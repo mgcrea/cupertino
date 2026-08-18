@@ -121,6 +121,11 @@ requires both `ALLOW_WRITES` and an explicit `confirm: true`.
 granted the host app. There is nothing here to leak, and nothing is sent anywhere: no network calls
 are made at all.
 
+**Attachments.** `save_attachment` can only write inside `APPLE_MAIL_ATTACHMENT_DIR`, and the
+filename is reduced to its basename first — a sender who names their attachment
+`../../../.ssh/authorized_keys` gets a file called `authorized_keys` in your downloads folder and
+nothing else. Existing files are never overwritten unless you ask.
+
 **No shell.** The one place this package spawns a process uses `execFile`, never `exec`, and no
 caller input is ever interpolated into script text. Scripts are static constants piped to
 `osascript` over stdin; every value travels as a JSON argument. A mailbox named

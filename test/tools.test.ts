@@ -57,8 +57,11 @@ const textOf = (result: Awaited<ReturnType<Client["callTool"]>>): string =>
 const READ_TOOLS = [
   "apple_mail_count_messages",
   "apple_mail_diagnostics",
+  "apple_mail_get_message",
+  "apple_mail_get_message_source",
   "apple_mail_get_thread",
   "apple_mail_list_accounts",
+  "apple_mail_list_attachments",
   "apple_mail_list_mailboxes",
   "apple_mail_list_messages",
   "apple_mail_search_messages",

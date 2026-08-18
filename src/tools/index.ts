@@ -5,6 +5,7 @@ import { registerAccountTools } from "./accounts.js";
 import { registerActionTools } from "./actions.js";
 import { registerComposeTools } from "./compose.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
+import { registerMessageTools } from "./messages.js";
 import { registerSearchTools } from "./search.js";
 
 export type ToolContext = {
@@ -33,6 +34,7 @@ export const registerTools = (
   registerDiagnosticsTools(server, client, ctx);
   registerAccountTools(server, client);
   registerSearchTools(server, client);
+  registerMessageTools(server, client, ctx.allowWrites);
 
   if (!ctx.allowWrites) return;
 

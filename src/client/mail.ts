@@ -1,5 +1,16 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
+
 import type { Config } from "../config.js";
+import {
+  extractAttachment,
+  locateEmlx,
+  readEmlx,
+  readEmlxSource,
+  type ParsedMessage,
+} from "./emlx.js";
 import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from "./envelope.js";
+import { MessageNotFoundError, PreconditionError } from "./errors.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
   CHECK_FOR_NEW_MAIL,
@@ -369,6 +380,125 @@ export class AppleMailClient {
       flagged: row.flagged,
       size: row.size,
     };
+  }
+
+  // ── body lane ──────────────────────────────────────────────────────────────
+
+  /**
+   * Read a message body.
+   *
+   * Preferred path is the `.emlx` file on disk, which is instant and gives us
+   * the real MIME structure. Falls back to asking Mail for `content` (~250ms),
+   * which also covers accounts whose message caching keeps headers only — so a
+   * missing file is a slow answer, not a failure.
+   */
+  async getMessageBody(
+    ref: string,
+    opts: { maxBodyBytes?: number } = {},
+  ): Promise<{
+    message: MessageSummary;
+    parsed: ParsedMessage | null;
+    source: "emlx" | "applescript";
+  }> {
+    const decoded = decodeRef(ref);
+    const located = await this.#locateMessageFile(decoded);
+
+    if (located) {
+      const parsed = readEmlx(located.path, {
+        maxBodyBytes: opts.maxBodyBytes ?? this.config.bodyMaxBytes,
+        partial: located.partial,
+      });
+      const [summary] = await this.getMessages(decoded, [decoded.id]);
+      if (summary) return { message: summary, parsed, source: "emlx" };
+    }
+
+    const [summary] = await this.getMessages(decoded, [decoded.id], { withContent: true });
+    if (!summary) throw new MessageNotFoundError(ref);
+    return { message: summary, parsed: null, source: "applescript" };
+  }
+
+  async getMessageSource(
+    ref: string,
+    opts: { offset: number; maxBytes: number },
+  ): Promise<{
+    source: string;
+    totalBytes: number | null;
+    truncated: boolean;
+    via: "emlx" | "applescript";
+  }> {
+    const decoded = decodeRef(ref);
+    const located = await this.#locateMessageFile(decoded);
+    if (located) {
+      return { ...readEmlxSource(located.path, opts), via: "emlx" };
+    }
+    const [summary] = await this.getMessages(decoded, [decoded.id], { withSource: true });
+    if (!summary) throw new MessageNotFoundError(ref);
+    const full = summary.source ?? "";
+    const slice = full.slice(opts.offset, opts.offset + opts.maxBytes);
+    return {
+      source: slice,
+      totalBytes: full.length,
+      truncated: opts.offset + slice.length < full.length,
+      via: "applescript",
+    };
+  }
+
+  async #locateMessageFile(ref: MessageRef): Promise<{ path: string; partial: boolean } | null> {
+    const accounts = await this.accounts();
+    const account = accounts.find((a) => a.id === ref.accountUuid);
+    if (!account?.directory) return null;
+    try {
+      return locateEmlx({
+        accountDirectory: account.directory,
+        mailbox: ref.mailbox,
+        rowid: ref.id,
+      });
+    } catch {
+      // Almost always a permission error on the mail store — the AppleScript
+      // fallback still works, so this is not worth failing the call over.
+      return null;
+    }
+  }
+
+  /**
+   * Save one attachment into the configured directory.
+   *
+   * The destination is resolved and then checked to be inside
+   * `APPLE_MAIL_ATTACHMENT_DIR`, so a filename of `../../.ssh/authorized_keys`
+   * lands nowhere. Existing files are never overwritten.
+   */
+  async saveAttachment(
+    ref: string,
+    filename: string,
+    opts: { overwrite?: boolean } = {},
+  ): Promise<{ path: string; bytes: number; from: "inline" | "sidecar" }> {
+    const decoded = decodeRef(ref);
+    const located = await this.#locateMessageFile(decoded);
+    if (!located) {
+      throw new PreconditionError(
+        "The message file could not be read, so its attachments are not reachable. " +
+          "Grant Full Disk Access and restart the host app.",
+      );
+    }
+
+    const { bytes, from } = extractAttachment(located.path, filename, decoded.id);
+
+    const root = resolve(this.config.attachmentDir);
+    // basename() first: the filename comes from message content, which is
+    // attacker-controlled in exactly the way path traversal needs.
+    const target = resolve(join(root, basename(filename)));
+    if (target !== join(root, basename(filename)) || !target.startsWith(root + sep)) {
+      throw new PreconditionError(
+        `Refusing to write outside ${root}. Set APPLE_MAIL_ATTACHMENT_DIR to change the destination.`,
+      );
+    }
+    if (existsSync(target) && !opts.overwrite) {
+      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
+    }
+
+    mkdirSync(root, { recursive: true });
+    writeFileSync(target, bytes, { mode: 0o600 });
+    return { path: target, bytes: bytes.length, from };
   }
 
   // ── write lane ─────────────────────────────────────────────────────────────

@@ -82,6 +82,7 @@ const WRITE_TOOLS = [
   "apple_mail_forward_message",
   "apple_mail_move_messages",
   "apple_mail_reply_to_message",
+  "apple_mail_save_attachment",
   "apple_mail_send_message",
   "apple_mail_set_message_flags",
 ];
