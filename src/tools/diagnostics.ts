@@ -30,6 +30,11 @@ export const registerDiagnosticsTools = (
     },
     async () =>
       wrap(async () => {
+        // Probe the lanes FIRST. lanes() is the call that retries past the
+        // cold-start Automation prompt, and a successful probe caches the
+        // accounts — so the account list below is read from the same evidence
+        // the lane status is derived from. Doing it the other way round makes
+        // the two disagree whenever the first Apple Event loses the race.
         const lanes = await client.lanes();
         const located = await client.locate();
 

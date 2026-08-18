@@ -126,12 +126,25 @@ export class AppleMailClient {
   }
 
   async lanes(): Promise<LaneStatus> {
+    /**
+     * Probe twice before declaring the lane dead.
+     *
+     * The FIRST Apple Event a fresh process sends is what triggers the macOS
+     * Automation prompt, and osascript can come back failed while the user is
+     * still deciding. Reporting "denied" off that one attempt produced a
+     * diagnostic that said automation was denied in the same breath as listing
+     * four accounts it had just read over automation — which sends people to
+     * fix a permission that was never the problem.
+     */
     let applescript: LaneStatus["applescript"] = "unavailable";
-    try {
-      await this.accounts();
-      applescript = "live";
-    } catch {
-      applescript = "unavailable";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.accounts();
+        applescript = "live";
+        break;
+      } catch {
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+      }
     }
 
     if (this.config.indexMode === "off") {
