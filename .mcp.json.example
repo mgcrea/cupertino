@@ -1,10 +1,9 @@
 {
   "mcpServers": {
     "apple-mail": {
-      "command": "node",
-      "args": ["./dist/cli.js"],
+      "command": "/Users/YOU/Library/Application Support/apple-mail-mcp/bin/apple-mail-mcp",
       "env": {
-        "APPLE_MAIL_ALLOW_WRITES": "0"
+        "APPLE_MAIL_ALLOW_WRITES": "1"
       }
     }
   }

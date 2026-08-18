@@ -40,17 +40,76 @@ there is corruption with a delay fuse.
 
 ## Permissions
 
-Two separate macOS permissions, doing different jobs. Both are granted to **the app that launches
-this server** (Terminal, iTerm, VS Code, Claude…), never to Mail.app.
+Two separate macOS permissions, doing different jobs. Neither is granted to Mail.app — it is the
+_reader_ that needs permission, not Mail.
 
 | Permission            | Needed for                          | Without it                                                                      |
 | --------------------- | ----------------------------------- | ------------------------------------------------------------------------------- |
 | **Automation → Mail** | everything                          | the server cannot do anything; you get a `-1743` error                          |
 | **Full Disk Access**  | search, message bodies, attachments | the server still runs: accounts, mailboxes, counts and capped listings all work |
 
-Grant them in System Settings → Privacy & Security → **Automation** and → **Full Disk Access**,
-then **restart** the app you granted it to. `apple_mail_diagnostics` reports exactly which of the
-two is missing and what it is blocking.
+**Automation** is granted to the app that launches the server (Terminal, iTerm, VS Code, Claude…).
+macOS prompts for it on the first Apple Event, so usually you just click Allow.
+
+**Full Disk Access** is the awkward one, and the reason this package ships a launcher.
+
+### Why you should not just grant it to your editor
+
+macOS attributes a process's file access to its _responsible process_ — the app at the top of the
+launch chain. When Claude spawns this server the chain is:
+
+```
+launchd → Visual Studio Code.app → Code Helper → claude → node dist/cli.js
+```
+
+so the grant would have to go to **VS Code**, and with it every extension, task and terminal command
+that editor ever runs would gain read access to your entire disk: Messages, Safari history, SSH
+keys, other apps' containers. That is a much larger permission than "may search my mail", and it
+defeats `APPLE_MAIL_ACCOUNTS`, which exists to bound exactly this.
+
+You cannot avoid it by granting the permission to `.mcp.json` (it is data, not code) or to `node`
+(it is not the responsible process, and it is shared by every node program on the machine).
+
+### The launcher
+
+`scripts/install-wrapper.sh` builds a small signed launcher that re-execs itself with
+`responsibility_spawnattrs_setdisclaim`, making it its own responsible process, and starts the
+server beneath it. Full Disk Access then goes to **that one binary** and nothing else.
+
+```bash
+pnpm build
+./scripts/install-wrapper.sh
+```
+
+Grant Full Disk Access to the path it prints, and point `.mcp.json` at it instead of `node`:
+
+```json
+{
+  "mcpServers": {
+    "apple-mail": {
+      "command": "/Users/YOU/Library/Application Support/apple-mail-mcp/bin/apple-mail-mcp",
+      "env": { "APPLE_MAIL_ALLOW_WRITES": "1" }
+    }
+  }
+}
+```
+
+Verified on macOS 26.6: the launcher reads Mail's index while plain `node` in the same shell stays
+denied, so the grant really is scoped. `apple_mail_diagnostics` will confirm it.
+
+Three things worth knowing:
+
+- **It is not a general-purpose "run X with Full Disk Access" tool.** The node and server paths are
+  compiled in and `argv` is never consulted for what to execute. A launcher that ran whatever it was
+  told would let any local process read your whole disk using a permission you granted for mail.
+- **Install it once, outside the repo.** macOS ties the grant to a file path, so a launcher living in
+  `node_modules` or an `npx` cache would silently lose its permission on the next version bump.
+- **`responsibility_spawnattrs_setdisclaim` is a private API.** It has been stable since 10.14, and
+  if it ever disappears the launcher says so on stderr and starts the server anyway — you lose the
+  search and body lanes, not the server. The fallback is granting Full Disk Access to the host app.
+
+Restart your MCP host after granting. `apple_mail_diagnostics` reports which permission is missing
+and what it is blocking.
 
 A wrinkle worth knowing: `stat()` on a TCC-protected file **succeeds** — you can see the size and
 mtime of the index without Full Disk Access, and only reading it is denied. So "the file is there"
