@@ -345,9 +345,17 @@ doc.sqlite = db.prepare("SELECT sqlite_version() AS v").get().v;
 
 // ─── 5. Schema ───────────────────────────────────────────────────────────────
 
+// Order matters: sqlite_master's natural "type, name" ordering puts every
+// CREATE INDEX before the tables it indexes, which makes the dump unreplayable.
+// Emit tables first, then indexes, then triggers and views.
 const ddlRows = db
-  .prepare("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name")
-  .all();
+  .prepare(
+    `SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL
+       ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, name`,
+  )
+  .all()
+  // sqlite_sequence is created implicitly by AUTOINCREMENT and cannot be declared.
+  .filter((r) => r.name !== "sqlite_sequence");
 const tables = ddlRows.filter((r) => r.type === "table").map((r) => r.name);
 
 const columnsOf = (t) =>

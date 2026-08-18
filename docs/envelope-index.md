@@ -3,16 +3,16 @@
 Regenerate with `node scripts/probe-envelope-index.mjs --write` on each new macOS release.
 Output is redacted: DDL, counts and booleans only.
 
-| | |
-|---|---|
-| macOS | 26.6 |
-| Mail data version | V10 |
-| Schema fingerprint | `77aa2cd3a55b` |
-| SQLite | 3.53.3 |
-| Epoch offset | 0 |
-| `labels` table | true |
-| ROWID == AppleScript id | true |
-| immutable=1 skips WAL | true |
+|                         |                |
+| ----------------------- | -------------- |
+| macOS                   | 26.6           |
+| Mail data version       | V10            |
+| Schema fingerprint      | `77aa2cd3a55b` |
+| SQLite                  | 3.53.3         |
+| Epoch offset            | 0              |
+| `labels` table          | true           |
+| ROWID == AppleScript id | true           |
+| immutable=1 skips WAL   | true           |
 
 ## Full document
 
@@ -106,21 +106,11 @@ Output is redacted: DDL, counts and booleans only.
       "tableCount": 54,
       "tables": {
         "action_flags": {
-          "columns": [
-            "ROWID",
-            "action",
-            "flag_type",
-            "flag_value"
-          ],
+          "columns": ["ROWID", "action", "flag_type", "flag_value"],
           "rows": 0
         },
         "action_labels": {
-          "columns": [
-            "ROWID",
-            "action",
-            "do_add",
-            "label"
-          ],
+          "columns": ["ROWID", "action", "do_add", "label"],
           "rows": 0
         },
         "action_messages": {
@@ -135,122 +125,55 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 0
         },
         "additional_remote_content_links": {
-          "columns": [
-            "ROWID",
-            "url",
-            "requests",
-            "last_seen_date",
-            "last_request_date"
-          ],
+          "columns": ["ROWID", "url", "requests", "last_seen_date", "last_request_date"],
           "rows": 0
         },
         "address_metadata": {
-          "columns": [
-            "ROWID",
-            "address",
-            "smime_capabilities",
-            "smime_capabilities_date"
-          ],
+          "columns": ["ROWID", "address", "smime_capabilities", "smime_capabilities_date"],
           "rows": 0
         },
         "addresses": {
-          "columns": [
-            "ROWID",
-            "address",
-            "comment"
-          ],
+          "columns": ["ROWID", "address", "comment"],
           "rows": 32813
         },
         "attachments": {
-          "columns": [
-            "ROWID",
-            "message",
-            "attachment_id",
-            "name"
-          ],
+          "columns": ["ROWID", "message", "attachment_id", "name"],
           "rows": 52128
         },
         "brand_indicator_evidence": {
-          "columns": [
-            "ROWID",
-            "brand_indicator",
-            "url",
-            "evidence",
-            "unverified_messages"
-          ],
+          "columns": ["ROWID", "brand_indicator", "url", "evidence", "unverified_messages"],
           "rows": 92
         },
         "brand_indicators": {
-          "columns": [
-            "ROWID",
-            "url",
-            "indicator",
-            "indicator_hash",
-            "hash_algorithm"
-          ],
+          "columns": ["ROWID", "url", "indicator", "indicator_hash", "hash_algorithm"],
           "rows": 79
         },
         "business_addresses": {
-          "columns": [
-            "ROWID",
-            "address",
-            "business",
-            "category",
-            "last_modified",
-            "last_bcs_sync"
-          ],
+          "columns": ["ROWID", "address", "business", "category", "last_modified", "last_bcs_sync"],
           "rows": 23830
         },
         "business_categories": {
-          "columns": [
-            "ROWID",
-            "business",
-            "category"
-          ],
+          "columns": ["ROWID", "business", "category"],
           "rows": 2
         },
         "businesses": {
-          "columns": [
-            "ROWID",
-            "address_comment",
-            "domain",
-            "brand_id",
-            "localized_brand_name"
-          ],
+          "columns": ["ROWID", "address_comment", "domain", "brand_id", "localized_brand_name"],
           "rows": 18194
         },
         "conversation_id_message_id": {
-          "columns": [
-            "conversation_id",
-            "message_id",
-            "date_sent"
-          ],
+          "columns": ["conversation_id", "message_id", "date_sent"],
           "rows": 184589
         },
         "conversations": {
-          "columns": [
-            "conversation_id",
-            "flags",
-            "sync_key"
-          ],
+          "columns": ["conversation_id", "flags", "sync_key"],
           "rows": 149472
         },
         "data_detection_results": {
-          "columns": [
-            "ROWID",
-            "global_message_id",
-            "category",
-            "value"
-          ],
+          "columns": ["ROWID", "global_message_id", "category", "value"],
           "rows": 0
         },
         "duplicates_unread_count": {
-          "columns": [
-            "ROWID",
-            "message_id",
-            "mailbox_id",
-            "unread_count"
-          ],
+          "columns": ["ROWID", "message_id", "mailbox_id", "unread_count"],
           "rows": 44546
         },
         "events": {
@@ -271,42 +194,19 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 59
         },
         "ews_folders": {
-          "columns": [
-            "ROWID",
-            "folder_id",
-            "mailbox_id",
-            "sync_state"
-          ],
+          "columns": ["ROWID", "folder_id", "mailbox_id", "sync_state"],
           "rows": 11
         },
         "generated_summaries": {
-          "columns": [
-            "ROWID",
-            "summary",
-            "status"
-          ],
+          "columns": ["ROWID", "summary", "status"],
           "rows": 8126
         },
         "indexing_analytics_attachment_donations_enqueued": {
-          "columns": [
-            "id",
-            "item",
-            "source",
-            "started_at",
-            "ended_at",
-            "error"
-          ],
+          "columns": ["id", "item", "source", "started_at", "ended_at", "error"],
           "rows": 0
         },
         "indexing_analytics_attachment_donations_identified": {
-          "columns": [
-            "id",
-            "item",
-            "reason",
-            "started_at",
-            "recorded",
-            "ended_at"
-          ],
+          "columns": ["id", "item", "reason", "started_at", "recorded", "ended_at"],
           "rows": 0
         },
         "indexing_analytics_batches": {
@@ -323,68 +223,31 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 0
         },
         "indexing_analytics_dropped_index_events": {
-          "columns": [
-            "id",
-            "timestamp"
-          ],
+          "columns": ["id", "timestamp"],
           "rows": 0
         },
         "indexing_analytics_message_donations_enqueued": {
-          "columns": [
-            "id",
-            "item",
-            "source",
-            "started_at",
-            "ended_at",
-            "error"
-          ],
+          "columns": ["id", "item", "source", "started_at", "ended_at", "error"],
           "rows": 0
         },
         "indexing_analytics_message_donations_identified": {
-          "columns": [
-            "id",
-            "item",
-            "reason",
-            "started_at",
-            "recorded",
-            "ended_at"
-          ],
+          "columns": ["id", "item", "reason", "started_at", "recorded", "ended_at"],
           "rows": 0
         },
         "indexing_analytics_rich_link_donations_enqueued": {
-          "columns": [
-            "id",
-            "item",
-            "source",
-            "started_at",
-            "ended_at",
-            "error"
-          ],
+          "columns": ["id", "item", "source", "started_at", "ended_at", "error"],
           "rows": 0
         },
         "indexing_analytics_rich_link_donations_identified": {
-          "columns": [
-            "id",
-            "item",
-            "reason",
-            "started_at",
-            "recorded",
-            "ended_at"
-          ],
+          "columns": ["id", "item", "reason", "started_at", "recorded", "ended_at"],
           "rows": 0
         },
         "labels": {
-          "columns": [
-            "message_id",
-            "mailbox_id"
-          ],
+          "columns": ["message_id", "mailbox_id"],
           "rows": 197951
         },
         "last_spotlight_check_date": {
-          "columns": [
-            "message_id",
-            "date"
-          ],
+          "columns": ["message_id", "date"],
           "rows": 0
         },
         "local_message_actions": {
@@ -448,27 +311,15 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 179910
         },
         "message_metadata": {
-          "columns": [
-            "message_id",
-            "timestamp",
-            "json_values"
-          ],
+          "columns": ["message_id", "timestamp", "json_values"],
           "rows": 0
         },
         "message_references": {
-          "columns": [
-            "ROWID",
-            "message",
-            "reference",
-            "is_originator"
-          ],
+          "columns": ["ROWID", "message", "reference", "is_originator"],
           "rows": 98765
         },
         "message_rich_links": {
-          "columns": [
-            "global_message_id",
-            "rich_link"
-          ],
+          "columns": ["global_message_id", "rich_link"],
           "rows": 2
         },
         "messages": {
@@ -509,74 +360,35 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 181427
         },
         "properties": {
-          "columns": [
-            "ROWID",
-            "key",
-            "value"
-          ],
+          "columns": ["ROWID", "key", "value"],
           "rows": 10
         },
         "protected_message_data": {
-          "columns": [
-            "ROWID",
-            "data"
-          ],
+          "columns": ["ROWID", "data"],
           "rows": 0
         },
         "recipients": {
-          "columns": [
-            "ROWID",
-            "message",
-            "address",
-            "type",
-            "position"
-          ],
+          "columns": ["ROWID", "message", "address", "type", "position"],
           "rows": 287734
         },
         "remote_content_links": {
-          "columns": [
-            "ROWID",
-            "url",
-            "requests",
-            "last_seen_date",
-            "last_request_date"
-          ],
+          "columns": ["ROWID", "url", "requests", "last_seen_date", "last_request_date"],
           "rows": 5104
         },
         "rich_links": {
-          "columns": [
-            "ROWID",
-            "title",
-            "url",
-            "hash"
-          ],
+          "columns": ["ROWID", "title", "url", "hash"],
           "rows": 3
         },
         "searchable_attachments": {
-          "columns": [
-            "attachment_id",
-            "attachment",
-            "message_id",
-            "transaction_id"
-          ],
+          "columns": ["attachment_id", "attachment", "message_id", "transaction_id"],
           "rows": 10184
         },
         "searchable_data_detection_results": {
-          "columns": [
-            "ROWID",
-            "data_detection_result",
-            "message",
-            "transaction_id"
-          ],
+          "columns": ["ROWID", "data_detection_result", "message", "transaction_id"],
           "rows": 0
         },
         "searchable_message_tombstones": {
-          "columns": [
-            "ROWID",
-            "type",
-            "identifier",
-            "transaction_id"
-          ],
+          "columns": ["ROWID", "type", "identifier", "transaction_id"],
           "rows": 0
         },
         "searchable_messages": {
@@ -590,35 +402,19 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 181425
         },
         "searchable_rich_links": {
-          "columns": [
-            "rich_link_id",
-            "rich_link",
-            "message_id",
-            "transaction_id"
-          ],
+          "columns": ["rich_link_id", "rich_link", "message_id", "transaction_id"],
           "rows": 4
         },
         "sender_addresses": {
-          "columns": [
-            "address",
-            "sender"
-          ],
+          "columns": ["address", "sender"],
           "rows": 199
         },
         "senders": {
-          "columns": [
-            "ROWID",
-            "contact_identifier",
-            "bucket",
-            "user_initiated"
-          ],
+          "columns": ["ROWID", "contact_identifier", "bucket", "user_initiated"],
           "rows": 141
         },
         "server_labels": {
-          "columns": [
-            "server_message",
-            "label"
-          ],
+          "columns": ["server_message", "label"],
           "rows": 197951
         },
         "server_messages": {
@@ -642,24 +438,15 @@ Output is redacted: DDL, counts and booleans only.
           "rows": 178957
         },
         "sqlite_sequence": {
-          "columns": [
-            "name",
-            "seq"
-          ],
+          "columns": ["name", "seq"],
           "rows": 18
         },
         "subjects": {
-          "columns": [
-            "ROWID",
-            "subject"
-          ],
+          "columns": ["ROWID", "subject"],
           "rows": 116448
         },
         "summaries": {
-          "columns": [
-            "ROWID",
-            "summary"
-          ],
+          "columns": ["ROWID", "summary"],
           "rows": 30614
         }
       },
@@ -684,11 +471,7 @@ Output is redacted: DDL, counts and booleans only.
     },
     "mailboxUrls": {
       "count": 50,
-      "schemes": [
-        "ews",
-        "imap",
-        "local"
-      ],
+      "schemes": ["ews", "imap", "local"],
       "hostIsAccountUuid": {
         "yes": 47,
         "no": 3
@@ -735,46 +518,31 @@ Output is redacted: DDL, counts and booleans only.
         {
           "found": true,
           "subjectMatches": true,
-          "subjectLengths": [
-            83,
-            83
-          ],
+          "subjectLengths": [83, 83],
           "dateDeltaSeconds": 0
         },
         {
           "found": true,
           "subjectMatches": true,
-          "subjectLengths": [
-            36,
-            36
-          ],
+          "subjectLengths": [36, 36],
           "dateDeltaSeconds": 0
         },
         {
           "found": true,
           "subjectMatches": true,
-          "subjectLengths": [
-            80,
-            80
-          ],
+          "subjectLengths": [80, 80],
           "dateDeltaSeconds": 0
         },
         {
           "found": true,
           "subjectMatches": true,
-          "subjectLengths": [
-            76,
-            76
-          ],
+          "subjectLengths": [76, 76],
           "dateDeltaSeconds": 0
         },
         {
           "found": true,
           "subjectMatches": true,
-          "subjectLengths": [
-            48,
-            48
-          ],
+          "subjectLengths": [48, 48],
           "dateDeltaSeconds": 0
         }
       ],
@@ -813,10 +581,7 @@ Output is redacted: DDL, counts and booleans only.
         }
       ],
       "messagesDirCount": null,
-      "innerEntries": [
-        "B6CE5937-6BD6-447C-B6DF-4762D2537363",
-        "Info.plist"
-      ],
+      "innerEntries": ["B6CE5937-6BD6-447C-B6DF-4762D2537363", "Info.plist"],
       "derivedHitRate": "5/5"
     },
     "gmail": {

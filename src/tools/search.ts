@@ -1,16 +1,103 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
-import { accountArg, limitArg, mailboxArg, wrap } from "./util.js";
+import { accountArg, limitArg, mailboxArg, messageRefArg, wrap } from "./util.js";
 
-/**
- * Listing and counting.
- *
- * `apple_mail_search_messages` lands here in Phase 2, once the Envelope Index
- * lane exists. It is deliberately absent rather than stubbed: a registered tool
- * that always answers "not implemented" is worse than one the model never sees.
- */
+/** Searching, listing and counting. */
 export const registerSearchTools = (server: McpServer, client: AppleMailClient): void => {
+  server.registerTool(
+    "apple_mail_search_messages",
+    {
+      description:
+        "Search mail by any combination of text, sender, recipient, subject, mailbox, account, " +
+        "read/flagged state, attachments and date range. This is the tool to reach for whenever a " +
+        "filter is involved — it reads Mail's own search index, so it is fast even across a " +
+        "six-figure archive. Returns a `ref` per message for the read and action tools. " +
+        "Requires Full Disk Access; without it this returns degraded:true and you should fall back " +
+        "to apple_mail_list_messages on a specific mailbox.",
+      inputSchema: {
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "Free text matched against subject and sender. Does NOT search message bodies.",
+          ),
+        sender: z.string().optional().describe("Match the sender address or display name."),
+        recipient: z.string().optional().describe("Match any recipient address."),
+        subject: z.string().optional().describe("Match the subject only."),
+        account: accountArg,
+        mailbox: mailboxArg,
+        unreadOnly: z.boolean().optional().describe("Only unread messages."),
+        flaggedOnly: z.boolean().optional().describe("Only flagged messages."),
+        hasAttachment: z.boolean().optional().describe("Only messages carrying an attachment."),
+        dateFrom: z.string().optional().describe("ISO date/time lower bound, e.g. 2026-01-01."),
+        dateTo: z.string().optional().describe("ISO date/time upper bound."),
+        limit: limitArg,
+        offset: z.number().int().min(0).optional().describe("Skip this many results, for paging."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) =>
+      wrap(async () => {
+        const result = await client.searchMessages({
+          ...args,
+          limit: Math.min(args.limit ?? 25, client.config.maxResults),
+          offset: args.offset ?? 0,
+        });
+        if (!result) {
+          return {
+            degraded: true,
+            capability: "search-index",
+            reason: client.indexError ?? "the search index is unavailable",
+            hint:
+              "Grant Full Disk Access and restart the host app, or use apple_mail_list_messages " +
+              "for a capped listing of one mailbox. Call apple_mail_diagnostics for details.",
+          };
+        }
+        return {
+          returned: result.messages.length,
+          source: result.source,
+          indexAgeSeconds: result.indexAgeSeconds,
+          ...(result.walBlind
+            ? { warning: "Index opened WAL-blind (immutable); very recent mail may be missing." }
+            : {}),
+          messages: result.messages,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "apple_mail_get_thread",
+    {
+      description:
+        "Get every message in the conversation containing a given message, oldest first, across " +
+        "mailboxes and accounts. Metadata only — use apple_mail_get_message for bodies. Requires " +
+        "Full Disk Access.",
+      inputSchema: {
+        ref: messageRefArg,
+        limit: limitArg,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ ref, limit }) =>
+      wrap(async () => {
+        const messages = await client.threadOf(
+          ref,
+          Math.min(limit ?? 50, client.config.maxResults),
+        );
+        if (!messages) {
+          return {
+            degraded: true,
+            capability: "search-index",
+            reason: client.indexError ?? "the search index is unavailable",
+            hint: "Threading needs Mail's search index. Call apple_mail_diagnostics for details.",
+          };
+        }
+        return { returned: messages.length, messages };
+      }),
+  );
+
   server.registerTool(
     "apple_mail_list_messages",
     {
@@ -76,12 +163,17 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         if (!resolved) return { note: "No accounts are visible to this server." };
         const box = mailbox ?? (resolved.mailboxes.includes("INBOX") ? "INBOX" : "Inbox");
         const counts = await client.countMailbox(resolved, box);
+        const viaIndex = await client.countViaIndex({ account: resolved.name, mailbox: box });
         return {
           account: resolved.name,
           mailbox: counts.mailbox,
-          total: counts.total,
-          unread: { applescript: counts.unread, index: null },
-          note: "unread.applescript is Mail's cached badge value and may be stale or zero.",
+          total: viaIndex?.total ?? counts.total,
+          unread: { applescript: counts.unread, index: viaIndex?.unread ?? null },
+          note: viaIndex
+            ? "Prefer unread.index: unread.applescript is Mail's cached badge value and is " +
+              "sometimes flatly wrong (observed as 0 for a mailbox with 1618 unread)."
+            : "unread.applescript is Mail's cached badge value and may be stale or zero. " +
+              "Grant Full Disk Access for the authoritative count.",
         };
       }),
   );

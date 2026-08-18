@@ -2,94 +2,6 @@
 -- macOS 26.6, Mail V10, fingerprint 77aa2cd3a55b.
 -- Schema only. No data.
 
-CREATE INDEX action_flags_action_index ON action_flags(action);
-CREATE INDEX action_labels_action_index ON action_labels(action);
-CREATE INDEX action_labels_label_index ON action_labels(label);
-CREATE INDEX action_messages_action_index ON action_messages(action);
-CREATE INDEX action_messages_destination_message_index ON action_messages(destination_message);
-CREATE INDEX action_messages_message_index ON action_messages(message);
-CREATE INDEX additional_remote_content_links_requests_last_request_date_index ON additional_remote_content_links(requests, last_request_date);
-CREATE INDEX additional_remote_content_links_requests_last_seen_date_index ON additional_remote_content_links(requests, last_seen_date);
-CREATE INDEX attachments_message_attachment_id_index ON attachments(message, attachment_id);
-CREATE INDEX attachments_message_name_index ON attachments(message, name);
-CREATE INDEX brand_indicator_evidence_unverified_messages_index ON brand_indicator_evidence(unverified_messages) WHERE unverified_messages IS NOT NULL;
-CREATE INDEX conversation_id_message_id_message_id_conversation_id_index ON conversation_id_message_id(message_id, conversation_id);
-CREATE INDEX conversations_flags_index ON conversations(flags);
-CREATE INDEX duplicates_unread_count_mailbox_id_index ON duplicates_unread_count(mailbox_id);
-CREATE INDEX events_message_id_index ON events(message_id);
-CREATE INDEX ews_folders_mailbox_id_index ON ews_folders(mailbox_id);
-CREATE INDEX indexing_analytics_attachment_donations_identified_item_started_at_index
-          ON indexing_analytics_attachment_donations_identified(item, started_at);
-CREATE INDEX indexing_analytics_message_donations_identified_item_started_at_index
-          ON indexing_analytics_message_donations_identified(item, started_at);
-CREATE INDEX indexing_analytics_rich_link_donations_identified_item_started_at_index
-          ON indexing_analytics_rich_link_donations_identified(item, started_at);
-CREATE INDEX labels_mailbox_id_index on labels(mailbox_id);
-CREATE INDEX last_spotlight_check_date_message_id_date_index ON last_spotlight_check_date(message_id, date);
-CREATE INDEX local_message_actions_mailbox_rowid_index ON local_message_actions(mailbox, ROWID);
-CREATE INDEX mailboxes_source_index ON mailboxes(source);
-CREATE INDEX message_global_data_category_model_version_model_category_index ON message_global_data(category_model_version, model_category);
-CREATE INDEX message_global_data_follow_up_end_date_index ON message_global_data(follow_up_end_date);
-CREATE INDEX message_global_data_follow_up_jsonstringformodelevaluationforsuggestions_index ON message_global_data(follow_up_jsonstringformodelevaluationforsuggestions);
-CREATE INDEX message_global_data_follow_up_start_date_index ON message_global_data(follow_up_start_date);
-CREATE INDEX message_global_data_model_category_index ON message_global_data(model_category);
-CREATE INDEX message_global_data_read_later_date_index ON message_global_data(read_later_date);
-CREATE INDEX message_global_data_send_later_date_index ON message_global_data(send_later_date);
-CREATE INDEX message_global_data_validation_state_equals_zero_index ON message_global_data(validation_state) WHERE validation_state = 0;
-CREATE INDEX message_metadata_timestamp_index ON message_metadata(timestamp);
-CREATE INDEX message_references_message_reference_index ON message_references(message, reference);
-CREATE INDEX message_references_reference_message_index ON message_references(reference, message);
-CREATE INDEX messages_brand_indicator_index ON messages(brand_indicator);
-CREATE INDEX messages_conversation_id_index ON messages(conversation_id);
-CREATE INDEX messages_conversation_id_mailbox_deleted_index ON messages(conversation_id, mailbox, deleted);
-CREATE INDEX messages_conversation_id_mailbox_flagged_deleted_index ON messages(conversation_id, mailbox, flagged, deleted);
-CREATE INDEX messages_conversation_id_mailbox_flags_deleted_index ON messages(conversation_id, mailbox, flags, deleted);
-CREATE INDEX messages_conversation_id_mailbox_read_date_received_deleted_index ON messages(conversation_id, mailbox, read, date_received, deleted);
-CREATE INDEX messages_conversation_id_mailbox_sender_date_received_deleted_index ON messages(conversation_id, mailbox, sender, date_received, deleted);
-CREATE INDEX messages_date_last_viewed_index ON messages(date_last_viewed);
-CREATE INDEX messages_date_received_index ON messages(date_received);
-CREATE INDEX messages_deleted_date_received_index ON messages(deleted, date_received);
-CREATE INDEX messages_deleted_index ON messages(deleted);
-CREATE INDEX messages_deleted_mailbox_index ON messages(deleted, mailbox);
-CREATE INDEX messages_document_id_index ON messages(document_id);
-CREATE INDEX messages_flag_color_index ON messages(flag_color);
-CREATE INDEX messages_flagged_index ON messages(flagged);
-CREATE INDEX messages_fuzzy_ancestor_index ON messages(fuzzy_ancestor);
-CREATE INDEX messages_global_message_id_mailbox_index ON messages(global_message_id, mailbox);
-CREATE INDEX messages_is_urgent_deleted_conversation_id_is_urgent_1_deleted_0_index ON messages(is_urgent, deleted, conversation_id) WHERE (is_urgent = 1 AND deleted = 0);
-CREATE INDEX messages_list_id_hash_index ON messages(list_id_hash);
-CREATE INDEX messages_mailbox_conversation_id_date_received_deleted_index ON messages(mailbox, conversation_id, date_received, deleted);
-CREATE INDEX messages_mailbox_date_received_index ON messages(mailbox, date_received);
-CREATE INDEX messages_mailbox_display_date_index ON messages(mailbox, display_date);
-CREATE INDEX messages_mailbox_is_urgent_display_date_index ON messages(mailbox, is_urgent, display_date);
-CREATE INDEX messages_message_id_mailbox_index ON messages(message_id, mailbox);
-CREATE INDEX messages_read_deleted_global_message_id_mailbox_read0_deleted0_index ON messages(read, deleted, global_message_id, mailbox) WHERE (read = 0 AND deleted = 0);
-CREATE INDEX messages_remote_mailbox_remote_id_index ON messages(remote_mailbox, remote_id);
-CREATE INDEX messages_root_status_index ON messages(root_status);
-CREATE INDEX messages_searchable_message_deleted_date_received_index ON messages(searchable_message, deleted, date_received);
-CREATE INDEX messages_sender_index ON messages(sender);
-CREATE INDEX messages_sender_subject_automated_conversation_index ON messages(sender, subject, automated_conversation);
-CREATE INDEX messages_subject_fuzzy_ancestor_index ON messages(subject, fuzzy_ancestor);
-CREATE INDEX messages_subject_index ON messages(subject);
-CREATE INDEX messages_summary_index ON messages(summary);
-CREATE INDEX messages_type_index ON messages(type);
-CREATE INDEX recipients_address_index ON recipients(address);
-CREATE INDEX recipients_message_position_type_address_index ON recipients(message, position, type, address);
-CREATE INDEX remote_content_links_requests_last_request_date_index ON remote_content_links(requests, last_request_date);
-CREATE INDEX remote_content_links_requests_last_seen_date_index ON remote_content_links(requests, last_seen_date);
-CREATE INDEX searchable_attachments_attachment_index ON searchable_attachments(attachment);
-CREATE INDEX searchable_attachments_message_id_index ON searchable_attachments(message_id);
-CREATE INDEX searchable_data_detection_results_data_detection_result_index ON searchable_data_detection_results(data_detection_result);
-CREATE INDEX searchable_data_detection_results_message_index ON searchable_data_detection_results(message);
-CREATE INDEX searchable_message_tombstones_transaction_id_type_identifier_index ON searchable_message_tombstones(transaction_id, type, identifier);
-CREATE INDEX searchable_messages_message_reindex_type_transaction_id_index ON searchable_messages(message, reindex_type, transaction_id);
-CREATE INDEX searchable_messages_reindex_type_message_index ON searchable_messages(reindex_type, message);
-CREATE INDEX searchable_messages_transaction_id_message_index ON searchable_messages(transaction_id, message);
-CREATE INDEX searchable_rich_links_message_id_index ON searchable_rich_links(message_id);
-CREATE INDEX searchable_rich_links_rich_link_index ON searchable_rich_links(rich_link);
-CREATE INDEX sender_addresses_sender_index ON sender_addresses(sender);
-CREATE INDEX senders_bucket_index ON senders(bucket);
-CREATE INDEX server_messages_message_index ON server_messages(message);
 CREATE TABLE action_flags (ROWID INTEGER PRIMARY KEY,
 action INTEGER REFERENCES local_message_actions(ROWID) ON DELETE CASCADE,
 flag_type INTEGER,
@@ -373,13 +285,100 @@ junk_level INTEGER NOT NULL,
 flag_color INTEGER NOT NULL,
 remote_id INTEGER NOT NULL,
 UNIQUE(mailbox, remote_id) ON CONFLICT ABORT);
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE subjects (ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
 subject TEXT COLLATE RTRIM NOT NULL,
 UNIQUE(subject) ON CONFLICT ABORT);
 CREATE TABLE summaries (ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
 summary TEXT COLLATE RTRIM NOT NULL,
 UNIQUE(summary) ON CONFLICT ABORT);
+CREATE INDEX action_flags_action_index ON action_flags(action);
+CREATE INDEX action_labels_action_index ON action_labels(action);
+CREATE INDEX action_labels_label_index ON action_labels(label);
+CREATE INDEX action_messages_action_index ON action_messages(action);
+CREATE INDEX action_messages_destination_message_index ON action_messages(destination_message);
+CREATE INDEX action_messages_message_index ON action_messages(message);
+CREATE INDEX additional_remote_content_links_requests_last_request_date_index ON additional_remote_content_links(requests, last_request_date);
+CREATE INDEX additional_remote_content_links_requests_last_seen_date_index ON additional_remote_content_links(requests, last_seen_date);
+CREATE INDEX attachments_message_attachment_id_index ON attachments(message, attachment_id);
+CREATE INDEX attachments_message_name_index ON attachments(message, name);
+CREATE INDEX brand_indicator_evidence_unverified_messages_index ON brand_indicator_evidence(unverified_messages) WHERE unverified_messages IS NOT NULL;
+CREATE INDEX conversation_id_message_id_message_id_conversation_id_index ON conversation_id_message_id(message_id, conversation_id);
+CREATE INDEX conversations_flags_index ON conversations(flags);
+CREATE INDEX duplicates_unread_count_mailbox_id_index ON duplicates_unread_count(mailbox_id);
+CREATE INDEX events_message_id_index ON events(message_id);
+CREATE INDEX ews_folders_mailbox_id_index ON ews_folders(mailbox_id);
+CREATE INDEX indexing_analytics_attachment_donations_identified_item_started_at_index
+          ON indexing_analytics_attachment_donations_identified(item, started_at);
+CREATE INDEX indexing_analytics_message_donations_identified_item_started_at_index
+          ON indexing_analytics_message_donations_identified(item, started_at);
+CREATE INDEX indexing_analytics_rich_link_donations_identified_item_started_at_index
+          ON indexing_analytics_rich_link_donations_identified(item, started_at);
+CREATE INDEX labels_mailbox_id_index on labels(mailbox_id);
+CREATE INDEX last_spotlight_check_date_message_id_date_index ON last_spotlight_check_date(message_id, date);
+CREATE INDEX local_message_actions_mailbox_rowid_index ON local_message_actions(mailbox, ROWID);
+CREATE INDEX mailboxes_source_index ON mailboxes(source);
+CREATE INDEX message_global_data_category_model_version_model_category_index ON message_global_data(category_model_version, model_category);
+CREATE INDEX message_global_data_follow_up_end_date_index ON message_global_data(follow_up_end_date);
+CREATE INDEX message_global_data_follow_up_jsonstringformodelevaluationforsuggestions_index ON message_global_data(follow_up_jsonstringformodelevaluationforsuggestions);
+CREATE INDEX message_global_data_follow_up_start_date_index ON message_global_data(follow_up_start_date);
+CREATE INDEX message_global_data_model_category_index ON message_global_data(model_category);
+CREATE INDEX message_global_data_read_later_date_index ON message_global_data(read_later_date);
+CREATE INDEX message_global_data_send_later_date_index ON message_global_data(send_later_date);
+CREATE INDEX message_global_data_validation_state_equals_zero_index ON message_global_data(validation_state) WHERE validation_state = 0;
+CREATE INDEX message_metadata_timestamp_index ON message_metadata(timestamp);
+CREATE INDEX message_references_message_reference_index ON message_references(message, reference);
+CREATE INDEX message_references_reference_message_index ON message_references(reference, message);
+CREATE INDEX messages_brand_indicator_index ON messages(brand_indicator);
+CREATE INDEX messages_conversation_id_index ON messages(conversation_id);
+CREATE INDEX messages_conversation_id_mailbox_deleted_index ON messages(conversation_id, mailbox, deleted);
+CREATE INDEX messages_conversation_id_mailbox_flagged_deleted_index ON messages(conversation_id, mailbox, flagged, deleted);
+CREATE INDEX messages_conversation_id_mailbox_flags_deleted_index ON messages(conversation_id, mailbox, flags, deleted);
+CREATE INDEX messages_conversation_id_mailbox_read_date_received_deleted_index ON messages(conversation_id, mailbox, read, date_received, deleted);
+CREATE INDEX messages_conversation_id_mailbox_sender_date_received_deleted_index ON messages(conversation_id, mailbox, sender, date_received, deleted);
+CREATE INDEX messages_date_last_viewed_index ON messages(date_last_viewed);
+CREATE INDEX messages_date_received_index ON messages(date_received);
+CREATE INDEX messages_deleted_date_received_index ON messages(deleted, date_received);
+CREATE INDEX messages_deleted_index ON messages(deleted);
+CREATE INDEX messages_deleted_mailbox_index ON messages(deleted, mailbox);
+CREATE INDEX messages_document_id_index ON messages(document_id);
+CREATE INDEX messages_flag_color_index ON messages(flag_color);
+CREATE INDEX messages_flagged_index ON messages(flagged);
+CREATE INDEX messages_fuzzy_ancestor_index ON messages(fuzzy_ancestor);
+CREATE INDEX messages_global_message_id_mailbox_index ON messages(global_message_id, mailbox);
+CREATE INDEX messages_is_urgent_deleted_conversation_id_is_urgent_1_deleted_0_index ON messages(is_urgent, deleted, conversation_id) WHERE (is_urgent = 1 AND deleted = 0);
+CREATE INDEX messages_list_id_hash_index ON messages(list_id_hash);
+CREATE INDEX messages_mailbox_conversation_id_date_received_deleted_index ON messages(mailbox, conversation_id, date_received, deleted);
+CREATE INDEX messages_mailbox_date_received_index ON messages(mailbox, date_received);
+CREATE INDEX messages_mailbox_display_date_index ON messages(mailbox, display_date);
+CREATE INDEX messages_mailbox_is_urgent_display_date_index ON messages(mailbox, is_urgent, display_date);
+CREATE INDEX messages_message_id_mailbox_index ON messages(message_id, mailbox);
+CREATE INDEX messages_read_deleted_global_message_id_mailbox_read0_deleted0_index ON messages(read, deleted, global_message_id, mailbox) WHERE (read = 0 AND deleted = 0);
+CREATE INDEX messages_remote_mailbox_remote_id_index ON messages(remote_mailbox, remote_id);
+CREATE INDEX messages_root_status_index ON messages(root_status);
+CREATE INDEX messages_searchable_message_deleted_date_received_index ON messages(searchable_message, deleted, date_received);
+CREATE INDEX messages_sender_index ON messages(sender);
+CREATE INDEX messages_sender_subject_automated_conversation_index ON messages(sender, subject, automated_conversation);
+CREATE INDEX messages_subject_fuzzy_ancestor_index ON messages(subject, fuzzy_ancestor);
+CREATE INDEX messages_subject_index ON messages(subject);
+CREATE INDEX messages_summary_index ON messages(summary);
+CREATE INDEX messages_type_index ON messages(type);
+CREATE INDEX recipients_address_index ON recipients(address);
+CREATE INDEX recipients_message_position_type_address_index ON recipients(message, position, type, address);
+CREATE INDEX remote_content_links_requests_last_request_date_index ON remote_content_links(requests, last_request_date);
+CREATE INDEX remote_content_links_requests_last_seen_date_index ON remote_content_links(requests, last_seen_date);
+CREATE INDEX searchable_attachments_attachment_index ON searchable_attachments(attachment);
+CREATE INDEX searchable_attachments_message_id_index ON searchable_attachments(message_id);
+CREATE INDEX searchable_data_detection_results_data_detection_result_index ON searchable_data_detection_results(data_detection_result);
+CREATE INDEX searchable_data_detection_results_message_index ON searchable_data_detection_results(message);
+CREATE INDEX searchable_message_tombstones_transaction_id_type_identifier_index ON searchable_message_tombstones(transaction_id, type, identifier);
+CREATE INDEX searchable_messages_message_reindex_type_transaction_id_index ON searchable_messages(message, reindex_type, transaction_id);
+CREATE INDEX searchable_messages_reindex_type_message_index ON searchable_messages(reindex_type, message);
+CREATE INDEX searchable_messages_transaction_id_message_index ON searchable_messages(transaction_id, message);
+CREATE INDEX searchable_rich_links_message_id_index ON searchable_rich_links(message_id);
+CREATE INDEX searchable_rich_links_rich_link_index ON searchable_rich_links(rich_link);
+CREATE INDEX sender_addresses_sender_index ON sender_addresses(sender);
+CREATE INDEX senders_bucket_index ON senders(bucket);
+CREATE INDEX server_messages_message_index ON server_messages(message);
 CREATE TRIGGER after_delete_label AFTER DELETE ON labels
 BEGIN
 UPDATE mailboxes SET total_count = MAX(0, total_count - 1) WHERE mailboxes.ROWID = OLD.mailbox_id AND mailboxes.source IN (SELECT mailbox FROM messages WHERE ROWID = OLD.message_id LIMIT 1);

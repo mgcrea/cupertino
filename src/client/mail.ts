@@ -1,4 +1,5 @@
 import type { Config } from "../config.js";
+import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from "./envelope.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
   CHECK_FOR_NEW_MAIL,
@@ -47,6 +48,8 @@ export type LaneStatus = {
   applescript: "live" | "unavailable";
   index: "live" | "unavailable" | "disabled";
   indexReason: string | null;
+  indexMode?: string;
+  schemaFingerprint?: string;
 };
 
 export type AppleMailClientOptions = {
@@ -62,6 +65,9 @@ export class AppleMailClient {
   readonly #logger: Logger | undefined;
 
   #located: LocateResult | null = null;
+  #index: EnvelopeIndex | null = null;
+  #indexError: string | null = null;
+  #indexTried = false;
 
   constructor(opts: AppleMailClientOptions) {
     this.config = opts.config;
@@ -120,11 +126,12 @@ export class AppleMailClient {
     if (this.config.indexMode === "off") {
       return { applescript, index: "disabled", indexReason: "APPLE_MAIL_INDEX_MODE=off" };
     }
-    const located = await this.locate();
+    const index = await this.index();
     return {
       applescript,
-      index: located.readable ? "live" : "unavailable",
-      indexReason: located.reason,
+      index: index ? "live" : "unavailable",
+      indexReason: index ? null : (this.#indexError ?? (await this.locate()).reason),
+      ...(index ? { indexMode: index.mode, schemaFingerprint: index.caps.fingerprint } : {}),
     };
   }
 
@@ -194,6 +201,174 @@ export class AppleMailClient {
       }),
     );
     return raw.filter((m) => m.found !== false).map((m) => this.#withRef(m));
+  }
+
+  // ── index lane ─────────────────────────────────────────────────────────────
+
+  /**
+   * Open the index on first use, once. A failure is remembered rather than
+   * retried on every call: the usual cause is a missing permission, which will
+   * not change until the user restarts the host app anyway.
+   */
+  async index(): Promise<EnvelopeIndex | null> {
+    if (this.#indexTried) return this.#index;
+    this.#indexTried = true;
+
+    if (this.config.indexMode === "off") {
+      this.#indexError = "APPLE_MAIL_INDEX_MODE=off";
+      return null;
+    }
+    const located = await this.locate();
+    if (!located.envelopeIndexPath) {
+      this.#indexError = located.reason;
+      return null;
+    }
+    try {
+      this.#index = new EnvelopeIndex(
+        openIndex(located.envelopeIndexPath, this.config.indexMode, this.#logger),
+      );
+    } catch (err) {
+      this.#indexError = err instanceof Error ? err.message : String(err);
+      this.#index = null;
+    }
+    return this.#index;
+  }
+
+  get indexError(): string | null {
+    return this.#indexError;
+  }
+
+  /** How stale the index file is, so callers can see when they are reading history. */
+  async indexAgeSeconds(): Promise<number | null> {
+    const located = await this.locate();
+    if (!located.mtime) return null;
+    return Math.max(0, Math.round((Date.now() - Date.parse(located.mtime)) / 1000));
+  }
+
+  /**
+   * Map index mailbox rows onto scriptable account/mailbox names.
+   *
+   * Three of the mailbox URLs on a real machine are `local://` (On My Mac) with
+   * no account UUID in the host position, so entries that do not resolve are
+   * dropped rather than guessed at.
+   */
+  async #mailboxLookup(): Promise<
+    Map<number, { accountUuid: string; mailbox: string; url: string }>
+  > {
+    const index = await this.index();
+    const map = new Map<number, { accountUuid: string; mailbox: string; url: string }>();
+    if (!index) return map;
+    for (const row of index.mailboxes()) {
+      const resolved = await this.mailboxes.resolveIndexUrl(row.url);
+      if (!resolved) continue;
+      map.set(row.rowid, {
+        accountUuid: resolved.account.id,
+        mailbox: resolved.mailbox,
+        url: row.url,
+      });
+    }
+    return map;
+  }
+
+  /** Resolve account/mailbox filters down to the index rowids they cover. */
+  async #targetMailboxRowids(opts: {
+    account?: string | undefined;
+    mailbox?: string | undefined;
+  }): Promise<number[] | undefined> {
+    if (!opts.account && !opts.mailbox) return undefined;
+    const lookup = await this.#mailboxLookup();
+    const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
+    const wanted = opts.mailbox
+      ? account
+        ? this.mailboxes.resolveMailboxName(account, opts.mailbox)
+        : opts.mailbox
+      : null;
+
+    const rowids: number[] = [];
+    for (const [rowid, entry] of lookup) {
+      if (account && entry.accountUuid !== account.id) continue;
+      if (wanted && entry.mailbox.toLowerCase() !== wanted.toLowerCase()) continue;
+      rowids.push(rowid);
+    }
+    return rowids;
+  }
+
+  async searchMessages(
+    opts: Omit<SearchFilters, "mailboxRowids"> & {
+      account?: string | undefined;
+      mailbox?: string | undefined;
+    },
+  ): Promise<{
+    messages: MessageSummary[];
+    source: "index";
+    indexMode: string;
+    indexAgeSeconds: number | null;
+    walBlind: boolean;
+  } | null> {
+    const index = await this.index();
+    if (!index) return null;
+
+    const mailboxRowids = await this.#targetMailboxRowids(opts);
+    const lookup = await this.#mailboxLookup();
+    const rows = index.search({ ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) });
+
+    return {
+      messages: rows
+        .map((r) => this.#rowToSummary(r, lookup))
+        .filter((m): m is MessageSummary => m !== null),
+      source: "index",
+      indexMode: index.mode,
+      indexAgeSeconds: await this.indexAgeSeconds(),
+      // immutable=1 cannot see the -wal, so results may lag reality.
+      walBlind: index.mode === "immutable",
+    };
+  }
+
+  async threadOf(ref: string, limit: number): Promise<MessageSummary[] | null> {
+    const index = await this.index();
+    if (!index) return null;
+    const decoded = decodeRef(ref);
+    const conversationId = index.conversationOf(decoded.id);
+    if (conversationId === null) return [];
+    const lookup = await this.#mailboxLookup();
+    return index
+      .thread(conversationId, limit)
+      .map((r) => this.#rowToSummary(r, lookup))
+      .filter((m): m is MessageSummary => m !== null);
+  }
+
+  async countViaIndex(opts: {
+    account?: string | undefined;
+    mailbox?: string | undefined;
+  }): Promise<{ total: number; unread: number } | null> {
+    const index = await this.index();
+    if (!index) return null;
+    const mailboxRowids = await this.#targetMailboxRowids(opts);
+    return index.count(mailboxRowids ? { mailboxRowids } : {});
+  }
+
+  #rowToSummary(
+    row: MessageRow,
+    lookup: Map<number, { accountUuid: string; mailbox: string; url: string }>,
+  ): MessageSummary | null {
+    const entry = [...lookup.values()].find((e) => e.url === row.mailboxUrl);
+    if (!entry) return null;
+    const sender = row.senderName
+      ? `${row.senderName} <${row.senderAddress ?? ""}>`
+      : (row.senderAddress ?? null);
+    return {
+      ref: encodeRef({ accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid }),
+      id: row.rowid,
+      accountUuid: entry.accountUuid,
+      mailbox: entry.mailbox,
+      subject: row.subject,
+      sender,
+      dateReceived: row.dateReceived,
+      dateSent: row.dateSent,
+      read: row.read,
+      flagged: row.flagged,
+      size: row.size,
+    };
   }
 
   // ── write lane ─────────────────────────────────────────────────────────────

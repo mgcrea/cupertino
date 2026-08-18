@@ -7,8 +7,8 @@ that is already synced to your Mac — no IMAP credentials, no OAuth, no mail le
 
 ## Status
 
-The AppleScript lane (reads and all mutations) is implemented and working. The search and body
-lanes are next — see [Roadmap](#roadmap).
+Search, listing, counting, threading and every mutation are implemented. Reading message _bodies_
+is the one remaining lane — see [Roadmap](#roadmap).
 
 ## How it works
 
