@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "v${version}",
+    "commitMessage": "release: cut the v${version} release",
+    "tagAnnotation": "v${version} release"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

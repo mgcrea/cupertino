@@ -21,7 +21,9 @@
     "apple-mail-mcp": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "native",
+    "scripts/install-wrapper.sh"
   ],
   "os": [
     "darwin"
@@ -50,7 +52,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "install-wrapper": "./scripts/install-wrapper.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

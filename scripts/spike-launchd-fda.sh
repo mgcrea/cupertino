@@ -1,6 +1,11 @@
 #!/bin/bash
 # Spike 1 — does a launchd-spawned process get its OWN Full Disk Access identity?
 #
+# OUTCOME: yes, it works — but this route was NOT the one adopted. Kept because
+# the measurement is the reason the decision can be defended, and because it is
+# the fallback if `responsibility_spawnattrs_setdisclaim` ever disappears.
+# The shipped approach is scripts/install-wrapper.sh; see README > Permissions.
+#
 # A process spawned by Claude/VS Code is attributed to VS Code for TCC purposes,
 # so granting it FDA means granting the whole editor. A launchd-spawned process
 # is its own responsible process, so TCC should attribute to its own binary —

@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu is the fast gate. macos matters because this package is
+        # darwin-only in practice: the osascript layer, the .emlx paths and
+        # node:sqlite's URI handling only really exist there, and a suite that
+        # never runs on macOS would let a darwin-only break reach a release.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+      - name: Setup pnpm 🔧
+        uses: pnpm/action-setup@v6
+      - name: Setup node 🔧
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          check-latest: true
+          cache: "pnpm"
+      - name: Install 🪄
+        run: pnpm install --frozen-lockfile
+      - name: Lint 🔍
+        run: pnpm run lint
+      - name: Format 🔍
+        run: pnpm run format:check
+      - name: TypeScript 🔍
+        run: pnpm run typecheck
+      # The suite is entirely offline: osascript is faked, the Envelope Index is
+      # a fixture built with node:sqlite, and .emlx files are written to a temp
+      # dir. APPLE_MAIL_INTEGRATION is deliberately never set here — a runner
+      # has no configured Mail and no TCC grants, so an integration test would
+      # either fail or, worse, pass for the wrong reason.
+      - name: Test 🧪
+        run: pnpm run test
+      - name: Build 📦
+        run: pnpm run build
+      # The launcher is what gives the server its own Full Disk Access identity,
+      # so a compile break in it would only surface at install time otherwise.
+      - name: Launcher compiles 🔨
+        if: runner.os == 'macOS'
+        run: |
+          clang -O2 -Wall -Wextra -Werror \
+            -DNODE_PATH='"/usr/bin/false"' \
+            -DSERVER_PATH='"/dev/null"' \
+            -o /tmp/launcher-check native/launcher.c
+      # Proves the built server actually speaks MCP over stdio, which a unit
+      # test using an in-memory transport cannot.
+      - name: MCP handshake 🤝
+        run: |
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            | node dist/cli.js 2>/dev/null | tee /tmp/handshake.json
+          grep -q '"serverInfo"' /tmp/handshake.json
+
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    # id-token: write is required for OIDC trusted publishing + provenance
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+      - name: Setup pnpm 🔧
+        uses: pnpm/action-setup@v6
+      - name: Setup node 🔧
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: "pnpm"
+          registry-url: https://registry.npmjs.org
+      - name: Install 🪄
+        run: pnpm install --frozen-lockfile
+      - name: Upgrade npm 🔧
+        # OIDC trusted publishing needs a recent npm CLI
+        run: npm install -g npm@latest
+      # A version already on npm cannot be republished, so re-running this job —
+      # after re-pushing a tag, or a manual re-run — would fail on a duplicate.
+      # Skip instead, so the tag stays the source of truth.
+      - name: Check npm for this version 🔍
+        id: published
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already published — skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish 🚀
+        if: steps.published.outputs.exists == 'false'
+        run: npm publish --provenance --access public
+
+  github-release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    needs: publish-npm
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Release 🚀
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

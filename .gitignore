@@ -10,3 +10,7 @@ __pycache__/
 .idea
 .mcp.json
 .reference
+
+# spike build output (the source is kept: it documents why the launcher exists)
+scripts/spike-disclaim/fda-probe
+scripts/spike-disclaim/*.dSYM
