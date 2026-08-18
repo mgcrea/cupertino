@@ -26,7 +26,15 @@ export type Attachment = {
   filename: string | null;
   contentType: string;
   contentId: string | null;
-  sizeBytes: number;
+  /**
+   * Size in bytes, or null if genuinely unknowable.
+   *
+   * The DECODED length when the bytes are in this file, otherwise null — the
+   * parser cannot know. `readEmlx` fills it in from the sidecar file on disk,
+   * which is both exact and the only way to know if it can be fetched. Never 0,
+   * which would read as a measurement rather than an absence.
+   */
+  sizeBytes: number | null;
   /** False when the bytes were stripped into a sidecar file (.partial.emlx). */
   inline: boolean;
 };
@@ -196,14 +204,22 @@ const splitMultipart = (body: Buffer, boundary: string): MimePart[] => {
   return segments.map((s) => parsePart(Buffer.from(s, "latin1")));
 };
 
-/** Decode one leaf part's body into text. */
-export const partText = (part: MimePart): string => {
-  let bytes = part.raw;
-  if (part.encoding === "base64") bytes = decodeBase64(part.raw.toString("latin1"));
-  else if (part.encoding === "quoted-printable")
-    bytes = decodeQuotedPrintable(part.raw.toString("latin1"));
-  return decodeCharset(bytes, part.charset);
+/**
+ * Decode one leaf part's body to raw bytes.
+ *
+ * Shared rather than duplicated: `emlx.ts` needs the same decoding to extract
+ * attachment contents, and two copies of a transfer-encoding switch is how the
+ * two ends up disagreeing about what a part contains.
+ */
+export const partBytes = (part: MimePart): Buffer => {
+  if (part.encoding === "base64") return decodeBase64(part.raw.toString("latin1"));
+  if (part.encoding === "quoted-printable")
+    return decodeQuotedPrintable(part.raw.toString("latin1"));
+  return part.raw;
 };
+
+/** Decode one leaf part's body into text. */
+export const partText = (part: MimePart): string => decodeCharset(partBytes(part), part.charset);
 
 /** Very small HTML-to-text pass: enough to read a marketing email, not a renderer. */
 export const htmlToText = (html: string): string =>
@@ -250,6 +266,29 @@ export const bestBody = (
   return { text: "", from: "none" };
 };
 
+/**
+ * Does a decoded part carry actual content?
+ *
+ * Stripping an attachment out to the sidecar tree leaves the part's delimiter
+ * whitespace behind, so `length > 0` is not the question — "is any of it not
+ * whitespace" is. A size threshold would work too but would be a magic number,
+ * and would misjudge a genuinely tiny attachment.
+ */
+const hasContent = (bytes: Buffer): boolean => {
+  for (const byte of bytes) {
+    // tab, LF, VT, FF, CR, space
+    const isSpace =
+      byte === 0x09 ||
+      byte === 0x0a ||
+      byte === 0x0b ||
+      byte === 0x0c ||
+      byte === 0x0d ||
+      byte === 0x20;
+    if (!isSpace) return true;
+  }
+  return false;
+};
+
 export const listAttachments = (root: MimePart): Attachment[] => {
   const found: Attachment[] = [];
   walk(root, (p) => {
@@ -257,14 +296,26 @@ export const listAttachments = (root: MimePart): Attachment[] => {
       p.disposition === "attachment" ||
       (p.filename !== null && !p.contentType.startsWith("multipart/"));
     if (!isAttachment || p.contentType.startsWith("multipart/")) return;
+    // Measure the DECODED payload. `raw` is still transfer-encoded, so a base64
+    // part would otherwise report roughly 4/3 of its true size.
+    const decoded = partBytes(p);
+
+    // Apple strips attachment bodies out into a sidecar tree for .partial.emlx,
+    // leaving only delimiter whitespace. Testing `> 0` therefore reported a
+    // stripped 250 KB PDF as present with a size of 1 byte — telling callers
+    // save_attachment would work when it could not.
+    const present = hasContent(decoded);
+
+    // Deliberately NOT falling back to X-Apple-Content-Length here: that header
+    // records the base64-ENCODED length, so a 164156-byte PDF advertises 224634.
+    // The exact size comes from statting the sidecar file, which the emlx layer
+    // does because it is the part that knows where the message lives on disk.
     found.push({
       filename: p.filename,
       contentType: p.contentType,
       contentId: p.contentId,
-      sizeBytes: p.raw.length,
-      // Apple strips attachment bodies out of .partial.emlx; an empty leaf with
-      // a filename means the bytes live in the sidecar Attachments tree.
-      inline: p.raw.length > 0,
+      sizeBytes: present ? decoded.length : null,
+      inline: present,
     });
   });
   return found;

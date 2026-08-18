@@ -162,6 +162,21 @@ Every message carries an opaque `ref` (`m1:<accountUuid>/<mailbox>#<id>`) which 
 tools take. It is versioned and carries its mailbox, so a row id can never be applied to the wrong
 mailbox. Do not construct one by hand.
 
+### Attachments
+
+Mail almost always stores attachment bodies _outside_ the message file, in a sidecar tree — on a
+real mail store, none of the attachments sampled were inline. So an attachment's size and whether it
+can be fetched cannot be answered by parsing the message alone, and two plausible shortcuts are both
+wrong:
+
+- A non-empty MIME part does **not** mean the bytes are there. Stripping leaves a byte of delimiter
+  whitespace behind, which reads as a present, 1-byte attachment.
+- `X-Apple-Content-Length` is **not** a byte size. It records the base64-encoded length, so a
+  164,156-byte PDF advertises 224,634.
+
+`list_attachments` therefore reports `sizeBytes` from the file on disk and a `retrievable` flag
+saying whether `save_attachment` will actually succeed, rather than guessing from the message.
+
 ## Security
 
 **Blast radius.** This server can read your entire mail archive and, with writes on, send mail as

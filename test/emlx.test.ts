@@ -170,6 +170,87 @@ describe("reading", () => {
     expect(read(198_577).truncated).toBe(false);
   });
 
+  it("reports a stripped attachment as absent even when a delimiter byte survives", () => {
+    // The real-mail shape: locateEmlx finds the .partial file, the body is
+    // intact, and the attachment must not claim to be retrievable.
+    const dir2 = join(accountDir, "INBOX.mbox", "MBOX-UUID", "Data", "7", "9", "1", "Messages");
+    mkdirSync(dir2, { recursive: true });
+    writeFileSync(
+      join(dir2, "197577.partial.emlx"),
+      emlx(
+        [
+          'Content-Type: multipart/mixed; boundary="M"',
+          "",
+          "--M",
+          "Content-Type: text/plain",
+          "",
+          "Voir piece jointe.",
+          "--M",
+          'Content-Type: application/pdf; name="Facture_5753.pdf"',
+          'Content-Disposition: attachment; filename="Facture_5753.pdf"',
+          "",
+          " ",
+          "--M--",
+        ].join("\r\n"),
+      ),
+    );
+    const parsed = read(197_577);
+    expect(parsed.partial).toBe(true);
+    expect(parsed.body).toBe("Voir piece jointe.");
+    expect(parsed.attachments[0]).toMatchObject({
+      filename: "Facture_5753.pdf",
+      inline: false,
+      // No sidecar file exists here, so nothing can be fetched and the size
+      // stays unknown rather than being guessed at.
+      retrievable: false,
+      sizeBytes: null,
+    });
+  });
+
+  /**
+   * The normal case on a real mail store: the bytes are not in the message
+   * file, but they ARE on disk in the sidecar tree, so the size is exact and
+   * save_attachment will succeed. Nothing in the message itself says this —
+   * only statting the sidecar does.
+   */
+  it("reports the exact size from the sidecar tree when Mail stored it there", () => {
+    const mboxRoot = join(accountDir, "INBOX.mbox", "MBOX-UUID");
+    const msgs = join(mboxRoot, "Data", "6", "9", "1", "Messages");
+    mkdirSync(msgs, { recursive: true });
+    writeFileSync(
+      join(msgs, "196577.partial.emlx"),
+      emlx(
+        [
+          'Content-Type: multipart/mixed; boundary="M"',
+          "",
+          "--M",
+          'Content-Type: application/pdf; name="Real.pdf"',
+          'Content-Disposition: attachment; filename="Real.pdf"',
+          // Deliberately wrong on purpose: this is the base64 length, and the
+          // implementation must ignore it in favour of the file on disk.
+          "X-Apple-Content-Length: 224634",
+          "",
+          " ",
+          "--M--",
+        ].join("\r\n"),
+      ),
+    );
+
+    const sidecar = join(mboxRoot, "Data", "6", "9", "1", "Attachments", "196577", "2");
+    mkdirSync(sidecar, { recursive: true });
+    writeFileSync(join(sidecar, "Real.pdf"), Buffer.alloc(164_156, 7));
+
+    const found = locateEmlx({ accountDirectory: accountDir, mailbox: "INBOX", rowid: 196_577 });
+    const parsed = readEmlx(found!.path, { maxBodyBytes: 4096, partial: true, rowid: 196_577 });
+
+    expect(parsed.attachments[0]).toMatchObject({
+      filename: "Real.pdf",
+      inline: false,
+      retrievable: true,
+      sizeBytes: 164_156,
+    });
+  });
+
   it("keeps the body of a partial message and reports the stripped attachment", () => {
     const parsed = read(199_577);
     expect(parsed.partial).toBe(true);

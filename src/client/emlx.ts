@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { PreconditionError } from "./errors.js";
 import {
   bestBody,
   listAttachments,
   parsePart,
+  partBytes,
   summaryHeaders,
   type Attachment,
   type MimePart,
@@ -33,7 +34,8 @@ export type ParsedMessage = {
   headers: Record<string, string | null>;
   body: string;
   bodyFrom: "text/plain" | "text/html" | "none";
-  attachments: Attachment[];
+  /** `retrievable` says whether save_attachment can actually fetch the bytes. */
+  attachments: (Attachment & { retrievable: boolean })[];
   truncated: boolean;
   sizeBytes: number;
   path: string;
@@ -142,7 +144,7 @@ export const splitEmlx = (buf: Buffer): Buffer => {
 
 export const readEmlx = (
   path: string,
-  opts: { maxBodyBytes: number; partial?: boolean },
+  opts: { maxBodyBytes: number; partial?: boolean; rowid?: number },
 ): ParsedMessage => {
   const stat = statSync(path);
   if (stat.size > MAX_FILE_BYTES) {
@@ -163,11 +165,34 @@ export const readEmlx = (
     ? `${encoded.subarray(0, opts.maxBodyBytes).toString("utf8")}\n\n[truncated: ${encoded.length} bytes total]`
     : picked.text;
 
+  /*
+   * Reconcile the parsed attachment list against the disk.
+   *
+   * Mail almost always moves attachment bodies out to a sidecar tree — on a
+   * real store, none of the sampled attachments were inline — so the parse
+   * alone cannot say how big an attachment is or whether it can be fetched.
+   * `X-Apple-Content-Length` is not the answer either: it records the
+   * BASE64-ENCODED length, so a 164156-byte PDF advertises 224634.
+   *
+   * Statting the sidecar gives the exact size and, more importantly, tells the
+   * caller whether apple_mail_save_attachment will actually succeed.
+   */
+  const attachments = listAttachments(root).map((a) => {
+    if (a.inline || !a.filename) return { ...a, retrievable: a.inline };
+    const sidecar = locateSidecar(path, opts.rowid ?? -1, a.filename);
+    if (!sidecar) return { ...a, sizeBytes: null, retrievable: false };
+    try {
+      return { ...a, sizeBytes: statSync(sidecar).size, retrievable: true };
+    } catch {
+      return { ...a, sizeBytes: null, retrievable: false };
+    }
+  });
+
   return {
     headers: summaryHeaders(root),
     body,
     bodyFrom: picked.from,
-    attachments: listAttachments(root),
+    attachments,
     truncated,
     sizeBytes: stat.size,
     path,
@@ -190,25 +215,6 @@ export const readEmlxSource = (
 };
 
 // ─── attachment extraction ───────────────────────────────────────────────────
-
-const decodePartBytes = (part: MimePart): Buffer => {
-  const encoding = part.encoding ?? "";
-  const raw = part.raw.toString("latin1");
-  if (encoding === "base64") return Buffer.from(raw, "base64");
-  if (encoding === "quoted-printable") {
-    const bytes: number[] = [];
-    for (let i = 0; i < raw.length; i += 1) {
-      const ch = raw[i]!;
-      if (ch === "=" && /^[0-9A-Fa-f]{2}$/.test(raw.slice(i + 1, i + 3))) {
-        bytes.push(Number.parseInt(raw.slice(i + 1, i + 3), 16));
-        i += 2;
-      } else if (ch === "=" && raw.slice(i + 1, i + 3).startsWith("\n")) i += 1;
-      else bytes.push(ch.charCodeAt(0));
-    }
-    return Buffer.from(bytes);
-  }
-  return part.raw;
-};
 
 const walkParts = (part: MimePart, visit: (p: MimePart) => void): void => {
   visit(part);
@@ -240,23 +246,67 @@ export const extractAttachment = (
     );
   }
 
-  const inline = decodePartBytes(match);
+  const inline = partBytes(match);
   if (inline.length > 0) return { bytes: inline, from: "inline" };
 
-  // The .partial case: bytes live beside the message, under the mailbox root.
-  const messagesDir = join(emlxPath, "..");
-  const dataRoot = join(messagesDir, "..", "..", "..", "..");
-  const attachmentsRoot = join(dataRoot, "Attachments", String(rowid));
-  for (const partDir of safeReaddir(attachmentsRoot)) {
-    const candidate = join(attachmentsRoot, partDir, filename);
-    if (existsSync(candidate)) return { bytes: readFileSync(candidate), from: "sidecar" };
-  }
+  // The stripped case — which is the NORMAL one, not an edge case: on a real
+  // mail store none of the sampled attachments were inline. Mail moves the
+  // bytes to an `Attachments/<rowid>/<part>/<filename>` tree.
+  //
+  // We search for that tree rather than deriving its path. The message lives at
+  // a variable depth (the shard is the digits of rowid/1000, so 5607 nests one
+  // level and 198577 nests three), which is precisely what a fixed number of
+  // `..` hops got wrong.
+  const hit = locateSidecar(emlxPath, rowid, filename);
+  if (hit) return { bytes: readFileSync(hit), from: "sidecar" };
 
   throw new PreconditionError(
-    `The attachment "${filename}" is not stored locally. Mail keeps only headers for this ` +
-      `account, or the attachment was never downloaded. Open the message in Mail to fetch it.`,
+    `The attachment "${filename}" is not stored locally. Either it was never downloaded, or ` +
+      `this account caches headers only — apple_mail_diagnostics reports the caching policy ` +
+      `per account. Opening the message in Mail fetches it.`,
     { emlxPath, rowid },
   );
+};
+
+/**
+ * Find an attachment's sidecar file.
+ *
+ * We search for the `Attachments/<rowid>/` tree rather than deriving its path.
+ * The message sits at a variable depth — the shard is the digits of rowid/1000,
+ * so 5607 nests one level and 198577 nests three — which is exactly what a
+ * fixed number of `..` hops got wrong.
+ */
+export const locateSidecar = (emlxPath: string, rowid: number, filename: string): string | null => {
+  let dir = dirname(emlxPath);
+  for (let depth = 0; depth < 12; depth += 1) {
+    const root = join(dir, "Attachments", String(rowid));
+    if (existsSync(root)) {
+      const found = findNamedFile(root, filename, 0);
+      if (found) return found;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+};
+
+/** Find a file by name anywhere under `root`. Depth-limited; the tree is shallow. */
+const findNamedFile = (root: string, filename: string, depth: number): string | null => {
+  if (depth > 4) return null;
+  for (const entry of safeReaddir(root)) {
+    const full = join(root, entry);
+    if (entry === filename) return full;
+    try {
+      if (statSync(full).isDirectory()) {
+        const hit = findNamedFile(full, filename, depth + 1);
+        if (hit) return hit;
+      }
+    } catch {
+      // Raced with Mail, or unreadable. Keep looking.
+    }
+  }
+  return null;
 };
 
 const safeReaddir = (dir: string): string[] => {

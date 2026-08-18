@@ -420,6 +420,7 @@ export class AppleMailClient {
       const parsed = readEmlx(located.path, {
         maxBodyBytes: opts.maxBodyBytes ?? this.config.bodyMaxBytes,
         partial: located.partial,
+        rowid: decoded.id,
       });
       const [summary] = await this.getMessages(decoded, [decoded.id]);
       if (summary) return { message: summary, parsed, source: "emlx" };

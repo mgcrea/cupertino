@@ -76,8 +76,16 @@ export const registerMessageTools = (
           truncated: parsed.truncated,
           body: parsed.body,
           attachments: parsed.attachments,
-          ...(parsed.partial
-            ? { note: "Attachment bodies are stored outside this file, so their sizes read as 0." }
+          // Derive the note from what was actually found, not from the file
+          // layout. Keying it on `partial` alone produced a note saying sizes
+          // read as 0 beside an attachment reporting 1 byte and inline: true.
+          ...(parsed.attachments.some((a) => !a.inline)
+            ? {
+                note:
+                  "Some attachments are stored outside this message file, so their sizes are " +
+                  "unknown and apple_mail_save_attachment cannot retrieve them. Open the message " +
+                  "in Mail to download them first.",
+              }
             : {}),
         };
       }),

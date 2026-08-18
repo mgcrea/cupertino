@@ -181,6 +181,75 @@ describe("attachments", () => {
     expect(bestBody(parsePart(Buffer.from(withAttachment))).text).toBe("See attached.");
   });
 
+  it("reports the DECODED size, not the transfer-encoded length", () => {
+    // "Hello, attachment" is 17 bytes; its base64 is 24. Reporting `raw.length`
+    // would inflate every base64 attachment by roughly a third.
+    const payload = Buffer.from("Hello, attachment", "utf8");
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        'Content-Type: application/octet-stream; name="a.bin"',
+        'Content-Disposition: attachment; filename="a.bin"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        payload.toString("base64"),
+        "--M--",
+      ].join("\n"),
+    );
+    const found = listAttachments(parsePart(Buffer.from(raw)));
+    expect(found[0]?.sizeBytes).toBe(payload.length);
+    expect(found[0]?.inline).toBe(true);
+  });
+
+  /**
+   * The shape observed on real mail: Mail moved the attachment to its sidecar
+   * tree and left one byte of delimiter whitespace behind. The old `raw.length
+   * > 0` test read that as a present, 1-byte attachment.
+   */
+  it("treats a part stripped to leftover whitespace as absent", () => {
+    const stray = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        'Content-Type: application/pdf; name="Facture_5753.pdf"',
+        'Content-Disposition: attachment; filename="Facture_5753.pdf"',
+        "",
+        " ",
+        "--M--",
+      ].join("\n"),
+    );
+    const found = listAttachments(parsePart(Buffer.from(stray)));
+    expect(found[0]).toMatchObject({
+      filename: "Facture_5753.pdf",
+      inline: false,
+      sizeBytes: null,
+    });
+  });
+
+  it("does not trust X-Apple-Content-Length as a byte size", () => {
+    // That header is the BASE64-ENCODED length: a 164156-byte PDF advertises
+    // 224634. The parser reports null and lets readEmlx stat the real file.
+    const stripped = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        'Content-Type: application/pdf; name="Facture_5753.pdf"',
+        'Content-Disposition: attachment; filename="Facture_5753.pdf"',
+        "X-Apple-Content-Length: 224634",
+        "",
+        " ",
+        "--M--",
+      ].join("\n"),
+    );
+    const found = listAttachments(parsePart(Buffer.from(stripped)));
+    expect(found[0]?.sizeBytes).toBeNull();
+    expect(found[0]?.inline).toBe(false);
+  });
+
   it("marks a stripped attachment as not inline", () => {
     const stripped = crlf(
       [
@@ -193,7 +262,9 @@ describe("attachments", () => {
         "--M--",
       ].join("\n"),
     );
-    expect(listAttachments(parsePart(Buffer.from(stripped)))[0]?.inline).toBe(false);
+    const found = listAttachments(parsePart(Buffer.from(stripped)))[0];
+    expect(found?.inline).toBe(false);
+    expect(found?.sizeBytes).toBeNull();
   });
 
   it("decodes the headers it surfaces", () => {
