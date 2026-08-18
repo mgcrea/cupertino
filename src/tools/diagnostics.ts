@@ -90,8 +90,9 @@ export const registerDiagnosticsTools = (
             readable: located.readable,
             sizeBytes: located.sizeBytes,
             indexAgeSeconds,
-            // A -wal means recent mail lives outside the main file, which is why
-            // the server opens with mode=ro rather than immutable=1.
+            // A -wal means some mail may live outside the main file. Whether a
+            // given read would miss it depends on checkpoint timing, which is
+            // exactly why the server opens with mode=ro and does not gamble.
             walPresent: located.walPresent,
             walSizeBytes: located.walSizeBytes,
             reason: located.reason,

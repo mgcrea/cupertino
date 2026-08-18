@@ -31,7 +31,7 @@ export type LocateResult = {
   readable: boolean;
   sizeBytes: number | null;
   mtime: string | null;
-  /** Whether a -wal file is present, i.e. whether `immutable=1` would hide recent mail. */
+  /** Whether a -wal file is present, i.e. whether `immutable=1` COULD miss recent mail. */
   walPresent: boolean;
   walSizeBytes: number | null;
   reason: string | null;

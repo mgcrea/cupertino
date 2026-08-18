@@ -1,5 +1,13 @@
 import type { Config } from "../config.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
+import {
+  CHECK_FOR_NEW_MAIL,
+  DELETE_MESSAGES,
+  MOVE_MESSAGES,
+  REPLY_OR_FORWARD,
+  SEND_MESSAGE,
+  SET_FLAGS,
+} from "./jxa/write.js";
 import { locateEnvelopeIndex, type LocateResult } from "./locate.js";
 import { MailboxMap, type MailAccount } from "./mailbox-map.js";
 import {
@@ -8,7 +16,7 @@ import {
   type OsascriptRunner,
   withBusyRetry,
 } from "./osascript.js";
-import { encodeRef, type MessageRef } from "./ref.js";
+import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref.js";
 
 /**
  * The facade every tool talks to. It owns three things the tools should not
@@ -186,6 +194,179 @@ export class AppleMailClient {
       }),
     );
     return raw.filter((m) => m.found !== false).map((m) => this.#withRef(m));
+  }
+
+  // ── write lane ─────────────────────────────────────────────────────────────
+  // Every mutation reports the state Mail re-read after the change. Verifying a
+  // write against the search index instead would race Mail's own update of it.
+
+  /** Set flags across refs, one Apple Event per distinct mailbox. */
+  async setFlags(
+    refs: string[],
+    flags: { read?: boolean; flagged?: boolean; flagIndex?: number; junk?: boolean },
+  ): Promise<{ changed: number; failed: number; results: unknown[] }> {
+    const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
+    const results: unknown[] = [];
+    let changed = 0;
+    let failed = 0;
+
+    for (const [, group] of groups) {
+      const first = group[0];
+      if (!first) continue;
+      const res = await withBusyRetry(() =>
+        this.runner.run<{ mailbox: string; results: { id: number; ok: boolean }[] }>(SET_FLAGS, {
+          accountUuid: first.accountUuid,
+          mailbox: first.mailbox,
+          ids: group.map((r) => r.id),
+          ...flags,
+        }),
+      );
+      for (const r of res.results) {
+        if (r.ok) changed += 1;
+        else failed += 1;
+        results.push({
+          ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
+          ...r,
+        });
+      }
+    }
+    return { changed, failed, results };
+  }
+
+  async moveMessages(
+    refs: string[],
+    opts: { destinationMailbox: string; destinationAccount?: string },
+  ): Promise<{ moved: number; failed: number; destination: string; results: unknown[] }> {
+    const destAccount = opts.destinationAccount
+      ? await this.mailboxes.resolveAccount(opts.destinationAccount)
+      : null;
+    const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
+    const results: unknown[] = [];
+    let moved = 0;
+    let failed = 0;
+    let destination = opts.destinationMailbox;
+
+    for (const [, group] of groups) {
+      const first = group[0];
+      if (!first) continue;
+      const res = await withBusyRetry(() =>
+        this.runner.run<{
+          destination: string;
+          destinationAccountUuid: string;
+          results: { id: number; ok: boolean; newId: number | null }[];
+        }>(MOVE_MESSAGES, {
+          accountUuid: first.accountUuid,
+          mailbox: first.mailbox,
+          ids: group.map((r) => r.id),
+          destMailbox: opts.destinationMailbox,
+          destAccountUuid: destAccount?.id ?? null,
+        }),
+      );
+      destination = res.destination;
+      for (const r of res.results) {
+        if (r.ok) moved += 1;
+        else failed += 1;
+        results.push({
+          previousRef: encodeRef({
+            accountUuid: first.accountUuid,
+            mailbox: first.mailbox,
+            id: r.id,
+          }),
+          // A moved message has a new row id, so the old ref is dead. Null here
+          // means Mail moved it but we could not re-locate it by Message-ID.
+          ref:
+            r.ok && r.newId
+              ? encodeRef({
+                  accountUuid: res.destinationAccountUuid || first.accountUuid,
+                  mailbox: res.destination,
+                  id: r.newId,
+                })
+              : null,
+          ...r,
+        });
+      }
+    }
+    return { moved, failed, destination, results };
+  }
+
+  async deleteMessages(refs: string[]): Promise<{
+    deleted: number;
+    failed: number;
+    movedToTrash: boolean | null;
+    results: unknown[];
+  }> {
+    const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
+    const results: unknown[] = [];
+    let deleted = 0;
+    let failed = 0;
+    let movedToTrash: boolean | null = null;
+
+    for (const [, group] of groups) {
+      const first = group[0];
+      if (!first) continue;
+      const res = await withBusyRetry(() =>
+        this.runner.run<{ movedToTrash: boolean | null; results: { id: number; ok: boolean }[] }>(
+          DELETE_MESSAGES,
+          { accountUuid: first.accountUuid, mailbox: first.mailbox, ids: group.map((r) => r.id) },
+        ),
+      );
+      movedToTrash = res.movedToTrash;
+      for (const r of res.results) {
+        if (r.ok) deleted += 1;
+        else failed += 1;
+        results.push(r);
+      }
+    }
+    return { deleted, failed, movedToTrash, results };
+  }
+
+  async checkForNewMail(account?: string): Promise<unknown> {
+    const resolved = account ? await this.mailboxes.resolveAccount(account) : null;
+    return this.runner.run(CHECK_FOR_NEW_MAIL, { accountUuid: resolved?.id ?? null });
+  }
+
+  async sendMessage(opts: {
+    account?: string;
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    subject: string;
+    body: string;
+    sendNow: boolean;
+  }): Promise<unknown> {
+    const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
+    return this.runner.run(SEND_MESSAGE, {
+      senderAddress: account?.emailAddresses[0] ?? null,
+      to: opts.to,
+      cc: opts.cc,
+      bcc: opts.bcc,
+      subject: opts.subject,
+      body: opts.body,
+      sendNow: opts.sendNow,
+    });
+  }
+
+  async replyOrForward(
+    ref: string,
+    opts: {
+      mode: "reply" | "forward";
+      body?: string;
+      to?: string[];
+      replyToAll?: boolean;
+      sendNow: boolean;
+    },
+  ): Promise<unknown> {
+    const decoded = decodeRef(ref);
+    return this.runner.run(REPLY_OR_FORWARD, {
+      accountUuid: decoded.accountUuid,
+      mailbox: decoded.mailbox,
+      id: decoded.id,
+      mode: opts.mode,
+      body: opts.body ?? null,
+      to: opts.to ?? [],
+      replyToAll: opts.replyToAll ?? false,
+      sendNow: opts.sendNow,
+    });
   }
 
   #withRef(m: Omit<MessageSummary, "ref">): MessageSummary {

@@ -7,8 +7,8 @@ that is already synced to your Mac — no IMAP credentials, no OAuth, no mail le
 
 ## Status
 
-Phase 1 (the AppleScript lane) is implemented and working. The search index and body lanes are
-gated on the Phase 0 spike — see [Roadmap](#roadmap).
+The AppleScript lane (reads and all mutations) is implemented and working. The search and body
+lanes are next — see [Roadmap](#roadmap).
 
 ## How it works
 
@@ -54,7 +54,7 @@ two is missing and what it is blocking.
 
 A wrinkle worth knowing: `stat()` on a TCC-protected file **succeeds** — you can see the size and
 mtime of the index without Full Disk Access, and only reading it is denied. So "the file is there"
-is not evidence that the permission is granted.
+is not evidence that the permission is granted; `access(R_OK)` is.
 
 ## Quick start
 
@@ -158,9 +158,11 @@ Things that will bite you, documented so nobody has to rediscover them:
   obvious index query (`WHERE mailbox = ?`) returns an empty inbox. Mailbox names are resolved
   through a ladder that strips the `[Gmail]/` prefix.
 - **`immutable=1` is the wrong way to open the index**, even though it is the common advice. It
-  tells SQLite to ignore the `-wal` file, and Mail runs in WAL mode — so you would silently read a
-  stale snapshot missing exactly the recent mail you were asked about. On this machine the `-wal`
-  was 10 minutes newer than the 437 MB main file.
+  tells SQLite to ignore the `-wal` file, and Mail runs in WAL mode, so a read can miss whatever has
+  not been checkpointed yet — precisely the recent mail an agent is usually asked about. Note this
+  is a race, not a certainty: probing both modes on a live 437 MB index with a 1 MB `-wal` present
+  returned the _same_ `MAX(ROWID)`, because the newest message happened to be checkpointed already.
+  `mode=ro` is the default because it removes the question, not because staleness was observed.
 - **Reading a message does not launch Mail.** If Mail is not running, read tools fail cleanly rather
   than launching it, because launching Mail steals focus and starts a sync.
 

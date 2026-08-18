@@ -2,6 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleMailClient } from "../client/mail.js";
 import { registerAccountTools } from "./accounts.js";
+import { registerActionTools } from "./actions.js";
+import { registerComposeTools } from "./compose.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerSearchTools } from "./search.js";
 
@@ -31,4 +33,9 @@ export const registerTools = (
   registerDiagnosticsTools(server, client, ctx);
   registerAccountTools(server, client);
   registerSearchTools(server, client);
+
+  if (!ctx.allowWrites) return;
+
+  registerActionTools(server, client);
+  registerComposeTools(server, client);
 };
