@@ -7,6 +7,15 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      oxfmt:
+        specifier: ^0.62.0
+        version: 0.62.0
+      oxlint:
+        specifier: ^1.77.0
+        version: 1.78.0
+
+  packages/mail:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
@@ -18,12 +27,6 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
-      oxfmt:
-        specifier: ^0.62.0
-        version: 0.62.0
-      oxlint:
-        specifier: ^1.77.0
-        version: 1.78.0
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)

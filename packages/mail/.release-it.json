@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "mail-v${version}",
+    "commitMessage": "release(mail): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-mail v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

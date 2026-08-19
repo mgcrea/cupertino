@@ -16,10 +16,6 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "outDir": "dist",
-    "rootDir": ".",
     "forceConsistentCasingInFileNames": true
-  },
-  "include": ["src/**/*", "test/**/*", "tsdown.config.ts"],
-  "exclude": ["dist", "node_modules", ".reference"]
+  }
 }

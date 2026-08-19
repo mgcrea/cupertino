@@ -37,6 +37,8 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+/** The probe is repo-wide; its fixture belongs to the package that consumes it. */
+const MAIL = join(ROOT, "packages", "mail");
 const argv = new Set(process.argv.slice(2));
 const WANT_JSON = argv.has("--json");
 const WANT_WRITE = argv.has("--write");
@@ -682,7 +684,7 @@ if (WANT_JSON) {
 
 if (WANT_WRITE) {
   mkdirSync(join(ROOT, "docs"), { recursive: true });
-  mkdirSync(join(ROOT, "test", "fixtures"), { recursive: true });
+  mkdirSync(join(MAIL, "test", "fixtures"), { recursive: true });
 
   const ddlSql = [
     `-- Captured from a real Envelope Index by scripts/probe-envelope-index.mjs.`,
@@ -691,7 +693,7 @@ if (WANT_WRITE) {
     ``,
     ...ddlRows.map((r) => `${r.sql};`),
   ].join("\n");
-  writeFileSync(join(ROOT, "test", "fixtures", "envelope-index.sql"), `${ddlSql}\n`);
+  writeFileSync(join(MAIL, "test", "fixtures", "envelope-index.sql"), `${ddlSql}\n`);
 
   const md = [
     `# Envelope Index — observed schema`,
