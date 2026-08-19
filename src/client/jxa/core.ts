@@ -78,6 +78,113 @@ function findAccount(M, uuid) {
   return null;
 }
 
+function pause(seconds) { $.NSThread.sleepForTimeInterval(seconds); }
+
+/** Depth-first hunt for the composer's body, which is a web area, not a text field. */
+function findBodyArea(el, depth) {
+  if (depth > 6) return null;
+  var kids;
+  try { kids = el.uiElements(); } catch (e) { return null; }
+  for (var i = 0; i < kids.length; i++) {
+    try { if (kids[i].role() === "AXWebArea") return kids[i]; } catch (e) {}
+    var found = findBodyArea(kids[i], depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Deepest quote level reported anywhere in the body; 0 once the citation is gone. */
+function maxQuoteLevel(el, depth) {
+  var worst = 0;
+  if (depth > 5) return worst;
+  var kids;
+  try { kids = el.uiElements(); } catch (e) { return worst; }
+  for (var i = 0; i < kids.length; i++) {
+    var level = prop(function () { return kids[i].attributes.byName("AXBlockQuoteLevel").value(); }, 0);
+    if (level && level > worst) worst = level;
+    var deeper = maxQuoteLevel(kids[i], depth + 1);
+    if (deeper > worst) worst = deeper;
+  }
+  return worst;
+}
+
+/**
+ * Undo Mail's citation wrapper on a composer window.
+ *
+ * Mail wraps *any* body set by AppleScript in <blockquote type="cite">, so the
+ * message arrives looking like a quoted reply and its text/plain alternative
+ * carries "> " on every line. This is FB11734014, filed in 2023 and still open.
+ * No scriptable property avoids it: the content setter goes through Mail's
+ * NSSharingService composer, and constructor-vs-assignment, visible true/false,
+ * htmlContent, plain message format and a relaunch all produce the same markup.
+ *
+ * The composer's own Format > Quote Level > Decrease does remove it, so we drive
+ * that menu. AppKit only gives the *active* application a key window, and the
+ * menu item validates to disabled without one, so Mail genuinely has to come
+ * forward — driving it in the background was measured, not assumed. What we can
+ * do is make that as close to invisible as the window server allows: shrink the
+ * composer to its minimum and push it off-screen first (macOS clamps it back to
+ * leave a 40px sliver — that residue is not removable from outside Mail's
+ * process, as the window server ignores alpha changes from a foreign
+ * connection), then hand the user's app back before sending.
+ *
+ * Failure is reported, never fatal: a quoted send still beats a lost one.
+ */
+function stripCitation(windowName) {
+  var SE = Application("System Events");
+  var proc = SE.processes.byName("Mail");
+
+  var wins = prop(function () { return proc.windows(); }, []);
+  if (!wins.length) return false;
+
+  var win = null;
+  for (var i = 0; i < wins.length; i++) {
+    if (prop(function () { return wins[i].name(); }, "") === windowName) { win = wins[i]; break; }
+  }
+  // An empty subject names the window something else; the composer is frontmost regardless.
+  if (!win) win = wins[0];
+
+  // Out of sight before Mail comes forward, so the user sees as little as possible.
+  try { win.size = [1, 1]; } catch (e) {}
+  try { win.position = [-100000, -100000]; } catch (e) {}
+
+  var previous = prop(function () {
+    return SE.applicationProcesses.whose({ frontmost: true })[0].name();
+  }, null);
+
+  var stripped = false;
+  try {
+    proc.frontmost = true;
+    pause(0.6);
+
+    var body = findBodyArea(win, 0);
+    if (body) {
+      body.focused = true;
+      pause(0.3);
+      SE.keystroke("a", { using: ["command down"] });
+      pause(0.3);
+
+      var decrease = proc.menuBars[0].menuBarItems.byName("Format").menus[0]
+                         .menuItems.byName("Quote Level").menus[0].menuItems.byName("Decrease");
+      var clicks = 0;
+      while (clicks < 3 && prop(function () { return decrease.enabled(); }, false)) {
+        decrease.click();
+        clicks++;
+        pause(0.25);
+      }
+      // Ask the composer itself rather than trusting the click count.
+      stripped = maxQuoteLevel(body, 0) === 0;
+    }
+  } catch (e) {
+    stripped = false;
+  }
+
+  if (previous && previous !== "Mail") {
+    try { SE.processes.byName(previous).frontmost = true; } catch (e) {}
+  }
+  return stripped;
+}
+
 /** Shape one message into the wire format every tool consumes. */
 function messageSummary(m, accountUuid, mailboxName) {
   return {

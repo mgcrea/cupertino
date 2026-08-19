@@ -149,7 +149,7 @@ export const SEND_MESSAGE = script(
   var msg = M.OutgoingMessage({
     subject: p.subject || "",
     content: p.body || "",
-    visible: p.sendNow ? false : true
+    visible: true
   });
   M.outgoingMessages.push(msg);
 
@@ -166,12 +166,16 @@ export const SEND_MESSAGE = script(
     }
   }
 
+  pause(1.2);
+  var unquoted = false;
+  try { unquoted = stripCitation(String(p.subject || "")); } catch (e) { unquoted = false; }
+
   if (p.sendNow) {
     msg.send();
-    return ok({ sent: true, subjectLength: String(p.subject || "").length,
+    return ok({ sent: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
                 recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length });
   }
-  return ok({ sent: false, draft: true, subjectLength: String(p.subject || "").length,
+  return ok({ sent: false, draft: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
               recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,
               note: "Draft window is open in Mail for review." });
 `,
