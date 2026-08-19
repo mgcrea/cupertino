@@ -132,6 +132,26 @@ enum Permissions {
     }
   }
 
+  /// Ask for Automation consent **now**, from the app, with the prompt visible.
+  ///
+  /// The alternative is what happens by default: the first tool call triggers
+  /// the prompt lazily inside `osascript`, which then blocks until someone
+  /// notices the dialog. Measured — the call times out after 30s and the
+  /// assistant is told Mail "may be mid-sync", which is not what happened.
+  ///
+  /// Blocks until the user answers, so never call it on the main thread.
+  static func requestAutomation(for bundleID: String) -> AutomationStatus {
+    let target = NSAppleEventDescriptor(bundleIdentifier: bundleID)
+    guard let desc = target.aeDesc else { return .failed(OSStatus(paramErr)) }
+    let status = AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, true)
+    switch status {
+    case noErr: return .granted
+    case OSStatus(errAEEventNotPermitted): return .denied
+    case OSStatus(procNotFound): return .appNotRunning
+    default: return .failed(status)
+    }
+  }
+
   static func openAutomationSettings() {
     let url = URL(
       string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation")!

@@ -1,7 +1,25 @@
 import SwiftUI
 
+/// Starting the host belongs to the app lifecycle, not to the menu: the
+/// servers must be reachable whether or not anyone has opened the menu bar
+/// item. `MenuBarExtra` content is built lazily, so this cannot live there.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    do {
+      try ServerHost.shared.start()
+    } catch {
+      hostLog("cupertino", .error, error.localizedDescription)
+    }
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    ServerHost.shared.stop()
+  }
+}
+
 @main
 struct CupertinoApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @State private var model = StatusModel()
 
   var body: some Scene {
@@ -20,6 +38,7 @@ struct CupertinoApp: App {
 final class StatusModel {
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
+  private(set) var allowWrites: [String: Bool] = [:]
 
   init() { refresh() }
 
@@ -27,6 +46,21 @@ final class StatusModel {
     diskAccess = Permissions.diskAccess()
     automation = Dictionary(
       uniqueKeysWithValues: Surface.all.map { ($0.id, Permissions.automation(for: $0.bundleID)) })
+    allowWrites = Dictionary(
+      uniqueKeysWithValues: Surface.all.map { ($0.id, Settings.allowWrites($0)) })
+  }
+
+  /// Off the main thread: the prompt blocks until answered.
+  func requestAutomation(_ surface: Surface) {
+    Task.detached {
+      let result = Permissions.requestAutomation(for: surface.bundleID)
+      await MainActor.run { self.automation[surface.id] = result }
+    }
+  }
+
+  func setAllowWrites(_ surface: Surface, _ value: Bool) {
+    Settings.setAllowWrites(surface, value)
+    allowWrites[surface.id] = value
   }
 }
 
@@ -61,17 +95,40 @@ struct StatusMenu: View {
       Divider()
 
       ForEach(Surface.all) { surface in
-        HStack {
-          Label {
-            Text(surface.displayName)
-          } icon: {
-            Image(systemName: icon(for: model.automation[surface.id]))
-              .foregroundStyle(tint(for: model.automation[surface.id]))
+        VStack(alignment: .leading, spacing: 2) {
+          HStack {
+            Label {
+              Text(surface.displayName)
+            } icon: {
+              Image(systemName: icon(for: model.automation[surface.id]))
+                .foregroundStyle(tint(for: model.automation[surface.id]))
+            }
+            Spacer()
+            switch model.automation[surface.id] {
+            case .notDetermined:
+              // Ask here, where the dialog is expected, rather than letting the
+              // first tool call block on it 30 seconds into a conversation.
+              Button("Allow…") { model.requestAutomation(surface) }
+                .controlSize(.small)
+            case .denied:
+              // A denial cannot be re-prompted; it has to be changed in Settings.
+              Button("Settings…") { Permissions.openAutomationSettings() }
+                .controlSize(.small)
+            default:
+              Text(caption(for: model.automation[surface.id]))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
           }
-          Spacer()
-          Text(caption(for: model.automation[surface.id]))
+          // Writes are withheld by not registering the tools at all
+          // (packages/*/src/tools/index.ts), so this toggle decides which tools
+          // the assistant can even see — not merely whether they are allowed.
+          Toggle("Allow writes", isOn: Binding(
+            get: { model.allowWrites[surface.id] ?? false },
+            set: { model.setAllowWrites(surface, $0) }))
+            .toggleStyle(.checkbox)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .padding(.leading, 20)
         }
       }
 

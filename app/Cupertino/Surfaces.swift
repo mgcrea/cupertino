@@ -19,6 +19,9 @@ struct Surface: Identifiable, Hashable {
   /// Where the file lane reads, relative to the home directory. `nil` for a
   /// surface that has no file lane yet.
   let storePath: String?
+  /// Prefix for the server's environment variables, e.g. `APPLE_MAIL_`.
+  /// See `packages/<id>/.env.example` for the full set.
+  let envPrefix: String
 
   static let all: [Surface] = [
     Surface(
@@ -28,13 +31,15 @@ struct Surface: Identifiable, Hashable {
       // The V number moves between macOS releases, which is why
       // packages/mail/src/client/locate.ts asks Mail itself first. For a
       // status row a glob is enough; the server does the real resolution.
-      storePath: "Library/Mail/V*/MailData/Envelope Index"
+      storePath: "Library/Mail/V*/MailData/Envelope Index",
+      envPrefix: "APPLE_MAIL_"
     ),
     Surface(
       id: "notes",
       displayName: "Notes",
       bundleID: "com.apple.Notes",
-      storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+      storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
+      envPrefix: "APPLE_NOTES_"
     ),
   ]
 
