@@ -141,10 +141,12 @@ compiling Apple's unpublished `.proto`, precisely so a renumbered field cannot s
 and the probe then checks every decoded note against the same note's Apple Events plaintext. The
 first run scored 51%, and the path histogram explained why:
 
-| Strategy               | Agreement | Note                                           |
-| ---------------------- | --------- | ---------------------------------------------- |
-| longest string in blob | 27 / 53   | picked `2.3.5.12` on 26 notes                  |
-| pinned path `2.3.2`    | 27 / 27   | every note read from this path matched exactly |
+| Strategy               | Agreement          | Note                          |
+| ---------------------- | ------------------ | ----------------------------- |
+| longest string in blob | 27 / 53 — 51%      | picked `2.3.5.12` on 26 notes |
+| pinned path `2.3.2`    | **53 / 53 — 100%** | every note, via `pinned`      |
+
+**Index full-text search is therefore viable**: title from `ZTITLE1`, body from the decoded blob.
 
 The failure mode is worth recording because it is silent. On roughly half the library an
 **attribute-run field outruns the body**, consistently by ~60 characters, so "take the longest
@@ -177,16 +179,29 @@ body — so **the index gives complete titles plus short previews, and full text
 Beware `ZTITLE` (spans folders and accounts) and `ZIDENTIFIER` (a UUID on every row, which will win
 any naive "most populated text column" heuristic — it did in an earlier revision of the probe).
 
-### The 1191-versus-921 trap
+### Which rows are notes
 
-`Z_ENT = 12` (`ICNote`) matches **1191 rows** while Apple Events reports **921 notes**, and filtering
-on `ZISRECOVERINGFROMTRASH` / `ZMARKEDFORDELETION` changes nothing — both are 1191.
+`Z_ENT = 12` (`ICNote`) matches **1191 rows** while Apple Events reports **921 notes**. The predicate
+that reconciles them, verified by comparing `Z_PK` **sets** rather than counts:
 
-So **`Z_ENT` alone is not "a note the user sees"**, and an index lane keyed on it would return 270
-phantom notes. `ZTITLE1` is non-null on exactly 921 rows, which makes `ZTITLE1 IS NOT NULL` the
-leading hypothesis for the real predicate — most likely the other rows are tombstones or versions
-carrying no title. **Verify before shipping any index query**; the probe now prints a MISMATCH line
-so this cannot pass unnoticed.
+| Predicate                                     | Rows | vs Apple Events                |
+| --------------------------------------------- | ---- | ------------------------------ |
+| `Z_ENT` only                                  | 1191 | 270 extra                      |
+| `Z_ENT` + not deleted                         | 1191 | 270 extra                      |
+| **`Z_ENT` + `ZTITLE1 IS NOT NULL`**           | 921  | **exact — 0 missing, 0 extra** |
+| `Z_ENT` + `ZTITLE1 IS NOT NULL` + not deleted | 921  | exact                          |
+
+Set equality matters here, not cardinality. A count that happens to match is not evidence — the
+first `ZDATA` decoder also produced the right count and the wrong text.
+
+The 270 extras are title-less rows, and the deletion columns do **not** explain them: filtering on
+`ZISRECOVERINGFROMTRASH` / `ZMARKEDFORDELETION` changes nothing, so they are tombstones or
+placeholders rather than trash.
+
+**Caveat on the fourth row.** Adding the deletion filter is also exact, but only because this
+library has nothing in the trash — that clause was never exercised. It is therefore untested, not
+proven redundant, so keep it: it costs nothing and a library with trashed notes is exactly where
+its absence would show up as phantom results.
 
 ### Attachments
 

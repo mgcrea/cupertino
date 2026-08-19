@@ -560,14 +560,68 @@ if (fileFacts.readable) {
    *
    * Redaction holds: text is compared in memory, only counts and offsets print.
    */
+  // One round trip, shared by the decoder check and the predicate check below.
+  const truth = timed("allPlaintext", ALL_PLAINTEXT, {}, 300_000);
+  const prefix = /^(.*)\/p\d+$/.exec(doc.findings.bulkIds?.idSample ?? "")?.[1] ?? null;
+  /** The Z_PKs Apple Events considers notes - the authority for the predicate. */
+  const truthPks = new Set(
+    (truth.ids ?? [])
+      .map((id) => Number(/\/p(\d+)$/.exec(String(id))?.[1]))
+      .filter((n) => Number.isInteger(n)),
+  );
+
+  /**
+   * Q3, settled properly. ZTITLE1 being non-null on exactly 921 rows is
+   * suggestive, but a matching COUNT is not a matching SET - the longest-string
+   * decoder also had the right count and the wrong answer. So compare the Z_PK
+   * sets and report what each candidate predicate misses or adds.
+   */
+  doc.findings.notePredicate = safe(() => {
+    if (!truthPks.size) return { tested: false, reason: "no Apple Events ids to compare against" };
+    const cols = columnInfo("ZICCLOUDSYNCINGOBJECT").map((c) => c.name);
+    const hasTitle = cols.includes("ZTITLE1");
+    const notDeleted = (doc.findings.entities?.deletionCols ?? [])
+      .map((c) => ` AND ("${c}" IS NULL OR "${c}" = 0)`)
+      .join("");
+    const predicates = [
+      { name: "Z_ENT only", extra: "" },
+      { name: "Z_ENT + not deleted", extra: notDeleted },
+    ];
+    if (hasTitle) {
+      predicates.push(
+        { name: "Z_ENT + ZTITLE1 NOT NULL", extra: " AND ZTITLE1 IS NOT NULL" },
+        {
+          name: "Z_ENT + ZTITLE1 NOT NULL + not deleted",
+          extra: ` AND ZTITLE1 IS NOT NULL${notDeleted}`,
+        },
+      );
+    }
+    return predicates.map((c) => {
+      const pks = safe(
+        () =>
+          new Set(
+            db
+              .prepare(`SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT = ?${c.extra}`)
+              .all(noteEnt)
+              .map((r) => r.Z_PK),
+          ),
+        () => null,
+      );
+      if (!pks) return { name: c.name, error: true };
+      let missing = 0;
+      for (const pk of truthPks) if (!pks.has(pk)) missing += 1;
+      let extra = 0;
+      for (const pk of pks) if (!truthPks.has(pk)) extra += 1;
+      return { name: c.name, rows: pks.size, missing, extra, exact: missing === 0 && extra === 0 };
+    });
+  });
+
   doc.findings.zdataDecode = safe(() => {
-    const truth = timed("allPlaintext", ALL_PLAINTEXT, {}, 300_000);
     if (!truth.ok)
       return { attempted: false, reason: "could not read plaintext over Apple Events" };
     const byId = new Map(
       (truth.ids ?? []).map((id, i) => [String(id), String(truth.texts?.[i] ?? "")]),
     );
-    const prefix = /^(.*)\/p\d+$/.exec(doc.findings.bulkIds?.idSample ?? "")?.[1] ?? null;
     if (!prefix) return { attempted: false, reason: "no id sample to derive the Core Data prefix" };
 
     const rows = db
@@ -740,12 +794,17 @@ const indexLane = !fileFacts.readable
       needsBlobDecode: !fullTextCol,
       recommendation: fullTextCol
         ? `${fullTextCol.column} holds ${Math.round((fullTextCol.charRatio ?? 0) * 100)}% of the library's characters — index full-text search is viable and ZDATA never has to be opened.`
-        : `No column holds the full body. Title: ${titleCol?.column ?? "none"} (${Math.round((titleCol?.coverage ?? 0) * 100)}% of notes)` +
-          (bestSnippet ? `, snippet ${bestSnippet.column} ~${bestSnippet.avgLength}ch` : "") +
-          `. The index filters and ranks by title. FULL TEXT lives in ZDATA, which is ` +
-          `${(doc.findings.zdata?.formats ?? []).map((f) => `${f.rows}x ${f.ascii}`).join(", ")}` +
-          `${doc.findings.zdata?.gunzipSucceeded ? `, ${doc.findings.zdata.gunzipSucceeded} of which gunzip to ${doc.findings.zdata.innerMagicAfterGunzip}` : ""}` +
-          ". So either decode it, or take the fallback: index for filtering, Apple Events for body.",
+        : (doc.findings.zdataDecode?.agreementRate ?? 0) >= 0.99
+          ? `Full text is not in a column, but the ZDATA decoder agrees with Apple Events on ` +
+            `${doc.findings.zdataDecode.agreePinned}/${doc.findings.zdataDecode.decoded} notes ` +
+            `at path ${Object.keys(doc.findings.zdataDecode.paths ?? {}).join(", ")}. ` +
+            `Index full-text search is viable: title from ${titleCol?.column ?? "?"}, body from ZDATA.`
+          : `No column holds the full body. Title: ${titleCol?.column ?? "none"} (${Math.round((titleCol?.coverage ?? 0) * 100)}% of notes)` +
+            (bestSnippet ? `, snippet ${bestSnippet.column} ~${bestSnippet.avgLength}ch` : "") +
+            `. The index filters and ranks by title. FULL TEXT lives in ZDATA, which is ` +
+            `${(doc.findings.zdata?.formats ?? []).map((f) => `${f.rows}x ${f.ascii}`).join(", ")}` +
+            `${doc.findings.zdata?.gunzipSucceeded ? `, ${doc.findings.zdata.gunzipSucceeded} of which gunzip to ${doc.findings.zdata.innerMagicAfterGunzip}` : ""}` +
+            ". So either decode it, or take the fallback: index for filtering, Apple Events for body.",
     };
 doc.verdict = {
   indexLane,
@@ -835,6 +894,12 @@ if (WANT_JSON) {
       );
     }
     const zd = doc.findings.zdataDecode ?? {};
+    for (const c of doc.findings.notePredicate ?? []) {
+      L.push(
+        `  predicate  ${c.name.padEnd(38)} ${String(c.rows ?? "?").padStart(5)} rows` +
+          `${c.exact ? "  EXACT MATCH" : `  missing ${c.missing}, extra ${c.extra}`}`,
+      );
+    }
     if (zd.attempted) {
       L.push(
         `  ZDATA decode          ${zd.decoded}/${zd.sampled} decoded; pinned path agrees ` +
@@ -901,7 +966,9 @@ if (WANT_WRITE) {
     console.error("\n--write needs the file lane. Grant Full Disk Access and re-run.");
     process.exit(3);
   }
-  const dest = join(ROOT, "test", "fixtures", "note-store.sql");
+  // Repo root for now: there is no packages/notes to own it yet. Moves there
+  // when that package exists.
+  const dest = join(ROOT, "fixtures", "note-store.sql");
   mkdirSync(dirname(dest), { recursive: true });
   const sql = [
     "-- Captured from a real NoteStore.sqlite by scripts/probe-notes.mjs --write.",
