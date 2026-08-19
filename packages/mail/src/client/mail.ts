@@ -10,7 +10,7 @@ import {
   type ParsedMessage,
 } from "./emlx.js";
 import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from "./envelope.js";
-import { MessageNotFoundError, PreconditionError } from "./errors.js";
+import { MAIL_SURFACE, MessageNotFoundError, PreconditionError } from "./errors.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
   CHECK_FOR_NEW_MAIL,
@@ -88,6 +88,7 @@ export class AppleMailClient {
       createOsascriptRunner({
         osascriptPath: opts.config.osascriptPath,
         timeoutMs: opts.config.osascriptTimeoutMs,
+        surface: MAIL_SURFACE,
         logger: opts.logger,
       });
     this.mailboxes = new MailboxMap({

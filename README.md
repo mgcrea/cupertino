@@ -7,10 +7,11 @@ permissions once instead of once each.
 
 ## Packages
 
-| Package                                       | Status                                                    |
-| --------------------------------------------- | --------------------------------------------------------- |
-| [`packages/mail`](packages/mail) — Apple Mail | implemented — search, read, attachments, and gated writes |
-| Notes, Reminders, Messages                    | not started; Notes has finished [phase 0](docs/notes.md)  |
+| Package                                       | Status                                                     |
+| --------------------------------------------- | ---------------------------------------------------------- |
+| [`packages/core`](packages/core) — shared     | the osascript boundary, TCC-aware errors, read-only SQLite |
+| [`packages/mail`](packages/mail) — Apple Mail | implemented — search, read, attachments, and gated writes  |
+| Notes, Reminders, Messages                    | not started; Notes has finished [phase 0](docs/notes.md)   |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.
 They share one bundle and one Full Disk Access grant, which is the whole reason they live together
@@ -51,7 +52,7 @@ pnpm probe:mail     # Envelope Index — needs Full Disk Access
 pnpm probe:notes    # Notes — the Apple Events half runs without it
 ```
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v0.1.0`.
+Releases are tagged per package, so a tag names what it publishes: `mail-v0.1.0`, `core-v0.1.0`.
 
 > The directory is still called `mcp-apple-mail` from when Mail was the only surface. Renaming it
 > is cosmetic and pending; the bundle identifier `io.mgcrea.cupertino` is the string that actually

@@ -1,6 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
-import { IndexUnavailableError, SchemaDriftError } from "./errors.js";
+import { escapeLike, openReadOnly, toFileUri } from "@mgcrea/mcp-apple-core";
+
+import { SchemaDriftError } from "./errors.js";
 import type { Logger } from "./osascript.js";
 import { assertUsable, introspect, type IndexCapabilities } from "./schema.js";
 
@@ -52,16 +54,7 @@ export type SearchFilters = {
   offset: number;
 };
 
-/**
- * SQLite URI filenames need percent-encoding, and Mail's path contains a space
- * ("Envelope Index"). `?` and `#` would otherwise be read as URI syntax.
- */
-export const toFileUri = (path: string, query: string): string =>
-  `file:${encodeURI(path).replaceAll("?", "%3f").replaceAll("#", "%23")}?${query}`;
-
-/** Escape LIKE wildcards so a subject containing % or _ searches literally. */
-export const escapeLike = (value: string): string =>
-  value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+export { escapeLike, toFileUri };
 
 const contains = (value: string): string => `%${escapeLike(value)}%`;
 
@@ -73,42 +66,31 @@ export type OpenResult = {
 };
 
 export const openIndex = (path: string, mode: IndexMode, logger?: Logger): OpenResult => {
-  if (mode === "off") {
-    throw new IndexUnavailableError("The search index is disabled (APPLE_MAIL_INDEX_MODE=off).");
-  }
-
-  const attempts: ("ro" | "immutable")[] =
-    mode === "auto" ? ["ro", "immutable"] : [mode === "ro" ? "ro" : "immutable"];
-
-  let lastError: unknown = null;
-  for (const attempt of attempts) {
-    try {
-      const uri = toFileUri(path, attempt === "ro" ? "mode=ro" : "immutable=1");
-      const db = new DatabaseSync(uri, { readOnly: true, allowExtension: false });
-      // Belt and braces: no code path below can issue DML even by accident.
-      db.exec("PRAGMA query_only = 1");
-      const caps = introspect(db);
-      assertUsable(caps);
-      if (attempt === "immutable") {
-        logger?.warn?.(
-          "opened the index with immutable=1; results may omit mail that is still in the -wal",
-        );
-      }
-      return { db, mode: attempt, caps };
-    } catch (err) {
-      // Schema drift is not something a different open mode can fix, and its
-      // message names the missing columns and the fingerprint — far more useful
-      // than the generic "could not open" this loop would otherwise produce.
-      if (err instanceof SchemaDriftError) throw err;
-      lastError = err;
-    }
-  }
-
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new IndexUnavailableError(
-    `Could not open Mail's search index at ${path}: ${message}. ` +
-      `If this is a permission error, grant Full Disk Access to the app running this server.`,
-  );
+  const {
+    db,
+    mode: opened,
+    validated: caps,
+  } = openReadOnly<IndexCapabilities>(path, mode, {
+    envVar: "APPLE_MAIL_INDEX_MODE",
+    label: "Mail's search index",
+    hint: "If this is a permission error, grant Full Disk Access to the app running this server.",
+    // Introspect inside the ladder: an index that opens but is missing required
+    // columns should fall through to the next mode, not be handed back.
+    validate: (conn) => {
+      const found = introspect(conn);
+      assertUsable(found);
+      return found;
+    },
+    // Schema drift is not something a different open mode can fix, and its
+    // message names the missing columns and the fingerprint — far more useful
+    // than the generic "could not open" the ladder would otherwise produce.
+    fatal: (err) => err instanceof SchemaDriftError,
+    onFallback: () =>
+      logger?.warn?.(
+        "opened the index with immutable=1; results may omit mail that is still in the -wal",
+      ),
+  });
+  return { db, mode: opened, caps };
 };
 
 export class EnvelopeIndex {

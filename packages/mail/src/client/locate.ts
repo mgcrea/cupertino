@@ -1,6 +1,8 @@
-import { accessSync, constants, readdirSync, statSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { inspectFile, type FileFacts } from "@mgcrea/mcp-apple-core";
 
 /**
  * Find Mail's data root and its Envelope Index.
@@ -37,32 +39,7 @@ export type LocateResult = {
   reason: string | null;
 };
 
-export type FileFacts = {
-  exists: boolean;
-  readable: boolean;
-  size: number | null;
-  mtime: string | null;
-};
-
-export const inspectFile = (path: string): FileFacts => {
-  let size: number | null = null;
-  let mtime: string | null = null;
-  try {
-    const st = statSync(path);
-    size = st.size;
-    mtime = st.mtime.toISOString();
-  } catch {
-    return { exists: false, readable: false, size: null, mtime: null };
-  }
-  let readable = false;
-  try {
-    accessSync(path, constants.R_OK);
-    readable = true;
-  } catch {
-    readable = false;
-  }
-  return { exists: true, readable, size, mtime };
-};
+export { inspectFile, type FileFacts };
 
 export type LocateOptions = {
   /** Explicit index path from config — wins outright. */

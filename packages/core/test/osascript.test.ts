@@ -1,19 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  MailBusyError,
-  MailNotRunningError,
+  AppBusyError,
+  AppNotRunningError,
   PlatformError,
   ProtocolError,
   TccDeniedError,
-} from "../src/client/errors.js";
-import { LIST_ACCOUNTS, LIST_RECENT } from "../src/client/jxa/read.js";
+  type SurfaceContext,
+} from "../src/errors.js";
 import {
   assertStaticScript,
   createOsascriptRunner,
   mapOsaError,
   withBusyRetry,
-} from "../src/client/osascript.js";
+} from "../src/osascript.js";
+
+/** Any surface will do; these tests are about the runner, not about one app. */
+const SURFACE: SurfaceContext = { appName: "TestApp", envPrefix: "TEST_APP" };
+
+/**
+ * Stand-ins for a server's real scripts. Static constants with no `${`, which
+ * is the only property of them this module cares about — using a specific
+ * server's scripts here would make core depend on one of its own consumers.
+ */
+const LIST_ACCOUNTS = `
+function run(argv) {
+  var p = JSON.parse(argv[0] || "{}");
+  return JSON.stringify({ ok: true, data: { total: 3 } });
+}
+`;
+const LIST_RECENT = `
+function run(argv) {
+  var p = JSON.parse(argv[0] || "{}");
+  return JSON.stringify({ ok: true, data: [] });
+}
+`;
 
 /**
  * These tests are the ones that keep the injection guarantee honest. They
@@ -39,16 +60,16 @@ describe("assertStaticScript", () => {
 
 describe("mapOsaError", () => {
   it.each([
-    ["execution error: Not authorized to send Apple events to Mail. (-1743)", TccDeniedError],
-    ["execution error: Application isn't running. (-600)", MailNotRunningError],
-    ["execution error: Apple event timed out. (-1712)", MailBusyError],
+    ["execution error: Not authorized to send Apple events to TestApp. (-1743)", TccDeniedError],
+    ["execution error: Application isn't running. (-600)", AppNotRunningError],
+    ["execution error: Apple event timed out. (-1712)", AppBusyError],
     ["execution error: Error: boom (-2700)", ProtocolError],
   ])("maps %s", (stderr, expected) => {
-    expect(mapOsaError(stderr, 1000)).toBeInstanceOf(expected);
+    expect(mapOsaError(stderr, 1000, SURFACE)).toBeInstanceOf(expected);
   });
 
   it("keeps the thrown message when the script itself failed", () => {
-    const err = mapOsaError("execution error: Error: no such mailbox (-2700)", 1000);
+    const err = mapOsaError("execution error: Error: no such mailbox (-2700)", 1000, SURFACE);
     expect(err.message).toContain("no such mailbox");
   });
 });
@@ -63,6 +84,7 @@ const withStdout = (stdout: string) => {
   const runner = createOsascriptRunner({
     osascriptPath: "/usr/bin/osascript",
     timeoutMs: 1000,
+    surface: SURFACE,
     exec,
   });
   return { runner, calls, exec };
@@ -94,7 +116,7 @@ describe("runner", () => {
     const notRunning = withStdout(
       JSON.stringify({ ok: false, error: { code: "MAIL_NOT_RUNNING", message: "x" } }),
     );
-    await expect(notRunning.runner.run(LIST_ACCOUNTS)).rejects.toBeInstanceOf(MailNotRunningError);
+    await expect(notRunning.runner.run(LIST_ACCOUNTS)).rejects.toBeInstanceOf(AppNotRunningError);
 
     const denied = withStdout(
       JSON.stringify({ ok: false, error: { code: "NOT_AUTHORIZED", message: "x" } }),
@@ -120,6 +142,7 @@ describe("runner", () => {
     const runner = createOsascriptRunner({
       osascriptPath: "/usr/bin/osascript",
       timeoutMs: 1000,
+      surface: SURFACE,
       exec,
     });
 
@@ -138,6 +161,7 @@ describe("runner", () => {
     const runner = createOsascriptRunner({
       osascriptPath: "/usr/bin/osascript",
       timeoutMs: 1000,
+      surface: SURFACE,
       exec,
     });
 
@@ -150,14 +174,14 @@ describe("withBusyRetry", () => {
   it("retries once when Mail says it is busy", async () => {
     const fn = vi
       .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(new MailBusyError())
+      .mockRejectedValueOnce(new AppBusyError(SURFACE))
       .mockResolvedValueOnce("ok");
     await expect(withBusyRetry(fn, 0)).resolves.toBe("ok");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it("does not retry other failures", async () => {
-    const fn = vi.fn<() => Promise<string>>().mockRejectedValue(new TccDeniedError());
+    const fn = vi.fn<() => Promise<string>>().mockRejectedValue(new TccDeniedError(SURFACE));
     await expect(withBusyRetry(fn, 0)).rejects.toBeInstanceOf(TccDeniedError);
     expect(fn).toHaveBeenCalledTimes(1);
   });

@@ -83,17 +83,35 @@ mcp-cupertino/
   app/                 the Cupertino.app build
 ```
 
-`packages/core` takes what is already surface-agnostic:
+`packages/core` exists, and holds only mechanism with more than one plausible consumer:
 
-- the osascript runner, with its serialising queue and the `assertStaticScript` tripwire
-  (`src/client/osascript.ts`)
-- the error taxonomy and the osa error-code mapping (`src/client/errors.ts`)
-- `inspectFile` and the existence-versus-readability distinction (`src/client/locate.ts`)
-- the shape of the diagnostics tool (`src/tools/diagnostics.ts`)
+| Module         | What                                                                             |
+| -------------- | -------------------------------------------------------------------------------- |
+| `osascript.ts` | the runner, the serialising queue, `assertStaticScript`, `mapOsaError`           |
+| `errors.ts`    | the taxonomy, written against a required `SurfaceContext`                        |
+| `fs.ts`        | `inspectFile` / `describeStore` — the exists-vs-readable distinction             |
+| `sqlite.ts`    | the `ro` -> `immutable` ladder, `toFileUri`, `escapeLike`, `PRAGMA query_only`   |
+| `schema.ts`    | `columnsOf`, `tableMap`, `fingerprintSchema`, `detectEpoch`, the Core Data epoch |
+| `config.ts`    | the four env parsers and `BaseConfigSchema`                                      |
+| `tools.ts`     | `wrap`, `toFailure`, `ok`/`okText`/`fail`, `compact`, `limitArg`, `confirmArg`   |
+| `cli.ts`       | `runStdioServer`, carrying the stdout-is-JSON-RPC rule and the darwin guard      |
 
-Migrate with `git filter-repo` or subtree so the history survives. This breaks the
-one-repo-per-service pattern the sibling `mcp-*` projects follow, deliberately: these four share a
-bundle, a permission model and a client.
+The strongest argument was never line count: `assertStaticScript` is a shell-injection tripwire and
+the queue is the `-1712` guard, and an invariant kept in two copies is one refactor away from being
+enforced in one.
+
+**Deliberately left in `packages/mail`**, because they are structurally Mail-shaped and an interface
+designed from one sample would be wrong: `locateEnvelopeIndex`'s four-branch strategy ladder,
+`ref.ts` (whose `#(\d+)$` assumes an integer id that Notes' `x-coredata://` ids are not), the JXA
+`PRELUDE`, and the diagnostics payload.
+
+Two defects were fixed rather than copied across:
+
+- `TccDeniedError` took an optional `hint` defaulting to "Mail", hardcoded "Mail" again later in the
+  same string, and was never passed a hint at either call site. `SurfaceContext` is now **required**
+  wherever it appears in a message, so it cannot silently go missing again.
+- `degraded()` in `tools/util.ts` had no call sites — every one inlined the shape. Deleted rather
+  than promoted: an unused helper in a shared package is API nobody honours.
 
 ## The bundle
 

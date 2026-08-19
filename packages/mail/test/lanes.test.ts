@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { MailNotRunningError } from "../src/client/errors.js";
+import { MAIL_SURFACE, MailNotRunningError } from "../src/client/errors.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { loadConfig } from "../src/config.js";
@@ -34,7 +34,7 @@ const flakyRunner = (failures: number): { runner: OsascriptRunner; calls: () => 
     run: vi.fn(async (script: string) => {
       if (!script.includes("a.emailAddresses()")) return [];
       calls += 1;
-      if (calls <= failures) throw new MailNotRunningError();
+      if (calls <= failures) throw new MailNotRunningError(MAIL_SURFACE);
       return ACCOUNTS;
     }) as OsascriptRunner["run"],
   };
