@@ -129,9 +129,36 @@ An earlier note in this document said the opposite. That came from a `LIMIT 1` s
 to land on one of the two `bplist00` outliers, so the widely repeated "gzipped protobuf" description
 is **correct**, and the correction was wrong. Sample more than one row.
 
-The practical consequence is that index full-text search _is_ achievable — gunzip, then decode a
-protobuf whose shape is well travelled in forensics tooling — rather than blocked. It is still real
-work, and the cheaper hybrid below may be the better trade.
+The practical consequence is that index full-text search _is_ achievable — gunzip, then decode —
+rather than blocked. It is also already built; see below.
+
+### Decoding it: `scripts/lib/note-protobuf.mjs`
+
+The body lives at protobuf path **`2.3.2`** — `document(2) -> note(3) -> note_text(2)`.
+
+That was measured, not looked up. The decoder walks the wire format structurally rather than
+compiling Apple's unpublished `.proto`, precisely so a renumbered field cannot silently break it,
+and the probe then checks every decoded note against the same note's Apple Events plaintext. The
+first run scored 51%, and the path histogram explained why:
+
+| Strategy               | Agreement | Note                                           |
+| ---------------------- | --------- | ---------------------------------------------- |
+| longest string in blob | 27 / 53   | picked `2.3.5.12` on 26 notes                  |
+| pinned path `2.3.2`    | 27 / 27   | every note read from this path matched exactly |
+
+The failure mode is worth recording because it is silent. On roughly half the library an
+**attribute-run field outruns the body**, consistently by ~60 characters, so "take the longest
+string" returns plausible but wrong text rather than an error. A synthetic message shaped that way
+reproduces the exact decoy path `2.3.5.12`, so this is structural rather than a quirk of one
+library.
+
+The decoder therefore reads the pinned path first and falls back to longest only when it is absent,
+reporting which route it took. **A shift to `longest` is the drift signal** if Apple ever renumbers
+the field.
+
+Also skipped, correctly: rows carrying a `ZCRYPTOTAG`. Password-protected notes hold AES ciphertext
+rather than gzip — which is why `ZICNOTEDATA` carries `ZCRYPTOINITIALIZATIONVECTOR` and `ZCRYPTOTAG`
+columns at all. 7 of 60 sampled rows were encrypted, consistent with 31 locked notes out of 921.
 
 ### What the indexed columns can and cannot do
 

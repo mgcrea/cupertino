@@ -47,6 +47,8 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
+import { extractNoteText } from "./lib/note-protobuf.mjs";
+
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
 const WANT_JSON = has("--json");
@@ -59,6 +61,13 @@ const TERM = (argv.find((a) => a.startsWith("--term=")) ?? "--term=the").slice(7
 const SAMPLE = 5;
 /** Core Data stores seconds since 2001-01-01. */
 const APPLE_EPOCH_OFFSET = 978_307_200;
+/**
+ * Notes uses U+2028 for soft breaks where Apple Events renders a newline, so
+ * compare on a normalised form rather than reading a line-ending convention as
+ * a decoder bug.
+ */
+const norm = (t) => t.replaceAll(/\r\n?/g, "\n").replaceAll("\u2028", "\n").trim();
+
 /** Core Data spells strings VARCHAR; LENGTH() on an INTEGER lies, so check the type. */
 const isTextType = (t) => /CHAR|CLOB|TEXT/i.test(String(t ?? ""));
 
@@ -218,6 +227,18 @@ function run(argv) {
     if (t.toLowerCase().indexOf(needle) !== -1) hits++;
   }
   return JSON.stringify({ hits: hits, scanned: texts.length, totalChars: bytes });
+}
+`;
+
+/**
+ * Every note's id and plaintext in one round trip. Used only to CHECK the ZDATA
+ * decoder against the authority — Apple Events is what the user sees, so if the
+ * decoder disagrees with it, the decoder is wrong.
+ */
+const ALL_PLAINTEXT = `
+function run(argv) {
+  var N = Application("Notes");
+  return JSON.stringify({ ids: N.notes.id(), texts: N.notes.plaintext() });
 }
 `;
 
@@ -529,6 +550,96 @@ if (fileFacts.readable) {
     };
   });
 
+  /**
+   * Q1c. Can the gzipped protobuf actually be decoded into the note body?
+   *
+   * The decoder guesses structurally rather than from a compiled .proto, so it
+   * has to be proven, not asserted — and there is a perfect oracle available:
+   * Apple Events already returns the same note's plaintext. Agreement across a
+   * sample is what makes an index full-text lane defensible.
+   *
+   * Redaction holds: text is compared in memory, only counts and offsets print.
+   */
+  doc.findings.zdataDecode = safe(() => {
+    const truth = timed("allPlaintext", ALL_PLAINTEXT, {}, 300_000);
+    if (!truth.ok)
+      return { attempted: false, reason: "could not read plaintext over Apple Events" };
+    const byId = new Map(
+      (truth.ids ?? []).map((id, i) => [String(id), String(truth.texts?.[i] ?? "")]),
+    );
+    const prefix = /^(.*)\/p\d+$/.exec(doc.findings.bulkIds?.idSample ?? "")?.[1] ?? null;
+    if (!prefix) return { attempted: false, reason: "no id sample to derive the Core Data prefix" };
+
+    const rows = db
+      .prepare(
+        `SELECT ZNOTE AS pk, ZDATA AS blob, ZCRYPTOTAG AS tag
+         FROM ZICNOTEDATA WHERE ZDATA IS NOT NULL AND ZNOTE IS NOT NULL LIMIT 60`,
+      )
+      .all();
+
+    let encrypted = 0;
+    let notGzip = 0;
+    let noCounterpart = 0;
+    let decoded = 0;
+    // Both strategies are scored on the same notes, because the pin is only
+    // worth having if it beats the heuristic on real data.
+    const score = { pinned: 0, longest: 0 };
+    const paths = {};
+    const viaCounts = {};
+    const deltas = [];
+
+    for (const r of rows) {
+      if (r.tag) {
+        encrypted += 1;
+        continue;
+      }
+      const buf = Buffer.from(r.blob);
+      if (buf[0] !== 0x1f || buf[1] !== 0x8b) {
+        notGzip += 1;
+        continue;
+      }
+      const plain = byId.get(`${prefix}/p${r.pk}`);
+      if (plain === undefined) {
+        noCounterpart += 1;
+        continue;
+      }
+      const inflated = safe(
+        () => gunzipSync(buf),
+        () => null,
+      );
+      if (!inflated) continue;
+
+      const pinned = extractNoteText(inflated);
+      const longest = extractNoteText(inflated, { preferPath: null });
+      if (pinned.text === null) continue;
+      decoded += 1;
+      paths[pinned.path] = (paths[pinned.path] ?? 0) + 1;
+      viaCounts[pinned.via] = (viaCounts[pinned.via] ?? 0) + 1;
+
+      const truthNorm = norm(plain);
+      if (norm(pinned.text) === truthNorm) score.pinned += 1;
+      else deltas.push(norm(pinned.text).length - truthNorm.length);
+      if (longest.text !== null && norm(longest.text) === truthNorm) score.longest += 1;
+    }
+
+    return {
+      attempted: true,
+      sampled: rows.length,
+      encrypted,
+      notGzip,
+      noCounterpart,
+      decoded,
+      agreePinned: score.pinned,
+      agreeLongest: score.longest,
+      agreementRate: decoded ? Number((score.pinned / decoded).toFixed(3)) : null,
+      longestRate: decoded ? Number((score.longest / decoded).toFixed(3)) : null,
+      // Which field path held the body, and how it was reached. Learned, not assumed.
+      paths,
+      via: viaCounts,
+      lengthDeltas: deltas.slice(0, 5),
+    };
+  });
+
   // Does the AppleScript id bridge to a primary key, the way Mail's ROWID did?
   // Notes ids look like x-coredata://<uuid>/ICNote/p<N>; test whether p<N> is Z_PK.
   doc.findings.idBridge = safe(
@@ -722,6 +833,24 @@ if (WANT_JSON) {
       L.push(
         `     gunzip ok on ${doc.findings.zdata.gunzipSucceeded}, inner ${doc.findings.zdata.innerMagicAfterGunzip}`,
       );
+    }
+    const zd = doc.findings.zdataDecode ?? {};
+    if (zd.attempted) {
+      L.push(
+        `  ZDATA decode          ${zd.decoded}/${zd.sampled} decoded; pinned path agrees ` +
+          `${zd.agreePinned}/${zd.decoded} (${Math.round((zd.agreementRate ?? 0) * 100)}%), ` +
+          `longest-string agrees ${zd.agreeLongest}/${zd.decoded} (${Math.round((zd.longestRate ?? 0) * 100)}%)`,
+      );
+      L.push(`     reached via        ${JSON.stringify(zd.via ?? {})}`);
+      L.push(
+        `     skipped            ${zd.encrypted} encrypted, ${zd.notGzip} not gzip, ${zd.noCounterpart} no counterpart`,
+      );
+      L.push(`     body field path    ${JSON.stringify(zd.paths)}`);
+      if (zd.lengthDeltas?.length) {
+        L.push(`     length deltas      ${zd.lengthDeltas.join(", ")}`);
+      }
+    } else if (zd.reason) {
+      L.push(`  ZDATA decode          not attempted - ${zd.reason}`);
     }
     L.push(
       `  attachment entities   ${JSON.stringify(doc.findings.attachments.attachEntities ?? {})}`,
