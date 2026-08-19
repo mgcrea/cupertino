@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0BCE00013100000000000001 /* cupertino-bridge in Helpers */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* cupertino-bridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0BCE00013100000000000001 /* CupertinoBridge in Embed Helper */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* CupertinoBridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -33,10 +33,10 @@
 		0BCE00013100000000000002 /* Embed Helper */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "Contents/Helpers";
+			dstPath = Contents/Helpers;
 			dstSubfolderSpec = 1;
 			files = (
-				0BCE00013100000000000001 /* cupertino-bridge in Helpers */,
+				0BCE00013100000000000001 /* CupertinoBridge in Embed Helper */,
 			);
 			name = "Embed Helper";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -44,7 +44,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		091399AC3035FE8D00800564 /* CupertinoBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = CupertinoBridge; sourceTree = BUILT_PRODUCTS_DIR; };
+		091399AC3035FE8D00800564 /* CupertinoBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; name = CupertinoBridge; path = "cupertino-bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
 		09145EC53035FC8A00D90D97 /* Cupertino.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cupertino.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
