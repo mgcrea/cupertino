@@ -69,14 +69,40 @@ func connectOnce() -> Int32? {
   return nil
 }
 
-/// Ask LaunchServices to start Cupertino, then wait for it to listen.
+/// The `.app` this binary is embedded in.
+///
+/// `Contents/Helpers/cupertino-bridge` -> `Cupertino.app`, or nil when running
+/// the bare executable out of a build directory.
+func containingApp() -> URL? {
+  guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
+  let app = executable                    // …/Cupertino.app/Contents/Helpers/cupertino-bridge
+    .deletingLastPathComponent()          // …/Contents/Helpers
+    .deletingLastPathComponent()          // …/Contents
+    .deletingLastPathComponent()          // …/Cupertino.app
+  return app.pathExtension == "app" ? app : nil
+}
+
+/// Start Cupertino, then wait for it to listen.
+///
+/// **By path, not by bundle identifier.** `open -b io.mgcrea.cupertino` asks
+/// LaunchServices to pick among every registered copy, and it picked a stale
+/// one out of Xcode's DerivedData during development — so the bridge waited on
+/// a socket that a different build was never going to open. Launching the app
+/// this binary shipped inside is unambiguous, and it also means a bridge copied
+/// somewhere else cannot be talked into starting some other app that happens to
+/// claim the identifier.
 ///
 /// `-g` keeps it from stealing focus: this runs while someone is typing at an
 /// AI assistant, not while they are looking at the screen.
 func launchApp() {
   let open = Process()
   open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-  open.arguments = ["-g", "-b", "io.mgcrea.cupertino"]
+  if let app = containingApp() {
+    open.arguments = ["-g", app.path]
+  } else {
+    warn("not running from inside Cupertino.app; falling back to the bundle identifier")
+    open.arguments = ["-g", "-b", "io.mgcrea.cupertino"]
+  }
   do { try open.run(); open.waitUntilExit() } catch {
     warn("could not launch Cupertino: \(error.localizedDescription)")
   }
@@ -97,7 +123,8 @@ if socketFD == nil {
 guard let sock = socketFD else {
   die("""
     could not reach Cupertino at \(path).
-    Open Cupertino once from /Applications, then retry.
+    Tried to launch \(containingApp()?.path ?? "io.mgcrea.cupertino").
+    Open Cupertino once by hand, then retry.
     """)
 }
 

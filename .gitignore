@@ -20,3 +20,6 @@ xcuserdata/
 
 # TCC spike build output
 scripts/spike-app-tcc/build/
+
+# local app build output
+app/.build/
