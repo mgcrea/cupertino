@@ -168,19 +168,20 @@ returns `Operation not permitted` while `test -e` succeeds, the same split `src/
 documents for Mail. Which is the point: nothing about their internals can be measured until Full
 Disk Access is granted to something.
 
-| Surface   | Store                                                   | Probe  | AppleScript lane    |
-| --------- | ------------------------------------------------------- | ------ | ------------------- |
-| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`            | EPERM  | full — implemented  |
-| Notes     | `~/Library/Group Containers/group.com.apple.notes/`     | EPERM  | body and folders    |
-| Reminders | `~/Library/Group Containers/group.com.apple.reminders/` | EPERM  | workable            |
-| Messages  | `~/Library/Messages/`                                   | EPERM  | send only, no reads |
-| Contacts  | `~/Library/Application Support/AddressBook/`            | EPERM  | limited             |
-| Calendar  | `~/Library/Calendars`                                   | absent | slow                |
+| Surface   | Store                                                   | Probe  | AppleScript lane             |
+| --------- | ------------------------------------------------------- | ------ | ---------------------------- |
+| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`            | EPERM  | full — implemented           |
+| Notes     | `~/Library/Group Containers/group.com.apple.notes/`     | EPERM  | usable alone below ~5k notes |
+| Reminders | `~/Library/Group Containers/group.com.apple.reminders/` | EPERM  | workable                     |
+| Messages  | `~/Library/Messages/`                                   | EPERM  | send only, no reads          |
+| Contacts  | `~/Library/Application Support/AddressBook/`            | EPERM  | limited                      |
+| Calendar  | `~/Library/Calendars`                                   | absent | slow                         |
 
 Two paths that are commonly cited and wrong on this machine: **`~/Library/Reminders` does not
 exist** — Reminders is under Group Containers — and neither does `~/Library/Calendars`, so Calendar
 probably needs EventKit rather than a file lane. Everything about the schemas behind these stores
-is unverified, including whether Notes bodies are the gzipped protobuf they are reputed to be.
+is unverified. Notes is the exception — it has since been probed, and its bodies turned out
+**not** to be the gzipped protobuf they are reputed to be.
 
 Messages is the surface where Full Disk Access is not optional: there is no AppleScript read path
 at all, so without the file lane there is no server.
@@ -188,6 +189,45 @@ at all, so without the file lane there is no server.
 Each new surface starts with a phase-0 probe in the style of `scripts/probe-envelope-index.mjs` →
 `docs/envelope-index.md`. That is the only way to learn one of these schemas, and writing the probe
 output down is what makes the queries defensible later.
+
+### Notes, measured
+
+Probed — see [notes.md](notes.md). At 921 notes Apple Events search runs in **97 ms**, against the
+74 s that forced Mail onto its index lane, so Notes is genuinely shippable without Full Disk Access
+on a small library. But the lane has no index and pays the full cost on every query, so the
+projection puts the wall at roughly 5–10k notes. Notes gets two lanes like Mail; what differs is
+that it can ship on the fallback and add the file lane after.
+
+The pure capability gain — the thing Apple Events cannot do at any speed — is **attachment bytes**:
+the dictionary exposes `URL` and `content identifier` but no filesystem path, so contents require
+reading `Accounts/<uuid>/Media/`.
+
+### Every surface gets a fallback
+
+Two lanes is the default shape, not Mail's special case:
+
+| Surface  | File lane                     | Apple Events fallback            |
+| -------- | ----------------------------- | -------------------------------- |
+| Mail     | required — search is 74 s     | accounts, mailboxes, all writes  |
+| Notes    | attachments, then scale       | **fully usable** below ~5k notes |
+| Messages | required — no read API exists | none possible                    |
+
+Three reasons this is the default rather than a per-surface optimisation:
+
+- **Try before you grant.** Someone can install the app and use it before deciding to hand over
+  whole-disk access. That is the honest way to ask for a permission this large, and it means the
+  Apple Events lane has to stay a first-class path rather than become dead code once the file lane
+  lands.
+- **Consistency.** One shape — file preferred, Apple Events fallback, diagnostics naming which is
+  live — lives once in `packages/core` instead of being re-litigated per surface.
+- **Scale.** Every unprivileged lane is per-item over Apple Events, so all of them degrade the same
+  way on a large library. Messages is the reminder that some surfaces have no fallback at all.
+
+**What this does not change:** the permission still has to buy something. Notes reads
+`Accounts/<uuid>/Media/` for attachments and, when a library is large enough to need it, the index
+for search — but a server that needs neither is still spawned as plain `node` against the bundled
+runtime rather than through the launcher. The closed table lists only servers that genuinely use
+the grant, which is the smallest honest answer to "what did I just give Full Disk Access to".
 
 ## Order of work
 
