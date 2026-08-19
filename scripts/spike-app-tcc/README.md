@@ -9,8 +9,8 @@ escape: the app is its own responsible process and so is everything beneath it. 
 cheapest way to find out whether that is true before any of it is built.
 
 **Verdict: it does.** Full Disk Access and Automation both land on the app bundle and are both
-inherited by grandchildren, the grant survives re-signing, and it does not leak to processes
-outside the app. `responsibility_spawnattrs_setdisclaim` is not needed under the app-hosted
+inherited by grandchildren, the grant survives re-signing in place, and it does not leak to
+processes outside the app — nor to a copy of the same app at another path. `responsibility_spawnattrs_setdisclaim` is not needed under the app-hosted
 design. Details below.
 
 ```sh
@@ -122,6 +122,37 @@ certificate, not content hash.
 
 This is the "grant-survives-updates payoff" that `docs/distribution.md` says everything depends
 on. It holds.
+
+### The grant does NOT survive a move
+
+The counterpart to the above, and the more surprising half. The granted bundle
+copied to a different path with `ditto` — byte-identical, signature still valid
+— is denied:
+
+```
+signature intact after copy
+half1 app reads Envelope Index: NO — errno=Operation not permitted
+file lane rc=3
+```
+
+So a Full Disk Access entry binds to the **path**, and checks the signature
+there. Both results together:
+
+| Change | Grant survives? |
+| --- | --- |
+| Same path, rebuilt and re-signed (new content hash) | yes |
+| New path, identical signature | no |
+
+**This is a shipping constraint, not a curiosity.** Someone who grants Full Disk
+Access while the app is still in `~/Downloads` and then drags it to
+`/Applications` loses the grant silently — same app, same signature, dead
+permission, no error anywhere. So the install flow is **move to /Applications
+first, grant second**, and the app should decline to ask for Full Disk Access at
+all while it is running from somewhere else.
+
+It also means the several copies a build produces (`app/.build`, Xcode's own
+DerivedData, any scratch build) each need their own grant. Granting the wrong
+one looks identical to not granting at all.
 
 ### Incidental finding: the Envelope Index schema has drifted
 
