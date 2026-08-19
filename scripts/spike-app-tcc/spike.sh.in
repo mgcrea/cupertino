@@ -1,0 +1,76 @@
+#!/bin/sh
+# Runs INSIDE the spike bundle, spawned by the app's main executable.
+#
+# Everything here is a child of the .app, which is the entire point: the real
+# design never touches Mail from Swift, it spawns `node cli.js` and
+# `/usr/bin/osascript` and relies on them inheriting the app's identity.
+#
+# build.sh substitutes @NODE@ and @REPO@ — Finder launches an app with a bare
+# PATH, so a Homebrew node would not otherwise be found.
+
+set -u
+
+NODE="@NODE@"
+REPO="@REPO@"
+
+echo "child PATH=$PATH"
+echo "child pid=$$ ppid=$PPID"
+
+# --- Lane 1: the file lane, via a node child (reuses scripts/fda-probe.mjs) ---
+echo
+echo "--- file lane: node $REPO/scripts/fda-probe.mjs"
+if [ -x "$NODE" ]; then
+  "$NODE" "$REPO/scripts/fda-probe.mjs"
+  file_rc=$?
+  echo "file lane rc=$file_rc  (0 = readable, 3 = denied)"
+else
+  echo "file lane SKIPPED: no node at $NODE"
+  file_rc=127
+fi
+
+# --- Lane 2: the Apple Events lane, via /usr/bin/osascript ---
+# The liveness gate mirrors packages/mail/src/client/jxa/core.ts: never send an
+# Apple Event to an app that is not running, because that launches it.
+echo
+echo "--- apple events lane: /usr/bin/osascript -l JavaScript"
+/usr/bin/osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit');
+const running = (bundleId) =>
+  $.NSRunningApplication.runningApplicationsWithBundleIdentifier(bundleId).count > 0;
+
+const probe = (bundleId, name, fn) => {
+  if (!running(bundleId)) return { app: name, skipped: 'not running' };
+  try {
+    return { app: name, ok: true, sample: fn() };
+  } catch (err) {
+    return { app: name, ok: false, error: String(err) };
+  }
+};
+
+const out = [
+  probe('com.apple.mail', 'Mail', () => Application('Mail').accounts().length),
+  probe('com.apple.Notes', 'Notes', () => Application('Notes').accounts().length),
+];
+JSON.stringify(out, null, 2);
+JXA
+ae_rc=$?
+echo "apple events lane rc=$ae_rc"
+
+# --- Lane 3: the REAL code path, not a toy probe ---
+# scripts/probe-envelope-index.mjs is the phase-0 spike that produced
+# docs/envelope-index.md. Its output is redacted by design (DDL, counts,
+# timings only), so it is safe to run here. If this works as a child of the
+# app, the index lane works under the app-hosted design.
+echo
+echo "--- real code path: probe-envelope-index.mjs"
+if [ -x "$NODE" ]; then
+  "$NODE" "$REPO/scripts/probe-envelope-index.mjs" 2>&1 | head -30
+  echo "real probe rc=${?}"
+else
+  echo "SKIPPED: no node at $NODE"
+fi
+
+echo
+echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc"
+[ "$file_rc" -eq 0 ] || exit 3
+exit 0

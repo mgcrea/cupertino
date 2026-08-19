@@ -17,3 +17,6 @@ scripts/spike-disclaim/*.dSYM
 
 # per-developer Xcode state, not project config
 xcuserdata/
+
+# TCC spike build output
+scripts/spike-app-tcc/build/
