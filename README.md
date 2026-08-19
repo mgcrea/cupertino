@@ -115,6 +115,10 @@ A wrinkle worth knowing: `stat()` on a TCC-protected file **succeeds** — you c
 mtime of the index without Full Disk Access, and only reading it is denied. So "the file is there"
 is not evidence that the permission is granted; `access(R_OK)` is.
 
+This install flow is a stopgap. [docs/distribution.md](docs/distribution.md) covers where it
+goes next — a signed, notarized app so the grant survives updates and no one needs a compiler —
+and why the App Store cannot host any of it.
+
 ## Quick start
 
 ```bash
