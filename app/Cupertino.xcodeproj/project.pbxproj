@@ -6,11 +6,54 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		0BCE00013100000000000001 /* cupertino-bridge in Helpers */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* cupertino-bridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0BCE00013100000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09145EBD3035FC8A00D90D97 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 091399AB3035FE8D00800564;
+			remoteInfo = CupertinoBridge;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		091399AA3035FE8D00800564 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+		0BCE00013100000000000002 /* Embed Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "Contents/Helpers";
+			dstSubfolderSpec = 1;
+			files = (
+				0BCE00013100000000000001 /* cupertino-bridge in Helpers */,
+			);
+			name = "Embed Helper";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		091399AC3035FE8D00800564 /* CupertinoBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = CupertinoBridge; sourceTree = BUILT_PRODUCTS_DIR; };
 		09145EC53035FC8A00D90D97 /* Cupertino.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cupertino.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		091399AD3035FE8D00800564 /* CupertinoBridge */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CupertinoBridge;
+			sourceTree = "<group>";
+		};
 		09145EC73035FC8A00D90D97 /* Cupertino */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Cupertino;
@@ -19,6 +62,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		091399A93035FE8D00800564 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		09145EC23035FC8A00D90D97 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -33,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				09145EC73035FC8A00D90D97 /* Cupertino */,
+				091399AD3035FE8D00800564 /* CupertinoBridge */,
 				09145EC63035FC8A00D90D97 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +92,7 @@
 			isa = PBXGroup;
 			children = (
 				09145EC53035FC8A00D90D97 /* Cupertino.app */,
+				091399AC3035FE8D00800564 /* CupertinoBridge */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,6 +100,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		091399AB3035FE8D00800564 /* CupertinoBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 091399B03035FE8D00800564 /* Build configuration list for PBXNativeTarget "CupertinoBridge" */;
+			buildPhases = (
+				091399A83035FE8D00800564 /* Sources */,
+				091399A93035FE8D00800564 /* Frameworks */,
+				091399AA3035FE8D00800564 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				091399AD3035FE8D00800564 /* CupertinoBridge */,
+			);
+			name = CupertinoBridge;
+			packageProductDependencies = (
+			);
+			productName = CupertinoBridge;
+			productReference = 091399AC3035FE8D00800564 /* CupertinoBridge */;
+			productType = "com.apple.product-type.tool";
+		};
 		09145EC43035FC8A00D90D97 /* Cupertino */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 09145ED03035FC8A00D90D97 /* Build configuration list for PBXNativeTarget "Cupertino" */;
@@ -55,10 +129,12 @@
 				09145EC13035FC8A00D90D97 /* Sources */,
 				09145EC23035FC8A00D90D97 /* Frameworks */,
 				09145EC33035FC8A00D90D97 /* Resources */,
+				0BCE00013100000000000002 /* Embed Helper */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0BCE00013100000000000004 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				09145EC73035FC8A00D90D97 /* Cupertino */,
@@ -80,6 +156,9 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					091399AB3035FE8D00800564 = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					09145EC43035FC8A00D90D97 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -100,6 +179,7 @@
 			projectRoot = "";
 			targets = (
 				09145EC43035FC8A00D90D97 /* Cupertino */,
+				091399AB3035FE8D00800564 /* CupertinoBridge */,
 			);
 		};
 /* End PBXProject section */
@@ -115,6 +195,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		091399A83035FE8D00800564 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		09145EC13035FC8A00D90D97 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,7 +211,45 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		0BCE00013100000000000004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 091399AB3035FE8D00800564 /* CupertinoBridge */;
+			targetProxy = 0BCE00013100000000000003 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		091399B13035FE8D00800564 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 75QE9PRT3V;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.mgcrea.cupertino.bridge;
+				PRODUCT_NAME = "cupertino-bridge";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		091399B23035FE8D00800564 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 75QE9PRT3V;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.mgcrea.cupertino.bridge;
+				PRODUCT_NAME = "cupertino-bridge";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		09145ECE3035FC8A00D90D97 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -312,6 +437,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		091399B03035FE8D00800564 /* Build configuration list for PBXNativeTarget "CupertinoBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				091399B13035FE8D00800564 /* Debug */,
+				091399B23035FE8D00800564 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		09145EC03035FC8A00D90D97 /* Build configuration list for PBXProject "Cupertino" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
