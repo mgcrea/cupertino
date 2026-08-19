@@ -7,11 +7,12 @@ permissions once instead of once each.
 
 ## Packages
 
-| Package                                       | Status                                                     |
-| --------------------------------------------- | ---------------------------------------------------------- |
-| [`packages/core`](packages/core) — shared     | the osascript boundary, TCC-aware errors, read-only SQLite |
-| [`packages/mail`](packages/mail) — Apple Mail | implemented — search, read, attachments, and gated writes  |
-| Notes, Reminders, Messages                    | not started; Notes has finished [phase 0](docs/notes.md)   |
+| Package                                          | Status                                                     |
+| ------------------------------------------------ | ---------------------------------------------------------- |
+| [`packages/core`](packages/core) — shared        | the osascript boundary, TCC-aware errors, read-only SQLite |
+| [`packages/mail`](packages/mail) — Apple Mail    | implemented — search, read, attachments, and gated writes  |
+| [`packages/notes`](packages/notes) — Apple Notes | implemented — search, read, attachments, and gated writes  |
+| Reminders, Messages                              | not started                                                |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.
 They share one bundle and one Full Disk Access grant, which is the whole reason they live together

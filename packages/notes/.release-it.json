@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "notes-v${version}",
+    "commitMessage": "release(notes): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-notes v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

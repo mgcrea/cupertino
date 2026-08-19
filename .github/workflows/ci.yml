@@ -66,9 +66,11 @@ jobs:
       # test using an in-memory transport cannot.
       - name: MCP handshake 🤝
         run: |
-          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
-            | node packages/mail/dist/cli.js 2>/dev/null | tee /tmp/handshake.json
-          grep -q '"serverInfo"' /tmp/handshake.json
+          for server in mail notes; do
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+              | node "packages/$server/dist/cli.js" 2>/dev/null | tee "/tmp/handshake-$server.json"
+            grep -q '"serverInfo"' "/tmp/handshake-$server.json"
+          done
 
   publish-npm:
     name: Publish to npm

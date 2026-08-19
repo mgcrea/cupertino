@@ -364,9 +364,17 @@ if (fileFacts.readable) {
   );
   doc.findings.open = { ms: Math.round(performance.now() - started) };
 
+  // Order matters: sqlite_master's natural "type, name" ordering puts every
+  // CREATE INDEX before the tables it indexes, which makes the dump unreplayable.
+  // Emit tables first, then indexes, then triggers and views.
   ddlRows = db
-    .prepare("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name")
-    .all();
+    .prepare(
+      `SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL
+         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, name`,
+    )
+    .all()
+    // sqlite_sequence is created implicitly by AUTOINCREMENT and cannot be declared.
+    .filter((r) => r.name !== "sqlite_sequence");
   const ddl = ddlRows;
   doc.findings.schema = {
     objectCount: ddl.length,
@@ -966,9 +974,7 @@ if (WANT_WRITE) {
     console.error("\n--write needs the file lane. Grant Full Disk Access and re-run.");
     process.exit(3);
   }
-  // Repo root for now: there is no packages/notes to own it yet. Moves there
-  // when that package exists.
-  const dest = join(ROOT, "fixtures", "note-store.sql");
+  const dest = join(ROOT, "packages", "notes", "test", "fixtures", "note-store.sql");
   mkdirSync(dirname(dest), { recursive: true });
   const sql = [
     "-- Captured from a real NoteStore.sqlite by scripts/probe-notes.mjs --write.",
