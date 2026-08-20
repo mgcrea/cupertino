@@ -13,11 +13,20 @@ enum ActivityWindow {
 /// reading a scrolling log needs. LSUIElement only removes the Dock icon; an
 /// accessory app can still own windows.
 struct ActivityView: View {
+  @State private var pane: Pane = .log
   @State private var surface: String = ActivityView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
 
   static let allSurfaces = "all"
+
+  /// The log is a stream and the connections are a snapshot; they answer
+  /// different questions and share only a window. Two panes rather than two
+  /// stacked lists, so neither has to give up half the height.
+  enum Pane: Hashable {
+    case log
+    case connections
+  }
 
   private var entries: [LogStore.Entry] {
     LogStore.shared.entries.filter { entry in
@@ -29,13 +38,34 @@ struct ActivityView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      filters
+      header
       Divider()
-      log
+      switch pane {
+      case .log:
+        filters
+        Divider()
+        log
+      case .connections:
+        connections
+      }
       Divider()
       footer
     }
     .frame(minWidth: 560, minHeight: 320)
+  }
+
+  private var header: some View {
+    Picker("", selection: $pane) {
+      Text("Log").tag(Pane.log)
+      Text("Connections").tag(Pane.connections)
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .fixedSize()
+    .controlSize(.small)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var filters: some View {
@@ -96,6 +126,57 @@ struct ActivityView: View {
   }
 
   private var tailAnchor: String { "activity-tail" }
+
+  /// Every live session, one row each — the detail the menu popover deliberately
+  /// collapses.
+  ///
+  /// This is where the ungrouped list belongs: a real window that scrolls, not a
+  /// popover sized to whatever happens to be connected. `Sessions.grouped` is the
+  /// other half of that split.
+  private var connections: some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 2) {
+        ForEach(Sessions.shared.live) { session in
+          connectionRow(session)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .textSelection(.enabled)
+    .overlay(alignment: .center) {
+      if Sessions.shared.live.isEmpty {
+        // The same words as the popover: idle is the resting shape, not a fault.
+        Text("No client connected.")
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private func connectionRow(_ session: Sessions.Session) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(Self.clock.string(from: session.startedAt))
+        .foregroundStyle(.tertiary)
+      // Same width as the log's surface column, so the two panes line up.
+      Text(Surface.named(session.surface)?.displayName ?? session.surface)
+        .foregroundStyle(.secondary)
+        .frame(width: 68, alignment: .leading)
+      Text(session.client ?? "connecting…")
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      Text("pid \(session.pid)")
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+      Text("\(session.calls) call\(session.calls == 1 ? "" : "s")")
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .frame(width: 72, alignment: .trailing)
+    }
+    .font(.system(.caption, design: .monospaced))
+  }
+
 
   private func row(_ entry: LogStore.Entry) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {

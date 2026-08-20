@@ -335,10 +335,22 @@ struct ClientsSection: View {
 ///
 /// The popover could previously say a great deal about permissions and nothing
 /// at all about whether any of it was being used.
+///
+/// One row per client rather than per connection, and never more than `visible`
+/// of them. This section lives in a popover with no `ScrollView`, so its height
+/// has to be bounded by construction instead of by how many places someone has
+/// wired Cupertino into — `Sessions.grouped` has the arithmetic.
 struct ConnectionsSection: View {
   let model: StatusModel
+  @Environment(\.openWindow) private var openWindow
+
+  /// Grouping already bounds the list to the number of *kinds* of client
+  /// installed. The cap is the backstop that makes that bound provable.
+  private static let visible = 4
 
   var body: some View {
+    let groups = Sessions.shared.grouped
+
     VStack(alignment: .leading, spacing: 6) {
       Text("Connections").font(.subheadline).bold()
 
@@ -347,31 +359,59 @@ struct ConnectionsSection: View {
           .foregroundStyle(.red)
           .font(.caption)
           .fixedSize(horizontal: false, vertical: true)
-      } else if Sessions.shared.live.isEmpty {
+      } else if groups.isEmpty {
         // Not a fault state. The bridge starts a server when a client connects
         // and the process exits with it, so idle is the normal resting shape.
         Text("No client connected.")
           .font(.caption)
           .foregroundStyle(.secondary)
       } else {
-        ForEach(Sessions.shared.live) { session in
-          HStack(spacing: 6) {
-            Image(systemName: "circle.fill")
-              .font(.system(size: 6))
-              .foregroundStyle(.green)
-            Text(Surface.named(session.surface)?.displayName ?? session.surface)
-            Text(session.client ?? "connecting…")
-              .foregroundStyle(.secondary)
-            Spacer()
-            Text("\(session.calls) call\(session.calls == 1 ? "" : "s")")
-              .foregroundStyle(.secondary)
-              .monospacedDigit()
-          }
-          .font(.caption)
-          .help("pid \(session.pid), since \(session.startedAt.formatted(date: .omitted, time: .standard))")
+        ForEach(groups.prefix(Self.visible)) { group in
+          row(group)
+        }
+        if groups.count > Self.visible {
+          // The overflow is not lost, it is one click away — and the window it
+          // opens lists every individual session, not just the hidden groups.
+          Button("\(groups.count - Self.visible) more…") { openActivity() }
+            .buttonStyle(.link)
+            .font(.caption)
         }
       }
     }
+  }
+
+  private func row(_ group: Sessions.ClientGroup) -> some View {
+    HStack(spacing: 6) {
+      Image(systemName: "circle.fill")
+        .font(.system(size: 6))
+        .foregroundStyle(.green)
+      // Free-form, straight off the peer's handshake. This app does not choose
+      // the string, so it does not let it set the popover's width either.
+      Text(group.displayName)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      if group.sessions > 1 {
+        Text("×\(group.sessions)")
+          .foregroundStyle(.secondary)
+          .monospacedDigit()
+      }
+      Text(group.surfaces.joined(separator: ", "))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 6)
+      // Last to give way: the count is the part that says anything is happening.
+      Text("\(group.calls) call\(group.calls == 1 ? "" : "s")")
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .layoutPriority(1)
+    }
+    .font(.caption)
+  }
+
+  private func openActivity() {
+    openWindow(id: ActivityWindow.id)
+    // An accessory app does not come forward on its own.
+    NSApp.activate(ignoringOtherApps: true)
   }
 }
 
