@@ -114,6 +114,43 @@ export const fileFacts = (path) => ({
   shmSizeBytes: sizeOf(`${path}-shm`),
 });
 
+// ─── redaction ───────────────────────────────────────────────────────────────
+// These live here rather than in the probes that use them because redaction is
+// the safety property of this whole exercise: a probe report is the kind of
+// thing that gets pasted into an issue. One tested implementation beats a
+// careful one per file.
+
+/**
+ * A URL reduced to its shape.
+ *
+ * The host is DROPPED, not shortened — it is the most identifying part, and a
+ * single URL can name a person, an employer and a medical condition. What
+ * survives is scheme, host length and path depth, which is all a schema
+ * discussion ever needs.
+ */
+export const maskUrl = (u) => {
+  const s = String(u ?? "");
+  const m = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i.exec(s);
+  if (!m) return `<${s.length} chars, no scheme>`;
+  const segments = m[3].split("/").filter(Boolean).length;
+  return `${m[1]}://<host:${m[2].length}>/${segments === 0 ? "" : `<${segments} segments>`}`;
+};
+
+/**
+ * An identifier stripped of anything that names a person.
+ *
+ * A Messages chat guid is `iMessage;-;+15551234567`, so the "shape" of an id is
+ * literally a phone number with punctuation around it. Emails and UUIDs go the
+ * same way, and any digit that survives the earlier passes is flattened to `0`
+ * so a residual account number cannot leak through.
+ */
+export const maskIdentity = (s) =>
+  String(s)
+    .replace(/[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27}/g, "<uuid>")
+    .replace(/[\w.+-]+@[\w.-]+/g, "<email>")
+    .replace(/\+?\d[\d\s().-]{5,}\d/g, "<number>")
+    .replace(/\d/g, "0");
+
 export const macosVersion = () =>
   safe(
     () => execFileSync("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" }).trim(),
@@ -217,6 +254,18 @@ export const appleEventsLane = (bundleId, appName, allowLaunch) => {
  */
 export const toFileUri = (path, query) =>
   `file:${encodeURI(path).replaceAll("?", "%3f").replaceAll("#", "%23")}?${query}`;
+
+/**
+ * Escape LIKE wildcards so a value containing `%` or `_` searches literally.
+ *
+ * Same function as `packages/core/src/sqlite.ts`, kept in step deliberately.
+ * Every `LIKE ? ESCAPE '\\'` in a probe must pass its needle through this —
+ * declaring the ESCAPE clause and then handing over a raw needle looks careful
+ * and is not: `--term=100%` silently becomes a wildcard and inflates the hit
+ * count, which is a number these probes exist to report.
+ */
+export const escapeLike = (value) =>
+  String(value).replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 
 /**
  * The ro → immutable ladder from `packages/core/src/sqlite.ts`, and the reason

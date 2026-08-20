@@ -62,10 +62,12 @@ import {
   appleEventsLane,
   detectEpoch,
   dumpSchema,
+  escapeLike,
   fileFacts,
   findIdBridge,
   listable,
   macosVersion,
+  maskIdentity,
   maxNumericAsText,
   openStore,
   parseArgs,
@@ -85,18 +87,6 @@ const TERM = args.term;
 const MESSAGES_DIR = join(homedir(), "Library", "Messages");
 const CHAT_DB = join(MESSAGES_DIR, "chat.db");
 const ATTACHMENTS_DIR = join(MESSAGES_DIR, "Attachments");
-
-/**
- * Anything derived from a chat or handle identifier is redacted before it can
- * reach the report. A chat guid looks like `iMessage;-;+15551234567`, so the
- * "shape" of an id is exactly a phone number with punctuation around it.
- */
-const maskIdentity = (s) =>
-  String(s)
-    .replace(/[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27}/g, "<uuid>")
-    .replace(/[\w.+-]+@[\w.-]+/g, "<email>")
-    .replace(/\+?\d[\d\s().-]{5,}\d/g, "<number>")
-    .replace(/\d/g, "0");
 
 const doc = {
   probeVersion: 1,
@@ -344,7 +334,10 @@ if (opened?.db) {
     if (!hasTable("message")) return { tested: false, reason: "no message table" };
     const fts = tables.filter((t) => /fts|search/i.test(t));
     const started = performance.now();
-    const hit = one(`SELECT COUNT(*) AS c FROM message WHERE text LIKE ? ESCAPE '\\'`, `%${TERM}%`);
+    const hit = one(
+      `SELECT COUNT(*) AS c FROM message WHERE text LIKE ? ESCAPE '\\'`,
+      `%${escapeLike(TERM)}%`,
+    );
     const likeMs = Math.round(performance.now() - started);
     // Indexes matter more here than anywhere else: this table is the big one.
     const indexes = all(

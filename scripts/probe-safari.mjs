@@ -63,10 +63,12 @@ import {
   appleEventsLane,
   detectEpoch,
   dumpSchema,
+  escapeLike,
   fileFacts,
   findIdBridge,
   listable,
   macosVersion,
+  maskUrl,
   openStore,
   parseArgs,
   safe,
@@ -87,19 +89,6 @@ const CLOUD_TABS = join(SAFARI_DIR, "CloudTabs.db");
 const DOWNLOADS = join(SAFARI_DIR, "Downloads.plist");
 
 const tilde = (p) => p.replace(homedir(), "~");
-
-/**
- * A URL reduced to its shape. Host is dropped entirely — it is the most
- * identifying part — leaving only scheme, host length and path depth, which is
- * all a schema discussion ever needs.
- */
-const maskUrl = (u) => {
-  const s = String(u ?? "");
-  const m = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i.exec(s);
-  if (!m) return `<${s.length} chars, no scheme>`;
-  const segments = m[3].split("/").filter(Boolean).length;
-  return `${m[1]}://<host:${m[2].length}>/${segments === 0 ? "" : `<${segments} segments>`}`;
-};
 
 const doc = {
   probeVersion: 1,
@@ -395,13 +384,16 @@ if (opened?.db) {
     const urlStart = performance.now();
     const urlHits = one(
       "SELECT COUNT(*) AS c FROM history_items WHERE url LIKE ? ESCAPE '\\'",
-      `%${TERM}%`,
+      `%${escapeLike(TERM)}%`,
     );
     const urlMs = Math.round(performance.now() - urlStart);
 
     const titleStart = performance.now();
     const titleHits = hasTable("history_visits")
-      ? one("SELECT COUNT(*) AS c FROM history_visits WHERE title LIKE ? ESCAPE '\\'", `%${TERM}%`)
+      ? one(
+          "SELECT COUNT(*) AS c FROM history_visits WHERE title LIKE ? ESCAPE '\\'",
+          `%${escapeLike(TERM)}%`,
+        )
       : null;
     const titleMs = Math.round(performance.now() - titleStart);
 
@@ -443,7 +435,7 @@ if (opened?.db) {
       const trimmed = u.split(/[?#]/)[0];
       const near = one(
         "SELECT COUNT(*) AS c FROM history_items WHERE url LIKE ? ESCAPE '\\'",
-        `${trimmed.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`,
+        `${escapeLike(trimmed)}%`,
       );
       if (near?.c) prefixOnly += 1;
     }
