@@ -215,23 +215,35 @@ returns `Operation not permitted` while `test -e` succeeds, the same split `src/
 documents for Mail. Which is the point: nothing about their internals can be measured until Full
 Disk Access is granted to something.
 
-| Surface   | Store                                                   | Probe  | AppleScript lane             |
-| --------- | ------------------------------------------------------- | ------ | ---------------------------- |
-| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`            | EPERM  | full — implemented           |
-| Notes     | `~/Library/Group Containers/group.com.apple.notes/`     | EPERM  | usable alone below ~5k notes |
-| Reminders | `~/Library/Group Containers/group.com.apple.reminders/` | EPERM  | workable                     |
-| Messages  | `~/Library/Messages/`                                   | EPERM  | send only, no reads          |
-| Contacts  | `~/Library/Application Support/AddressBook/`            | EPERM  | limited                      |
-| Calendar  | `~/Library/Calendars`                                   | absent | slow                         |
+| Surface   | Store                                                   | Probe | AppleScript lane             |
+| --------- | ------------------------------------------------------- | ----- | ---------------------------- |
+| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`            | EPERM | full — implemented           |
+| Notes     | `~/Library/Group Containers/group.com.apple.notes/`     | EPERM | usable alone below ~5k notes |
+| Reminders | `~/Library/Group Containers/group.com.apple.reminders/` | EPERM | workable                     |
+| Messages  | `~/Library/Messages/chat.db` — **probed**               | EPERM | none — measured, see below   |
+| Contacts  | `~/Library/Application Support/AddressBook/`            | EPERM | limited                      |
+| Calendar  | `~/Library/Group Containers/group.com.apple.calendar`   | EPERM | unmeasured                   |
 
 Two paths that are commonly cited and wrong on this machine: **`~/Library/Reminders` does not
-exist** — Reminders is under Group Containers — and neither does `~/Library/Calendars`, so Calendar
-probably needs EventKit rather than a file lane. Everything about the schemas behind these stores
-is unverified. Notes is the exception — it has since been probed, and its bodies turned out
-**not** to be the gzipped protobuf they are reputed to be.
+exist** — Reminders is under Group Containers — and neither does `~/Library/Calendars`.
+
+**An earlier version of this document drew the wrong conclusion from that second one**, and the
+correction is worth stating rather than quietly fixing. It read the absence of `~/Library/Calendars`
+as evidence that Calendar "probably needs EventKit rather than a file lane". But
+`~/Library/Group Containers/group.com.apple.calendar` **exists and returns `Operation not
+permitted`** — the same EPERM signature every other row here carries, and the exact
+absent-vs-unreadable split `packages/core/src/fs.ts` was written to keep apart. The premise was
+right; only one of the two candidate paths had been checked. `group.com.apple.contacts` exists too.
+Calendar most likely has a file lane, and the EventKit departure — which would put the first data
+framework into `app/`, add a TCC grant, and fork the two-lane design — is unsupported until
+`scripts/probe-calendar.mjs` runs with the grant.
 
 Messages is the surface where Full Disk Access is not optional: there is no AppleScript read path
-at all, so without the file lane there is no server.
+at all, so without the file lane there is no server. **This is now measured rather than read off the
+dictionary** — see [messages.md](messages.md). Every read attempt failed, and Messages answers
+"Application isn't running" to Apple Events even while it is running. The consequence is that "try
+before you grant" below cannot be honoured for this surface: every other server degrades without the
+grant, Messages simply does not exist without it.
 
 Each new surface starts with a phase-0 probe in the style of `scripts/probe-envelope-index.mjs` →
 `docs/envelope-index.md`. That is the only way to learn one of these schemas, and writing the probe
@@ -257,7 +269,7 @@ Two lanes is the default shape, not Mail's special case:
 | -------- | ----------------------------- | -------------------------------- |
 | Mail     | required — search is 74 s     | accounts, mailboxes, all writes  |
 | Notes    | attachments, then scale       | **fully usable** below ~5k notes |
-| Messages | required — no read API exists | none possible                    |
+| Messages | required — measured, no reads | none — confirmed, not inferred   |
 
 Three reasons this is the default rather than a per-surface optimisation:
 
