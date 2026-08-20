@@ -50,12 +50,12 @@ Point your MCP host at the built CLIs — for Claude Code, a `.mcp.json` beside 
 
 Writes are off unless you ask for them — see [Configuration](#configuration).
 
-Running through the menu bar app instead routes both servers through the bridge, so Full Disk
+Running through the menu bar app instead routes every server through the bridge, so Full Disk
 Access is granted to Cupertino rather than to whichever editor spawned the server:
 
 ```bash
 make run      # build Cupertino.app, point it at packages/*/dist, launch it
-make smoke    # handshake both servers through the bridge
+make smoke    # handshake every server through the bridge
 ```
 
 The repo's checked-in [`.mcp.json`](.mcp.json) is wired for that path. `make` on its own lists
@@ -68,7 +68,7 @@ app does.
 ## Permissions
 
 Two separate macOS grants, and they land on **whatever process launched the server** — your
-editor, your terminal, or Cupertino — never on Mail or Notes themselves.
+editor, your terminal, or Cupertino — never on Mail, Notes or Reminders themselves.
 
 | Grant                                     | Needed for                                             |
 | ----------------------------------------- | ------------------------------------------------------ |
@@ -80,10 +80,11 @@ Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
 
 **What works without Full Disk Access:**
 
-| Surface | Without the grant                                                                |
-| ------- | -------------------------------------------------------------------------------- |
-| Mail    | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s |
-| Notes   | **fully usable** below roughly 5k notes; only attachment bytes need the grant    |
+| Surface   | Without the grant                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------ |
+| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                       |
+| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                          |
+| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it |
 
 Tools that need the index don't disappear when it's missing — the tool list is a pure function of
 `allowWrites` and nothing else, because MCP clients cache it. They return a structured `degraded`
@@ -110,7 +111,14 @@ merely refused.
 | `list_notes` `search_notes` `get_note` `list_attachments` | `create_note` `update_note` `move_note` `delete_notes` `save_attachment` |
 | `list_accounts` `list_folders` `diagnostics`              |                                                                          |
 
-All names are prefixed `apple_mail_` / `apple_notes_`.
+### Reminders
+
+| Always available                                                | Write-gated                                                                                  |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `list_reminders` `search_reminders` `get_reminder` `list_lists` | `create_reminder` `update_reminder` `complete_reminders` `move_reminders` `delete_reminders` |
+| `list_accounts` `diagnostics`                                   |                                                                                              |
+
+All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_`.
 
 ## Configuration
 
@@ -165,7 +173,7 @@ The Swift half is `xcodebuild`, named by the Makefile rather than wrapped by it:
 ```bash
 make app            # build Cupertino.app (Debug)
 make run            # build, point at packages/*/dist, launch
-make smoke          # handshake both servers through the bridge
+make smoke          # handshake every server through the bridge
 make stop           # quit and remove the socket
 ```
 
