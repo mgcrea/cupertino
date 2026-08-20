@@ -188,10 +188,13 @@ cannot host any of this, so the question does not get re-opened.
 |                                                  |                                               |
 | ------------------------------------------------ | --------------------------------------------- |
 | [docs/distribution.md](docs/distribution.md)     | how this ships, and why not the App Store     |
+| [docs/surfaces.md](docs/surfaces.md)             | which surfaces, and what each one costs       |
 | [docs/licensing.md](docs/licensing.md)           | what is open, what is sold, what buys trust   |
 | [docs/notes.md](docs/notes.md)                   | Apple Notes phase-0 measurements              |
 | [docs/reminders.md](docs/reminders.md)           | Apple Reminders phase-0 measurements          |
 | [docs/messages.md](docs/messages.md)             | Apple Messages phase-0 measurements           |
+| [docs/calendar.md](docs/calendar.md)             | Apple Calendar phase-0 measurements           |
+| [docs/safari.md](docs/safari.md)                 | Safari phase-0 measurements                   |
 | [docs/envelope-index.md](docs/envelope-index.md) | Mail's observed `Envelope Index` schema       |
 | [docs/verify.md](docs/verify.md)                 | checking the Mail server against a real index |
 

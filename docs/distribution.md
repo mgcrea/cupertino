@@ -218,14 +218,15 @@ returns `Operation not permitted` while `test -e` succeeds, the same split `src/
 documents for Mail. Which is the point: nothing about their internals can be measured until Full
 Disk Access is granted to something.
 
-| Surface   | Store                                                   | Probe | AppleScript lane             |
-| --------- | ------------------------------------------------------- | ----- | ---------------------------- |
-| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`            | EPERM | full — implemented           |
-| Notes     | `~/Library/Group Containers/group.com.apple.notes/`     | EPERM | usable alone below ~5k notes |
-| Reminders | `~/Library/Group Containers/group.com.apple.reminders/` | EPERM | workable                     |
-| Messages  | `~/Library/Messages/chat.db` — **probed**               | EPERM | none — measured, see below   |
-| Contacts  | `~/Library/Application Support/AddressBook/`            | EPERM | limited                      |
-| Calendar  | `~/Library/Group Containers/group.com.apple.calendar`   | EPERM | unmeasured                   |
+| Surface   | Store                                                       | Probe | AppleScript lane                 |
+| --------- | ----------------------------------------------------------- | ----- | -------------------------------- |
+| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`                | EPERM | full — implemented               |
+| Notes     | `~/Library/Group Containers/group.com.apple.notes/`         | EPERM | usable alone below ~5k notes     |
+| Reminders | `~/Library/Group Containers/group.com.apple.reminders/`     | EPERM | workable                         |
+| Messages  | `~/Library/Messages/chat.db` — **probed**                   | EPERM | none — measured, see below       |
+| Contacts  | `~/Library/Application Support/AddressBook/`                | EPERM | limited                          |
+| Safari    | `~/Library/Safari/History.db` — **probed**                  | EPERM | live tabs only, no history       |
+| Calendar  | `…/group.com.apple.calendar/Calendar.sqlitedb` — **probed** | EPERM | too slow — 3.4 s at 1,349 events |
 
 Two paths that are commonly cited and wrong on this machine: **`~/Library/Reminders` does not
 exist** — Reminders is under Group Containers — and neither does `~/Library/Calendars`.
@@ -237,9 +238,20 @@ as evidence that Calendar "probably needs EventKit rather than a file lane". But
 permitted`** — the same EPERM signature every other row here carries, and the exact
 absent-vs-unreadable split `packages/core/src/fs.ts` was written to keep apart. The premise was
 right; only one of the two candidate paths had been checked. `group.com.apple.contacts` exists too.
-Calendar most likely has a file lane, and the EventKit departure — which would put the first data
-framework into `apps/apple/`, add a TCC grant, and fork the two-lane design — is unsupported until
-`scripts/probe-calendar.mjs` runs with the grant.
+**Since measured, and settled** — see [calendar.md](calendar.md). `Calendar.sqlitedb` is there,
+4.9 MB, opening read-only in about a millisecond, with `CalendarItem.UUID` holding the Apple Events
+`uid` exactly (198 of 198 sampled). Calendar does not need EventKit, so `apps/apple/` stays a pure
+broker.
+
+The table's unsourced "slow" was measured too, and it holds badly: a ±90-day range query takes
+**3.4 s over 1,349 events**, `whose` is worse and unstable, and every per-property bulk fetch costs
+~2 s whichever property it is. Calendar is the first surface where the Apple Events lane cannot carry
+the product — it needs the file lane for SPEED, not capability, which is the reverse of Reminders.
+
+Safari has since been probed too — see [safari.md](safari.md). It is the odd one out: its two lanes
+see almost DISJOINT things, so neither is a fallback for the other, and it needs a third permission
+state (Safari's "Allow JavaScript from Apple Events" toggle) that `Permissions.swift` does not
+model.
 
 Messages is the surface where Full Disk Access is not optional: there is no AppleScript read path
 at all, so without the file lane there is no server. **This is now measured rather than read off the
@@ -264,32 +276,63 @@ The pure capability gain — the thing Apple Events cannot do at any speed — i
 the dictionary exposes `URL` and `content identifier` but no filesystem path, so contents require
 reading `Accounts/<uuid>/Media/`.
 
-### Every surface gets a fallback
+### Lane policy: the file lane reads, Apple Events writes
 
-Two lanes is the default shape, not Mail's special case:
+**Revised after probing Reminders, Messages, Calendar and Safari.** The original policy made two
+lanes the default shape everywhere and kept the Apple Events lane as a first-class _read_ path. The
+measurements do not support that. What they support is below.
 
-| Surface  | File lane                     | Apple Events fallback            |
-| -------- | ----------------------------- | -------------------------------- |
-| Mail     | required — search is 74 s     | accounts, mailboxes, all writes  |
-| Notes    | attachments, then scale       | **fully usable** below ~5k notes |
-| Messages | required — measured, no reads | none — confirmed, not inferred   |
+| Surface   | Apple Events read      | Per item | File lane          | AE reads viable? |
+| --------- | ---------------------- | -------- | ------------------ | ---------------- |
+| Mail      | 74 s search            | —        | index, required    | no               |
+| Calendar  | 3,355 ms / 1,349       | ~2.5 ms  | 1 ms to open       | no               |
+| Messages  | none exists            | —        | only door          | impossible       |
+| Safari    | disjoint, not slower   | —        | the past only      | n/a — see below  |
+| Notes     | 97 ms / 921            | 0.105 ms | attachments, scale | **yes**          |
+| Reminders | dictionary is complete | —        | tags, attachments  | **yes**          |
 
-Three reasons this is the default rather than a per-surface optimisation:
+Apple Events is a viable read path on two surfaces out of six. So:
 
-- **Try before you grant.** Someone can install the app and use it before deciding to hand over
-  whole-disk access. That is the honest way to ask for a permission this large, and it means the
-  Apple Events lane has to stay a first-class path rather than become dead code once the file lane
-  lands.
-- **Consistency.** One shape — file preferred, Apple Events fallback, diagnostics naming which is
-  live — lives once in `packages/core` instead of being re-litigated per surface.
-- **Scale.** Every unprivileged lane is per-item over Apple Events, so all of them degrade the same
-  way on a large library. Messages is the reminder that some surfaces have no fallback at all.
+- **Reads go through the file lane.** For a new surface, do not build an Apple Events read lane at
+  all. Messages, Calendar and Safari get file-lane reads and nothing else.
+- **Writes go through Apple Events, always.** Not a preference: `PRAGMA query_only` is set because
+  the app owns the store, holds it open and reconciles it against a server, so writing to it corrupts
+  sync state. Every write verb on every surface is an Apple Event.
+- **Live state goes through Apple Events.** Safari is the sharp case — only **60.7%** of open tabs
+  resolve to a history row, so the lanes genuinely see different things and "what is open right now"
+  has no file-lane answer at any speed.
+- **Keep the Notes and Reminders read lanes.** They are already written, and they are the drift
+  insurance. The file lane is reverse-engineered and unversioned — `SchemaDriftError` exists because
+  it is expected to break. A scripting dictionary is a published contract that survives a column
+  move, so when a macOS release reshuffles a store, one surface degrades instead of dying.
 
-**What this does not change:** the permission still has to buy something. Notes reads
-`Accounts/<uuid>/Media/` for attachments and, when a library is large enough to need it, the index
-for search — but a server that needs neither is still spawned as plain `node` against the bundled
-runtime rather than through the launcher. The closed table lists only servers that genuinely use
-the grant, which is the smallest honest answer to "what did I just give Full Disk Access to".
+Consistency still holds, in a narrower form: one shape — file lane preferred, Apple Events for writes
+and live state, diagnostics naming which is live — lives once in `packages/core` rather than being
+re-litigated per surface.
+
+#### Retiring "try before you grant"
+
+The original policy rested on it: someone could install the app and use it before handing over
+whole-disk access, which is what made the Apple Events lane a first-class path rather than dead code
+once the file lane landed.
+
+**The measurements retired it, and it should stop being claimed.** It held for Notes (97 ms) and
+holds for Reminders. It never held for Messages, which has no read path at all. And it does not hold
+for Mail or Calendar: a 74-second search and a 3.4-second range query are not a trial, they are a
+broken product that happens to return the right answer. A promise three of six surfaces cannot keep
+is worse than no promise.
+
+What replaces it is narrower and true: **a read-only surface needs no Automation grant at all.**
+`allowWrites` is off by default, so someone who never enables writes gets zero Automation prompts for
+Messages, Calendar and Safari — just the one Full Disk Access grant the bundle already shares. That
+is a better permission story than the one being retired, and the strongest argument for file-first.
+
+The cost, stated plainly: **Full Disk Access becomes load-bearing for everything.** Nothing works
+before the largest grant. That was already true for Messages; this extends it to the rest.
+
+**What this does not change:** the permission still has to buy something. The closed table in
+`Surfaces.swift` lists only servers that genuinely use the grant, which is the smallest honest answer
+to "what did I just give Full Disk Access to".
 
 ## Order of work
 
