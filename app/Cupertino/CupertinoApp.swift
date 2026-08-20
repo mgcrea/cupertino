@@ -5,6 +5,11 @@ import SwiftUI
 /// item. `MenuBarExtra` content is built lazily, so this cannot live there.
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
+    let location = InstallLocation.current
+    hostLog(
+      "cupertino", location.grantWillPersist ? .info : .error,
+      "running from \(location.url.path)"
+        + (location.grantWillPersist ? "" : " — a Full Disk Access grant made here will not survive a move"))
     do {
       try ServerHost.shared.start()
     } catch {
@@ -38,13 +43,30 @@ struct CupertinoApp: App {
 final class StatusModel {
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
+  private(set) var location: InstallLocation = .current
+  private(set) var clients: [ClientWiring.Client: ClientWiring.Status] = [:]
+  private(set) var lastError: String?
 
   init() { refresh() }
 
   func refresh() {
+    location = .current
     diskAccess = Permissions.diskAccess()
     automation = Dictionary(
       uniqueKeysWithValues: Surface.all.map { ($0.id, Permissions.automation(for: $0.bundleID)) })
+    clients = Dictionary(
+      uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
+  }
+
+  func configure(_ client: ClientWiring.Client) {
+    do {
+      try ClientWiring.configure(client)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+      hostLog("cupertino", .error, error.localizedDescription)
+    }
+    refresh()
   }
 
   /// Off the main thread: the prompt blocks until answered.
@@ -63,6 +85,20 @@ struct StatusMenu: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Cupertino").font(.headline)
 
+      // A grant made from the wrong place is worse than no grant: it appears to
+      // work until the app moves, then fails with no error anywhere.
+      if let warning = model.location.warning {
+        VStack(alignment: .leading, spacing: 6) {
+          Label(warning, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+          Button("Reveal in Finder") { model.location.revealInFinder() }
+            .controlSize(.small)
+        }
+        Divider()
+      }
+
       VStack(alignment: .leading, spacing: 6) {
         HStack {
           Label {
@@ -72,9 +108,18 @@ struct StatusMenu: View {
               .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
           }
           Spacer()
+          // Offered only where it will stick. A developer build runs from a
+          // build directory, so DEBUG keeps the button and tolerates the churn.
           if model.diskAccess != .granted {
-            Button("Grant…") { Permissions.openDiskAccessSettings() }
-              .controlSize(.small)
+            #if DEBUG
+              Button("Grant…") { Permissions.openDiskAccessSettings() }
+                .controlSize(.small)
+            #else
+              if model.location.grantWillPersist {
+                Button("Grant…") { Permissions.openDiskAccessSettings() }
+                  .controlSize(.small)
+              }
+            #endif
           }
         }
         // One row, not one per surface: the grant is indivisible, and showing
@@ -114,6 +159,15 @@ struct StatusMenu: View {
           }
           WritesToggle(surface: surface)
         }
+      }
+
+      Divider()
+
+      ClientsSection(model: model)
+
+      if let error = model.lastError {
+        Text(error).font(.caption).foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       Divider()
@@ -190,5 +244,57 @@ struct WritesToggle: View {
       .toggleStyle(.checkbox)
       .font(.caption)
       .padding(.leading, 20)
+  }
+}
+
+
+/// One-click wiring into the MCP clients on this Mac.
+struct ClientsSection: View {
+  let model: StatusModel
+  @State private var copied = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("MCP clients").font(.subheadline).bold()
+
+      ForEach(ClientWiring.clients) { client in
+        if let status = model.clients[client], status != .notInstalled {
+          HStack {
+            Label {
+              Text(client.displayName)
+            } icon: {
+              Image(systemName: status == .configured ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(status == .configured ? .green : .secondary)
+            }
+            Spacer()
+            switch status {
+            case .configured:
+              Button("Reveal") { ClientWiring.reveal(client) }.controlSize(.small)
+            case .stale:
+              // Points at a previous build — the common case after moving the app.
+              Button("Update") { model.configure(client) }.controlSize(.small)
+            case .unreadable(let why):
+              Text(why).font(.caption).foregroundStyle(.red)
+            default:
+              Button("Configure") { model.configure(client) }.controlSize(.small)
+            }
+          }
+        }
+      }
+
+      // Not edited automatically on purpose: ~/.claude.json is large, holds API
+      // credentials, and running sessions write to it concurrently, so a
+      // read-modify-write from here could drop someone else's change.
+      HStack {
+        Label("Claude Code", systemImage: "terminal")
+        Spacer()
+        Button(copied ? "Copied" : "Copy command") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(ClientWiring.claudeCodeCommands, forType: .string)
+          copied = true
+        }
+        .controlSize(.small)
+      }
+    }
   }
 }
