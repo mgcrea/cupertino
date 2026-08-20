@@ -29,7 +29,14 @@ export {
   toPriorityValue,
   type PriorityName,
 } from "./client/priority.js";
-export { decodeRef, encodeRef, REF_VERSION, uuidOf, type ReminderRef } from "./client/ref.js";
+export {
+  decodeRef,
+  encodeRef,
+  REF_VERSION,
+  refFromUuid,
+  uuidOf,
+  type ReminderRef,
+} from "./client/ref.js";
 export {
   AppleRemindersClient,
   type LaneStatus,
@@ -40,6 +47,17 @@ export {
   type ReminderList,
   type ReminderSummary,
 } from "./client/reminders.js";
+export {
+  introspect,
+  openStore,
+  ReminderStore,
+  type IndexAttachment,
+  type IndexEnrichment,
+  type IndexList,
+  type IndexReminder,
+  type ReminderQuery,
+  type StoreCapabilities,
+} from "./client/store.js";
 export { loadConfig, type Config } from "./config.js";
 export { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 export { registerTools, type ToolContext } from "./tools/index.js";

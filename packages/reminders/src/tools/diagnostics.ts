@@ -84,13 +84,21 @@ export const registerDiagnosticsTools = (
           },
           caveats: [
             "Reminders' scripting dictionary covers the core model read-write, so this server " +
-              "is fully usable with Automation alone — unlike Mail, where search without Full " +
-              "Disk Access takes over a minute.",
-            "What the dictionary has no class for at all: tags, the URL field, recurrence " +
-              "rules, location alerts and attached images. Those need the index lane.",
+              "works with Automation alone. But a bulk read costs about 700ms PER PROPERTY on " +
+              "that bridge — roughly nine seconds for a full listing, whatever the library " +
+              "size — so the index lane carries listing and search whenever it is available.",
+            "Without the index, `dueAllDay` is a guess. Reminders populates BOTH `due date` " +
+              "and `allday due date` for every dated reminder, so only the store's ZALLDAY " +
+              "column can actually answer it. Each result says which source it used.",
+            "Subtasks need the index. The scripting dictionary types a reminder's container " +
+              'as "list or reminder", but calling container() on a reminder throws every ' +
+              "time, so parentage is unreachable over Apple Events.",
+            "Also index-only: attachments, alarms, recurrence and location alerts. There is " +
+              "no URL field in this store despite the folklore — it was looked for and is " +
+              "not there.",
             "Moving a reminder between lists is a copy-and-delete, because the scripting " +
               "dictionary makes a reminder's list read-only. Moved reminders get a new ref.",
-            "Results are cached for " +
+            "Apple Events results are cached for " +
               `${client.config.searchCacheTtlMs}ms. Checking for changes costs about as much ` +
               "as re-reading everything, so there is no cheaper invalidation to be had.",
           ],
