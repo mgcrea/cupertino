@@ -253,8 +253,10 @@ export class ReminderStore {
     if (!this.caps.reminderColumns.has("ZPARENTREMINDER")) return [];
     const rows = this.db
       .prepare(
+        // Same tiebreaker as search(): subtasks are usually all undated, so
+        // without the title they come back in whatever order the table gives.
         `${this.#baseSelect()} WHERE ${this.#live()} AND r."ZPARENTREMINDER" = ?
-         ORDER BY (r."ZDUEDATE" IS NULL), r."ZDUEDATE" ASC`,
+         ORDER BY (r."ZDUEDATE" IS NULL), r."ZDUEDATE" ASC, r."ZTITLE" ASC`,
       )
       .all(parentPk) as Record<string, unknown>[];
     return rows.map(this.#rowToReminder);
