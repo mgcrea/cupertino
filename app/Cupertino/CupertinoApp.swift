@@ -38,7 +38,6 @@ struct CupertinoApp: App {
 final class StatusModel {
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
-  private(set) var allowWrites: [String: Bool] = [:]
 
   init() { refresh() }
 
@@ -46,8 +45,6 @@ final class StatusModel {
     diskAccess = Permissions.diskAccess()
     automation = Dictionary(
       uniqueKeysWithValues: Surface.all.map { ($0.id, Permissions.automation(for: $0.bundleID)) })
-    allowWrites = Dictionary(
-      uniqueKeysWithValues: Surface.all.map { ($0.id, Settings.allowWrites($0)) })
   }
 
   /// Off the main thread: the prompt blocks until answered.
@@ -56,11 +53,6 @@ final class StatusModel {
       let result = Permissions.requestAutomation(for: surface.bundleID)
       await MainActor.run { self.automation[surface.id] = result }
     }
-  }
-
-  func setAllowWrites(_ surface: Surface, _ value: Bool) {
-    Settings.setAllowWrites(surface, value)
-    allowWrites[surface.id] = value
   }
 }
 
@@ -120,15 +112,7 @@ struct StatusMenu: View {
                 .foregroundStyle(.secondary)
             }
           }
-          // Writes are withheld by not registering the tools at all
-          // (packages/*/src/tools/index.ts), so this toggle decides which tools
-          // the assistant can even see — not merely whether they are allowed.
-          Toggle("Allow writes", isOn: Binding(
-            get: { model.allowWrites[surface.id] ?? false },
-            set: { model.setAllowWrites(surface, $0) }))
-            .toggleStyle(.checkbox)
-            .font(.caption)
-            .padding(.leading, 20)
+          WritesToggle(surface: surface)
         }
       }
 
@@ -182,5 +166,29 @@ struct StatusMenu: View {
     case .appNotRunning: "not running"
     case .failed(let code): "error \(code)"
     }
+  }
+}
+
+/// Writes are withheld by not registering the tools at all
+/// (`packages/*/src/tools/index.ts`), so this decides which tools the assistant
+/// can even *see* — not merely whether it is allowed to use them.
+///
+/// `@AppStorage` rather than a copy cached on the model. The cached version read
+/// the defaults once at init and the toggle wrote back from that snapshot, so a
+/// value changed from anywhere else was silently overwritten the next time the
+/// menu was drawn. That is exactly how `allowWrites.mail` went back to 0 after
+/// being set to 1.
+struct WritesToggle: View {
+  @AppStorage private var allowWrites: Bool
+
+  init(surface: Surface) {
+    _allowWrites = AppStorage(wrappedValue: false, "allowWrites.\(surface.id)")
+  }
+
+  var body: some View {
+    Toggle("Allow writes", isOn: $allowWrites)
+      .toggleStyle(.checkbox)
+      .font(.caption)
+      .padding(.leading, 20)
   }
 }
