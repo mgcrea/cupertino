@@ -64,6 +64,21 @@ The gradient is always vertical, top light → bottom warm. Don't rotate it, don
 `appshot icon build --out <path>` picks its format from the extension. For an `apple-touch-icon`,
 pass `--corner-radius 0` — iOS applies its own mask, and a rounded source gets double-rounded.
 
+## The menu bar glyph
+
+`cupertino-menubar.svg` is the mark reduced to two strokes — a sun ring over the hills. It is a
+**template image**: pure black plus alpha, no colour, so AppKit tints it for light menu bars, dark
+menu bars and the highlighted state instead of us shipping three renderings.
+
+Its `viewBox` is the only thing tuned away from the design canvas. The glyph now inks 20.95 × 15.50
+pt in a 23 × 18 pt canvas, against the 21 × 16 pt that `tray.full` — the SF Symbol it replaced —
+inks in a 25 × 18 pt one, with a 1pt gutter so the round stroke caps are not flush to the edge.
+The paths themselves are verbatim.
+
+`actool` reads the SVG directly and preserves the vector representation, so there are no PNG slots
+to keep in step. `make icon` copies the file into `MenuBarIcon.imageset`, which is why that copy is
+listed as generated above.
+
 ## Not generated from here
 
-The menu bar glyph and the horizontal lockup still live in the design canvas, not in this folder.
+The horizontal lockup still lives in the design canvas, not in this folder.
