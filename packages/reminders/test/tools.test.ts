@@ -221,7 +221,12 @@ const connectWith = async (
   env: NodeJS.ProcessEnv = {},
   overrides: Record<string, unknown> = {},
 ) => {
-  const config: Config = loadConfig(env);
+  // The index lane is forced off. Without this the client would call
+  // locateStore() against the REAL home directory, and on a machine that has
+  // Full Disk Access these tests would quietly read the user's own reminders —
+  // passing or failing on data nobody wrote. These cover the Apple Events lane;
+  // store.test.ts covers the index against the captured schema.
+  const config: Config = loadConfig({ APPLE_REMINDERS_INDEX_MODE: "off", ...env });
   const osascript = fakeRunner(overrides);
   const { server } = createServer({ config, osascript, now });
   const client = new Client({ name: "test", version: "0" });

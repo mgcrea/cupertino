@@ -17,8 +17,13 @@ const runner = () => {
 const bulkCalls = (r: { run: ReturnType<typeof vi.fn> }) =>
   r.run.mock.calls.filter((c) => String(c[0]).includes("membershipVia")).length;
 
+/** Index off: the cache being tested is the Apple Events one. */
 const client = (env: NodeJS.ProcessEnv, clock: () => Date, osascript: OsascriptRunner) =>
-  new AppleRemindersClient({ config: loadConfig(env), osascript, now: clock });
+  new AppleRemindersClient({
+    config: loadConfig({ APPLE_REMINDERS_INDEX_MODE: "off", ...env }),
+    osascript,
+    now: clock,
+  });
 
 /**
  * The cache is a TTL, not an invalidation scheme, and that is a measured
