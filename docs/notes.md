@@ -52,7 +52,7 @@ already does for mailboxes. It cannot be both fresh and cheap without the file l
 ## Two rules the timings impose
 
 - **Never read a property per note in a loop.** One note costs ~116 ms, so the whole library would
-  take ~107 s — the same trap the README documents for Mail. Every read must be a bulk array fetch
+  take ~107 s — the same trap Mail's Apple Events lane hits at 74 s ([verify.md](verify.md)). Every read must be a bulk array fetch
   (`N.notes.plaintext()`), which is one Apple Event regardless of size.
 - **Prefer the bulk fetch over `whose`.** Counterintuitively `whose plaintext contains` is **6.9×
   slower** than pulling everything and filtering in JS, because the specifier evaluates per note

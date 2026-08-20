@@ -21,7 +21,7 @@ Settled. Recorded so it is not re-opened.
    no App Store-available entitlement reads another app's TCC-protected data. The index lane and
    the body lane are impossible, not merely harder.
 2. **What survives is already benchmarked unusable.** Only the Apple Events lane would remain, and
-   the table at the top of the README puts `messages whose read status is false` at 74 seconds.
+   [verify.md](verify.md) puts `messages whose read status is false` at 74 seconds.
    Searching cannot go through Apple Events; that is the whole reason the index lane exists.
 3. **The launcher is disqualifying twice over.** `responsibility_spawnattrs_setdisclaim` is
    undocumented SPI reached through `dlsym`, and private API use is a rejection. Its purpose —
