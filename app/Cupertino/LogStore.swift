@@ -37,6 +37,11 @@ final class LogStore {
 }
 
 /// Post a log line from any thread.
+///
+/// Also mirrored to stderr, which is where it shows up when the app is launched
+/// from a terminal instead of by LaunchServices — the difference between being
+/// able to debug the host and guessing at it.
 func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
+  FileHandle.standardError.write(Data("[\(surface)] \(level.rawValue): \(text)\n".utf8))
   Task { @MainActor in LogStore.shared.append(surface: surface, level: level, text) }
 }

@@ -134,6 +134,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     process.environment = ServerLocator.environment(
       for: surface, allowWrites: Settings.allowWrites(surface))
 
+    let writes = Settings.allowWrites(surface)
+    hostLog(surface.id, .info, "allowWrites=\(writes)")
+
     let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
     process.standardInput = toChild
     process.standardOutput = fromChild
