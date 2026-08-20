@@ -29,14 +29,14 @@ So closing the app would cost exactly the thing being sold, and buy only protect
 | Part             | Licence          | Why                                                         |
 | ---------------- | ---------------- | ----------------------------------------------------------- |
 | `packages/*`     | MIT              | libraries; ecosystem adoption is the funnel; vendor freely  |
-| `app/`           | source-available | readable and buildable for yourself, binary rights reserved |
+| `apps/apple/`    | source-available | readable and buildable for yourself, binary rights reserved |
 | the signed build | sold             | the notarized artifact, the update channel, the maintenance |
 
 "Build it yourself if you would rather not pay" is an honest position and a defensible one. Most
 people will pay rather than install Xcode, and the ones who will not were never customers.
 
 **There is no `LICENSE` file today** — only `"license": "MIT"` in the package manifests, which says
-nothing about `app/`. That ambiguity is the worst state for both halves and is the first thing to
+nothing about `apps/apple/`. That ambiguity is the worst state for both halves and is the first thing to
 fix, whichever way the app licence lands.
 
 ## What is actually being sold
@@ -69,7 +69,7 @@ contradicts its own pitch, and the next section is why that matters more than us
 ## Three claims worth more than the licence
 
 1. **The app makes no network connections.** There is no `URLSession`, no Sparkle and no HTTP
-   anywhere in `app/Cupertino` or `app/CupertinoBridge`. The one socket in the codebase is
+   anywhere in `apps/apple/Cupertino` or `apps/apple/CupertinoBridge`. The one socket in the codebase is
    `socket(AF_UNIX, SOCK_STREAM, 0)` in `ServerHost.swift` — a filesystem entry, mode-restricted to
    the one user, carrying stdio between the app and its own servers. For a process holding Full
    Disk Access that is a strong claim and a cheap one for anyone to verify, so it belongs on the
@@ -110,7 +110,7 @@ It denies the high-level symbols — `URLSession`, CFNetwork, `Network.framework
 TLS entry points — and deliberately does **not** deny `socket` / `bind` / `connect`, because the
 AF_UNIX bridge shares those syscalls with the thing being ruled out and so they cannot be the test.
 The assertion that carries the claim is at source level instead: `AF_INET`, `PF_INET` and
-`sockaddr_in` appear nowhere in `app/`. A socket that never names an internet address family is not
+`sockaddr_in` appear nowhere in `apps/apple/`. A socket that never names an internet address family is not
 one.
 
 Two properties make it a gate rather than a decoration. It fails when it inspected nothing — a build
