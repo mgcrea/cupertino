@@ -44,7 +44,15 @@ run: app dev-config ## Build, then (re)launch the menu bar app
 	@sleep 1 && open "$(APP)"
 	@echo "Cupertino running — look for the tray icon in the menu bar."
 
-install: app ## Install the Debug build to /Applications (development)
+# `dev-config` is a prerequisite, not a nicety. A Debug app has no staged
+# servers, so it resolves them through dev.json — and dev.json holds an
+# absolute path to this checkout. Moving or renaming the repo therefore breaks
+# the copy in /Applications, which answers to a path that no longer exists:
+# every new connection is refused with "no build at …" while sessions started
+# before the move keep working, so it presents as a client that mysteriously
+# stopped connecting. Rewriting it on every install keeps the two in step.
+# A Release bundle does not have this problem; it carries its own servers.
+install: app dev-config ## Install the Debug build to /Applications (development)
 	@$(MAKE) --no-print-directory install-from SRC="$(APP)"
 
 # The whole release path in one command. Written as sequential sub-makes rather
