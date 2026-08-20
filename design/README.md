@@ -66,14 +66,29 @@ pass `--corner-radius 0` — iOS applies its own mask, and a rounded source gets
 
 ## The menu bar glyph
 
-`cupertino-menubar.svg` is the mark reduced to two strokes — a sun ring over the hills. It is a
-**template image**: pure black plus alpha, no colour, so AppKit tints it for light menu bars, dark
-menu bars and the highlighted state instead of us shipping three renderings.
+`cupertino-menubar.svg` is the mark reduced to three shapes — a filled sun over the back and front
+hills. It is a **template image**: pure black plus alpha, no colour, so AppKit tints it for light
+menu bars, dark menu bars and the highlighted state instead of us shipping three renderings.
 
-Its `viewBox` is the only thing tuned away from the design canvas. The glyph now inks 20.95 × 15.50
-pt in a 23 × 18 pt canvas, against the 21 × 16 pt that `tray.full` — the SF Symbol it replaced —
-inks in a 25 × 18 pt one, with a 1pt gutter so the round stroke caps are not flush to the edge.
-The paths themselves are verbatim.
+The two ridges are deliberately not the same length or phase. Stacked as equals they read as
+tramlines rather than as hills receding, so the back ridge is inset on both sides and crests left
+of the front one, which runs the full width.
+
+Measured against `tray.full`, the SF Symbol it replaced:
+
+|                    | ink              | canvas        | strokes |
+| ------------------ | ---------------- | ------------- | ------- |
+| `tray.full` @ 18pt | 21.00 × 16.00 pt | 25 × 18 pt    | —       |
+| this glyph         | 14.98 × 15.50 pt | 17.48 × 18 pt | 1.31 pt |
+
+The 1.25pt gutter matters: the round stroke caps clip at 1x if the ink is flush to the edge, which
+is how the design canvas's own 18×18 framing rendered it.
+
+The ridges sit **0.45pt apart**, and that is a floor rather than a taste call. Counting connected
+components in the rendered slots, the glyph resolves into three separate shapes at 1x and 2x at
+that spacing; open the gap and the thin strokes start fragmenting under 1x antialiasing into four
+or five pieces. Closer is also better here, which is not the intuition. Re-run the count after any
+change to the ridges — the failure is invisible at the size you will be looking at it.
 
 `actool` reads the SVG directly and preserves the vector representation, so there are no PNG slots
 to keep in step. `make icon` copies the file into `MenuBarIcon.imageset`, which is why that copy is

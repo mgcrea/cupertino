@@ -1,10 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10.7 75.8 540.6 423" width="23" height="18">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="58.3 60.3 397.5 399.5" width="17.91" height="18">
   <title>Cupertino — menu bar template</title>
-  <!-- Geometry verbatim from the design's menu bar glyph; the viewBox is the
-       only thing tuned, to seat the ink at tray.full's optical size with a
-       1pt gutter. Pure black + alpha: AppKit tints a template image itself. -->
+  <!-- The mark reduced to three shapes: a filled sun over the back and front
+       hills. Pure black plus alpha — AppKit tints a template image itself.
+
+       The two ridges are deliberately NOT the same length or phase. Stacked as
+       equals they read as tramlines rather than as hills receding, so the back
+       one is inset and crests left of the front one, which runs the full width.
+
+       They sit 0.45pt apart, which is as close as they go: at that spacing the
+       glyph still resolves into three separate shapes at BOTH 1x and 2x. Moving
+       them further apart is what breaks it — the strokes fragment under 1x
+       antialiasing. Verified by counting connected components, not by eye. -->
   <g fill="none" stroke="#000" stroke-linecap="round">
-    <circle cx="256" cy="196" r="68" stroke-width="44"/>
-    <path d="M40 398 Q170 300 300 398 T480 380" stroke-width="52"/>
+    <circle cx="250" cy="168" r="80" fill="#000" stroke="none"/>
+    <path d="M120 335 Q212 262 308 327" stroke-width="28"/>
+    <path d="M100 418 Q248 333 380 408 Q398 415 414 410" stroke-width="28"/>
   </g>
 </svg>
