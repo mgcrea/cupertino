@@ -41,6 +41,19 @@ nonisolated final class ServerHost: @unchecked Sendable {
   // MARK: - Lifecycle
 
   func start() throws {
+    // SIGPIPE's default action is to kill the process, and this app writes to
+    // descriptors whose far end routinely disappears: a client socket whose
+    // bridge exited because its editor window closed, or a server's stdin
+    // after the server crashed. Unhandled, one client quitting mid-request
+    // took Cupertino down and every *other* client's session with it — which
+    // read as "the server cannot handle multiple connections", because the
+    // surviving clients are the ones who report the failure.
+    //
+    // Ignored rather than trapped: `writeAll` already checks every return
+    // value, so EPIPE arrives as a failed write on the one connection that
+    // deserves it. This must be set before the first connection is served.
+    _ = signal(SIGPIPE, SIG_IGN)
+
     do {
       try openSocket()
       startupError = nil
@@ -80,6 +93,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
       throw HostError.socketFailed(detail)
     }
 
+    // Every server this host spawns would otherwise inherit the listening
+    // socket, so a wedged server would keep the socket alive after Cupertino
+    // quit and later connections would hang against a listener nobody is
+    // accepting on.
+    closeOnExec(fd)
+
     listenFD = fd
     hostLog("cupertino", .info, "listening at \(path)")
     queue.async { [weak self] in self?.acceptLoop(fd) }
@@ -90,15 +109,38 @@ nonisolated final class ServerHost: @unchecked Sendable {
     unlink(BridgeProtocol.socketPath)
   }
 
+  /// Accept forever, and treat "forever" literally.
+  ///
+  /// Returning from here retires the socket for the lifetime of the app: the
+  /// path stays bound, so `connect` still succeeds and a bridge sits waiting on
+  /// a handshake reply that will never come. Every transient reason `accept`
+  /// can fail — a peer that hung up between connect and accept, a momentary
+  /// descriptor shortage — is therefore recovered from rather than fatal.
   private func acceptLoop(_ fd: Int32) {
     while true {
       let client = accept(fd, nil, nil)
       if client < 0 {
-        if errno == EINTR { continue }
+        let failure = errno  // read before hostLog, which may clobber it
         if listenFD < 0 { return }  // stopped deliberately
-        hostLog("cupertino", .error, "accept failed: \(errnoText())")
-        return
+        switch failure {
+        case EINTR, ECONNABORTED:
+          continue
+        case EMFILE, ENFILE, ENOMEM, ENOBUFS:
+          // The listener is fine; the machine is out of something. Back off so
+          // this does not spin, and let whatever is holding the descriptors
+          // release them.
+          hostLog("cupertino", .error, "accept deferred: \(String(cString: strerror(failure)))")
+          usleep(100_000)
+          continue
+        default:
+          hostLog("cupertino", .error, "accept failed: \(String(cString: strerror(failure)))")
+          return
+        }
       }
+      // Not inherited by the servers: a connection belongs to the host, and a
+      // server holding a copy of some *other* client's socket keeps that client
+      // from ever seeing EOF.
+      closeOnExec(client)
       DispatchQueue.global(qos: .userInitiated).async { [weak self] in
         self?.serve(client)
       }
@@ -157,6 +199,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
     process.standardInput = toChild
     process.standardOutput = fromChild
     process.standardError = childErr
+
+    // The ends this host keeps. `Process` hands the child the opposite end of
+    // each pair, so nothing downstream needs these — and a server that inherited
+    // another connection's read end would hold that pipe open after its owner
+    // exited, leaving the other connection waiting on an EOF that never lands.
+    for handle in [
+      toChild.fileHandleForWriting, fromChild.fileHandleForReading,
+      childErr.fileHandleForReading,
+    ] {
+      closeOnExec(handle.fileDescriptor)
+    }
 
     do {
       try process.run()
@@ -276,6 +329,12 @@ func writeAll(_ fd: Int32, _ data: Data) -> Bool {
 }
 
 func errnoText() -> String { String(cString: strerror(errno)) }
+
+/// Mark `fd` FD_CLOEXEC, so spawned servers do not inherit it.
+func closeOnExec(_ fd: Int32) {
+  let flags = fcntl(fd, F_GETFD)
+  if flags >= 0 { _ = fcntl(fd, F_SETFD, flags | FD_CLOEXEC) }
+}
 
 /// Per-surface user settings.
 enum Settings {

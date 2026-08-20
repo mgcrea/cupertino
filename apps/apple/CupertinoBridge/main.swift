@@ -21,6 +21,13 @@
 
 import Foundation
 
+// The two things this relay writes to — its own stdout and the app socket —
+// both belong to processes that can exit first: an MCP host that closed the
+// connection, or a Cupertino that quit. SIGPIPE's default action would kill
+// the bridge outright, so the write failures below could never be reported.
+// Every write here already checks its return value.
+_ = signal(SIGPIPE, SIG_IGN)
+
 let stderrHandle = FileHandle.standardError
 
 func warn(_ message: String) {
