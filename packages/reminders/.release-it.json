@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "reminders-v${version}",
+    "commitMessage": "release(reminders): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-reminders v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

@@ -22,7 +22,8 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "probe:mail": "node scripts/probe-envelope-index.mjs",
-    "probe:notes": "node scripts/probe-notes.mjs"
+    "probe:notes": "node scripts/probe-notes.mjs",
+    "probe:reminders": "node scripts/probe-reminders.mjs"
   },
   "devDependencies": {
     "oxfmt": "^0.62.0",
