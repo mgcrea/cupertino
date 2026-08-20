@@ -140,6 +140,25 @@ that is what `*_ACCOUNTS` is for, and it is enforced in exactly one place so no 
 it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_BODY_MAX_BYTES` and
 `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
 
+## The app
+
+The menu bar is Cupertino's whole surface — there is no Dock icon and no main window.
+
+| Section                  | What it answers                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| Full Disk Access         | granted or not, with the button that opens the right Settings pane                  |
+| Mail / Notes / Reminders | Automation status per app, the consent prompt, and the writes toggle                |
+| Connections              | which client is talking to which server right now, and how many tools it has called |
+| MCP clients              | one-click wiring for Claude Desktop and Cursor; a copyable command for Claude Code  |
+| Activity…                | opens a window listing every tool call, live                                        |
+
+The **Activity** window records tool _names_ only — never arguments, message contents or results.
+It is the answer to "what did the assistant just do with my mail?", and the reason the servers run
+under an app you can see rather than inside whichever editor spawned them.
+
+Writes are off per surface until you turn them on, and the toggle decides whether the mutating
+tools are registered at all — an assistant with writes off cannot see that they exist.
+
 ## Why a single app
 
 Full Disk Access is one indivisible whole-disk grant. Granting it per surface buys no containment

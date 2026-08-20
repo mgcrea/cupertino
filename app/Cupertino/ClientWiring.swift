@@ -97,6 +97,9 @@ enum ClientWiring {
     case configured
     /// Present, but pointing somewhere else — usually a previous build.
     case stale(String)
+    /// Wired for some surfaces and not others — what an existing config looks
+    /// like the day a new surface ships.
+    case incomplete([String])
     case unreadable(String)
   }
 
@@ -109,15 +112,22 @@ enum ClientWiring {
       let root = try readJSON(client.configPath)
       let servers = root["mcpServers"] as? [String: Any] ?? [:]
       let expected = bridgePath
-      var found = false
+      var missing: [String] = []
       for surface in Surface.all {
-        guard let entry = servers[serverKey(for: surface)] as? [String: Any] else { continue }
-        found = true
+        guard let entry = servers[serverKey(for: surface)] as? [String: Any] else {
+          missing.append(surface.displayName)
+          continue
+        }
         if (entry["command"] as? String) != expected {
           return .stale((entry["command"] as? String) ?? "unknown")
         }
       }
-      return found ? .configured : .notConfigured
+      // A partially wired config used to report `.configured`, because any one
+      // matching entry was enough. That made every new surface invisible to
+      // everyone who had already configured the client — a green check beside a
+      // config that would never gain the new server.
+      if missing.count == Surface.all.count { return .notConfigured }
+      return missing.isEmpty ? .configured : .incomplete(missing)
     } catch {
       return .unreadable(error.localizedDescription)
     }

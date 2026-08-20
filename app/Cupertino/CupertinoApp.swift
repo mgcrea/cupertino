@@ -39,6 +39,13 @@ struct CupertinoApp: App {
       StatusMenu(model: model)
     }
     .menuBarExtraStyle(.window)
+
+    // The one exception to "the menu bar is the whole surface". A log is read by
+    // scrolling, and the popover dismisses itself the moment focus moves.
+    Window("Activity", id: ActivityWindow.id) {
+      ActivityView()
+    }
+    .defaultSize(width: 760, height: 460)
   }
 }
 
@@ -49,11 +56,15 @@ final class StatusModel {
   private(set) var location: InstallLocation = .current
   private(set) var clients: [ClientWiring.Client: ClientWiring.Status] = [:]
   private(set) var lastError: String?
+  /// The socket never came up. Nothing works in this state, and until now it
+  /// was only ever written to stderr.
+  private(set) var hostError: String?
 
   init() { refresh() }
 
   func refresh() {
     location = .current
+    hostError = ServerHost.shared.startupError
     diskAccess = Permissions.diskAccess()
     automation = Dictionary(
       uniqueKeysWithValues: Surface.all.map { ($0.id, Permissions.automation(for: $0.bundleID)) })
@@ -121,6 +132,7 @@ struct StatusMenu: View {
         Text(diskAccessHint)
           .font(.caption)
           .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       Divider()
@@ -157,12 +169,20 @@ struct StatusMenu: View {
 
       Divider()
 
+      ConnectionsSection(model: model)
+
+      Divider()
+
       ClientsSection(model: model)
 
       if let error = model.lastError {
         Text(error).font(.caption).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
+
+      Divider()
+
+      AboutSection(model: model)
 
       Divider()
 
@@ -175,6 +195,10 @@ struct StatusMenu: View {
     }
     .padding(14)
     .frame(width: 320)
+    // Permission state changes in System Settings, not here, so a menu drawn
+    // once at launch is a menu that lies. `Permissions.automation` is the
+    // non-prompting variant precisely so this is safe.
+    .onAppear { model.refresh() }
   }
 
   private var diskAccessHint: String {
@@ -267,6 +291,14 @@ struct ClientsSection: View {
             case .stale:
               // Points at a previous build — the common case after moving the app.
               Button("Update") { model.configure(client) }.controlSize(.small)
+            case .incomplete(let missing):
+              // Wired before a surface existed. Configure writes all of
+              // Surface.all, so the same button finishes the job.
+              HStack(spacing: 6) {
+                Text("missing \(missing.joined(separator: ", "))")
+                  .font(.caption).foregroundStyle(.secondary)
+                Button("Update") { model.configure(client) }.controlSize(.small)
+              }
             case .unreadable(let why):
               Text(why).font(.caption).foregroundStyle(.red)
             default:
@@ -286,8 +318,113 @@ struct ClientsSection: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(ClientWiring.claudeCodeCommands, forType: .string)
           copied = true
+          // Confirmation, not a permanent state: the button has to invite a
+          // second copy after the app has moved and the paths changed.
+          Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+          }
         }
         .controlSize(.small)
+      }
+    }
+  }
+}
+
+/// What is talking to Cupertino right now.
+///
+/// The popover could previously say a great deal about permissions and nothing
+/// at all about whether any of it was being used.
+struct ConnectionsSection: View {
+  let model: StatusModel
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Connections").font(.subheadline).bold()
+
+      if let error = model.hostError {
+        Label(error, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.red)
+          .font(.caption)
+          .fixedSize(horizontal: false, vertical: true)
+      } else if Sessions.shared.live.isEmpty {
+        // Not a fault state. The bridge starts a server when a client connects
+        // and the process exits with it, so idle is the normal resting shape.
+        Text("No client connected.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(Sessions.shared.live) { session in
+          HStack(spacing: 6) {
+            Image(systemName: "circle.fill")
+              .font(.system(size: 6))
+              .foregroundStyle(.green)
+            Text(Surface.named(session.surface)?.displayName ?? session.surface)
+            Text(session.client ?? "connecting…")
+              .foregroundStyle(.secondary)
+            Spacer()
+            Text("\(session.calls) call\(session.calls == 1 ? "" : "s")")
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+          .font(.caption)
+          .help("pid \(session.pid), since \(session.startedAt.formatted(date: .omitted, time: .standard))")
+        }
+      }
+    }
+  }
+}
+
+/// Identity, the login item, and the way into the Activity window.
+struct AboutSection: View {
+  let model: StatusModel
+  @Environment(\.openWindow) private var openWindow
+  @State private var launchAtLogin = LoginItem.isEnabled
+  @State private var loginError: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text("Cupertino \(AppInfo.version)")
+        Spacer()
+        Button("Activity…") {
+          openWindow(id: ActivityWindow.id)
+          // An accessory app does not come forward on its own, so the window
+          // would otherwise open behind whatever the user was looking at.
+          NSApp.activate(ignoringOtherApps: true)
+        }
+        .controlSize(.small)
+      }
+      .font(.caption)
+
+      Text(AppInfo.identity)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      Toggle("Launch at login", isOn: $launchAtLogin)
+        .toggleStyle(.checkbox)
+        .font(.caption)
+        .disabled(!model.location.isStable)
+        .onChange(of: launchAtLogin) { _, value in
+          loginError = LoginItem.set(value)
+          // Trust the service, not the checkbox: a refused registration has to
+          // put the box back rather than claim something that is not true.
+          launchAtLogin = LoginItem.isEnabled
+        }
+
+      if let loginError {
+        Text(loginError).font(.caption).foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+      } else if !model.location.isStable {
+        Text("Move Cupertino to Applications first — a login item records a path.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      } else {
+        Text("Cupertino starts on demand when a client connects. This only removes the wait on the first call.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }

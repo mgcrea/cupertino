@@ -19,6 +19,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
   private var listenFD: Int32 = -1
   private let queue = DispatchQueue(label: "io.mgcrea.cupertino.host", qos: .userInitiated)
 
+  /// Why the socket never came up, if it did not. Kept rather than only logged:
+  /// a host that failed to listen is the one state where nothing will ever
+  /// work, and stderr is invisible to someone who launched the app from Finder.
+  private(set) var startupError: String?
+
   enum HostError: LocalizedError {
     case pathTooLong(String)
     case socketFailed(String)
@@ -36,6 +41,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
   // MARK: - Lifecycle
 
   func start() throws {
+    do {
+      try openSocket()
+      startupError = nil
+    } catch {
+      startupError = error.localizedDescription
+      throw error
+    }
+  }
+
+  // Not `listen()`: that is `Darwin.listen`, which this method calls.
+  private func openSocket() throws {
     let path = BridgeProtocol.socketPath
     guard let address = unixAddress(path) else { throw HostError.pathTooLong(path) }
 
@@ -148,12 +164,18 @@ nonisolated final class ServerHost: @unchecked Sendable {
       hostLog(surface.id, .error, "could not start server: \(error.localizedDescription)")
       return
     }
+    let session = UUID()
+    let pid = process.processIdentifier
+    Task(priority: Sessions.priority) { @MainActor in
+      Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+    }
     hostLog(
       surface.id, .info,
-      "server started (pid \(process.processIdentifier))"
+      "server started (pid \(pid))"
         + (binaries.isDevelopment ? " — development build" : ""))
 
     let group = DispatchGroup()
+    let observer = RequestObserver(surface: surface, session: session)
 
     // Client -> server. Also the only place that sees requests, so it is where
     // tool calls are picked out for the log. On EOF, close the child's stdin so
@@ -161,7 +183,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let childStdin = toChild.fileHandleForWriting
     pump(
       from: client, to: childStdin.fileDescriptor, group: group,
-      observe: { self.noteRequests(surface: surface, $0) },
+      observe: { observer.saw($0) },
       onFinish: { try? childStdin.close() })
 
     // Server -> client. Half-close only: `serve` owns the socket and closes it
@@ -184,6 +206,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     group.wait()
     process.waitUntilExit()
+    Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
     hostLog(surface.id, .info, "server exited (\(process.terminationStatus))")
   }
 
@@ -214,25 +237,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // Let the far side see EOF instead of waiting forever — how, and whether
       // the descriptor is closed at all, is the caller's business.
       onFinish()
-    }
-  }
-
-  /// MCP over stdio is newline-delimited JSON, so requests can be read off the
-  /// wire without interpreting them. Best effort only — this must never slow or
-  /// break the pump.
-  private func noteRequests(surface: Surface, _ chunk: Data) {
-    for line in chunk.split(separator: UInt8(ascii: "\n")) where !line.isEmpty {
-      guard
-        let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-        let method = object["method"] as? String
-      else { continue }
-      if method == "tools/call", let params = object["params"] as? [String: Any],
-        let name = params["name"] as? String
-      {
-        hostLog(surface.id, .call, name)
-      } else {
-        hostLog(surface.id, .info, method)
-      }
     }
   }
 
@@ -277,9 +281,5 @@ func errnoText() -> String { String(cString: strerror(errno)) }
 enum Settings {
   static func allowWrites(_ surface: Surface) -> Bool {
     UserDefaults.standard.bool(forKey: "allowWrites.\(surface.id)")
-  }
-
-  static func setAllowWrites(_ surface: Surface, _ value: Bool) {
-    UserDefaults.standard.set(value, forKey: "allowWrites.\(surface.id)")
   }
 }
