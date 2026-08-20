@@ -35,7 +35,12 @@ const ConfigSchema = BaseConfigSchema.extend({
    */
   degradedMaxNotes: z.number().int().min(1).max(1_000).default(200),
   bodyMaxBytes: z.number().int().min(1_024).max(10_000_000).default(262_144),
-  /** The only directory save_attachment may write into, enforced after realpath. */
+  /**
+   * The confinement boundary for save_attachment, not merely its default: the
+   * tool's `directory` argument may select a subdirectory of this, never escape
+   * it. Enforced lexically with `resolve()` + `basename()`, not `realpath()` —
+   * the destination may not exist yet.
+   */
   attachmentDir: z.string().default(join(homedir(), "Downloads")),
   /**
    * How long the Apple Events plaintext cache stays warm.

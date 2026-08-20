@@ -40,7 +40,11 @@ const ConfigSchema = BaseConfigSchema.extend({
   /** Cap for the AppleScript listing lane: ~130ms + 42ms per message per property. */
   degradedMaxMessages: z.number().int().min(1).max(200).default(50),
   bodyMaxBytes: z.number().int().min(1_024).max(10_000_000).default(262_144),
-  /** The only directory save_attachment may write into, enforced after realpath. */
+  /**
+   * The only directory save_attachment may write into. Enforced lexically with
+   * `resolve()` + `basename()`, not `realpath()`: the destination may not exist
+   * yet, and the filename — not the directory — is the attacker-controlled part.
+   */
   attachmentDir: z.string().default(join(homedir(), "Downloads")),
   mailboxCacheTtlMs: z.number().int().min(0).max(3_600_000).default(60_000),
 }).strict();

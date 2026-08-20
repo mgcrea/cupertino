@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 
 import {
   createOsascriptRunner,
@@ -408,6 +408,7 @@ export class AppleNotesClient {
     ref: string,
     attachmentId: string,
     targetDir?: string,
+    opts: { overwrite?: boolean } = {},
   ): Promise<{
     path: string;
     bytes: number;
@@ -431,13 +432,29 @@ export class AppleNotesClient {
       );
     }
 
-    const root = resolve(targetDir ?? this.config.attachmentDir);
-    const target = resolve(join(root, basename(meta.name ?? basename(source))));
-    if (!target.startsWith(`${root}/`)) {
-      throw new PreconditionError(`Refusing to write outside ${root}.`);
+    // The configured directory is the confinement boundary, not a default that
+    // `targetDir` replaces: an override may only select a subdirectory of it.
+    // Resolving the override *against* the root means a relative path lands
+    // inside it and an absolute one is caught by the check below.
+    const root = resolve(this.config.attachmentDir);
+    const dir = targetDir ? resolve(root, targetDir) : root;
+    if (dir !== root && !dir.startsWith(root + sep)) {
+      throw new PreconditionError(
+        `Refusing to write outside ${root}. Set APPLE_NOTES_ATTACHMENT_DIR to change the destination.`,
+      );
+    }
+    // basename() first: the name comes from note content, which is
+    // attacker-controlled in exactly the way path traversal needs.
+    const name = basename(meta.name ?? basename(source));
+    const target = resolve(join(dir, name));
+    if (target !== join(dir, name) || !target.startsWith(dir + sep)) {
+      throw new PreconditionError(`Refusing to write outside ${dir}.`);
+    }
+    if (existsSync(target) && !opts.overwrite) {
+      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
     }
     const bytes = readFileSync(source);
-    mkdirSync(root, { recursive: true });
+    mkdirSync(dir, { recursive: true });
     writeFileSync(target, bytes, { mode: 0o600 });
     return { path: target, bytes: bytes.length };
   }

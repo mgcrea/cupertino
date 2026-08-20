@@ -106,14 +106,19 @@ const READ_TOOLS = [
   "apple_notes_list_attachments",
   "apple_notes_list_folders",
   "apple_notes_list_notes",
-  "apple_notes_save_attachment",
   "apple_notes_search_notes",
 ];
 
+/**
+ * `save_attachment` is here rather than in the read set because it puts a file
+ * on the user's disk, which is a write whatever it does to Notes. Mail gates
+ * its identical tool the same way.
+ */
 const WRITE_TOOLS = [
   "apple_notes_create_note",
   "apple_notes_delete_notes",
   "apple_notes_move_note",
+  "apple_notes_save_attachment",
   "apple_notes_update_note",
 ];
 

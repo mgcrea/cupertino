@@ -31,7 +31,7 @@ export const registerTools = (
 ): void => {
   registerDiagnosticsTools(server, client, ctx);
   registerAccountTools(server, client);
-  registerNoteTools(server, client);
+  registerNoteTools(server, client, ctx.allowWrites);
 
   if (!ctx.allowWrites) return;
   registerActionTools(server, client);

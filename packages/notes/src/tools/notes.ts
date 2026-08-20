@@ -4,7 +4,11 @@ import { z } from "zod";
 import type { AppleNotesClient } from "../client/notes.js";
 import { folderArg, limitArg, noteRefArg, ok, okText, wrap, wrapResult } from "./util.js";
 
-export const registerNoteTools = (server: McpServer, client: AppleNotesClient): void => {
+export const registerNoteTools = (
+  server: McpServer,
+  client: AppleNotesClient,
+  allowWrites: boolean,
+): void => {
   server.registerTool(
     "apple_notes_list_notes",
     {
@@ -89,23 +93,30 @@ export const registerNoteTools = (server: McpServer, client: AppleNotesClient): 
     async ({ ref }) => wrap(() => client.attachments(ref)),
   );
 
+  if (!allowWrites) return;
+
   server.registerTool(
     "apple_notes_save_attachment",
     {
       description:
-        "Save one attachment to disk. Needs Full Disk Access. Writes only into the configured " +
-        "attachment directory (APPLE_NOTES_ATTACHMENT_DIR, default ~/Downloads).",
+        "Save one attachment to disk. Needs Full Disk Access. It can only write into " +
+        "APPLE_NOTES_ATTACHMENT_DIR (default ~/Downloads) and will not overwrite an existing " +
+        "file unless you ask it to. Write-gated because it puts a file on the user's disk, " +
+        "even though it changes nothing in Notes.",
       inputSchema: {
         ref: noteRefArg,
         attachmentId: z.string().min(1).describe("An id from apple_notes_list_attachments."),
         directory: z
           .string()
           .optional()
-          .describe("Override the target directory. Must still resolve inside it."),
+          .describe("Override the target directory. Must still resolve inside the configured one."),
+        overwrite: z.boolean().optional().describe("Replace an existing file. Default false."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ ref, attachmentId, directory }) =>
-      wrap(() => client.saveAttachment(ref, attachmentId, directory)),
+    async ({ ref, attachmentId, directory, overwrite }) =>
+      wrap(() =>
+        client.saveAttachment(ref, attachmentId, directory, overwrite ? { overwrite } : {}),
+      ),
   );
 };
