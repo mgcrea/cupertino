@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="18" height="18">
+  <title>Cupertino — menu bar template (monochrome, name file *Template.pdf/png for AppKit tinting)</title>
+  <g fill="none" stroke="#000" stroke-linecap="round">
+    <circle cx="256" cy="196" r="68" stroke-width="44"></circle>
+    <path d="M40 398 Q170 300 300 398 T480 380" stroke-width="52"></path>
+  </g>
+</svg>

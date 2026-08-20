@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="64" height="64">
+  <title>Cupertino — simplified icon for 16–64px</title>
+  <defs><linearGradient id="skyS" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFD08A"></stop><stop offset="1" stop-color="#F2895C"></stop></linearGradient>
+    <clipPath id="squircleS"><rect width="1024" height="1024" rx="226" ry="226"></rect></clipPath></defs>
+  <g clip-path="url(#squircleS)">
+    <rect width="1024" height="1024" fill="url(#skyS)"></rect>
+    <circle cx="512" cy="408" r="152" fill="#FFF8EC"></circle>
+    <path d="M-40 800 Q300 584 660 800 T1120 780 V1064 H-40 Z" fill="#7A2F1C"></path>
+  </g>
+</svg>

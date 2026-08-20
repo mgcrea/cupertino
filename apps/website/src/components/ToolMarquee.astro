@@ -1,0 +1,37 @@
+---
+/**
+ * Every read tool that ships, run past once. Two identical copies translated by
+ * exactly -50% so the seam lands on a whole run.
+ *
+ * Read tools only, on purpose: the write tools are the next section's subject,
+ * and putting them here would contradict it.
+ */
+import { SURFACES } from "../data/surfaces";
+
+const names = SURFACES.flatMap((s) => s.read);
+---
+
+<div class="relative overflow-hidden border-y border-rule py-3.5" aria-hidden="true">
+  <div class="marquee flex w-max gap-2.5">
+    {
+      [0, 1].map(() =>
+        names.map((n) => (
+          <span class="rounded-md border border-rule bg-bg-2 px-3 py-1.5 font-mono text-[11.5px] whitespace-nowrap text-fg-muted">
+            {n}
+          </span>
+        )),
+      )
+    }
+  </div>
+  <!-- Fade the ends into the page so the loop has no visible edge. -->
+  <div
+    class="pointer-events-none absolute inset-y-0 left-0 w-24"
+    style="background:linear-gradient(90deg,var(--color-bg),transparent)"
+  >
+  </div>
+  <div
+    class="pointer-events-none absolute inset-y-0 right-0 w-24"
+    style="background:linear-gradient(270deg,var(--color-bg),transparent)"
+  >
+  </div>
+</div>

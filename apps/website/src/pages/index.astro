@@ -1,0 +1,51 @@
+---
+import Cta from "../components/Cta.astro";
+import Footer from "../components/Footer.astro";
+import Grant from "../components/Grant.astro";
+import Hero from "../components/Hero.astro";
+import Latency from "../components/Latency.astro";
+import MenuBar from "../components/MenuBar.astro";
+import Nav from "../components/Nav.astro";
+import Status from "../components/Status.astro";
+import Surfaces from "../components/Surfaces.astro";
+import ToolMarquee from "../components/ToolMarquee.astro";
+import WriteGate from "../components/WriteGate.astro";
+import { APP_NAME, REPO_URL, SITE_URL } from "../config";
+import { SURFACES, toolCount } from "../data/surfaces";
+import Layout from "../layouts/Layout.astro";
+
+const total = SURFACES.reduce((n, s) => n + toolCount(s), 0);
+
+/**
+ * SoftwareApplication rather than Product: nothing is for sale yet, and a price
+ * or an offer here would be a structured-data lie. Revisit when SHIPPED flips.
+ */
+const schema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: APP_NAME,
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "macOS",
+  url: SITE_URL,
+  codeRepository: REPO_URL,
+  license: "https://opensource.org/licenses/MIT",
+  description: `MCP servers for Apple Mail, Notes and Reminders — ${total} tools across three surfaces — and the signed menu-bar app that holds their one Full Disk Access grant.`,
+  author: { "@type": "Person", name: "Olivier Louvignes" },
+};
+---
+
+<Layout schema={schema}>
+  <Nav />
+  <main>
+    <Hero />
+    <MenuBar />
+    <ToolMarquee />
+    <Grant />
+    <Latency />
+    <Surfaces />
+    <WriteGate />
+    <Status />
+    <Cta />
+  </main>
+  <Footer />
+</Layout>

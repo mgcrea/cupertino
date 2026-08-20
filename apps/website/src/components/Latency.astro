@@ -1,0 +1,64 @@
+---
+import { LATENCY } from "../config";
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * Drawn to scale, which is the entire argument. 97 against 74,000 is 0.13% of
+ * the track — small enough that the honest bar is nearly invisible, which is
+ * the point, so `.bar` carries a 3px floor to keep it on screen without
+ * inflating the ratio.
+ */
+const pct = (LATENCY.indexedMs / LATENCY.appleEventsMs) * 100;
+
+const rows = [
+  {
+    label: "Apple Events search",
+    value: `${LATENCY.appleEventsMs.toLocaleString("en-US")} ms`,
+    width: 100,
+    color: "var(--color-danger)",
+  },
+  {
+    label: "Indexed search",
+    value: `${LATENCY.indexedMs} ms`,
+    width: pct,
+    color: "var(--color-ok)",
+  },
+] as const;
+---
+
+<section id="latency" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="Latency" heading="Read the index.<br />Don't ask Mail.">
+    Same query, same mailbox. Apple Events makes Mail.app do the work one message at a time; the
+    index lane reads the Envelope Index directly. That gap is what the grant buys.
+  </SectionHeader>
+
+  <div class="reveal flex flex-col gap-6 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
+    {
+      rows.map((r) => (
+        <div class="flex flex-col gap-2.5">
+          <div class="flex items-baseline justify-between gap-4">
+            <span class="text-[14px] text-fg">{r.label}</span>
+            <span class="font-mono text-[14px] text-fg-dim">{r.value}</span>
+          </div>
+          <div class="h-2.5 overflow-hidden rounded-full bg-bg-3">
+            <div class="bar" style={`width:${r.width}%;background:${r.color}`} />
+          </div>
+        </div>
+      ))
+    }
+
+    <p class="mono m-0">
+      drawn to scale — {pct.toFixed(2)}% of the bar above
+    </p>
+  </div>
+
+  <p class="reveal mt-6 text-[14px] leading-[1.65] text-fg-muted">
+    Without the grant, Notes still works fully below roughly {LATENCY.notesCeiling}; Mail search
+    falls back to the {(LATENCY.appleEventsMs / 1000).toFixed(0)}-second path. Tools that need the
+    index never disappear — the tool list is a pure function of <code
+      class="font-mono text-[13px] text-fg-dim">allowWrites</code
+    > and nothing else, so they return a structured <code
+      class="font-mono text-[13px] text-fg-dim">degraded</code
+    > result naming what is absent.
+  </p>
+</section>

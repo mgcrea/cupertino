@@ -1,0 +1,26 @@
+---
+import Footer from "../components/Footer.astro";
+import Nav from "../components/Nav.astro";
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Not found — Cupertino" description="That page does not exist.">
+  <Nav />
+  <main class="wrap flex min-h-[60vh] flex-col items-start justify-center gap-5 py-24">
+    <div class="mono text-accent">404</div>
+    <h1
+      class="m-0 font-display text-[clamp(30px,4.4vw,48px)] leading-[1.06] font-semibold tracking-[-0.04em]"
+    >
+      Not registered.
+    </h1>
+    <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-fg-dim">
+      That page does not exist — which, in this app's terms, means the host was never told about it.
+    </p>
+    <a
+      href="/"
+      class="rounded-[10px] bg-accent px-[19px] py-[11px] text-[14px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+      >Back to the start</a
+    >
+  </main>
+  <Footer />
+</Layout>

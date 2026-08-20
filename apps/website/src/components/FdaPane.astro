@@ -1,0 +1,68 @@
+---
+/**
+ * A rendering of System Settings → Privacy & Security → Full Disk Access.
+ *
+ * This is the hero's whole argument, so it is drawn as real macOS chrome rather
+ * than illustrated: a reader who has granted this permission recognises the
+ * pane immediately, and the before/after needs no caption. Not a screenshot —
+ * the row list has to differ between the two panes, and a screenshot of the
+ * "after" state does not exist yet.
+ */
+import Logo from "./Logo.astro";
+
+export interface Props {
+  rows: readonly string[];
+  caption: string;
+  /** The Cupertino row carries the app mark; host rows get a neutral glyph. */
+  branded?: boolean;
+  tone?: "warn" | "ok";
+  class?: string;
+}
+
+const { rows, caption, branded = false, tone = "warn", class: className } = Astro.props;
+const toggle = tone === "ok" ? "var(--color-ok)" : "var(--color-danger)";
+---
+
+<div
+  class:list={[
+    "overflow-hidden rounded-[14px] border border-rule-2 bg-chrome shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]",
+    className,
+  ]}
+>
+  <div
+    class="flex items-center gap-2 border-b border-rule-2 bg-chrome-2 px-3.5 py-2.5 text-[12px] text-fg-dim"
+  >
+    <span aria-hidden="true">‹</span>
+    <span class="text-fg">Full Disk Access</span>
+  </div>
+
+  <ul class="m-0 list-none p-0">
+    {
+      rows.map((row) => (
+        <li class="flex items-center gap-2.5 border-b border-[color-mix(in_srgb,var(--color-rule)_70%,transparent)] px-3.5 py-[9px] last:border-b-0">
+          {branded ? (
+            <Logo size={17} />
+          ) : (
+            <span
+              class="block flex-none rounded-[5px] bg-[color-mix(in_srgb,var(--color-fg)_13%,transparent)]"
+              style="width:17px;height:17px"
+              aria-hidden="true"
+            />
+          )}
+          <span class="flex-1 text-[12.5px] text-fg">{row}</span>
+          <span
+            class="relative block flex-none rounded-full"
+            style={`width:26px;height:15px;background:${toggle}`}
+            aria-hidden="true"
+          >
+            <span
+              class="absolute top-[2px] block rounded-full bg-white"
+              style="width:11px;height:11px;left:13px"></span>
+          </span>
+        </li>
+      ))
+    }
+  </ul>
+
+  <div class="mono border-t border-rule-2 bg-chrome-2 px-3.5 py-2.5">{caption}</div>
+</div>

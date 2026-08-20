@@ -1,0 +1,24 @@
+---
+/**
+ * The pre-masked squircle mark. The brand README is explicit that below 64px
+ * the two-hill art silts up, so the small variant is the default and the full
+ * one is opt-in for the CTA plate.
+ */
+export interface Props {
+  size?: number;
+  variant?: "small" | "full";
+  class?: string;
+}
+
+const { size = 23, variant = "small", class: className } = Astro.props;
+const src = variant === "small" ? "/icon-small.svg" : "/app-icon.svg";
+---
+
+<img
+  src={src}
+  alt=""
+  width={size}
+  height={size}
+  class:list={["rounded-[26%]", className]}
+  style={`width:${size}px;height:${size}px`}
+/>

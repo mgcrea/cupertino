@@ -1,0 +1,45 @@
+---
+import { REPO_URL } from "../config";
+import Logo from "./Logo.astro";
+
+const links = [
+  { href: "/#permissions", label: "Permissions" },
+  { href: "/#latency", label: "Latency" },
+  { href: "/#surfaces", label: "Surfaces" },
+  { href: "/#tools", label: "Tools" },
+];
+---
+
+<header
+  class="sticky top-0 z-50 border-b border-rule bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] backdrop-blur-[20px] backdrop-saturate-[180%]"
+>
+  <div class="wrap flex h-[58px] items-center justify-between gap-6">
+    <a href="/" class="flex flex-none items-center gap-[10px] text-fg">
+      <Logo size={23} />
+      <span class="font-display text-[14.5px] leading-none font-[590] tracking-[-0.02em]"
+        >Cupertino</span
+      >
+    </a>
+
+    <nav class="hidden items-center gap-[30px] md:flex">
+      {
+        links.map((l) => (
+          <a
+            href={l.href}
+            class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi"
+          >
+            {l.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <a
+      href={REPO_URL}
+      target="_blank"
+      rel="noopener"
+      class="rounded-lg bg-[color-mix(in_srgb,var(--color-fg)_8%,transparent)] px-[13px] py-[7px] text-[13px] whitespace-nowrap text-fg transition-colors hover:bg-accent hover:text-accent-ink"
+      >GitHub <span class="opacity-60">↗</span></a
+    >
+  </div>
+</header>

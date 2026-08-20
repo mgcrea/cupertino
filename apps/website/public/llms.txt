@@ -1,0 +1,32 @@
+# Cupertino
+
+> MCP servers for the Apple apps already on your Mac — Mail, Notes and Reminders — and the signed
+> menu-bar app that holds their one Full Disk Access grant instead of handing it to every editor.
+
+Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed app and the
+`@mgcrea/mcp-apple-*` packages land together at the first release.
+
+## The argument
+
+- Full Disk Access is a single, indivisible grant, and it lands on whatever process launched the
+  server — your editor or your terminal, never Mail itself. Granting it to Mail.app does nothing.
+- Four MCP hosts therefore mean four whole-disk grants. Cupertino is one signed, notarized app that
+  holds it once, and the bundle identifier `io.mgcrea.cupertino` is the TCC identity, so the grant
+  survives updates.
+- The grant buys speed as well as reach: the same Mail search is 74,000 ms over Apple Events and
+  97 ms off the Envelope Index.
+- Write tools are not merely refused when writes are off — they are never registered, because MCP
+  clients cache the tool list.
+
+## Surfaces
+
+- Mail — 18 tools (10 always registered, 8 write-gated). `@mgcrea/mcp-apple-mail`
+- Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
+- Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
+- Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
+
+## Links
+
+- Source: https://github.com/mgcrea/mcp-apple-mail
+- How it ships, and why not the App Store: https://github.com/mgcrea/mcp-apple-mail/blob/main/docs/distribution.md
+- What is open, what is sold: https://github.com/mgcrea/mcp-apple-mail/blob/main/docs/licensing.md

@@ -1,0 +1,130 @@
+---
+import { BUNDLE_ID, HOSTS } from "../config";
+import Logo from "./Logo.astro";
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * The funnel is only legible when each lane leaves the vertical centre of its
+ * row, so the rows carry an explicit height and the SVG is sized from the same
+ * three numbers rather than from a guess.
+ */
+const ROW = 36;
+const GAP = 8;
+const LANE = 56;
+const COLUMN = HOSTS.length * ROW + (HOSTS.length - 1) * GAP;
+const centres = HOSTS.map((_, i) => i * (ROW + GAP) + ROW / 2);
+const first = centres[0]!;
+const last = centres[centres.length - 1]!;
+---
+
+<section id="permissions" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="The grant" heading="One key to the<br />whole house.">
+    Full Disk Access is indivisible, and it lands on whatever process launched the server — your
+    editor, your terminal, never Mail itself. A grant for mail is already a grant for Messages,
+    Safari history and SSH keys. Granting it to Mail.app does nothing: the reader needs the
+    permission, not Mail.
+  </SectionHeader>
+
+  <div class="reveal grid grid-cols-1 gap-5 lg:grid-cols-2">
+    <!-- Before -->
+    <div class="rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
+      <div class="mb-5 flex items-baseline justify-between gap-4">
+        <span class="text-[14px] text-fg">Every host asks for its own</span>
+        <span class="mono !text-danger">{HOSTS.length} grants</span>
+      </div>
+      <ul class="m-0 flex list-none flex-col gap-2.5 p-0">
+        {
+          HOSTS.map((h) => (
+            <li class="flex items-center gap-3 rounded-lg border border-rule bg-bg-3 px-3.5 py-3">
+              <span class="flex-1 text-[13.5px] text-fg">{h}</span>
+              <svg width="34" height="10" viewBox="0 0 34 10" fill="none" aria-hidden="true">
+                <line
+                  class="lane"
+                  x1="0"
+                  y1="5"
+                  x2="34"
+                  y2="5"
+                  stroke="var(--color-danger)"
+                  stroke-width="1.5"
+                />
+              </svg>
+              <span class="mono !text-danger">whole disk</span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+
+    <!-- After -->
+    <div class="rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
+      <div class="mb-5 flex items-baseline justify-between gap-4">
+        <span class="text-[14px] text-fg">One signed app holds it</span>
+        <span class="mono !text-ok">1 grant</span>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <ul class="m-0 flex flex-1 list-none flex-col p-0" style={`gap:${GAP}px`}>
+          {
+            HOSTS.map((h) => (
+              <li
+                class="flex items-center rounded-md border border-rule bg-bg-3 px-3 text-[12.5px] text-fg-dim"
+                style={`height:${ROW}px`}
+              >
+                {h}
+              </li>
+            ))
+          }
+        </ul>
+
+        {/* Four feeds into a spine, and one line out. Drawn as a bus rather than
+            as four curves converging on a point, which at this width smudges. */}
+        <svg
+          width={LANE}
+          height={COLUMN}
+          viewBox={`0 0 ${LANE} ${COLUMN}`}
+          fill="none"
+          aria-hidden="true"
+          class="flex-none"
+        >
+          {
+            centres.map((y) => (
+              <path
+                class="lane"
+                d={`M0 ${y} H${LANE / 2}`}
+                stroke="var(--color-fg-muted)"
+                stroke-width="1.25"
+              />
+            ))
+          }
+          <path
+            d={`M${LANE / 2} ${first} V${last}`}
+            stroke="var(--color-rule-2)"
+            stroke-width="1.25"
+          />
+          <path
+            class="lane"
+            d={`M${LANE / 2} ${COLUMN / 2} H${LANE}`}
+            stroke="var(--color-ok)"
+            stroke-width="1.5"
+          />
+        </svg>
+
+        <div class="flex flex-none flex-col items-center gap-2.5">
+          <div
+            class="flex items-center gap-2.5 rounded-xl border border-accent/40 bg-bg-3 px-3.5 py-3"
+          >
+            <Logo size={22} />
+            <span class="text-[13px] font-medium whitespace-nowrap text-fg">Cupertino.app</span>
+          </div>
+          <span class="mono !text-ok text-center">whole disk<br />granted once</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="reveal mt-6 text-[14px] leading-[1.65] text-fg-muted">
+    Automation is prompted separately, one row per target app. The bundle identifier{" "}
+    <code class="font-mono text-[13px] text-fg-dim">{BUNDLE_ID}</code> is the TCC identity, so the grant
+    survives every update.
+  </p>
+</section>

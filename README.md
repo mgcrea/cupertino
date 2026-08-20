@@ -188,6 +188,16 @@ pnpm lint
 pnpm format
 ```
 
+The marketing site is its own workspace, and deploys by hand:
+
+```bash
+pnpm --filter @mgcrea/cupertino-website dev     # astro dev
+pnpm --filter @mgcrea/cupertino-website build   # static build
+```
+
+It is built from the design canvas in `.idea/design/`, and reads its tool counts from
+`packages/*/src/tools/` rather than from this file — see [apps/website](apps/website/AGENTS.md).
+
 The Swift half is `xcodebuild`, named by the Makefile rather than wrapped by it:
 
 ```bash

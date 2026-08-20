@@ -1,0 +1,62 @@
+---
+import { BUNDLE_ID, DOCS, ISSUES_URL, REPO_URL } from "../config";
+import Logo from "./Logo.astro";
+
+const columns = [
+  {
+    title: "Docs",
+    links: [
+      { label: "Distribution", href: DOCS.distribution },
+      { label: "Licensing", href: DOCS.licensing },
+      { label: "Envelope Index", href: DOCS.envelopeIndex },
+      { label: "Notes phase-0", href: DOCS.notes },
+    ],
+  },
+  {
+    title: "Source",
+    links: [
+      { label: "GitHub ↗", href: REPO_URL },
+      { label: "Issues", href: ISSUES_URL },
+    ],
+  },
+] as const;
+---
+
+<footer class="border-t border-rule py-12">
+  <div class="wrap grid grid-cols-1 gap-10 sm:grid-cols-[1.4fr_1fr_1fr]">
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center gap-2.5">
+        <Logo size={22} />
+        <span class="font-display text-[14.5px] font-[590] tracking-[-0.02em] text-fg"
+          >Cupertino</span
+        >
+      </div>
+      <p class="m-0 text-[12.5px] leading-[1.6] text-fg-muted">
+        Unofficial. Not affiliated with Apple.<br />
+        <code class="font-mono">{BUNDLE_ID}</code> · MIT
+      </p>
+    </div>
+
+    {
+      columns.map((c) => (
+        <div class="flex flex-col gap-3">
+          <div class="mono">{c.title}</div>
+          <ul class="m-0 flex list-none flex-col gap-2 p-0">
+            {c.links.map((l) => (
+              <li>
+                <a
+                  href={l.href}
+                  target="_blank"
+                  rel="noopener"
+                  class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi"
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </div>
+</footer>

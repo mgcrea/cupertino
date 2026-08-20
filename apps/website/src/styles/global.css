@@ -1,0 +1,211 @@
+@import "tailwindcss";
+
+/* ── Tokens ──────────────────────────────────────────────────────────────────
+   Dark is the base, not an override. The design canvas
+   (`.idea/design/Cupertino Site v4.dc.html`) is drawn dark-first and has no
+   light artboard, so there is no light theme to be faithful to and none is
+   invented here. Everything below is a token rather than a literal, so adding
+   one later is a second block and no component edits.
+
+   The warm ramp is the icon's own sky gradient, from
+   `.idea/design/logo/colors.css`: #FFD08A at the top, #F2895C at the bottom.
+   Nothing else on the page is warm — the accent is load-bearing precisely
+   because it is rationed. */
+:root {
+  --color-bg: #0b0c0f;
+  --color-bg-2: #131419;
+  --color-bg-3: #191a1d;
+  --color-fg: #f4f2ef;
+  --color-fg-dim: #9b9a96;
+  --color-fg-muted: #6e7076;
+  --color-rule: #22242a;
+  --color-rule-2: #2e3037;
+
+  /* Sky bottom. Type-safe on ink at 4.8:1, so unlike Cadence's amber it needs
+     no separate deepened variant — one accent covers glyphs and fills alike. */
+  --color-accent: #f2895c;
+  /* Hover/link lift, one step up the same ramp. */
+  --color-accent-hi: #f2a07c;
+  /* Sits on top of an accent fill. The icon's ink, not the page background. */
+  --color-accent-ink: #1b1c1f;
+  /* Sky top. The second stop of the icon gradient — used only where the
+     gradient itself is being quoted, never as a second accent. */
+  --color-sky-top: #ffd08a;
+
+  /* Status, hue-matched to the palette in logo/colors.css and lifted for ink. */
+  --color-ok: #8fd9a9;
+  --color-warn: #ffd08a;
+  --color-danger: #e4805c;
+
+  /* Backing behind a rendered macOS surface (the Settings pane, the menu-bar
+     strip) so it reads as a window sitting on the page rather than as a panel
+     of the page itself. */
+  --color-chrome: #1c1e23;
+  --color-chrome-2: #24262c;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-bg-2: var(--color-bg-2);
+  --color-bg-3: var(--color-bg-3);
+  --color-fg: var(--color-fg);
+  --color-fg-dim: var(--color-fg-dim);
+  --color-fg-muted: var(--color-fg-muted);
+  --color-rule: var(--color-rule);
+  --color-rule-2: var(--color-rule-2);
+  --color-accent: var(--color-accent);
+  --color-accent-hi: var(--color-accent-hi);
+  --color-accent-ink: var(--color-accent-ink);
+  --color-sky-top: var(--color-sky-top);
+  --color-ok: var(--color-ok);
+  --color-warn: var(--color-warn);
+  --color-danger: var(--color-danger);
+  --color-chrome: var(--color-chrome);
+  --color-chrome-2: var(--color-chrome-2);
+}
+
+@theme {
+  /* The system stack, deliberately. The design is drawn in SF Pro, which cannot
+     be self-hosted — and on the Macs this app is for, the system stack *is* SF
+     Pro. It also keeps `font-src 'self'` honest by downloading nothing. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --container-wide: 1240px;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 78px;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+@utility wrap {
+  max-width: var(--container-wide);
+  margin-inline: auto;
+  padding-inline: clamp(20px, 4vw, 40px);
+}
+
+@utility mono {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+}
+
+/* The icon's sky, quoted directly. Only the app mark and the CTA plate use it;
+   the rule from the brand README applies — vertical, two stops, never rotated. */
+@utility sky {
+  background: linear-gradient(180deg, var(--color-sky-top) 0%, var(--color-accent) 100%);
+}
+
+/* ── Scroll reveal ───────────────────────────────────────────────────────────
+   `.in` is added by the observer in Layout.astro. With JS off nothing adds it,
+   so the reduced-motion block at the bottom doubles as the no-JS fallback by
+   making the resting state visible. */
+.reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── The grant diagram ───────────────────────────────────────────────────────
+   Four hosts each holding a whole disk, collapsing to one app that holds it
+   once. The dashed connectors animate along their own path. */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -44;
+  }
+}
+
+.lane {
+  stroke-dasharray: 5 6;
+  animation: dash 1.6s linear infinite;
+}
+
+/* ── The tool marquee ────────────────────────────────────────────────────────
+   Two identical runs translated by exactly -50%, so the seam lands on a whole
+   copy and the loop is invisible. */
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee {
+  animation: marquee 42s linear infinite;
+}
+
+/* ── The write gate ──────────────────────────────────────────────────────────
+   The whole point of the section: with writes off the mutating rows are absent
+   from layout, not dimmed in place. `hidden` would be the same pixels but the
+   wrong semantics — these tools are never registered, so they are never
+   announced to a screen reader either. */
+.gate[data-writes="off"] .gate-write,
+.gate[data-writes="on"] .gate-off {
+  display: none;
+}
+
+.gate-toggle[data-active="1"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+/* ── Latency bars ────────────────────────────────────────────────────────────
+   Drawn to scale, which is the argument: 97ms against 74,000ms is 0.13% of the
+   track and has to stay visible anyway, hence the min-width floor. */
+.bar {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

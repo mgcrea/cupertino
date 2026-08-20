@@ -1,0 +1,86 @@
+---
+import { HOSTS, REPO_URL, SHIPPED } from "../config";
+import FdaPane from "./FdaPane.astro";
+---
+
+<section class="relative overflow-hidden pt-[88px] pb-[72px]">
+  <!-- The icon's own sky, bled off the top edge. The only large use of the
+       gradient on the page; everywhere else the accent is a single hue. -->
+  <div
+    class="pointer-events-none absolute inset-x-0 -top-[200px] h-[680px]"
+    style="background:radial-gradient(58% 68% at 50% 0%,rgba(242,137,92,.26) 0%,rgba(242,137,92,.05) 46%,transparent 72%)"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="wrap relative grid grid-cols-1 items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
+    <div class="flex flex-col gap-6">
+      {
+        !SHIPPED && (
+          <div class="flex items-center gap-2 self-start rounded-full border border-rule-2 bg-bg-2 py-[5px] pr-3.5 pl-2.5">
+            <span
+              class="block rounded-full bg-accent"
+              style="width:6px;height:6px"
+              aria-hidden="true"
+            />
+            <span class="mono !text-fg-dim">Pre-release · not shipped yet</span>
+          </div>
+        )
+      }
+
+      <h1
+        class="m-0 font-display text-[clamp(38px,5.6vw,64px)] leading-[1.02] font-semibold tracking-[-0.045em] text-balance"
+      >
+        Four apps hold your whole disk.<br /><span class="text-accent">It should be one.</span>
+      </h1>
+
+      <p class="m-0 max-w-[52ch] text-[16.5px] leading-[1.62] text-pretty text-fg-dim">
+        Cupertino is a menu-bar app that lets Claude read Mail, Notes and Reminders on your Mac.
+        Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to
+        every editor that happens to spawn a server.
+      </p>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noopener"
+          class="rounded-[10px] bg-accent px-[19px] py-[11px] text-[14px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+          >Watch the repo →</a
+        >
+        <a
+          href="#run"
+          class="rounded-[10px] border border-rule-2 px-[19px] py-[11px] text-[14px] text-fg transition-colors hover:border-fg-muted"
+          >Run it from source</a
+        >
+      </div>
+
+      <p class="mono m-0">MIT servers · unofficial, not affiliated with Apple</p>
+    </div>
+
+    <!-- The before/after. Four grants collapsing to one, in the pane the reader
+         has actually seen.
+
+         Stacked below `sm`: a row of "Visual Studio Code" plus its toggle has a
+         min-content width of roughly 205px, so two panes side by side cannot
+         fit a phone however hard flex-1 tries — they simply push the page wider
+         than the viewport. -->
+    <div class="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:gap-6">
+      <FdaPane
+        rows={HOSTS}
+        caption={`${HOSTS.length} grants · ${HOSTS.length} whole disks`}
+        class="sm:flex-1"
+      />
+      <span class="flex-none self-center text-[20px] text-fg-muted" aria-hidden="true">
+        <span class="sm:hidden">↓</span><span class="hidden sm:inline">→</span>
+      </span>
+      <FdaPane
+        rows={["Cupertino"]}
+        caption="1 grant · every host"
+        branded
+        tone="ok"
+        class="sm:flex-1 sm:self-start"
+      />
+    </div>
+  </div>
+</section>

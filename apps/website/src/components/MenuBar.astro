@@ -1,0 +1,120 @@
+---
+/**
+ * The product shot. Cupertino has no window — it is a menu-bar icon and a
+ * dropdown — so this strip *is* the app, and a conventional screenshot section
+ * would have nothing to show.
+ *
+ * Beside it, one exchange in a host: the two tools a real question actually
+ * calls, with the index lane's measured timings.
+ */
+import { SURFACES } from "../data/surfaces";
+import Logo from "./Logo.astro";
+
+const items = SURFACES.map((s) => ({ name: s.name, lane: "index lane" }));
+
+const calls = [
+  { tool: "apple_mail_search_messages", ms: 97 },
+  { tool: "apple_notes_search_notes", ms: 41 },
+] as const;
+---
+
+<section class="wrap grid grid-cols-1 items-start gap-8 pb-[96px] lg:grid-cols-[0.9fr_1.1fr] lg:gap-12">
+  <!-- Menu bar + dropdown -->
+  <div
+    class="reveal overflow-hidden rounded-[14px] border border-rule-2 bg-chrome shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+  >
+    <div
+      class="flex items-center justify-between gap-4 border-b border-rule-2 bg-chrome-2 px-3.5 py-[7px] text-[11.5px] text-fg-dim"
+    >
+      <div class="flex items-center gap-3.5">
+        <span class="font-semibold text-fg">Claude</span>
+        <span class="hidden sm:inline">File</span>
+        <span class="hidden sm:inline">Edit</span>
+        <span class="hidden sm:inline">View</span>
+        <span class="hidden sm:inline">Window</span>
+        <span class="hidden sm:inline">Help</span>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <!-- A template image is pure black + alpha; macOS inverts it for a dark
+             menu bar, and this strip has to do the same by hand. -->
+        <img
+          src="/menubar-glyph.svg"
+          alt="Cupertino"
+          width="14"
+          height="14"
+          style="filter:invert(1);opacity:.85"
+        />
+        <span>Thu 09:41</span>
+      </div>
+    </div>
+
+    <div class="p-2.5">
+      <div class="flex items-center gap-2.5 px-2 py-2">
+        <Logo size={20} />
+        <span class="text-[13px] font-medium text-fg">Cupertino</span>
+        <span class="mono ml-auto !text-ok">{items.length} servers running</span>
+      </div>
+
+      <ul class="m-0 list-none p-0">
+        {
+          items.map((i) => (
+            <li class="flex items-center gap-2.5 rounded-md px-2 py-[7px] text-[12.5px] text-fg-dim">
+              <span
+                class="block flex-none rounded-full bg-ok"
+                style="width:5px;height:5px"
+                aria-hidden="true"
+              />
+              <span class="text-fg">{i.name}</span>
+              <span class="mono ml-auto">{i.lane}</span>
+            </li>
+          ))
+        }
+      </ul>
+
+      <div class="my-1.5 h-px bg-rule-2"></div>
+
+      <ul class="m-0 list-none p-0 text-[12.5px]">
+        <li class="flex items-center gap-2 px-2 py-[7px] text-fg-dim">
+          <span class="text-fg">Full Disk Access</span>
+          <span class="mono ml-auto !text-ok">granted</span>
+        </li>
+        <li class="flex items-center gap-2 px-2 py-[7px] text-fg-dim">
+          <span class="text-fg">Writes</span>
+          <span class="mono ml-auto">off</span>
+        </li>
+      </ul>
+
+      <div class="my-1.5 h-px bg-rule-2"></div>
+
+      <ul class="m-0 list-none p-0 text-[12.5px] text-fg-dim">
+        <li class="px-2 py-[7px]">Copy .mcp.json snippet</li>
+        <li class="px-2 py-[7px]">Open diagnostics…</li>
+        <li class="px-2 py-[7px]">Quit Cupertino</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- One exchange -->
+  <div class="reveal flex flex-col gap-4 rounded-[14px] border border-rule bg-bg-2 p-6 sm:p-8">
+    <div class="mono">claude</div>
+    <p class="m-0 text-[19px] leading-[1.45] text-pretty text-fg">
+      “What did Anna send me about the lease, and is it in my notes?”
+    </p>
+    <div class="flex flex-col gap-2">
+      {
+        calls.map((c) => (
+          <div class="flex flex-wrap items-center gap-2.5 rounded-lg border border-rule bg-bg-3 px-3.5 py-2.5">
+            <span class="font-mono text-[12px] text-accent">{c.tool}</span>
+            <span class="mono ml-auto">
+              read · {c.ms} ms
+            </span>
+          </div>
+        ))
+      }
+    </div>
+    <p class="m-0 text-[13.5px] leading-[1.6] text-fg-muted">
+      Both reads came off the index lane. The same two questions over Apple Events would have taken
+      the better part of two minutes.
+    </p>
+  </div>
+</section>

@@ -1,0 +1,62 @@
+---
+import { DOCS, REPO_URL } from "../config";
+
+/**
+ * Deliberately the plainest block on the page. Everything here is a claim the
+ * repo has to be able to honour, so it reads as a table of facts rather than as
+ * a feature list — including the two that are not flattering.
+ */
+const rows = [
+  {
+    k: "Servers",
+    v: "Open source, MIT. All three run from source today.",
+    href: REPO_URL,
+  },
+  {
+    k: "App",
+    v: "Source-available, Developer ID signed, notarized and stapled, hardened runtime throughout.",
+    href: DOCS.licensing,
+  },
+  {
+    k: "Network",
+    v: "Makes no network connections. Verified in CI against the built binary, not the source.",
+    href: DOCS.licensing,
+  },
+  { k: "Platform", v: "macOS only. It drives the apps on your Mac; there is nothing to port." },
+  {
+    k: "Distribution",
+    v: "Not on the App Store — the sandbox denies ~/Library/Mail whatever you grant. A stapled zip and a Homebrew cask instead.",
+    href: DOCS.distribution,
+  },
+  { k: "Release", v: "Not shipped yet. The app and the npm packages land together." },
+] as const;
+---
+
+<section class="wrap py-[96px]">
+  <div class="mono mb-8">Status</div>
+  <dl class="m-0 grid grid-cols-1 gap-0">
+    {
+      rows.map((r) => (
+        <div class="grid grid-cols-1 gap-1.5 border-t border-rule py-5 last:border-b sm:grid-cols-[180px_1fr] sm:gap-8">
+          <dt class="text-[14px] font-medium text-fg">{r.k}</dt>
+          <dd class="m-0 text-[14px] leading-[1.6] text-pretty text-fg-dim">
+            {r.v}
+            {"href" in r && r.href && (
+              <>
+                {" "}
+                <a
+                  href={r.href}
+                  target="_blank"
+                  rel="noopener"
+                  class="text-accent transition-colors hover:text-accent-hi"
+                >
+                  ↗
+                </a>
+              </>
+            )}
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+</section>

@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "account_id": "0121e8859874c6fc0d674676e17d9f18",
+  "name": "cupertino-website",
+  "compatibility_date": "2026-03-31",
+  "assets": {
+    "directory": "./dist/",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "cupertino.mgcrea.io", "custom_domain": true }],
+  "send_metrics": false,
+  "workers_dev": false,
+  "preview_urls": true
+}

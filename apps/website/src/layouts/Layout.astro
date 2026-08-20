@@ -1,0 +1,107 @@
+---
+import { APP_NAME } from "../config";
+import "../styles/global.css";
+
+type SchemaObject = Record<string, unknown>;
+
+export interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+  schema?: SchemaObject | SchemaObject[];
+}
+
+const {
+  title = "Cupertino — Four apps hold your whole disk. It should be one.",
+  description =
+    "A macOS menu-bar app that lets Claude read Mail, Notes and Reminders on your Mac. Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to every editor that happens to spawn a server.",
+  ogImage = "/og-image.png",
+  schema,
+} = Astro.props;
+
+const canonicalHref = new URL(Astro.url.pathname, Astro.site).href;
+const ogImageHref = ogImage.startsWith("http") ? ogImage : new URL(ogImage, Astro.site).href;
+
+const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <!-- One value: the page is dark in both system themes, by design. -->
+    <meta name="theme-color" content="#0b0c0f" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalHref} />
+
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalHref} />
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:site_name" content={APP_NAME} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageHref} />
+
+    {
+      schemaEntries.map((entry) => (
+        <script is:inline type="application/ld+json" set:html={JSON.stringify(entry)} />
+      ))
+    }
+  </head>
+  <body>
+    <slot />
+
+    <script>
+      // Scroll-reveal. Everything else on this page is static by construction —
+      // there is no theme toggle, because there is one theme.
+      const reveals = document.querySelectorAll(".reveal");
+      if ("IntersectionObserver" in window && reveals.length) {
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                e.target.classList.add("in");
+                io.unobserve(e.target);
+              }
+            });
+          },
+          { rootMargin: "0px 0px -80px 0px" },
+        );
+        reveals.forEach((el) => io.observe(el));
+      } else {
+        reveals.forEach((el) => el.classList.add("in"));
+      }
+
+      // The write gate. Flipping it re-registers the tool list, which is the
+      // section's whole claim — the write rows leave the DOM flow rather than
+      // greying out, so assistive tech stops announcing them too.
+      const gate = document.querySelector<HTMLElement>(".gate");
+      if (gate) {
+        gate.querySelectorAll<HTMLButtonElement>(".gate-toggle").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const value = btn.dataset.value ?? "off";
+            gate.dataset.writes = value;
+            gate.querySelectorAll<HTMLButtonElement>(".gate-toggle").forEach((b) => {
+              const on = b.dataset.value === value;
+              // "1"/"0" rather than "true"/"false": global.css keys the active
+              // styling off [data-active="1"].
+              b.dataset.active = on ? "1" : "0";
+              b.setAttribute("aria-pressed", String(on));
+            });
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

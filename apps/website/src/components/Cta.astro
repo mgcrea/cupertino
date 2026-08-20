@@ -1,0 +1,45 @@
+---
+import { REPO_URL } from "../config";
+import Logo from "./Logo.astro";
+---
+
+<section id="run" class="wrap scroll-mt-20 py-[96px]">
+  <div
+    class="reveal relative overflow-hidden rounded-[20px] border border-rule bg-bg-2 px-6 py-14 text-center sm:px-12"
+  >
+    <div
+      class="pointer-events-none absolute inset-x-0 top-0 h-[220px]"
+      style="background:radial-gradient(50% 100% at 50% 0%,rgba(242,137,92,.18) 0%,transparent 70%)"
+      aria-hidden="true"
+    >
+    </div>
+
+    <div class="relative flex flex-col items-center gap-6">
+      <Logo size={64} variant="full" />
+
+      <h2
+        class="m-0 font-display text-[clamp(28px,3.6vw,42px)] leading-[1.1] font-semibold tracking-[-0.04em] text-balance"
+      >
+        One app. One grant.
+      </h2>
+
+      <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
+        The signed app and the npm packages ship together. Until then, clone it and point your host
+        at the built CLIs.
+      </p>
+
+      <a
+        href={REPO_URL}
+        target="_blank"
+        rel="noopener"
+        class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+        >Watch the repo →</a
+      >
+
+      <code
+        class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted"
+        >git clone mcp-apple-mail && pnpm build</code
+      >
+    </div>
+  </div>
+</section>
