@@ -23,8 +23,26 @@ import { DatabaseSync } from "node:sqlite";
 /** Core Data stores seconds since 2001-01-01. */
 export const APPLE_EPOCH_OFFSET = 978_307_200;
 
-/** Outside this range an epoch guess is wrong, however plausible the number looks. */
-export const sane = (d) => d instanceof Date && d.getFullYear() >= 2001 && d.getFullYear() <= 2100;
+/**
+ * Is this a plausible date for the NEWEST row in a live store?
+ *
+ * The window is deliberately narrow, and 2001 is deliberately outside it. Every
+ * Apple epoch here is anchored at 2001-01-01, so dividing a seconds value by 1e9
+ * lands within a rounding error of the anchor and produces exactly "2001" — a
+ * date that looks fine and is really the arithmetic saying "nothing here". A
+ * lower bound of 2001 accepts that artifact; Safari's `visit_time` was
+ * misidentified as nanoseconds through precisely this hole.
+ *
+ * Callers pass MAX() of a column, so the newest row in a store anyone is still
+ * using should be recent. A store whose latest row predates 2005 will fail every
+ * candidate and report `unknown` with the candidates listed — the right outcome:
+ * a human should look, rather than a heuristic guessing.
+ */
+export const sane = (d) =>
+  d instanceof Date &&
+  Number.isFinite(d.getTime()) &&
+  d.getFullYear() >= 2005 &&
+  d.getFullYear() <= new Date().getFullYear() + 2;
 
 /** Core Data spells strings VARCHAR; LENGTH() on an INTEGER lies, so check the type. */
 export const isTextType = (t) => /CHAR|CLOB|TEXT/i.test(String(t ?? ""));
@@ -47,7 +65,7 @@ export const safe = (fn, onErr) => {
  * the reason `packages/core/src/fs.ts` exists.
  *
  * `stat` SUCCEEDS on a file the sandbox will not let you open — the same trap
- * `app/Cupertino/Permissions.swift` documents. So "the file is not there" and
+ * `apps/apple/Cupertino/Permissions.swift` documents. So "the file is not there" and
  * "you may not read it" are different findings and a probe must never conflate
  * them: one means the surface has no file lane, the other means run it again
  * with Full Disk Access.
@@ -384,6 +402,13 @@ export const detectEpoch = (maxValue) => {
     { name: "unix-milliseconds", date: new Date(n), divisor: 1e-3, offset: 0 },
   ];
   const won = candidates.find((c) => sane(c.date));
+  // The rejected readings are kept either way. A wrong pick is only visible if
+  // you can see what the alternatives produced.
+  const considered = candidates.map((c) => ({
+    epoch: c.name,
+    year: Number.isFinite(c.date.getTime()) ? c.date.getFullYear() : null,
+    plausible: sane(c.date),
+  }));
   return won
     ? {
         tested: true,
@@ -391,8 +416,9 @@ export const detectEpoch = (maxValue) => {
         divisor: won.divisor,
         offset: won.offset,
         latestYear: won.date.getFullYear(),
+        considered,
       }
-    : { tested: true, epoch: "unknown", checked: candidates.map((c) => c.name) };
+    : { tested: true, epoch: "unknown", considered };
 };
 
 /**
