@@ -62,6 +62,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  aggNumericAsText,
   appleEventsLane,
   detectEpoch,
   dumpSchema,
@@ -69,7 +70,7 @@ import {
   findIdBridge,
   listable,
   macosVersion,
-  maxNumericAsText,
+  looksLikeDateColumn,
   openStore,
   parseArgs,
   safe,
@@ -542,7 +543,7 @@ if (opened?.db) {
         table: t,
         rows: doc.findings.tableCounts[t] ?? null,
         dateColumns: columnInfo(t)
-          .filter((c) => /START|END|CREAT|MODIF|DATE/i.test(c.name))
+          .filter((c) => looksLikeDateColumn(c.name, c.type))
           .map((c) => c.name),
       }))
       .toSorted((a, b) => (b.rows ?? 0) - (a.rows ?? 0));
@@ -569,8 +570,8 @@ if (opened?.db) {
     }
     // The columns a server would actually read, capped so the report stays short.
     const preferred = columnInfo(table)
+      .filter((c) => looksLikeDateColumn(c.name, c.type))
       .map((c) => c.name)
-      .filter((c) => /START|END|CREAT|MODIF|LAST/i.test(c))
       .slice(0, 8);
     if (!preferred.length) return { tested: false, reason: `no date column on ${table}` };
 
@@ -579,11 +580,24 @@ if (opened?.db) {
     let first = null;
     for (const c of preferred) {
       // Read as TEXT: a column that overflows a JS double throws in node:sqlite
-      // and is indistinguishable from an empty one. See maxNumericAsText.
-      const max = maxNumericAsText(db, table, c);
-      const detected = detectEpoch(max.value);
+      // and is indistinguishable from an empty one. See aggNumericAsText.
+      const max = aggNumericAsText(db, table, c, "MAX");
+      let detected = detectEpoch(max.value);
+      let via = "MAX";
+      // MAX can be a far-future sentinel — an unbounded recurring event's last
+      // occurrence — which fails every plausibility window and reports as
+      // "unknown" while the column is perfectly readable. MIN settles it.
+      if (detected.epoch === "unknown") {
+        const min = aggNumericAsText(db, table, c, "MIN");
+        const fromMin = detectEpoch(min.value);
+        if (fromMin.epoch && fromMin.epoch !== "unknown") {
+          detected = fromMin;
+          via = "MIN (MAX is out of range — likely a recurrence sentinel)";
+        }
+      }
       columns[c] = {
         ...detected,
+        via,
         digits: max.digits ?? 0,
         exceedsSafeInteger: max.exceedsSafeInteger,
       };
@@ -802,9 +816,17 @@ if (args.json) {
     );
     for (const [col, e] of Object.entries(doc.findings.epoch?.columns ?? {})) {
       L.push(
-        `     ${col.padEnd(24)} ${e.tested ? `${e.epoch}${e.latestYear ? `  (latest ${e.latestYear})` : ""}` : e.reason}` +
-          `${e.exceedsSafeInteger ? "  EXCEEDS JS SAFE INTEGER" : ""}`,
+        `     ${col.padEnd(24)} ${e.tested ? `${e.epoch}${e.latestYear ? `  (${e.via === "MAX" ? "latest" : "earliest"} ${e.latestYear})` : ""}` : e.reason}` +
+          `${e.exceedsSafeInteger ? "  EXCEEDS JS SAFE INTEGER" : ""}` +
+          `${e.via && e.via !== "MAX" ? `  via ${e.via}` : ""}`,
       );
+      // An "unknown" that shows its working is diagnosable; one that does not
+      // just looks like the probe giving up.
+      if (e.epoch === "unknown" && e.considered) {
+        L.push(
+          `        readings: ${e.considered.map((c) => `${c.epoch}→${c.year ?? "?"}`).join(", ")}`,
+        );
+      }
     }
     L.push("");
   }

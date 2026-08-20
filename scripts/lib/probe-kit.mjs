@@ -353,11 +353,13 @@ export const findIdBridge = (db, tables, columnInfo, needles) => {
  * that code must use BigInt or keep the text. `exceedsSafeInteger` is how this
  * probe tells it so.
  */
-export const maxNumericAsText = (db, table, column) => {
+export const aggNumericAsText = (db, table, column, agg = "MAX") => {
   const row = safe(
     () =>
       db
-        .prepare(`SELECT CAST(MAX("${column}") AS TEXT) AS m FROM "${table}" WHERE "${column}" > 0`)
+        .prepare(
+          `SELECT CAST(${agg}("${column}") AS TEXT) AS m FROM "${table}" WHERE "${column}" > 0`,
+        )
         .get(),
     () => null,
   );
@@ -492,4 +494,24 @@ export const parseArgs = (argv) => {
     has,
     valueOf,
   };
+};
+
+/** MAX(), the common case. See aggNumericAsText. */
+export const maxNumericAsText = (db, table, column) => aggNumericAsText(db, table, column, "MAX");
+
+/**
+ * Does this column hold a date?
+ *
+ * Answered on a TOKEN boundary, not a substring. `calendar_id` contains "end"
+ * and `self_attendee_id` contains "end", so a naive /END/i sweep over
+ * CalendarItem's 27 columns returns two integer foreign keys and reports them as
+ * dates that failed to parse. Type is checked too: `start_tz` is a timezone
+ * string sitting right beside `start_date`.
+ */
+export const looksLikeDateColumn = (name, type) => {
+  if (/CHAR|CLOB|TEXT|BLOB/i.test(String(type ?? ""))) return false;
+  return (
+    /(^|_)(date|time|stamp)(_|$)/i.test(name) ||
+    /(^|_)(creat|modif|due|completion|visit)/i.test(name)
+  );
 };
