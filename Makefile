@@ -174,6 +174,7 @@ ICON_MARK   := design/cupertino-mark.svg
 HASH        := \#
 ICON_SKY     = $(HASH)FFD08A,$(HASH)F2895C
 ICON_RADIUS := 230
+ICON_MENUBAR := design/cupertino-menubar.svg
 
 icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.svg
 	@appshot icon build --from $(ICON_MARK) \
@@ -192,6 +193,10 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 		-e 's|<g transform=|<g clip-path="url($(HASH)c)" transform=|;' \
 		design/cupertino-icon.svg
 	@appshot icon check --out app/Cupertino/Cupertino.icon
+	@# The menu bar glyph is authored, not composed — but the imageset needs the
+	@# file *inside* it, so design/ stays the one copy anyone edits.
+	@cp $(ICON_MENUBAR) app/Cupertino/Assets.xcassets/MenuBarIcon.imageset/
+	@echo "  copied $(notdir $(ICON_MENUBAR)) into MenuBarIcon.imageset"
 
 clean: ## Remove the app build output
 	@rm -rf app/.build

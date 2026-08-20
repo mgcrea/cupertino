@@ -1,0 +1,32 @@
+{
+  "name": "Cupertino",
+  "colors": {
+    "skyTop": "#FFD08A",
+    "skyBottom": "#F2895C",
+    "sun": "#FFF8EC",
+    "hillMid": "#B0532F",
+    "hillFore": "#7A2F1C",
+    "ink": "#1B1C1F",
+    "ok": "#2F8F52",
+    "warn": "#C6821B",
+    "danger": "#B3341F"
+  },
+  "gradients": {
+    "sky": {
+      "type": "linear",
+      "angle": 180,
+      "stops": [
+        { "offset": 0, "color": "#FFD08A" },
+        { "offset": 1, "color": "#F2895C" }
+      ]
+    },
+    "wash": {
+      "type": "linear",
+      "angle": 180,
+      "stops": [
+        { "offset": 0, "color": "#FFF8EC" },
+        { "offset": 1, "color": "#FBE7D6" }
+      ]
+    }
+  }
+}

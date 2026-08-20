@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Cupertino — icon mark (sun and hills, transparent sky)</title>
+  <circle cx="512" cy="424" r="124" fill="#FFF8EC"/>
+  <path d="M-40 744 Q256 536 552 744 T1120 744 V1064 H-40 Z" fill="#B0532F" opacity=".9"/>
+  <path d="M-40 848 Q320 660 660 848 T1120 824 V1064 H-40 Z" fill="#7A2F1C"/>
+</svg>

@@ -3,7 +3,7 @@
   "sortImports": {
     "enabled": true
   },
-  "ignorePatterns": ["dist", "pnpm-lock.yaml", ".reference", "**/*.xcassets"],
+  "ignorePatterns": ["dist", "pnpm-lock.yaml", ".reference", "**/*.icon", "**/*.xcassets"],
   "overrides": [
     {
       "files": ["**/*.json", "**/*.jsonc"],

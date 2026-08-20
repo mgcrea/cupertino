@@ -61,6 +61,10 @@ make smoke    # handshake both servers through the bridge
 The repo's checked-in [`.mcp.json`](.mcp.json) is wired for that path. `make` on its own lists
 every target.
 
+`Cupertino.app` needs **macOS 26 or later** — its icon is an Icon Composer bundle, which nothing
+older can render. The servers themselves are plain Node and carry no such floor; only the menu bar
+app does.
+
 ## Permissions
 
 Two separate macOS grants, and they land on **whatever process launched the server** — your
