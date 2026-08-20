@@ -170,7 +170,8 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		--entitlements app/node.entitlements "$(RELEASE_APP)/Contents/Resources/node"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
-	codesign --force --options runtime --timestamp --sign "$$id" "$(RELEASE_APP)"
+	codesign --force --options runtime --timestamp --sign "$$id" \
+		--entitlements app/Cupertino.entitlements "$(RELEASE_APP)"
 	@codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1 | sed 's/^/  /'
 	@echo "  size: $$(du -sh "$(RELEASE_APP)" | cut -f1)"
 

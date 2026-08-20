@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Cupertino sends Apple Events, and under the hardened runtime that has to
+       be declared. Without this key macOS does not merely refuse the event: it
+       refuses to ASK. Measured on a reset grant, target running —
+
+           com.apple.reminders running=true before=-1744 corePrompt=-1743
+
+       errAEEventNotPermitted with no consent dialog, for any event class,
+       because an app that never said it sends Apple Events is not worth
+       prompting about.
+
+       The MCP servers were unaffected and hid this for a long time: they reach
+       Apple Events through `osascript`, a separate Apple-signed process that
+       carries its own entitlement, with Cupertino only the responsible process
+       TCC attributes the grant to. The one place the app sends an event in its
+       own right is the Allow… button, and that is the one place this broke. -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

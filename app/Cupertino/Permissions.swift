@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 
 /// Full Disk Access, as one indivisible fact.
@@ -29,6 +30,24 @@ enum AutomationStatus: Equatable {
 }
 
 enum Permissions {
+  /// The event the permission questions are asked about: `core`/`getd`, a
+  /// property read — which is what the servers actually send, since every read
+  /// in `packages/*/src/client` reaches Apple Events through `osascript` asking
+  /// for a property.
+  ///
+  /// This was `typeWildCard` for both, which the header defines as asking
+  /// whether *every* event may be sent — a strictly broader question than the
+  /// one the app needs answered, and one that can disagree with what the
+  /// servers can actually do. Naming the real event keeps the status row and
+  /// the Allow… button answering the same question.
+  ///
+  /// It is **not** what made the button fail; that was the missing hardened
+  /// runtime entitlement, recorded in `app/Cupertino.entitlements`. The
+  /// wildcard was measured to behave identically, denying without a prompt,
+  /// for the same reason.
+  private static let eventClass = AEEventClass(kAECoreSuite)
+  private static let eventID = AEEventID(kAEGetData)
+
   // MARK: Full Disk Access
 
   /// Probe with `access(2)`, never `stat(2)`.
@@ -121,7 +140,7 @@ enum Permissions {
     guard let desc = target.aeDesc else { return .failed(OSStatus(paramErr)) }
 
     let status = AEDeterminePermissionToAutomateTarget(
-      desc, typeWildCard, typeWildCard, false)
+      desc, eventClass, eventID, false)
 
     switch status {
     case noErr: return .granted
@@ -139,15 +158,26 @@ enum Permissions {
   /// notices the dialog. Measured — the call times out after 30s and the
   /// assistant is told Mail "may be mid-sync", which is not what happened.
   ///
+  /// This needs `com.apple.security.automation.apple-events` in
+  /// `app/Cupertino.entitlements`. Without it, under the hardened runtime, the
+  /// call returns `errAEEventNotPermitted` instantly and no dialog is ever
+  /// shown — see the entitlements file for the measurement. The servers were
+  /// never affected, because they send their events from `osascript`.
+  ///
   /// Blocks until the user answers, so never call it on the main thread.
   static func requestAutomation(for bundleID: String) -> AutomationStatus {
     let target = NSAppleEventDescriptor(bundleIdentifier: bundleID)
     guard let desc = target.aeDesc else { return .failed(OSStatus(paramErr)) }
-    let status = AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, true)
+    let status = AEDeterminePermissionToAutomateTarget(desc, eventClass, eventID, true)
     switch status {
     case noErr: return .granted
     case OSStatus(errAEEventNotPermitted): return .denied
     case OSStatus(procNotFound): return .appNotRunning
+    // Asked, and still undecided — the dialog was dismissed rather than
+    // answered. Falling through to `.failed` here turned that into a dead grey
+    // cross with no way back; `.notDetermined` leaves the button offering to
+    // ask again.
+    case OSStatus(errAEEventWouldRequireUserConsent): return .notDetermined
     default: return .failed(status)
     }
   }
