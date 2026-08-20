@@ -69,11 +69,17 @@ contradicts its own pitch, and the next section is why that matters more than us
 ## Three claims worth more than the licence
 
 1. **The app makes no network connections.** There is no `URLSession`, no Sparkle and no HTTP
-   anywhere in `app/Cupertino` or `app/CupertinoBridge`. For a process holding Full Disk Access
-   that is a strong claim, and a cheap one for anyone to verify — Little Snitch, thirty seconds. It
-   belongs on the front page, not in a footnote. It is also a **constraint**: adding an update check
-   makes it false, so if Sparkle ever lands it has to become the single documented exception, and
-   the claim gets reworded rather than quietly dropped.
+   anywhere in `app/Cupertino` or `app/CupertinoBridge`. The one socket in the codebase is
+   `socket(AF_UNIX, SOCK_STREAM, 0)` in `ServerHost.swift` — a filesystem entry, mode-restricted to
+   the one user, carrying stdio between the app and its own servers. Nothing in the bundle can
+   reach the network at all. For a process holding Full Disk Access that is a strong claim, and a
+   cheap one for anyone to verify — Little Snitch, thirty seconds — so it belongs on the front page
+   rather than in a footnote. It is also a **constraint**: adding an update check makes it false, so
+   if Sparkle ever lands it becomes the single documented exception and the claim gets reworded, not
+   quietly dropped.
+
+   The servers under it speak stdio and Apple Events and nothing else. `send_message` is not a
+   counter-example: Mail.app does the sending, over the connection it already had.
 
 2. **Reproducible builds and published checksums.** Open source closes the gap between what the
    source says and what the binary does only if the two are known to correspond. Publish the hash of
