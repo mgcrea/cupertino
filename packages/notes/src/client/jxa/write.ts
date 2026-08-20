@@ -1,4 +1,5 @@
 import { script } from "./core.js";
+import { REPAIR_BODY_SRC } from "./repair.js";
 
 /**
  * Mutations may launch Notes.
@@ -44,9 +45,17 @@ export const CREATE_NOTE = script(
   MUTATION,
 );
 
-/** Replace a note's body. The title follows the first line, as it does on create. */
+/**
+ * Replace a note's body. The title follows the first line, as it does on create.
+ *
+ * Append re-serialises the *existing* body through Notes' HTML parser, which is
+ * lossy in both directions — see `repair.ts`. `repairBody` undoes the getter's
+ * damage before the concatenation, so an append leaves untouched content byte
+ * identical instead of silently flattening indentation and eating characters.
+ */
 export const UPDATE_NOTE = script(
-  `
+  REPAIR_BODY_SRC +
+    `
   var note = null;
   try { note = N.notes.byId(String(p.id)); } catch (e) { note = null; }
   if (!note) return err("NOTE_NOT_FOUND", "No note with id " + p.id);
@@ -55,7 +64,7 @@ export const UPDATE_NOTE = script(
   }
 
   var current = prop(function () { return String(note.body()); }, "");
-  var next = p.mode === "append" ? current + (p.body || "") : (p.body || "");
+  var next = p.mode === "append" ? repairBody(current) + (p.body || "") : (p.body || "");
   note.body = next;
   return ok({
     id: String(p.id),
