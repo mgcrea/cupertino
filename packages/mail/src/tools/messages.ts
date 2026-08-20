@@ -40,7 +40,7 @@ export const registerMessageTools = (
     },
     async ({ ref, maxBodyBytes }) =>
       wrap(async () => {
-        const { message, parsed, source } = await client.getMessageBody(
+        const { message, parsed, source, fallbackReason } = await client.getMessageBody(
           ref,
           maxBodyBytes ? { maxBodyBytes } : {},
         );
@@ -57,9 +57,13 @@ export const registerMessageTools = (
             read: message.read,
             flagged: message.flagged,
             body: message.content ?? "",
+            // The reason comes from an actual lookup rather than a fixed guess.
+            // The old text always blamed Full Disk Access, which sent people to
+            // a setting that was already correct whenever the real cause was a
+            // mailbox path we failed to resolve.
             note:
               "Body came from Mail rather than the message file, so attachment details are not " +
-              "available. Grant Full Disk Access for the full MIME view.",
+              `available. ${fallbackReason ?? ""}`.trimEnd(),
           };
         }
 
@@ -135,15 +139,17 @@ export const registerMessageTools = (
     },
     async ({ ref }) =>
       wrap(async () => {
-        const { parsed, source } = await client.getMessageBody(ref, { maxBodyBytes: 1024 });
+        const { parsed, source, fallbackReason } = await client.getMessageBody(ref, {
+          maxBodyBytes: 1024,
+        });
         if (!parsed) {
           return {
             degraded: true,
             capability: "message-file",
             reason:
-              "The message file could not be read, and Mail's scripting interface does not expose " +
-              "a MIME attachment manifest.",
-            hint: "Grant Full Disk Access and restart the host app. See apple_mail_diagnostics.",
+              "The message file was not read, and Mail's scripting interface does not expose a " +
+              `MIME attachment manifest. ${fallbackReason ?? ""}`.trimEnd(),
+            hint: "See the `messageFile` section of apple_mail_diagnostics, which probes this lane.",
           };
         }
         return { ref, source, count: parsed.attachments.length, attachments: parsed.attachments };

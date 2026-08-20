@@ -22,7 +22,8 @@ export const registerDiagnosticsTools = (
       description:
         "Report what this server can currently do and why. Shows whether Mail is running, whether " +
         "Automation and Full Disk Access are granted, where Mail's data lives, whether the search " +
-        "index is readable and how stale it is, per-account message caching, and the active " +
+        "index is readable and how stale it is, whether the message file lane actually resolves " +
+        "and reads a real message per account, per-account message caching, and the active " +
         "write/allowlist settings. Call this first whenever a tool returns `degraded: true` or a " +
         "permission error — it names the exact System Settings pane to open.",
       inputSchema: {},
@@ -37,6 +38,10 @@ export const registerDiagnosticsTools = (
         // the two disagree whenever the first Apple Event loses the race.
         const lanes = await client.lanes();
         const located = await client.locate();
+        // End-to-end probe of the message-file lane: resolve a real message to
+        // a path and read a byte of it. Without this the report can say Full
+        // Disk Access is granted while every file read on an account fails.
+        const messageFile = await client.probeMessageFile();
 
         let accounts: unknown[] = [];
         let accountsError: string | null = null;
@@ -69,6 +74,7 @@ export const registerDiagnosticsTools = (
             platform: process.platform,
           },
           lanes,
+          messageFile,
           permissions: {
             automation: lanes.applescript === "live" ? "granted" : "denied-or-mail-not-running",
             fullDiskAccess: located.readable
@@ -115,6 +121,9 @@ export const registerDiagnosticsTools = (
           accounts,
           ...(accountsError ? { accountsError } : {}),
           caveats: [
+            "`messageFile` is per account on purpose: mailbox layout differs by provider, so one " +
+              "account's lane can be dead while another's works. `unreachable` with " +
+              "`fullDiskAccess: granted` means the path was wrong, not the permission.",
             "Mailbox `unread` from the AppleScript lane is Mail's cached badge value and can " +
               "disagree with the real count (observed: 0 reported for a mailbox with 1618 unread " +
               "messages). Counts are labelled with their source; prefer the index when it is live.",

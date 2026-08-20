@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { PreconditionError } from "./errors.js";
 import {
@@ -64,46 +64,224 @@ export type LocateMessageOptions = {
 };
 
 /**
+ * Why a lookup failed, so the caller can say something true.
+ *
+ * `permission` matters because the obvious probe lies: `existsSync` is
+ * stat-based and SUCCEEDS on a TCC-protected path, while `readdirSync` and
+ * `readFileSync` return EPERM. Without Full Disk Access we therefore get past
+ * the directory check and die on the first read — which is a different problem
+ * from a path that is simply not there, and needs a different sentence.
+ */
+export type EmlxLookup =
+  | { found: true; path: string; partial: boolean }
+  | {
+      found: false;
+      reason: "no-mailbox-dir" | "no-message-file" | "permission";
+      /** The `.mbox` directories the mailbox name resolved to. */
+      mailboxDirs: string[];
+      /** Concrete paths we looked for the message file at. */
+      probed: string[];
+    };
+
+/**
  * Find a message file. Derive first (a few `existsSync` calls, microseconds),
  * then scan the mailbox's `Messages/` directories, then give up so the caller
  * can fall back to asking Mail directly.
+ *
+ * The mailbox name is resolved to a directory rather than joined onto the
+ * account root, because providers nest: a Gmail account keeps its special
+ * mailboxes under `[Gmail].mbox/`, so `All Mail` is not at
+ * `<account>/All Mail.mbox` and the flat join found nothing — which took the
+ * whole message-file lane out on those accounts without ever saying so.
  */
+export const lookupEmlx = (opts: LocateMessageOptions): EmlxLookup => {
+  const search = new MailboxSearch(opts.rowid);
+
+  // Fast path: the mailbox name spells its own directory. A flat `INBOX` costs
+  // one stat and no walk at all, exactly as it did before nesting was handled.
+  const derived = derivedMailboxDir(opts.accountDirectory, opts.mailbox);
+  if (isDirectory(derived)) {
+    const hit = search.in(derived);
+    if (hit) return hit;
+  }
+
+  /*
+   * Fallback: find the directory by name. A ref carries only a bare leaf, so
+   * `All Mail` has to be located inside whatever container holds it, and more
+   * than one container may hold that name. Try each; the one holding this rowid
+   * is the answer, which settles the ambiguity against the message that
+   * actually exists rather than by guessing at the name.
+   */
+  const mboxDirs = resolveMailboxDirs(opts.accountDirectory, opts.mailbox).filter(
+    (d) => d !== derived,
+  );
+  for (const mboxDir of mboxDirs) {
+    const hit = search.in(mboxDir);
+    if (hit) return hit;
+  }
+
+  const searched = [...(isDirectory(derived) ? [derived] : []), ...mboxDirs];
+  if (searched.length === 0) {
+    // Nothing resolved, but "not there" and "not allowed to look" are different
+    // answers: without Full Disk Access the walk's readdirs all fail silently.
+    let reason: "no-mailbox-dir" | "permission" = "no-mailbox-dir";
+    try {
+      readdirSync(opts.accountDirectory);
+    } catch (err) {
+      if (isPermissionError(err)) reason = "permission";
+    }
+    return { found: false, reason, mailboxDirs: [], probed: [derived] };
+  }
+
+  return {
+    found: false,
+    reason: search.denied ? "permission" : "no-message-file",
+    mailboxDirs: searched,
+    probed: search.probed,
+  };
+};
+
+/** Looks for one rowid inside a `.mbox` directory, remembering where it looked. */
+class MailboxSearch {
+  readonly probed: string[] = [];
+  denied = false;
+  readonly #relative: string;
+  readonly #names: string[];
+
+  constructor(rowid: number) {
+    this.#relative = join("Data", shardPath(rowid), "Messages");
+    this.#names = [`${rowid}.emlx`, `${rowid}.partial.emlx`];
+  }
+
+  in(mboxDir: string): Extract<EmlxLookup, { found: true }> | null {
+    let inner: string[];
+    try {
+      inner = readdirSync(mboxDir).filter((d) => !d.startsWith("."));
+    } catch (err) {
+      if (isPermissionError(err)) this.denied = true;
+      return null;
+    }
+
+    // Fast path: the derived shard.
+    for (const uuid of inner) {
+      for (const name of this.#names) {
+        const candidate = join(mboxDir, uuid, this.#relative, name);
+        this.probed.push(candidate);
+        if (existsSync(candidate)) return foundAt(candidate, name);
+      }
+    }
+
+    // Slow path. Kept even though the derivation hits reliably today, because it
+    // is what stops a future layout change from taking the body lane out entirely.
+    for (const uuid of inner) {
+      const dataRoot = join(mboxDir, uuid, "Data");
+      for (const dir of findMessagesDirs(dataRoot, 0)) {
+        for (const name of this.#names) {
+          const candidate = join(dir, name);
+          if (existsSync(candidate)) return foundAt(candidate, name);
+        }
+      }
+    }
+    return null;
+  }
+}
+
+const foundAt = (path: string, name: string): Extract<EmlxLookup, { found: true }> => ({
+  found: true,
+  path,
+  partial: name.includes(".partial."),
+});
+
+/** The `path | null` shape most callers want. See `lookupEmlx` for the reason. */
 export const locateEmlx = (
   opts: LocateMessageOptions,
 ): { path: string; partial: boolean } | null => {
-  const mboxDir = join(opts.accountDirectory, `${opts.mailbox}.mbox`);
-  if (!existsSync(mboxDir)) return null;
+  const found = lookupEmlx(opts);
+  return found.found ? { path: found.path, partial: found.partial } : null;
+};
 
-  let inner: string[];
-  try {
-    inner = readdirSync(mboxDir).filter((d) => !d.startsWith("."));
-  } catch {
-    return null;
-  }
+// ─── mailbox name → on-disk directory ────────────────────────────────────────
 
-  const relative = join("Data", shardPath(opts.rowid), "Messages");
-  const names = [`${opts.rowid}.emlx`, `${opts.rowid}.partial.emlx`];
+/** Depth cap for the `.mbox` walk. Matches `findMessagesDirs`. */
+const MAX_MBOX_DEPTH = 6;
 
-  // Fast path: the derived shard.
-  for (const uuid of inner) {
-    for (const name of names) {
-      const candidate = join(mboxDir, uuid, relative, name);
-      if (existsSync(candidate)) return { path: candidate, partial: name.includes(".partial.") };
-    }
-  }
+/** `[Gmail]/All Mail` -> `<account>/[Gmail].mbox/All Mail.mbox`. */
+const derivedMailboxDir = (accountDirectory: string, mailbox: string): string =>
+  join(accountDirectory, ...mailbox.split("/").map((segment) => `${segment}.mbox`));
 
-  // Slow path. Kept even though the derivation hits reliably today, because it
-  // is what stops a future layout change from taking the body lane out entirely.
-  for (const uuid of inner) {
-    const dataRoot = join(mboxDir, uuid, "Data");
-    for (const dir of findMessagesDirs(dataRoot, 0)) {
-      for (const name of names) {
-        const candidate = join(dir, name);
-        if (existsSync(candidate)) return { path: candidate, partial: name.includes(".partial.") };
+/**
+ * Resolve a mailbox name to every `.mbox` directory that could be it.
+ *
+ * This is the inverse of the ladder `MailboxMap.resolveMailboxName` and the JXA
+ * `resolveMailbox` walk (exact, `[Gmail]/`-stripped, final segment, then
+ * case-insensitive): those take a path and find a mailbox Mail knows about,
+ * this takes the bare leaf name that survives into a ref and finds the nested
+ * container holding it.
+ *
+ * Deliberately generic rather than special-casing `[Gmail]`: Exchange and other
+ * providers nest too, and a Gmail label `Work/Projects` lands two levels deep as
+ * `Work.mbox/Projects.mbox`.
+ */
+export const resolveMailboxDirs = (accountDirectory: string, mailbox: string): string[] => {
+  // The name may spell its own path: a flat `INBOX.mbox`, or an explicit
+  // `[Gmail]/All Mail`. That goes first, but it does not end the search — a flat
+  // `Archive.mbox` existing does not prove this message is in it rather than in
+  // a nested one of the same name, and the caller settles that by rowid.
+  const derived = derivedMailboxDir(accountDirectory, mailbox);
+  const first = isDirectory(derived) ? [derived] : [];
+
+  const candidates = mailboxNameCandidates(mailbox);
+  const exact: string[] = [];
+  const insensitive: string[] = [];
+  const lowered = candidates.map((c) => c.toLowerCase());
+
+  // Breadth-first so shallower matches are offered before deeper ones. Only
+  // `.mbox` entries are ever opened, so the walk never descends into `Data/` —
+  // that is what keeps this to tens of small readdirs instead of a scan over
+  // every message shard in the account.
+  let frontier = [accountDirectory];
+  for (let depth = 0; depth < MAX_MBOX_DEPTH && frontier.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const dir of frontier) {
+      for (const entry of safeReaddir(dir)) {
+        if (!entry.endsWith(".mbox") || entry.startsWith(".")) continue;
+        const full = join(dir, entry);
+        if (!isDirectory(full)) continue;
+        const name = basename(entry, ".mbox");
+        if (candidates.includes(name)) exact.push(full);
+        else if (lowered.includes(name.toLowerCase())) insensitive.push(full);
+        // Recurse regardless: a mailbox can be both a match and a container.
+        next.push(full);
       }
     }
+    frontier = next;
   }
-  return null;
+
+  return [...new Set([...first, ...exact, ...insensitive])];
+};
+
+/** Exact, `[Gmail]/`-stripped, then final segment — the shared ladder's names. */
+const mailboxNameCandidates = (mailbox: string): string[] => {
+  const candidates = [mailbox];
+  if (mailbox.startsWith("[Gmail]/")) candidates.push(mailbox.slice(8));
+  if (mailbox.includes("/")) {
+    const last = mailbox.split("/").pop();
+    if (last) candidates.push(last);
+  }
+  return candidates;
+};
+
+const isDirectory = (path: string): boolean => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const isPermissionError = (err: unknown): boolean => {
+  const code = (err as { code?: string } | null)?.code;
+  return code === "EPERM" || code === "EACCES";
 };
 
 /** Depth-limited walk for `Messages/` directories under a Data root. */

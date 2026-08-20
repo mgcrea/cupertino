@@ -195,4 +195,24 @@ describe("diagnostics", () => {
     expect(payload.lanes.index).toBe("disabled");
     expect(payload.lanes.indexReason).toContain("off");
   });
+
+  /**
+   * The message-file lane degrades to AppleScript on every reader, so a lane
+   * that has been broken for months looks like a lane that is merely slow.
+   * Diagnostics has to probe it rather than infer it from the FDA bit.
+   */
+  it("probes the message-file lane per account instead of inferring it", async () => {
+    const client = await connect(loadConfig({ APPLE_MAIL_INDEX_MODE: "off" }));
+    const payload = JSON.parse(
+      textOf(await client.callTool({ name: "apple_mail_diagnostics", arguments: {} })),
+    );
+    expect(payload.messageFile).toHaveLength(1);
+    expect(payload.messageFile[0]).toMatchObject({
+      accountUuid: UUID,
+      account: "iCloud",
+      status: "not-probed",
+    });
+    // It must say WHY it could not probe, rather than reporting a healthy lane.
+    expect(payload.messageFile[0].reason).toBeTruthy();
+  });
 });

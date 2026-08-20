@@ -52,7 +52,7 @@ let dir: string;
 let accountDir: string;
 let downloads: string;
 
-const runner = (): OsascriptRunner => ({
+const runner = (mailbox = "INBOX"): OsascriptRunner => ({
   run: vi.fn(async (script: string) => {
     if (script.includes("a.emailAddresses()")) {
       return [
@@ -65,7 +65,7 @@ const runner = (): OsascriptRunner => ({
           fullName: "Me",
           directory: accountDir,
           messageCaching: "all messages and their attachments",
-          mailboxes: ["INBOX"],
+          mailboxes: [mailbox],
         },
       ];
     }
@@ -73,10 +73,12 @@ const runner = (): OsascriptRunner => ({
   }) as OsascriptRunner["run"],
 });
 
-const clientWith = (filename: string) => {
-  const messagesDir = join(
+/** Where the message file is laid down. `container` nests it, Gmail-style. */
+const messagesDirFor = (mailbox: string, container?: string) =>
+  join(
     accountDir,
-    "INBOX.mbox",
+    ...(container ? [`${container}.mbox`] : []),
+    `${mailbox}.mbox`,
     "MBOX-UUID",
     "Data",
     "8",
@@ -84,12 +86,15 @@ const clientWith = (filename: string) => {
     "1",
     "Messages",
   );
+
+const clientWith = (filename: string, mailbox = "INBOX", container?: string) => {
+  const messagesDir = messagesDirFor(mailbox, container);
   mkdirSync(messagesDir, { recursive: true });
   writeFileSync(join(messagesDir, `${ROWID}.emlx`), emlx(message(filename)));
 
   return new AppleMailClient({
     config: loadConfig({ APPLE_MAIL_ATTACHMENT_DIR: downloads, APPLE_MAIL_ALLOW_WRITES: "1" }),
-    osascript: runner(),
+    osascript: runner(mailbox),
   });
 };
 
@@ -148,17 +153,33 @@ describe("saving attachments", () => {
     );
   });
 
-  it("says the bytes are not local when Mail stripped them", async () => {
-    const messagesDir = join(
-      accountDir,
-      "INBOX.mbox",
-      "MBOX-UUID",
-      "Data",
-      "8",
-      "9",
-      "1",
-      "Messages",
+  /**
+   * The bug this suite gained a case for: on a Gmail account "All Mail" lives at
+   * `[Gmail].mbox/All Mail.mbox`, the flat join found nothing, and this tool —
+   * which has no AppleScript fallback — hard-failed on every message.
+   */
+  it("saves from a mailbox nested inside a [Gmail] container", async () => {
+    const client = clientWith("nested.pdf", "All Mail", "[Gmail]");
+    const nestedRef = encodeRef({ accountUuid: UUID, mailbox: "All Mail", id: ROWID });
+
+    const saved = await client.saveAttachment(nestedRef, "nested.pdf");
+    expect(readFileSync(saved.path, "utf8")).toBe("PDF-BYTES");
+  });
+
+  it("does not blame Full Disk Access when the mailbox resolved but the message did not", async () => {
+    const client = clientWith("present.pdf");
+    const absent = encodeRef({ accountUuid: UUID, mailbox: "INBOX", id: 424_242 });
+
+    await expect(client.saveAttachment(absent, "present.pdf")).rejects.toThrow(
+      /message file was not found/,
     );
+    await expect(client.saveAttachment(absent, "present.pdf")).rejects.not.toThrow(
+      /Grant Full Disk Access/,
+    );
+  });
+
+  it("says the bytes are not local when Mail stripped them", async () => {
+    const messagesDir = messagesDirFor("INBOX");
     mkdirSync(messagesDir, { recursive: true });
     writeFileSync(
       join(messagesDir, `${ROWID}.emlx`),

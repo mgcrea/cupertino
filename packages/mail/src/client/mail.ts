@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 import type { Config } from "../config.js";
 import {
   extractAttachment,
-  locateEmlx,
+  lookupEmlx,
   readEmlx,
   readEmlxSource,
+  type EmlxLookup,
   type ParsedMessage,
 } from "./emlx.js";
 import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from "./envelope.js";
@@ -62,6 +63,16 @@ export type LaneStatus = {
   indexMode?: string;
   schemaFingerprint?: string;
 };
+
+/** What `#lookupMessageFile` found, and — when it found nothing — why. */
+type MessageFileLookup =
+  | { found: true; path: string; partial: boolean }
+  | { found: false; lookup?: Extract<EmlxLookup, { found: false }>; explain: string };
+
+/** The FDA sentence, kept verbatim for the case where FDA really is the problem. */
+const FDA_HINT =
+  "The message file could not be read. Grant Full Disk Access to the app running this server " +
+  "and restart it.";
 
 export type AppleMailClientOptions = {
   config: Config;
@@ -413,11 +424,13 @@ export class AppleMailClient {
     message: MessageSummary;
     parsed: ParsedMessage | null;
     source: "emlx" | "applescript";
+    /** Why the file lane was not used. Present only when it was not. */
+    fallbackReason?: string;
   }> {
     const decoded = decodeRef(ref);
-    const located = await this.#locateMessageFile(decoded);
+    const located = await this.#lookupMessageFile(decoded);
 
-    if (located) {
+    if (located.found) {
       const parsed = readEmlx(located.path, {
         maxBodyBytes: opts.maxBodyBytes ?? this.config.bodyMaxBytes,
         partial: located.partial,
@@ -429,7 +442,14 @@ export class AppleMailClient {
 
     const [summary] = await this.getMessages(decoded, [decoded.id], { withContent: true });
     if (!summary) throw new MessageNotFoundError(ref);
-    return { message: summary, parsed: null, source: "applescript" };
+    return {
+      message: summary,
+      parsed: null,
+      source: "applescript",
+      fallbackReason: located.found
+        ? "The message file was read, but Mail did not return a summary for it."
+        : located.explain,
+    };
   }
 
   async getMessageSource(
@@ -440,10 +460,11 @@ export class AppleMailClient {
     totalBytes: number | null;
     truncated: boolean;
     via: "emlx" | "applescript";
+    fallbackReason?: string;
   }> {
     const decoded = decodeRef(ref);
-    const located = await this.#locateMessageFile(decoded);
-    if (located) {
+    const located = await this.#lookupMessageFile(decoded);
+    if (located.found) {
       return { ...readEmlxSource(located.path, opts), via: "emlx" };
     }
     const [summary] = await this.getMessages(decoded, [decoded.id], { withSource: true });
@@ -455,23 +476,234 @@ export class AppleMailClient {
       totalBytes: full.length,
       truncated: opts.offset + slice.length < full.length,
       via: "applescript",
+      ...(located.found ? {} : { fallbackReason: located.explain }),
     };
   }
 
-  async #locateMessageFile(ref: MessageRef): Promise<{ path: string; partial: boolean } | null> {
+  /**
+   * Look for a message's `.emlx`, keeping the reason it was not found.
+   *
+   * The reason is the point. This lane degrades silently by design — the
+   * AppleScript fallback answers most questions — so a lookup that fails for
+   * the WRONG reason (a mailbox path we derived incorrectly, say) is invisible
+   * and stays invisible. Every caller that reports a degraded read now has the
+   * evidence to say which of "no permission", "not cached", and "no such path"
+   * it actually was.
+   */
+  async #lookupMessageFile(ref: MessageRef): Promise<MessageFileLookup> {
     const accounts = await this.accounts();
     const account = accounts.find((a) => a.id === ref.accountUuid);
-    if (!account?.directory) return null;
+    if (!account) {
+      return { found: false, explain: `No account with id ${ref.accountUuid} is visible.` };
+    }
+    if (!account.directory) {
+      return {
+        found: false,
+        explain: `Mail did not report an on-disk directory for account "${account.name}".`,
+      };
+    }
+    let lookup: EmlxLookup;
     try {
-      return locateEmlx({
+      lookup = lookupEmlx({
         accountDirectory: account.directory,
         mailbox: ref.mailbox,
         rowid: ref.id,
       });
-    } catch {
-      // Almost always a permission error on the mail store — the AppleScript
+    } catch (err) {
+      // Unexpected: lookupEmlx swallows its own I/O errors. The AppleScript
       // fallback still works, so this is not worth failing the call over.
-      return null;
+      return { found: false, explain: err instanceof Error ? err.message : String(err) };
+    }
+    if (lookup.found) return { found: true, path: lookup.path, partial: lookup.partial };
+    return {
+      found: false,
+      lookup,
+      explain: await this.#explainMissingFile(account, ref, lookup),
+    };
+  }
+
+  /**
+   * One truthful sentence about why there is no message file.
+   *
+   * Written because the old text said "Grant Full Disk Access and restart the
+   * host app" unconditionally, which sent people to fix a permission that was
+   * already granted while the real cause — a mailbox nested under
+   * `[Gmail].mbox/` that the flat path join never found — went unmentioned.
+   */
+  async #explainMissingFile(
+    account: MailAccount,
+    ref: MessageRef,
+    lookup: Extract<EmlxLookup, { found: false }>,
+  ): Promise<string> {
+    if (lookup.reason === "permission") return FDA_HINT;
+
+    const probed = lookup.probed.slice(0, 3).join(", ");
+
+    if (lookup.reason === "no-mailbox-dir") {
+      // Nothing resolved and no EPERM. If we also cannot read the index, a
+      // blanket TCC denial is still the likeliest story; otherwise the path is
+      // simply wrong, and saying "grant Full Disk Access" would be a lie.
+      if (!(await this.locate()).readable) return FDA_HINT;
+      return (
+        `Full Disk Access is granted, but no mailbox directory for "${ref.mailbox}" was found ` +
+        `under ${account.directory}. Probed: ${probed}.`
+      );
+    }
+
+    /*
+     * `no-message-file` means the mailbox directory was listed successfully, so
+     * we demonstrably have read access to the mail store. Permission is settled
+     * by that evidence and must not be blamed here — not even when the Envelope
+     * Index is unreadable for its own reasons.
+     */
+    const cachesBodies = /all messages/i.test(account.messageCaching ?? "");
+    if (!cachesBodies) {
+      return (
+        `The mailbox directory was found, but message ${ref.id} has no file on disk. Account ` +
+        `"${account.name}" caches "${account.messageCaching ?? "unknown"}", so bodies may not be ` +
+        `stored locally. Opening the message in Mail downloads it.`
+      );
+    }
+    return (
+      `The mailbox directory was found and is readable, but no file for message ${ref.id} exists ` +
+      `under ${lookup.mailboxDirs.slice(0, 2).join(", ")}. Probed: ${probed}.`
+    );
+  }
+
+  /**
+   * Walk the message-file lane end to end, per account, and report what broke.
+   *
+   * This exists because the lane fails silently by construction: every reader
+   * falls back to AppleScript, so a lane that has been dead for months looks
+   * like a lane that is merely slow. Diagnostics reporting
+   * `fullDiskAccess: granted` beside a lane where every file read fails is the
+   * misleading part, and this is what replaces the guess with a probe.
+   *
+   * Deliberately per-account: the failure that motivated it was an account-level
+   * layout difference (Gmail nesting its mailboxes under `[Gmail].mbox/`), so a
+   * single-account probe would have reported a healthy lane.
+   */
+  async probeMessageFile(): Promise<
+    {
+      account: string;
+      accountUuid: string;
+      status: "ok" | "unreachable" | "headers-only" | "not-probed";
+      mailbox?: string;
+      rowid?: number;
+      path?: string;
+      reason?: string;
+      probed?: string[];
+    }[]
+  > {
+    let accounts: MailAccount[];
+    try {
+      accounts = await this.accounts();
+    } catch (err) {
+      this.#logger?.debug?.("probeMessageFile: no account list", err);
+      return [];
+    }
+
+    const index = await this.index();
+    // No index means no cheap way to name a real message. Firing an Apple Event
+    // per account to find one would make diagnostics slower precisely when the
+    // index lane is already telling the user what to fix, so we say so instead.
+    const noIndex = index
+      ? null
+      : (this.#indexError ?? (await this.locate()).reason ?? "the search index is unavailable");
+
+    const results = [];
+    for (const account of accounts) {
+      const base = { account: account.name, accountUuid: account.id };
+      if (!account.directory) {
+        results.push({
+          ...base,
+          status: "not-probed" as const,
+          reason: "Mail did not report an on-disk directory for this account.",
+        });
+        continue;
+      }
+      if (!index) {
+        results.push({ ...base, status: "not-probed" as const, reason: noIndex ?? undefined });
+        continue;
+      }
+
+      const sample = this.#sampleMessage(index, account);
+      if (!sample) {
+        results.push({
+          ...base,
+          status: "not-probed" as const,
+          reason: "The search index holds no message for this account.",
+        });
+        continue;
+      }
+
+      const lookup = lookupEmlx({
+        accountDirectory: account.directory,
+        mailbox: sample.mailbox,
+        rowid: sample.rowid,
+      });
+      const located = { ...base, mailbox: sample.mailbox, rowid: sample.rowid };
+
+      if (lookup.found) {
+        // Stat is not enough: it SUCCEEDS on a TCC-protected file, so a lane
+        // with no read permission would report `ok`. Read a byte instead.
+        try {
+          const fd = openSync(lookup.path, "r");
+          try {
+            readSync(fd, Buffer.alloc(1), 0, 1, 0);
+          } finally {
+            closeSync(fd);
+          }
+          results.push({ ...located, status: "ok" as const, path: lookup.path });
+        } catch (err) {
+          results.push({
+            ...located,
+            status: "unreachable" as const,
+            path: lookup.path,
+            reason: `The message file exists but could not be read: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+        }
+        continue;
+      }
+
+      const cachesBodies = /all messages/i.test(account.messageCaching ?? "");
+      results.push({
+        ...located,
+        status:
+          lookup.reason === "no-message-file" && !cachesBodies
+            ? ("headers-only" as const)
+            : ("unreachable" as const),
+        reason: lookup.reason,
+        probed: lookup.probed.slice(0, 3),
+      });
+    }
+    return results;
+  }
+
+  /** Cheapest real (mailbox, rowid) pair for an account, straight from the index. */
+  #sampleMessage(
+    index: EnvelopeIndex,
+    account: MailAccount,
+  ): { mailbox: string; rowid: number } | null {
+    const owned = index.mailboxes().filter((m) => {
+      const host = /^[a-z-]+:\/\/([^/]*)/i.exec(m.url)?.[1];
+      return host && decodeURIComponent(host) === account.id;
+    });
+    if (owned.length === 0) return null;
+
+    const [row] = index.search({ mailboxRowids: owned.map((m) => m.rowid), limit: 1, offset: 0 });
+    if (!row) return null;
+
+    const path = decodeURIComponent(/^[a-z-]+:\/\/[^/]*\/?(.*)$/i.exec(row.mailboxUrl)?.[1] ?? "");
+    if (!path) return null;
+    try {
+      return { mailbox: this.mailboxes.resolveMailboxName(account, path), rowid: row.rowid };
+    } catch {
+      // The index knows a mailbox Mail does not list. Probe the raw path — that
+      // is exactly the sort of mismatch this probe should surface, not hide.
+      return { mailbox: path, rowid: row.rowid };
     }
   }
 
@@ -488,11 +720,11 @@ export class AppleMailClient {
     opts: { overwrite?: boolean } = {},
   ): Promise<{ path: string; bytes: number; from: "inline" | "sidecar" }> {
     const decoded = decodeRef(ref);
-    const located = await this.#locateMessageFile(decoded);
-    if (!located) {
+    const located = await this.#lookupMessageFile(decoded);
+    if (!located.found) {
       throw new PreconditionError(
-        "The message file could not be read, so its attachments are not reachable. " +
-          "Grant Full Disk Access and restart the host app.",
+        `The message file was not found, so its attachments are not reachable. ${located.explain}`,
+        { probed: located.lookup?.probed.slice(0, 3) ?? [] },
       );
     }
 

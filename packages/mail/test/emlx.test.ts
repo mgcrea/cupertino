@@ -4,7 +4,15 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { locateEmlx, readEmlx, readEmlxSource, shardPath, splitEmlx } from "../src/client/emlx.js";
+import {
+  locateEmlx,
+  lookupEmlx,
+  readEmlx,
+  readEmlxSource,
+  resolveMailboxDirs,
+  shardPath,
+  splitEmlx,
+} from "../src/client/emlx.js";
 import { PreconditionError } from "../src/client/errors.js";
 
 /**
@@ -86,6 +94,81 @@ beforeAll(() => {
   const odd = join(accountDir, "Archive.mbox", "MBOX-UUID", "Data", "weird", "Messages");
   mkdirSync(odd, { recursive: true });
   writeFileSync(join(odd, "42.emlx"), emlx("Subject: Found by scanning\r\n\r\nhello"));
+
+  /*
+   * The Gmail shape, which is what the flat `<account>/<mailbox>.mbox` join got
+   * wrong: special mailboxes live under a `[Gmail].mbox` container, so nothing
+   * named "All Mail" sits at the account root. Verified against a live store.
+   *
+   * 189233 -> floor(189233/1000) = 189 -> digits reversed -> 9/8/1
+   */
+  const gmail = join(
+    accountDir,
+    "[Gmail].mbox",
+    "All Mail.mbox",
+    "MBOX-UUID",
+    "Data",
+    "9",
+    "8",
+    "1",
+    "Messages",
+  );
+  mkdirSync(gmail, { recursive: true });
+  writeFileSync(join(gmail, "189233.emlx"), emlx("Subject: Nested\r\n\r\nfrom the container"));
+
+  // Two levels of nesting: a Gmail label "Work/Projects" lands here.
+  const deep = join(
+    accountDir,
+    "Work.mbox",
+    "Projects.mbox",
+    "Notes.mbox",
+    "MBOX-UUID",
+    "Data",
+    "7",
+    "Messages",
+  );
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(join(deep, "7001.emlx"), emlx("Subject: Two deep\r\n\r\nhello"));
+
+  /*
+   * The same leaf name under two containers. The ref carries only "Receipts",
+   * so the name alone cannot say which one — only the rowid can.
+   */
+  for (const [container, rowid] of [
+    ["Personal", 3001],
+    ["Business", 3002],
+  ] as const) {
+    const shared = join(
+      accountDir,
+      `${container}.mbox`,
+      "Receipts.mbox",
+      "MBOX-UUID",
+      "Data",
+      "3",
+      "Messages",
+    );
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(join(shared, `${rowid}.emlx`), emlx(`Subject: ${container}\r\n\r\nreceipt`));
+  }
+
+  /*
+   * A decoy inside a Data tree. The walk must never descend into `Data/` — if
+   * it did, this would shadow the real mailbox and the walk would also be
+   * scanning every message shard in the account.
+   */
+  const decoy = join(
+    accountDir,
+    "INBOX.mbox",
+    "MBOX-UUID",
+    "Data",
+    "Trap.mbox",
+    "MBOX-UUID",
+    "Data",
+    "8",
+    "Messages",
+  );
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(join(decoy, "8123.emlx"), emlx("Subject: Decoy\r\n\r\nshould not be found"));
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -139,6 +222,77 @@ describe("locating", () => {
   it("returns null for an unknown mailbox or message", () => {
     expect(locateEmlx({ accountDirectory: accountDir, mailbox: "Nope", rowid: 1 })).toBeNull();
     expect(locateEmlx({ accountDirectory: accountDir, mailbox: "INBOX", rowid: 123 })).toBeNull();
+  });
+});
+
+/**
+ * The regression this file exists for: a Gmail account nests its special
+ * mailboxes under `[Gmail].mbox`, so joining `<account>/<mailbox>.mbox` finds
+ * nothing and every message-file capability silently degrades.
+ */
+describe("locating inside nested .mbox containers", () => {
+  it("finds a Gmail mailbox from the bare leaf name the ref carries", () => {
+    const found = locateEmlx({ accountDirectory: accountDir, mailbox: "All Mail", rowid: 189_233 });
+    expect(found?.path).toContain(join("[Gmail].mbox", "All Mail.mbox"));
+    expect(found?.path).toContain(join("Data", "9", "8", "1", "Messages", "189233.emlx"));
+  });
+
+  it("also accepts the full path, which the search lane resolves with", () => {
+    const found = locateEmlx({
+      accountDirectory: accountDir,
+      mailbox: "[Gmail]/All Mail",
+      rowid: 189_233,
+    });
+    expect(found?.path).toContain(join("[Gmail].mbox", "All Mail.mbox"));
+  });
+
+  it("finds a mailbox two containers deep", () => {
+    const found = locateEmlx({ accountDirectory: accountDir, mailbox: "Notes", rowid: 7001 });
+    expect(found?.path).toContain(join("Work.mbox", "Projects.mbox", "Notes.mbox"));
+  });
+
+  it("matches case-insensitively, like the name ladder does", () => {
+    expect(
+      locateEmlx({ accountDirectory: accountDir, mailbox: "all mail", rowid: 189_233 }),
+    ).not.toBeNull();
+  });
+
+  it("picks the container that actually holds the rowid when the leaf name is ambiguous", () => {
+    // "Receipts" exists under both Personal and Business; only the rowid decides.
+    const personal = locateEmlx({ accountDirectory: accountDir, mailbox: "Receipts", rowid: 3001 });
+    const business = locateEmlx({ accountDirectory: accountDir, mailbox: "Receipts", rowid: 3002 });
+    expect(personal?.path).toContain(join("Personal.mbox", "Receipts.mbox"));
+    expect(business?.path).toContain(join("Business.mbox", "Receipts.mbox"));
+  });
+
+  it("never descends into Data/, so message shards are not scanned", () => {
+    expect(locateEmlx({ accountDirectory: accountDir, mailbox: "Trap", rowid: 8123 })).toBeNull();
+    expect(resolveMailboxDirs(accountDir, "Trap")).toEqual([]);
+  });
+
+  it("keeps the flat layout as the first candidate", () => {
+    expect(resolveMailboxDirs(accountDir, "INBOX")).toEqual([join(accountDir, "INBOX.mbox")]);
+  });
+});
+
+/** The lane degrades quietly; these are the facts that let a caller say why. */
+describe("explaining a miss", () => {
+  it("reports no-mailbox-dir and the path it probed", () => {
+    const miss = lookupEmlx({ accountDirectory: accountDir, mailbox: "Nope", rowid: 1 });
+    expect(miss.found).toBe(false);
+    if (miss.found) return;
+    expect(miss.reason).toBe("no-mailbox-dir");
+    expect(miss.mailboxDirs).toEqual([]);
+    expect(miss.probed).toEqual([join(accountDir, "Nope.mbox")]);
+  });
+
+  it("distinguishes a resolved mailbox with no such message", () => {
+    const miss = lookupEmlx({ accountDirectory: accountDir, mailbox: "INBOX", rowid: 123 });
+    expect(miss.found).toBe(false);
+    if (miss.found) return;
+    expect(miss.reason).toBe("no-message-file");
+    expect(miss.mailboxDirs).toContain(join(accountDir, "INBOX.mbox"));
+    expect(miss.probed.length).toBeGreaterThan(0);
   });
 });
 

@@ -240,6 +240,19 @@ Things that will bite you, documented so nobody has to rediscover them:
 - **Gmail accounts keep everything in `[Gmail]/All Mail`.** INBOX membership is a _label_, so the
   obvious index query (`WHERE mailbox = ?`) returns an empty inbox. Mailbox names are resolved
   through a ladder that strips the `[Gmail]/` prefix.
+- **The on-disk layout nests too, and the ref cannot see it.** `All Mail` is not at
+  `<account>/All Mail.mbox` — it is at `<account>/[Gmail].mbox/All Mail.mbox`, and a label like
+  `Work/Projects` nests two deep. The index knows the full path, but the ladder above strips it
+  down to the leaf before the ref is minted, so the file lane gets `All Mail` and nothing else.
+  It therefore resolves the name by walking `*.mbox` directories under the account root (never
+  into `Data/`) and, when a leaf name is ambiguous, picks the container that actually holds the
+  rowid. A flat join here silently disabled every message-file capability on Gmail accounts.
+- **`existsSync` succeeds on a TCC-protected path.** It is stat-based, so it answers "is it
+  there", not "may I read it" — `readdirSync` and `readFileSync` are the calls that return
+  `EPERM`. Existence and readability are different questions, which is why
+  `apple_mail_diagnostics` reads a byte of a real message file rather than statting it, and why
+  a lookup can distinguish "wrong path" from "no permission" instead of blaming Full Disk Access
+  for both.
 - **`immutable=1` is the wrong way to open the index**, even though it is the common advice. It
   tells SQLite to ignore the `-wal` file, and Mail runs in WAL mode, so a read can miss whatever has
   not been checkpointed yet — precisely the recent mail an agent is usually asked about. Note this
