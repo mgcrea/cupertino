@@ -25,10 +25,10 @@ expensive string in the project.
 
 ## What it tests, and why in halves
 
-| Half | Question | How |
-| --- | --- | --- |
-| 1 | Does the app itself hold Full Disk Access? | `access(2)` in `spike-main.c` |
-| 2 | Do processes it spawns inherit it? | `Resources/spike.sh` → `node scripts/fda-probe.mjs` |
+| Half | Question                                   | How                                                 |
+| ---- | ------------------------------------------ | --------------------------------------------------- |
+| 1    | Does the app itself hold Full Disk Access? | `access(2)` in `spike-main.c`                       |
+| 2    | Do processes it spawns inherit it?         | `Resources/spike.sh` → `node scripts/fda-probe.mjs` |
 
 Half 2 is the one that matters: the real design never reads Mail from Swift, it reads it from a
 `node` child. The child is deliberately a **grandchild** (app → `/bin/sh` → `node`/`osascript`),
@@ -138,10 +138,10 @@ file lane rc=3
 So a Full Disk Access entry binds to the **path**, and checks the signature
 there. Both results together:
 
-| Change | Grant survives? |
-| --- | --- |
-| Same path, rebuilt and re-signed (new content hash) | yes |
-| New path, identical signature | no |
+| Change                                              | Grant survives? |
+| --------------------------------------------------- | --------------- |
+| Same path, rebuilt and re-signed (new content hash) | yes             |
+| New path, identical signature                       | no              |
 
 **This is a shipping constraint, not a curiosity.** Someone who grants Full Disk
 Access while the app is still in `~/Downloads` and then drags it to
@@ -161,10 +161,10 @@ because `probe-envelope-index.mjs` reported `67a632b37d2b` while
 `docs/envelope-index.md` records `77aa2cd3a55b`. **That was wrong** — the two
 numbers are computed differently and were never comparable:
 
-| | Ordering | `sqlite_sequence` |
-| --- | --- | --- |
-| `packages/core/src/schema.ts` | `ORDER BY type, name` | included |
-| `scripts/probe-envelope-index.mjs` | tables, then indexes, then views | dropped |
+|                                    | Ordering                         | `sqlite_sequence` |
+| ---------------------------------- | -------------------------------- | ----------------- |
+| `packages/core/src/schema.ts`      | `ORDER BY type, name`            | included          |
+| `scripts/probe-envelope-index.mjs` | tables, then indexes, then views | dropped           |
 
 Different concatenation order, different sha256. Running the real client through
 the app reports `77aa2cd3a55b`, matching the doc: **the schema has not drifted.**
