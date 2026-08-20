@@ -26,7 +26,13 @@ enum ServerLocator {
   /// Production layout, per `docs/distribution.md`:
   ///
   ///     Cupertino.app/Contents/Resources/node
-  ///     Cupertino.app/Contents/Resources/servers/<id>/cli.js
+  ///     Cupertino.app/Contents/Resources/servers/<id>/package.json
+  ///     Cupertino.app/Contents/Resources/servers/<id>/dist/cli.js
+  ///
+  /// The `package.json` + `dist/` shape is not decoration: `build-info.ts`
+  /// reads its version from `new URL("../package.json", import.meta.url)`, so a
+  /// flat `servers/<id>/cli.js` would resolve to one shared file and report the
+  /// wrong version in diagnostics.
   ///
   /// Node is embedded rather than borrowed from the system: the official
   /// nodejs.org darwin builds are a single self-contained binary, which pins
@@ -39,7 +45,7 @@ enum ServerLocator {
     let script = resources
       .appendingPathComponent("servers")
       .appendingPathComponent(surface.id)
-      .appendingPathComponent("cli.js")
+      .appendingPathComponent("dist/cli.js")
 
     let exists = FileManager.default.fileExists(atPath:)
     if exists(node.path), exists(script.path) {

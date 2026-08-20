@@ -62,6 +62,16 @@ jobs:
             -DNODE_PATH='"/usr/bin/false"' \
             -DSERVER_PATH='"/dev/null"' \
             -o /tmp/launcher-check packages/mail/native/launcher.c
+      # docs/licensing.md sells the app partly on it being unable to reach the
+      # network, so that claim is a gate rather than a sentence in a README.
+      # Unsigned is fine: the audit reads symbols, and signing does not add any.
+      - name: No network 🔌
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -project app/Cupertino.xcodeproj -scheme Cupertino \
+            -configuration Debug -derivedDataPath app/.build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
+          scripts/audit-network.sh
       # Proves the built server actually speaks MCP over stdio, which a unit
       # test using an in-memory transport cannot.
       - name: MCP handshake 🤝

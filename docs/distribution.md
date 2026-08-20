@@ -62,7 +62,7 @@ write tools against Mail and against Reminders are not the same risk.
 |                   |                                                             |
 | ----------------- | ----------------------------------------------------------- |
 | App display name  | Cupertino                                                   |
-| Bundle identifier | `io.mgcrea.cupertino`, team `493B6W4L7C`                    |
+| Bundle identifier | `io.mgcrea.cupertino`, Magenta Creations (`75QE9PRT3V`)     |
 | Repo              | `mcp-cupertino`, a monorepo absorbing this one              |
 | npm packages      | unchanged — `@mgcrea/mcp-apple-mail`, `-notes`, `-messages` |
 | Transport         | stdio, unchanged                                            |
@@ -115,34 +115,63 @@ Two defects were fixed rather than copied across:
 
 ## The bundle
 
+Built by `make bundle`. As shipped:
+
 ```text
 Cupertino.app/Contents/
-  Info.plist          io.mgcrea.cupertino, LSUIElement, NSAppleEventsUsageDescription
-  MacOS/cupertino     native/launcher.c, prebuilt, universal
-  Resources/node      from nodejs.org
-  Resources/servers/{mail,notes,messages}/cli.js
+  Info.plist                      io.mgcrea.cupertino, LSUIElement, NSAppleEventsUsageDescription
+  MacOS/Cupertino                 the SwiftUI menu bar app — holds FDA and Automation
+  Helpers/cupertino-bridge        stdin <-> unix socket relay, touches nothing protected
+  Resources/node                  from nodejs.org, universal
+  Resources/servers/<id>/package.json
+  Resources/servers/<id>/dist/cli.js
+  Resources/servers/mcp-<hash>.js shared SDK chunk
 ```
+
+**The launcher is gone, and with it the private SPI.** `scripts/spike-app-tcc` measured what the
+order of work below asked for: Full Disk Access and Automation granted to a signed `.app` are
+inherited by the processes it spawns, two levels deep — a `node` grandchild reads the Envelope
+Index, and `tccd` resolves a grandchild `osascript` to `io.mgcrea.cupertino`, not to whatever
+launched it. So there is nothing to escape, and `responsibility_spawnattrs_setdisclaim` is no
+longer needed. `native/launcher.c` stays in the repo as the clearest statement of the
+responsible-process problem, but it is not shipped.
+
+What an MCP host spawns instead is `cupertino-bridge`, which copies bytes between stdin and a unix
+socket and opens no protected path at all. Its own TCC identity is therefore irrelevant. It
+launches the app **by path**, derived from its own location inside the bundle, rather than by
+bundle identifier — `open -b` asks LaunchServices to choose among every registered copy, and during
+development it chose a stale one out of DerivedData.
+
+**The closed table survived the move.** `ServerHost` validates the requested surface against
+`Surface.all`, a table fixed at compile time, exactly as the launcher compiled its paths in: a
+caller names a surface, never a path, so this cannot become a
+read-anything-with-my-permissions gadget.
 
 **Node comes from nodejs.org, not Homebrew.** The official darwin builds are a single
 self-contained binary; Homebrew's is not, which is why `scripts/spike-launchd-fda.sh` had to
-symlink `libnode.137.dylib` next to its copy. Embedding it also pins the `node:sqlite` requirement
-and retires the "re-run after upgrading node" caveat in `scripts/install-wrapper.sh`.
+symlink `libnode.137.dylib` next to its copy. Embedding it also pins the `node:sqlite` requirement.
+Universal costs about 240 MB of the bundle; `make bundle NODE_ARCHS=arm64` halves it while
+iterating.
 
-**The launcher learns a closed table instead of one path.** `native/launcher.c` bakes in a single
-`SERVER_PATH` and never consults argv, because a launcher that runs what it is told is a way for
-any local process to read the whole disk with a permission granted for mail. That property has to
-survive N servers, so argv selects a _name_ from a table fixed at compile time
-(`--server=mail|notes|messages`) and never a path. The paths themselves resolve relative to the
-bundle, from the `_NSGetExecutablePath` call the file already makes, then `realpath()` with an
-assertion that the result is still inside the bundle.
+**The servers are bundled, not copied from `dist/`.** Each package's own `tsdown.config.ts` leaves
+dependencies external, which is right for npm and fatal here — there is no `node_modules` inside
+the bundle for `@modelcontextprotocol/sdk` to resolve against. `app/tsdown.servers.config.ts`
+inlines everything instead.
 
-Unchanged: spawning node rather than exec'ing it, the signal forwarding, and the degrade-don't-die
-path when `dlsym` returns NULL.
+The `package.json` + `dist/cli.js` shape mirrors an installed package on purpose.
+`build-info.ts` reads its version from `new URL("../package.json", import.meta.url)`; with a flat
+`servers/<id>/cli.js` that resolves to one shared `servers/package.json`, which cannot carry two
+different versions — and diagnostics reported `0.0.0` until the layout changed. The same config
+re-applies the `__GIT_COMMIT__` substitution, without which the commit field reads `unknown`, which
+is the one thing it must never say in a bug report.
 
-**Double-click does something useful.** The main executable speaks JSON-RPC on stdin. If Finder
-launches it, stdin is not a pipe — detect that and open
-`x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles`, print
-the `.mcp.json` snippet, and exit, rather than starting a server into a dead pipe.
+**Full Disk Access binds to the bundle identifier and signing certificate, not the path.**
+Measured in `scripts/spike-app-tcc`: an earlier version of this claim said the opposite — that a
+grant is denied the moment the bundle moves — and it was wrong, an artifact of testing a copy of an
+app that had already lost its own grant. The controlled result: `make install` moved a granted build
+from `app/.build` to `/Applications` and the grant followed it, no re-prompt. `InstallLocation`
+therefore only warns that a _bridge path_ written into another app's config will break if the bundle
+moves or is deleted — never that a permission is at risk.
 
 ## Signing and notarization
 
