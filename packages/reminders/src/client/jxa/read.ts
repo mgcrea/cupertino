@@ -129,6 +129,7 @@ export const BULK_REMINDERS = script(`
     row.dueDate = iso(due);
     row.alldayDueDate = iso(allday);
     row.allDayGuess = isMidnight(allday || due);
+    row.dueDay = dayOf(allday || due);
 
     // Apple Events cannot answer this; the index does. Null means unknown.
     row.parentId = null;
@@ -185,6 +186,7 @@ export const GET_REMINDERS = script(`
       dueDate: iso(dueRaw),
       alldayDueDate: iso(allDayRaw),
       allDayGuess: isMidnight(allDayRaw || dueRaw),
+      dueDay: dayOf(allDayRaw || dueRaw),
       remindMeDate: iso(prop(function () { return r.remindMeDate(); }, null)),
       priority: prop(function () { return r.priority(); }, 0),
       flagged: prop(function () { return r.flagged(); }, false),

@@ -163,27 +163,51 @@ function membership(lists) {
 }
 
 /**
- * Whether a due date names a whole day.
+ * Whether a due date names a whole day, and which day that is.
  *
- * MEASURED, and it is the trap on this surface: Reminders populates BOTH
- * \`due date\` and \`allday due date\` for every dated reminder — 144 of each over
- * 144 dated reminders, with 144 carrying both. So presence discriminates
- * nothing, and "allday is set, therefore all-day" marks every dated reminder
- * as all-day.
+ * MEASURED, and there are two traps stacked here.
  *
- * What is left is the time component, evaluated HERE rather than in the server:
- * this script runs in the user's time zone, so midnight is local midnight. An
- * ISO string sent north would have to be re-interpreted, and re-interpreting it
- * in the wrong zone is how a 00:00 reminder becomes 22:00 the previous day.
+ * **First:** Reminders populates BOTH \`due date\` and \`allday due date\` for
+ * every dated reminder — 144 of each over 144 dated reminders, all carrying
+ * both. So presence discriminates nothing, and "allday is set, therefore
+ * all-day" marks every dated reminder as all-day.
  *
- * This is a heuristic and is labelled as one. \`ZALLDAY\` in the store is the
- * authoritative flag, so the index lane overrides this whenever it is live.
+ * **Second:** the two lanes disagree about how an all-day date is stored, and
+ * verifying against only one of them gets the other backwards. The same
+ * reminder, due 9 November:
+ *
+ *     Apple Events   2025-11-08T23:00:00Z   = LOCAL midnight (Paris, UTC+1)
+ *     ZDUEDATE       2025-11-09T00:00:00Z   = UTC   midnight
+ *
+ * Both mean the 9th. So the check here reads **local** time, because this
+ * script runs in the user's zone and that is the convention Apple Events uses.
+ * The store's UTC convention is converted separately, on the store's side.
+ *
+ * \`dayOf\` exists for the same reason: an all-day reminder names a day, and
+ * deriving that day from the UTC ISO string would land on the 8th for everyone
+ * east of Greenwich. Formatting it here, from local components, cannot.
+ *
+ * This is still a heuristic — a reminder deliberately set to local midnight
+ * defeats it — and is labelled as one. \`ZALLDAY\` in the store is the
+ * authoritative flag, so the index lane overrides it whenever it is live.
  */
 function isMidnight(d) {
   try {
     return Boolean(d) && d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0;
   } catch (e) {
     return false;
+  }
+}
+
+/** Local calendar day as YYYY-MM-DD. Never derive this from a UTC string. */
+function dayOf(d) {
+  try {
+    if (!d) return null;
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+  } catch (e) {
+    return null;
   }
 }
 `;

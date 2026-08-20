@@ -54,6 +54,37 @@ describe("JXA scripts", () => {
     },
   );
 
+  /**
+   * The two lanes store an all-day date differently, and this script must use
+   * the Apple Events convention because that is the data it reads:
+   *
+   *     Apple Events   2025-11-08T23:00:00Z   LOCAL midnight (Paris, UTC+1)
+   *     ZDUEDATE       2025-11-09T00:00:00Z   UTC   midnight
+   *
+   * Both mean 9 November. Switching this to getUTC* looks like a timezone
+   * safety improvement — it was briefly made as one — and reports every all-day
+   * reminder as timed for anyone east of Greenwich.
+   */
+  it.each(SCRIPTS)("%s reads midnight in local time, not UTC", (_name, source) => {
+    if (!source.includes("function isMidnight")) return;
+    expect(source).toContain("d.getHours()");
+    expect(source).not.toContain("getUTCHours()");
+  });
+
+  /**
+   * The day is formatted from local components for the same reason. Scoped to
+   * dayOf's own body: `iso()` uses toISOString legitimately, so checking the
+   * whole script would fail on every one of them.
+   */
+  it.each(SCRIPTS)("%s formats the due day from local components", (_name, source) => {
+    const body = /function dayOf\(d\) \{[\s\S]*?\n\}/.exec(source)?.[0];
+    if (!body) return;
+    expect(body).toContain("d.getFullYear()");
+    expect(body).toContain("d.getDate()");
+    expect(body).not.toContain("toISOString");
+    expect(body).not.toContain("getUTC");
+  });
+
   // osacompile only exists on macOS; the rest of the suite is portable.
   const onDarwin = process.platform === "darwin";
   it.skipIf(!onDarwin).each(SCRIPTS)("%s compiles", (name, source) => {

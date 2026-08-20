@@ -138,6 +138,8 @@ type RawReminder = {
   parentId: string | null;
   /** Local-midnight heuristic computed inside JXA, where the time zone is real. */
   allDayGuess?: boolean;
+  /** The local calendar day, also computed inside JXA. See jxa/core.ts. */
+  dueDay?: string | null;
 };
 
 type BulkPayload = {
@@ -149,6 +151,29 @@ type BulkPayload = {
 };
 
 type BulkCache = { at: number; data: BulkPayload };
+
+/**
+ * Render a due date for the caller.
+ *
+ * An all-day reminder names a DAY, and reporting it as an instant is wrong
+ * rather than merely ugly — the same value reads as a different date either
+ * side of Greenwich.
+ *
+ * Which day, though, depends on the lane, because the two genuinely disagree.
+ * The same reminder, due 9 November, measured on a real library:
+ *
+ *     Apple Events   2025-11-08T23:00:00Z   LOCAL midnight (Paris, UTC+1)
+ *     ZDUEDATE       2025-11-09T00:00:00Z   UTC   midnight
+ *
+ * So neither lane's string can be sliced by the other's rule. Each converts on
+ * its own terms — JXA formats from local components, the store from UTC — and
+ * hands the finished day in here.
+ */
+const renderDue = (instant: string | null, allDay: boolean, day: string | null): string | null =>
+  allDay ? day : instant;
+
+/** The store keeps all-day dates at UTC midnight, so the UTC date IS the day. */
+const utcDay = (iso: string | null): string | null => (iso ? iso.slice(0, 10) : null);
 
 /** Sort key for due dates: undated reminders sort last rather than first. */
 const dueAt = (s: ReminderSummary): number =>
@@ -326,7 +351,7 @@ export class AppleRemindersClient {
       ref: encodeRef(r.id),
       name: r.name,
       completed: Boolean(r.completed),
-      due: r.dueDate ?? r.alldayDueDate,
+      due: renderDue(r.dueDate ?? r.alldayDueDate, allDay, r.dueDay ?? null),
       dueAllDay: allDay,
       dueAllDaySource: "heuristic",
       remindMe: r.remindMeDate,
@@ -383,7 +408,7 @@ export class AppleRemindersClient {
       ref: r.uuid ? refFromUuid(r.uuid) : encodeRef(String(r.primaryKey)),
       name: r.title,
       completed: r.completed,
-      due: r.due,
+      due: renderDue(r.due, r.allDay, utcDay(r.due)),
       // ZALLDAY is the authoritative flag and exists nowhere else.
       dueAllDay: r.allDay,
       dueAllDaySource: "index",
@@ -463,9 +488,23 @@ export class AppleRemindersClient {
       .slice(0, filters.limit);
   }
 
+  /**
+   * Whether the index can answer this request faithfully.
+   *
+   * The store has no readable account name — `ZREMCDACCOUNTLISTDATA` is a blob
+   * and nothing else carries one — so an account allowlist cannot be applied on
+   * that lane. Returning index rows anyway would silently ignore the setting
+   * whose entire job is limiting what gets read, and would do so ONLY on
+   * machines with Full Disk Access, which is exactly where it matters. So a
+   * configured allowlist takes the slower Apple Events lane instead.
+   */
+  #indexCanAnswer(): boolean {
+    return this.config.accounts.length === 0;
+  }
+
   async listReminders(filters: ReminderFilters): Promise<ReminderSummary[]> {
     const now = this.#now();
-    const store = this.index();
+    const store = this.#indexCanAnswer() ? this.index() : null;
     if (store) return this.#fromStore(store, filters, undefined, undefined, now);
 
     const data = await this.#bulk();
@@ -491,7 +530,7 @@ export class AppleRemindersClient {
     const needle = query.trim().toLowerCase();
     const full = (opts.scope ?? "full") === "full";
 
-    const store = this.index();
+    const store = this.#indexCanAnswer() ? this.index() : null;
     if (store) return this.#fromStore(store, opts, query.trim(), opts.scope ?? "full", now);
 
     const data = await this.#bulk();
@@ -553,7 +592,13 @@ export class AppleRemindersClient {
     return {
       ...summary,
       // ZALLDAY beats the local-midnight guess whenever it is available.
-      ...(indexed ? { dueAllDay: indexed.allDay, dueAllDaySource: "index" as const } : {}),
+      ...(indexed
+        ? {
+            dueAllDay: indexed.allDay,
+            dueAllDaySource: "index" as const,
+            due: renderDue(indexed.due, indexed.allDay, utcDay(indexed.due)),
+          }
+        : {}),
       body: row.body,
       completionDate: row.completionDate,
       dueDate: row.dueDate,
