@@ -21,7 +21,7 @@
 // them here by looking at only one of the two candidate paths.
 //
 // The stakes are not academic. Linking EventKit would be the first data
-// framework in `app/`, which today is a pure broker: it would add a TCC grant,
+// framework in `apps/apple/`, which today is a pure broker: it would add a TCC grant,
 // move logic from TypeScript into Swift, and fork the two-lane design that
 // packages/core exists to hold in one place. That is a large decision to take on
 // the strength of a path that was never checked.
@@ -548,11 +548,17 @@ if (opened?.db) {
       .toSorted((a, b) => (b.rows ?? 0) - (a.rows ?? 0));
   });
 
-  /** Which epoch, so dates are not silently 31 years off. */
+  /**
+   * Which epoch, so dates are not silently 31 years off.
+   *
+   * `CalendarItem` carries 27 date columns and there is no reason to believe
+   * they agree — a Core Data store can mix an anchored timestamp with a plain
+   * one. So sample several rather than trusting whichever name matches first,
+   * and report each. Picking one column and generalising from it is the same
+   * mistake as reading a blob format from `LIMIT 1`.
+   */
   doc.findings.epoch = safe(() => {
     const bridge = doc.findings.idBridge?.hits?.[0];
-    // Prefer the bridge table when there is one; otherwise the busiest event-ish
-    // table that actually carries a date column. Never the first name to match.
     const ranked = doc.findings.eventTables ?? [];
     const table = bridge?.table ?? ranked.find((t) => t.dateColumns.length)?.table;
     if (!table) {
@@ -561,17 +567,32 @@ if (opened?.db) {
         reason: `no event table with a date column among ${ranked.length} candidates`,
       };
     }
-    const dateCol = columnInfo(table).find((c) => /START|CREAT|MODIF|DATE/i.test(c.name));
-    if (!dateCol) return { tested: false, reason: `no date column on ${table}` };
-    // Read as TEXT: Calendar dates are floats today, but a column that overflows
-    // a JS double throws in node:sqlite and looks exactly like an empty one.
-    const max = maxNumericAsText(db, table, dateCol.name);
-    return {
-      table,
-      column: dateCol.name,
-      ...detectEpoch(max.value),
-      exceedsSafeInteger: max.exceedsSafeInteger,
-    };
+    // The columns a server would actually read, capped so the report stays short.
+    const preferred = columnInfo(table)
+      .map((c) => c.name)
+      .filter((c) => /START|END|CREAT|MODIF|LAST/i.test(c))
+      .slice(0, 8);
+    if (!preferred.length) return { tested: false, reason: `no date column on ${table}` };
+
+    const columns = {};
+    let disagreement = false;
+    let first = null;
+    for (const c of preferred) {
+      // Read as TEXT: a column that overflows a JS double throws in node:sqlite
+      // and is indistinguishable from an empty one. See maxNumericAsText.
+      const max = maxNumericAsText(db, table, c);
+      const detected = detectEpoch(max.value);
+      columns[c] = {
+        ...detected,
+        digits: max.digits ?? 0,
+        exceedsSafeInteger: max.exceedsSafeInteger,
+      };
+      if (detected.epoch && detected.epoch !== "unknown") {
+        if (first === null) first = detected.epoch;
+        else if (detected.epoch !== first) disagreement = true;
+      }
+    }
+    return { tested: true, table, columns, consensus: disagreement ? null : first, disagreement };
   });
 
   db.close();
@@ -773,8 +794,18 @@ if (args.json) {
       );
     }
     L.push(
-      `  epoch                 ${doc.findings.epoch?.epoch ?? doc.findings.epoch?.reason ?? "?"}`,
+      `  epoch                 ${
+        doc.findings.epoch?.tested
+          ? `${doc.findings.epoch.consensus ?? "COLUMNS DISAGREE"} on ${doc.findings.epoch.table}`
+          : (doc.findings.epoch?.reason ?? "?")
+      }`,
     );
+    for (const [col, e] of Object.entries(doc.findings.epoch?.columns ?? {})) {
+      L.push(
+        `     ${col.padEnd(24)} ${e.tested ? `${e.epoch}${e.latestYear ? `  (latest ${e.latestYear})` : ""}` : e.reason}` +
+          `${e.exceedsSafeInteger ? "  EXCEEDS JS SAFE INTEGER" : ""}`,
+      );
+    }
     L.push("");
   }
   if (doc.verdict.projection) {
