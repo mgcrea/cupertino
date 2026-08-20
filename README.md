@@ -61,6 +61,12 @@ make smoke    # handshake every server through the bridge
 The repo's checked-in [`.mcp.json`](.mcp.json) is wired for that path. `make` on its own lists
 every target.
 
+Note the different server names. Wired by hand as above, a server is `apple-mail` and runs under
+whatever grant its host process has. Wired by Cupertino it is `cupertino-mail`, because that entry
+points at the app's bridge and runs under the app's grant. Two names for two deployments, and you
+can have both. The app only ever touches its own `cupertino-*` keys — an `apple-mail` entry
+belonging to some other server is left alone.
+
 `Cupertino.app` needs **macOS 26 or later** — its icon is an Icon Composer bundle, which nothing
 older can render. The servers themselves are plain Node and carry no such floor; only the menu bar
 app does.
