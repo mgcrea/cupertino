@@ -69,6 +69,7 @@ import {
   findIdBridge,
   listable,
   macosVersion,
+  maxNumericAsText,
   openStore,
   parseArgs,
   safe,
@@ -401,7 +402,7 @@ if (chosen) opened = openStore(chosen.fullPath);
 
 if (opened?.db) {
   const db = opened.db;
-  const { columnInfo, countOf, one, all } = tableTools(db);
+  const { columnInfo, countOf, all } = tableTools(db);
   doc.sqlite = opened.sqlite;
   doc.findings.open = { ms: opened.openMs, mode: opened.mode, walBlind: opened.walBlind };
 
@@ -524,15 +525,53 @@ if (opened?.db) {
     return out;
   });
 
+  /**
+   * The event-ish tables ranked by row count.
+   *
+   * "Which table holds the events" is not answerable by name alone: this store
+   * has seven tables matching /event|occurrence|item/, and the FIRST one
+   * alphabetically is `EventAction`, which holds no dates at all. Ranking by
+   * rows finds `CalendarItem` instead. Printed because the doc needs to name the
+   * main table, and because a first-match heuristic quietly picking the wrong
+   * one is how the epoch check below reported "no date column" on its first run.
+   */
+  doc.findings.eventTables = safe(() => {
+    const candidates = tables.filter((t) => /event|occurrence|item/i.test(t));
+    return candidates
+      .map((t) => ({
+        table: t,
+        rows: doc.findings.tableCounts[t] ?? null,
+        dateColumns: columnInfo(t)
+          .filter((c) => /START|END|CREAT|MODIF|DATE/i.test(c.name))
+          .map((c) => c.name),
+      }))
+      .toSorted((a, b) => (b.rows ?? 0) - (a.rows ?? 0));
+  });
+
   /** Which epoch, so dates are not silently 31 years off. */
   doc.findings.epoch = safe(() => {
     const bridge = doc.findings.idBridge?.hits?.[0];
-    const table = bridge?.table ?? tables.find((t) => /EVENT|OCCURRENCE/i.test(t));
-    if (!table) return { tested: false, reason: "no event table identified" };
+    // Prefer the bridge table when there is one; otherwise the busiest event-ish
+    // table that actually carries a date column. Never the first name to match.
+    const ranked = doc.findings.eventTables ?? [];
+    const table = bridge?.table ?? ranked.find((t) => t.dateColumns.length)?.table;
+    if (!table) {
+      return {
+        tested: false,
+        reason: `no event table with a date column among ${ranked.length} candidates`,
+      };
+    }
     const dateCol = columnInfo(table).find((c) => /START|CREAT|MODIF|DATE/i.test(c.name));
     if (!dateCol) return { tested: false, reason: `no date column on ${table}` };
-    const m = one(`SELECT MAX("${dateCol.name}") AS m FROM "${table}"`);
-    return { table, column: dateCol.name, ...detectEpoch(m?.m) };
+    // Read as TEXT: Calendar dates are floats today, but a column that overflows
+    // a JS double throws in node:sqlite and looks exactly like an empty one.
+    const max = maxNumericAsText(db, table, dateCol.name);
+    return {
+      table,
+      column: dateCol.name,
+      ...detectEpoch(max.value),
+      exceedsSafeInteger: max.exceedsSafeInteger,
+    };
   });
 
   db.close();
@@ -694,6 +733,13 @@ if (args.json) {
     L.push(
       `  entities              ${doc.findings.entities.style}; event-ish: ${(doc.findings.entities.eventish ?? []).join(", ") || "none"}`,
     );
+    L.push(`  event-ish tables by rows (which one actually holds the events):`);
+    for (const t of (doc.findings.eventTables ?? []).slice(0, 6)) {
+      L.push(
+        `     ${t.table.padEnd(24)} ${String(t.rows ?? "?").padStart(7)} rows  ` +
+          `${t.dateColumns.length ? `${t.dateColumns.length} date cols` : "no date cols"}`,
+      );
+    }
     const bridge = doc.findings.idBridge ?? {};
     L.push("");
     L.push("  ID BRIDGE");
@@ -722,7 +768,8 @@ if (args.json) {
     L.push("  WHAT THE STORE BUYS (absent from the scripting dictionary)");
     for (const [k, v] of Object.entries(caps)) {
       L.push(
-        `     ${k.padEnd(18)} ${v.present ? "PRESENT" : "absent "}  ${v.tables.join(", ") || `${v.columnCount} cols`}`,
+        `     ${k.padEnd(18)} ${v.present ? "PRESENT" : "absent "}  ${v.tables.join(", ") || `${v.columnCount} cols`}` +
+          `${v.columns.length && !v.tables.length ? `  e.g. ${v.columns.slice(0, 3).join(", ")}` : ""}`,
       );
     }
     L.push(

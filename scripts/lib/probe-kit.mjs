@@ -319,6 +319,42 @@ export const findIdBridge = (db, tables, columnInfo, needles) => {
 };
 
 /**
+ * MAX() of a numeric column, read as TEXT.
+ *
+ * `node:sqlite` THROWS on an INTEGER too large for a JS double rather than
+ * silently truncating it. That is the right call on its part and fatal to a
+ * naive `SELECT MAX(date)`: Messages stores nanoseconds since 2001, about
+ * 7.9e17 in 2026, which is two orders of magnitude past Number.MAX_SAFE_INTEGER.
+ * So the throw is the COMMON case on that surface, not an edge one — and
+ * swallowed by a try/catch it looks exactly like "this column has no dates",
+ * which is how it hid the first time.
+ *
+ * Casting to TEXT in SQL sidesteps the throw. The Number() conversion here then
+ * loses the low digits, which is fine for deciding an EPOCH — that needs only
+ * the magnitude. It is NOT fine for a server actually reading these columns:
+ * that code must use BigInt or keep the text. `exceedsSafeInteger` is how this
+ * probe tells it so.
+ */
+export const maxNumericAsText = (db, table, column) => {
+  const row = safe(
+    () =>
+      db
+        .prepare(`SELECT CAST(MAX("${column}") AS TEXT) AS m FROM "${table}" WHERE "${column}" > 0`)
+        .get(),
+    () => null,
+  );
+  const raw = row?.m ?? null;
+  if (raw === null || raw === "") return { raw: null, value: null, exceedsSafeInteger: false };
+  const value = Number(raw);
+  return {
+    raw: String(raw),
+    digits: String(raw).replace("-", "").length,
+    value: Number.isFinite(value) ? value : null,
+    exceedsSafeInteger: Number.isFinite(value) && Math.abs(value) > Number.MAX_SAFE_INTEGER,
+  };
+};
+
+/**
  * Which epoch a numeric date column uses, decided by whether the result is a
  * plausible date rather than by what the column is named.
  *

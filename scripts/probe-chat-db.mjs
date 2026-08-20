@@ -66,6 +66,7 @@ import {
   findIdBridge,
   listable,
   macosVersion,
+  maxNumericAsText,
   openStore,
   parseArgs,
   safe,
@@ -320,11 +321,19 @@ if (opened?.db) {
     if (!hasTable("message")) return { tested: false, reason: "no message table" };
     const dateCols = colsOf("message").filter((c) => c.startsWith("date"));
     const out = {};
+    let anyOverflow = false;
     for (const c of dateCols) {
-      const m = one(`SELECT MAX("${c}") AS m FROM message WHERE "${c}" > 0`);
-      out[c] = detectEpoch(m?.m);
+      // Read as TEXT: a plain MAX() throws on these, and a swallowed throw is
+      // indistinguishable from an empty column. See maxNumericAsText.
+      const max = maxNumericAsText(db, "message", c);
+      if (max.exceedsSafeInteger) anyOverflow = true;
+      out[c] = {
+        ...detectEpoch(max.value),
+        digits: max.digits ?? 0,
+        exceedsSafeInteger: max.exceedsSafeInteger,
+      };
     }
-    return { tested: true, columns: out };
+    return { tested: true, columns: out, anyExceedsSafeInteger: anyOverflow };
   });
 
   /**
@@ -504,6 +513,7 @@ doc.verdict = {
   decoderShare,
   capabilitiesGained: gained,
   searchMs: doc.findings.search?.likeMs ?? null,
+  datesExceedSafeInteger: doc.findings.epoch?.anyExceedsSafeInteger ?? null,
   walBlind: doc.findings.open?.walBlind ?? null,
   recommendation: !opened?.db
     ? "Unanswerable without Full Disk Access. Grant it and re-run; there is no partial result for this surface."
@@ -589,7 +599,16 @@ if (args.json) {
     L.push("  DATE EPOCHS (a wrong guess here is a silent 31-year error)");
     for (const [col, e] of Object.entries(doc.findings.epoch?.columns ?? {})) {
       L.push(
-        `     ${col.padEnd(18)} ${e.tested ? `${e.epoch}${e.latestYear ? `  (latest ${e.latestYear})` : ""}` : e.reason}`,
+        `     ${col.padEnd(18)} ${e.tested ? `${e.epoch}${e.latestYear ? `  (latest ${e.latestYear})` : ""}` : e.reason}` +
+          `${e.digits ? `  ${e.digits} digits` : ""}${e.exceedsSafeInteger ? "  EXCEEDS JS SAFE INTEGER" : ""}`,
+      );
+    }
+    if (doc.findings.epoch?.anyExceedsSafeInteger) {
+      L.push(
+        `     ^ these do NOT fit in a JavaScript number. node:sqlite throws rather than truncating,`,
+      );
+      L.push(
+        `       so the server must read them as BigInt or TEXT — a plain SELECT looks like "no dates".`,
       );
     }
     L.push("");
