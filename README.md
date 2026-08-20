@@ -67,6 +67,17 @@ points at the app's bridge and runs under the app's grant. Two names for two dep
 can have both. The app only ever touches its own `cupertino-*` keys — an `apple-mail` entry
 belonging to some other server is left alone.
 
+Cupertino is machine configuration, not a project dependency, so it belongs in a per-user config:
+one file for Claude Desktop, one for Cursor, and `--scope user` for Claude Code, which is what the
+app's copyable command uses. Deliberately **not** `--scope project`, which writes an `.mcp.json`
+meant to be committed — that entry is an absolute path into a bundle on one Mac, backed by one
+person's Full Disk Access grant, and it would be useless to a teammate and unwise to offer them.
+
+This repo's own [`.mcp.json`](.mcp.json) is the exception, and it names its servers
+`cupertino-*-dev` on purpose: it points at `apps/apple/.build`, so working on the app means having
+the development build and the installed one side by side. Claude Code reports servers of the same
+name in two scopes as a conflict rather than picking one, so the suffix is what keeps both usable.
+
 `Cupertino.app` needs **macOS 26 or later** — its icon is an Icon Composer bundle, which nothing
 older can render. The servers themselves are plain Node and carry no such floor; only the menu bar
 app does.

@@ -106,9 +106,21 @@ enum ClientWiring {
   }
 
   /// The command for clients we decline to edit.
+  ///
+  /// `--scope user` is load-bearing. The flag defaults to `local`, which files
+  /// the server under whichever project directory the command was run from, so
+  /// Cupertino would appear in one repo and be missing from every other. The
+  /// two clients this app writes directly both have a single per-user file;
+  /// this is the flag that makes the third behave the same way.
+  ///
+  /// Not `--scope project` either, which writes an `.mcp.json` into the repo
+  /// meant to be committed and shared. The entry is an absolute path into a
+  /// bundle on this Mac, backed by this user's Full Disk Access grant — it is
+  /// personal machine configuration, not a dependency of anyone's project.
   static var claudeCodeCommands: String {
     Surface.all.map { surface in
-      "claude mcp add \(serverKey(for: surface)) -- \"\(bridgePath)\" --server=\(surface.id)"
+      "claude mcp add --scope user \(serverKey(for: surface))"
+        + " -- \"\(bridgePath)\" --server=\(surface.id)"
     }
     .joined(separator: "\n")
   }
