@@ -154,14 +154,25 @@ It also means the several copies a build produces (`app/.build`, Xcode's own
 DerivedData, any scratch build) each need their own grant. Granting the wrong
 one looks identical to not granting at all.
 
-### Incidental finding: the Envelope Index schema has drifted
+### Incidental finding: two fingerprints that are not comparable
 
-The probe reports fingerprint `67a632b37d2b`. `docs/envelope-index.md` records `77aa2cd3a55b`.
+An earlier draft of this file claimed the Envelope Index schema had drifted,
+because `probe-envelope-index.mjs` reported `67a632b37d2b` while
+`docs/envelope-index.md` records `77aa2cd3a55b`. **That was wrong** — the two
+numbers are computed differently and were never comparable:
 
-Benign so far — `missing required: none`, so the drift detection in
-`packages/mail/src/client/schema.ts` does not trip — but the documented fingerprint and the
-`packages/mail/test/fixtures/envelope-index.sql` capture are both from the older schema and should
-be refreshed with `probe-envelope-index.mjs --write`.
+| | Ordering | `sqlite_sequence` |
+| --- | --- | --- |
+| `packages/core/src/schema.ts` | `ORDER BY type, name` | included |
+| `scripts/probe-envelope-index.mjs` | tables, then indexes, then views | dropped |
+
+Different concatenation order, different sha256. Running the real client through
+the app reports `77aa2cd3a55b`, matching the doc: **the schema has not drifted.**
+
+What is real, and worth reconciling, is that two functions both called "the
+schema fingerprint" disagree. `apple_mail_diagnostics` prints one and
+`docs/envelope-index.md` records the other, so anyone comparing them hits the
+same confusion. One of the two should adopt the other's ordering.
 
 ## Unexplained, and deliberately not chased
 
