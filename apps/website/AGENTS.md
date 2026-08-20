@@ -66,25 +66,35 @@ The repo is the authority on what ships, and this site is downstream of it.
   gates it in CI. If that check is ever relaxed, the Status row here comes down first.
 - **Unofficial, not affiliated with Apple** stays in the hero caption and the footer.
 
-## Design source
+## Design source and brand marks
 
-The design lives in `../../.idea/design/` (gitignored, local reference only).
-`Cupertino Site v4.dc.html` is the homepage this was built from — two artboards, D1 desktop and D2
-mobile. Open it beside the dev server when changing layout.
+The homepage was built from `../../.idea/design/Cupertino Site v4.dc.html` — two artboards, D1
+desktop and D2 mobile. That directory is gitignored and is layout reference only.
 
-## Brand marks
+**The marks are not copied from there.** `pnpm icons` reads the repo-root `design/`, which is
+where `make icon` writes them, so the chain is one geometry end to end:
 
-`public/app-icon.svg`, `favicon.svg`, `icon-small.svg` and `menubar-glyph.svg` are **copied in**
-from `../../.idea/design/logo/`, which is gitignored — so they stay committed here and a checkout
-without the design directory still builds. Re-copy by hand when the mark changes.
+```
+design/cupertino-mark.svg --make icon--> design/cupertino-icon.svg --pnpm icons--> public/*
+                          --make icon--> apps/apple/Cupertino/Cupertino.icon
+```
 
-Two rules from the mark's own README that this site has to keep:
+It used to stop short. These files were hand-copied out of `.idea/design/logo/`, and by the time
+anyone checked, the site was serving an **earlier direction of the mark than the app shipped** —
+which is the exact failure the generated chain now prevents. Run `make icon && pnpm icons` when the
+mark changes; never move an SVG by hand.
 
-- **Below 64px use the small variant.** The two-hill art silts up; `Logo.astro` defaults to it and
-  only the CTA plate opts into the full mark.
+Two consequences worth keeping:
+
+- **There is one rendering, not a small variant.** `Logo.astro` always serves the plated squircle.
+  The superseded direction had a simplified mark for 64px and below; the current one does not, and
+  hand-authoring one here would restart the drift.
 - **The menu-bar glyph is a template image** — pure black plus alpha, which macOS inverts for a
   dark menu bar. Nothing does that on the web, so `MenuBar.astro` applies `filter:invert(1)` by
   hand. It is not a colour asset and must not be recoloured.
 
-`pnpm icons` regenerates `favicon-32.png`, `apple-touch-icon.png` and `og-image.png` from those
-SVGs with sharp. The outputs are committed; the command is only needed when the mark changes.
+`pnpm icons` also renders `favicon-32.png`, `apple-touch-icon.png` and `og-image.png` with sharp.
+Every output is committed, so a checkout builds without running it. The touch icon is squared first
+— iOS applies its own mask, and the corner radius applied twice reads pinched — through a
+`replaceOnce` that throws rather than silently passing the artwork through if `make icon`'s output
+shifts.

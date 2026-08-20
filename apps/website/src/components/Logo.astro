@@ -1,24 +1,23 @@
 ---
 /**
- * The pre-masked squircle mark. The brand README is explicit that below 64px
- * the two-hill art silts up, so the small variant is the default and the full
- * one is opt-in for the CTA plate.
+ * The plated squircle mark, served from `public/app-icon.svg` — which
+ * `pnpm icons` writes from the repo-root `design/`. There is one rendering, not
+ * a small variant: the mark has exactly three generated outputs and inventing a
+ * fourth here is how the site's artwork drifted from the app's the first time.
  */
 export interface Props {
   size?: number;
-  variant?: "small" | "full";
   class?: string;
 }
 
-const { size = 23, variant = "small", class: className } = Astro.props;
-const src = variant === "small" ? "/icon-small.svg" : "/app-icon.svg";
+const { size = 23, class: className } = Astro.props;
 ---
 
 <img
-  src={src}
+  src="/app-icon.svg"
   alt=""
   width={size}
   height={size}
-  class:list={["rounded-[26%]", className]}
+  class:list={className}
   style={`width:${size}px;height:${size}px`}
 />
