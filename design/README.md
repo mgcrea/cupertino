@@ -8,12 +8,12 @@ One source, three renderings, one command:
 make icon
 ```
 
-| File                              | Role                                                                      |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `cupertino-mark.svg`              | **the source.** Sun and hills on a transparent sky, 1024×1024. Edit this. |
-| `colors.json`                     | palette and gradients                                                     |
-| `cupertino-icon.svg`              | _generated_ — plated vector for the web/README/docs                       |
-| `../app/Cupertino/Cupertino.icon` | _generated_ — the Icon Composer bundle Xcode compiles                     |
+| File                                     | Role                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| `cupertino-mark.svg`                     | **the source.** Sun and hills on a transparent sky, 1024×1024. Edit this. |
+| `colors.json`                            | palette and gradients                                                     |
+| `cupertino-icon.svg`                     | _generated_ — plated vector for the web/README/docs                       |
+| `../apps/apple/Cupertino/Cupertino.icon` | _generated_ — the Icon Composer bundle Xcode compiles                     |
 
 `make icon` writes both generated files and audits the bundle. Never hand-edit them: the mark is
 the only geometry, which is the whole point of generating the rest from it.

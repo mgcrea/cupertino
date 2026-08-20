@@ -21,5 +21,6 @@ xcuserdata/
 # TCC spike build output
 scripts/spike-app-tcc/build/
 
-# local app build output
-app/.build/
+# local app build output. Anchored to the app rather than a bare `.build/`, so it
+# cannot quietly swallow a directory of that name elsewhere in the tree.
+apps/apple/.build/

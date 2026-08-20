@@ -75,12 +75,15 @@ and "Apple MCP" sitting there would undercut the README's first line.
 
 ```text
 mcp-cupertino/
-  packages/core/       @mgcrea/mcp-apple-core
-  packages/mail/       @mgcrea/mcp-apple-mail   ← this repo, history preserved
+  packages/core/        @mgcrea/mcp-apple-core
+  packages/mail/        @mgcrea/mcp-apple-mail   ← this repo, history preserved
   packages/notes/
-  packages/messages/
   packages/reminders/
-  app/                 the Cupertino.app build
+  packages/messages/    not started
+  apps/apple/           the Cupertino.app build
+  apps/website/         the marketing site
+  design/               the one mark, and what `make icon` generates from it
+  docs/                 this
 ```
 
 `packages/core` exists, and holds only mechanism with more than one plausible consumer:
@@ -155,7 +158,7 @@ iterating.
 
 **The servers are bundled, not copied from `dist/`.** Each package's own `tsdown.config.ts` leaves
 dependencies external, which is right for npm and fatal here — there is no `node_modules` inside
-the bundle for `@modelcontextprotocol/sdk` to resolve against. `app/tsdown.servers.config.ts`
+the bundle for `@modelcontextprotocol/sdk` to resolve against. `apps/apple/tsdown.servers.config.ts`
 inlines everything instead.
 
 The `package.json` + `dist/cli.js` shape mirrors an installed package on purpose.
@@ -169,7 +172,7 @@ is the one thing it must never say in a bug report.
 Measured in `scripts/spike-app-tcc`: an earlier version of this claim said the opposite — that a
 grant is denied the moment the bundle moves — and it was wrong, an artifact of testing a copy of an
 app that had already lost its own grant. The controlled result: `make install` moved a granted build
-from `app/.build` to `/Applications` and the grant followed it, no re-prompt. `InstallLocation`
+from `apps/apple/.build` to `/Applications` and the grant followed it, no re-prompt. `InstallLocation`
 therefore only warns that a _bridge path_ written into another app's config will break if the bundle
 moves or is deleted — never that a permission is at risk.
 
@@ -235,7 +238,7 @@ permitted`** — the same EPERM signature every other row here carries, and the 
 absent-vs-unreadable split `packages/core/src/fs.ts` was written to keep apart. The premise was
 right; only one of the two candidate paths had been checked. `group.com.apple.contacts` exists too.
 Calendar most likely has a file lane, and the EventKit departure — which would put the first data
-framework into `app/`, add a TCC grant, and fork the two-lane design — is unsupported until
+framework into `apps/apple/`, add a TCC grant, and fork the two-lane design — is unsupported until
 `scripts/probe-calendar.mjs` runs with the grant.
 
 Messages is the surface where Full Disk Access is not optional: there is no AppleScript read path

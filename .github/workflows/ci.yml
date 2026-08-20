@@ -68,8 +68,8 @@ jobs:
       - name: No network 🔌
         if: runner.os == 'macOS'
         run: |
-          xcodebuild -project app/Cupertino.xcodeproj -scheme Cupertino \
-            -configuration Debug -derivedDataPath app/.build \
+          xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
+            -configuration Debug -derivedDataPath apps/apple/.build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
           scripts/audit-network.sh
       # Proves the built server actually speaks MCP over stdio, which a unit

@@ -11,11 +11,11 @@ CONFIG  := Debug
 NODE_VERSION ?= 24.18.0
 # `arm64 x64` for a release; `arm64` alone builds far faster while iterating.
 NODE_ARCHS   ?= arm64 x64
-STAGED       := app/.build/staged
-# The surfaces the app brokers. Mirrors `Surface.all` in app/Cupertino/Surfaces.swift
-# and `known` in app/CupertinoBridge/main.swift; adding one means all three.
+STAGED       := apps/apple/.build/staged
+# The surfaces the app brokers. Mirrors `Surface.all` in apps/apple/Cupertino/Surfaces.swift
+# and `known` in apps/apple/CupertinoBridge/main.swift; adding one means all three.
 SURFACES     := mail notes reminders
-APP     ?= app/.build/Build/Products/$(CONFIG)/Cupertino.app
+APP     ?= apps/apple/.build/Build/Products/$(CONFIG)/Cupertino.app
 INSTALLED := /Applications/Cupertino.app
 BRIDGE  := $(APP)/Contents/Helpers/cupertino-bridge
 SUPPORT := $(HOME)/Library/Application Support/io.mgcrea.cupertino
@@ -35,8 +35,8 @@ build: ## Build both halves: the npm servers and the app (Debug)
 	@$(MAKE) --no-print-directory app
 
 app: ## Build Cupertino.app (Debug; Release needs the bundled servers)
-	@xcodebuild -project app/Cupertino.xcodeproj -scheme Cupertino \
-		-configuration $(CONFIG) -derivedDataPath app/.build build \
+	@xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
+		-configuration $(CONFIG) -derivedDataPath apps/apple/.build build \
 		| grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true
 
 run: app dev-config ## Build, then (re)launch the menu bar app
@@ -128,27 +128,27 @@ audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"
 
 servers: ## Bundle the MCP servers self-contained (no node_modules at runtime)
-	@pnpm exec tsdown --config app/tsdown.servers.config.ts -l warn
+	@pnpm exec tsdown --config apps/apple/tsdown.servers.config.ts -l warn
 	@for s in $(SURFACES); do \
 		python3 -c "import json;src=json.load(open('packages/$$s/package.json'));json.dump({'name':src['name'],'version':src['version'],'type':'module','private':True},open('$(STAGED)/servers/$$s/package.json','w'),indent=2)"; \
 	done
 	@echo "  staged $$(find $(STAGED)/servers -name '*.js' | wc -l | tr -d ' ') server files"
 
 node: ## Download and lipo the embedded node runtime
-	@mkdir -p $(STAGED) app/.build/node-cache
+	@mkdir -p $(STAGED) apps/apple/.build/node-cache
 	@for arch in $(NODE_ARCHS); do \
-		tar="app/.build/node-cache/node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
+		tar="apps/apple/.build/node-cache/node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
 		[ -f "$$tar" ] || curl -fsSL -o "$$tar" \
 			"https://nodejs.org/dist/v$(NODE_VERSION)/node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
-		tar -xzf "$$tar" -C app/.build/node-cache \
+		tar -xzf "$$tar" -C apps/apple/.build/node-cache \
 			"node-v$(NODE_VERSION)-darwin-$$arch/bin/node"; \
 	done
 	@slices=""; for arch in $(NODE_ARCHS); do \
-		slices="$$slices app/.build/node-cache/node-v$(NODE_VERSION)-darwin-$$arch/bin/node"; done; \
+		slices="$$slices apps/apple/.build/node-cache/node-v$(NODE_VERSION)-darwin-$$arch/bin/node"; done; \
 		lipo -create $$slices -output $(STAGED)/node
 	@lipo -info $(STAGED)/node | sed 's/^/  /'
 
-RELEASE_APP := app/.build/Build/Products/Release/Cupertino.app
+RELEASE_APP := apps/apple/.build/Build/Products/Release/Cupertino.app
 
 bundle: servers node ## Build, stage and sign a Release Cupertino.app
 	@$(MAKE) --no-print-directory app CONFIG=Release
@@ -167,22 +167,22 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		echo "     This build will NOT notarize and will not run on another Mac."; \
 	fi; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
-		--entitlements app/node.entitlements "$(RELEASE_APP)/Contents/Resources/node"; \
+		--entitlements apps/apple/node.entitlements "$(RELEASE_APP)/Contents/Resources/node"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
-		--entitlements app/Cupertino.entitlements "$(RELEASE_APP)"
+		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
 	@codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1 | sed 's/^/  /'
 	@echo "  size: $$(du -sh "$(RELEASE_APP)" | cut -f1)"
 
 notarize: ## Submit the signed bundle to Apple and staple the ticket
 	@test -n "$$AC_KEY_ID" || { echo "set AC_KEY_ID, AC_ISSUER_ID and AC_KEY_PATH first" >&2; exit 1; }
-	@ditto -c -k --keepParent "$(RELEASE_APP)" app/.build/Cupertino.zip
-	@xcrun notarytool submit app/.build/Cupertino.zip --wait \
+	@ditto -c -k --keepParent "$(RELEASE_APP)" apps/apple/.build/Cupertino.zip
+	@xcrun notarytool submit apps/apple/.build/Cupertino.zip --wait \
 		--key "$$AC_KEY_PATH" --key-id "$$AC_KEY_ID" --issuer "$$AC_ISSUER_ID"
 	@xcrun stapler staple "$(RELEASE_APP)"
-	@ditto -c -k --keepParent "$(RELEASE_APP)" app/.build/Cupertino.zip
-	@echo "  stapled: app/.build/Cupertino.zip"
+	@ditto -c -k --keepParent "$(RELEASE_APP)" apps/apple/.build/Cupertino.zip
+	@echo "  stapled: apps/apple/.build/Cupertino.zip"
 
 # The icon is generated, never hand-drawn: one mark, three renderings. The plate
 # lives in the flags rather than the artwork so the .icon layers stay separable.
@@ -196,7 +196,7 @@ ICON_MENUBAR := design/cupertino-menubar.svg
 icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.svg
 	@appshot icon build --from $(ICON_MARK) \
 		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
-		--out app/Cupertino/Cupertino.icon
+		--out apps/apple/Cupertino/Cupertino.icon
 	@appshot icon build --from $(ICON_MARK) \
 		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
 		--corner-radius $(ICON_RADIUS) --label 'Cupertino' \
@@ -209,13 +209,17 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 		-e 's|</defs>|<clipPath id="c"><rect width="1024" height="1024" rx="$(ICON_RADIUS)"/></clipPath></defs>|;' \
 		-e 's|<g transform=|<g clip-path="url($(HASH)c)" transform=|;' \
 		design/cupertino-icon.svg
-	@appshot icon check --out app/Cupertino/Cupertino.icon
+	@appshot icon check --out apps/apple/Cupertino/Cupertino.icon
 	@# The menu bar glyph is authored, not composed — but the imageset needs the
 	@# file *inside* it, so design/ stays the one copy anyone edits.
-	@cp $(ICON_MENUBAR) app/Cupertino/Assets.xcassets/MenuBarIcon.imageset/
+	@cp $(ICON_MENUBAR) apps/apple/Cupertino/Assets.xcassets/MenuBarIcon.imageset/
 	@echo "  copied $(notdir $(ICON_MENUBAR)) into MenuBarIcon.imageset"
+	@# The website renders its favicon, touch icon and OG card from the same two
+	@# files. It reads design/ directly, so nothing is copied — but the PNGs it
+	@# derives are committed, and only this command's output makes them stale.
+	@echo "  next: pnpm --filter @mgcrea/cupertino-website icons"
 
 clean: ## Remove the app build output
-	@rm -rf app/.build
+	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke audit servers node bundle sign notarize icon clean
