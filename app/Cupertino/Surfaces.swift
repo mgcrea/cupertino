@@ -41,6 +41,20 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
       envPrefix: "APPLE_NOTES_"
     ),
+    Surface(
+      id: "reminders",
+      displayName: "Reminders",
+      bundleID: "com.apple.reminders",
+      // The container, not the store. Reminders keeps its data in
+      // Container_v1/Stores/Data-<UUID>.sqlite, and a UUID cannot be probed by
+      // name — `resolveStore` only expands a glob in a directory component.
+      // Reading the directory is the right question anyway: it is exactly the
+      // `containerListable` signal packages/reminders/src/client/locate.ts uses,
+      // because without the grant the container cannot even be listed, so the
+      // store cannot be located at all.
+      storePath: "Library/Group Containers/group.com.apple.reminders",
+      envPrefix: "APPLE_REMINDERS_"
+    ),
   ]
 
   static func named(_ id: String) -> Surface? {

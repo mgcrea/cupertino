@@ -12,6 +12,9 @@ NODE_VERSION ?= 24.18.0
 # `arm64 x64` for a release; `arm64` alone builds far faster while iterating.
 NODE_ARCHS   ?= arm64 x64
 STAGED       := app/.build/staged
+# The surfaces the app brokers. Mirrors `Surface.all` in app/Cupertino/Surfaces.swift
+# and `known` in app/CupertinoBridge/main.swift; adding one means all three.
+SURFACES     := mail notes reminders
 APP     ?= app/.build/Build/Products/$(CONFIG)/Cupertino.app
 INSTALLED := /Applications/Cupertino.app
 BRIDGE  := $(APP)/Contents/Helpers/cupertino-bridge
@@ -84,15 +87,16 @@ install-from:
 		&& echo "gatekeeper accepted (notarized)" \
 		|| echo "NOT notarized — fine locally, but this copy will not run on another Mac"
 	@echo ""
-	@echo "Grant Full Disk Access to THIS copy. A grant binds to the PATH, not to the"
-	@echo "signature, so it does NOT carry over from a build directory — but it does"
-	@echo "survive every later reinstall here, because /Applications does not move."
+	@echo "Grant Full Disk Access to this copy if you have not already. The grant"
+	@echo "follows the code signature rather than the path, so it survives moves and"
+	@echo "reinstalls — what breaks on a move is the bridge path written into MCP"
+	@echo "client configs, which is why /Applications is the right home."
 	@echo ""
 	@# Functional, not structural. Checking for Resources/servers would only catch
 	@# the shapes of breakage anyone thought to look for; actually starting a
 	@# server catches an install that cannot serve, whatever the reason.
 	@sleep 2
-	@for s in mail notes; do \
+	@for s in $(SURFACES); do \
 		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"install","version":"0"}}}' \
 			| "$(INSTALLED)/Contents/Helpers/cupertino-bridge" --server=$$s 2>/dev/null \
 			| grep -q '"serverInfo"' && echo "  serves $$s" \
@@ -114,7 +118,7 @@ dev-config: ## Point the Debug app at packages/*/dist instead of bundled servers
 		> "$(SUPPORT)/dev.json"
 
 smoke: ## Handshake both servers through the bridge, as CI does directly
-	@for s in mail notes; do \
+	@for s in $(SURFACES); do \
 		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"make","version":"0"}}}' \
 			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"serverInfo"' \
 			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
@@ -125,7 +129,7 @@ audit: app ## Assert the built app cannot reach the network
 
 servers: ## Bundle the MCP servers self-contained (no node_modules at runtime)
 	@pnpm exec tsdown --config app/tsdown.servers.config.ts -l warn
-	@for s in mail notes; do \
+	@for s in $(SURFACES); do \
 		python3 -c "import json;src=json.load(open('packages/$$s/package.json'));json.dump({'name':src['name'],'version':src['version'],'type':'module','private':True},open('$(STAGED)/servers/$$s/package.json','w'),indent=2)"; \
 	done
 	@echo "  staged $$(find $(STAGED)/servers -name '*.js' | wc -l | tr -d ' ') server files"
