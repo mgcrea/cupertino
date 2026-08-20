@@ -28,7 +28,7 @@
 //        that looks for a database will not find it.
 //     3. IS `do JavaScript` REACHABLE? It needs Safari's "Allow JavaScript from
 //        Apple Events" developer toggle — a THIRD permission state beyond Full
-//        Disk Access and Automation, and one `app/Cupertino/Permissions.swift`
+//        Disk Access and Automation, and one `apps/apple/Cupertino/Permissions.swift`
 //        does not model. If Safari ships, that file grows a case.
 //     4. CAN A LIVE TAB BE ENRICHED FROM HISTORY? The two lanes only compose if
 //        an open tab can be tied to its history row. The join key is the URL
@@ -238,55 +238,106 @@ doc.findings.files = {
  * REDACTION: this walks the entire bookmark tree and retains COUNTS ONLY. No
  * title, no URL and no preview text is ever copied out of the parsed structure.
  */
-doc.findings.bookmarks = safe(() => {
-  if (!doc.findings.files.bookmarks.readable) {
-    return {
+/**
+ * The bookmark tree, walked as a native object graph.
+ *
+ * The obvious approach — `plutil -convert json` — FAILS on this file:
+ *
+ *     Bookmarks.plist: Invalid object in plist for JSON format
+ *
+ * Reading List entries carry `NSData` (preview images), and JSON has no
+ * representation for it, so the whole conversion aborts. Converting to XML and
+ * regexing it would work for counting fixed literals but cannot track nesting,
+ * and nesting is the entire question: which leaves sit UNDER the Reading List
+ * folder.
+ *
+ * So read the plist as an `NSDictionary` through the osascript boundary already
+ * in use for everything else, and walk it with `objectForKey`/`objectAtIndex`.
+ * The data keys are simply never touched, so their unrepresentability stops
+ * mattering. osascript inherits Full Disk Access from whatever launched it,
+ * exactly as the rest of the file lane does.
+ *
+ * REDACTION: counts only. No title, no URL and no preview text is copied out.
+ */
+const BOOKMARKS_WALK = `
+function run(argv) {
+  var p = JSON.parse(argv[0]);
+  ObjC.import("Foundation");
+  var root = $.NSDictionary.dictionaryWithContentsOfFile(p.path);
+  if (!root || root.isNil()) return JSON.stringify({ ok: false, error: "plist could not be read" });
+
+  var folders = 0, leaves = 0, maxDepth = 0;
+  var rl = { found: false, items: 0, unread: 0, withPreview: 0 };
+
+  function str(dict, key) {
+    var v = dict.objectForKey(key);
+    if (!v || v.isNil()) return null;
+    try { return ObjC.unwrap(v); } catch (e) { return null; }
+  }
+  function has(dict, key) {
+    var v = dict.objectForKey(key);
+    return Boolean(v) && !v.isNil();
+  }
+
+  function walk(node, depth, within) {
+    if (!node || node.isNil()) return;
+    if (depth > maxDepth) maxDepth = depth;
+
+    var type = str(node, "WebBookmarkType");
+    // The container is identified by a fixed literal, never a user-facing name.
+    var isReadingList = str(node, "Title") === "com.apple.ReadingList";
+    if (isReadingList) rl.found = true;
+    var inReadingList = within || isReadingList;
+
+    if (type === "WebBookmarkTypeLeaf") {
+      leaves++;
+      if (inReadingList) {
+        rl.items++;
+        var d = node.objectForKey("ReadingList");
+        if (d && !d.isNil()) {
+          if (!has(d, "DateLastViewed")) rl.unread++;
+          if (has(d, "PreviewText")) rl.withPreview++;
+        }
+      }
+    } else if (type === "WebBookmarkTypeList") {
+      folders++;
+    }
+
+    var kids = node.objectForKey("Children");
+    if (kids && !kids.isNil()) {
+      var n = kids.count;
+      for (var i = 0; i < n; i++) walk(kids.objectAtIndex(i), depth + 1, inReadingList);
+    }
+  }
+  walk(root, 0, false);
+  return JSON.stringify({ ok: true, folders: folders, leaves: leaves, maxDepth: maxDepth,
+                          readingList: rl });
+}
+`;
+
+// Gated on the FILE being readable, not on Safari running: this talks to
+// Foundation, not to Safari, so it needs Full Disk Access and no Automation.
+doc.findings.bookmarks = !doc.findings.files.bookmarks.readable
+  ? {
       tested: false,
       reason: doc.findings.files.bookmarks.exists
         ? "Bookmarks.plist exists but is not readable — Full Disk Access is not granted"
         : "Bookmarks.plist not present",
-    };
-  }
-  const json = execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", BOOKMARKS], {
-    encoding: "utf8",
-    timeout: 30_000,
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  const root = JSON.parse(json);
-
-  let folders = 0;
-  let leaves = 0;
-  let maxDepth = 0;
-  const readingList = { found: false, items: 0, unread: 0, withPreview: 0 };
-
-  const walk = (node, depth, inReadingList) => {
-    if (!node || typeof node !== "object") return;
-    maxDepth = Math.max(maxDepth, depth);
-    const type = node.WebBookmarkType;
-    // The container is identified by a fixed literal, not by a user-facing name.
-    const isReadingList = node.Title === "com.apple.ReadingList";
-    if (isReadingList) readingList.found = true;
-    const within = inReadingList || isReadingList;
-
-    if (type === "WebBookmarkTypeLeaf") {
-      leaves += 1;
-      if (within) {
-        readingList.items += 1;
-        const rl = node.ReadingList;
-        if (rl && typeof rl === "object") {
-          if (!rl.DateLastViewed) readingList.unread += 1;
-          if (rl.PreviewText) readingList.withPreview += 1;
-        }
-      }
-    } else if (type === "WebBookmarkTypeList") {
-      folders += 1;
     }
-    for (const child of node.Children ?? []) walk(child, depth + 1, within);
-  };
-  walk(root, 0, false);
-
-  return { tested: true, folders, leaves, maxDepth, readingList };
-});
+  : (() => {
+      const r = timed("bookmarks", BOOKMARKS_WALK, { path: BOOKMARKS }, 60_000);
+      if (!r.ok) return { tested: false, reason: `walk failed: ${r.error}` };
+      if (!r.readingList)
+        return { tested: false, reason: r.error ?? "plist walk returned nothing" };
+      return {
+        tested: true,
+        ms: r.ms,
+        folders: r.folders,
+        leaves: r.leaves,
+        maxDepth: r.maxDepth,
+        readingList: r.readingList,
+      };
+    })();
 
 let ddlRows = null;
 let opened = null;
@@ -484,7 +535,7 @@ doc.verdict = {
   thirdPermissionState:
     "Safari needs THREE permission states, not two: Full Disk Access (history, bookmarks), " +
     "Automation for com.apple.Safari (live tabs), and the 'Allow JavaScript from Apple Events' " +
-    "developer toggle (do JavaScript). app/Cupertino/Permissions.swift models only the first two, " +
+    "developer toggle (do JavaScript). apps/apple/Cupertino/Permissions.swift models only the first two, " +
     "so shipping Safari means teaching it a third — otherwise diagnostics will report a healthy " +
     "surface whose most powerful verb silently fails.",
   recommendation: !opened?.db
