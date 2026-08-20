@@ -27,6 +27,10 @@ help: ## Show this help
 	@echo "  servers: pnpm -r build | test | typecheck, pnpm lint | format"
 	@echo ""
 
+build: ## Build both halves: the npm servers and the app (Debug)
+	@pnpm -r build
+	@$(MAKE) --no-print-directory app
+
 app: ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@xcodebuild -project app/Cupertino.xcodeproj -scheme Cupertino \
 		-configuration $(CONFIG) -derivedDataPath app/.build build \
@@ -40,13 +44,21 @@ run: app dev-config ## Build, then (re)launch the menu bar app
 install: app ## Install the Debug build to /Applications (development)
 	@$(MAKE) --no-print-directory install-from SRC="$(APP)"
 
+# The whole release path in one command. Written as sequential sub-makes rather
+# than `build-release: bundle notarize`, because prerequisites may run in
+# parallel under -j and notarizing a bundle that is still being signed would
+# staple a ticket to a cdhash that is about to change.
+build-release: ## Build, sign and notarize a shippable Cupertino.app
+	@$(MAKE) --no-print-directory bundle
+	@$(MAKE) --no-print-directory notarize
+
 # Deliberately NOT `install-release: bundle`. `bundle` re-signs, and re-signing
 # changes the cdhash the stapled notarization ticket is bound to — so depending
 # on it silently un-notarizes the very thing being installed. The order is
 # bundle -> notarize -> install, and this target is only the last step.
-install-release: ## Install the already-notarized Release build (run: bundle, notarize)
+install-release: ## Install the notarized Release build (run build-release first)
 	@xcrun stapler validate "$(RELEASE_APP)" >/dev/null 2>&1 \
-		|| { echo "$(RELEASE_APP) is not stapled — run 'make bundle && make notarize' first"; exit 1; }
+		|| { echo "$(RELEASE_APP) is not stapled — run 'make build-release' first"; exit 1; }
 	@$(MAKE) --no-print-directory install-from SRC="$(RELEASE_APP)"
 
 # Not in help: an implementation detail of the two targets above.
@@ -201,4 +213,4 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 clean: ## Remove the app build output
 	@rm -rf app/.build
 
-.PHONY: help app run install install-release install-from uninstall stop dev-config smoke audit servers node bundle sign notarize icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke audit servers node bundle sign notarize icon clean
