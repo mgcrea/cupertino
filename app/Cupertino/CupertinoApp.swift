@@ -7,9 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     let location = InstallLocation.current
     hostLog(
-      "cupertino", location.grantWillPersist ? .info : .error,
+      "cupertino", .info,
       "running from \(location.url.path)"
-        + (location.grantWillPersist ? "" : " — a Full Disk Access grant made here will not survive a move"))
+        + (location.isStable ? "" : " — not a stable location for MCP client configuration"))
     do {
       try ServerHost.shared.start()
     } catch {
@@ -32,7 +32,10 @@ struct CupertinoApp: App {
     // menu bar is the whole surface. docs/distribution.md's framing — "the
     // signed app that grants them their permissions once instead of once
     // each" — is a status-and-consent app, not a window.
-    MenuBarExtra("Cupertino", systemImage: "tray.full") {
+    // The mark, not an SF Symbol. MenuBarIcon is a template image: pure black
+    // plus alpha, so AppKit tints it for light, dark and the highlighted state
+    // rather than us drawing three of them.
+    MenuBarExtra("Cupertino", image: "MenuBarIcon") {
       StatusMenu(model: model)
     }
     .menuBarExtraStyle(.window)
@@ -85,8 +88,8 @@ struct StatusMenu: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Cupertino").font(.headline)
 
-      // A grant made from the wrong place is worse than no grant: it appears to
-      // work until the app moves, then fails with no error anywhere.
+      // Not about the grant — that follows the signature and survives a move.
+      // It is the bridge path written into other apps' configs that breaks.
       if let warning = model.location.warning {
         VStack(alignment: .leading, spacing: 6) {
           Label(warning, systemImage: "exclamationmark.triangle.fill")
@@ -108,18 +111,9 @@ struct StatusMenu: View {
               .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
           }
           Spacer()
-          // Offered only where it will stick. A developer build runs from a
-          // build directory, so DEBUG keeps the button and tolerates the churn.
           if model.diskAccess != .granted {
-            #if DEBUG
-              Button("Grant…") { Permissions.openDiskAccessSettings() }
-                .controlSize(.small)
-            #else
-              if model.location.grantWillPersist {
-                Button("Grant…") { Permissions.openDiskAccessSettings() }
-                  .controlSize(.small)
-              }
-            #endif
+            Button("Grant…") { Permissions.openDiskAccessSettings() }
+              .controlSize(.small)
           }
         }
         // One row, not one per surface: the grant is indivisible, and showing

@@ -123,36 +123,48 @@ certificate, not content hash.
 This is the "grant-survives-updates payoff" that `docs/distribution.md` says everything depends
 on. It holds.
 
-### The grant does NOT survive a move
+### The grant follows the signature, not the path — earlier claim retracted
 
-The counterpart to the above, and the more surprising half. The granted bundle
-copied to a different path with `ditto` — byte-identical, signature still valid
-— is denied:
+An earlier version of this file claimed a Full Disk Access grant does **not** survive the app
+moving. **That was wrong**, and it is retracted.
+
+The evidence for it was a single uncontrolled observation: the granted spike bundle was `ditto`'d
+to a path under `/private/tmp/...`, run, and denied. What was not checked is whether the _original_
+still had its grant at that moment. It did not — the spike reads `Denied (Service Policy)` today,
+having been removed from the Full Disk Access list at some point during that session. The copy was
+denied because the identity had no grant at all, not because it had moved.
+
+The controlled result, from the real app:
 
 ```
-signature intact after copy
-half1 app reads Envelope Index: NO — errno=Operation not permitted
-file lane rc=3
+10:15:25  app/.build/…/Cupertino.app   Auth Right: Allowed (System Set)
+10:16:00  /Applications/Cupertino.app  Auth Right: Allowed (System Set)
 ```
 
-So a Full Disk Access entry binds to the **path**, and checks the signature
-there. Both results together:
+35 seconds apart, `make install` in between, no user interaction — the grant followed the bundle to
+an entirely different path.
 
-| Change                                              | Grant survives? |
-| --------------------------------------------------- | --------------- |
-| Same path, rebuilt and re-signed (new content hash) | yes             |
-| New path, identical signature                       | no              |
+Reading the user TCC database through the app's own access confirms the mechanism: the `client`
+column is a **bundle identifier**, not a path.
 
-**This is a shipping constraint, not a curiosity.** Someone who grants Full Disk
-Access while the app is still in `~/Downloads` and then drags it to
-`/Applications` loses the grant silently — same app, same signature, dead
-permission, no error anywhere. So the install flow is **move to /Applications
-first, grant second**, and the app should decline to ask for Full Disk Access at
-all while it is running from somewhere else.
+```json
+{ "service": "kTCCServiceAppleEvents", "client": "io.mgcrea.cupertino", "auth_value": 2 }
+```
 
-It also means the several copies a build produces (`app/.build`, Xcode's own
-DerivedData, any scratch build) each need their own grant. Granting the wrong
-one looks identical to not granting at all.
+Full Disk Access itself is not in the user database at all — it lives in the system one at
+`/Library/Application Support/com.apple.TCC/TCC.db`, which needs root to read.
+
+So both of these hold, and they are the same rule seen twice:
+
+| Change                                                          | Grant survives? |
+| --------------------------------------------------------------- | --------------- |
+| Same path, rebuilt and re-signed                                | yes             |
+| New path, same identifier and certificate                       | **yes**         |
+| Different bundle identifier, or a different signing certificate | no              |
+
+That is what `docs/distribution.md` means by the bundle identifier being the most expensive string
+in the project — and it is a stronger guarantee than "survives updates". It also means moving to
+/Applications after granting is safe.
 
 ### Incidental finding: two fingerprints that are not comparable
 

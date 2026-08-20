@@ -1,19 +1,19 @@
 import AppKit
 import Foundation
 
-/// Where Cupertino is running from, and whether a Full Disk Access grant made
-/// here would survive.
+/// Where Cupertino is running from.
 ///
-/// Measured in `scripts/spike-app-tcc`: a TCC entry for Full Disk Access binds
-/// to the **path**, and validates the signature there. The granted bundle
-/// copied elsewhere — byte-identical, signature still valid — is denied. So the
-/// obvious install order is the broken one:
+/// **This is not about the TCC grant.** Measured in `scripts/spike-app-tcc`: a
+/// grant is bound to the code signature, not the path — it followed the bundle
+/// from a build directory to /Applications untouched, and the user TCC database
+/// keys its rows on the bundle identifier. Moving the app after granting is
+/// safe. An earlier version of this type claimed otherwise and was wrong.
 ///
-///     grant Full Disk Access in ~/Downloads, then drag to /Applications
-///     -> same app, same signature, dead permission, no error anywhere
-///
-/// The app knows its own location, so it can refuse to ask rather than hand
-/// someone a grant that stops working the moment they tidy up.
+/// What the location does affect is the **bridge path**, which `ClientWiring`
+/// writes as an absolute path into other applications' config files. A config
+/// pointing into a build directory breaks the moment that directory is cleaned,
+/// and the failure surfaces inside someone else's app as a server that will not
+/// start.
 enum InstallLocation {
   case applications(URL)
   /// Gatekeeper ran the app from a read-only disk image copy. Nothing granted
@@ -35,8 +35,8 @@ enum InstallLocation {
     return .elsewhere(url)
   }
 
-  /// Whether a Full Disk Access grant made now is worth anything long-term.
-  var grantWillPersist: Bool {
+  /// Whether a path written into another app's config from here will keep working.
+  var isStable: Bool {
     if case .applications = self { return true }
     return false
   }
@@ -53,15 +53,15 @@ enum InstallLocation {
       return nil
     case .translocated:
       return """
-        Cupertino is running from a temporary copy made by Gatekeeper. Move it to \
-        your Applications folder and open it from there — a permission granted now \
-        would be discarded.
+        Cupertino is running from a temporary copy made by Gatekeeper, at a path that \
+        will not exist next time. Move it to your Applications folder and open it from \
+        there before configuring any MCP clients.
         """
     case .elsewhere(let url):
       return """
-        Cupertino is running from \(url.deletingLastPathComponent().path). Full Disk \
-        Access is tied to the app's location, so granting it here stops working as \
-        soon as the app moves. Move it to Applications first.
+        Cupertino is running from \(url.deletingLastPathComponent().path). Clients are \
+        configured with the full path to this copy, so they will stop working if it \
+        moves or is deleted. Move it to Applications for a stable location.
         """
     }
   }
