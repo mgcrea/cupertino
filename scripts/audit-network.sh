@@ -21,7 +21,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP="${1:-app/.build/Build/Products/Debug/Cupertino.app}"
+APP="${1:-apps/apple/.build/Build/Products/Debug/Cupertino.app}"
 status=0
 checked=0
 
@@ -73,7 +73,18 @@ fi
 # claim: a socket that never names an internet address family is not one.
 echo ""
 echo "  Sources — an internet address family appears nowhere"
-inet=$(grep -rInE 'AF_INET|PF_INET|sockaddr_in\b|sockaddr_in6' app packages/*/native 2>/dev/null || true)
+# Named explicitly, and existence-checked: `grep -r` over a directory that has
+# been moved away returns nothing and exits non-zero, which `|| true` would
+# launder into a pass. The check would then report "ok" having read no source at
+# all — the same silent-skip failure the `checked` counter above exists to stop.
+SOURCES=(apps/apple packages/*/native)
+for dir in "${SOURCES[@]}"; do
+  [ -d "$dir" ] || {
+    printf '  FAIL  %-18s no such directory: %s\n' "sources" "$dir"
+    status=1
+  }
+done
+inet=$(grep -rInE 'AF_INET|PF_INET|sockaddr_in\b|sockaddr_in6' "${SOURCES[@]}" 2>/dev/null || true)
 if [ -n "$inet" ]; then
   printf '  FAIL  %s\n' "AF_INET is referenced:"
   printf '%s\n' "$inet" | sed 's/^/          /'
