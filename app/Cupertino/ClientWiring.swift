@@ -79,7 +79,31 @@ enum ClientWiring {
     ["command": bridgePath, "args": ["--server=\(surface.id)"]]
   }
 
-  static func serverKey(for surface: Surface) -> String { "apple-\(surface.id)" }
+  /// Named after the thing that provides the server, not the thing it talks to.
+  ///
+  /// This key lands in a file the user owns, next to entries the app knows
+  /// nothing about, and `configure` writes it unconditionally. `apple-mail` is
+  /// a name several public MCP servers already use, so the old key could
+  /// silently replace one of them. `cupertino-mail` cannot collide by accident,
+  /// and it makes "which of these entries are mine?" a question with an answer.
+  ///
+  /// The npm packages and the tool names deliberately did **not** follow: the
+  /// servers are MIT and run standalone with no app at all, so naming them
+  /// after the app would misdescribe them. Someone wiring the package up by
+  /// hand still calls it `apple-mail`, and that is right — it is a different
+  /// deployment, running under their own grant rather than Cupertino's.
+  static func serverKey(for surface: Surface) -> String { "cupertino-\(surface.id)" }
+
+  /// What `serverKey` returned before the rename.
+  static func legacyServerKey(for surface: Surface) -> String { "apple-\(surface.id)" }
+
+  /// Whether an entry is one this app wrote, wherever the bundle was at the
+  /// time. Deliberately not compared against the current `bridgePath`: an entry
+  /// left by a copy that has since moved is exactly the one worth cleaning up.
+  private static func isOurs(_ entry: [String: Any]) -> Bool {
+    guard let command = entry["command"] as? String else { return false }
+    return command.hasSuffix("/Contents/Helpers/cupertino-bridge")
+  }
 
   /// The command for clients we decline to edit.
   static var claudeCodeCommands: String {
@@ -179,6 +203,14 @@ enum ClientWiring {
     var servers = root["mcpServers"] as? [String: Any] ?? [:]
     for surface in Surface.all {
       servers[serverKey(for: surface)] = entry(for: surface)
+
+      // Migrate rather than duplicate. Only if it is ours — a third-party
+      // server that happens to be called `apple-mail` is someone else's entry
+      // and this has no business removing it.
+      let legacy = legacyServerKey(for: surface)
+      if let previous = servers[legacy] as? [String: Any], isOurs(previous) {
+        servers.removeValue(forKey: legacy)
+      }
     }
     root["mcpServers"] = servers
 
