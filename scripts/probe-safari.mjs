@@ -37,8 +37,9 @@
 // THE APPLE EVENTS HALF RUNS WITHOUT FULL DISK ACCESS.
 //
 // Dependency-free (node builtins + scripts/lib/probe-kit.mjs). Databases are
-// opened read-only and NEVER written to. Bookmarks.plist is converted with
-// `plutil` to a temporary in-memory JSON string, never rewritten.
+// opened read-only and NEVER written to. Bookmarks.plist is read as an
+// NSDictionary through osascript — `plutil -convert json` ABORTS on it, because
+// Reading List entries carry NSData that JSON cannot represent.
 //
 // OUTPUT IS REDACTED ON PURPOSE: counts, timings, lengths, booleans, column
 // names and DDL only. NO URLS, no page titles, no domains, no search terms.

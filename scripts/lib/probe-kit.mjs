@@ -23,26 +23,37 @@ import { DatabaseSync } from "node:sqlite";
 /** Core Data stores seconds since 2001-01-01. */
 export const APPLE_EPOCH_OFFSET = 978_307_200;
 
+/** 2001-01-01T00:00:00Z, the anchor every Apple epoch here is measured from. */
+const APPLE_ANCHOR_MS = APPLE_EPOCH_OFFSET * 1000;
+
 /**
- * Is this a plausible date for the NEWEST row in a live store?
+ * A date is plausible if it falls in a generous window AND is not sitting on the
+ * 2001 anchor.
  *
- * The window is deliberately narrow, and 2001 is deliberately outside it. Every
- * Apple epoch here is anchored at 2001-01-01, so dividing a seconds value by 1e9
- * lands within a rounding error of the anchor and produces exactly "2001" — a
- * date that looks fine and is really the arithmetic saying "nothing here". A
- * lower bound of 2001 accepts that artifact; Safari's `visit_time` was
- * misidentified as nanoseconds through precisely this hole.
+ * The anchor check is the load-bearing half. Dividing a seconds value by 1e9
+ * collapses it to within a rounding error of 2001-01-01 — the arithmetic saying
+ * "there is nothing here" while producing a date that looks perfectly fine.
+ * Safari's `visit_time` was misidentified as nanoseconds through exactly that
+ * hole.
  *
- * Callers pass MAX() of a column, so the newest row in a store anyone is still
- * using should be recent. A store whose latest row predates 2005 will fail every
- * candidate and report `unknown` with the candidates listed — the right outcome:
- * a human should look, rather than a heuristic guessing.
+ * An earlier attempt fixed it by narrowing the window to roughly `now`, which
+ * was wrong in the other direction and for an obvious reason once seen: a
+ * CALENDAR holds future events. `CalendarItem.start_date` reads as 2030 here and
+ * was rejected for it. Narrow windows encode an assumption about what kind of
+ * store this is; the anchor check does not.
  */
-export const sane = (d) =>
-  d instanceof Date &&
-  Number.isFinite(d.getTime()) &&
-  d.getFullYear() >= 2005 &&
-  d.getFullYear() <= new Date().getFullYear() + 2;
+const NEAR_ANCHOR_MS = 86_400_000;
+
+export const sane = (d, offset = 0) => {
+  if (!(d instanceof Date) || !Number.isFinite(d.getTime())) return false;
+  const year = d.getUTCFullYear();
+  if (year < 1990 || year > 2100) return false;
+  // Only the Apple-anchored readings can produce the degenerate case.
+  if (offset === APPLE_EPOCH_OFFSET && Math.abs(d.getTime() - APPLE_ANCHOR_MS) < NEAR_ANCHOR_MS) {
+    return false;
+  }
+  return true;
+};
 
 /** Core Data spells strings VARCHAR; LENGTH() on an INTEGER lies, so check the type. */
 export const isTextType = (t) => /CHAR|CLOB|TEXT/i.test(String(t ?? ""));
@@ -403,13 +414,30 @@ export const detectEpoch = (maxValue) => {
     { name: "unix-seconds", date: new Date(n * 1000), divisor: 1, offset: 0 },
     { name: "unix-milliseconds", date: new Date(n), divisor: 1e-3, offset: 0 },
   ];
-  const won = candidates.find((c) => sane(c.date));
+  // Several readings can be plausible at once — a genuine Unix timestamp also
+  // reads as a valid (but 31-years-late) Apple-seconds date. So score rather
+  // than take the first match: the reading closest to now wins. That is right
+  // for a log-like store whose newest row is recent AND for a calendar whose
+  // newest row is a few years out, because every WRONG reading is off by
+  // decades, not years.
+  const now = Date.now();
+  const scored = candidates.map((c) => {
+    const t = c.date.getTime();
+    const ok = Number.isFinite(t);
+    return {
+      ...c,
+      year: ok ? c.date.getUTCFullYear() : null,
+      plausible: sane(c.date, c.offset),
+      distance: ok ? Math.abs(t - now) : Number.POSITIVE_INFINITY,
+    };
+  });
+  const won = scored.filter((c) => c.plausible).toSorted((a, b) => a.distance - b.distance)[0];
   // The rejected readings are kept either way. A wrong pick is only visible if
   // you can see what the alternatives produced.
-  const considered = candidates.map((c) => ({
+  const considered = scored.map((c) => ({
     epoch: c.name,
-    year: Number.isFinite(c.date.getTime()) ? c.date.getFullYear() : null,
-    plausible: sane(c.date),
+    year: c.year,
+    plausible: c.plausible,
   }));
   return won
     ? {
@@ -417,7 +445,7 @@ export const detectEpoch = (maxValue) => {
         epoch: won.name,
         divisor: won.divisor,
         offset: won.offset,
-        latestYear: won.date.getFullYear(),
+        latestYear: won.year,
         considered,
       }
     : { tested: true, epoch: "unknown", considered };
