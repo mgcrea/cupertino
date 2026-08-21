@@ -101,6 +101,29 @@ const CANDIDATE_ROOTS = [
 
 const tilde = (p) => p.replace(homedir(), "~");
 
+/** How many members of `want` are absent from `got`. Set diffs, both directions. */
+const missingFrom = (want, got) => {
+  let n = 0;
+  for (const v of want) if (!got.has(v)) n += 1;
+  return n;
+};
+
+/**
+ * Whether a stored timezone string names a real zone.
+ *
+ * Called, not `new`ed: `Intl.DateTimeFormat` returns an instance either way, and
+ * the throw on an unknown zone is the whole test. Anything that fails here is a
+ * sentinel — a floating date, which is a different type from an instant.
+ */
+const isIanaZone = (v) => {
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: String(v) });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const doc = {
   probeVersion: 1,
   ranAt: new Date().toISOString(),
@@ -296,6 +319,50 @@ function run(argv) {
 }
 `;
 
+/**
+ * PHASE 0.5 — the truth set for the recurrence question.
+ *
+ * `EVENT_UIDS` above answers "does this uid appear in a column"; that settled the
+ * id bridge and nothing more. Deciding how to expand recurrences needs a
+ * different shape of answer: the (uid, start instant) PAIRS Calendar itself
+ * reports for a window, so the store's range query can be diffed against them as
+ * a SET.
+ *
+ * A count comparison would not do. `docs/surfaces.md` records that the Notes
+ * decoder passed a count check while being wrong about half the corpus, and a
+ * recurring event is precisely the case where the store can return the right
+ * NUMBER of rows for the wrong instants.
+ *
+ * Bulk per calendar, filtered in JS — the shape every measurement in this file
+ * has already shown to win.
+ */
+const RANGE_TRUTH = `
+function run(argv) {
+  var p = JSON.parse(argv[0]);
+  var C = Application("Calendar");
+  var from = new Date(p.from).getTime();
+  var to = new Date(p.to).getTime();
+  var cals = C.calendars();
+  var pairs = [], failed = 0, truncated = false;
+  for (var i = 0; i < cals.length; i++) {
+    try {
+      var uids = cals[i].events.uid();
+      var starts = cals[i].events.startDate();
+      for (var j = 0; j < uids.length && j < starts.length; j++) {
+        if (starts[j] === null) continue;
+        var t = starts[j].getTime();
+        if (t < from || t >= to) continue;
+        if (pairs.length >= p.cap) { truncated = true; break; }
+        pairs.push(String(uids[j]) + "|" + Math.round(t / 1000));
+      }
+    } catch (e) {
+      failed += 1;
+    }
+  }
+  return JSON.stringify({ pairs: pairs, calendarsFailed: failed, truncated: truncated });
+}
+`;
+
 /** Event uids for the bridge scan. Uids are opaque; masked before printing anyway. */
 const EVENT_UIDS = `
 function run(argv) {
@@ -331,6 +398,12 @@ doc.findings.rangeBulk = ae(() => timed("rangeBulk", RANGE_BULK, { from, to }, 3
 doc.findings.bulkSearch = ae(() => timed("bulkSearch", BULK_SEARCH, { term: TERM }, 300_000));
 doc.findings.props = ae(() => timed("props", PROP_MATRIX, {}, 300_000));
 doc.findings.richElements = ae(() => timed("richElements", RICH_ELEMENTS, { sample: 40 }, 240_000));
+// The same window the store-side range query below uses, so the two are
+// comparable as sets. Capped: a set diff is about membership, and an unbounded
+// fetch on a large calendar would price this probe out of being run at all.
+doc.findings.rangeTruth = ae(() =>
+  timed("rangeTruth", RANGE_TRUTH, { from, to, cap: 5_000 }, 300_000),
+);
 
 const eventTotal = doc.findings.shape.eventTotal ?? null;
 const whoseMs = doc.findings.rangeWhose.ok ? doc.findings.rangeWhose.ms : null;
@@ -403,7 +476,7 @@ if (chosen) opened = openStore(chosen.fullPath);
 
 if (opened?.db) {
   const db = opened.db;
-  const { columnInfo, countOf, all } = tableTools(db);
+  const { columnInfo, countOf, one, all } = tableTools(db);
   doc.sqlite = opened.sqlite;
   doc.findings.open = { ms: opened.openMs, mode: opened.mode, walBlind: opened.walBlind };
 
@@ -609,6 +682,385 @@ if (opened?.db) {
     return { tested: true, table, columns, consensus: disagreement ? null : first, disagreement };
   });
 
+  // ─── PHASE 0.5: what the recurrence decision actually needs ───────────────
+  //
+  // Everything above settled where the store is and whether a row can be tied
+  // to an event. Neither answers the question that decides whether a range
+  // query is CORRECT: `OccurrenceCache` (1,946 rows) and `OccurrenceCacheDays`
+  // (2,630) both out-row `CalendarItem` (1,350), so expanded recurrences live
+  // somewhere other than the main table and a naive `SELECT ... FROM
+  // CalendarItem` returns a repeating event once instead of weekly.
+  //
+  // The failure mode is the dangerous kind: a short list is indistinguishable
+  // from a free afternoon. So none of the column names below are assumed —
+  // each is resolved against the live schema and the resolution is printed, in
+  // the same spirit as findIdBridge above.
+
+  const APPLE_EPOCH = 978_307_200;
+  const appleToMs = (v) =>
+    v === null || v === undefined || !Number.isFinite(Number(v))
+      ? null
+      : (Number(v) + APPLE_EPOCH) * 1000;
+  const daysFromNow = (v) => {
+    const ms = appleToMs(v);
+    return ms === null ? null : Math.round((ms - Date.now()) / 86_400_000);
+  };
+  const isoOf = (v) => {
+    const ms = appleToMs(v);
+    if (ms === null) return null;
+    const d = new Date(ms);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  };
+  const has = (t) => tables.includes(t);
+
+  /** First candidate that exists on the table, else null. Never guesses blind. */
+  const pickCol = (table, candidates) => {
+    if (!has(table)) return null;
+    const names = colsOf(table);
+    const lower = new Map(names.map((n) => [n.toLowerCase(), n]));
+    for (const c of candidates) {
+      const hit = lower.get(c.toLowerCase());
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  /**
+   * WHICH COLUMN JOINS A CHILD ROW TO ITS PARENT, measured rather than assumed.
+   *
+   * Same reasoning as findIdBridge: a plausible-looking `event_id` that is
+   * really an index into something else would produce a query that runs, returns
+   * rows, and is wrong. So score every integer column by how completely its
+   * non-null values resolve to a parent ROWID, and report the ranking — a
+   * winner with a 100% resolve rate over many distinct values is a measurement;
+   * one that resolves 40% is a warning.
+   */
+  const linkColumn = (child, parent) => {
+    if (!has(child) || !has(parent)) {
+      return { tested: false, reason: `${!has(child) ? child : parent} absent` };
+    }
+    const ints = columnInfo(child).filter((c) => /INT/i.test(c.type || ""));
+    const ranked = [];
+    for (const c of ints) {
+      const stats = one(
+        `SELECT COUNT(*) AS nonNull, COUNT(DISTINCT "${c.name}") AS distinctValues
+           FROM "${child}" WHERE "${c.name}" IS NOT NULL AND "${c.name}" > 0`,
+      );
+      if (!stats?.nonNull) continue;
+      const matched = one(
+        `SELECT COUNT(*) AS matched FROM "${child}" ch
+           JOIN "${parent}" pa ON pa.ROWID = ch."${c.name}"
+          WHERE ch."${c.name}" IS NOT NULL AND ch."${c.name}" > 0`,
+      );
+      ranked.push({
+        column: c.name,
+        nonNull: stats.nonNull,
+        distinctValues: stats.distinctValues,
+        matched: matched?.matched ?? 0,
+        resolveRate: Number(((matched?.matched ?? 0) / stats.nonNull).toFixed(4)),
+      });
+    }
+    // Fully-resolving first, then the one spanning the most parents: a flag
+    // column of 0s and 1s also "resolves" against a table with rowids 0 and 1.
+    ranked.sort((a, b) => b.resolveRate - a.resolveRate || b.distinctValues - a.distinctValues);
+    const winner = ranked.find((r) => r.resolveRate === 1 && r.distinctValues > 1) ?? null;
+    return { tested: true, winner: winner?.column ?? null, ranked: ranked.slice(0, 8) };
+  };
+
+  /** (1) The tables a server would read, with their real column lists. */
+  doc.findings.schemaDetail = safe(() => {
+    const WANTED = [
+      "CalendarItem",
+      "Calendar",
+      "Store",
+      "OccurrenceCache",
+      "OccurrenceCacheDays",
+      "Recurrence",
+      "ExceptionDate",
+      "Location",
+      "Alarm",
+      "Participant",
+    ];
+    const out = {};
+    for (const t of WANTED) {
+      if (!has(t)) {
+        out[t] = { present: false };
+        continue;
+      }
+      const cols = columnInfo(t);
+      out[t] = {
+        present: true,
+        rows: doc.findings.tableCounts[t] ?? null,
+        columnCount: cols.length,
+        columns: cols.map((c) => `${c.name}:${c.type || "?"}`),
+        dateColumns: cols.filter((c) => looksLikeDateColumn(c.name, c.type)).map((c) => c.name),
+      };
+    }
+    return out;
+  });
+
+  /** (2) The joins, each measured. */
+  doc.findings.links = safe(() => ({
+    occurrenceToItem: linkColumn("OccurrenceCache", "CalendarItem"),
+    occurrenceDaysToOccurrence: linkColumn("OccurrenceCacheDays", "OccurrenceCache"),
+    recurrenceToItem: linkColumn("Recurrence", "CalendarItem"),
+    exceptionToItem: linkColumn("ExceptionDate", "CalendarItem"),
+    itemToCalendar: linkColumn("CalendarItem", "Calendar"),
+    calendarToStore: linkColumn("Calendar", "Store"),
+  }));
+
+  /**
+   * (3) THE NUMBER THAT DECIDES THE DESIGN: how far the expansion reaches.
+   *
+   * If the cache spans a bounded window around today, it is a materialised view
+   * for the month/day UI and cannot be the sole authority — "what is on in March
+   * next year" would come back empty and look exactly like a free calendar. If
+   * it spans decades, it is a real expansion and can be trusted inside its edges.
+   * Either way the server must publish the edges rather than truncate silently.
+   */
+  doc.findings.occurrenceCoverage = safe(() => {
+    if (!has("OccurrenceCache")) return { tested: false, reason: "OccurrenceCache absent" };
+    const rows = countOf("OccurrenceCache") ?? 0;
+    if (!rows) return { tested: true, rows: 0, note: "present but empty" };
+    const dateCols = columnInfo("OccurrenceCache")
+      .filter((c) => looksLikeDateColumn(c.name, c.type))
+      .map((c) => c.name);
+    const columns = {};
+    for (const c of dateCols) {
+      const min = aggNumericAsText(db, "OccurrenceCache", c, "MIN");
+      const max = aggNumericAsText(db, "OccurrenceCache", c, "MAX");
+      columns[c] = {
+        earliestIso: isoOf(min.value),
+        latestIso: isoOf(max.value),
+        earliestDaysFromToday: daysFromNow(min.value),
+        latestDaysFromToday: daysFromNow(max.value),
+        // The epoch is re-derived per column rather than inherited: a Core Data
+        // store can mix anchored and unanchored timestamps in one table.
+        epoch: detectEpoch(max.value).epoch ?? null,
+      };
+    }
+    return { tested: true, rows, columns };
+  });
+
+  /**
+   * (4) Does the cache hold non-recurring items too?
+   *
+   * This decides whether the two legs of a union overlap for ordinary events —
+   * i.e. whether the dedupe step is doing real work or is merely defensive.
+   */
+  doc.findings.occurrenceScope = safe(() => {
+    const link = doc.findings.links?.occurrenceToItem?.winner;
+    const recLink = doc.findings.links?.recurrenceToItem?.winner;
+    if (!link) return { tested: false, reason: "no measured OccurrenceCache -> CalendarItem link" };
+    const parents = one(
+      `SELECT COUNT(DISTINCT "${link}") AS parents FROM "OccurrenceCache" WHERE "${link}" > 0`,
+    );
+    const result = {
+      tested: true,
+      linkColumn: link,
+      distinctParents: parents?.parents ?? null,
+      itemRows: doc.findings.tableCounts.CalendarItem ?? null,
+      occurrenceRows: doc.findings.tableCounts.OccurrenceCache ?? null,
+    };
+    if (recLink && has("Recurrence")) {
+      const withRule = one(
+        `SELECT COUNT(DISTINCT oc."${link}") AS n FROM "OccurrenceCache" oc
+           WHERE EXISTS (SELECT 1 FROM "Recurrence" r WHERE r."${recLink}" = oc."${link}")`,
+      );
+      const withoutRule = one(
+        `SELECT COUNT(DISTINCT oc."${link}") AS n FROM "OccurrenceCache" oc
+           WHERE NOT EXISTS (SELECT 1 FROM "Recurrence" r WHERE r."${recLink}" = oc."${link}")`,
+      );
+      result.parentsWithRecurrenceRule = withRule?.n ?? null;
+      result.parentsWithoutRecurrenceRule = withoutRule?.n ?? null;
+      result.cacheCoversNonRecurringItems = (withoutRule?.n ?? 0) > 0;
+    }
+    return result;
+  });
+
+  /**
+   * (5) THE SET DIFF. Not a count — a count check is how the Notes decoder
+   * passed while being wrong about half the corpus (docs/surfaces.md).
+   *
+   * Runs the two-leg range query the server would issue and diffs it against
+   * the (uid, start) pairs Calendar itself reported for the same window. Two
+   * diffs are reported: by uid, which finds events the store cannot see at all,
+   * and by (uid, instant), which additionally finds occurrences landing on the
+   * wrong time. Separating them matters — the fixes are different.
+   */
+  doc.findings.rangeAgreement = safe(() => {
+    const truthDoc = doc.findings.rangeTruth;
+    if (!truthDoc?.pairs) {
+      return { tested: false, reason: "Apple Events did not return a truth set" };
+    }
+    const bridge = doc.findings.idBridge?.hits?.[0];
+    const itemUuid =
+      bridge?.table === "CalendarItem" ? bridge.column : pickCol("CalendarItem", ["UUID"]);
+    const itemStart = pickCol("CalendarItem", ["start_date"]);
+    const itemEnd = pickCol("CalendarItem", ["end_date"]);
+    const link = doc.findings.links?.occurrenceToItem?.winner;
+    const recLink = doc.findings.links?.recurrenceToItem?.winner;
+    const occStart = pickCol("OccurrenceCache", [
+      "occurrence_date",
+      "start_date",
+      "occurrence_start_date",
+    ]);
+    const resolved = {
+      itemUuid,
+      itemStart,
+      itemEnd,
+      occurrenceLink: link,
+      occurrenceStart: occStart,
+    };
+    if (!itemUuid || !itemStart) {
+      return {
+        tested: false,
+        reason: "could not resolve CalendarItem uuid/start columns",
+        resolved,
+      };
+    }
+
+    const fromApple = Math.round(new Date(from).getTime() / 1000) - APPLE_EPOCH;
+    const toApple = Math.round(new Date(to).getTime() / 1000) - APPLE_EPOCH;
+
+    // Leg 1: items with no recurrence rule. Correct at any horizon.
+    const notRecurring = recLink
+      ? `AND NOT EXISTS (SELECT 1 FROM "Recurrence" r WHERE r."${recLink}" = ci.ROWID)`
+      : "";
+    const leg1 = all(
+      `SELECT ci."${itemUuid}" AS uuid, ci."${itemStart}" AS startDate
+         FROM "CalendarItem" ci
+        WHERE ci."${itemStart}" < ?
+          AND COALESCE(${itemEnd ? `ci."${itemEnd}"` : "NULL"}, ci."${itemStart}") > ?
+          ${notRecurring}`,
+      toApple,
+      fromApple,
+    );
+
+    // Leg 2: expanded occurrences, if the cache is there to expand them.
+    const leg2 =
+      link && occStart
+        ? all(
+            `SELECT ci."${itemUuid}" AS uuid, oc."${occStart}" AS startDate
+               FROM "OccurrenceCache" oc
+               JOIN "CalendarItem" ci ON ci.ROWID = oc."${link}"
+              WHERE oc."${occStart}" >= ? AND oc."${occStart}" < ?`,
+            fromApple,
+            toApple,
+          )
+        : [];
+
+    const key = (uuid, appleSeconds) =>
+      `${String(uuid).toUpperCase()}|${Math.round(Number(appleSeconds) + APPLE_EPOCH)}`;
+    const storePairs = new Set();
+    const storeUids = new Set();
+    for (const r of [...leg1, ...leg2]) {
+      if (r.uuid === null || r.startDate === null) continue;
+      storePairs.add(key(r.uuid, r.startDate));
+      storeUids.add(String(r.uuid).toUpperCase());
+    }
+
+    const truthPairs = new Set();
+    const truthUids = new Set();
+    for (const raw of truthDoc.pairs) {
+      const idx = String(raw).lastIndexOf("|");
+      if (idx < 0) continue;
+      const uid = uuidOf(String(raw).slice(0, idx)) ?? String(raw).slice(0, idx);
+      truthPairs.add(`${uid.toUpperCase()}|${String(raw).slice(idx + 1)}`);
+      truthUids.add(uid.toUpperCase());
+    }
+
+    return {
+      tested: true,
+      resolved,
+      windowDays: DAYS,
+      appleEventsTruncated: Boolean(truthDoc.truncated),
+      leg1Rows: leg1.length,
+      leg2Rows: leg2.length,
+      storeUids: storeUids.size,
+      truthUids: truthUids.size,
+      // The gate. Non-zero here means the store cannot see events that exist.
+      uidsMissingFromStore: missingFrom(truthUids, storeUids),
+      uidsExtraInStore: missingFrom(storeUids, truthUids),
+      // Non-zero here with zero above means the event is found but expanded to
+      // the wrong instants — a recurrence bug rather than a visibility one.
+      pairsMissingFromStore: missingFrom(truthPairs, storePairs),
+      pairsExtraInStore: missingFrom(storePairs, truthPairs),
+    };
+  });
+
+  /**
+   * (6) The unexplained extra row — 1,350 store rows against 1,349 events.
+   *
+   * One row is not a class of drift, but "which row" decides whether leg 1
+   * needs a type predicate: CalendarItem shares its schema with Reminders
+   * (due_date, completion_date), so a reminder-shaped row sitting in it would
+   * be a filter the server is currently missing. Reported as shape only —
+   * which columns are populated, never what they hold.
+   */
+  doc.findings.itemShape = safe(() => {
+    const dueCol = pickCol("CalendarItem", ["due_date"]);
+    const doneCol = pickCol("CalendarItem", ["completion_date"]);
+    const startCol = pickCol("CalendarItem", ["start_date"]);
+    const entityCol = pickCol("CalendarItem", ["entity_type", "type", "item_type"]);
+    const out = {
+      rows: doc.findings.tableCounts.CalendarItem ?? null,
+      dueDateColumn: dueCol,
+      completionDateColumn: doneCol,
+      entityTypeColumn: entityCol,
+    };
+    if (dueCol)
+      out.rowsWithDueDate =
+        one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${dueCol}" IS NOT NULL`)?.n ?? null;
+    if (doneCol)
+      out.rowsWithCompletionDate =
+        one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${doneCol}" IS NOT NULL`)?.n ?? null;
+    if (startCol)
+      out.rowsWithoutStartDate =
+        one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${startCol}" IS NULL`)?.n ?? null;
+    if (entityCol) {
+      out.entityTypeHistogram = all(
+        `SELECT "${entityCol}" AS v, COUNT(*) AS n FROM "CalendarItem" GROUP BY 1 ORDER BY n DESC LIMIT 8`,
+      );
+    }
+    return out;
+  });
+
+  /**
+   * (7) The floating-timezone sentinel.
+   *
+   * An all-day event names a DAY, not an instant, and rendering it in the
+   * reader's zone moves it to the previous day for everyone east of Greenwich.
+   * The server therefore needs to recognise a start_tz that is not a real zone.
+   *
+   * REDACTION: real IANA names are not printed — a timezone set describes where
+   * someone lives and works. Only the count, and the values that FAIL to
+   * validate as zones, which is the finding and identifies nobody.
+   */
+  doc.findings.timeZones = safe(() => {
+    const tzCol = pickCol("CalendarItem", ["start_tz", "start_timezone", "timezone"]);
+    if (!tzCol) return { tested: false, reason: "no timezone column on CalendarItem" };
+    const rows = all(
+      `SELECT DISTINCT "${tzCol}" AS v FROM "CalendarItem" WHERE "${tzCol}" IS NOT NULL`,
+    );
+    const sentinels = rows.map((r) => r.v).filter((v) => !isIanaZone(v));
+    const nulls =
+      one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${tzCol}" IS NULL`)?.n ?? null;
+    const allDayCol = pickCol("CalendarItem", ["all_day"]);
+    return {
+      tested: true,
+      column: tzCol,
+      distinctValues: rows.length,
+      nullRows: nulls,
+      // Printed in full: these are sentinels like "_float", not real places.
+      nonIanaValues: sentinels,
+      allDayColumn: allDayCol,
+      allDayRows: allDayCol
+        ? (one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${allDayCol}" = 1`)?.n ?? null)
+        : null,
+    };
+  });
+
   db.close();
 } else if (chosen) {
   doc.findings.open = { ok: false, error: opened?.error ?? null };
@@ -616,6 +1068,35 @@ if (opened?.db) {
     `Found a store but SQLite refused both open modes: ${opened?.error ?? "unknown"}.`,
   );
 }
+
+/**
+ * `Extras.db` — 32 KB sitting beside the main store, listed as unexamined in
+ * docs/calendar.md. Small enough that one schema dump closes it out, and an
+ * unexamined file next to the one the server depends on is exactly the kind of
+ * thing that turns out to hold the flag nobody could find.
+ *
+ * Schema only, like everything else here.
+ */
+doc.findings.extras = safe(() => {
+  const extras = allStores.find((s) => /(^|\/)Extras\.db$/i.test(s.name));
+  if (!extras) return { tested: false, reason: "no Extras.db found under either root" };
+  if (!extras.readable)
+    return { tested: false, reason: "found but not readable — needs Full Disk Access" };
+  const extrasDb = openStore(extras.fullPath);
+  if (!extrasDb.db) return { tested: false, reason: `could not open: ${extrasDb.error}` };
+  const schema = dumpSchema(extrasDb.db);
+  const { countOf } = tableTools(extrasDb.db);
+  const out = {
+    tested: true,
+    sizeBytes: extras.sizeBytes,
+    objectCount: schema.objectCount,
+    fingerprint: schema.fingerprint,
+    tables: schema.tables,
+    rowCounts: Object.fromEntries(schema.tables.map((t) => [t, countOf(t)])),
+  };
+  extrasDb.db.close();
+  return out;
+});
 
 // ─── Verdict ────────────────────────────────────────────────────────────────
 
@@ -657,6 +1138,53 @@ const gained = Object.entries(caps)
   .map(([k]) => k);
 const rich = doc.findings.richElements ?? {};
 
+/**
+ * PHASE 0.5 VERDICT: which recurrence strategy the evidence supports.
+ *
+ * Stated as a recommendation with its reasoning attached, because the next
+ * reader needs to be able to disagree with it on the evidence rather than on
+ * trust. The gate is the SET diff, not the row counts.
+ */
+const recurrenceVerdict = (() => {
+  const agree = doc.findings.rangeAgreement;
+  const cover = doc.findings.occurrenceCoverage;
+  if (!opened?.db) {
+    return { decidable: false, reason: "no file lane — re-run with Full Disk Access." };
+  }
+  if (!agree?.tested) {
+    return {
+      decidable: false,
+      reason: `the set diff did not run (${agree?.reason ?? "unknown"}). Without it there is no evidence either way — do not start the store lane.`,
+    };
+  }
+  const clean = agree.uidsMissingFromStore === 0 && agree.pairsMissingFromStore === 0;
+  // Coverage is read off whichever occurrence column reaches furthest: the
+  // question is how far the expansion goes, not which column carries it.
+  const spans = Object.values(cover?.columns ?? {})
+    .map((c) => c.latestDaysFromToday)
+    .filter((n) => typeof n === "number");
+  const latest = spans.length ? Math.max(...spans) : null;
+  const bounded = latest !== null && latest < 400;
+  return {
+    decidable: true,
+    setDiffClean: clean,
+    uidsMissingFromStore: agree.uidsMissingFromStore,
+    pairsMissingFromStore: agree.pairsMissingFromStore,
+    expansionLatestDaysFromToday: latest,
+    expansionLooksBounded: bounded,
+    strategy: !clean
+      ? "BLOCKED"
+      : bounded
+        ? "hybrid, coverage published"
+        : "hybrid, coverage published (cache reaches far)",
+    recommendation: !clean
+      ? `BLOCKED. The store's range query misses ${agree.uidsMissingFromStore} uid(s) and ${agree.pairsMissingFromStore} (uid, instant) pair(s) that Calendar reports for the same window. Do not build the store lane on this shape — find out what it cannot see first.`
+      : bounded
+        ? `Two-leg hybrid, and the cache is NOT an authority beyond its edge: the furthest expanded occurrence is ${latest} days from today, which is a materialised window for the UI rather than a complete expansion. Leg 1 (items with no recurrence rule) is correct at any horizon; leg 2 (OccurrenceCache) is correct inside the window. A range past the edge must set a truncated flag naming what is missing — a short list is indistinguishable from a free calendar.`
+        : `Two-leg hybrid. The set diff is clean and the cache reaches ${latest} days out, so it behaves like a real expansion rather than a UI window — but publish the coverage edge anyway, because nothing here guarantees the next machine's cache is as deep.`,
+  };
+})();
+
 doc.verdict = {
   storeLocation: tableCorrection,
   fullDiskAccessGranted: Boolean(opened?.db),
@@ -682,6 +1210,7 @@ doc.verdict = {
         }))
       : null,
   appleEventsTested: aeLane.available,
+  recurrence: recurrenceVerdict,
   recommendation: !aeLane.available
     ? `Speed UNMEASURED — ${aeLane.reason} The table's unsourced "slow" is still unsourced.`
     : rangeMs === null
@@ -828,6 +1357,108 @@ if (args.json) {
         );
       }
     }
+
+    // ─── PHASE 0.5 ────────────────────────────────────────────────────────
+    L.push("");
+    L.push("  RECURRENCE — the question that decides whether a range query is CORRECT");
+    const links = doc.findings.links ?? {};
+    for (const [name, l] of Object.entries(links)) {
+      L.push(
+        `     ${name.padEnd(26)} ${
+          l.tested ? (l.winner ? `${l.winner}  (resolves 100%)` : "NO CLEAN LINK") : l.reason
+        }`,
+      );
+      // A partial resolve rate is the interesting case: it means the column
+      // looks like a foreign key and is not one.
+      for (const r of l.ranked ?? []) {
+        if (r.resolveRate < 1 && r.resolveRate > 0.05) {
+          L.push(
+            `        suspect         ${r.column}: resolves ${(r.resolveRate * 100).toFixed(1)}% over ${r.distinctValues} distinct`,
+          );
+        }
+      }
+    }
+    const cover = doc.findings.occurrenceCoverage ?? {};
+    if (cover.tested && cover.columns) {
+      L.push(`     expansion window   ${cover.rows} cached occurrence rows`);
+      for (const [col, c] of Object.entries(cover.columns)) {
+        L.push(
+          `        ${col.padEnd(24)} ${String(c.earliestDaysFromToday ?? "?").padStart(7)} → ${String(c.latestDaysFromToday ?? "?").padStart(7)} days from today  (${c.epoch ?? "?"})`,
+        );
+      }
+    } else {
+      L.push(`     expansion window   ${cover.reason ?? cover.note ?? "?"}`);
+    }
+    const scope = doc.findings.occurrenceScope ?? {};
+    if (scope.tested) {
+      L.push(
+        `     cache parents      ${scope.distinctParents ?? "?"} of ${scope.itemRows ?? "?"} items` +
+          (scope.cacheCoversNonRecurringItems === undefined
+            ? ""
+            : `; ${scope.parentsWithoutRecurrenceRule} have NO recurrence rule` +
+              (scope.cacheCoversNonRecurringItems
+                ? "  — the legs OVERLAP, dedupe is load-bearing"
+                : "  — the legs are disjoint")),
+      );
+    }
+    const agree = doc.findings.rangeAgreement ?? {};
+    L.push("");
+    L.push(`  SET DIFF vs Apple Events (±${DAYS} days) — the gate`);
+    if (agree.tested) {
+      L.push(
+        `     columns used       ${Object.entries(agree.resolved)
+          .map(([k, v]) => `${k}=${v ?? "—"}`)
+          .join("  ")}`,
+      );
+      L.push(`     store rows         leg1=${agree.leg1Rows}  leg2=${agree.leg2Rows}`);
+      L.push(`     uids               store ${agree.storeUids} vs Calendar ${agree.truthUids}`);
+      L.push(
+        `     MISSING from store ${agree.uidsMissingFromStore} uids, ${agree.pairsMissingFromStore} (uid, instant) pairs` +
+          `${agree.uidsMissingFromStore === 0 && agree.pairsMissingFromStore === 0 ? "   CLEAN" : "   *** BLOCKER ***"}`,
+      );
+      L.push(
+        `     extra in store     ${agree.uidsExtraInStore} uids, ${agree.pairsExtraInStore} pairs` +
+          `${agree.appleEventsTruncated ? "   (Apple Events truth set was capped — extras expected)" : ""}`,
+      );
+    } else {
+      L.push(`     not tested         ${agree.reason}`);
+    }
+    const tz = doc.findings.timeZones ?? {};
+    if (tz.tested) {
+      L.push("");
+      L.push(
+        `  TIMEZONES            ${tz.column}: ${tz.distinctValues} distinct, ${tz.nullRows} null rows, ${tz.allDayRows ?? "?"} all-day events`,
+      );
+      L.push(
+        `     floating sentinel  ${tz.nonIanaValues.length ? JSON.stringify(tz.nonIanaValues) : "none — every value is a real IANA zone"}`,
+      );
+    }
+    const shape = doc.findings.itemShape ?? {};
+    if (shape.rows) {
+      L.push(
+        `  ITEM SHAPE           ${shape.rows} rows; ${shape.rowsWithDueDate ?? 0} with a due date, ` +
+          `${shape.rowsWithCompletionDate ?? 0} completed, ${shape.rowsWithoutStartDate ?? 0} with no start`,
+      );
+      if (shape.entityTypeHistogram) {
+        L.push(
+          `     ${shape.entityTypeColumn}      ${shape.entityTypeHistogram.map((r) => `${r.v}×${r.n}`).join("  ")}`,
+        );
+      }
+    }
+    const extras = doc.findings.extras ?? {};
+    L.push(
+      `  Extras.db            ${
+        extras.tested
+          ? `${extras.sizeBytes} B, ${extras.tables.length} tables: ${extras.tables.join(", ") || "none"}`
+          : extras.reason
+      }`,
+    );
+    L.push("");
+    const rv = doc.verdict.recurrence ?? {};
+    L.push("  STRATEGY");
+    for (const line of String(rv.recommendation ?? rv.reason ?? "?").split(/(?<=\.) (?=[A-Z])/)) {
+      L.push(`     ${line}`);
+    }
     L.push("");
   }
   if (doc.verdict.projection) {
@@ -850,6 +1481,20 @@ if (args.json) {
   L.push("VERDICT");
   L.push(`  store      : ${doc.verdict.storeLocation}`);
   L.push(`  speed      : ${doc.verdict.recommendation}`);
+  // Printed unconditionally, including when the file lane never opened. The
+  // recurrence section above lives inside the FDA branch, so without this line
+  // a run with no grant is silent about the one question that blocks the build
+  // — and silence reads as "nothing to report" rather than "not measured".
+  L.push(
+    `  recurrence : ${doc.verdict.recurrence.recommendation ?? doc.verdict.recurrence.reason}`,
+  );
+  // Printed unconditionally, including when the file lane never opened. The
+  // recurrence section above lives inside the FDA branch, so without this line
+  // a run with no grant is silent about the one question that blocks the build
+  // — and silence reads as "nothing to report" rather than "not measured".
+  L.push(
+    `  recurrence : ${doc.verdict.recurrence.recommendation ?? doc.verdict.recurrence.reason}`,
+  );
   for (const n of doc.notes) L.push(`  note: ${n}`);
   L.push("");
   L.push("Full document: re-run with --json");
