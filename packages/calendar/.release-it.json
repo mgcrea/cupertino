@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "calendar-v${version}",
+    "commitMessage": "release(calendar): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-calendar v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

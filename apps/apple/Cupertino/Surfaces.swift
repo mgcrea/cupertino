@@ -55,6 +55,22 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Group Containers/group.com.apple.reminders",
       envPrefix: "APPLE_REMINDERS_"
     ),
+    Surface(
+      id: "calendar",
+      displayName: "Calendar",
+      // NOT `com.apple.Calendar`, which does not exist. Calendar.app kept the
+      // bundle id it shipped with as iCal, and this is the only surface in the
+      // table where the display name and the bundle id disagree — the same
+      // shape of trap as `com.apple.Notes` vs `com.apple.reminders` above,
+      // which this project has already been caught by once.
+      bundleID: "com.apple.iCal",
+      // A constant filename, unlike Reminders' generated UUID directory. That
+      // makes this the best Full Disk Access probe in the table: `access(2)`
+      // on a known path answers the question directly, with no listing step
+      // that could fail for its own reasons.
+      storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
+      envPrefix: "APPLE_CALENDAR_"
+    ),
   ]
 
   static func named(_ id: String) -> Surface? {

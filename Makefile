@@ -14,7 +14,7 @@ NODE_ARCHS   ?= arm64 x64
 STAGED       := apps/apple/.build/staged
 # The surfaces the app brokers. Mirrors `Surface.all` in apps/apple/Cupertino/Surfaces.swift
 # and `known` in apps/apple/CupertinoBridge/main.swift; adding one means all three.
-SURFACES     := mail notes reminders
+SURFACES     := mail notes reminders calendar
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
 # default, which nothing bumps. Empty locally, where the pbxproj value stands.

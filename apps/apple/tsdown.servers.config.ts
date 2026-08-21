@@ -19,7 +19,7 @@ const tryGit = (cmd: string): string => {
  * `dist/cli.js` importing `@modelcontextprotocol/sdk` would fail at startup.
  *
  * `deps.alwaysBundle` inlines everything, which is also what docs/distribution.md
- * already assumes: it lists `Resources/servers/{mail,notes,reminders}/cli.js`, one file
+ * already assumes: it lists `Resources/servers/{mail,notes,reminders,calendar}/cli.js`, one file
  * per surface.
  *
  * Paths are relative to this file, not to the working directory — tsdown
@@ -36,6 +36,7 @@ export default defineConfig({
     "mail/dist/cli": "../packages/mail/src/cli.ts",
     "notes/dist/cli": "../packages/notes/src/cli.ts",
     "reminders/dist/cli": "../packages/reminders/src/cli.ts",
+    "calendar/dist/cli": "../packages/calendar/src/cli.ts",
   },
   outDir: ".build/staged/servers",
   format: ["esm"],
