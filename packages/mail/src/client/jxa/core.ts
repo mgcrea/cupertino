@@ -98,6 +98,140 @@ function containsText(haystack, needle) {
   return squash(haystack).indexOf(n) !== -1;
 }
 
+/**
+ * Read the start of a composer's body, out of the window.
+ *
+ * Mail's scripting interface reports content as "" for every reply and forward
+ * composer, and silently discards writes to it — measured on macOS 26, with and
+ * without opening window, immediately and six seconds later. So the window is
+ * the only place a composed body can be read, and the accessible text under its
+ * web area is what a person would see on screen.
+ *
+ * Bounded on purpose. Every node costs an Apple Event, and a composer holding a
+ * quoted newsletter runs to 160 of them — around eight seconds to walk in full,
+ * twice over, on a tool whose whole budget is thirty. Reading stops once budget
+ * characters are in hand, which is enough to answer the only question being
+ * asked: is the text we just pasted at the top of this window. Values are read a
+ * parent at a time, one event per level rather than one per node.
+ *
+ * Returns null when the body cannot be reached at all — a different answer from
+ * "", and the two have to stay apart: one means we are blind, the other means
+ * the composer is empty.
+ */
+function composerBodyText(body, budget) {
+  if (!body) return null;
+  var acc = { lines: [], chars: 0 };
+  collectText(body, 0, acc, budget);
+  return acc.lines.join("\\n");
+}
+
+function collectText(el, depth, acc, budget) {
+  if (depth > 6 || acc.chars >= budget) return;
+  var kids = prop(function () { return el.uiElements(); }, []);
+  if (!kids.length) return;
+  // One event for the whole level. Falls back to one per child if this composer
+  // has a level whose values will not marshal as a list.
+  var values = prop(function () { return el.uiElements.value(); }, null);
+  for (var i = 0; i < kids.length && acc.chars < budget; i++) {
+    var kid = kids[i];
+    var value = values ? values[i] : prop(function () { return kid.value(); }, null);
+    if (value && typeof value === "string" && value.trim()) {
+      acc.lines.push(value);
+      acc.chars += value.length + 1;
+    } else {
+      collectText(kid, depth + 1, acc, budget);
+    }
+  }
+}
+
+/**
+ * How many elements the composer's body holds, in one Apple Event.
+ *
+ * A fingerprint, not a reading. Taken before and after a paste it answers "did
+ * anything at all land", which is what decides whether pasting again is safe:
+ * a paste that landed and cannot be read must NOT be repeated, or the reply
+ * ends up in the draft twice with no way to undo it from here.
+ */
+function composerBodySize(body) {
+  return prop(function () { return body.entireContents().length; }, -1);
+}
+
+/**
+ * Find the composer Mail just opened, by the subject Mail gave it.
+ *
+ * Counting windows before and after does not work: Mail closes and reuses
+ * windows around a compose, so the count comes back unchanged with a new
+ * composer on screen — measured. The subject is the identity that holds, and
+ * requiring a body area with it rejects the main window and the drafts list.
+ */
+function composerWindow(proc, subject, timeoutMs) {
+  var waited = 0;
+  while (true) {
+    var wins = prop(function () { return proc.windows(); }, []);
+    for (var i = 0; i < wins.length; i++) {
+      var win = wins[i];
+      if (prop(function () { return win.name(); }, "") !== subject) continue;
+      if (findBodyArea(win, 0)) return win;
+    }
+    if (waited >= timeoutMs) return null;
+    pause(0.2);
+    waited += 200;
+  }
+}
+
+/**
+ * Put text into a composer body, via the pasteboard.
+ *
+ * No route through the scripting interface works on a reply or a forward:
+ * assigning content is dropped, and so is setting AXValue on the web area,
+ * which reports itself settable first and then does nothing. Typing the text
+ * keystroke by keystroke does land, but a 4 KB body takes minutes and mangles
+ * accented characters. A paste is one event, exact, and encoding-safe.
+ *
+ * The caller must have made Mail frontmost already: a keystroke goes to the
+ * active application, and raising a window inside Mail is not that.
+ *
+ * COST, stated because it is real: this borrows the user's clipboard. The
+ * string on it is put back afterwards, but a clipboard holding an image or a
+ * file promise comes back as text, because AppKit offers no way to carry an
+ * arbitrary item across without knowing its type.
+ */
+function pasteIntoComposer(win, body, text) {
+  if (!body) return false;
+  var SE = Application("System Events");
+
+  var pb = $.NSPasteboard.generalPasteboard;
+  var saved = null;
+  try {
+    var existing = pb.stringForType($.NSPasteboardTypeString);
+    saved = existing.isNil() ? null : ObjC.unwrap(existing);
+  } catch (e) {
+    saved = null;
+  }
+
+  var pasted = false;
+  try {
+    pb.clearContents;
+    pb.setStringForType($(text), $.NSPasteboardTypeString);
+    try { win.actions.byName("AXRaise").perform(); } catch (e) {}
+    body.focused = true;
+    pause(0.3);
+    SE.keystroke("v", { using: ["command down"] });
+    pause(0.8);
+    pasted = true;
+  } catch (e) {
+    pasted = false;
+  }
+
+  if (saved !== null) {
+    try {
+      pb.clearContents;
+      pb.setStringForType($(saved), $.NSPasteboardTypeString);
+    } catch (e) {}
+  }
+  return pasted;
+}
+
 /** Depth-first hunt for the composer's body, which is a web area, not a text field. */
 function findBodyArea(el, depth) {
   if (depth > 6) return null;

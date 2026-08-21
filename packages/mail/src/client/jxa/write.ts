@@ -185,13 +185,18 @@ export const SEND_MESSAGE = script(
 /**
  * Reply to, or forward, an existing message.
  *
- * `reply` and `forward` return a reference to the outgoing message *before*
- * Mail has finished building the composer window, and anything assigned in that
- * gap is discarded without raising — which produced a draft with correct
- * recipients, correct threading and an empty body, reported as a success. So we
- * wait for the composer to become real, then verify the body by reading it back
- * out of Mail, and fail loudly if it did not take. A caller told "your draft is
- * ready" about an empty draft is worse off than one told nothing happened.
+ * The body cannot go through the scripting interface. `reply` and `forward`
+ * hand back an outgoing message whose `content` reads as "" and swallows every
+ * write — not a race, and not fixed by waiting: measured on macOS 26 with and
+ * without `opening window`, immediately and six seconds later, and the same for
+ * setting AXValue on the composer's web area, which reports itself settable and
+ * then does nothing. Recipients, subject and threading DO come through, which
+ * is what made the old failure so bad: a draft correct in every visible respect
+ * except the words, reported as a success.
+ *
+ * So the body is pasted into the composer window and then read back out of it.
+ * Nothing here reports a draft as ready on the strength of an assignment having
+ * been accepted, because that is exactly what lied.
  */
 export const REPLY_OR_FORWARD = script(
   `
@@ -208,28 +213,34 @@ export const REPLY_OR_FORWARD = script(
     return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
   }
 
+  // The window is opened even when sending immediately: it is where the body
+  // has to be typed, and sending from it sends what was verified rather than
+  // whatever the disconnected scripting object thinks it holds.
   var draft;
   if (p.mode === "forward") {
-    draft = M.forward(original, { openingWindow: !p.sendNow });
+    draft = M.forward(original, { openingWindow: true });
   } else {
-    draft = M.reply(original, { openingWindow: !p.sendNow, replyToAll: p.replyToAll ? true : false });
+    draft = M.reply(original, { openingWindow: true, replyToAll: p.replyToAll ? true : false });
   }
 
-  // The quoted original showing up in \`content\` is the one signal from Mail
-  // itself that the composer exists and will keep what we hand it. Poll for it
-  // rather than sleeping a fixed amount: a cold Mail takes seconds, a warm one
-  // is ready almost at once, and a fixed sleep has to be wrong for one of them.
-  var quoted = "";
-  var waitedMs = 0;
-  while (waitedMs < 6000) {
-    quoted = String(prop(function () { return draft.content(); }, ""));
-    if (quoted) break;
-    pause(0.2);
-    waitedMs += 200;
-  }
-  var composerReady = quoted.length > 0;
+  var subject = String(prop(function () { return draft.subject(); }, ""));
+  if (!subject) return err("COMPOSER_NOT_FOUND", "Mail did not return a composer for the " + p.mode + ".");
 
-  // Recipients go on after the wait for the same reason the body does.
+  var SE = Application("System Events");
+  var proc = SE.processes.byName("Mail");
+  var win = composerWindow(proc, subject, 8000);
+  if (!win) {
+    return err(
+      "COMPOSER_NOT_FOUND",
+      "Mail was asked to open a " + p.mode + " window for \\"" + subject + "\\" and no such window " +
+      "appeared within 8s. If a compose window IS on screen, this Mac has not granted Accessibility " +
+      "to whatever runs this server, which is what reading and filling a composer needs. Nothing " +
+      "was written; check System Settings > Privacy & Security > Accessibility."
+    );
+  }
+
+  // Recipients go through the scripting object, which does work for them, but
+  // only once the composer exists.
   if (p.mode === "forward") {
     var addrs = p.to || [];
     for (var i = 0; i < addrs.length; i++) {
@@ -237,45 +248,126 @@ export const REPLY_OR_FORWARD = script(
     }
   }
 
+  var bodyArea = findBodyArea(win, 0);
+  if (!bodyArea) {
+    return err(
+      "COMPOSER_NOT_FOUND",
+      "The " + p.mode + " window for \\"" + subject + "\\" is open, but its body cannot be reached " +
+      "through the accessibility interface, which is the only way into it. Nothing was written."
+    );
+  }
+
+  var previous = prop(function () {
+    return SE.applicationProcesses.whose({ frontmost: true })[0].name();
+  }, null);
+  var restore = function () {
+    if (previous && previous !== "Mail") {
+      try { SE.processes.byName(previous).frontmost = true; } catch (e) {}
+    }
+  };
+
   var bodyVerified = null;
-  var contentLength = quoted.length;
+  var verifiedChars = 0;
   if (p.body) {
     var body = String(p.body);
+    // Confirm the opening of the body rather than all of it. Reading the whole
+    // of a long reply plus the quote it sits above costs seconds of Apple
+    // Events, and buys nothing: a paste either arrives whole or does not arrive,
+    // which is what was measured, so the top of it is the tell.
+    var expected = body.length > 400 ? body.slice(0, 400) : body;
+    var sizeBefore = composerBodySize(bodyArea);
     bodyVerified = false;
-    // Every attempt rebuilds from the quote captured once, above. Reusing the
-    // read-back instead would stack a second copy of the body on any retry
-    // where the write landed but the verification did not see it.
-    for (var attempt = 0; attempt < 3 && !bodyVerified; attempt++) {
-      try { draft.content = body + "\\n\\n" + quoted; } catch (e) {}
-      pause(attempt === 0 ? 0.4 : 1);
-      var after = String(prop(function () { return draft.content(); }, ""));
-      contentLength = after.length;
-      bodyVerified = containsText(after, body);
+
+    try {
+      proc.frontmost = true;
+      pause(0.4);
+      for (var attempt = 0; attempt < 2 && !bodyVerified; attempt++) {
+        pasteIntoComposer(win, bodyArea, body);
+        var after = composerBodyText(bodyArea, expected.length + 400);
+        bodyVerified = after !== null && containsText(after, expected);
+        if (bodyVerified) {
+          verifiedChars = expected.length;
+        } else if (composerBodySize(bodyArea) !== sizeBefore) {
+          // Something went in that we cannot match. Pasting again would put the
+          // reply in the draft twice, and nothing here can undo that.
+          break;
+        }
+      }
+    } catch (e) {
+      bodyVerified = false;
     }
+
     if (!bodyVerified) {
-      var why = composerReady
-        ? "Mail accepted the assignment without error but did not keep it."
-        : "The composer never became readable within 6s, so Mail was probably still building it.";
+      restore();
       return err(
         "DRAFT_BODY_NOT_SET",
-        "Mail opened the " + p.mode + " window but the body did not take. " + why +
-        " Reading the composed message back gave " + contentLength + " characters, none of them " +
-        "the text we sent. The window is open and MUST be treated as EMPTY: do not tell the user " +
-        "their " + p.mode + " is ready. Close it in Mail before retrying, or the retry will leave " +
-        "two drafts behind."
+        "The " + p.mode + " window for \\"" + subject + "\\" is open and correctly addressed, but the " +
+        "body did not go in: reading the composer back does not show the text that was sent. The " +
+        "draft is EMPTY or wrong and MUST NOT be described to the user as ready. Close it in Mail " +
+        "before retrying, or the retry leaves a second draft behind."
       );
     }
   }
 
   if (p.sendNow) {
-    draft.send();
+    // Sent from the window, so what goes out is what was just verified.
+    var clicked = false;
+    try {
+      proc.frontmost = true;
+      pause(0.4);
+      try { win.actions.byName("AXRaise").perform(); } catch (e) {}
+      pause(0.3);
+      var send = proc.menuBars[0].menuBarItems.byName("Message").menus[0].menuItems.byName("Send");
+      if (prop(function () { return send.enabled(); }, false)) {
+        send.click();
+        clicked = true;
+      }
+    } catch (e) {
+      clicked = false;
+    }
+    // The window closing is the confirmation that it went. Wait for it rather
+    // than sampling once: reporting a slow close as a failure would invite a
+    // retry, and a retry after a send that DID go sends the mail twice.
+    var stillOpen = true;
+    var waited = 0;
+    while (clicked && waited < 8000) {
+      pause(0.5);
+      waited += 500;
+      if (composerWindow(proc, subject, 0) === null) { stillOpen = false; break; }
+    }
+    restore();
+    if (!clicked) {
+      return err(
+        "SEND_FAILED",
+        "The " + p.mode + " was composed and its body verified, but Message > Send would not " +
+        "activate, so NOTHING WAS SENT. The draft is on screen with the right text in it and can " +
+        "be sent by hand."
+      );
+    }
+    if (stillOpen) {
+      return err(
+        "SEND_UNCONFIRMED",
+        "The " + p.mode + " was composed, its body verified, and Send was clicked — but the window " +
+        "was still open 8s later, so whether it went cannot be confirmed from here. DO NOT send it " +
+        "again: check Sent in Mail first, because a retry would send it twice."
+      );
+    }
     return ok({ sent: true, mode: p.mode, bodyVerified: bodyVerified,
-                subject: prop(function () { return draft.subject(); }, null) });
+                verifiedChars: verifiedChars, subject: subject });
   }
-  return ok({ sent: false, draft: true, mode: p.mode, bodyVerified: bodyVerified,
-              contentLength: contentLength,
-              subject: prop(function () { return draft.subject(); }, null),
-              note: "Draft window is open in Mail for review; its body was read back and matches." });
+
+  restore();
+  return ok({
+    sent: false,
+    draft: true,
+    mode: p.mode,
+    subject: subject,
+    bodyVerified: bodyVerified,
+    verifiedChars: verifiedChars,
+    note: bodyVerified
+      ? "Draft window is open in Mail for review; its body was read back out of the window and matches."
+      : "Draft window is open in Mail for review."
+  });
 `,
   { allowLaunch: true },
 );
