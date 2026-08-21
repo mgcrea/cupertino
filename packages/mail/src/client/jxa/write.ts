@@ -182,7 +182,17 @@ export const SEND_MESSAGE = script(
   { allowLaunch: true },
 );
 
-/** Reply to, or forward, an existing message. */
+/**
+ * Reply to, or forward, an existing message.
+ *
+ * `reply` and `forward` return a reference to the outgoing message *before*
+ * Mail has finished building the composer window, and anything assigned in that
+ * gap is discarded without raising — which produced a draft with correct
+ * recipients, correct threading and an empty body, reported as a success. So we
+ * wait for the composer to become real, then verify the body by reading it back
+ * out of Mail, and fail loudly if it did not take. A caller told "your draft is
+ * ready" about an empty draft is worse off than one told nothing happened.
+ */
 export const REPLY_OR_FORWARD = script(
   `
   var acct = findAccount(M, p.accountUuid);
@@ -201,24 +211,71 @@ export const REPLY_OR_FORWARD = script(
   var draft;
   if (p.mode === "forward") {
     draft = M.forward(original, { openingWindow: !p.sendNow });
-    var addrs = p.to || [];
-    for (var i = 0; i < addrs.length; i++) {
-      draft.toRecipients.push(M.ToRecipient({ address: addrs[i] }));
-    }
   } else {
     draft = M.reply(original, { openingWindow: !p.sendNow, replyToAll: p.replyToAll ? true : false });
   }
 
+  // The quoted original showing up in \`content\` is the one signal from Mail
+  // itself that the composer exists and will keep what we hand it. Poll for it
+  // rather than sleeping a fixed amount: a cold Mail takes seconds, a warm one
+  // is ready almost at once, and a fixed sleep has to be wrong for one of them.
+  var quoted = "";
+  var waitedMs = 0;
+  while (waitedMs < 6000) {
+    quoted = String(prop(function () { return draft.content(); }, ""));
+    if (quoted) break;
+    pause(0.2);
+    waitedMs += 200;
+  }
+  var composerReady = quoted.length > 0;
+
+  // Recipients go on after the wait for the same reason the body does.
+  if (p.mode === "forward") {
+    var addrs = p.to || [];
+    for (var i = 0; i < addrs.length; i++) {
+      draft.toRecipients.push(M.ToRecipient({ address: addrs[i] }));
+    }
+  }
+
+  var bodyVerified = null;
+  var contentLength = quoted.length;
   if (p.body) {
-    // Prepend so the quoted original survives underneath.
-    draft.content = p.body + "\\n\\n" + prop(function () { return draft.content(); }, "");
+    var body = String(p.body);
+    bodyVerified = false;
+    // Every attempt rebuilds from the quote captured once, above. Reusing the
+    // read-back instead would stack a second copy of the body on any retry
+    // where the write landed but the verification did not see it.
+    for (var attempt = 0; attempt < 3 && !bodyVerified; attempt++) {
+      try { draft.content = body + "\\n\\n" + quoted; } catch (e) {}
+      pause(attempt === 0 ? 0.4 : 1);
+      var after = String(prop(function () { return draft.content(); }, ""));
+      contentLength = after.length;
+      bodyVerified = containsText(after, body);
+    }
+    if (!bodyVerified) {
+      var why = composerReady
+        ? "Mail accepted the assignment without error but did not keep it."
+        : "The composer never became readable within 6s, so Mail was probably still building it.";
+      return err(
+        "DRAFT_BODY_NOT_SET",
+        "Mail opened the " + p.mode + " window but the body did not take. " + why +
+        " Reading the composed message back gave " + contentLength + " characters, none of them " +
+        "the text we sent. The window is open and MUST be treated as EMPTY: do not tell the user " +
+        "their " + p.mode + " is ready. Close it in Mail before retrying, or the retry will leave " +
+        "two drafts behind."
+      );
+    }
   }
 
   if (p.sendNow) {
     draft.send();
-    return ok({ sent: true, mode: p.mode });
+    return ok({ sent: true, mode: p.mode, bodyVerified: bodyVerified,
+                subject: prop(function () { return draft.subject(); }, null) });
   }
-  return ok({ sent: false, draft: true, mode: p.mode, note: "Draft window is open in Mail for review." });
+  return ok({ sent: false, draft: true, mode: p.mode, bodyVerified: bodyVerified,
+              contentLength: contentLength,
+              subject: prop(function () { return draft.subject(); }, null),
+              note: "Draft window is open in Mail for review; its body was read back and matches." });
 `,
   { allowLaunch: true },
 );

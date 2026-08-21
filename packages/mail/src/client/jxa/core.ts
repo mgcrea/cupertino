@@ -80,6 +80,24 @@ function findAccount(M, uuid) {
 
 function pause(seconds) { $.NSThread.sleepForTimeInterval(seconds); }
 
+/**
+ * Does the haystack contain the needle, ignoring how Mail rewrote whitespace?
+ *
+ * Used to verify a body we just wrote into a composer. A literal comparison
+ * fails on text that was stored correctly: Mail hands back CR or CRLF line
+ * endings, re-wraps runs of spaces and drops trailing ones, so an indented,
+ * blank-line-separated body never reads back byte-identical. Collapsing every
+ * whitespace run on both sides compares what a reader would see, which is the
+ * question being asked -- the alternative is a false "the body was dropped" on
+ * a draft that is in fact fine.
+ */
+function containsText(haystack, needle) {
+  var squash = function (s) { return String(s).replace(/\\s+/g, " ").trim(); };
+  var n = squash(needle);
+  if (!n) return true;
+  return squash(haystack).indexOf(n) !== -1;
+}
+
 /** Depth-first hunt for the composer's body, which is a web area, not a text field. */
 function findBodyArea(el, depth) {
   if (depth > 6) return null;

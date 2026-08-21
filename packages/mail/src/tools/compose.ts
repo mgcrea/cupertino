@@ -89,7 +89,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
       description:
         "Reply to a message. By default it opens a draft in Mail with the original quoted beneath " +
         "your text, for the user to review. Pass replyToAll to include every original recipient. " +
-        "Only pass sendNow: true (with confirm: true) when explicitly asked to send now.",
+        "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
+        "Success means the body was read back out of the composer and matched; an error means the " +
+        "draft is EMPTY and must not be described to the user as ready.",
       inputSchema: {
         ref: messageRefArg,
         body: bodyArg,
@@ -119,7 +121,8 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     {
       description:
         "Forward a message to new recipients. By default it opens a draft in Mail for review. " +
-        "Only pass sendNow: true (with confirm: true) when explicitly asked to send now.",
+        "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
+        "When a note is given, success means it was read back out of the composer and matched.",
       inputSchema: {
         ref: messageRefArg,
         to: z.array(z.string().email()).min(1).describe("Who to forward to."),
