@@ -1,6 +1,22 @@
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "tsdown";
+
+/**
+ * Anchor a path to THIS FILE rather than to the working directory.
+ *
+ * The comment below used to claim tsdown resolved entries against the config's
+ * own location. It does not — rolldown resolves them against `process.cwd()`,
+ * and since the Makefile invokes this config from the repo root (`pnpm exec
+ * tsdown --config apps/apple/tsdown.servers.config.ts`), every entry resolved
+ * one directory above the repo and `make servers` failed with UNRESOLVED_ENTRY
+ * for all of them.
+ *
+ * Resolving through `import.meta.url` makes the claim true instead of merely
+ * documented, and keeps the config correct from any working directory.
+ */
+const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
 
 const tryGit = (cmd: string): string => {
   try {
@@ -22,8 +38,9 @@ const tryGit = (cmd: string): string => {
  * already assumes: it lists `Resources/servers/{mail,notes,reminders,calendar}/cli.js`, one file
  * per surface.
  *
- * Paths are relative to this file, not to the working directory — tsdown
- * resolves them against the config's own location.
+ * Paths are anchored to this file through `here()`, so the config behaves the
+ * same whether it is invoked from the repo root (as the Makefile does) or from
+ * `apps/apple`.
  */
 export default defineConfig({
   entry: {
@@ -33,12 +50,12 @@ export default defineConfig({
     // `servers/<id>/` that resolves to a single shared `servers/package.json`,
     // which cannot carry two different versions. The staging step writes a
     // real package.json beside each `dist/`.
-    "mail/dist/cli": "../packages/mail/src/cli.ts",
-    "notes/dist/cli": "../packages/notes/src/cli.ts",
-    "reminders/dist/cli": "../packages/reminders/src/cli.ts",
-    "calendar/dist/cli": "../packages/calendar/src/cli.ts",
+    "mail/dist/cli": here("../../packages/mail/src/cli.ts"),
+    "notes/dist/cli": here("../../packages/notes/src/cli.ts"),
+    "reminders/dist/cli": here("../../packages/reminders/src/cli.ts"),
+    "calendar/dist/cli": here("../../packages/calendar/src/cli.ts"),
   },
-  outDir: ".build/staged/servers",
+  outDir: here("./.build/staged/servers"),
   format: ["esm"],
   target: "node24",
   platform: "node",
