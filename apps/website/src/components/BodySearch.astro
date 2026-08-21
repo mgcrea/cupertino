@@ -1,0 +1,152 @@
+---
+import { BODY_SEARCH } from "../config";
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * Body search, and the refusal.
+ *
+ * This section exists because the honest version of the feature is more
+ * persuasive than the flattering one. Every other reader of Apple Mail either
+ * has no body search or caps it quietly at the newest few thousand messages,
+ * which answers "not found" for older mail indistinguishably from a real
+ * absence. Saying when we did not look is the differentiator, so the degraded
+ * result is rendered as prominently as the timings.
+ *
+ * Deliberately no competitor is named. The lanes below are approaches, not
+ * products: an approach comparison stays true without anyone maintaining it,
+ * and a table of other people's feature sets is a claim nothing in CI can gate
+ * — see the claims discipline in this workspace's CLAUDE.md.
+ *
+ * Bars are logarithmic, and that is a real choice rather than a nicety. Linear
+ * would make everything below 6,566 candidates invisible against 182,329, and
+ * the whole point is that the small end is where this lane lives.
+ */
+const MAX = Math.max(...BODY_SEARCH.steps.map((s) => s.ms));
+const width = (ms: number) => (Math.log10(ms) / Math.log10(MAX)) * 100;
+
+const fmt = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+const n = (x: number) => x.toLocaleString("en-US");
+
+/**
+ * Written out rather than interpolated. Tailwind generates utilities by
+ * scanning source text, so `!text-${tone}` produces a class name in the HTML
+ * and no rule in the CSS — the column renders unstyled and nothing warns. This
+ * cost a build to notice; keep the literals.
+ */
+const TONE = {
+  danger: "!text-danger",
+  warn: "!text-warn",
+  ok: "!text-ok",
+} as const;
+
+const LANES = [
+  {
+    lane: "Ask Mail directly",
+    speed: "74 s for one filtered query",
+    disk: "nothing",
+    upkeep: "nothing",
+    tone: "danger",
+    note: "What an AppleScript-only reader is left with. Measured, not estimated.",
+  },
+  {
+    lane: "Build a full-text index",
+    speed: "fast, including unbounded",
+    disk: `${BODY_SEARCH.indexAlternative.gigabytes} GB`,
+    upkeep: "forever",
+    tone: "warn",
+    note: `A second copy of the archive, ${BODY_SEARCH.indexAlternative.buildSeconds} s to build and stale the moment mail arrives.`,
+  },
+  {
+    lane: "Narrow, then read",
+    speed: "48 ms – 3 s when filtered",
+    disk: "nothing",
+    upkeep: "nothing",
+    tone: "ok",
+    note: "What Cupertino does. The index narrows; only the survivors are read.",
+  },
+] as const;
+---
+
+<section id="body-search" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="Body search" heading="It tells you<br />when it didn't look.">
+    macOS has no body index to borrow — Mail keeps none, and Spotlight excludes <code
+      class="font-mono text-[14px] text-fg-dim">~/Library</code
+    > outright. So the index narrows the query and only the survivors are read, which makes cost linear
+    in how well you filtered. Past the bound it refuses and says so.
+  </SectionHeader>
+
+  <div class="reveal flex flex-col gap-6 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
+    {
+      BODY_SEARCH.steps.map((s) => (
+        <div class="flex flex-col gap-2.5">
+          <div class="flex items-baseline justify-between gap-4">
+            <span class="text-[14px] text-fg">
+              {n(s.candidates)}
+              <span class="text-fg-muted"> · {s.label}</span>
+            </span>
+            <span class="font-mono text-[14px] text-fg-dim">
+              {fmt(s.ms)}
+              {"refused" in s && s.refused && <span class="!text-danger"> · refused</span>}
+            </span>
+          </div>
+          <div class="h-2.5 overflow-hidden rounded-full bg-bg-3">
+            <div
+              class="bar"
+              style={`width:${width(s.ms)}%;background:${
+                "refused" in s && s.refused ? "var(--color-danger)" : "var(--color-ok)"
+              }`}
+            />
+          </div>
+        </div>
+      ))
+    }
+    <p class="mono m-0">
+      log scale · measured against {n(BODY_SEARCH.storeSize)} messages
+    </p>
+  </div>
+
+  {/* The refusal, as the server actually returns it. This is the section's
+      whole argument, so it is quoted rather than described. */}
+  <div class="reveal mt-5 overflow-x-auto rounded-[16px] border border-rule bg-bg-3 p-6 sm:p-8">
+    <pre
+      class="m-0 font-mono text-[12.5px] leading-[1.75] text-fg-dim"><span class="text-danger">degraded</span>: true
+<span class="text-accent">capability</span>: "body-scan"
+<span class="text-accent">reason</span>: "6566 messages match the other filters, above the
+          {BODY_SEARCH.bound}-message body scan bound. Nothing was scanned,
+          so this is not "no results"."
+<span class="text-accent">hint</span>: "Narrow with mailbox, account, sender or dateFrom and
+        try again — a body search over a few hundred candidates
+        is near-instant."</pre>
+  </div>
+
+  <h3 class="mt-14 mb-5 text-[15px] font-medium text-fg">Three ways to search a body</h3>
+
+  <div class="overflow-x-auto">
+    <table class="reveal w-full min-w-[560px] border-collapse text-left">
+      <thead>
+        <tr class="border-b border-rule">
+          {
+            ["Approach", "Speed", "On disk", "Upkeep"].map((h) => (
+              <th class="mono pb-3 font-normal">{h}</th>
+            ))
+          }
+        </tr>
+      </thead>
+      <tbody>
+        {
+          LANES.map((l) => (
+            <tr class="border-b border-rule align-top last:border-b-0">
+              <td class="py-4 pr-6">
+                <div class="text-[14px] text-fg">{l.lane}</div>
+                <div class="mt-1 text-[13px] leading-[1.6] text-fg-muted">{l.note}</div>
+              </td>
+              <td class={`py-4 pr-6 font-mono text-[13px] ${TONE[l.tone]}`}>{l.speed}</td>
+              <td class="py-4 pr-6 font-mono text-[13px] text-fg-dim">{l.disk}</td>
+              <td class="py-4 font-mono text-[13px] text-fg-dim">{l.upkeep}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+</section>

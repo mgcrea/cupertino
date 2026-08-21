@@ -59,4 +59,26 @@ export const LATENCY = {
   notesCeiling: "5k notes",
 } as const;
 
+/**
+ * Body search, measured on the same 181,734-message store as LATENCY.
+ * See docs/mail-body.md — the probe that produced these is
+ * `pnpm probe:mail-body`, and the repo is the authority on every one of them.
+ */
+export const BODY_SEARCH = {
+  /** Messages in the store the measurements were taken against. */
+  storeSize: 181_734,
+  /** The declared bound, APPLE_MAIL_BODY_SCAN_MAX. */
+  bound: 2_000,
+  /** Cost is linear in candidates, so the filter decides everything. */
+  steps: [
+    { label: "a tight filter", candidates: 100, ms: 48 },
+    { label: "sender + a month", candidates: 500, ms: 242 },
+    { label: "90 days, one mailbox", candidates: 1_932, ms: 933 },
+    { label: "90 days, every mailbox", candidates: 6_566, ms: 3_171 },
+    { label: "no filter at all", candidates: 182_329, ms: 88_065, refused: true },
+  ],
+  /** What an owned full-text index would have cost instead. */
+  indexAlternative: { gigabytes: 2.2, buildSeconds: 365 },
+} as const;
+
 export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Terminal"] as const;
