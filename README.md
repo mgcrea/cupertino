@@ -25,8 +25,8 @@ They share one bundle and one Full Disk Access grant, which is the whole reason 
 and the `@mgcrea/mcp-apple-*` packages land together at the first release.
 
 ```bash
-git clone https://github.com/mgcrea/mcp-apple-mail.git
-cd mcp-apple-mail
+git clone https://github.com/mgcrea/mcp-cupertino.git
+cd mcp-cupertino
 pnpm install
 pnpm build
 ```
@@ -38,11 +38,11 @@ Point your MCP host at the built CLIs — for Claude Code, a `.mcp.json` beside 
   "mcpServers": {
     "apple-mail": {
       "command": "node",
-      "args": ["/abs/path/to/mcp-apple-mail/packages/mail/dist/cli.js"]
+      "args": ["/abs/path/to/mcp-cupertino/packages/mail/dist/cli.js"]
     },
     "apple-notes": {
       "command": "node",
-      "args": ["/abs/path/to/mcp-apple-mail/packages/notes/dist/cli.js"]
+      "args": ["/abs/path/to/mcp-cupertino/packages/notes/dist/cli.js"]
     }
   }
 }
@@ -245,8 +245,26 @@ granted, is reported as a finding — and none of them launches an app unless yo
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
 
 Releases are tagged per package, so a tag names what it publishes: `mail-v0.1.0`,
-`reminders-v0.1.0`, `core-v0.1.0`.
+`reminders-v0.1.0`, `core-v0.1.0`. The app is tagged `app-v1.0.0` and releases on its own lane —
+a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
+[docs/distribution.md](docs/distribution.md).
 
-> The directory is still called `mcp-apple-mail` from when Mail was the only surface. Renaming it
-> is cosmetic and pending; the bundle identifier `io.mgcrea.cupertino` is the string that actually
-> matters, because changing it would invalidate every user's Full Disk Access grant.
+> The repo is `mcp-cupertino`; the npm packages stay `@mgcrea/mcp-apple-*`, because that is what
+> people search npm for. Neither name is load-bearing. The bundle identifier `io.mgcrea.cupertino`
+> is the string that actually matters, because changing it would invalidate every user's Full Disk
+> Access grant.
+
+## Licence
+
+Two, because the halves are not the same thing.
+
+| Part                        | Licence                                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `packages/*`, `scripts/`    | [MIT](LICENSE) — libraries, vendor them freely                                                           |
+| `apps/apple/`               | [source-available](apps/apple/LICENSE) — read, audit, build for yourself; binary redistribution reserved |
+| the signed, notarized build | sold, under the EULA shipped with it                                                                     |
+
+Cupertino asks for Full Disk Access, so the source stays readable. **Building it yourself needs no
+fee and no licence key** — that is written into the licence, not offered as a concession. What is
+sold is the notarized binary and the maintenance behind it. The reasoning is in
+[docs/licensing.md](docs/licensing.md).

@@ -35,9 +35,18 @@ So closing the app would cost exactly the thing being sold, and buy only protect
 "Build it yourself if you would rather not pay" is an honest position and a defensible one. Most
 people will pay rather than install Xcode, and the ones who will not were never customers.
 
-**There is no `LICENSE` file today** — only `"license": "MIT"` in the package manifests, which says
-nothing about `apps/apple/`. That ambiguity is the worst state for both halves and is the first thing to
-fix, whichever way the app licence lands.
+**Both halves are now written down.** [`LICENSE`](../LICENSE) at the root is plain MIT, covering
+`packages/*`, `scripts/` and `docs/`; [`apps/apple/LICENSE`](../apps/apple/LICENSE) is the Cupertino
+Source-Available License, which disclaims its own open-source status in the second paragraph rather
+than leaving anyone to work it out.
+
+Its shape is the one this section argues for. Section 1 grants use, study, modification, source
+redistribution — so a public fork or a pull request is fine — and, explicitly, **compiling it and
+running your own build with no fee and no licence key**. Section 2 reserves exactly one thing:
+handing a _binary_ to someone else. Auditing is not merely tolerated but named in 1(e): publishing
+benchmarks, security findings, disassembly and the quotes needed to support them requires no
+permission and no notice, because a licence that made an audit a favour would defeat the point of
+being readable at all.
 
 ## What is actually being sold
 
@@ -184,8 +193,6 @@ Apple-shaped.
 
 ## Not decided
 
-- The exact app licence text. It has to permit personal builds and forbid binary redistribution
-  without making auditing awkward.
 - Whether anything beyond the trial is free.
 - Price.
 - Whether the servers ever need a second licence. They do not today.

@@ -1,0 +1,86 @@
+Cupertino Source-Available License
+Version 1.0, 2026
+
+Copyright (c) 2026 Olivier Louvignes <olivier@mgcrea.io>
+
+This license covers the contents of `apps/apple/` — the Cupertino menu bar app
+and the cupertino-bridge helper. It does NOT cover `packages/*`, `scripts/` or
+`docs/`, which are MIT licensed; see the LICENSE file at the root of this
+repository.
+
+WHY THIS IS NOT AN OPEN SOURCE LICENSE
+
+Cupertino asks for Full Disk Access. Nobody should grant that to software they
+cannot read, so the source stays readable, auditable and buildable by anyone.
+What is sold is the signed, notarized build and the maintenance behind it —
+never secrecy. This license is the narrowest set of terms that keeps both true.
+
+1. GRANT
+
+Subject to the conditions below, you are granted a worldwide, royalty-free,
+non-exclusive license to:
+
+  (a) use, view, study and analyze the Software, for any purpose, including
+      commercially;
+  (b) modify the Software and create derivative works of it;
+  (c) compile the Software and run the resulting binaries on any computer you
+      own or control, for any purpose, including commercially, with no fee and
+      no license key;
+  (d) redistribute the Software in SOURCE form, modified or unmodified,
+      including as a public fork or a contribution back to this project,
+      provided a copy of this license is included and the notices in Section 4
+      are preserved;
+  (e) publish the results of any analysis of the Software — reviews, benchmarks,
+      security findings, disassembly, teardowns — and quote from it as needed to
+      support them, without restriction and without notice to the copyright
+      holder.
+
+2. CONDITIONS
+
+You may not:
+
+  (a) distribute the Software, or any derivative work of it, in BINARY or other
+      non-source form, to anyone, whether or not for a fee;
+  (b) remove, disable, or circumvent any license validation in the Software, or
+      distribute anything designed to do so;
+  (c) use the name "Cupertino", the bundle identifier `io.mgcrea.cupertino`, or
+      the project's marks to identify a build you produced, in a way likely to
+      suggest it is the official one.
+
+Section 2(a) is the whole of the commercial reservation. A binary you compiled
+for yourself under 1(c) is yours to run, on as many machines as you control, for
+as long as you like. It is only handing that binary to someone else that is
+reserved.
+
+3. THE OFFICIAL BUILD IS SEPARATE
+
+The signed and notarized builds distributed by the copyright holder are not
+licensed by this document. They are governed by the end user license agreement
+accompanying them, and may require a paid license key after a trial period. That
+agreement grants you no rights to this source, and this license grants you no
+rights to those builds.
+
+4. NOTICES
+
+Retain this license, the copyright notice above, and any notice in the Software
+identifying its origin or its unaffiliated status with respect to Apple Inc.
+
+5. TERMINATION
+
+This license terminates automatically if you breach Section 2 and do not cure
+the breach within 30 days of becoming aware of it. Rights properly granted to
+recipients of source you distributed under 1(d) survive your termination.
+
+6. NO TRADEMARK LICENSE
+
+Nothing here grants rights in any trademark, service mark or logo of the
+copyright holder, except the nominative use permitted by Section 1(e).
+
+7. DISCLAIMER AND LIMITATION OF LIABILITY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
