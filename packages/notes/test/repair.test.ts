@@ -49,7 +49,7 @@ describe("repairBody", () => {
 
   it("does not mangle a literal ampersand or a literal entity", () => {
     const fromGetter = "<div>amp test: a &amp b &ampquot; c</div>";
-    expect(reparse(repairBody(fromGetter))).toBe('amp test: a & b &quot; c\n');
+    expect(reparse(repairBody(fromGetter))).toBe("amp test: a & b &quot; c\n");
   });
 
   it("preserves indentation that HTML would collapse", () => {
