@@ -23,6 +23,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "probe:mail": "node scripts/probe-envelope-index.mjs",
+    "probe:mail-body": "node scripts/probe-mail-body.mjs",
     "probe:notes": "node scripts/probe-notes.mjs",
     "probe:reminders": "node scripts/probe-reminders.mjs",
     "probe:messages": "node scripts/probe-chat-db.mjs",

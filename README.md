@@ -183,6 +183,21 @@ and costs a System Settings trip each time, so every surface ships inside one si
 called Cupertino. [docs/distribution.md](docs/distribution.md) also records why the Mac App Store
 cannot host any of this, so the question does not get re-opened.
 
+But the grant is not the only thing the app holds, and it is not the only reason to run the servers
+under it rather than under an editor:
+
+|                                        |                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **The grant lands on Cupertino**       | not on whichever editor spawned the server, and with it every extension and task that editor runs      |
+| **A visible audit trail**              | the Activity window lists every tool call, live; a server inside an editor is unobservable             |
+| **Writes are off, per surface**        | and the toggle decides whether the mutating tools are registered at all                                |
+| **`*_ACCOUNTS` bounds reading**        | the blast radius on Mail is the archive, not the mutations                                             |
+| **Results say how much to trust them** | `indexAgeSeconds`, a WAL-blind warning, and a structured `degraded` result rather than a vanished tool |
+| **Three surfaces, one grant**          | which is the actual payoff of the indivisibility above                                                 |
+
+[docs/alternatives.md](docs/alternatives.md) is the honest version of that list: what else reads
+Apple Mail for an assistant, and where those tools are ahead.
+
 ## Documentation
 
 |                                                  |                                               |
@@ -190,6 +205,8 @@ cannot host any of this, so the question does not get re-opened.
 | [docs/distribution.md](docs/distribution.md)     | how this ships, and why not the App Store     |
 | [docs/surfaces.md](docs/surfaces.md)             | which surfaces, and what each one costs       |
 | [docs/licensing.md](docs/licensing.md)           | what is open, what is sold, what buys trust   |
+| [docs/alternatives.md](docs/alternatives.md)     | what else reads Apple Mail, and where we lose |
+| [docs/mail-body.md](docs/mail-body.md)           | the body-search lane, and how it is decided   |
 | [docs/notes.md](docs/notes.md)                   | Apple Notes phase-0 measurements              |
 | [docs/reminders.md](docs/reminders.md)           | Apple Reminders phase-0 measurements          |
 | [docs/messages.md](docs/messages.md)             | Apple Messages phase-0 measurements           |
@@ -232,6 +249,7 @@ and redact their output to counts, timings and DDL:
 
 ```bash
 pnpm probe:mail      # Envelope Index — needs Full Disk Access
+pnpm probe:mail-body # which lane can search message bodies — needs Full Disk Access
 pnpm probe:notes     # Notes — the Apple Events half runs without it
 pnpm probe:reminders # Reminders — the store path is a glob, so finding it is itself privileged
 pnpm probe:messages  # chat.db — no Apple Events read lane exists, so this one needs the grant
