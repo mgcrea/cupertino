@@ -227,7 +227,7 @@ over, none of them needing a clock:
 - **Run the servers alone.** They are MIT and on npm. They do the work; the app holds the permission.
 - **Buy it and change your mind.** Thirty days, no reason required, no form.
 
-So the refund *is* the trial, with the payment step in front of it rather than behind. What that buys
+So the refund _is_ the trial, with the payment step in front of it rather than behind. What that buys
 is the deletion of an entire subsystem: no trial clock, no Keychain expiry state, no degraded mode, no
 "one trial per machine" fiction to pretend to enforce, and no moment where a tool holding Full Disk
 Access starts refusing to work. The licence check becomes one branch — a valid key, or not — and
@@ -242,10 +242,14 @@ The ladder is published in advance and tied to **shipped surfaces**, not to the 
 
 | Price  | When           | Surfaces                                  |
 | ------ | -------------- | ----------------------------------------- |
-| €14.99 | launch         | Mail, Notes, Reminders                    |
-| €24.99 | Calendar ships | + Calendar                                |
-| €34.99 | Messages ships | + Messages                                |
-| €49.99 | Safari ships   | + Safari — the full set the probes mapped |
+| €14.99 | launch         | Mail, Notes, Reminders, Calendar          |
+| €24.99 | Messages ships | + Messages                                |
+| €34.99 | Safari ships   | + Safari — the full set the probes mapped |
+
+Calendar landed in `c740b4f`, before launch rather than after, so it sits in the opening rung rather
+than buying the first rise. The table was written a commit too early; this is the correction, and the
+top rung is one lower for it. A fourth at €49.99 is held rather than promised, because promising a
+price for a surface nobody has built yet is the kind of schedule that gets quietly dropped.
 
 Tying a rise to a date says latecomers pay more for the same thing, which earns resentment and teaches
 people to wait for a sale. Tying it to surfaces says the price went up because the product got bigger,
@@ -264,11 +268,17 @@ actually paid, and that number cannot be reconstructed after the fact.
 
 ### Three stores, one job each
 
-| Question                                  | Lives in                 | Why there                                                 |
-| ----------------------------------------- | ------------------------ | --------------------------------------------------------- |
-| who paid, how much, what tax              | Stripe                   | already the system of record for money; do not rebuild    |
-| which key went to whom, and is it revoked | Cloudflare D1, one table | needed to re-send a key, and to address 1.x buyers at 2.0 |
-| is _this_ Mac licensed                    | the Mac's Keychain       | offline by construction; never leaves the machine         |
+| Question                                  | Lives in                  | Why there                                                 |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------- |
+| who paid, how much, what tax              | Stripe                    | already the system of record for money; do not rebuild    |
+| which key went to whom, and is it revoked | Cloudflare D1, one table  | needed to re-send a key, and to address 1.x buyers at 2.0 |
+| is _this_ Mac licensed                    | this Mac's `UserDefaults` | offline by construction; never leaves the machine         |
+
+`UserDefaults` rather than the Keychain, which is what this table said first. The key is not a
+secret — it is issued to the user, rendered in the menu bar, emailed in plain text and re-sendable on
+demand — so encrypting it at rest would be ceremony, and it would make licensing the app's first
+`SecItem` code for nothing gained. `Settings.allowWrites` already reads `UserDefaults` synchronously
+from the connection thread, which is exactly what the gate needs and all it needs.
 
 **"Who has not paid" is not stored anywhere.** There is no such list. It is the absence of a valid key
 on a disk we cannot see, and any design that needs the list has smuggled a phone-home back in.
@@ -278,8 +288,11 @@ payload format changes once, and then no old key can be reproduced and every re-
 has to be possible to ask which addresses hold a 1.x key on the day 2.0 ships, or the per-major model
 has no upgrade path. One table, and it is the only state this project keeps about anyone.
 
-Revocation lands at build time rather than run time: a refund sets `revoked_at`, and the release job
-bakes the current revoked-ID list into the next build. A refunded key therefore stops working at the
+Revocation lands at build time rather than run time: a refund sets `revoked_at`, `make revocations`
+rewrites `apps/apple/Cupertino/Revocations.swift`, and the diff is committed like any other source
+change. Generated-and-committed rather than fetched by CI, because reading D1 from the release job
+would put a network dependency in the path of shipping — an outage at Cloudflare becoming an outage
+in releases — and buy nothing, since a revocation cannot take effect before the next build either way. A refunded key therefore stops working at the
 next update, not instantly. That asymmetry is the price of the no-network claim, it is small, and the
 [EULA](../apps/apple/EULA) says so in §4(a) rather than leaving it to be discovered.
 
@@ -301,8 +314,8 @@ Apple-shaped.
 
 ## Not decided
 
-- **What an unlicensed build actually does.** There is no expiry to handle any more, but a fresh
-  install still has no key, and what it shows before one is entered is unwritten.
+- **Whether the menu bar should nag beyond the one status line.** It currently states the fact and
+  stops, which may be too quiet for something that is refusing to work.
 - **Whether upgrade pricing exists at 2.0.** Not promised, and deliberately left open — but the data
   needed to offer it is being recorded from the first sale.
 - Whether the servers ever need a second licence. They do not today.

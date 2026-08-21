@@ -46,6 +46,13 @@ struct CupertinoApp: App {
       ActivityView()
     }
     .defaultSize(width: 760, height: 460)
+
+    // For the same reason: a 224-character key arrives by paste or by drop, and
+    // both gestures move focus away from a popover, which closes it.
+    Window("Licence", id: LicenseWindow.id) {
+      LicenseView()
+    }
+    .defaultSize(width: 560, height: 380)
   }
 }
 
@@ -422,6 +429,11 @@ struct AboutSection: View {
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
 
+  private var licence: String {
+    guard let license = LicenseStore.current else { return "Unlicensed" }
+    return "Licensed to \(license.email)"
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
@@ -440,6 +452,20 @@ struct AboutSection: View {
       Text(AppInfo.identity)
         .font(.caption)
         .foregroundStyle(.secondary)
+
+      // Read fresh rather than held in @State: the window next door can change
+      // it, and the menu is rebuilt every time it opens anyway.
+      HStack {
+        Text(licence)
+          .foregroundStyle(LicenseStore.isLicensed ? Color.secondary : Color.orange)
+        Spacer()
+        Button("Licence…") {
+          openWindow(id: LicenseWindow.id)
+          NSApp.activate(ignoringOtherApps: true)
+        }
+        .controlSize(.small)
+      }
+      .font(.caption)
 
       Toggle("Launch at login", isOn: $launchAtLogin)
         .toggleStyle(.checkbox)

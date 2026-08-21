@@ -171,6 +171,27 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
 
+    // The licence gate, and the only one in the app.
+    //
+    // Here rather than a few lines further down because this is the last point
+    // where nothing has been spawned and no `ok` has been sent. Past
+    // `reply(client, BridgeProtocol.ok)` the socket belongs to JSON-RPC and
+    // there is no channel left to refuse on.
+    //
+    // What stops is the relay — the brokered Full Disk Access grant, which is
+    // the thing actually being sold. Writes are NOT gated and must not be:
+    // docs/licensing.md rules that out, because it would make the free tier the
+    // safe one and the paid tier the dangerous one.
+    //
+    // Logged as well as replied. The bridge relays this sentence to its MCP
+    // host, where it lands in a log file nobody opens; the Activity window is
+    // where someone will actually look for it.
+    if case .refused(let reason) = LicenseStore.check {
+      hostLog(surface.id, .error, "refused: \(reason)")
+      reply(client, "err \(reason) — open Cupertino to enter a licence key")
+      return
+    }
+
     let binaries: ServerBinaries
     do {
       binaries = try ServerLocator.locate(surface)

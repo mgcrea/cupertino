@@ -17,6 +17,17 @@ enum AppInfo {
     return "\(short) (\(build))"
   }
 
+  /// The major version a licence key has to name to unlock this build.
+  ///
+  /// Nothing bumps `MARKETING_VERSION` in the pbxproj — CI overrides it from the
+  /// `app-v*` tag and a local build keeps the default. So this reads 1 on every
+  /// developer's Mac whatever tag is checked out, which is expected rather than
+  /// a bug, and only ever wrong in a direction that is easy to notice.
+  static var major: Int {
+    let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+    return Int(short.split(separator: ".").first ?? "") ?? 1
+  }
+
   /// The team the signature names, or nil for a build signed to run locally.
   static var teamIdentifier: String? {
     var code: SecCode?

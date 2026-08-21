@@ -158,7 +158,12 @@ guard writeAll(sock, Array(BridgeProtocol.handshake(server: server).utf8)) else 
 
 // Read the status line one byte at a time. It is a few dozen bytes, and
 // buffering here would risk swallowing JSON-RPC that follows it.
-var statusLine = ""
+// Collect bytes and decode once, the way ServerHost.readLine does on the other
+// side. Appending `Character(UnicodeScalar(byte))` per byte is a latin-1 decode:
+// every multi-byte sequence in the reason becomes that many mojibake characters.
+// The reason is prose written for a person — LocateError already puts an em dash
+// in one — so it has to survive the trip intact.
+var statusBytes = [UInt8]()
 while true {
   var byte: UInt8 = 0
   let n = read(sock, &byte, 1)
@@ -168,9 +173,10 @@ while true {
     die("handshake read failed: \(String(cString: strerror(errno)))")
   }
   if byte == UInt8(ascii: "\n") { break }
-  statusLine.append(Character(UnicodeScalar(byte)))
-  if statusLine.count > 512 { die("handshake reply was not a line") }
+  statusBytes.append(byte)
+  if statusBytes.count > 512 { die("handshake reply was not a line") }
 }
+let statusLine = String(decoding: statusBytes, as: UTF8.self)
 
 if statusLine != BridgeProtocol.ok {
   let detail = statusLine.hasPrefix(BridgeProtocol.errorPrefix)
