@@ -141,13 +141,89 @@ usual "the store buys you the rich stuff" argument is much weaker here than for 
 Which is why the file lane is justified on **speed**, not capability. It is the only surface so far
 where that is the primary argument.
 
+## Recurrence, settled
+
+Measured by the phase-0.5 additions to `scripts/probe-calendar.mjs`, on the same machine.
+
+**The strategy is a two-leg hybrid**, and the set diff against Apple Events over ±90 days is clean:
+**0 uids and 0 (uid, instant) pairs missing** from the store.
+
+|                  |                                                                           |
+| ---------------- | ------------------------------------------------------------------------- |
+| Occurrence link  | `OccurrenceCache.event_id` -> `CalendarItem.ROWID`, resolves 100%         |
+| Recurrence link  | `Recurrence.owner_id`; `ExceptionDate.owner_id`                           |
+| Expansion window | `occurrence_date` spans **-732 to +724 days** from today, over 1,946 rows |
+| Cache parents    | 489 of 1,350 items, of which **456 carry no recurrence rule**             |
+
+Three findings inside that table, each of which changes the code.
+
+**The cache is a real expansion, not a UI window.** Two years either side is far past anything a
+month view needs, so `OccurrenceCache` can be trusted inside its edges. It is still an edge, and a
+range query running past it must say so rather than return a short list — nothing here guarantees
+the next machine's cache is as deep.
+
+**The legs overlap, so dedupe is load-bearing rather than defensive.** 456 of 489 cached parents have
+no `Recurrence` row at all, which means `OccurrenceCache` holds plain one-shot events as well as
+expanded repeats. A union of "items with no recurrence rule" and "everything in the cache" therefore
+double-counts most ordinary events. Dedupe on `(uuid, occurrence start)`.
+
+**`OccurrenceCacheDays` is not an index into `OccurrenceCache`.** It is
+`(calendar_id, store_id, day, count)` — a per-calendar per-day _count_, for badging a month view. It
+has no row-level link to anything and cannot be used to prune a range query.
+
+### Two traps this probe walked into first
+
+**A dense primary key resolves against any other dense primary key.** The link detector initially
+reported `Recurrence.ROWID` and `ExceptionDate.ROWID` as 100% resolving foreign keys to
+`CalendarItem`. Both tables are `ROWID INTEGER PRIMARY KEY AUTOINCREMENT`, so their 1..N keys land
+inside `CalendarItem`'s own 1..N rowids with a perfect score and no meaning whatsoever. The real
+column is `owner_id` in both cases. A sole `INTEGER PRIMARY KEY` is now excluded from the scan — but
+a _composite_ key is not, because `OccurrenceCacheDays.calendar_id` is genuinely a foreign key.
+
+**"Extra in store" is not a defect signal.** The run reports 71 extra uids and 180 extra pairs, and
+that is the expansion working. `cal.events` returns MASTER events, and the truth query filters them
+by the master's own `startDate`, so a weekly meeting that began in 2023 contributes nothing to the
+truth set while having real occurrences inside the window. The diff is evidence in one direction
+only: _missing_ means the store cannot see something; _extra_ means it can see something Apple
+Events cannot express.
+
+## Timezones: two non-IANA values that mean opposite things
+
+`start_tz` holds 8 distinct values across 1,350 rows, with no nulls and 409 all-day events. Two of
+them are not IANA names:
+
+- `_float` — a genuinely floating date, an instant deliberately without a zone.
+- `GMT+0200` — a perfectly definite fixed offset that merely is not an IANA name.
+
+Treating the second as floating would silently discard two hours. Anything matching `GMT±HHMM` is a
+fixed offset to be honoured, and only what is left over is floating.
+
+## What the store does NOT hold
+
+`CalendarItem` shares its schema with Reminders, and the reminder half is empty here: **0 rows with a
+due date, 0 with a completion date, 0 without a start date.** `entity_type` is `2` on all 1,350 rows.
+So there is one entity in this table and leg 1 needs no type predicate — though the column exists if
+that ever stops being true.
+
+`Extras.db` is closed out: 32 KB, 5 tables (`ZALARM`, `ZSETTING`, `Z_METADATA`, `Z_MODELCACHE`,
+`Z_PRIMARYKEY`), a small Core Data store for alarms and settings. Nothing the server needs.
+
+## A note on fingerprints
+
+The probe reports `2bf4e34ff75f` and `apple_calendar_diagnostics` reports `cd2424fea732` **for the
+same schema**. They are not comparable: `fingerprintSchema` in `packages/core` orders `sqlite_master`
+by `type, name`, while `dumpSchema` in `scripts/lib/probe-kit.mjs` orders tables before indexes.
+Reminders shows the same split (`510062aad004` at runtime against the `278b001e3c55` in its own drift
+message and in [verify.md](verify.md)). Compare a probe fingerprint with a probe fingerprint.
+Reconciling the two orderings is a one-line change in `packages/core` that moves the value for every
+surface at once.
+
 ## Still open
 
-- **The one extra store row** — 1,350 rows against 1,349 Apple Events events.
-- **`OccurrenceCache` semantics.** Whether a range query must read it, or can expand recurrence rules
-  from `Recurrence` itself. This decides whether repeating events are correct or quietly missing.
-- **`Extras.db`** — 32 KB, unexamined.
-- **Writes.** Untested. Creating an event is a real side effect on a real calendar, so it was not
-  probed without asking.
-- **No schema fixture captured.** `--write` would emit `packages/calendar/test/fixtures/`, and there
-  is no `packages/calendar` yet.
+- **The one extra store row** — 1,350 rows against 1,349 Apple Events events. All 1,350 are
+  `entity_type` 2 with a start date, so it is a real event Apple Events did not list rather than a
+  reminder hiding in the table. `CalendarItem.birthday_id` exists and is the obvious suspect.
+- **Writes.** Still untested. Creating an event is a real side effect on a real calendar.
+- **Calendar writability.** `Calendar` has no explicit writable column; it carries `flags`, `type`,
+  `sharing_status`, `is_published` and `subcal_url`. Which of those marks a subscribed, read-only
+  calendar needs measuring before a write tool refuses one.

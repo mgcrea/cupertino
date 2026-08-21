@@ -739,7 +739,29 @@ if (opened?.db) {
     if (!has(child) || !has(parent)) {
       return { tested: false, reason: `${!has(child) ? child : parent} absent` };
     }
-    const ints = columnInfo(child).filter((c) => /INT/i.test(c.type || ""));
+    /**
+     * The child's own INTEGER PRIMARY KEY is excluded, and that exclusion is
+     * the whole correctness of this function.
+     *
+     * MEASURED FAILURE: without it this reported `Recurrence.ROWID` and
+     * `ExceptionDate.ROWID` as 100% resolving links to CalendarItem. They are
+     * not links at all — both tables are `ROWID INTEGER PRIMARY KEY
+     * AUTOINCREMENT`, so their keys are a dense 1..N sequence that trivially
+     * lands inside CalendarItem's own dense 1..N rowids. A perfect score, and
+     * completely wrong; the real column is `owner_id` in both cases.
+     *
+     * That is the exact shape of mistake this file keeps warning about — a
+     * plausible answer nobody would think to question — so the guard is here
+     * rather than in the reader's head.
+     */
+    const cols = columnInfo(child);
+    // A SOLE `INTEGER PRIMARY KEY` column is an alias for the table's rowid.
+    // A composite key is not, so `OccurrenceCacheDays.calendar_id` — part of
+    // `PRIMARY KEY (calendar_id, day)` and a genuine foreign key — must survive.
+    const keyed = cols.filter((c) => c.pk > 0);
+    const rowidAlias =
+      keyed.length === 1 && /INT/i.test(keyed[0].type || "") ? keyed[0].name : null;
+    const ints = cols.filter((c) => /INT/i.test(c.type || "") && c.name !== rowidAlias);
     const ranked = [];
     for (const c of ints) {
       const stats = one(
@@ -1043,7 +1065,20 @@ if (opened?.db) {
     const rows = all(
       `SELECT DISTINCT "${tzCol}" AS v FROM "CalendarItem" WHERE "${tzCol}" IS NOT NULL`,
     );
-    const sentinels = rows.map((r) => r.v).filter((v) => !isIanaZone(v));
+    /**
+     * MEASURED: this store holds TWO non-IANA values, `_float` and `GMT+0200`,
+     * and they mean opposite things. `_float` is a floating date — an instant
+     * deliberately without a zone. `GMT+0200` is a perfectly definite fixed
+     * offset that merely is not an IANA name, and treating it as floating would
+     * silently discard a two-hour offset.
+     *
+     * So classify rather than lump together: anything matching GMT±HHMM is a
+     * fixed offset the renderer can honour directly.
+     */
+    const nonIana = rows.map((r) => r.v).filter((v) => !isIanaZone(v));
+    const FIXED_OFFSET = /^(?:GMT|UTC)[+-]\d{2}:?\d{2}$/i;
+    const fixedOffsets = nonIana.filter((v) => FIXED_OFFSET.test(String(v)));
+    const sentinels = nonIana.filter((v) => !FIXED_OFFSET.test(String(v)));
     const nulls =
       one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${tzCol}" IS NULL`)?.n ?? null;
     const allDayCol = pickCol("CalendarItem", ["all_day"]);
@@ -1054,6 +1089,8 @@ if (opened?.db) {
       nullRows: nulls,
       // Printed in full: these are sentinels like "_float", not real places.
       nonIanaValues: sentinels,
+      /** Definite zones that simply are not IANA names. NOT floating dates. */
+      fixedOffsetValues: fixedOffsets,
       allDayColumn: allDayCol,
       allDayRows: allDayCol
         ? (one(`SELECT COUNT(*) AS n FROM "CalendarItem" WHERE "${allDayCol}" = 1`)?.n ?? null)
@@ -1418,7 +1455,24 @@ if (args.json) {
       );
       L.push(
         `     extra in store     ${agree.uidsExtraInStore} uids, ${agree.pairsExtraInStore} pairs` +
-          `${agree.appleEventsTruncated ? "   (Apple Events truth set was capped — extras expected)" : ""}`,
+          `${agree.appleEventsTruncated ? "   (Apple Events truth set was capped)" : ""}`,
+      );
+      // Extras are EXPECTED, and reading them as a defect would be the wrong
+      // lesson entirely. `cal.events` hands back MASTER events, and the truth
+      // query filters them by the master's own startDate — so a weekly meeting
+      // that began in 2023 contributes nothing to the truth set while having
+      // real occurrences inside the window. Expanding those is the entire point
+      // of leg 2. The diff is therefore evidence in ONE direction only:
+      // "missing" means the store cannot see something, "extra" means it can
+      // see something Apple Events cannot express.
+      L.push(
+        `        ^ extras are expected: Apple Events reports masters by their own start date, so`,
+      );
+      L.push(
+        `          occurrences of a series that began before the window exist only on this side.`,
+      );
+      L.push(
+        `          Only the MISSING count is a defect signal; "extra" is leg 2 doing its job.`,
       );
     } else {
       L.push(`     not tested         ${agree.reason}`);
@@ -1432,6 +1486,11 @@ if (args.json) {
       L.push(
         `     floating sentinel  ${tz.nonIanaValues.length ? JSON.stringify(tz.nonIanaValues) : "none — every value is a real IANA zone"}`,
       );
+      if (tz.fixedOffsetValues?.length) {
+        L.push(
+          `     fixed offsets      ${JSON.stringify(tz.fixedOffsetValues)} — definite zones, NOT floating; render with the offset`,
+        );
+      }
     }
     const shape = doc.findings.itemShape ?? {};
     if (shape.rows) {
@@ -1481,13 +1540,6 @@ if (args.json) {
   L.push("VERDICT");
   L.push(`  store      : ${doc.verdict.storeLocation}`);
   L.push(`  speed      : ${doc.verdict.recommendation}`);
-  // Printed unconditionally, including when the file lane never opened. The
-  // recurrence section above lives inside the FDA branch, so without this line
-  // a run with no grant is silent about the one question that blocks the build
-  // — and silence reads as "nothing to report" rather than "not measured".
-  L.push(
-    `  recurrence : ${doc.verdict.recurrence.recommendation ?? doc.verdict.recurrence.reason}`,
-  );
   // Printed unconditionally, including when the file lane never opened. The
   // recurrence section above lives inside the FDA branch, so without this line
   // a run with no grant is silent about the one question that blocks the build
