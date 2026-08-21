@@ -1,7 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
+import { registerCalendarTools } from "./calendars.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
+import { registerEventTools } from "./events.js";
 
 export type ToolContext = {
   /**
@@ -21,9 +23,7 @@ export type ToolContext = {
  * calling names the server no longer has. Tools that need the store instead
  * report their source, or explain what is missing.
  *
- * Only diagnostics exists so far. The read tools are gated on the recurrence
- * measurement (`scripts/probe-calendar.mjs`), and the write tools on the JXA
- * lane that follows it.
+ * The write tools are not here yet; they arrive with the JXA lane.
  */
 export const registerTools = (
   server: McpServer,
@@ -31,6 +31,8 @@ export const registerTools = (
   ctx: ToolContext,
 ): void => {
   registerDiagnosticsTools(server, client, ctx);
+  registerCalendarTools(server, client);
+  registerEventTools(server, client);
 
   if (!ctx.allowWrites) return;
   // Write tools land here, behind this same gate.

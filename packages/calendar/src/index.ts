@@ -13,6 +13,7 @@ export {
   CalendarNotRunningError,
   CalendarNotWritableError,
   EventNotFoundError,
+  InvalidDateError,
 } from "./client/errors.js";
 export {
   defaultContainerPath,
@@ -25,6 +26,14 @@ export {
   type StoreCandidate,
 } from "./client/locate.js";
 export { CalendarStore, introspect, openStore, type StoreCapabilities } from "./client/store.js";
+export {
+  decodeRef,
+  encodeRef,
+  REF_VERSION,
+  seriesRefOf,
+  uuidOf,
+  type CalendarRef,
+} from "./client/ref.js";
 export { loadConfig, type Config } from "./config.js";
 export { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 export { registerTools, type ToolContext } from "./tools/index.js";

@@ -4,6 +4,7 @@ import {
   columnsOf,
   CORE_DATA_EPOCH_OFFSET,
   fingerprintSchema,
+  escapeLike,
   openReadOnly,
   SchemaDriftError,
   type Logger,
@@ -91,6 +92,70 @@ export type StoreCapabilities = {
   epochOffset: number;
 };
 
+/** One row of the union, still in store units. Rendering happens above this. */
+export type EventRow = {
+  itemPk: number;
+  uuid: string | null;
+  calendarPk: number | null;
+  calendarUuid: string | null;
+  calendarTitle: string | null;
+  summary: string | null;
+  description: string | null;
+  url: string | null;
+  conferenceUrl: string | null;
+  locationTitle: string | null;
+  startApple: number | null;
+  endApple: number | null;
+  allDay: boolean;
+  startTz: string | null;
+  endTz: string | null;
+  status: number | null;
+  invitationStatus: number | null;
+  availability: number | null;
+  hasRecurrences: boolean;
+  hasAttendees: boolean;
+  /** Set on a detached occurrence: which series it broke away from, and when. */
+  origItemPk: number | null;
+  origDateApple: number | null;
+  /** Which leg produced this row. Reported so a caller can see the expansion working. */
+  source: "item" | "occurrence";
+};
+
+export type RangeQuery = {
+  /** Apple-seconds, inclusive lower bound. */
+  fromApple: number;
+  /** Apple-seconds, exclusive upper bound. */
+  toApple: number;
+  /** `Calendar.UUID` values. Empty means every calendar. */
+  calendarUuids?: readonly string[];
+  limit: number;
+};
+
+export type SearchQuery = RangeQuery & {
+  text: string;
+  scope: "summary" | "full";
+};
+
+/** How far the cached expansion actually reaches, in Apple-seconds. */
+export type Coverage = { fromApple: number; toApple: number; rows: number } | null;
+
+export type IndexCalendar = {
+  uuid: string | null;
+  title: string | null;
+  color: string | null;
+  type: string | null;
+  accountName: string | null;
+  isSubscribed: boolean;
+  isPublished: boolean;
+  sharingStatus: number | null;
+};
+
+export type IndexAccount = { name: string | null; type: number | null; calendars: number };
+
+const bool = (v: unknown): boolean => v === 1 || v === true;
+const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
 export class CalendarStore {
   readonly db: DatabaseSync;
   readonly mode: string;
@@ -100,6 +165,312 @@ export class CalendarStore {
     this.db = db;
     this.mode = mode;
     this.caps = caps;
+  }
+
+  /**
+   * Project a column, or a typed NULL when this store does not have it.
+   *
+   * The same guard `packages/reminders/src/client/store.ts` uses, and for the
+   * same reason: the schema is reverse-engineered and unversioned, so an Apple
+   * rename should cost one field rather than the whole lane.
+   */
+  #col(present: Set<string>, table: string, name: string, alias = name): string {
+    return present.has(name) ? `${table}."${name}" AS ${alias}` : `NULL AS ${alias}`;
+  }
+
+  #itemColumns(): string {
+    const c = this.caps.itemColumns;
+    return [
+      `ci."ROWID" AS itemPk`,
+      this.#col(c, "ci", "UUID", "uuid"),
+      this.#col(c, "ci", "summary", "summary"),
+      this.#col(c, "ci", "description", "description"),
+      this.#col(c, "ci", "url", "url"),
+      this.#col(c, "ci", "conference_url", "conferenceUrl"),
+      this.#col(c, "ci", "all_day", "allDay"),
+      this.#col(c, "ci", "start_tz", "startTz"),
+      this.#col(c, "ci", "end_tz", "endTz"),
+      this.#col(c, "ci", "status", "status"),
+      this.#col(c, "ci", "invitation_status", "invitationStatus"),
+      this.#col(c, "ci", "availability", "availability"),
+      this.#col(c, "ci", "has_recurrences", "hasRecurrences"),
+      this.#col(c, "ci", "has_attendees", "hasAttendees"),
+      this.#col(c, "ci", "orig_item_id", "origItemPk"),
+      this.#col(c, "ci", "orig_date", "origDateApple"),
+      this.#col(c, "ci", "calendar_id", "calendarPk"),
+      `cal."UUID" AS calendarUuid`,
+      `cal."title" AS calendarTitle`,
+      this.caps.hasLocation ? `loc."title" AS locationTitle` : `NULL AS locationTitle`,
+    ].join(",\n         ");
+  }
+
+  #joins(): string {
+    const location =
+      this.caps.hasLocation && this.caps.itemColumns.has("location_id")
+        ? `\n    LEFT JOIN "Location" loc ON loc."ROWID" = ci."location_id"`
+        : "";
+    return `JOIN "Calendar" cal ON cal."ROWID" = ci."calendar_id"${location}`;
+  }
+
+  /**
+   * Rows this lane must never return, whichever leg found them.
+   *
+   * `entity_type` is 2 for events. The probed store holds nothing else — 0 rows
+   * carry a due date or a completion date — but `CalendarItem` shares its schema
+   * with Reminders, so the predicate is cheap insurance rather than dead code.
+   *
+   * `hidden` and `phantom_master` are INFERRED rather than measured. A phantom
+   * master is the placeholder row EventKit keeps for a series whose occurrences
+   * have all been detached; showing it would put an event on the calendar that
+   * Calendar.app does not draw. Both are excluded conservatively, and both are
+   * on the list for the next probe run to confirm.
+   */
+  #excluded(alias = "ci"): string {
+    const c = this.caps.itemColumns;
+    const out: string[] = [];
+    if (c.has("entity_type")) out.push(`${alias}."entity_type" = 2`);
+    if (c.has("hidden")) out.push(`(${alias}."hidden" IS NULL OR ${alias}."hidden" = 0)`);
+    if (c.has("phantom_master")) {
+      out.push(`(${alias}."phantom_master" IS NULL OR ${alias}."phantom_master" = 0)`);
+    }
+    return out.length ? `AND ${out.join("\n            AND ")}` : "";
+  }
+
+  #calendarFilter(uuids: readonly string[] | undefined): { sql: string; params: string[] } {
+    if (!uuids?.length) return { sql: "", params: [] };
+    const marks = uuids.map(() => "?").join(", ");
+    return { sql: `AND cal."UUID" IN (${marks})`, params: [...uuids] };
+  }
+
+  #rowsFrom(sql: string, params: unknown[], source: EventRow["source"]): EventRow[] {
+    const raw = this.db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[];
+    return raw.map((r) => ({
+      itemPk: Number(r.itemPk),
+      uuid: text(r.uuid),
+      calendarPk: num(r.calendarPk),
+      calendarUuid: text(r.calendarUuid),
+      calendarTitle: text(r.calendarTitle),
+      summary: text(r.summary),
+      description: text(r.description),
+      url: text(r.url),
+      conferenceUrl: text(r.conferenceUrl),
+      locationTitle: text(r.locationTitle),
+      startApple: num(r.startApple),
+      endApple: num(r.endApple),
+      allDay: bool(r.allDay),
+      startTz: text(r.startTz),
+      endTz: text(r.endTz),
+      status: num(r.status),
+      invitationStatus: num(r.invitationStatus),
+      availability: num(r.availability),
+      hasRecurrences: bool(r.hasRecurrences),
+      hasAttendees: bool(r.hasAttendees),
+      origItemPk: num(r.origItemPk),
+      origDateApple: num(r.origDateApple),
+      source,
+    }));
+  }
+
+  /**
+   * LEG 1 — items carried by the table itself.
+   *
+   * Overlap, not containment: `start < to AND COALESCE(end, start) > from`. A
+   * naive `BETWEEN` on the start silently drops the all-hands that began at
+   * 09:00 when the caller asked about 10:00 onward.
+   *
+   * Items whose occurrences are expanded in the cache are excluded here and
+   * picked up by leg 2, so a repeating event is not also returned once at its
+   * master start.
+   */
+  rangeItems(q: RangeQuery): EventRow[] {
+    const c = this.caps.itemColumns;
+    if (!c.has("start_date")) return [];
+    const cal = this.#calendarFilter(q.calendarUuids);
+    const endExpr = c.has("end_date")
+      ? `COALESCE(ci."end_date", ci."start_date")`
+      : `ci."start_date"`;
+    // `has_recurrences` is the table's own flag. When it is missing, fall back
+    // to asking the Recurrence table directly rather than dropping the guard —
+    // without one, every repeating event doubles.
+    const notExpanded = c.has("has_recurrences")
+      ? `AND (ci."has_recurrences" IS NULL OR ci."has_recurrences" = 0)`
+      : this.caps.hasRecurrence
+        ? `AND NOT EXISTS (SELECT 1 FROM "Recurrence" r WHERE r."owner_id" = ci."ROWID")`
+        : "";
+    const sql = `
+      SELECT ci."start_date" AS startApple,
+             ${c.has("end_date") ? `ci."end_date"` : `NULL`} AS endApple,
+             ${this.#itemColumns()}
+        FROM "CalendarItem" ci
+        ${this.#joins()}
+       WHERE ci."start_date" < ?
+         AND ${endExpr} > ?
+         ${notExpanded}
+         ${this.#excluded()}
+         ${cal.sql}
+       ORDER BY ci."start_date" ASC
+       LIMIT ?`;
+    return this.#rowsFrom(sql, [q.toApple, q.fromApple, ...cal.params, q.limit], "item");
+  }
+
+  /**
+   * LEG 2 — expanded occurrences.
+   *
+   * `OccurrenceCache.event_id` -> `CalendarItem.ROWID` was measured at a 100%
+   * resolve rate. `occurrence_date` is the start; `occurrence_start_date` exists
+   * too and reaches only +256 days against `occurrence_date`'s +724, so using it
+   * would silently truncate the far half of the window.
+   */
+  rangeOccurrences(q: RangeQuery): EventRow[] {
+    if (!this.caps.hasOccurrenceCache) return [];
+    const o = this.caps.occurrenceColumns;
+    if (!o.has("occurrence_date") || !o.has("event_id")) return [];
+    const cal = this.#calendarFilter(q.calendarUuids);
+    const endExpr = o.has("occurrence_end_date")
+      ? `COALESCE(oc."occurrence_end_date", oc."occurrence_date")`
+      : `oc."occurrence_date"`;
+    const sql = `
+      SELECT oc."occurrence_date" AS startApple,
+             ${o.has("occurrence_end_date") ? `oc."occurrence_end_date"` : `NULL`} AS endApple,
+             ${this.#itemColumns()}
+        FROM "OccurrenceCache" oc
+        JOIN "CalendarItem" ci ON ci."ROWID" = oc."event_id"
+        ${this.#joins()}
+       WHERE oc."occurrence_date" < ?
+         AND ${endExpr} > ?
+         ${this.#excluded()}
+         ${cal.sql}
+       ORDER BY oc."occurrence_date" ASC
+       LIMIT ?`;
+    return this.#rowsFrom(sql, [q.toApple, q.fromApple, ...cal.params, q.limit], "occurrence");
+  }
+
+  /**
+   * Text search, unbounded in time by default.
+   *
+   * Searching is the one place a caller legitimately wants all of history, so
+   * the window is the caller's to set rather than a default. Runs over items
+   * only: an occurrence carries no text of its own, and matching the series once
+   * is what a search result should be.
+   */
+  searchItems(q: SearchQuery): EventRow[] {
+    const c = this.caps.itemColumns;
+    const cal = this.#calendarFilter(q.calendarUuids);
+    const needle = `%${escapeLike(q.text)}%`;
+    const fields = ["summary"];
+    if (q.scope === "full") {
+      if (c.has("description")) fields.push("description");
+      if (this.caps.hasLocation) fields.push("__location");
+    }
+    const match = fields
+      .map((f) =>
+        f === "__location" ? `loc."title" LIKE ? ESCAPE '\\'` : `ci."${f}" LIKE ? ESCAPE '\\'`,
+      )
+      .join(" OR ");
+    const sql = `
+      SELECT ci."start_date" AS startApple,
+             ${c.has("end_date") ? `ci."end_date"` : `NULL`} AS endApple,
+             ${this.#itemColumns()}
+        FROM "CalendarItem" ci
+        ${this.#joins()}
+       WHERE (${match})
+         AND ci."start_date" < ?
+         AND COALESCE(ci."end_date", ci."start_date") > ?
+         ${this.#excluded()}
+         ${cal.sql}
+       ORDER BY ci."start_date" DESC
+       LIMIT ?`;
+    const params = [...fields.map(() => needle), q.toApple, q.fromApple, ...cal.params, q.limit];
+    return this.#rowsFrom(sql, params, "item");
+  }
+
+  /** One event by its Apple Events uid. The bridge measured 198/198 exact. */
+  byUuid(uuid: string): EventRow | null {
+    const c = this.caps.itemColumns;
+    if (!c.has("UUID")) return null;
+    const sql = `
+      SELECT ci."start_date" AS startApple,
+             ${c.has("end_date") ? `ci."end_date"` : `NULL`} AS endApple,
+             ${this.#itemColumns()}
+        FROM "CalendarItem" ci
+        ${this.#joins()}
+       WHERE UPPER(ci."UUID") = ?
+         ${this.#excluded()}
+       LIMIT 1`;
+    return this.#rowsFrom(sql, [uuid.toUpperCase()], "item")[0] ?? null;
+  }
+
+  /**
+   * How far the expansion reaches.
+   *
+   * Published with every range result. Measured at -732 to +724 days on the
+   * probed store, which is a real expansion rather than a month-view cache —
+   * but it is still an edge, and nothing guarantees the next machine's is as
+   * deep. A range running past it must say so rather than return a short list.
+   */
+  coverage(): Coverage {
+    if (!this.caps.hasOccurrenceCache || !this.caps.occurrenceColumns.has("occurrence_date")) {
+      return null;
+    }
+    const row = this.db
+      .prepare(
+        `SELECT MIN("occurrence_date") AS lo, MAX("occurrence_date") AS hi, COUNT(*) AS n
+           FROM "OccurrenceCache" WHERE "occurrence_date" IS NOT NULL`,
+      )
+      .get() as { lo: unknown; hi: unknown; n: unknown } | undefined;
+    const lo = num(row?.lo);
+    const hi = num(row?.hi);
+    if (lo === null || hi === null) return null;
+    return { fromApple: lo, toApple: hi, rows: Number(row?.n ?? 0) };
+  }
+
+  calendars(): IndexCalendar[] {
+    const c = this.caps.calendarColumns;
+    const store = this.caps.storeColumns.size > 0;
+    const sql = `
+      SELECT ${this.#col(c, "cal", "UUID", "uuid")},
+             ${this.#col(c, "cal", "title", "title")},
+             ${this.#col(c, "cal", "color", "color")},
+             ${this.#col(c, "cal", "type", "type")},
+             ${this.#col(c, "cal", "sharing_status", "sharingStatus")},
+             ${this.#col(c, "cal", "is_published", "isPublished")},
+             ${this.#col(c, "cal", "subcal_url", "subcalUrl")},
+             ${store ? `st."name"` : `NULL`} AS accountName
+        FROM "Calendar" cal
+        ${store ? `LEFT JOIN "Store" st ON st."ROWID" = cal."store_id"` : ""}
+       ORDER BY ${c.has("display_order") ? `cal."display_order" ASC,` : ""} cal."title" ASC`;
+    const rows = this.db.prepare(sql).all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      uuid: text(r.uuid),
+      title: text(r.title),
+      color: text(r.color),
+      type: text(r.type),
+      accountName: text(r.accountName),
+      // A subscribed calendar is read-only, which is what a write tool needs to
+      // know. Derived from the presence of a subscription URL rather than from a
+      // flags bit whose meaning has not been measured.
+      isSubscribed: Boolean(text(r.subcalUrl)),
+      isPublished: bool(r.isPublished),
+      sharingStatus: num(r.sharingStatus),
+    }));
+  }
+
+  accounts(): IndexAccount[] {
+    if (!this.caps.storeColumns.size) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT st."name" AS name, st."type" AS type, COUNT(cal."ROWID") AS calendars
+           FROM "Store" st
+           LEFT JOIN "Calendar" cal ON cal."store_id" = st."ROWID"
+          GROUP BY st."ROWID"
+          ORDER BY st."name" ASC`,
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      name: text(r.name),
+      type: num(r.type),
+      calendars: Number(r.calendars ?? 0),
+    }));
   }
 
   close(): void {

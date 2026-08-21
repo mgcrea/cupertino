@@ -49,7 +49,14 @@ describe("tool registration", () => {
 
   it("registers only read tools by default", async () => {
     const { tools } = await (await connect()).listTools();
-    expect(tools.map((t) => t.name).toSorted()).toEqual(["apple_calendar_diagnostics"]);
+    expect(tools.map((t) => t.name).toSorted()).toEqual([
+      "apple_calendar_diagnostics",
+      "apple_calendar_get_event",
+      "apple_calendar_list_accounts",
+      "apple_calendar_list_calendars",
+      "apple_calendar_list_events",
+      "apple_calendar_search_events",
+    ]);
   });
 
   /**
@@ -120,7 +127,7 @@ describe("apple_calendar_diagnostics", () => {
   it("discloses that the event tools are not registered yet, and why", async () => {
     const out = await call(await connect(), "apple_calendar_diagnostics");
     const doc = out.json() as { caveats: string[] };
-    expect(doc.caveats.join(" ")).toMatch(/under construction/);
+    expect(doc.caveats.join(" ")).toMatch(/Writes are not implemented/);
     expect(doc.caveats.join(" ")).toMatch(/OccurrenceCache/);
   });
 

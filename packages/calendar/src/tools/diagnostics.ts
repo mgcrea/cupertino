@@ -106,17 +106,21 @@ export const registerDiagnosticsTools = (
             timeZone: client.config.timeZone ?? null,
           },
           caveats: [
-            "This surface is under construction. Only diagnostics is registered; the event " +
-              "and calendar tools land once the recurrence question below is settled.",
+            "Writes are not implemented yet. The read tools are complete; create, update and " +
+              "delete arrive with the Apple Events lane.",
             "Calendar reads through the file lane only. Apple Events was measured at 3.4s for " +
               "a single 90-day range query, with the cost falling per round trip rather than " +
               "per event, so there is no slower-but-working fallback to offer when Full Disk " +
               "Access is missing. Reads need the grant.",
-            "The open question is recurrence. OccurrenceCache and OccurrenceCacheDays both " +
-              "hold more rows than CalendarItem itself, so expanded occurrences of a repeating " +
-              "event live outside the main table. Until `pnpm probe:calendar` has diffed a " +
-              "range query against Apple Events as a set, a listing tool would risk showing a " +
-              "weekly meeting once — which looks exactly like a free afternoon.",
+            "Repeating events are expanded from OccurrenceCache, which was measured to reach " +
+              "about two years either side of today on the probed store. That is an edge: a " +
+              "range running past it returns fewer repeating events than exist, so every " +
+              "list_events result carries `coverage`, and sets `truncated` rather than " +
+              "returning a short list silently.",
+            "The `status` and `invitationStatus` numbers are EventKit's documented constants, " +
+              "and this store is assumed to mirror them — likely, but not measured. That is why " +
+              "cancelled and declined events are only hidden when you ask, and why the raw " +
+              "value is on every result.",
             "Writes will go through Apple Events, targeting com.apple.iCal. Note the bundle id " +
               "is iCal, not Calendar, which is the one place this surface differs from the " +
               "other three.",

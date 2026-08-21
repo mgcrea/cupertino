@@ -198,6 +198,21 @@ them are not IANA names:
 Treating the second as floating would silently discard two hours. Anything matching `GMT±HHMM` is a
 fixed offset to be honoured, and only what is left over is floating.
 
+**All-day dates are derived in UTC, and the direction of that bug is measured rather than assumed.**
+The stored value is anchored at midnight UTC, so reading it with local getters lands on the previous
+day for every zone at a _negative_ offset — the whole Americas, not the eastern hemisphere:
+
+```
+TZ=America/Los_Angeles   local 2026-08-20   utc 2026-08-21   <- shifted
+TZ=UTC                   local 2026-08-21   utc 2026-08-21
+TZ=Asia/Kolkata          local 2026-08-21   utc 2026-08-21
+TZ=Pacific/Auckland      local 2026-08-21   utc 2026-08-21
+```
+
+Reminders documents the mirror image of this for its own storage, which is anchored the other way
+round. The direction is a property of the anchor, not a general rule, which is why it is measured per
+surface. `packages/calendar/test/dates.test.ts` runs under all four zones.
+
 ## What the store does NOT hold
 
 `CalendarItem` shares its schema with Reminders, and the reminder half is empty here: **0 rows with a

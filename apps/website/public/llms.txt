@@ -24,12 +24,12 @@ Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed a
 - Mail — 18 tools (10 always registered, 8 write-gated). `@mgcrea/mcp-apple-mail`
 - Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
-- Calendar — in progress. `@mgcrea/mcp-apple-calendar` ships in the app and its index lane is
-  live, but only `apple_calendar_diagnostics` is registered so far. Listing, search and gated
-  writes wait on one measurement: Calendar keeps expanded repeats in a cache table larger than
-  the events table, so a range query written against the obvious one would show a weekly
-  meeting once. It is also the first surface with no Apple Events read path fast enough to be
-  a fallback, so every read needs the grant.
+- Calendar — in progress. `@mgcrea/mcp-apple-calendar` ships in the app with 6 read tools
+  registered; create, update and delete are still to come, which is why it is not counted as a
+  shipped surface. Repeating events are expanded from Calendar's occurrence cache, so a weekly
+  meeting is returned once per week, and a range running past what the store has expanded says so
+  rather than coming back short. It is also the first surface with no Apple Events read path fast
+  enough to be a fallback, so every read needs the grant.
 - Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
 
 ## Links

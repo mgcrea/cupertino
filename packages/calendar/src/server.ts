@@ -12,6 +12,8 @@ export const SERVER_VERSION = BUILD_INFO.version;
 export type CreateServerOptions = {
   config: Config;
   logger?: Logger;
+  /** Injected by tests so a relative range resolves against a frozen clock. */
+  now?: () => Date;
 };
 
 export type CreatedServer = {
@@ -35,6 +37,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   const client = new AppleCalendarClient({
     config,
     ...(opts.logger ? { logger: opts.logger } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });

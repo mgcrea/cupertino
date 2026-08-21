@@ -8,11 +8,12 @@
  * wrong here is a claim the servers do not honour — check the tree, not the
  * README, which has drifted before.
  *
- * Calendar is deliberately NOT in this list. It ships inside the app and its
- * index lane is live, but `packages/calendar/src/tools/index.ts` registers one
- * tool so far, so a card claiming a listing surface would be exactly the kind
- * of unhonoured claim the paragraph above exists to prevent. It lives in
- * `IN_PROGRESS` until the tools are real.
+ * Calendar is deliberately NOT in this list. Its six read tools are real and its
+ * index lane is live, but it has no write tools yet — and every surface above
+ * is defined by the read/write split the write gate draws. Promoting a
+ * half-surface would also trip the price ladder in docs/licensing.md, which
+ * commits to a rise when "Calendar ships". It stays in `IN_PROGRESS` until the
+ * writes land.
  */
 
 export interface Surface {
@@ -126,13 +127,21 @@ export const IN_PROGRESS = [
   {
     name: "Calendar",
     pkg: "@mgcrea/mcp-apple-calendar",
-    /** Transcribed from `packages/calendar/src/tools/index.ts`, same rule as above. */
-    registered: ["apple_calendar_diagnostics"],
-    lands: "listing, search and gated writes",
+    /** Transcribed from `packages/calendar/src/tools/*.ts`, same rule as above. */
+    registered: [
+      "apple_calendar_list_events",
+      "apple_calendar_search_events",
+      "apple_calendar_get_event",
+      "apple_calendar_list_calendars",
+      "apple_calendar_list_accounts",
+      "apple_calendar_diagnostics",
+    ],
+    lands: "create, update and delete, behind the write gate",
     why:
-      "Calendar keeps expanded repeats in a cache table that holds more rows than the events " +
-      "table itself, so a range query written against the obvious one would show a weekly " +
-      "meeting once — which reads exactly like a free afternoon.",
+      "Reads are done, including the hard part: Calendar keeps expanded repeats in a cache " +
+      "table holding more rows than the events table itself, so a weekly meeting is returned " +
+      "once per week rather than once — and when a range runs past what the store has expanded, " +
+      "the result says so instead of quietly coming back short.",
     withoutGrant:
       "Nothing. This is the first surface with no Apple Events read path fast enough to be a " +
       "fallback: one 90-day range query costs 3.4 seconds, so every read needs the grant.",
