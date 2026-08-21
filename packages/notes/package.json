@@ -14,7 +14,7 @@
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mgcrea/mcp-apple-mail.git",
+    "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/notes"
   },
   "bin": {
