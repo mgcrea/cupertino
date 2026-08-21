@@ -1,4 +1,4 @@
-import type { Logger } from "@mgcrea/mcp-apple-core";
+import type { Logger, OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "./build-info.js";
@@ -12,6 +12,8 @@ export const SERVER_VERSION = BUILD_INFO.version;
 export type CreateServerOptions = {
   config: Config;
   logger?: Logger;
+  /** Injected by tests so nothing spawns a process or touches a real Calendar. */
+  osascript?: OsascriptRunner;
   /** Injected by tests so a relative range resolves against a frozen clock. */
   now?: () => Date;
 };
@@ -26,9 +28,6 @@ export type CreatedServer = {
  * process and reads no file, so a test can construct it freely and every
  * external dependency arrives through an option.
  *
- * No `osascript` seam yet, unlike `packages/reminders`. It arrives with the
- * write lane that needs it — a constructor argument nothing reads would suggest
- * an Apple Events path this server does not have.
  */
 export const createServer = (opts: CreateServerOptions): CreatedServer => {
   const { config } = opts;
@@ -37,6 +36,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   const client = new AppleCalendarClient({
     config,
     ...(opts.logger ? { logger: opts.logger } : {}),
+    ...(opts.osascript ? { osascript: opts.osascript } : {}),
     ...(opts.now ? { now: opts.now } : {}),
   });
 

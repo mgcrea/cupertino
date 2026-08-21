@@ -51,9 +51,11 @@ export const registerDiagnosticsTools = (
           server: { lanes },
           permissions: {
             fullDiskAccess,
-            automation:
-              "not requested — this server has no Apple Events read lane, and the write lane " +
-              "is not implemented yet. A read-only Calendar surface needs no Automation grant.",
+            automation: ctx.allowWrites
+              ? "needed for writes only. Reads never send an Apple Event, so a read-only setup " +
+                "prompts for nothing."
+              : "not needed — writes are off, and reads never send an Apple Event. Turning " +
+                "writes on will prompt for Automation the first time one runs.",
             ...(located.readable
               ? {}
               : {
@@ -106,8 +108,15 @@ export const registerDiagnosticsTools = (
             timeZone: client.config.timeZone ?? null,
           },
           caveats: [
-            "Writes are not implemented yet. The read tools are complete; create, update and " +
-              "delete arrive with the Apple Events lane.",
+            "Writes go through Apple Events and are real side effects: on a shared, CalDAV or " +
+              "Exchange calendar a created event syncs within seconds and other people see it. " +
+              "There is no draft state and no undo.",
+            "Three things are deliberately not offered. Attendees cannot be set, because that " +
+              "emails a person. A single occurrence of a repeating event cannot be EDITED, " +
+              "because Calendar's scripting interface cannot detach one and editing the series " +
+              "instead would move every other occurrence — delete the occurrence and create a " +
+              'replacement. And there is no "all future occurrences", which would need two ' +
+              "writes with no transaction between them.",
             "Calendar reads through the file lane only. Apple Events was measured at 3.4s for " +
               "a single 90-day range query, with the cost falling per round trip rather than " +
               "per event, so there is no slower-but-working fallback to offer when Full Disk " +

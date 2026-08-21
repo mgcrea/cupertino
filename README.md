@@ -12,6 +12,7 @@ permissions once instead of once each.
 | Mail      | [`packages/mail`](packages/mail)           | implemented — 18 tools, search/read/attachments + gated writes |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 12 tools, search/read/attachments + gated writes |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes      |
+| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 9 tools, ranges/search/recurrence + gated writes |
 | Messages  | —                                          | not started                                                    |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite    |
 
@@ -97,11 +98,12 @@ Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
 
 **What works without Full Disk Access:**
 
-| Surface   | Without the grant                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------------ |
-| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                       |
-| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                          |
-| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it |
+| Surface   | Without the grant                                                                                                                                                                  |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                   |
+| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                      |
+| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                             |
+| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work. |
 
 Tools that need the index don't disappear when it's missing — the tool list is a pure function of
 `allowWrites` and nothing else, because MCP clients cache it. They return a structured `degraded`
@@ -135,12 +137,23 @@ merely refused.
 | `list_reminders` `search_reminders` `get_reminder` `list_lists` | `create_reminder` `update_reminder` `complete_reminders` `move_reminders` `delete_reminders` |
 | `list_accounts` `diagnostics`                                   |                                                                                              |
 
-All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_`.
+### Calendar
+
+| Always available                                           | Write-gated                                   |
+| ---------------------------------------------------------- | --------------------------------------------- |
+| `list_events` `search_events` `get_event` `list_calendars` | `create_event` `update_event` `delete_events` |
+| `list_accounts` `diagnostics`                              |                                               |
+
+`list_events` expands repeating events, so a weekly standup is returned once per week. Every result
+carries the window the expansion is known to cover, and sets `truncated` when a range runs past it
+rather than coming back short — a short list of events is indistinguishable from a free afternoon.
+
+All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_`.
 
 ## Configuration
 
 Environment only — these servers hold no secret of their own, so there is no config file. Prefix
-is `APPLE_MAIL_` or `APPLE_NOTES_`.
+is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_` or `APPLE_CALENDAR_`.
 
 | Variable                 | Default       | What                                                           |
 | ------------------------ | ------------- | -------------------------------------------------------------- |
@@ -161,13 +174,13 @@ it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_
 
 The menu bar is Cupertino's whole surface — there is no Dock icon and no main window.
 
-| Section                  | What it answers                                                                     |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| Full Disk Access         | granted or not, with the button that opens the right Settings pane                  |
-| Mail / Notes / Reminders | Automation status per app, the consent prompt, and the writes toggle                |
-| Connections              | which client is talking to which server right now, and how many tools it has called |
-| MCP clients              | one-click wiring for Claude Desktop and Cursor; a copyable command for Claude Code  |
-| Activity…                | opens a window listing every tool call, live                                        |
+| Section                             | What it answers                                                                     |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| Full Disk Access                    | granted or not, with the button that opens the right Settings pane                  |
+| Mail / Notes / Reminders / Calendar | Automation status per app, the consent prompt, and the writes toggle                |
+| Connections                         | which client is talking to which server right now, and how many tools it has called |
+| MCP clients                         | one-click wiring for Claude Desktop and Cursor; a copyable command for Claude Code  |
+| Activity…                           | opens a window listing every tool call, live                                        |
 
 The **Activity** window records tool _names_ only — never arguments, message contents or results.
 It is the answer to "what did the assistant just do with my mail?", and the reason the servers run
@@ -193,7 +206,7 @@ under it rather than under an editor:
 | **Writes are off, per surface**        | and the toggle decides whether the mutating tools are registered at all                                |
 | **`*_ACCOUNTS` bounds reading**        | the blast radius on Mail is the archive, not the mutations                                             |
 | **Results say how much to trust them** | `indexAgeSeconds`, a WAL-blind warning, and a structured `degraded` result rather than a vanished tool |
-| **Three surfaces, one grant**          | which is the actual payoff of the indivisibility above                                                 |
+| **Four surfaces, one grant**           | which is the actual payoff of the indivisibility above                                                 |
 
 [docs/alternatives.md](docs/alternatives.md) is the honest version of that list: what else reads
 Apple Mail for an assistant, and where those tools are ahead.
@@ -257,13 +270,13 @@ pnpm probe:calendar  # settles whether Calendar has a file lane at all
 pnpm probe:safari    # History.db, and the Reading List hiding inside Bookmarks.plist
 ```
 
-Messages, Calendar and Safari are **probed but unbuilt**: there is a phase-0 probe and no package.
+Messages and Safari are **probed but unbuilt**: there is a phase-0 probe and no package.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
 
 Releases are tagged per package, so a tag names what it publishes: `mail-v0.1.0`,
-`reminders-v0.1.0`, `core-v0.1.0`. The app is tagged `app-v1.0.0` and releases on its own lane —
+`reminders-v0.1.0`, `calendar-v0.1.0`, `core-v0.1.0`. The app is tagged `app-v1.0.0` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 

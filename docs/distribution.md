@@ -218,15 +218,15 @@ returns `Operation not permitted` while `test -e` succeeds, the same split `src/
 documents for Mail. Which is the point: nothing about their internals can be measured until Full
 Disk Access is granted to something.
 
-| Surface   | Store                                                       | Probe | AppleScript lane                 |
-| --------- | ----------------------------------------------------------- | ----- | -------------------------------- |
-| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`                | EPERM | full — implemented               |
-| Notes     | `~/Library/Group Containers/group.com.apple.notes/`         | EPERM | usable alone below ~5k notes     |
-| Reminders | `~/Library/Group Containers/group.com.apple.reminders/`     | EPERM | workable                         |
-| Messages  | `~/Library/Messages/chat.db` — **probed**                   | EPERM | none — measured, see below       |
-| Contacts  | `~/Library/Application Support/AddressBook/`                | EPERM | limited                          |
-| Safari    | `~/Library/Safari/History.db` — **probed**                  | EPERM | live tabs only, no history       |
-| Calendar  | `…/group.com.apple.calendar/Calendar.sqlitedb` — **probed** | EPERM | too slow — 3.4 s at 1,349 events |
+| Surface   | Store                                                            | Probe | AppleScript lane                 |
+| --------- | ---------------------------------------------------------------- | ----- | -------------------------------- |
+| Mail      | `~/Library/Mail/V10/MailData/Envelope Index`                     | EPERM | full — implemented               |
+| Notes     | `~/Library/Group Containers/group.com.apple.notes/`              | EPERM | usable alone below ~5k notes     |
+| Reminders | `~/Library/Group Containers/group.com.apple.reminders/`          | EPERM | workable                         |
+| Messages  | `~/Library/Messages/chat.db` — **probed**                        | EPERM | none — measured, see below       |
+| Contacts  | `~/Library/Application Support/AddressBook/`                     | EPERM | limited                          |
+| Safari    | `~/Library/Safari/History.db` — **probed**                       | EPERM | live tabs only, no history       |
+| Calendar  | `…/group.com.apple.calendar/Calendar.sqlitedb` — **implemented** | EPERM | too slow — 3.4 s at 1,349 events |
 
 Two paths that are commonly cited and wrong on this machine: **`~/Library/Reminders` does not
 exist** — Reminders is under Group Containers — and neither does `~/Library/Calendars`.
@@ -294,7 +294,9 @@ measurements do not support that. What they support is below.
 Apple Events is a viable read path on two surfaces out of six. So:
 
 - **Reads go through the file lane.** For a new surface, do not build an Apple Events read lane at
-  all. Messages, Calendar and Safari get file-lane reads and nothing else.
+  all. Messages, Calendar and Safari get file-lane reads and nothing else. Calendar shipped on
+  exactly that shape and it held: no `jxa/read.ts` exists in `packages/calendar`, and a test asserts
+  it never will.
 - **Writes go through Apple Events, always.** Not a preference: `PRAGMA query_only` is set because
   the app owns the store, holds it open and reconciles it against a server, so writing to it corrupts
   sync state. Every write verb on every surface is an Apple Event.

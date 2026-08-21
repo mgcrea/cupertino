@@ -238,7 +238,20 @@ surface at once.
 - **The one extra store row** — 1,350 rows against 1,349 Apple Events events. All 1,350 are
   `entity_type` 2 with a start date, so it is a real event Apple Events did not list rather than a
   reminder hiding in the table. `CalendarItem.birthday_id` exists and is the obvious suspect.
-- **Writes.** Still untested. Creating an event is a real side effect on a real calendar.
-- **Calendar writability.** `Calendar` has no explicit writable column; it carries `flags`, `type`,
-  `sharing_status`, `is_published` and `subcal_url`. Which of those marks a subscribed, read-only
-  calendar needs measuring before a write tool refuses one.
+- **Writes are implemented but not exercised against a real calendar.** Every script compiles under
+  `osacompile` and the tools are covered by an injected fake runner, which proves the shapes and not
+  the behaviour. What still needs a consented pass on a throwaway calendar: whether Calendar treats
+  an all-day `end` as inclusive or exclusive, and whether the excluded-dates assignment behaves as
+  `EXCLUDE_OCCURRENCE` assumes.
+- **Calendar writability is derived, not measured.** `Calendar` has no explicit writable column, so
+  `isSubscribed` is taken from the presence of `subcal_url`. The `flags`, `type` and `sharing_status`
+  columns may carry a better signal. The JXA lane asks Calendar itself via `writable()`, so this only
+  decides whether the refusal is early and well-named or late and cryptic.
+- **`occurrence_date` vs `occurrence_start_date`.** Leg 2 reads `occurrence_date`, which spans the
+  full ±2 years while `occurrence_start_date` reaches only +256 days — so the latter would silently
+  truncate. The clean set diff supports the choice but does not prove it: the 46 uids Apple Events
+  reported were matched mostly by leg 1, so leg 2's instants are not independently validated.
+- **Status codes are inferred.** `status` and `invitationStatus` are read as EventKit's documented
+  `EKEventStatus` / `EKParticipantStatus` constants. Likely, not measured — which is why cancelled
+  and declined events are only hidden when asked for, and why the raw value is on every result.
+- **`hidden` and `phantom_master` are excluded conservatively** from both legs on the same basis.

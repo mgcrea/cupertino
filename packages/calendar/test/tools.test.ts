@@ -93,7 +93,7 @@ describe("apple_calendar_diagnostics", () => {
       permissions: { automation: string };
     };
     expect(doc.server.lanes.applescript).toBe("not-used");
-    expect(doc.permissions.automation).toMatch(/no Apple Events read lane/);
+    expect(doc.permissions.automation).toMatch(/reads never send an Apple Event/);
   });
 
   /**
@@ -127,7 +127,7 @@ describe("apple_calendar_diagnostics", () => {
   it("discloses that the event tools are not registered yet, and why", async () => {
     const out = await call(await connect(), "apple_calendar_diagnostics");
     const doc = out.json() as { caveats: string[] };
-    expect(doc.caveats.join(" ")).toMatch(/Writes are not implemented/);
+    expect(doc.caveats.join(" ")).toMatch(/real side effects/);
     expect(doc.caveats.join(" ")).toMatch(/OccurrenceCache/);
   });
 

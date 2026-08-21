@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
+import { registerActionTools } from "./actions.js";
 import { registerCalendarTools } from "./calendars.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerEventTools } from "./events.js";
@@ -23,7 +24,9 @@ export type ToolContext = {
  * calling names the server no longer has. Tools that need the store instead
  * report their source, or explain what is missing.
  *
- * The write tools are not here yet; they arrive with the JXA lane.
+ * Writes go through Apple Events, always. Not a preference: `PRAGMA query_only`
+ * is set on the store because Calendar owns it, holds it open and reconciles it
+ * against a server, so writing to it would corrupt sync state.
  */
 export const registerTools = (
   server: McpServer,
@@ -35,5 +38,5 @@ export const registerTools = (
   registerEventTools(server, client);
 
   if (!ctx.allowWrites) return;
-  // Write tools land here, behind this same gate.
+  registerActionTools(server, client);
 };

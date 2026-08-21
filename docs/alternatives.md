@@ -90,7 +90,7 @@ absent instead of a vanished tool. Nobody else reports index staleness at all â€
 now that the peer servers are also index-backed, because a fast wrong answer is the failure mode
 they share.
 
-**One grant covers Mail, Notes and Reminders.** Full Disk Access is indivisible, so a second
+**One grant covers Mail, Notes, Reminders and Calendar.** Full Disk Access is indivisible, so a second
 single-surface server buys no containment and costs another trip to System Settings.
 
 ## Where we lose

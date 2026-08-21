@@ -1,8 +1,28 @@
-import type { Logger } from "@mgcrea/mcp-apple-core";
+import {
+  createOsascriptRunner,
+  withBusyRetry,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
-import { parseRange, renderInstant, type EventInstant } from "./dates.js";
-import { CalendarNotFoundError, EventNotFoundError, IndexUnavailableError } from "./errors.js";
+import {
+  parseDate,
+  parseDuration,
+  parseRange,
+  renderInstant,
+  toLocalIso,
+  type EventInstant,
+} from "./dates.js";
+import {
+  CALENDAR_SURFACE,
+  CalendarNotFoundError,
+  CalendarNotWritableError,
+  EventNotFoundError,
+  IndexUnavailableError,
+  PreconditionError,
+} from "./errors.js";
+import { CREATE_EVENT, DELETE_EVENTS, EXCLUDE_OCCURRENCE, UPDATE_EVENT } from "./jxa/write.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { mergeRange, type ExpansionState } from "./recurrence.js";
 import { decodeRef, encodeRef, seriesRefOf } from "./ref.js";
@@ -104,12 +124,52 @@ export type EventFilters = {
 export type CreateClientOptions = {
   config: Config;
   logger?: Logger;
+  /** Injected by tests so nothing spawns a process or touches a real Calendar. */
+  osascript?: OsascriptRunner;
   /** Injected by tests so a relative range resolves against a frozen clock. */
   now?: () => Date;
 };
 
+/** What a write returns: what Calendar STORED, never what was requested. */
+export type WriteResult = {
+  ref: string;
+  uid: string | null;
+  summary: string | null;
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
+  calendar: string | null;
+  /** Always "apple-events": writes never touch the store. */
+  source: "apple-events";
+};
+
+export type CreateEventFields = {
+  summary: string;
+  calendar?: string | undefined;
+  start: string;
+  end?: string | undefined;
+  durationMinutes?: number | undefined;
+  allDay?: boolean | undefined;
+  location?: string | undefined;
+  description?: string | undefined;
+  url?: string | undefined;
+};
+
+export type UpdateEventFields = {
+  ref: string;
+  summary?: string | undefined;
+  start?: string | undefined;
+  end?: string | undefined;
+  durationMinutes?: number | undefined;
+  allDay?: boolean | undefined;
+  location?: string | undefined;
+  description?: string | undefined;
+  url?: string | undefined;
+};
+
 export class AppleCalendarClient {
   readonly config: Config;
+  readonly runner: OsascriptRunner;
   readonly #logger: Logger | undefined;
   readonly #now: () => Date;
 
@@ -121,6 +181,14 @@ export class AppleCalendarClient {
     this.config = opts.config;
     this.#logger = opts.logger;
     this.#now = opts.now ?? (() => new Date());
+    this.runner =
+      opts.osascript ??
+      createOsascriptRunner({
+        osascriptPath: opts.config.osascriptPath,
+        timeoutMs: opts.config.osascriptTimeoutMs,
+        surface: CALENDAR_SURFACE,
+        logger: opts.logger,
+      });
   }
 
   /** Cached: the answer cannot change without the process being restarted anyway. */
@@ -431,6 +499,203 @@ export class AppleCalendarClient {
 
   accounts(): IndexAccount[] {
     return this.#require().accounts();
+  }
+
+  // ─── writes ───────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the calendar a write targets, and refuse a read-only one up front.
+   *
+   * Asking the store first means the refusal names the cause. Letting the Apple
+   * Event fail instead produces a message from deep inside Calendar that does
+   * not mention writability at all.
+   */
+  #writeTarget(named: string | undefined): { calendar: string | undefined; title: string } {
+    const store = this.index();
+    if (!store) {
+      // No store to check against. The JXA scripts ask Calendar itself, so the
+      // guard is not lost — only the better error message is.
+      return { calendar: named, title: named ?? "(default)" };
+    }
+    const all = store.calendars();
+    const wanted = named ?? this.config.defaultCalendar;
+    if (!wanted) return { calendar: undefined, title: "(default)" };
+    const lower = wanted.toLowerCase();
+    const hit = all.find(
+      (c) => c.uuid?.toLowerCase() === lower || c.title?.toLowerCase() === lower,
+    );
+    if (!hit) {
+      throw new CalendarNotFoundError(wanted, all.map((c) => c.title ?? "").filter(Boolean));
+    }
+    if (hit.isSubscribed) throw new CalendarNotWritableError(hit.title ?? wanted);
+    return { calendar: hit.uuid ?? hit.title ?? wanted, title: hit.title ?? wanted };
+  }
+
+  async #run<T>(scriptText: string, params: unknown): Promise<T> {
+    return withBusyRetry(() => this.runner.run<T>(scriptText, params));
+  }
+
+  #shapeWrite(data: Record<string, unknown>, calendarUid: string | null): WriteResult {
+    const uid = typeof data.uid === "string" ? data.uid : null;
+    return {
+      ref: encodeRef(calendarUid ?? "", uid ?? ""),
+      uid,
+      summary: typeof data.summary === "string" ? data.summary : null,
+      start: typeof data.startDate === "string" ? data.startDate : null,
+      end: typeof data.endDate === "string" ? data.endDate : null,
+      allDay: data.alldayEvent === true,
+      calendar: typeof data.calendarName === "string" ? data.calendarName : null,
+      source: "apple-events",
+    };
+  }
+
+  /**
+   * Work out an event's end from whichever of the three forms the caller used.
+   *
+   * `end` wins over `durationMinutes`; with neither, the configured default
+   * length applies. A zero-length event is refused rather than created, because
+   * Calendar renders one as a point in time that is almost impossible to click.
+   */
+  #resolveWindow(
+    start: string,
+    end: string | undefined,
+    durationMinutes: number | undefined,
+  ): { startIso: string; endIso: string; allDayHint: boolean } {
+    const now = this.#now();
+    const from = parseDate("start", start, now);
+    if (end !== undefined) {
+      const to = parseDate("end", end, now);
+      if (to.at.getTime() <= from.at.getTime()) {
+        throw new PreconditionError(
+          `end (${to.iso}) is not after start (${from.iso}). An event cannot finish before it begins.`,
+        );
+      }
+      return { startIso: from.iso, endIso: to.iso, allDayHint: from.kind === "allDay" };
+    }
+    const minutes =
+      durationMinutes === undefined
+        ? this.config.defaultEventDurationMinutes
+        : parseDuration("durationMinutes", durationMinutes);
+    const to = new Date(from.at.getTime() + minutes * 60_000);
+    return {
+      startIso: from.iso,
+      endIso: toLocalIso(to),
+      allDayHint: from.kind === "allDay",
+    };
+  }
+
+  async createEvent(fields: CreateEventFields): Promise<WriteResult> {
+    const target = this.#writeTarget(fields.calendar);
+    const win = this.#resolveWindow(fields.start, fields.end, fields.durationMinutes);
+    const data = await this.#run<Record<string, unknown>>(CREATE_EVENT, {
+      calendar: target.calendar ?? null,
+      summary: fields.summary,
+      startDate: win.startIso,
+      endDate: win.endIso,
+      // A bare day in `start` already means all-day; an explicit flag overrides.
+      allDay: fields.allDay ?? win.allDayHint,
+      ...(fields.location !== undefined ? { location: fields.location } : {}),
+      ...(fields.description !== undefined ? { description: fields.description } : {}),
+      ...(fields.url !== undefined ? { url: fields.url } : {}),
+    });
+    this.invalidate();
+    return this.#shapeWrite(data, typeof data.calendarUid === "string" ? data.calendarUid : null);
+  }
+
+  async updateEvent(fields: UpdateEventFields): Promise<WriteResult> {
+    const ref = decodeRef(fields.ref);
+    /**
+     * An occurrence ref is REFUSED rather than quietly applied to the series.
+     *
+     * Calendar's scripting dictionary has no way to detach a single occurrence —
+     * the "This Event" edit in the UI has no scripting equivalent. Applying the
+     * change to the series would move every future standup because someone
+     * asked to move one lunch, which is a data-loss bug wearing a success
+     * message. "All future" is absent for a related reason: it needs a rule
+     * split, which is two writes with no transaction between them.
+     */
+    if (ref.isOccurrence) {
+      throw new PreconditionError(
+        `That ref names one occurrence of a repeating event, and Calendar's scripting interface ` +
+          `cannot edit a single occurrence — only the whole series. Applying your change to the ` +
+          `series would move every other occurrence too, so this is refused rather than done ` +
+          `silently. To change just this one: delete it with apple_calendar_delete_events ` +
+          `(scope "occurrence"), then create a replacement. To change them all, pass the ` +
+          `seriesRef from apple_calendar_get_event instead.`,
+        { ref: fields.ref, seriesRef: seriesRefOf(ref) },
+      );
+    }
+
+    const window =
+      fields.start !== undefined
+        ? this.#resolveWindow(fields.start, fields.end, fields.durationMinutes)
+        : null;
+
+    const data = await this.#run<Record<string, unknown>>(UPDATE_EVENT, {
+      calendar: ref.calendarUid || null,
+      uid: ref.eventUid,
+      ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
+      ...(window ? { startDate: window.startIso, endDate: window.endIso } : {}),
+      ...(fields.allDay !== undefined ? { allDay: fields.allDay } : {}),
+      ...(fields.location !== undefined ? { location: fields.location } : {}),
+      ...(fields.description !== undefined ? { description: fields.description } : {}),
+      ...(fields.url !== undefined ? { url: fields.url } : {}),
+    });
+    this.invalidate();
+    return this.#shapeWrite(data, ref.calendarUid);
+  }
+
+  /**
+   * Delete events, or exclude single occurrences of them.
+   *
+   * `scope` has no default on purpose. The two outcomes are "one lunch is
+   * cancelled" and "the weekly standup no longer exists", and no default is
+   * safe enough to guess at.
+   */
+  async deleteEvents(
+    refs: readonly string[],
+    scope: "series" | "occurrence",
+  ): Promise<{ results: unknown[]; scope: string }> {
+    const decoded = refs.map((r) => decodeRef(r));
+
+    if (scope === "occurrence") {
+      const results = [];
+      for (const ref of decoded) {
+        if (!ref.occurrenceStart) {
+          throw new PreconditionError(
+            `Scope "occurrence" needs a ref naming one occurrence, and ${JSON.stringify(
+              refs[decoded.indexOf(ref)],
+            )} names a whole event. Use the ref from a list_events result, or pass scope "series".`,
+          );
+        }
+        const data = await this.#run<Record<string, unknown>>(EXCLUDE_OCCURRENCE, {
+          calendar: ref.calendarUid || null,
+          uid: ref.eventUid,
+          occurrenceStart: ref.occurrenceStart.toISOString(),
+        });
+        results.push(data);
+      }
+      this.invalidate();
+      return { results, scope };
+    }
+
+    // Grouped by calendar: findEvent costs one bulk uid fetch per calendar, so
+    // deleting five events from one calendar should pay that once, not five times.
+    const byCalendar = new Map<string, string[]>();
+    for (const ref of decoded) {
+      const key = ref.calendarUid || "";
+      byCalendar.set(key, [...(byCalendar.get(key) ?? []), ref.eventUid]);
+    }
+    const results: unknown[] = [];
+    for (const [calendar, uids] of byCalendar) {
+      const data = await this.#run<{ results: unknown[] }>(DELETE_EVENTS, {
+        calendar: calendar || null,
+        uids,
+      });
+      results.push(...(data.results ?? []));
+    }
+    this.invalidate();
+    return { results, scope };
   }
 
   lanes(): LaneStatus {
