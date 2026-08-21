@@ -1,5 +1,5 @@
 ---
-import { REPO_URL } from "../config";
+import { DOWNLOAD, REPO_URL, SHIPPED } from "../config";
 import Logo from "./Logo.astro";
 ---
 
@@ -23,23 +23,60 @@ import Logo from "./Logo.astro";
         One app. One grant.
       </h2>
 
-      <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
-        The signed app and the npm packages ship together. Until then, clone it and point your host
-        at the built CLIs.
-      </p>
+      {
+        SHIPPED ? (
+          <>
+            <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
+              Signed with a Developer ID and notarized by Apple. Building it yourself needs no fee
+              and no licence key.
+            </p>
 
-      <a
-        href={REPO_URL}
-        target="_blank"
-        rel="noopener"
-        class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
-        >Watch the repo →</a
-      >
+            {/* Not target="_blank": this is a download, and a tab that opens only to
+                close itself is worse than no tab. */}
+            <a
+              href={DOWNLOAD.href}
+              class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+            >
+              Download for macOS
+            </a>
 
-      <code
-        class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted"
-        >git clone mcp-apple-mail && pnpm build</code
-      >
+            <code class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted">
+              {DOWNLOAD.cask}
+            </code>
+
+            <p class="m-0 text-[12.5px] text-fg-muted">
+              {DOWNLOAD.requires} ·{" "}
+              <a class="underline underline-offset-2 hover:text-fg-dim" href={DOWNLOAD.checksum}>
+                SHA-256
+              </a>{" "}
+              ·{" "}
+              <a class="underline underline-offset-2 hover:text-fg-dim" href={DOWNLOAD.releases}>
+                release notes
+              </a>
+            </p>
+          </>
+        ) : (
+          <>
+            <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
+              The signed app and the npm packages ship together. Until then, clone it and point your
+              host at the built CLIs.
+            </p>
+
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noopener"
+              class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+            >
+              Watch the repo →
+            </a>
+
+            <code class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted">
+              git clone mcp-cupertino && pnpm build
+            </code>
+          </>
+        )
+      }
     </div>
   </div>
 </section>

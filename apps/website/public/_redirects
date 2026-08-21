@@ -1,0 +1,13 @@
+# The one stable download URL. Cloudflare's static-assets runtime reads this file
+# from the build output; Astro copies public/ into dist/ verbatim.
+#
+# It points at `latest/download` rather than a versioned asset so a release never
+# needs a site deploy to become downloadable. That only works because CI uploads
+# the asset as `Cupertino.zip` with no version in the name — see the release-app
+# job in .github/workflows/ci.yml.
+#
+# 302, not 301: the destination is expected to move (a different host, a mirror),
+# and a cached permanent redirect would outlive the decision.
+/download  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip  302
+/checksum  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip.sha256  302
+/releases  https://github.com/mgcrea/mcp-cupertino/releases  302
