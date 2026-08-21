@@ -42,14 +42,24 @@ build you are running today does not stop working because a newer major shipped.
 Upgrade pricing for existing licensees, if any, is offered at the time and is not
 promised here.
 
-3. THE TRIAL
+3. EVALUATING IT BEFORE YOU BUY
 
-Before purchase the app runs with every feature enabled for 14 days. Nothing is
-withheld from the trial and no capability is reserved for paying users — in
-particular the write controls are a safety feature, not a paid one, and behave
-identically whether or not a key is present.
+There is no time-limited trial, because there are already three ways to find out
+whether this works for you and none of them needs a clock:
 
-After 14 days the app requires a key. One trial per machine is intended.
+  (a) Build it. The source is public and the license covering it grants you the
+      right to compile it and run your own build, on every machine you control,
+      for as long as you like, with no fee and no key. That is not a crippled
+      demo — it is the same program.
+  (b) Run the servers on their own. They are MIT licensed and published to npm.
+      They do the work; the app holds the permission and the convenience.
+  (c) Buy it and change your mind. Section 5 refunds you in full within 30 days,
+      for any reason or none. In practice this is the trial, with the payment
+      step in front of it instead of behind.
+
+Nothing is withheld from a purchase and no capability is reserved. In particular
+the write controls are a safety feature, not a paid one, and behave identically
+however you obtained the build.
 
 4. VALIDATION IS OFFLINE, AND WHAT THAT COSTS
 
@@ -76,6 +86,10 @@ Two consequences follow, and they are stated here rather than discovered:
 Within 30 days of purchase, for any reason or none, ask and the purchase is
 refunded in full. Write to olivier@mgcrea.io from the address the key was issued
 to. The key is revoked on refund, with the effect described in Section 4(a).
+
+This is deliberately generous and deliberately load-bearing. With no trial, it is
+the thing that makes buying first a reasonable request, so it is not administered
+grudgingly and there is no form to fill in.
 
 If you are a consumer in the European Union you also have a statutory right of
 withdrawal, which the 30-day policy above is intended to exceed rather than

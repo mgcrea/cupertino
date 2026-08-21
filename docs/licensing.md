@@ -63,10 +63,11 @@ you, the writes toggle, the log pane.
 
 |            |                                                                          |
 | ---------- | ------------------------------------------------------------------------ |
+| Price      | €14.99 at launch, rising with the surface count — see below              |
 | Model      | one-time, per major version — 1.x is free forever, 2.0 is a new purchase |
 | Collection | Stripe, with Stripe Tax on; VAT filed directly through OSS — see below   |
 | Validation | offline, signed licence key, verified locally, no phone-home             |
-| Trial      | full features, 14 days                                                   |
+| Trial      | none — see below; the refund is the trial                                |
 
 **Writes are not the paywall.** Gating them behind the licence would make the free tier the safe one
 and the paid tier the dangerous one — backwards as a sales message and worse as a default.
@@ -215,6 +216,52 @@ self-checks, no hardened trial storage. All of it is unenforceable by constructi
 that can run `make build-release` legally, and every hour spent on it is an hour not spent on the
 people who paid. The deterrent is that the key carries the buyer's email and the app renders it.
 
+### No trial, because three already exist
+
+A time-limited trial is the standard answer to "nobody pays before they have seen it work", and it is
+the wrong one here — not because the objection is weak but because it is already answered three times
+over, none of them needing a clock:
+
+- **Build it.** `apps/apple/LICENSE` §1(c) grants compiling and running your own build, on every
+  machine you control, forever, with no fee and no key. It is the same program, not a crippled demo.
+- **Run the servers alone.** They are MIT and on npm. They do the work; the app holds the permission.
+- **Buy it and change your mind.** Thirty days, no reason required, no form.
+
+So the refund *is* the trial, with the payment step in front of it rather than behind. What that buys
+is the deletion of an entire subsystem: no trial clock, no Keychain expiry state, no degraded mode, no
+"one trial per machine" fiction to pretend to enforce, and no moment where a tool holding Full Disk
+Access starts refusing to work. The licence check becomes one branch — a valid key, or not — and
+[EULA §3](../apps/apple/EULA) says all of this to the buyer in the same words.
+
+The cost is real and worth naming: someone who will not build it and will not risk €14.99 is not
+reachable. At this price and this audience that is a small number, and the refund catches most of it.
+
+### Price, and why it goes up
+
+The ladder is published in advance and tied to **shipped surfaces**, not to the calendar:
+
+| Price  | When           | Surfaces                                  |
+| ------ | -------------- | ----------------------------------------- |
+| €14.99 | launch         | Mail, Notes, Reminders                    |
+| €24.99 | Calendar ships | + Calendar                                |
+| €34.99 | Messages ships | + Messages                                |
+| €49.99 | Safari ships   | + Safari — the full set the probes mapped |
+
+Tying a rise to a date says latecomers pay more for the same thing, which earns resentment and teaches
+people to wait for a sale. Tying it to surfaces says the price went up because the product got bigger,
+which is both true and the roadmap in [surfaces.md](surfaces.md) restated as a reason to buy now.
+Published as a schedule it is a price ladder, a roadmap and genuine urgency in one table.
+
+Two rules come with it. **Every rise is announced before it happens** — a quiet increase reads as
+testing on people. And **it never goes back down**: retreating from €49.99 would insult everyone who
+paid it, so the ladder only ratchets.
+
+The sour spot is the interaction with per-major pricing. Someone who buys 1.x at €14.99 meets 2.0 at
+whatever the ladder reached, and [EULA §2](../apps/apple/EULA) deliberately promises them nothing.
+That is honest and it will still sting at 3.3×, so the D1 row records `amount_paid` and `price_id`
+from the very first sale — fair upgrade pricing later is impossible without knowing what people
+actually paid, and that number cannot be reconstructed after the fact.
+
 ### Three stores, one job each
 
 | Question                                  | Lives in                 | Why there                                                 |
@@ -254,15 +301,15 @@ Apple-shaped.
 
 ## Not decided
 
-- **Price.** The last thing blocking a pricing page, and the only one that cannot be defaulted.
-- **Whether anything beyond the trial is free.** Nothing, or a reduced mode after day 14.
-- **What expiry actually does.** Nag and keep relaying, or stop relaying. Not `allowWrites` either
-  way — see above, that door is closed.
+- **What an unlicensed build actually does.** There is no expiry to handle any more, but a fresh
+  install still has no key, and what it shows before one is entered is unwritten.
+- **Whether upgrade pricing exists at 2.0.** Not promised, and deliberately left open — but the data
+  needed to offer it is being recorded from the first sale.
 - Whether the servers ever need a second licence. They do not today.
 
 Decided, and recorded above so they are not re-opened: one-time per major version, Stripe rather than
-a merchant of record, offline validation as a constraint rather than a preference, a 14-day
-full-feature trial, and the succession commitments in [succession.md](succession.md).
+a merchant of record, offline validation as a constraint rather than a preference, no trial at all,
+a surface-tied price ladder from €14.99, and the succession commitments in [succession.md](succession.md).
 
 And the honest expectation, recorded so it is not mistaken for a forecast: macOS only, developer
 audience, MIT core. This is a modest revenue line and a strong reputation asset, not a business. The
