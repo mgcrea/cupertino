@@ -23,6 +23,9 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "calen
 
 const EPOCH = 978_307_200;
 const apple = (iso: string) => Math.round(new Date(iso).getTime() / 1000) - EPOCH;
+/** All-day events are stored at LOCAL midnight — measured against a live store. */
+const appleLocalMidnight = (y: number, m: number, d: number) =>
+  Math.round(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000) - EPOCH;
 const DAY = 86_400;
 
 /** Frozen: a relative range must resolve against this, not the wall clock. */
@@ -82,8 +85,8 @@ beforeAll(() => {
     "E-ALLDAY",
     "Bank holiday",
     null,
-    apple("2026-08-24T00:00:00Z"),
-    apple("2026-08-25T00:00:00Z"),
+    appleLocalMidnight(2026, 8, 24),
+    appleLocalMidnight(2026, 8, 25),
     1,
     "_float",
     2,

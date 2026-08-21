@@ -510,25 +510,67 @@ export class AppleCalendarClient {
    * Event fail instead produces a message from deep inside Calendar that does
    * not mention writability at all.
    */
-  #writeTarget(named: string | undefined): { calendar: string | undefined; title: string } {
+  #writeTarget(named: string | undefined): { name: string | undefined; uuid: string | null } {
     const store = this.index();
+    const wanted = named ?? this.config.defaultCalendar;
     if (!store) {
-      // No store to check against. The JXA scripts ask Calendar itself, so the
-      // guard is not lost — only the better error message is.
-      return { calendar: named, title: named ?? "(default)" };
+      // No store to check against. The JXA script asks Calendar itself, so the
+      // guard is not lost — only the earlier, better-worded error is.
+      return { name: wanted, uuid: null };
     }
     const all = store.calendars();
-    const wanted = named ?? this.config.defaultCalendar;
-    if (!wanted) return { calendar: undefined, title: "(default)" };
+    if (!wanted) return { name: undefined, uuid: null };
+
     const lower = wanted.toLowerCase();
-    const hit = all.find(
+    const hits = all.filter(
       (c) => c.uuid?.toLowerCase() === lower || c.title?.toLowerCase() === lower,
     );
-    if (!hit) {
+    if (!hits.length) {
       throw new CalendarNotFoundError(wanted, all.map((c) => c.title ?? "").filter(Boolean));
     }
+
+    /**
+     * Duplicate titles are real: the machine this was measured on has two
+     * calendars both named `olouvignes@me.com`. A read can legitimately span
+     * both, but a write has to land in exactly one — and only a NAME crosses to
+     * Apple Events, so an ambiguous one is refused rather than resolved by coin
+     * flip.
+     */
+    if (hits.length > 1) {
+      throw new PreconditionError(
+        `"${wanted}" matches ${hits.length} calendars, and a write has to name exactly one. ` +
+          `Calendars are addressed by name when writing — Apple Events cannot resolve a ` +
+          `calendar uid at all — so duplicates cannot be told apart. Rename one in Calendar.app, ` +
+          `or write to a calendar whose name is unique.`,
+        { requested: wanted, matches: hits.length },
+      );
+    }
+    const hit = hits[0]!;
     if (hit.isSubscribed) throw new CalendarNotWritableError(hit.title ?? wanted);
-    return { calendar: hit.uuid ?? hit.title ?? wanted, title: hit.title ?? wanted };
+    // The NAME is what crosses the boundary; the uuid is kept only for the ref.
+    return { name: hit.title ?? wanted, uuid: hit.uuid };
+  }
+
+  /** Map a calendar name reported by Apple Events back to its store uuid. */
+  #calendarUuidByName(name: string | null): string | null {
+    if (!name) return null;
+    const store = this.index();
+    if (!store) return null;
+    return store.calendars().find((c) => c.title === name)?.uuid ?? null;
+  }
+
+  /**
+   * The calendar NAME a ref points at, for a write.
+   *
+   * A ref carries the store uuid, which Apple Events cannot resolve, so it has
+   * to be turned back into a name before it crosses.
+   */
+  #nameForRefCalendar(calendarUid: string): string | undefined {
+    if (!calendarUid) return undefined;
+    const store = this.index();
+    if (!store) return undefined;
+    const lower = calendarUid.toLowerCase();
+    return store.calendars().find((c) => c.uuid?.toLowerCase() === lower)?.title ?? undefined;
   }
 
   async #run<T>(scriptText: string, params: unknown): Promise<T> {
@@ -588,7 +630,7 @@ export class AppleCalendarClient {
     const target = this.#writeTarget(fields.calendar);
     const win = this.#resolveWindow(fields.start, fields.end, fields.durationMinutes);
     const data = await this.#run<Record<string, unknown>>(CREATE_EVENT, {
-      calendar: target.calendar ?? null,
+      calendar: target.name ?? null,
       summary: fields.summary,
       startDate: win.startIso,
       endDate: win.endIso,
@@ -599,7 +641,12 @@ export class AppleCalendarClient {
       ...(fields.url !== undefined ? { url: fields.url } : {}),
     });
     this.invalidate();
-    return this.#shapeWrite(data, typeof data.calendarUid === "string" ? data.calendarUid : null);
+    // Prefer the uuid we resolved; fall back to looking up whichever calendar
+    // Calendar actually used, which is the default-calendar case.
+    const uuid =
+      target.uuid ??
+      this.#calendarUuidByName(typeof data.calendarName === "string" ? data.calendarName : null);
+    return this.#shapeWrite(data, uuid);
   }
 
   async updateEvent(fields: UpdateEventFields): Promise<WriteResult> {
@@ -632,7 +679,7 @@ export class AppleCalendarClient {
         : null;
 
     const data = await this.#run<Record<string, unknown>>(UPDATE_EVENT, {
-      calendar: ref.calendarUid || null,
+      calendar: this.#nameForRefCalendar(ref.calendarUid) ?? null,
       uid: ref.eventUid,
       ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
       ...(window ? { startDate: window.startIso, endDate: window.endIso } : {}),
@@ -669,7 +716,7 @@ export class AppleCalendarClient {
           );
         }
         const data = await this.#run<Record<string, unknown>>(EXCLUDE_OCCURRENCE, {
-          calendar: ref.calendarUid || null,
+          calendar: this.#nameForRefCalendar(ref.calendarUid) ?? null,
           uid: ref.eventUid,
           occurrenceStart: ref.occurrenceStart.toISOString(),
         });
@@ -689,7 +736,7 @@ export class AppleCalendarClient {
     const results: unknown[] = [];
     for (const [calendar, uids] of byCalendar) {
       const data = await this.#run<{ results: unknown[] }>(DELETE_EVENTS, {
-        calendar: calendar || null,
+        calendar: this.#nameForRefCalendar(calendar) ?? null,
         uids,
       });
       results.push(...(data.results ?? []));

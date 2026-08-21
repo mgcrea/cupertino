@@ -70,21 +70,24 @@ function prop(fn, fallback) {
 }
 
 /**
- * Find a calendar by uid, falling back to its name.
+ * Find a calendar BY NAME.
  *
- * A \`whose\` specifier IS affordable here and nowhere else in this file: there
- * are eight calendars on the probed machine, not 1,349 events, so the per-item
- * bridge cost that makes \`whose\` lose on events is negligible on calendars.
+ * MEASURED, macOS 26.6: \`calendar.uid()\` throws \`AppleEvent handler failed\`
+ * (-10000) for EVERY calendar, including ones this process just created. So a
+ * calendar cannot be addressed by uid across Apple Events at all, and the
+ * store's \`Calendar.UUID\` has no counterpart on this side.
+ *
+ * This is NOT the event id bridge, which docs/calendar.md measured as exact
+ * (\`CalendarItem.UUID\` matched an event's \`uid\` 198/198). That result was
+ * assumed to carry over to calendars; it does not. Events are addressable by
+ * uid, calendars are addressable by name, and the caller resolves the name
+ * before it gets here — including refusing an ambiguous one, which this side
+ * has no way to detect.
  */
 function findCalendar(C, wanted) {
   if (!wanted) {
     return prop(function () { return C.defaultCalendar(); }, null);
   }
-  var byUid = prop(function () {
-    var hits = C.calendars.whose({ uid: wanted })();
-    return hits.length ? hits[0] : null;
-  }, null);
-  if (byUid) return byUid;
   var cals = prop(function () { return C.calendars(); }, []);
   for (var i = 0; i < cals.length; i++) {
     var name = prop(function () { return String(cals[i].name()); }, null);
@@ -143,7 +146,9 @@ function readback(ev, cal) {
     description: prop(function () { var v = ev.description(); return v === null ? null : String(v); }, null),
     url: prop(function () { var v = ev.url(); return v === null ? null : String(v); }, null),
     stampDate: iso(prop(function () { return ev.stampDate(); }, null)),
-    calendarUid: prop(function () { return String(cal.uid()); }, null),
+    // No calendarUid: cal.uid() throws on every calendar (see findCalendar).
+    // The caller already knows which calendar it targeted, and re-derives the
+    // store uuid from this name.
     calendarName: prop(function () { return String(cal.name()); }, null)
   };
 }
