@@ -1,29 +1,57 @@
 import AppKit
 import SwiftUI
 
-/// Identifies the Activity scene to `openWindow`.
-enum ActivityWindow {
-  static let id = "activity"
+/// Cupertino's main window.
+///
+/// This started as the log pane and became the main window, which is the right
+/// shape for what it already was. A menu bar popover is 320pt wide and closes
+/// the moment focus moves — fine for a glance, wrong for watching a log, and
+/// wrong for the question a new user actually has, which is "is any of this
+/// working". So the status the popover summarises is repeated here as a header
+/// that stays put while the log scrolls underneath it.
+///
+/// It is still not opened on launch. Cupertino is started by a tool call far
+/// more often than by a person, and a window appearing while someone is typing
+/// at an assistant is exactly the interruption `open -g` exists to avoid —
+/// `AppDelegate` opens this only when a human launched the app in the
+/// foreground, or clicked the Dock icon.
+@MainActor
+enum MainWindowController {
+  private static let hosted = HostedWindow(
+    title: "Cupertino", autosaveName: "main",
+    content: { MainView(model: StatusModel.shared) })
+
+  static func show() { hosted.show() }
 }
 
-/// The log pane, at last rendered.
-///
-/// A window rather than a section of the menu: the popover is 320pt wide and
-/// closes the moment you click anywhere else, which is the opposite of what
-/// reading a scrolling log needs. LSUIElement only removes the Dock icon; an
-/// accessory app can still own windows.
-struct ActivityView: View {
-  @State private var pane: Pane = .log
-  @State private var surface: String = ActivityView.allSurfaces
+/// The entry point for callers that are not already on the main actor.
+enum MainWindowOpener {
+  static func show() {
+    Task { @MainActor in MainWindowController.show() }
+  }
+}
+
+struct MainView: View {
+  let model: StatusModel
+  /// Optional because that is the shape `List(selection:)` drives for a single
+  /// selection. A non-optional binding compiles, and then the sidebar highlight
+  /// moves while the detail pane stays where it was — selection updating in
+  /// AppKit but never reaching this state.
+  @State private var pane: Pane? = .log
+  @State private var surface: String = MainView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
 
   static let allSurfaces = "all"
 
-  /// The log is a stream and the connections are a snapshot; they answer
-  /// different questions and share only a window. Two panes rather than two
-  /// stacked lists, so neither has to give up half the height.
+  /// What the sidebar selects.
+  ///
+  /// Surfaces are destinations rather than a filter on one list, which is the
+  /// whole reason this became a split view: "is Mail working" is the question
+  /// people actually arrive with, and answering it used to mean reading three
+  /// different places.
   enum Pane: Hashable {
+    case surface(String)
     case log
     case connections
   }
@@ -37,35 +65,112 @@ struct ActivityView: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
-      header
-      Divider()
-      switch pane {
-      case .log:
-        filters
-        Divider()
-        log
-      case .connections:
-        connections
-      }
-      Divider()
-      footer
+    NavigationSplitView {
+      sidebar
+    } detail: {
+      detail
     }
-    .frame(minWidth: 560, minHeight: 320)
+    .frame(minWidth: 780, minHeight: 460)
+    .onAppear { model.refresh() }
   }
 
-  private var header: some View {
-    Picker("", selection: $pane) {
-      Text("Log").tag(Pane.log)
-      Text("Connections").tag(Pane.connections)
+  /// The sidebar carries its own material on macOS 26, which is why the glass
+  /// bar this window used to have is gone: hand-rolled chrome next to system
+  /// chrome is the one arrangement that always looks wrong.
+  private var sidebar: some View {
+    List(selection: $pane) {
+      Section("Surfaces") {
+        ForEach(Surface.all) { surface in
+          Label {
+            Text(surface.displayName)
+          } icon: {
+            Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+              .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+          }
+          .tag(Pane.surface(surface.id))
+        }
+      }
+      Section("Activity") {
+        Label("Log", systemImage: "list.bullet.rectangle").tag(Pane.log)
+        Label("Connections", systemImage: "cable.connector").tag(Pane.connections)
+      }
     }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .fixedSize()
-    .controlSize(.small)
+    .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+    .safeAreaInset(edge: .bottom) { sidebarStatus }
+  }
+
+  /// The two facts that are true of the whole app rather than of one surface.
+  /// Full Disk Access belongs here and nowhere else — `DiskAccessStatus` is
+  /// deliberately app-wide, and a copy of it per surface would imply a
+  /// containment that does not exist.
+  private var sidebarStatus: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Divider()
+      licenceLine
+      Button { SettingsOpener.show(.permissions) } label: {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(model.diskAccess == .granted ? Color.green : Color.orange)
+            .frame(width: 7, height: 7)
+          Text("Full Disk Access").font(.caption)
+          Spacer()
+        }
+      }
+      .buttonStyle(.plain)
+    }
     .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.bottom, 10)
+  }
+
+  @ViewBuilder
+  private var licenceLine: some View {
+    switch LicenseStore.check {
+    case .valid(let license):
+      Button { SettingsOpener.show(.licence) } label: {
+        HStack(spacing: 6) {
+          Circle().fill(Color.green).frame(width: 7, height: 7)
+          Text("Licensed").font(.caption)
+          Spacer()
+        }
+      }
+      .buttonStyle(.plain)
+      .help(license.email)
+    case .refused:
+      Button { SettingsOpener.show(.licence) } label: {
+        Label("Unlicensed", systemImage: "exclamationmark.triangle.fill")
+          .font(.caption)
+          .foregroundStyle(.orange)
+      }
+      .buttonStyle(.plain)
+      .help("Servers will not start until a key is entered")
+    }
+  }
+
+  @ViewBuilder
+  private var detail: some View {
+    switch pane ?? .log {
+    case .surface(let id):
+      if let surface = Surface.named(id) {
+        SurfaceDetail(surface: surface, model: model)
+      } else {
+        Text("Unknown surface").foregroundStyle(.secondary)
+      }
+    case .log:
+      VStack(spacing: 0) {
+        // Floating rather than welded to the edge: glass reads as a layer above
+        // the content, and a strip of it flush against the top with a divider
+        // under it just looks like a lighter background.
+        filters
+          .padding(.horizontal, 12)
+          .padding(.top, 12)
+          .padding(.bottom, 6)
+        log
+        Divider()
+        footer
+      }
+    case .connections:
+      connections
+    }
   }
 
   private var filters: some View {
@@ -92,8 +197,9 @@ struct ActivityView: View {
       Button("Clear") { LogStore.shared.clear() }
     }
     .controlSize(.small)
-    .padding(.horizontal, 12)
+    .padding(.horizontal, 14)
     .padding(.vertical, 8)
+    .glassBackground(cornerRadius: 12)
   }
 
   private var log: some View {

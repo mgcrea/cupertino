@@ -104,11 +104,15 @@ func containingApp() -> URL? {
 func launchApp() {
   let open = Process()
   open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+  // `--args --background` tells the app a tool call started it, not a person,
+  // so it stays in the menu bar instead of opening its window. The app cannot
+  // work this out for itself: an accessory app never becomes active, so there
+  // is no foreground/background difference for it to observe.
   if let app = containingApp() {
-    open.arguments = ["-g", app.path]
+    open.arguments = ["-g", app.path, "--args", BridgeProtocol.backgroundFlag]
   } else {
     warn("not running from inside Cupertino.app; falling back to the bundle identifier")
-    open.arguments = ["-g", "-b", "io.mgcrea.cupertino"]
+    open.arguments = ["-g", "-b", "io.mgcrea.cupertino", "--args", BridgeProtocol.backgroundFlag]
   }
   do { try open.run(); open.waitUntilExit() } catch {
     warn("could not launch Cupertino: \(error.localizedDescription)")

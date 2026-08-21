@@ -36,6 +36,10 @@ enum BridgeProtocol {
   /// First line the app sends back: `ok\n`, or `err <reason>\n`.
   static let ok = "ok"
   static let errorPrefix = "err "
+
+  /// Passed to the app when the bridge cold-starts it, so it knows a tool call
+  /// is waiting rather than a person. See `launchApp` in CupertinoBridge.
+  static let backgroundFlag = "--background"
 }
 
 /// Fill a `sockaddr_un` for `path`, or nil if it will not fit.

@@ -36,51 +36,27 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   }
 }
 
-/// The Settings window, owned directly rather than declared as a scene.
+/// The Settings window.
 ///
-/// SwiftUI's `Settings` scene was the obvious choice and it does not work here.
-/// It is opened by the `showSettingsWindow:` action, which AppKit routes through
-/// the app menu — and `LSUIElement` means this app has no app menu, so the
-/// action reaches no target and the button does nothing at all. The same reason
-/// makes ⌘, unreachable, so the scene was buying a keyboard shortcut and a menu
-/// item that neither exist. `Window` + `openWindow` would work for buttons but
-/// not from `AppDelegate`, where the first-run prompt lives.
-///
-/// So: an `NSWindow` around an `NSHostingController`, held for the life of the
-/// app. Opening it from a background caller, a delegate callback or a button is
-/// then the same one call.
+/// See `HostedWindow` for why this is an `NSWindow` rather than a SwiftUI
+/// `Settings` scene: the scene opens through an app menu that `LSUIElement`
+/// removes, so its button did nothing at all.
 @MainActor
-final class SettingsWindowController {
-  static let shared = SettingsWindowController()
+enum SettingsWindowController {
+  private static let hosted = HostedWindow(
+    title: "Cupertino Settings", autosaveName: "settings",
+    content: { SettingsView(model: StatusModel.shared) })
 
-  /// Not released on close, so reopening restores the same window — and with it
-  /// the frame AppKit autosaves.
-  private var window: NSWindow?
-
-  func show(_ pane: SettingsPane) {
+  static func show(_ pane: SettingsPane) {
     UserDefaults.standard.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
-
-    if window == nil {
-      let hosting = NSHostingController(rootView: SettingsView(model: StatusModel.shared))
-      let created = NSWindow(contentViewController: hosting)
-      created.title = "Cupertino Settings"
-      created.styleMask = [.titled, .closable, .miniaturizable]
-      created.isReleasedWhenClosed = false
-      created.setFrameAutosaveName("settings")
-      created.center()
-      window = created
-    }
-
-    // An accessory app does not come forward on its own, so the window would
-    // otherwise open behind whatever the user was looking at.
-    NSApp.activate(ignoringOtherApps: true)
-    window?.makeKeyAndOrderFront(nil)
+    hosted.show()
   }
 }
 
+/// The entry point for callers that are not already on the main actor.
 enum SettingsOpener {
   static func show(_ pane: SettingsPane) {
-    Task { @MainActor in SettingsWindowController.shared.show(pane) }
+    Task { @MainActor in SettingsWindowController.show(pane) }
   }
 }
 
@@ -204,6 +180,7 @@ struct PermissionsPane: View {
           Spacer()
           if model.diskAccess != .granted {
             Button("Grant…") { Permissions.openDiskAccessSettings() }
+              .buttonStyle(.glass)
               .controlSize(.small)
           }
         }
@@ -247,7 +224,8 @@ struct PermissionsPane: View {
 
             switch model.automation[surface.id] {
             case .notDetermined:
-              Button("Allow…") { model.requestAutomation(surface) }.controlSize(.small)
+              Button("Allow…") { model.requestAutomation(surface) }
+                .buttonStyle(.glass).controlSize(.small)
             case .denied:
               // A denial cannot be re-prompted; it has to change in Settings.
               Button("Settings…") { Permissions.openAutomationSettings() }.controlSize(.small)

@@ -106,6 +106,7 @@ struct LicensePane: View {
 
       HStack {
         Button("Use this key") { apply(entry) }
+          .buttonStyle(.glassProminent)
           .keyboardShortcut(.defaultAction)
           .disabled(entry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         Button("Remove") {
@@ -117,6 +118,7 @@ struct LicensePane: View {
         .disabled(LicenseStore.raw == nil)
         Spacer()
         Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
+          .buttonStyle(.glass)
       }
       .controlSize(.small)
     }

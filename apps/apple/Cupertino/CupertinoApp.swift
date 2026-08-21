@@ -15,26 +15,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } catch {
       hostLog("cupertino", .error, error.localizedDescription)
     }
+    DockPresence.observe()
     promptForLicenceIfNeeded()
   }
 
+  /// A click on the Dock icon, or opening the app while it is already running —
+  /// which, since Cupertino is started by the first tool call and usually also
+  /// by the login item, is what a Finder double-click almost always becomes.
+  ///
+  /// This is the only path that opens the main window automatically. Doing it
+  /// from `applicationDidFinishLaunching` instead needed the app to work out
+  /// whether a person or a tool call had started it, and it cannot: an
+  /// `.accessory` app never becomes active, so `NSApp.isActive` is false either
+  /// way, and "is the login item enabled" suppresses exactly the daily users
+  /// most likely to want the window. A cold double-click with the app not
+  /// running therefore shows only the menu bar icon; opening it once more gets
+  /// the window, and that case is rare precisely because the app is nearly
+  /// always already up.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    guard !hasVisibleWindows else { return true }
+    if !LicenseStore.isLicensed && !UserDefaults.standard.bool(forKey: Self.licencePromptShown) {
+      UserDefaults.standard.set(true, forKey: Self.licencePromptShown)
+      SettingsOpener.show(.licence)
+    } else {
+      MainWindowController.show()
+    }
+    return true
+  }
+
+  /// Show the main window when a person opened the app, and never when a tool
+  /// call did.
+  ///
+  /// The obvious test — is the app active — does not work: an `.accessory` app
+  /// never becomes active, so `NSApp.isActive` is false for a double-click and
+  /// for `open -g` alike. The bridge therefore says so outright.
+  ///
+  /// Launch at login is the other quiet start. Someone who asked for the app to
+  /// be there at login did not ask for a window at login, and the menu bar item
+  /// and the Dock icon are each one click away.
+  private func openMainWindowIfLaunchedByHand() {
+    guard !CommandLine.arguments.contains(BridgeProtocol.backgroundFlag) else { return }
+    guard !LoginItem.isEnabled else { return }
+    MainWindowController.show()
+  }
+
+  static let licencePromptShown = "licencePromptShown"
+
   /// Open the licence pane once, and only when there is nothing to run with.
   ///
-  /// A menu bar app that opens a window at launch is normally a nuisance. This
-  /// one earns it exactly once: an unlicensed build has just refused, or is
-  /// about to refuse, the tool call that started it, and the popover is behind
-  /// an icon the user may never have looked at. Recorded in defaults so it is
-  /// the first launch and not every launch.
+  /// Suppressed when the bridge started us. `cupertino-bridge` passes
+  /// `--background` because it launches Cupertino with `open -g` while someone
+  /// is mid-sentence at an assistant, and a window arriving then is the exact
+  /// interruption that flag exists to prevent. They still learn why: the server
+  /// refusal reaches the MCP host, the Activity log has it, and the popover
+  /// carries the banner. The pane opens the first time a person opens the app.
   private func promptForLicenceIfNeeded() {
-    let shown = "licencePromptShown"
-    guard !LicenseStore.isLicensed, !UserDefaults.standard.bool(forKey: shown) else { return }
-    UserDefaults.standard.set(true, forKey: shown)
-    Task { @MainActor in
-      // `showSettingsWindow:` has nothing to open until the scene graph exists,
-      // and it does not yet during didFinishLaunching.
-      try? await Task.sleep(for: .milliseconds(500))
-      SettingsOpener.show(.licence)
-    }
+    guard !CommandLine.arguments.contains(BridgeProtocol.backgroundFlag) else { return }
+    guard !LicenseStore.isLicensed,
+      !UserDefaults.standard.bool(forKey: Self.licencePromptShown)
+    else { return }
+    UserDefaults.standard.set(true, forKey: Self.licencePromptShown)
+    SettingsOpener.show(.licence)
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -48,10 +89,15 @@ struct CupertinoApp: App {
   @State private var model = StatusModel.shared
 
   var body: some Scene {
-    // LSUIElement is YES, so there is no Dock icon and no main window: the
-    // menu bar is the whole surface. docs/distribution.md's framing — "the
-    // signed app that grants them their permissions once instead of once
-    // each" — is a status-and-consent app, not a window.
+    // The menu bar is the only surface Cupertino shows uninvited. It is started
+    // by a tool call far more often than by a person, and docs/distribution.md's
+    // framing — "the signed app that grants them their permissions once instead
+    // of once each" — is a broker, not something to look at.
+    //
+    // It owns two windows all the same, opened only when asked: the main window
+    // (status and the log) and Settings. `DockPresence` gives the app a Dock
+    // icon for exactly as long as one of them is open, because a titled window
+    // with no Dock icon and no app menu is one you cannot get back to.
     // The mark, not an SF Symbol. MenuBarIcon is a template image: pure black
     // plus alpha, so AppKit tints it for light, dark and the highlighted state
     // rather than us drawing three of them.
@@ -59,13 +105,6 @@ struct CupertinoApp: App {
       StatusMenu(model: model)
     }
     .menuBarExtraStyle(.window)
-
-    // The one exception to "the menu bar is the whole surface". A log is read by
-    // scrolling, and the popover dismisses itself the moment focus moves.
-    Window("Activity", id: ActivityWindow.id) {
-      ActivityView()
-    }
-    .defaultSize(width: 760, height: 460)
   }
 }
 
@@ -119,7 +158,6 @@ final class StatusModel {
 
 struct StatusMenu: View {
   let model: StatusModel
-  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -163,6 +201,7 @@ struct StatusMenu: View {
         Spacer()
         if model.diskAccess != .granted {
           Button("Grant…") { Permissions.openDiskAccessSettings() }
+            .buttonStyle(.glass)
             .controlSize(.small)
         }
       }
@@ -181,6 +220,7 @@ struct StatusMenu: View {
             // Ask here, where the dialog is expected, rather than letting the
             // first tool call block on it 30 seconds into a conversation.
             Button("Allow…") { model.requestAutomation(surface) }
+              .buttonStyle(.glass)
               .controlSize(.small)
           case .denied:
             // A denial cannot be re-prompted; it has to be changed in Settings.
@@ -205,16 +245,15 @@ struct StatusMenu: View {
 
       Divider()
 
+      // Three, not four. A fourth truncated "Open Cupertino" to "Open Cuperti…"
+      // at 320pt, and Refresh was the one to lose: `onAppear` already refreshes
+      // every time the menu opens, and `requestAutomation` writes its own result
+      // back, so there is no state it could reach that those two do not.
       HStack {
+        Button("Open Cupertino") { MainWindowController.show() }
+          .buttonStyle(.glass)
         Button("Settings…") { SettingsOpener.show(.general) }
-        Button("Activity…") {
-          openWindow(id: ActivityWindow.id)
-          // An accessory app does not come forward on its own, so the window
-          // would otherwise open behind whatever the user was looking at.
-          NSApp.activate(ignoringOtherApps: true)
-        }
         Spacer()
-        Button("Refresh") { model.refresh() }
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
       .controlSize(.small)
@@ -251,6 +290,7 @@ struct LicenceBanner: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       Button("Enter a licence key…") { SettingsOpener.show(.licence) }
+        .buttonStyle(.glassProminent)
         .controlSize(.small)
     }
   }
@@ -357,7 +397,6 @@ struct ClientsSection: View {
 /// wired Cupertino into — `Sessions.grouped` has the arithmetic.
 struct ConnectionsSection: View {
   let model: StatusModel
-  @Environment(\.openWindow) private var openWindow
 
   /// Grouping already bounds the list to the number of *kinds* of client
   /// installed. The cap is the backstop that makes that bound provable.
@@ -424,8 +463,6 @@ struct ConnectionsSection: View {
   }
 
   private func openActivity() {
-    openWindow(id: ActivityWindow.id)
-    // An accessory app does not come forward on its own.
-    NSApp.activate(ignoringOtherApps: true)
+    MainWindowController.show()
   }
 }
