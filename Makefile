@@ -173,6 +173,7 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 	@rm -rf "$(RELEASE_APP)/Contents/Resources/servers" "$(RELEASE_APP)/Contents/Resources/node"
 	@ditto "$(STAGED)/servers" "$(RELEASE_APP)/Contents/Resources/servers"
 	@ditto "$(STAGED)/node" "$(RELEASE_APP)/Contents/Resources/node"
+	@install -m 644 apps/apple/EULA "$(RELEASE_APP)/Contents/Resources/EULA.txt"
 	@$(MAKE) --no-print-directory sign
 
 # Inner-out, and never in the other order: signing the bundle first and then

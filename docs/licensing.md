@@ -61,12 +61,12 @@ trips, four processes that can now read their SSH keys.
 Convenience sits on top and is real but secondary: no absolute paths, the host config written for
 you, the writes toggle, the log pane.
 
-|            |                                                                               |
-| ---------- | ----------------------------------------------------------------------------- |
-| Model      | one-time, bounded update window — no backend exists to justify a subscription |
-| Collection | merchant of record — Paddle, Lemon Squeezy or Polar; they file the EU VAT     |
-| Validation | offline, signed licence key, verified locally, no phone-home                  |
-| Trial      | full features, time-limited                                                   |
+|            |                                                                          |
+| ---------- | ------------------------------------------------------------------------ |
+| Model      | one-time, per major version — 1.x is free forever, 2.0 is a new purchase |
+| Collection | Stripe, with Stripe Tax on; VAT filed directly through OSS — see below   |
+| Validation | offline, signed licence key, verified locally, no phone-home             |
+| Trial      | full features, 14 days                                                   |
 
 **Writes are not the paywall.** Gating them behind the licence would make the free tier the safe one
 and the paid tier the dangerous one — backwards as a sales message and worse as a default.
@@ -97,6 +97,14 @@ contradicts its own pitch, and the next section is why that matters more than us
    existing user's Full Disk Access silently, on an ordinary update, with no prompt. That is
    precisely the Bartender mechanism. Stating in advance what happens to `io.mgcrea.cupertino` if
    this is sold, abandoned or handed on costs nothing, and no competitor bothers.
+
+   **Now written**, in [succession.md](succession.md), and incorporated into the EULA by reference so
+   it is owed to licensees rather than merely published. The load-bearing commitment is that a change
+   of ownership ships under a **new** bundle identifier — every user re-grants, consciously, having
+   been told who the acquirer is. That is deliberately expensive to acquire through, which is the
+   whole point. The second is a twelve-month dead-man's switch: no release and no substantive commit
+   for a year and `apps/apple/` relicenses to MIT on its own, because a redistribution reservation
+   protecting an unmaintained project protects nothing and only blocks a fork.
 
 ## Enforcing the first claim
 
@@ -175,6 +183,59 @@ And never cite the absence of `com.apple.security.network.client` as evidence. T
 means something only inside the App Sandbox, so its absence here proves nothing at all. It is cited
 wrongly often enough to be worth naming.
 
+## Collection, and where the record lives
+
+This table used to say "merchant of record — Paddle, Lemon Squeezy or Polar". It says Stripe now, and
+the reasoning is recorded here so the swap is not read as an oversight and quietly reverted.
+
+An MoR is bought for one thing: it becomes the legal seller and files the EU VAT. That is worth real
+money in saved attention, and it is declined here for one reason — **Paddle, Lemon Squeezy and Polar
+all want to be the licence authority too**, and their licence authority is an online activation
+endpoint. Bending one of them into issuing an offline key that nothing ever calls back is fighting
+the product to get less of it, at a higher fee. Stripe has no opinion about licensing, which is the
+correct amount of opinion.
+
+The cost is honest and recurring: selling from France to EU consumers means registering for **VAT
+OSS**, filing quarterly at destination rates from the first sale, and keeping two pieces of location
+evidence per transaction. Stripe Tax computes and collects; the filing is ours. If that attention
+ever costs more than the fee difference, **Polar** is the escape hatch — the migration is a new
+checkout URL and a webhook, because nothing in the app knows where a key came from.
+
+### The app can never be the enforcement point
+
+Worth stating once, because every licensing vendor's happy path violates it. `audit-network.sh` fails
+the build on `URLSession`, `_nw_*`, `_CFHTTP`, `_getaddrinfo` and the TLS entry points, and the front
+page sells the claim it protects. An activation call would break a green CI job **and** a shipped
+promise. CryptoKit and the Keychain trip none of those symbols, so offline verification is free of
+CI risk and online verification is not merely undesirable but unavailable.
+
+The second constraint is `apps/apple/LICENSE` §1(c): anyone may already compile and run their own
+build with no fee and no key. So **no effort goes into anti-tamper** — no obfuscation, no integrity
+self-checks, no hardened trial storage. All of it is unenforceable by construction against an audience
+that can run `make build-release` legally, and every hour spent on it is an hour not spent on the
+people who paid. The deterrent is that the key carries the buyer's email and the app renders it.
+
+### Three stores, one job each
+
+| Question                                  | Lives in                 | Why there                                                 |
+| ----------------------------------------- | ------------------------ | --------------------------------------------------------- |
+| who paid, how much, what tax              | Stripe                   | already the system of record for money; do not rebuild    |
+| which key went to whom, and is it revoked | Cloudflare D1, one table | needed to re-send a key, and to address 1.x buyers at 2.0 |
+| is _this_ Mac licensed                    | the Mac's Keychain       | offline by construction; never leaves the machine         |
+
+**"Who has not paid" is not stored anywhere.** There is no such list. It is the absence of a valid key
+on a disk we cannot see, and any design that needs the list has smuggled a phone-home back in.
+
+D1 rather than deriving the key deterministically from the payment: derivation looks elegant until the
+payload format changes once, and then no old key can be reproduced and every re-send is wrong. It also
+has to be possible to ask which addresses hold a 1.x key on the day 2.0 ships, or the per-major model
+has no upgrade path. One table, and it is the only state this project keeps about anyone.
+
+Revocation lands at build time rather than run time: a refund sets `revoked_at`, and the release job
+bakes the current revoked-ID list into the next build. A refunded key therefore stops working at the
+next update, not instantly. That asymmetry is the price of the no-network claim, it is small, and the
+[EULA](../apps/apple/EULA) says so in §4(a) rather than leaving it to be discovered.
+
 ## Positioning
 
 Every MCP connector shipping today is cloud OAuth — Gmail, Drive, Notion. This one is the opposite,
@@ -193,9 +254,15 @@ Apple-shaped.
 
 ## Not decided
 
-- Whether anything beyond the trial is free.
-- Price.
+- **Price.** The last thing blocking a pricing page, and the only one that cannot be defaulted.
+- **Whether anything beyond the trial is free.** Nothing, or a reduced mode after day 14.
+- **What expiry actually does.** Nag and keep relaying, or stop relaying. Not `allowWrites` either
+  way — see above, that door is closed.
 - Whether the servers ever need a second licence. They do not today.
+
+Decided, and recorded above so they are not re-opened: one-time per major version, Stripe rather than
+a merchant of record, offline validation as a constraint rather than a preference, a 14-day
+full-feature trial, and the succession commitments in [succession.md](succession.md).
 
 And the honest expectation, recorded so it is not mistaken for a forecast: macOS only, developer
 audience, MIT core. This is a modest revenue line and a strong reputation asset, not a business. The

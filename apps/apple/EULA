@@ -1,0 +1,182 @@
+Cupertino End User License Agreement
+Version 1.0, 2026
+
+Copyright (c) 2026 Olivier Louvignes <olivier@mgcrea.io>
+
+This agreement covers the signed, notarized builds of Cupertino distributed by
+the copyright holder — the ones downloaded from cupertino.mgcrea.io or from the
+GitHub releases page, and installed from `Cupertino.zip`.
+
+It does NOT cover the source code. The source is in the same repository under
+its own terms; see Section 10.
+
+WHAT THIS IS
+
+You are buying a build, not access to the code. The code is readable by anyone
+and compiling it yourself costs nothing and needs no license key — that is
+written into the source license and is not a loophole. What a license key pays
+for is the signed and notarized artifact, the work of keeping it working across
+macOS releases, and the commitments in Sections 7 through 9.
+
+1. THE LICENSE
+
+On payment, you are granted a perpetual, worldwide, non-exclusive license to
+install and use the covered builds, for any purpose, including commercially.
+
+The key is issued to a person or an organization, not to a machine. There is no
+activation limit and nothing counts your installs. Use it on every Mac you own
+or control. If you bought as an organization, one key covers one named user
+across their machines; a second person needs a second key.
+
+The key is not transferable to someone else, and it is not for publishing. It
+carries the purchaser's email address, and the app displays it.
+
+2. WHAT VERSIONS IT COVERS
+
+A key names a major version and covers every release within it. A key for 1.x
+unlocks 1.0, 1.4, 1.9 and anything else numbered 1 — for as long as you like,
+with no expiry and no renewal.
+
+Version 2.0 is a new purchase. There is no subscription, nothing lapses, and a
+build you are running today does not stop working because a newer major shipped.
+Upgrade pricing for existing licensees, if any, is offered at the time and is not
+promised here.
+
+3. THE TRIAL
+
+Before purchase the app runs with every feature enabled for 14 days. Nothing is
+withheld from the trial and no capability is reserved for paying users — in
+particular the write controls are a safety feature, not a paid one, and behave
+identically whether or not a key is present.
+
+After 14 days the app requires a key. One trial per machine is intended.
+
+4. VALIDATION IS OFFLINE, AND WHAT THAT COSTS
+
+The app verifies your key locally, using a signature it can check without asking
+anyone. It does not contact a licensing server, because it does not contact any
+server: the app opens no network socket of its own, and that is checked on every
+build rather than asserted. See `scripts/audit-network.sh` in the repository, and
+run it against the copy you downloaded if you would rather not take our word.
+
+Two consequences follow, and they are stated here rather than discovered:
+
+  (a) There is no way to deactivate a key remotely. If a key is revoked under
+      Section 5 or Section 11, it stops being accepted by builds released after
+      the revocation. Builds you already have continue to accept it. This is a
+      deliberate trade and the alternative was a program that phones home.
+
+  (b) Nothing about your usage is measured, transmitted or retained. There are no
+      installation counts, no license check-ins, no analytics, and no crash
+      reporting. If you never write to us, we have no way to know you are running
+      it.
+
+5. REFUNDS
+
+Within 30 days of purchase, for any reason or none, ask and the purchase is
+refunded in full. Write to olivier@mgcrea.io from the address the key was issued
+to. The key is revoked on refund, with the effect described in Section 4(a).
+
+If you are a consumer in the European Union you also have a statutory right of
+withdrawal, which the 30-day policy above is intended to exceed rather than
+replace. Because the key is delivered immediately, checkout asks you to consent
+to that immediate delivery and to acknowledge that doing so ends the statutory
+withdrawal right once delivery is complete. The refund policy above applies
+regardless.
+
+6. WHAT THE SOFTWARE DOES WITH YOUR DATA
+
+Nothing leaves your Mac by way of Cupertino. The app reads your local Mail,
+Notes and Reminders data on behalf of the MCP clients you connect to it, over a
+socket that is a file on your own disk, restricted to your own user account.
+
+Two honest limits on that sentence:
+
+  (a) The MCP client you connect — Claude, an editor, whatever it is — is a
+      separate program with its own network behaviour and its own privacy terms.
+      Cupertino hands it data. What that program then does is between you and it.
+
+  (b) Some operations ask Mail.app to send a message or check for new mail.
+      Mail.app then does network I/O, as it would if you had clicked the button
+      yourself. Cupertino opens no socket; it is not true that nothing at all
+      leaves the machine.
+
+7. FULL DISK ACCESS
+
+Cupertino asks for Full Disk Access, and that is the point of it: one grant to
+one notarized binary from an identifiable developer, instead of the same grant
+handed separately to every editor that might spawn a server.
+
+You may withdraw the grant at any time in System Settings. The app degrades and
+reports what it cannot reach; it does not work around the refusal.
+
+8. UPDATES
+
+Updates within your major version are free and are published as new downloads.
+The app does not update itself and contains no update checker, which follows from
+Section 4. Checking for a new version is something you do, not something it does.
+
+9. SUCCESSION
+
+The bundle identifier `io.mgcrea.cupertino` is what your Full Disk Access grant
+is attached to. If it changed hands quietly, a new owner would inherit that grant
+from every existing user on an ordinary update, with no prompt.
+
+What happens to it if this project is sold, abandoned or handed on is written
+down in advance, in `docs/succession.md` in the repository. That document is
+incorporated into this agreement by reference, and the commitments in it are made
+to you as a licensee.
+
+10. THE SOURCE IS SEPARATE
+
+This agreement grants you no rights in the source code, and the source license
+grants you no rights in these builds. The two are independent, and you may hold
+both at once.
+
+You may study, modify and compile the source under its own terms, and doing so
+requires no key and no payment. Section 2(b) of that license asks you not to
+circumvent or strip the license validation in builds distributed here, or to
+distribute anything designed to do so; that request applies to you under this
+agreement too. Building an unvalidated binary for your own use from the published
+source is expressly permitted and is not circumvention.
+
+11. TERMINATION
+
+This license ends if you breach it and do not cure the breach within 30 days of
+becoming aware of it — in practice, if you resell or publish your key. On
+termination the key is revoked, with the effect described in Section 4(a).
+
+Nothing else terminates it. It does not expire, it is not conditional on
+continued payment, and it is not withdrawn because the project stops.
+
+12. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+This does not limit any warranty or remedy that applicable consumer law grants
+you and does not permit us to disclaim — in the European Union, the statutory
+conformity guarantee in particular.
+
+13. LIMITATION OF LIABILITY
+
+To the extent permitted by law, total liability arising out of or in connection
+with the Software is limited to the amount you paid for the license.
+
+Nothing here excludes liability for death or personal injury caused by
+negligence, for fraud, or for anything else that cannot lawfully be excluded.
+
+14. GOVERNING LAW
+
+French law governs this agreement. If you are a consumer, this does not deprive
+you of the protection of the mandatory rules of the country where you live, and
+you may bring proceedings in your own courts.
+
+15. CONTACT
+
+Olivier Louvignes
+olivier@mgcrea.io
+https://cupertino.mgcrea.io
+
+Cupertino is not affiliated with, endorsed by, or sponsored by Apple Inc.

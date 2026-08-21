@@ -280,7 +280,7 @@ Two, because the halves are not the same thing.
 | --------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `packages/*`, `scripts/`    | [MIT](LICENSE) — libraries, vendor them freely                                                           |
 | `apps/apple/`               | [source-available](apps/apple/LICENSE) — read, audit, build for yourself; binary redistribution reserved |
-| the signed, notarized build | sold, under the EULA shipped with it                                                                     |
+| the signed, notarized build | sold, under the [EULA](apps/apple/EULA) shipped with it                                                  |
 
 Cupertino asks for Full Disk Access, so the source stays readable. **Building it yourself needs no
 fee and no licence key** — that is written into the licence, not offered as a concession. What is
