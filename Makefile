@@ -15,6 +15,11 @@ STAGED       := apps/apple/.build/staged
 # The surfaces the app brokers. Mirrors `Surface.all` in apps/apple/Cupertino/Surfaces.swift
 # and `known` in apps/apple/CupertinoBridge/main.swift; adding one means all three.
 SURFACES     := mail notes reminders
+# Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
+# the `app-v*` tag so the shipped version is the tag rather than the pbxproj
+# default, which nothing bumps. Empty locally, where the pbxproj value stands.
+# Command-line variables propagate to the sub-makes `build-release` runs.
+XCARGS       ?=
 APP     ?= apps/apple/.build/Build/Products/$(CONFIG)/Cupertino.app
 INSTALLED := /Applications/Cupertino.app
 BRIDGE  := $(APP)/Contents/Helpers/cupertino-bridge
@@ -34,10 +39,15 @@ build: ## Build both halves: the npm servers and the app (Debug)
 	@pnpm -r build
 	@$(MAKE) --no-print-directory app
 
+# The `|| true` belongs to grep, not to the pipeline: grep exits 1 on a clean
+# build with nothing to report, and swallowing that must not also swallow
+# xcodebuild's own failure. Without pipefail plus the inner braces, a failed
+# Release build reaches `bundle`, which then fails at `ditto` with a missing-path
+# error that says nothing about what actually broke.
 app: ## Build Cupertino.app (Debug; Release needs the bundled servers)
-	@xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
-		-configuration $(CONFIG) -derivedDataPath apps/apple/.build build \
-		| grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true
+	@set -o pipefail; xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
+		-configuration $(CONFIG) -derivedDataPath apps/apple/.build $(XCARGS) build \
+		| { grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true; }
 
 run: app dev-config ## Build, then (re)launch the menu bar app
 	@pkill -f 'Cupertino.app/Contents/MacOS/Cupertino' 2>/dev/null || true
