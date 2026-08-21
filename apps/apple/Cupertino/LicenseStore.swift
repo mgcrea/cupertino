@@ -6,7 +6,7 @@ import Foundation
 /// the user, rendered in the menu bar, emailed to them in plain text and
 /// re-sendable on demand. Encrypting at rest something displayed in the UI would
 /// be ceremony, and it would make this the app's first `SecItem` code for no
-/// security gained. `Settings.allowWrites` already reads `UserDefaults`
+/// security gained. `SurfaceSettings.allowWrites` already reads `UserDefaults`
 /// synchronously from the connection thread; this needs exactly that and no more.
 ///
 /// Nothing is cached. Ed25519 verification is microseconds, and re-checking on

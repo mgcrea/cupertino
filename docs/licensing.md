@@ -277,7 +277,7 @@ actually paid, and that number cannot be reconstructed after the fact.
 `UserDefaults` rather than the Keychain, which is what this table said first. The key is not a
 secret — it is issued to the user, rendered in the menu bar, emailed in plain text and re-sendable on
 demand — so encrypting it at rest would be ceremony, and it would make licensing the app's first
-`SecItem` code for nothing gained. `Settings.allowWrites` already reads `UserDefaults` synchronously
+`SecItem` code for nothing gained. `SurfaceSettings.allowWrites` already reads `UserDefaults` synchronously
 from the connection thread, which is exactly what the gate needs and all it needs.
 
 **"Who has not paid" is not stored anywhere.** There is no such list. It is the absence of a valid key

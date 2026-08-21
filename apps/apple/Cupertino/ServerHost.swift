@@ -211,9 +211,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
     process.environment = ServerLocator.environment(
-      for: surface, allowWrites: Settings.allowWrites(surface))
+      for: surface, allowWrites: SurfaceSettings.allowWrites(surface))
 
-    let writes = Settings.allowWrites(surface)
+    let writes = SurfaceSettings.allowWrites(surface)
     hostLog(surface.id, .info, "allowWrites=\(writes)")
 
     let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
@@ -358,7 +358,12 @@ func closeOnExec(_ fd: Int32) {
 }
 
 /// Per-surface user settings.
-enum Settings {
+///
+/// Not `Settings`: that name shadows SwiftUI's `Settings` scene, and the
+/// collision is invisible until someone writes one and gets "cannot be
+/// constructed because it has no accessible initializers" pointing at the
+/// wrong file.
+enum SurfaceSettings {
   static func allowWrites(_ surface: Surface) -> Bool {
     UserDefaults.standard.bool(forKey: "allowWrites.\(surface.id)")
   }
