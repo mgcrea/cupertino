@@ -10,18 +10,26 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
     "apple_mail_search_messages",
     {
       description:
-        "Search mail by any combination of text, sender, recipient, subject, mailbox, account, " +
-        "read/flagged state, attachments and date range. This is the tool to reach for whenever a " +
-        "filter is involved — it reads Mail's own search index, so it is fast even across a " +
-        "six-figure archive. Returns a `ref` per message for the read and action tools. " +
+        "Search mail by any combination of text, body text, sender, recipient, subject, mailbox, " +
+        "account, read/flagged state, attachments and date range. This is the tool to reach for " +
+        "whenever a filter is involved — it reads Mail's own search index, so it is fast even " +
+        "across a six-figure archive. Returns a `ref` per message for the read and action tools. " +
         "Requires Full Disk Access; without it this returns degraded:true and you should fall back " +
         "to apple_mail_list_messages on a specific mailbox.",
       inputSchema: {
         query: z
           .string()
           .optional()
+          .describe("Free text matched against subject and sender. For bodies, use `body`."),
+        body: z
+          .string()
+          .optional()
           .describe(
-            "Free text matched against subject and sender. Does NOT search message bodies.",
+            "Free text matched against message BODIES. There is no body index on macOS, so this " +
+              "reads the message files of whatever the other filters leave — cost is linear in " +
+              "that number. COMBINE IT WITH A NARROWING FILTER (mailbox, sender, dateFrom) or it " +
+              "will exceed the scan bound and refuse rather than answer from a partial scan. The " +
+              "result's `bodyScan` block reports how many messages were considered and scanned.",
           ),
         sender: z.string().optional().describe("Match the sender address or display name."),
         recipient: z.string().optional().describe("Match any recipient address."),
@@ -55,10 +63,33 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
               "for a capped listing of one mailbox. Call apple_mail_diagnostics for details.",
           };
         }
+        /*
+         * A refusal, not an empty result. The distinction is the whole point of
+         * the bound: "no messages matched" and "too many messages to check"
+         * look identical to a model unless the second one says so.
+         */
+        if (result.bodyScan?.status === "over-bound") {
+          const { candidates, bound } = result.bodyScan;
+          return {
+            degraded: true,
+            capability: "body-scan",
+            reason:
+              `${candidates} messages match the other filters, above the ${bound}-message body ` +
+              `scan bound. Nothing was scanned, so this is not "no results".`,
+            hint:
+              "Narrow with mailbox, account, sender or dateFrom and try again — a body search " +
+              "over a few hundred candidates is near-instant. Raise APPLE_MAIL_BODY_SCAN_MAX " +
+              "only if a slow answer is genuinely wanted.",
+            candidates,
+            bound,
+          };
+        }
+
         return {
           returned: result.messages.length,
           source: result.source,
           indexAgeSeconds: result.indexAgeSeconds,
+          ...(result.bodyScan ? { bodyScan: result.bodyScan } : {}),
           ...(result.walBlind
             ? { warning: "Index opened WAL-blind (immutable); very recent mail may be missing." }
             : {}),

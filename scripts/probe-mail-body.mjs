@@ -409,7 +409,16 @@ const needleFrom = (parsed) => {
 // ─── 5. LANE 1 — Spotlight ───────────────────────────────────────────────────
 
 const mdutil = safe(
-  () => execFileSync("/usr/bin/mdutil", ["-s", "/"], { encoding: "utf8", timeout: 15_000 }).trim(),
+  () =>
+    execFileSync("/usr/bin/mdutil", ["-s", "/"], {
+      encoding: "utf8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      // mdutil answers over two lines with a leading tab, which reads as a
+      // broken report when the rest of the block is one fact per line.
+      .replaceAll(/\s+/g, " ")
+      .trim(),
   () => null,
 );
 
@@ -420,6 +429,11 @@ const mdfind = (needle, onlyIn) => {
       encoding: "utf8",
       timeout: 30_000,
       maxBuffer: 32 * 1024 * 1024,
+      // mdfind and mdls each log two [UserQueryParser] lines to stderr per
+      // invocation, and this probe invokes them once per sampled file. Inherited
+      // stderr turns a 200-file sample into 800 lines of Apple's logging with
+      // the report buried underneath it.
+      stdio: ["ignore", "pipe", "ignore"],
     });
     const paths = out.split("\n").filter(Boolean);
     return { ok: true, ms: Math.round(performance.now() - started), paths };
@@ -433,24 +447,41 @@ const mdfind = (needle, onlyIn) => {
   }
 };
 
-/** Has Spotlight ingested THIS file? Asked of the file, not of a query. */
-const mdIndexed = (path) =>
+/**
+ * THE CONTROL, and the correction to an earlier version of this probe.
+ *
+ * The first draft asked `mdls` per file whether Spotlight held
+ * `kMDItemContentType` and `kMDItemTextContent`, then ran a body round trip on
+ * each of 200 files. It reported "100% known to Spotlight, 0% with text
+ * content, 0/199 round trip" and concluded, wrongly, that Spotlight indexes
+ * mail files but not mail bodies.
+ *
+ * BOTH mdls readings were meaningless:
+ *
+ *   - `kMDItemContentType` is derived from the file's UTI on demand. mdls
+ *     answers it for a file the index has never heard of, so "100% known to
+ *     Spotlight" measured the `.emlx` extension and nothing else.
+ *   - `kMDItemTextContent` is searchable but NOT readable. Spotlight never
+ *     hands it back through mdls, so "0% with text content" was the API
+ *     declining to answer, reported as a finding about mail.
+ *
+ * And the round trip was 199 queries against an index that structurally cannot
+ * contain those files, because **`~/Library` is excluded from the Spotlight
+ * volume index** — the whole tree, not just Mail. Three cheap counts settle
+ * that before any per-file work, and distinguish the three ways it can fail:
+ * mdfind broken, ~/Library excluded, or Mail specifically unindexed.
+ */
+const mdCount = (dir, query) =>
   safe(
     () => {
       const out = execFileSync(
-        "/usr/bin/mdls",
-        ["-name", "kMDItemContentType", "-name", "kMDItemTextContent", path],
-        { encoding: "utf8", timeout: 15_000 },
+        "/usr/bin/mdfind",
+        dir ? ["-onlyin", dir, "-count", query] : ["-count", query],
+        { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "ignore"] },
       );
-      return {
-        contentType: !/kMDItemContentType\s*=\s*\(null\)/.test(out),
-        // The attribute a body search actually needs. Present content-type with
-        // absent text content is an indexed FILE with an unindexed BODY, which
-        // is the precise failure this lane has to be checked for.
-        textContent: !/kMDItemTextContent\s*=\s*\(null\)/.test(out),
-      };
+      return Number(out.trim());
     },
-    () => ({ contentType: false, textContent: false }),
+    () => null,
   );
 
 const spotlight = {
@@ -459,74 +490,104 @@ const spotlight = {
   tested: false,
 };
 
-if (mailRoot && fda && files.length) {
-  // Sample across the whole walk rather than off the front: the walk returns
-  // account by account and mailbox by mailbox, so the first N files are all one
-  // mailbox and would measure that mailbox's indexing, not the store's.
-  const stride = Math.max(1, Math.floor(files.length / SAMPLE));
-  const sample = files.filter((_, i) => i % stride === 0).slice(0, SAMPLE);
+if (mailRoot) {
+  // Cheap, and in this order on purpose: each answers a question the next one
+  // would otherwise be blamed for.
+  const reach = {
+    // Does mdfind work here at all? Unscoped, and every Mac has hundreds.
+    mdfindWorks: mdCount(null, "kMDItemFSName == '*.app'"),
+    // Is ~/Library reachable? This is the one that decides it.
+    homeLibrary: mdCount(join(HOME, "Library"), "kMDItemFSName == '*'"),
+    // Is Mail specifically reachable, as files and as content?
+    mailFiles: mdCount(mailRoot, "kMDItemFSName == '*.emlx'"),
+    mailContent: mdCount(mailRoot, "mail"),
+  };
+  spotlight.reach = reach;
 
-  let ingested = 0;
-  let withText = 0;
-  let roundTripAttempted = 0;
-  let roundTripHit = 0;
-  let needleless = 0;
-  let unreadable = 0;
-  const needleLengths = [];
-  const roundTripMs = [];
-  const bodyReadMs = [];
+  const excluded = reach.homeLibrary === 0 && (reach.mdfindWorks ?? 0) > 0;
+  spotlight.excluded = excluded;
 
-  for (const f of sample) {
-    const md = mdIndexed(f.path);
-    if (md.contentType) ingested += 1;
-    if (md.textContent) withText += 1;
+  if (excluded) {
+    // Do NOT spend 200 round trips confirming an exclusion three counts already
+    // proved. A zero measured this way is a fact about Spotlight's scope; a
+    // zero measured per-file reads as a fact about mail bodies, which is how
+    // the earlier draft of this probe drew the wrong conclusion.
+    spotlight.tested = true;
+    spotlight.skippedRoundTrip = "~/Library is not in the Spotlight volume index";
+    spotlight.roundTrip = { attempted: 0, hit: 0, coverage: 0, meanQueryMs: null };
+  } else if (fda && files.length) {
+    const stride = Math.max(1, Math.floor(files.length / SAMPLE));
+    const sample = files.filter((_, i) => i % stride === 0).slice(0, SAMPLE);
 
-    const t0 = performance.now();
-    const parsed = readBody(f.path);
-    bodyReadMs.push(performance.now() - t0);
-    if (!parsed.ok) {
-      unreadable += 1;
-      continue;
+    let roundTripAttempted = 0;
+    let roundTripHit = 0;
+    let needleless = 0;
+    let unreadable = 0;
+    const needleLengths = [];
+    const roundTripMs = [];
+    const bodyReadMs = [];
+
+    for (const f of sample) {
+      const t0 = performance.now();
+      const parsed = readBody(f.path);
+      bodyReadMs.push(performance.now() - t0);
+      if (!parsed.ok) {
+        unreadable += 1;
+        continue;
+      }
+      const needle = needleFrom(parsed);
+      if (!needle) {
+        needleless += 1;
+        continue;
+      }
+      needleLengths.push(needle.length);
+      const found = mdfind(needle, mailRoot);
+      roundTripAttempted += 1;
+      roundTripMs.push(found.ms);
+      if (found.paths.includes(f.path)) roundTripHit += 1;
     }
 
-    const needle = needleFrom(parsed);
-    if (!needle) {
-      needleless += 1;
-      continue;
-    }
-    needleLengths.push(needle.length);
-
-    // The decisive measurement. Everything above says whether Spotlight has
-    // heard of the file; this says whether searching for a word that appears
-    // ONLY in this message's body actually returns this message.
-    const found = mdfind(needle, mailRoot);
-    roundTripAttempted += 1;
-    roundTripMs.push(found.ms);
-    if (found.paths.includes(f.path)) roundTripHit += 1;
+    Object.assign(spotlight, {
+      tested: true,
+      sampled: sample.length,
+      unreadable,
+      needleless,
+      meanNeedleLength: mean(needleLengths),
+      roundTrip: {
+        attempted: roundTripAttempted,
+        hit: roundTripHit,
+        coverage: pct(roundTripHit, roundTripAttempted),
+        meanQueryMs: mean(roundTripMs),
+      },
+      meanBodyReadMs: mean(bodyReadMs),
+    });
   }
-
-  Object.assign(spotlight, {
-    tested: true,
-    sampled: sample.length,
-    unreadable,
-    ingested,
-    ingestedRate: pct(ingested, sample.length),
-    withTextContent: withText,
-    textContentRate: pct(withText, sample.length),
-    needleless,
-    meanNeedleLength: mean(needleLengths),
-    roundTrip: {
-      attempted: roundTripAttempted,
-      hit: roundTripHit,
-      // THE NUMBER THE DECISION TURNS ON.
-      coverage: pct(roundTripHit, roundTripAttempted),
-      meanQueryMs: mean(roundTripMs),
-    },
-    meanBodyReadMs: mean(bodyReadMs),
-  });
 }
 
 doc.findings.spotlight = spotlight;
+
+/**
+ * Roughly what an indexer would actually keep.
+ *
+ * The earlier draft measured `body.length` against the file size and got 83.8%,
+ * which projected a 4.8 GB index. That number was mostly base64: a mail store
+ * is 68% `.partial.emlx` and the rest carries encoded attachments inline, and
+ * base64 is both the bulk of the bytes and the last thing anyone would tokenise
+ * into a full-text index. Stripping it is not a refinement, it is the
+ * difference between a plausible projection and a scary wrong one.
+ *
+ * Deliberately cruder than packages/mail/src/client/mime.ts. This estimates a
+ * SIZE; that parser has to be correct.
+ */
+const indexableText = (body) =>
+  body
+    // Encoded attachment payloads: long unbroken runs of base64 alphabet.
+    .replaceAll(/^[A-Za-z0-9+/=]{60,}$/gm, "")
+    // Quoted-printable soft breaks and escapes.
+    .replaceAll(/=[0-9A-F]{2}/g, "")
+    // Markup, which an indexer strips before tokenising.
+    .replaceAll(/<[^>]{1,2000}>/g, " ")
+    .replaceAll(/\s+/g, " ");
 
 // ─── 6. LANE 2 — what an owned FTS5 index would cost ─────────────────────────
 // Extrapolated from the sample rather than measured whole, because measuring it
@@ -536,8 +597,17 @@ doc.findings.spotlight = spotlight;
 doc.findings.fts5 = { tested: false };
 
 if (files.length && doc.findings.walk.ran) {
+  // A DISJOINT sample from the Spotlight one, taken from the other end of the
+  // walk. Re-reading the files that loop just touched measures the page cache:
+  // the earlier draft did exactly that and reported 0.02 ms/file — about
+  // 1.4 GB/s, which is memory, not disk — and projected a 4-second build over
+  // 182k files. The number is still warm (the walk stat'd everything), so it
+  // remains a floor; it is no longer a fantasy.
   const stride = Math.max(1, Math.floor(files.length / Math.min(SAMPLE, files.length)));
-  const sample = files.filter((_, i) => i % stride === 0).slice(0, SAMPLE);
+  const sample = files
+    .filter((_, i) => i % stride === 0)
+    .toReversed()
+    .slice(0, SAMPLE);
 
   const started = performance.now();
   let bytesRead = 0;
@@ -550,7 +620,7 @@ if (files.length && doc.findings.walk.ran) {
       continue;
     }
     bytesRead += parsed.bytes;
-    textBytes += parsed.body.length;
+    textBytes += indexableText(parsed.body).length;
   }
   const elapsed = performance.now() - started;
 
@@ -559,24 +629,27 @@ if (files.length && doc.findings.walk.ran) {
   // against the larger number or the estimate flatters itself.
   const totalFiles = doc.findings.walk.filesSeen || files.length;
   const textRatio = bytesRead ? textBytes / bytesRead : 0;
+  const meanBytes = doc.findings.walk.meanBytes ?? 0;
 
   doc.findings.fts5 = {
     tested: true,
     sampled: sample.length,
     failed,
-    perFileMs: Number(perFileMs.toFixed(2)),
+    perFileMs: Number(perFileMs.toFixed(3)),
     textRatio: Number(textRatio.toFixed(3)),
+    cacheWarm: true,
     projected: {
       files: totalFiles,
-      // Single-threaded and cold-cache-free: the sample was read moments after
-      // the walk stat'd it, so this is an OPTIMISTIC floor, not a forecast.
-      buildSeconds: Math.round((perFileMs * totalFiles) / 1000),
-      extractedTextBytes: Math.round(textRatio * (doc.findings.walk.meanBytes ?? 0) * totalFiles),
+      buildSecondsWarm: Math.round((perFileMs * totalFiles) / 1000),
+      // The honest bound. A cold pass is seek-limited, not CPU-limited, and
+      // 182k small files scattered across a sharded tree is the worst shape
+      // there is for that. 2 ms/file is a conservative cold figure and the two
+      // numbers together give the real range.
+      buildSecondsCold: Math.round((2 * totalFiles) / 1000),
+      extractedTextBytes: Math.round(textRatio * meanBytes * totalFiles),
       // FTS5 with the default tokenizer lands near the size of the text it
       // indexes once the docsize and idx shadow tables are counted.
-      approxIndexBytes: Math.round(
-        textRatio * (doc.findings.walk.meanBytes ?? 0) * totalFiles * 1.1,
-      ),
+      approxIndexBytes: Math.round(textRatio * meanBytes * totalFiles * 1.1),
     },
     note:
       "An owned index is a second copy of the user's mail on their disk that Cupertino would " +
@@ -631,15 +704,19 @@ doc.findings.narrowThenScan = narrow;
 const cov = doc.findings.spotlight?.roundTrip?.coverage ?? null;
 
 doc.verdict.coverage = cov;
-doc.verdict.lane = !fda
-  ? "unknown — no Full Disk Access, so no lane could be measured"
-  : cov === null
-    ? "unknown — the round trip never ran"
-    : cov >= 0.95
-      ? "spotlight"
-      : cov >= 0.6
-        ? "spotlight+fallback"
-        : "owned-fts5";
+doc.verdict.spotlightExcluded = doc.findings.spotlight?.excluded ?? null;
+doc.verdict.lane =
+  doc.findings.spotlight?.excluded === true
+    ? "owned-fts5"
+    : !fda
+      ? "unknown — no Full Disk Access, so no lane could be measured"
+      : cov === null
+        ? "unknown — the round trip never ran"
+        : cov >= 0.95
+          ? "spotlight"
+          : cov >= 0.6
+            ? "spotlight+fallback"
+            : "owned-fts5";
 
 doc.verdict.recommendation =
   {
@@ -653,9 +730,15 @@ doc.verdict.recommendation =
       "the tool result the way indexAgeSeconds and walBlind already do — a coverage number the " +
       "model can read beats a silent miss. Narrow-then-scan fills the gap for bounded queries.",
     "owned-fts5":
-      "Spotlight cannot be trusted for this. Build and own an FTS5 index, and budget for the " +
+      "The Spotlight volume index does not reach ~/Library, so mdfind can never answer a body " +
+      "query about mail however the query is phrased. That leaves an owned FTS5 index and the " +
       "incremental refresh problem that comes with it — the build cost measured above is the " +
-      "cheap half.",
+      "cheap half. Weigh it against narrow-then-scan below before committing: a lane that " +
+      "answers bounded queries and stores nothing may be the better trade. Mail's own body " +
+      "search is not a counter-example. The indexing_analytics_*_donations_* tables in the " +
+      "Envelope Index are CoreSpotlight donation bookkeeping, and a CoreSpotlight index is " +
+      "queried through CSSearchQuery by the app that donated to it — not through mdfind, and " +
+      "not by a third party.",
     unknown: "Not measured. Grant Full Disk Access, make sure Mail is running, and re-run.",
   }[doc.verdict.lane.split(" ")[0]] ?? "Not measured.";
 
@@ -729,10 +812,21 @@ if (args.json) {
 
   L.push("LANE 1 — Spotlight");
   L.push(`  volume indexing      : ${f.spotlight.volumeStatus ?? "?"}`);
-  if (f.spotlight.tested) {
+  if (f.spotlight.reach) {
+    const r = f.spotlight.reach;
+    L.push(`  mdfind works at all  : ${r.mdfindWorks} hits for *.app`);
+    L.push(`  ~/Library indexed    : ${r.homeLibrary} files   <-- THE CONTROL`);
+    L.push(`  Mail .emlx indexed   : ${r.mailFiles} files`);
+    L.push(`  Mail content hits    : ${r.mailContent}`);
+  }
+  if (f.spotlight.excluded) {
+    L.push("");
+    L.push("  ~/Library IS EXCLUDED FROM THE SPOTLIGHT VOLUME INDEX.");
+    L.push("  Not a fact about mail: the whole tree is absent, so no query scoped");
+    L.push("  under it can ever return anything. The per-file round trip is skipped");
+    L.push("  rather than run 200 times to reconfirm it.");
+  } else if (f.spotlight.tested) {
     L.push(`  sampled              : ${f.spotlight.sampled} files`);
-    L.push(`  known to Spotlight   : ${pc(f.spotlight.ingestedRate)}`);
-    L.push(`  with text content    : ${pc(f.spotlight.textContentRate)}`);
     L.push(
       `  body round trip      : ${f.spotlight.roundTrip.hit}/${f.spotlight.roundTrip.attempted} = ${pc(f.spotlight.roundTrip.coverage)}  <-- THE NUMBER`,
     );
@@ -749,10 +843,12 @@ if (args.json) {
 
   L.push("LANE 2 — an owned FTS5 index");
   if (f.fts5?.tested) {
-    L.push(`  read cost            : ${f.fts5.perFileMs} ms/file over ${f.fts5.sampled} files`);
-    L.push(`  text / file bytes    : ${pc(f.fts5.textRatio)}`);
     L.push(
-      `  projected build      : ${f.fts5.projected.buildSeconds} s for ${f.fts5.projected.files} files (optimistic floor)`,
+      `  read cost            : ${f.fts5.perFileMs} ms/file over ${f.fts5.sampled} files (page cache warm)`,
+    );
+    L.push(`  indexable / raw      : ${pc(f.fts5.textRatio)} after stripping base64 and markup`);
+    L.push(
+      `  projected build      : ${f.fts5.projected.buildSecondsWarm} s warm — ${f.fts5.projected.buildSecondsCold} s cold, for ${f.fts5.projected.files} files`,
     );
     L.push(
       `  projected index size : ~${Math.round(f.fts5.projected.approxIndexBytes / 1e6)} MB on the user's disk, forever`,

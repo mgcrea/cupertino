@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } f
 import { basename, join, resolve, sep } from "node:path";
 
 import type { Config } from "../config.js";
+import { scanBodies } from "./body-scan.js";
 import {
   extractAttachment,
   lookupEmlx,
@@ -63,6 +64,28 @@ export type LaneStatus = {
   indexMode?: string;
   schemaFingerprint?: string;
 };
+
+/**
+ * What a body search actually did, reported alongside the results.
+ *
+ * The bound is declared rather than hidden. A scan that silently stopped at the
+ * newest N messages would answer "not found" for older mail indistinguishably
+ * from a real absence, and the model has no way to tell the two apart — so when
+ * the candidate set is too wide this says so, with both numbers, and returns
+ * nothing rather than a partial answer dressed as a complete one.
+ */
+export type BodyScanReport =
+  | {
+      status: "ok";
+      candidates: number;
+      scanned: number;
+      matched: number;
+      /** Candidates with no readable message file. Usually a missing grant. */
+      unreadable: number;
+      elapsedMs: number;
+      bound: number;
+    }
+  | { status: "over-bound"; candidates: number; bound: number };
 
 /** What `#lookupMessageFile` found, and — when it found nothing — why. */
 type MessageFileLookup =
@@ -333,30 +356,120 @@ export class AppleMailClient {
     opts: Omit<SearchFilters, "mailboxRowids"> & {
       account?: string | undefined;
       mailbox?: string | undefined;
+      /** Free text matched against message BODIES. See body-scan.ts. */
+      body?: string | undefined;
     },
   ): Promise<{
     messages: MessageSummary[];
-    source: "index";
+    source: "index" | "index+body-scan";
     indexMode: string;
     indexAgeSeconds: number | null;
     walBlind: boolean;
+    bodyScan?: BodyScanReport;
   } | null> {
     const index = await this.index();
     if (!index) return null;
 
     const mailboxRowids = await this.#targetMailboxRowids(opts);
     const lookup = await this.#mailboxLookup();
-    const rows = index.search({ ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) });
+    const scoped = { ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) };
 
-    return {
-      messages: rows
-        .map((r) => this.#rowToSummary(r, lookup))
-        .filter((m): m is MessageSummary => m !== null),
-      source: "index",
+    const common = {
       indexMode: index.mode,
       indexAgeSeconds: await this.indexAgeSeconds(),
       // immutable=1 cannot see the -wal, so results may lag reality.
       walBlind: index.mode === "immutable",
+    };
+
+    if (!opts.body) {
+      const rows = index.search(scoped);
+      return {
+        messages: rows
+          .map((r) => this.#rowToSummary(r, lookup))
+          .filter((m): m is MessageSummary => m !== null),
+        source: "index" as const,
+        ...common,
+      };
+    }
+
+    /*
+     * The body lane. The index narrows, the scan reads only the survivors.
+     *
+     * Candidates are fetched WITHOUT the caller's limit and offset, because
+     * those bound the answer and this needs to bound the work: paging into
+     * results that have not been filtered yet would silently drop matches
+     * sitting past the first page. One row over the ceiling is enough to know
+     * the set is too wide, so ask for exactly that many.
+     */
+    const bound = this.config.bodyScanMax;
+    const candidateRows = index.search({ ...scoped, limit: bound + 1, offset: 0 });
+
+    const byUrl = new Map([...lookup.values()].map((e) => [e.url, e]));
+    const accounts = await this.mailboxes.accounts();
+    const dirOf = new Map(accounts.map((a) => [a.id, a.directory]));
+    const placeOf = new Map<number, { accountUuid: string; mailbox: string }>();
+    for (const row of candidateRows) {
+      const entry = byUrl.get(row.mailboxUrl);
+      if (entry) placeOf.set(row.rowid, entry);
+    }
+
+    const outcome = scanBodies({
+      candidates: candidateRows.map((r) => r.rowid),
+      term: opts.body,
+      bound,
+      maxBytes: this.config.bodyScanBytes,
+      locate: (rowid) => {
+        const place = placeOf.get(rowid);
+        const directory = place ? dirOf.get(place.accountUuid) : null;
+        if (!place || !directory) return null;
+        try {
+          const found = lookupEmlx({
+            accountDirectory: directory,
+            mailbox: place.mailbox,
+            rowid,
+          });
+          return found.found ? found.path : null;
+        } catch {
+          // lookupEmlx swallows its own I/O errors; anything reaching here is
+          // one bad candidate, and one bad candidate must not take out a query
+          // over two thousand of them.
+          return null;
+        }
+      },
+    });
+
+    if (outcome.status === "over-bound") {
+      return {
+        messages: [],
+        source: "index+body-scan" as const,
+        ...common,
+        bodyScan: {
+          status: "over-bound",
+          candidates: outcome.candidates,
+          bound: outcome.bound,
+        },
+      };
+    }
+
+    const hits = new Set(outcome.matched);
+    const matchedRows = candidateRows.filter((r) => hits.has(r.rowid));
+    const paged = matchedRows.slice(opts.offset, opts.offset + opts.limit);
+
+    return {
+      messages: paged
+        .map((r) => this.#rowToSummary(r, lookup))
+        .filter((m): m is MessageSummary => m !== null),
+      source: "index+body-scan" as const,
+      ...common,
+      bodyScan: {
+        status: "ok",
+        candidates: outcome.candidates,
+        scanned: outcome.scanned,
+        matched: matchedRows.length,
+        unreadable: outcome.unreadable,
+        elapsedMs: outcome.elapsedMs,
+        bound,
+      },
     };
   }
 

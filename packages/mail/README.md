@@ -7,8 +7,8 @@ that is already synced to your Mac — no IMAP credentials, no OAuth, no mail le
 
 ## Status
 
-Search, listing, counting, threading and every mutation are implemented. Reading message _bodies_
-is the one remaining lane — see [Roadmap](#roadmap).
+Search, listing, counting, threading, body reading, body _search_ and every mutation are
+implemented.
 
 ## How it works
 
@@ -154,13 +154,14 @@ npx @modelcontextprotocol/inspector node dist/cli.js
 
 ## Tools
 
-| Tool                        | Does                                                                                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apple_mail_diagnostics`    | What the server can currently do and why. **Call this first when anything looks wrong** — it names the exact System Settings pane to open. |
-| `apple_mail_list_accounts`  | Accounts with UUIDs, addresses and mailbox names. Start here.                                                                              |
-| `apple_mail_list_mailboxes` | Mailboxes, optionally with counts (~0.3 s each).                                                                                           |
-| `apple_mail_list_messages`  | Newest N of one mailbox, with a `ref` per message.                                                                                         |
-| `apple_mail_count_messages` | Totals and unread, labelled by source.                                                                                                     |
+| Tool                         | Does                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apple_mail_diagnostics`     | What the server can currently do and why. **Call this first when anything looks wrong** — it names the exact System Settings pane to open. |
+| `apple_mail_list_accounts`   | Accounts with UUIDs, addresses and mailbox names. Start here.                                                                              |
+| `apple_mail_list_mailboxes`  | Mailboxes, optionally with counts (~0.3 s each).                                                                                           |
+| `apple_mail_list_messages`   | Newest N of one mailbox, with a `ref` per message.                                                                                         |
+| `apple_mail_search_messages` | Any combination of filters. `body` searches message text — see [Body search](#body-search).                                                |
+| `apple_mail_count_messages`  | Totals and unread, labelled by source.                                                                                                     |
 
 Every message carries an opaque `ref` (`m1:<accountUuid>/<mailbox>#<id>`) which the read and action
 tools take. It is versioned and carries its mailbox, so a row id can never be applied to the wrong
@@ -262,20 +263,41 @@ Things that will bite you, documented so nobody has to rediscover them:
 - **Reading a message does not launch Mail.** If Mail is not running, read tools fail cleanly rather
   than launching it, because launching Mail steals focus and starts a sync.
 
-## Roadmap
+## Body search
 
-Phase 0 is a read-only spike (`pnpm probe`) that answers the questions nobody can answer without
-Full Disk Access — chiefly whether the index's `ROWID` is the same integer as the AppleScript
-message id, which is what lets a search result be acted on. Phases 2–5 are gated on it.
+`search_messages` takes a `body` term, and it is the one filter with no index behind it.
 
-| Phase                                 | Status                                          |
-| ------------------------------------- | ----------------------------------------------- |
-| 0 · spike                             | script ready, **needs Full Disk Access to run** |
-| 1 · AppleScript lane                  | done                                            |
-| 2 · index lane (search)               | blocked on phase 0                              |
-| 3 · body lane (`.emlx`)               | blocked on phase 0                              |
-| 4 · write lane (flag/move/delete)     | ready to start                                  |
-| 5 · compose lane (send/reply/forward) | ready to start                                  |
+There is nothing to index against. The Envelope Index carries no FTS table, and the Spotlight
+volume index **excludes `~/Library` entirely** — `mdfind` returns nothing under that path however
+the query is phrased, which is a fact about Spotlight's scope and not about mail. Mail's own body
+search runs on CoreSpotlight donations, queried through `CSSearchQuery` by the app that donated
+them and unreachable from here. The measurements are in
+[docs/mail-body.md](../../docs/mail-body.md).
+
+So the index narrows and the scan reads only the survivors. **Cost is linear in survivors**,
+measured at 0.48 ms per message on a 181,734-message store:
+
+| Candidates after the other filters | Cost           |
+| ---------------------------------- | -------------- |
+| 100 — a tight filter               | 48 ms          |
+| 500                                | 242 ms         |
+| 1,932 — 90 days of one mailbox     | 0.9 s          |
+| 6,566 — 90 days, every mailbox     | 3.2 s          |
+| 182,329 — no filter at all         | 88 s, unusable |
+
+Which is why the bound is **declared, not hidden**. Over `APPLE_MAIL_BODY_SCAN_MAX` (2,000) the
+search returns `degraded` naming the candidate count and the bound, and scans nothing. A silent cap
+at the newest N messages would answer "not found" for older mail indistinguishably from a real
+absence, and the model has no way to tell those apart; a refusal it can read, it can act on.
+
+Two consequences worth knowing:
+
+- **Combine `body` with a narrowing filter.** `mailbox`, `sender`, `dateFrom` — any of them. A body
+  search over a few hundred candidates is near-instant.
+- **The scan reads the first `APPLE_MAIL_BODY_SCAN_BYTES` (64 KB) of each file.** 79% of a real
+  store's bytes are base64 that no text search would match, and MIME puts text parts ahead of
+  attachments — so this trades a tail nothing wants for a cost paid on every candidate. A term
+  hiding past the cap is missed; raise it if that matters more than latency.
 
 ## Develop
 

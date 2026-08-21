@@ -75,6 +75,27 @@ export const registerDiagnosticsTools = (
           },
           lanes,
           messageFile,
+          /*
+           * Body search is its own lane and reports as one, because "it found
+           * nothing" and "it could not look" are the two answers a caller must
+           * never confuse. It rides on the message-file lane — no file, no body
+           * — so its readiness is that lane's readiness plus a declared bound.
+           */
+          bodySearch: {
+            available: messageFile.some((p) => p.status === "ok"),
+            via: "index narrows, message files are scanned",
+            reason: messageFile.some((p) => p.status === "ok")
+              ? null
+              : "Body search reads .emlx files, and no account produced one. An account cached " +
+                "headers-only has no bodies on disk at all; otherwise this is the message-file " +
+                "lane failing, which the messageFile block above explains per account.",
+            scanBound: client.config.bodyScanMax,
+            readBytesPerMessage: client.config.bodyScanBytes,
+            note:
+              "There is no body index on macOS to use: the Envelope Index has no FTS table, and " +
+              "the Spotlight volume index excludes ~/Library entirely. Cost is linear in the " +
+              "messages left by the other filters, so a body search wants a narrowing filter.",
+          },
           permissions: {
             automation: lanes.applescript === "live" ? "granted" : "denied-or-mail-not-running",
             fullDiskAccess: located.readable
@@ -115,6 +136,7 @@ export const registerDiagnosticsTools = (
               : "(all accounts)",
             indexMode: client.config.indexMode,
             degradedMaxMessages: client.config.degradedMaxMessages,
+            bodyScanMax: client.config.bodyScanMax,
             maxResults: client.config.maxResults,
             attachmentDir: client.config.attachmentDir,
           },

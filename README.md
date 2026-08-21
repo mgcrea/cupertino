@@ -154,8 +154,8 @@ is `APPLE_MAIL_` or `APPLE_NOTES_`.
 
 `allowWrites` gates mutation, but on Mail the larger blast radius is _reading_ an entire archive —
 that is what `*_ACCOUNTS` is for, and it is enforced in exactly one place so no query path escapes
-it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_BODY_MAX_BYTES` and
-`*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
+it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_BODY_MAX_BYTES`,
+`*_BODY_SCAN_MAX`, `*_BODY_SCAN_BYTES` and `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
 
 ## The app
 

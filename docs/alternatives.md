@@ -16,8 +16,9 @@ Every alternative surveyed tells the user to **grant Full Disk Access to Termina
 one thing none of them solve and the one thing this repo was started to solve. It is not the only
 difference, but it is the only difference nobody else has tried to close.
 
-The place a user can rationally choose otherwise today is **body search**, which Cupertino does not
-have. See [Where we lose](#where-we-lose).
+Body search — the one capability a competitor genuinely had and this did not — is now
+implemented, though the unbounded case is deliberately refused rather than served. See
+[Where we lose](#where-we-lose).
 
 ## The baseline: what happens with no server at all
 
@@ -94,13 +95,13 @@ single-surface server buys no containment and costs another trip to System Setti
 
 ## Where we lose
 
-**Body search.** `apple_mail_search_messages` matches subject and sender; the tool description says
-so outright and `envelope.ts` calls body search "a separate, opt-in scan" that does not exist.
-`imdinu` markets exactly this and is right about why it matters: "find the mail where they
-mentioned the invoice" is a body query, and subject+sender silently returns nothing. This is the
-one place a user should pick a competitor today. Being measured in
-[mail-body.md](mail-body.md) via `pnpm probe:mail-body`, which is deciding between Spotlight, an
-owned FTS5 index, and narrowing on the index before scanning.
+**~~Body search.~~** Closed. `search_messages` now takes a `body` term. The lane is
+narrow-then-scan rather than an owned index, because the measurements said so: bounded body
+queries cost 48 ms to 3 s with nothing stored, and only an unbounded one justifies the 2.2 GB and
+the permanent refresh problem an FTS5 index would cost. `imdinu` still wins the unbounded case —
+"search my whole archive for a word, no other filter" is a query it answers and this one refuses.
+The refusal names the candidate count and the bound, which is the part that matters: it is not a
+silent cap reported as an absence. See [mail-body.md](mail-body.md).
 
 **Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers three
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why

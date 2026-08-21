@@ -41,6 +41,28 @@ const ConfigSchema = BaseConfigSchema.extend({
   degradedMaxMessages: z.number().int().min(1).max(200).default(50),
   bodyMaxBytes: z.number().int().min(1_024).max(10_000_000).default(262_144),
   /**
+   * The declared bound on a body search, in candidate messages.
+   *
+   * Body search has no index behind it — the Spotlight volume index does not
+   * reach `~/Library` at all, so there is nothing to query. What there is
+   * instead is the Envelope Index narrowing a query to its survivors and the
+   * scan reading only those. Cost is therefore linear in survivors, measured at
+   * 0.48 ms per message warm: 100 candidates is 48 ms, 2,000 is under a second,
+   * and the whole 182k store is 88 seconds — the Apple Events wall again.
+   *
+   * 2,000 is where an interactive answer stops being interactive. Over it the
+   * search returns `degraded` naming the count and the bound rather than
+   * scanning a truncated prefix, which is the failure this default exists to
+   * avoid: a silent cap answers "not found" for older mail indistinguishably
+   * from a real absence. See docs/mail-body.md.
+   */
+  bodyScanMax: z.number().int().min(1).max(50_000).default(2_000),
+  /**
+   * How much of each candidate file the scan reads. 79% of a mail store's bytes
+   * are base64 that no text search matches, and MIME puts the text parts first.
+   */
+  bodyScanBytes: z.number().int().min(1_024).max(1_000_000).default(65_536),
+  /**
    * The only directory save_attachment may write into. Enforced lexically with
    * `resolve()` + `basename()`, not `realpath()`: the destination may not exist
    * yet, and the filename — not the directory — is the attacker-controlled part.
@@ -68,6 +90,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     maxResults: parseIntOpt(env.APPLE_MAIL_MAX_RESULTS),
     degradedMaxMessages: parseIntOpt(env.APPLE_MAIL_DEGRADED_MAX_MESSAGES),
     bodyMaxBytes: parseIntOpt(env.APPLE_MAIL_BODY_MAX_BYTES),
+    bodyScanMax: parseIntOpt(env.APPLE_MAIL_BODY_SCAN_MAX),
+    bodyScanBytes: parseIntOpt(env.APPLE_MAIL_BODY_SCAN_BYTES),
     attachmentDir: trimmed(env.APPLE_MAIL_ATTACHMENT_DIR),
     mailboxCacheTtlMs: parseIntOpt(env.APPLE_MAIL_MAILBOX_CACHE_TTL_MS),
   };
