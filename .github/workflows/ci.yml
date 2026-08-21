@@ -42,6 +42,15 @@ jobs:
         run: pnpm run lint
       - name: Format 🔍
         run: pnpm run format:check
+      # Build BEFORE typecheck and test, not after. packages/core resolves to
+      # `./dist/index.d.ts`, and dist is gitignored — so on a clean checkout
+      # every package importing @mgcrea/mcp-apple-core fails with TS2307 until
+      # core has been built. This passes locally either way, because a developer
+      # already has a dist/ lying around from the last build; only a cold clone
+      # shows it. `pnpm -r build` orders the workspace topologically, so core
+      # comes first without naming it here.
+      - name: Build 📦
+        run: pnpm run build
       - name: TypeScript 🔍
         run: pnpm run typecheck
       # The suite is entirely offline: osascript is faked, the Envelope Index is
@@ -51,8 +60,6 @@ jobs:
       # either fail or, worse, pass for the wrong reason.
       - name: Test 🧪
         run: pnpm run test
-      - name: Build 📦
-        run: pnpm run build
       # The launcher is what gives the server its own Full Disk Access identity,
       # so a compile break in it would only surface at install time otherwise.
       - name: Launcher compiles 🔨
