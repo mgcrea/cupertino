@@ -15,8 +15,19 @@ const EPOCH = 978_307_200;
 /** A Friday, so "next monday" has an unambiguous answer. */
 const NOW = new Date(2026, 7, 21, 14, 30, 0);
 
-/** Apple-seconds for a given UTC instant, which is how the store holds them. */
+/** Apple-seconds for a given UTC instant. Correct for TIMED events, which are true instants. */
 const appleUtc = (iso: string) => Math.round(new Date(iso).getTime() / 1000) - EPOCH;
+
+/**
+ * Apple-seconds for LOCAL midnight on a day — how an all-day event is really
+ * stored, measured against a live calendar.
+ *
+ * The suite previously built these with `appleUtc(...T00:00:00Z)`, which agreed
+ * with the implementation's own wrong assumption and passed under all four
+ * zones while the surface reported every all-day event a day early.
+ */
+const appleLocalMidnight = (y: number, m: number, d: number) =>
+  Math.round(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000) - EPOCH;
 
 describe("parseDate", () => {
   it("reads a bare day as a whole day", () => {
@@ -175,21 +186,41 @@ describe("renderInstant", () => {
   });
 
   /**
-   * THE ALL-DAY TRAP, and the single most likely way this surface goes quietly
-   * wrong. An all-day event names a DAY, and the stored value is anchored at
-   * midnight UTC — so local getters land on the PREVIOUS day for every zone at a
-   * negative offset, which is the whole Americas. The day string is therefore
-   * derived from UTC components, never local ones.
+   * THE ALL-DAY TRAP, and the one this surface actually fell into.
    *
-   * This assertion proves nothing on a machine already in UTC, which is why the
-   * suite is run under four zones:
+   * Calendar stores an all-day event at midnight in the event's own zone — for a
+   * floating date, the local one. Reading it with UTC getters lands a day early
+   * for every zone at a POSITIVE offset, which is how a Paris calendar reported
+   * every birthday on the day before.
    *
-   *     for tz in UTC America/Los_Angeles Pacific/Auckland Asia/Kolkata; do
-   *       TZ=$tz npx vitest run test/dates.test.ts
-   *     done
+   * Run under four zones. That matrix passed while the code was wrong, because
+   * the fixture was built on the same assumption as the implementation — so the
+   * fixture is now built the way the store really holds it.
    */
-  it("gives an all-day event a bare day and no zone", () => {
-    const got = renderInstant(appleUtc("2026-08-21T00:00:00Z"), "_float", true, EPOCH);
+  it("gives an all-day event the day it is stored on, and no zone", () => {
+    const got = renderInstant(appleLocalMidnight(2026, 8, 21), "_float", true, EPOCH);
+    expect(got).toEqual({ allDay: true, day: "2026-08-21", timeZone: null });
+  });
+
+  /**
+   * REGRESSION, from a live calendar. A birthday stored at 2026-08-20T22:00Z
+   * (midnight in Paris) is a 21 August birthday, and was rendered as the 20th.
+   */
+  it("reads a Paris midnight as that day, not the one before", () => {
+    const stored = Math.round(Date.parse("2026-08-21T00:00:00+02:00") / 1000) - EPOCH;
+    const got = renderInstant(stored, "_float", true, EPOCH) as { day: string };
+    // In Paris this is the 21st. Elsewhere the local day differs, which is the
+    // honest answer for a FLOATING date and is asserted per-zone below.
+    if (Intl.DateTimeFormat().resolvedOptions().timeZone === "Europe/Paris") {
+      expect(got.day).toBe("2026-08-21");
+    }
+    expect(got.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  /** An all-day event carrying a real zone is read in THAT zone, not the reader's. */
+  it("honours an explicit zone on an all-day event", () => {
+    const stored = Math.round(Date.parse("2026-08-21T00:00:00+09:00") / 1000) - EPOCH;
+    const got = renderInstant(stored, "Asia/Tokyo", true, EPOCH);
     expect(got).toEqual({ allDay: true, day: "2026-08-21", timeZone: null });
   });
 

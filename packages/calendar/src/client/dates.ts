@@ -342,24 +342,30 @@ const partsIn = (d: Date, tz: string): Record<string, string> => {
 /**
  * Render a stored instant as an event start or end.
  *
- * ## Why all-day is derived in UTC
+ * ## Why all-day is derived in the event's own zone, falling back to local
  *
- * An all-day event names a DAY. The stored value is anchored at midnight UTC,
- * so reading it with local getters lands on the PREVIOUS day for every zone at a
- * negative offset — the whole Americas. Verified rather than reasoned about:
+ * An all-day event names a DAY, and the day you get depends entirely on which
+ * frame you read the stored instant in. MEASURED against a live store:
  *
- *   TZ=America/Los_Angeles   local 2026-08-20   utc 2026-08-21   <- shifted
- *   TZ=UTC                   local 2026-08-21   utc 2026-08-21
- *   TZ=Asia/Kolkata          local 2026-08-21   utc 2026-08-21
- *   TZ=Pacific/Auckland      local 2026-08-21   utc 2026-08-21
+ *   stored          2026-08-20T22:00:00Z
+ *   UTC getters     2026-08-20    <- a day early
+ *   local getters   2026-08-21    <- what Calendar.app shows
  *
- * (Reminders documents the mirror-image bug for its own storage, which is
- * anchored the other way round — see docs/reminders.md. The direction is a
- * property of the anchor, not a general rule, which is exactly why it is
- * measured here rather than carried over.)
+ * Calendar anchors an all-day event at midnight in the event's own zone, which
+ * for a floating date is the local one. So the day comes from local components,
+ * or from `start_tz` when that names a real zone.
  *
- * So the day string comes from UTC components, never local ones. `dates.test.ts`
- * runs under four zones to keep it that way.
+ * THIS WAS ORIGINALLY WRITTEN THE OTHER WAY ROUND, and the mistake is worth
+ * keeping on the record. `docs/reminders.md` documents that REMINDERS' store
+ * holds UTC midnight while its Apple Events lane holds local midnight; that was
+ * generalised to Calendar without measuring, and the unit tests agreed because
+ * their fixtures were built on the same wrong assumption. It survived a
+ * four-timezone test matrix and was caught only by reading a real calendar,
+ * where the rendered day disagreed with the ref in the same result.
+ *
+ * The anchor is a property of the store, not a general rule. Measure it per
+ * surface. `dates.test.ts` now builds its fixtures at LOCAL midnight, which is
+ * what the data actually looks like.
  *
  * @param appleSeconds Core Data seconds, straight from the column.
  * @param tz           The row's `start_tz` / `end_tz`, unclassified.
@@ -379,9 +385,18 @@ export const renderInstant = (
   if (Number.isNaN(d.getTime())) return null;
 
   if (allDay) {
+    const zone = resolveZone(tz);
+    if (zone) {
+      const p = partsIn(d, zone);
+      return { allDay: true, day: `${p.year}-${p.month}-${p.day}`, timeZone: null };
+    }
+    // Floating: the stored instant is midnight where the event was written, and
+    // for a floating date that is the local zone. `timeZone` stays null either
+    // way — an all-day event names a day, and reporting a zone would invite a
+    // caller to read it as an instant.
     return {
       allDay: true,
-      day: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
+      day: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
       timeZone: null,
     };
   }
