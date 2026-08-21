@@ -45,7 +45,22 @@ import {
 /** Tables the lane cannot work without. Anything else degrades to a null field. */
 const REQUIRED = ["CalendarItem", "Calendar"] as const;
 
-/** The schema this was written against. Named in the drift error, not enforced. */
+/**
+ * The schema this was written against. Named in the drift error, not enforced.
+ *
+ * CAUTION: this is the PROBE's fingerprint and it is NOT comparable to the one
+ * `diagnostics` reports. `fingerprintSchema` in packages/core orders
+ * sqlite_master by `type, name`; `dumpSchema` in scripts/lib/probe-kit.mjs
+ * orders it by a CASE expression putting tables before indexes, so the same
+ * schema hashes to two different values. Measured here: this store reports
+ * cd2424fea732 at runtime against the 2bf4e34ff75f docs/calendar.md recorded
+ * from the probe, and Reminders shows the same split (510062aad004 at runtime
+ * against the 278b001e3c55 in its own drift message and in docs/verify.md).
+ *
+ * So compare a probe fingerprint with a probe fingerprint. Reconciling the two
+ * orderings is a one-line change in packages/core, but it moves the value for
+ * every surface at once and is therefore its own decision.
+ */
 const PROBED_FINGERPRINT = "2bf4e34ff75f";
 const PROBED_MACOS = "26.6";
 
@@ -105,8 +120,9 @@ export const introspect = (db: DatabaseSync): StoreCapabilities => {
     if (cols.size === 0) {
       throw new SchemaDriftError(
         `This Calendar store has no ${t} table. It was probed on macOS ${PROBED_MACOS} with ` +
-          `schema fingerprint ${PROBED_FINGERPRINT}; re-run \`pnpm probe:calendar\` to see what ` +
-          `changed.`,
+          `schema fingerprint ${PROBED_FINGERPRINT} (a PROBE fingerprint — compare it against ` +
+          `another probe run, not against the one diagnostics reports); re-run ` +
+          `\`pnpm probe:calendar\` to see what changed.`,
       );
     }
   }
