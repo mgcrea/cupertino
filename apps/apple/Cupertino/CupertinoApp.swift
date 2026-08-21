@@ -15,6 +15,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } catch {
       hostLog("cupertino", .error, error.localizedDescription)
     }
+    promptForLicenceIfNeeded()
+  }
+
+  /// Open the licence pane once, and only when there is nothing to run with.
+  ///
+  /// A menu bar app that opens a window at launch is normally a nuisance. This
+  /// one earns it exactly once: an unlicensed build has just refused, or is
+  /// about to refuse, the tool call that started it, and the popover is behind
+  /// an icon the user may never have looked at. Recorded in defaults so it is
+  /// the first launch and not every launch.
+  private func promptForLicenceIfNeeded() {
+    let shown = "licencePromptShown"
+    guard !LicenseStore.isLicensed, !UserDefaults.standard.bool(forKey: shown) else { return }
+    UserDefaults.standard.set(true, forKey: shown)
+    Task { @MainActor in
+      // `showSettingsWindow:` has nothing to open until the scene graph exists,
+      // and it does not yet during didFinishLaunching.
+      try? await Task.sleep(for: .milliseconds(500))
+      SettingsOpener.show(.licence)
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -25,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct CupertinoApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-  @State private var model = StatusModel()
+  @State private var model = StatusModel.shared
 
   var body: some Scene {
     // LSUIElement is YES, so there is no Dock icon and no main window: the
@@ -46,18 +66,16 @@ struct CupertinoApp: App {
       ActivityView()
     }
     .defaultSize(width: 760, height: 460)
-
-    // For the same reason: a 224-character key arrives by paste or by drop, and
-    // both gestures move focus away from a popover, which closes it.
-    Window("Licence", id: LicenseWindow.id) {
-      LicenseView()
-    }
-    .defaultSize(width: 560, height: 380)
   }
 }
 
 @Observable
 final class StatusModel {
+  /// Shared for the same reason `Sessions` and `LogStore` are: the Settings
+  /// window is built by an AppKit controller that has no view hierarchy to
+  /// inherit it from, and two StatusModels would disagree about permissions.
+  static let shared = StatusModel()
+
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
   private(set) var location: InstallLocation = .current
@@ -101,10 +119,19 @@ final class StatusModel {
 
 struct StatusMenu: View {
   let model: StatusModel
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Cupertino").font(.headline)
+
+      // First, and in the popover rather than behind a tab. This is the one
+      // state where nothing works at all, and whoever is reading it has just
+      // been told by their assistant that a server failed to start.
+      if case .refused(let reason) = LicenseStore.check {
+        LicenceBanner(reason: reason)
+        Divider()
+      }
 
       // Not about the grant — that follows the signature and survives a move.
       // It is the bridge path written into other apps' configs that breaks.
@@ -120,67 +147,56 @@ struct StatusMenu: View {
         Divider()
       }
 
-      VStack(alignment: .leading, spacing: 6) {
-        HStack {
-          Label {
-            Text("Full Disk Access")
-          } icon: {
-            Image(systemName: model.diskAccess == .granted ? "checkmark.circle.fill" : "xmark.circle.fill")
-              .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
-          }
-          Spacer()
-          if model.diskAccess != .granted {
-            Button("Grant…") { Permissions.openDiskAccessSettings() }
-              .controlSize(.small)
-          }
+      // Status at a glance, carrying only the actions that will not wait. The
+      // explanations, the writes toggles and the client wiring moved to
+      // Settings when a fourth surface made this taller than the thing it is
+      // supposed to be a summary of.
+      HStack {
+        Label {
+          Text("Full Disk Access")
+        } icon: {
+          Image(
+            systemName: model.diskAccess == .granted ? "checkmark.circle.fill" : "xmark.circle.fill"
+          )
+          .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
         }
-        // One row, not one per surface: the grant is indivisible, and showing
-        // it per surface would imply a containment that does not exist.
-        Text(diskAccessHint)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        Spacer()
+        if model.diskAccess != .granted {
+          Button("Grant…") { Permissions.openDiskAccessSettings() }
+            .controlSize(.small)
+        }
       }
 
-      Divider()
-
       ForEach(Surface.all) { surface in
-        VStack(alignment: .leading, spacing: 2) {
-          HStack {
-            Label {
-              Text(surface.displayName)
-            } icon: {
-              Image(systemName: icon(for: model.automation[surface.id]))
-                .foregroundStyle(tint(for: model.automation[surface.id]))
-            }
-            Spacer()
-            switch model.automation[surface.id] {
-            case .notDetermined:
-              // Ask here, where the dialog is expected, rather than letting the
-              // first tool call block on it 30 seconds into a conversation.
-              Button("Allow…") { model.requestAutomation(surface) }
-                .controlSize(.small)
-            case .denied:
-              // A denial cannot be re-prompted; it has to be changed in Settings.
-              Button("Settings…") { Permissions.openAutomationSettings() }
-                .controlSize(.small)
-            default:
-              Text(caption(for: model.automation[surface.id]))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+        HStack {
+          Label {
+            Text(surface.displayName)
+          } icon: {
+            Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+              .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
           }
-          WritesToggle(surface: surface)
+          Spacer()
+          switch model.automation[surface.id] {
+          case .notDetermined:
+            // Ask here, where the dialog is expected, rather than letting the
+            // first tool call block on it 30 seconds into a conversation.
+            Button("Allow…") { model.requestAutomation(surface) }
+              .controlSize(.small)
+          case .denied:
+            // A denial cannot be re-prompted; it has to be changed in Settings.
+            Button("Settings…") { Permissions.openAutomationSettings() }
+              .controlSize(.small)
+          default:
+            Text(StatusStyle.caption(model.automation[surface.id]))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
         }
       }
 
       Divider()
 
       ConnectionsSection(model: model)
-
-      Divider()
-
-      ClientsSection(model: model)
 
       if let error = model.lastError {
         Text(error).font(.caption).foregroundStyle(.red)
@@ -189,13 +205,16 @@ struct StatusMenu: View {
 
       Divider()
 
-      AboutSection(model: model)
-
-      Divider()
-
       HStack {
-        Button("Refresh") { model.refresh() }
+        Button("Settings…") { SettingsOpener.show(.general) }
+        Button("Activity…") {
+          openWindow(id: ActivityWindow.id)
+          // An accessory app does not come forward on its own, so the window
+          // would otherwise open behind whatever the user was looking at.
+          NSApp.activate(ignoringOtherApps: true)
+        }
         Spacer()
+        Button("Refresh") { model.refresh() }
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
       .controlSize(.small)
@@ -207,43 +226,32 @@ struct StatusMenu: View {
     // non-prompting variant precisely so this is safe.
     .onAppear { model.refresh() }
   }
+}
 
-  private var diskAccessHint: String {
-    switch model.diskAccess {
-    case .granted:
-      // Deliberately blunt. The honest description of what was granted.
-      return "Search and message bodies are available. This grant covers the whole disk, not just Mail."
-    case .denied:
-      return "Without it, search falls back to Apple Events — usable for Notes, far too slow for Mail."
-    case .storeMissing:
-      return "No Mail or Notes store found on this Mac."
-    }
-  }
+/// The unlicensed state, said plainly and where it will be seen.
+///
+/// The reason string is the same sentence `ServerHost` hands the bridge, which
+/// hands it to the MCP host, which files it in a log nobody opens. Saying it
+/// here as well is the difference between "it broke" and "I know why".
+struct LicenceBanner: View {
+  let reason: String
 
-  private func icon(for status: AutomationStatus?) -> String {
-    switch status {
-    case .granted: "checkmark.circle.fill"
-    case .appNotRunning: "moon.zzz"
-    case .notDetermined, .none: "questionmark.circle"
-    default: "xmark.circle.fill"
-    }
-  }
-
-  private func tint(for status: AutomationStatus?) -> Color {
-    switch status {
-    case .granted: .green
-    case .denied: .red
-    default: .secondary
-    }
-  }
-
-  private func caption(for status: AutomationStatus?) -> String {
-    switch status {
-    case .granted: "automation allowed"
-    case .denied: "automation denied"
-    case .notDetermined, .none: "not yet asked"
-    case .appNotRunning: "not running"
-    case .failed(let code): "error \(code)"
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Label("Unlicensed — servers will not start", systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(.orange)
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+      Text(reason)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Text("Permissions, settings and the write controls are unaffected.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Enter a licence key…") { SettingsOpener.show(.licence) }
+        .controlSize(.small)
     }
   }
 }
@@ -419,79 +427,5 @@ struct ConnectionsSection: View {
     openWindow(id: ActivityWindow.id)
     // An accessory app does not come forward on its own.
     NSApp.activate(ignoringOtherApps: true)
-  }
-}
-
-/// Identity, the login item, and the way into the Activity window.
-struct AboutSection: View {
-  let model: StatusModel
-  @Environment(\.openWindow) private var openWindow
-  @State private var launchAtLogin = LoginItem.isEnabled
-  @State private var loginError: String?
-
-  private var licence: String {
-    guard let license = LicenseStore.current else { return "Unlicensed" }
-    return "Licensed to \(license.email)"
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text("Cupertino \(AppInfo.version)")
-        Spacer()
-        Button("Activity…") {
-          openWindow(id: ActivityWindow.id)
-          // An accessory app does not come forward on its own, so the window
-          // would otherwise open behind whatever the user was looking at.
-          NSApp.activate(ignoringOtherApps: true)
-        }
-        .controlSize(.small)
-      }
-      .font(.caption)
-
-      Text(AppInfo.identity)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      // Read fresh rather than held in @State: the window next door can change
-      // it, and the menu is rebuilt every time it opens anyway.
-      HStack {
-        Text(licence)
-          .foregroundStyle(LicenseStore.isLicensed ? Color.secondary : Color.orange)
-        Spacer()
-        Button("Licence…") {
-          openWindow(id: LicenseWindow.id)
-          NSApp.activate(ignoringOtherApps: true)
-        }
-        .controlSize(.small)
-      }
-      .font(.caption)
-
-      Toggle("Launch at login", isOn: $launchAtLogin)
-        .toggleStyle(.checkbox)
-        .font(.caption)
-        .disabled(!model.location.isStable)
-        .onChange(of: launchAtLogin) { _, value in
-          loginError = LoginItem.set(value)
-          // Trust the service, not the checkbox: a refused registration has to
-          // put the box back rather than claim something that is not true.
-          launchAtLogin = LoginItem.isEnabled
-        }
-
-      if let loginError {
-        Text(loginError).font(.caption).foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
-      } else if !model.location.isStable {
-        Text("Move Cupertino to Applications first — a login item records a path.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-      } else {
-        Text("Cupertino starts on demand when a client connects. This only removes the wait on the first call.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-    }
   }
 }

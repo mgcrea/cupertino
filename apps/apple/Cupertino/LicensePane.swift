@@ -2,28 +2,29 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Identifies the Licence scene to `openWindow`.
-enum LicenseWindow {
-  static let id = "license"
-
+enum LicenseLinks {
   /// Where to buy one. A redirect rather than the checkout URL itself, so the
   /// destination can move without shipping a new build — see the website's
   /// `public/_redirects`.
-  static let buyURL = URL(string: "https://cupertino.mgcrea.io/buy")!
+  static let buy = URL(string: "https://cupertino.mgcrea.io/buy")!
 }
 
-/// Entering a licence key, and seeing what happened to it.
+/// Entering a licence key, seeing what happened to it, and — when there is none
+/// — finding out what that actually means.
 ///
-/// A window rather than a row in the popover, for the same reason `ActivityView`
-/// is one: the menu is 320pt wide and dismisses on focus loss, and a key is 224
-/// characters that arrive by paste or by drop from a mail client — precisely the
-/// two gestures a popover interrupts.
+/// A Settings tab rather than a row in the popover: a key is 224 characters that
+/// arrive by paste or by drop from a mail client, and both gestures move focus
+/// away from a popover, which closes it. The same reason `ActivityView` is a
+/// window.
 ///
-/// The honest note at the bottom is not a disclaimer. `apps/apple/LICENSE` §1(c)
-/// really does let anyone compile this and run it without a key, and saying so
-/// where somebody is deciding whether to pay is the whole positioning: what is
-/// sold is a signed build and the work behind it, never access.
-struct LicenseView: View {
+/// Most of this pane is explanation, deliberately. Somebody arrives here because
+/// their assistant just said "server failed to start", and the useful thing to
+/// give them is the whole shape of it: what stopped, what did not, and what to
+/// do. The honest note at the bottom is part of that rather than a disclaimer —
+/// `apps/apple/LICENSE` §1(c) really does let anyone compile this and run it
+/// without a key, and saying so where somebody is deciding whether to pay is the
+/// entire positioning: what is sold is a signed build and the work behind it.
+struct LicensePane: View {
   @State private var entry = ""
   @State private var check = LicenseStore.check
   @State private var problem: String?
@@ -36,8 +37,8 @@ struct LicenseView: View {
       Divider()
       footer
     }
-    .padding(16)
-    .frame(minWidth: 520, minHeight: 340)
+    .padding(20)
+    .frame(minWidth: 520, maxWidth: .infinity, minHeight: 400, alignment: .topLeading)
     .onAppear { entry = LicenseStore.raw ?? "" }
     .onDrop(of: [.fileURL], isTargeted: nil, perform: accept)
   }
@@ -58,12 +59,31 @@ struct LicenseView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        Text("Servers will not start until a key is entered. Nothing else is affected.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        explanation
       }
     }
     .textSelection(.enabled)
+  }
+
+  /// What "unlicensed" costs, in the words someone needs when their assistant
+  /// has just failed to start a server.
+  private var explanation: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      row("Cupertino will not start the MCP servers, so Mail, Notes, Reminders and Calendar are unavailable to your assistant.")
+      row("Everything else works: permissions stay granted, your settings are untouched, and no data has moved.")
+      row("The write controls are a safety feature, not a paid one. They behave the same either way.")
+      row("Building Cupertino yourself from source needs no key. See the licence in the repository.")
+    }
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .padding(.top, 4)
+  }
+
+  private func row(_ text: String) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text("·")
+      Text(text).fixedSize(horizontal: false, vertical: true)
+    }
   }
 
   private var editor: some View {
@@ -96,7 +116,7 @@ struct LicenseView: View {
         }
         .disabled(LicenseStore.raw == nil)
         Spacer()
-        Button("Buy a licence…") { NSWorkspace.shared.open(LicenseWindow.buyURL) }
+        Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
       }
       .controlSize(.small)
     }
