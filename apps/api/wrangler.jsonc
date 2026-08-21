@@ -15,9 +15,12 @@
       "migrations_dir": "./migrations"
     }
   ],
+  // Cloudflare Email Service. Sending to arbitrary recipients needs the Workers
+  // Paid plan and a verified sender domain, or send() fails E_SENDER_NOT_VERIFIED.
+  "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "CURRENT_MAJOR": "1",
-    "LICENSE_FROM_EMAIL": "Cupertino <licences@mgcrea.io>",
+    "LICENSE_FROM_EMAIL": "licences@mgcrea.io",
     "SITE_URL": "https://cupertino.mgcrea.io"
   },
   "send_metrics": false,

@@ -16,8 +16,7 @@ pnpm deploy              # wrangler deploy, by hand or from the api-v* tag in CI
 ```
 
 Copy `.dev.vars.example` to `.dev.vars` first — it is gitignored and holds the signing key in plain
-text. Leaving `RESEND_API_KEY` unset is useful rather than broken: the webhook then returns 500,
-which is exactly what makes Stripe retry, and the licence row is still written.
+text.
 
 `pnpm lint` and `pnpm format:check` are **root-only** commands covering every workspace at once.
 
@@ -29,12 +28,65 @@ risks shadowing it. The site's `tsconfig.json` is `include: ["**/*"]` over a Nod
 is the wrong shape for workerd. And the signing key has no business on the Worker that serves public
 HTML. The cost is a second hostname, which is why `/thanks` renders here rather than there.
 
+## Email goes through Cloudflare, not a third party
+
+`env.EMAIL.send()`, via the `send_email` binding — the Cloudflare Email Service, same account as the
+Worker and the database. Two requirements that fail loudly rather than quietly: the sender domain
+must be verified in that account (`E_SENDER_NOT_VERIFIED` otherwise), and sending to arbitrary
+recipients needs the Workers Paid plan. Sending only to addresses already verified in the account is
+free, which is enough to test with and not enough to sell with.
+
+The older Email Routing `send_email` binding could not do this — it could only reach verified
+forwarding destinations, never a customer. If you find documentation saying Workers cannot send mail
+to arbitrary addresses, it predates the Email Service beta of April 2026.
+
+The attachment is passed as encoded bytes rather than a string, because the field accepts either and
+"was that raw or already base64" is not a question to discover from a customer's mangled attachment.
+
 ## The one secret
 
 `LICENSE_SIGNING_KEY` fails in both directions. Leaked, anyone can issue licences. Lost, no key can
 ever be issued for that major version again — including a replacement for a customer who lost
 theirs, because the public half is compiled into every shipped build. It belongs in a backup that is
 neither this repository nor the Worker.
+
+## Provisioning Stripe
+
+Four objects, in this order. Everything below exists in the **sandbox** today; the live account has
+none of it.
+
+1. **Product**, tax code `txcd_10202001` — "Downloadable Software, non-recreational, personal use".
+   Prewritten software the buyer downloads, for work rather than entertainment. The
+   personal-vs-business distinction in that code only affects US sales, so it is the least wrong of the
+   available options rather than an exact fit. 2. **Price**, one-time, EUR 1499, `tax_behavior:
+inclusive`. Inclusive because the site promises €14.99 and that has to be the number the buyer is
+   charged. The consequence is worth stating: once registrations exist, VAT comes **out** of the €14.99
+   rather than on top, so a French sale nets about €12.49 and a German one about €12.60. 3. **Payment
+   Link** with `automatic_tax`, `tax_id_collection` (B2B reverse charge) and `customer_creation:
+always`, redirecting to `/thanks?session_id={CHECKOUT_SESSION_ID}`. Its URL goes in
+   `apps/website/public/_redirects` behind `/buy`, which is commented out until then. 4. **Webhook
+   endpoint** on `checkout.session.completed`, plus the refund and dispute events, at
+   `https://api.cupertino.mgcrea.io/stripe/webhook`. Its signing secret is `STRIPE_WEBHOOK_SECRET`.
+
+### Tax registrations are the part that silently does nothing
+
+Stripe Tax can be **active**, with a head office set, and still compute **zero tax on every sale**,
+because it only calculates for jurisdictions where a registration exists. Enabling `automatic_tax`
+on a Payment Link is accepted without complaint in that state. Nothing anywhere says "you are
+collecting no VAT" — the orders simply come through with `amount_tax: 0`.
+
+Selling from France needs two, both with `country: "FR"`:
+
+| `country_options.fr.type` | Covers | |
+------------------------- | ----------------------------------------------------------------- | |
+`standard` | French domestic sales | |
+`oss_union` | every other EU member state, under the One Stop Shop union scheme |
+
+And the caveat Stripe attaches to its own API: **it records a registration, it does not register on
+your behalf.** Creating these in live mode without a real OSS registration behind them would mean
+charging VAT that has nowhere to be filed, which is worse than charging none.
+
+Check with `GET /v1/tax/registrations`; an empty list is the failure state, not a fresh start.
 
 ## Three implementations, one format
 

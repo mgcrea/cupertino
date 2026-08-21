@@ -25,7 +25,7 @@ import {
 import { priceIdFor, verifySignature } from "./stripe";
 
 /** Long enough to swallow a Stripe redelivery, short enough to be useful. */
-const RESEND_COOLDOWN_MS = 5 * 60 * 1000;
+const SEND_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** A resend body is an address. Anything larger is not one. */
 const MAX_BODY_BYTES = 4096;
@@ -112,7 +112,7 @@ const fulfil = async (object: unknown, env: Env): Promise<Response> => {
   }
   if (!row) return new Response("could not record the licence", { status: 500 });
 
-  if (sentWithin(row.last_sent_at, RESEND_COOLDOWN_MS, Date.now())) {
+  if (sentWithin(row.last_sent_at, SEND_COOLDOWN_MS, Date.now())) {
     return new Response("already sent", { status: 200 });
   }
   const sent = await sendLicense(env, row.email, row.key);
@@ -274,7 +274,7 @@ const handleResend = async (request: Request, env: Env): Promise<Response> => {
   )
     .bind(email)
     .first<LicenseRow>();
-  if (!row || sentWithin(row.last_sent_at, RESEND_COOLDOWN_MS, Date.now())) return answer;
+  if (!row || sentWithin(row.last_sent_at, SEND_COOLDOWN_MS, Date.now())) return answer;
 
   const sent = await sendLicense(env, row.email, row.key);
   if (sent.ok) await markSent(env, row.id);
