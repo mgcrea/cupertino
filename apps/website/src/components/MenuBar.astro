@@ -7,10 +7,23 @@
  * Beside it, one exchange in a host: the two tools a real question actually
  * calls, with the index lane's measured timings.
  */
-import { SURFACES } from "../data/surfaces";
+import { IN_PROGRESS, SURFACES } from "../data/surfaces";
 import Logo from "./Logo.astro";
 
-const items = SURFACES.map((s) => ({ name: s.name, lane: "index lane" }));
+/**
+ * Four rows, because the app really does broker four surfaces now — the menu
+ * builds itself from `Surface.all`, and Calendar is in it.
+ *
+ * `IN_PROGRESS` is folded in rather than left out: this strip reports which
+ * servers are running and which lane each answers on, and both are true of
+ * Calendar. What it does not report is tool counts, which is the part Calendar
+ * cannot yet claim — that distinction is drawn in the Surfaces section, where
+ * there is room to explain it.
+ */
+const items = [...SURFACES, ...IN_PROGRESS].map((s) => ({
+  name: s.name,
+  lane: "index lane",
+}));
 
 const calls = [
   { tool: "apple_mail_search_messages", ms: 97 },

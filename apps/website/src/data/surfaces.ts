@@ -7,6 +7,12 @@
  * are never registered, so the host is never told they exist. Getting a name
  * wrong here is a claim the servers do not honour — check the tree, not the
  * README, which has drifted before.
+ *
+ * Calendar is deliberately NOT in this list. It ships inside the app and its
+ * index lane is live, but `packages/calendar/src/tools/index.ts` registers one
+ * tool so far, so a card claiming a listing surface would be exactly the kind
+ * of unhonoured claim the paragraph above exists to prevent. It lives in
+ * `IN_PROGRESS` until the tools are real.
  */
 
 export interface Surface {
@@ -106,6 +112,32 @@ export const SURFACES: readonly Surface[] = [
 ] as const;
 
 export const toolCount = (s: Surface) => s.read.length + s.write.length;
+
+/**
+ * Built and shipping, but not yet claimable as a surface.
+ *
+ * The distinction from NOT_STARTED is real rather than cosmetic: the app
+ * already brokers Calendar, the store opens read-only and every table the
+ * design needs is present. What is missing is the one measurement that decides
+ * whether a range query is CORRECT, and shipping listing tools before it would
+ * risk the quietest possible bug.
+ */
+export const IN_PROGRESS = [
+  {
+    name: "Calendar",
+    pkg: "@mgcrea/mcp-apple-calendar",
+    /** Transcribed from `packages/calendar/src/tools/index.ts`, same rule as above. */
+    registered: ["apple_calendar_diagnostics"],
+    lands: "listing, search and gated writes",
+    why:
+      "Calendar keeps expanded repeats in a cache table that holds more rows than the events " +
+      "table itself, so a range query written against the obvious one would show a weekly " +
+      "meeting once — which reads exactly like a free afternoon.",
+    withoutGrant:
+      "Nothing. This is the first surface with no Apple Events read path fast enough to be a " +
+      "fallback: one 90-day range query costs 3.4 seconds, so every read needs the grant.",
+  },
+] as const;
 
 /** Messages has no Apple Events read path at all, so it cannot ship without the grant. */
 export const NOT_STARTED = [

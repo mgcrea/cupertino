@@ -1,7 +1,8 @@
 # Cupertino
 
-> MCP servers for the Apple apps already on your Mac — Mail, Notes and Reminders — and the signed
-> menu-bar app that holds their one Full Disk Access grant instead of handing it to every editor.
+> MCP servers for the Apple apps already on your Mac — Mail, Notes and Reminders, with Calendar in
+> progress — and the signed menu-bar app that holds their one Full Disk Access grant instead of
+> handing it to every editor.
 
 Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed app and the
 `@mgcrea/mcp-apple-*` packages land together at the first release.
@@ -23,6 +24,12 @@ Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed a
 - Mail — 18 tools (10 always registered, 8 write-gated). `@mgcrea/mcp-apple-mail`
 - Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
+- Calendar — in progress. `@mgcrea/mcp-apple-calendar` ships in the app and its index lane is
+  live, but only `apple_calendar_diagnostics` is registered so far. Listing, search and gated
+  writes wait on one measurement: Calendar keeps expanded repeats in a cache table larger than
+  the events table, so a range query written against the obvious one would show a weekly
+  meeting once. It is also the first surface with no Apple Events read path fast enough to be
+  a fallback, so every read needs the grant.
 - Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
 
 ## Links
