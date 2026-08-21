@@ -66,29 +66,38 @@ pass `--corner-radius 0` — iOS applies its own mask, and a rounded source gets
 
 ## The menu bar glyph
 
-`cupertino-menubar.svg` is the mark reduced to three shapes — a filled sun over the back and front
-hills. It is a **template image**: pure black plus alpha, no colour, so AppKit tints it for light
-menu bars, dark menu bars and the highlighted state instead of us shipping three renderings.
+`cupertino-menubar.svg` is the mark reduced to three shapes — a filled sun over the back ridge and
+the front hill. It is a **template image**: pure black plus alpha, no colour, so AppKit tints it for
+light menu bars, dark menu bars and the highlighted state instead of us shipping three renderings.
 
-The two ridges are deliberately not the same length or phase. Stacked as equals they read as
-tramlines rather than as hills receding, so the back ridge is inset on both sides and crests left
-of the front one, which runs the full width.
+It is variant **E2c** ("big sun, thin wave") from the menu bar canvas, kept at that canvas's own
+36-unit grid drawn at 18pt — so 2 units = 1pt, and the coordinates in the file are the ones in the
+design, unscaled. Keeping the grid is what makes a change in the canvas transcribable rather than
+re-derived.
+
+The three shapes carry three different weights on purpose: one heavy (the sun), one light (the
+stroked back ridge), one solid (the filled front hill). Matched weights read as tramlines rather
+than as a scene receding, which is what the earlier equal-ridge pairs did. The front hill is a
+filled region closed along the bottom edge, not a second stroke — the fill keeps its own silhouette
+however the thin stroke above it antialiases.
 
 Measured against `tray.full`, the SF Symbol it replaced:
 
-|                    | ink              | canvas        | strokes |
-| ------------------ | ---------------- | ------------- | ------- |
-| `tray.full` @ 18pt | 21.00 × 16.00 pt | 25 × 18 pt    | —       |
-| this glyph         | 14.98 × 15.50 pt | 17.48 × 18 pt | 1.31 pt |
+|                    | ink              | canvas     | strokes |
+| ------------------ | ---------------- | ---------- | ------- |
+| `tray.full` @ 18pt | 21.00 × 16.00 pt | 25 × 18 pt | —       |
+| this glyph         | 16.10 × 14.15 pt | 18 × 18 pt | 1.10 pt |
 
-The 1.25pt gutter matters: the round stroke caps clip at 1x if the ink is flush to the edge, which
-is how the design canvas's own 18×18 framing rendered it.
+Ink is centred in the canvas: the back ridge's round caps reach 1.9 and 34.1 on the 36-unit grid,
+so the horizontal midpoint is exactly 18. The caps are what set the horizontal extent, and they sit
+0.95pt inside the edge — a real gutter, so nothing clips at 1x, but there is no room to widen the
+ridge without eating it.
 
-The ridges sit **0.45pt apart**, and that is a floor rather than a taste call. Counting connected
-components in the rendered slots, the glyph resolves into three separate shapes at 1x and 2x at
-that spacing; open the gap and the thin strokes start fragmenting under 1x antialiasing into four
-or five pieces. Closer is also better here, which is not the intuition. Re-run the count after any
-change to the ridges — the failure is invisible at the size you will be looking at it.
+At 18pt the two waves merge into one connected shape at 1x and separate into three at 2x. That is
+the baseline, not a regression: counting connected components in the rendered slots, the ridge-pair
+glyph this replaced did exactly the same. Re-run the count after any change to the ridges rather
+than trusting the 2x render — at 1x the failure mode is the sun touching the wave, and it is
+invisible at the size you will be looking at it.
 
 `actool` reads the SVG directly and preserves the vector representation, so there are no PNG slots
 to keep in step. `make icon` copies the file into `MenuBarIcon.imageset`, which is why that copy is

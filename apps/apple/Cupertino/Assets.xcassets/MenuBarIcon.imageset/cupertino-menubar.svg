@@ -1,19 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="58.3 60.3 397.5 399.5" width="17.91" height="18">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="18" height="18">
   <title>Cupertino — menu bar template</title>
-  <!-- The mark reduced to three shapes: a filled sun over the back and front
-       hills. Pure black plus alpha — AppKit tints a template image itself.
+  <!-- The mark reduced to three shapes: a filled sun over the back ridge and
+       the front hill. Pure black plus alpha — AppKit tints a template image
+       itself. Design canvas variant E2c, "big sun, thin wave".
 
-       The two ridges are deliberately NOT the same length or phase. Stacked as
-       equals they read as tramlines rather than as hills receding, so the back
-       one is inset and crests left of the front one, which runs the full width.
+       The three shapes are deliberately three different weights: one heavy
+       (the sun), one light (the stroked back ridge), one solid (the filled
+       front hill). Matched weights read as tramlines rather than as a scene
+       receding, which is what the earlier equal-ridge pairs did.
 
-       They sit 0.45pt apart, which is as close as they go: at that spacing the
-       glyph still resolves into three separate shapes at BOTH 1x and 2x. Moving
-       them further apart is what breaks it — the strokes fragment under 1x
-       antialiasing. Verified by counting connected components, not by eye. -->
+       The front hill is a filled region closed along the bottom edge, not a
+       second stroke: the fill keeps its own silhouette however the thin ridge
+       above it antialiases. At 18pt the two waves still merge into one shape at
+       1x and separate into three at 2x — that is the baseline the ridge-pair
+       glyph this replaced also measured, not a regression. Check it by counting
+       connected components in the rendered slots, not by eye.
+
+       Coordinates are the canvas's own 36-unit grid at 18pt, so 2 units = 1pt. -->
   <g fill="none" stroke="#000" stroke-linecap="round">
-    <circle cx="250" cy="168" r="80" fill="#000" stroke="none"/>
-    <path d="M120 335 Q212 262 308 327" stroke-width="28"/>
-    <path d="M100 418 Q248 333 380 408 Q398 415 414 410" stroke-width="28"/>
+    <circle cx="18" cy="9.5" r="5.8" fill="#000" stroke="none"/>
+    <path d="M3 23 C7.5 18 12.5 18 17 22 C21.5 26 27 25 33 19.5" stroke-width="2.2"/>
+    <path d="M2 32 L2 28 C7 23 13 23 18 27.5 C23 32 28.5 30.5 34 25.5 L34 32 Z" fill="#000" stroke="none"/>
   </g>
 </svg>
