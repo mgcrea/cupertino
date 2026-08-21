@@ -24,3 +24,10 @@ scripts/spike-app-tcc/build/
 # local app build output. Anchored to the app rather than a bare `.build/`, so it
 # cannot quietly swallow a directory of that name elsewhere in the tree.
 apps/apple/.build/
+
+# wrangler local state, and the local secrets file. `.dev.vars` holds the Stripe
+# keys and the licence signing key in plain text — the same secret that, leaked,
+# lets anyone mint licences.
+.dev.vars
+.dev.vars.*
+.wrangler/

@@ -1,0 +1,35 @@
+{
+  "name": "@mgcrea/cupertino-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Turns a Stripe payment into a Cupertino licence key",
+  "license": "MIT",
+  "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
+    "directory": "apps/api"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate": "wrangler d1 migrations apply cupertino-licenses --remote",
+    "migrate:local": "wrangler d1 migrations apply cupertino-licenses --local",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.84.1"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

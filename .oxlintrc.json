@@ -5,5 +5,5 @@
     "suspicious": "warn"
   },
   "rules": {},
-  "ignorePatterns": ["dist", "node_modules", ".reference"]
+  "ignorePatterns": ["dist", "node_modules", ".reference", "**/worker-configuration.d.ts"]
 }

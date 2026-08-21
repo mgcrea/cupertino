@@ -3,7 +3,14 @@
   "sortImports": {
     "enabled": true
   },
-  "ignorePatterns": ["dist", "pnpm-lock.yaml", ".reference", "**/*.icon", "**/*.xcassets"],
+  "ignorePatterns": [
+    "dist",
+    "pnpm-lock.yaml",
+    ".reference",
+    "**/*.icon",
+    "**/*.xcassets",
+    "**/worker-configuration.d.ts"
+  ],
   "overrides": [
     {
       "files": ["**/*.json", "**/*.jsonc"],
