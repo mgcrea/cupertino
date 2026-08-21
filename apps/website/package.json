@@ -10,6 +10,7 @@
     "deploy": "astro build && wrangler deploy",
     "astro": "astro",
     "check": "astro check",
+    "typecheck": "astro check",
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {

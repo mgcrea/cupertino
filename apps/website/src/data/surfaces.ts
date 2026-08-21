@@ -8,17 +8,15 @@
  * wrong here is a claim the servers do not honour — check the tree, not the
  * README, which has drifted before.
  *
- * Calendar is deliberately NOT in this list. Its six read tools are real and its
- * index lane is live, but it has no write tools yet — and every surface above
- * is defined by the read/write split the write gate draws. Promoting a
- * half-surface would also trip the price ladder in docs/licensing.md, which
- * commits to a rise when "Calendar ships". It stays in `IN_PROGRESS` until the
- * writes land.
+ * NOTE: promoting a surface into this list is a commercial act as well as a
+ * technical one — docs/licensing.md ties a price rise to each surface shipping.
+ * A surface belongs here once it has both halves of the read/write split the
+ * write gate draws, and not before.
  */
 
 export interface Surface {
   /** Anchor id and display key. */
-  id: "mail" | "notes" | "reminders";
+  id: "mail" | "notes" | "reminders" | "calendar";
   name: string;
   pkg: string;
   /** Always registered. */
@@ -110,25 +108,11 @@ export const SURFACES: readonly Surface[] = [
       "Lists, due dates and search across every account, with five mutating tools behind the write gate.",
     withoutGrant: "Workable over Apple Events — the file lane is what makes search scale.",
   },
-] as const;
-
-export const toolCount = (s: Surface) => s.read.length + s.write.length;
-
-/**
- * Built and shipping, but not yet claimable as a surface.
- *
- * The distinction from NOT_STARTED is real rather than cosmetic: the app
- * already brokers Calendar, the store opens read-only and every table the
- * design needs is present. What is missing is the one measurement that decides
- * whether a range query is CORRECT, and shipping listing tools before it would
- * risk the quietest possible bug.
- */
-export const IN_PROGRESS = [
   {
+    id: "calendar",
     name: "Calendar",
     pkg: "@mgcrea/mcp-apple-calendar",
-    /** Transcribed from `packages/calendar/src/tools/*.ts`, same rule as above. */
-    registered: [
+    read: [
       "apple_calendar_list_events",
       "apple_calendar_search_events",
       "apple_calendar_get_event",
@@ -136,17 +120,19 @@ export const IN_PROGRESS = [
       "apple_calendar_list_accounts",
       "apple_calendar_diagnostics",
     ],
-    lands: "create, update and delete, behind the write gate",
-    why:
-      "Reads are done, including the hard part: Calendar keeps expanded repeats in a cache " +
-      "table holding more rows than the events table itself, so a weekly meeting is returned " +
-      "once per week rather than once — and when a range runs past what the store has expanded, " +
-      "the result says so instead of quietly coming back short.",
+    write: [
+      "apple_calendar_create_event",
+      "apple_calendar_update_event",
+      "apple_calendar_delete_events",
+    ],
+    pitch:
+      "Ranges, search and repeating events expanded properly, with three mutating tools behind the write gate.",
     withoutGrant:
-      "Nothing. This is the first surface with no Apple Events read path fast enough to be a " +
-      "fallback: one 90-day range query costs 3.4 seconds, so every read needs the grant.",
+      "Nothing — the only surface with no Apple Events read path fast enough to be a fallback.",
   },
 ] as const;
+
+export const toolCount = (s: Surface) => s.read.length + s.write.length;
 
 /** Messages has no Apple Events read path at all, so it cannot ship without the grant. */
 export const NOT_STARTED = [

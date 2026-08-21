@@ -1,7 +1,7 @@
 # Cupertino
 
-> MCP servers for the Apple apps already on your Mac — Mail, Notes and Reminders, with Calendar in
-> progress — and the signed menu-bar app that holds their one Full Disk Access grant instead of
+> MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders and
+> Calendar — and the signed menu-bar app that holds their one Full Disk Access grant instead of
 > handing it to every editor.
 
 Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed app and the
@@ -24,16 +24,23 @@ Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed a
 - Mail — 18 tools (10 always registered, 8 write-gated). `@mgcrea/mcp-apple-mail`
 - Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
-- Calendar — in progress. `@mgcrea/mcp-apple-calendar` ships in the app with 6 read tools
-  registered; create, update and delete are still to come, which is why it is not counted as a
-  shipped surface. Repeating events are expanded from Calendar's occurrence cache, so a weekly
-  meeting is returned once per week, and a range running past what the store has expanded says so
-  rather than coming back short. It is also the first surface with no Apple Events read path fast
-  enough to be a fallback, so every read needs the grant.
+- Calendar — 9 tools (6 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`
 - Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
+
+## Price
+
+- €14.99 once, covering every 1.x release. Not a subscription, nothing lapses, and 2.0 is a separate
+  purchase. Not on sale yet — the app has not shipped.
+- The ladder is published in advance and tied to shipped surfaces rather than dates: €24.99 when
+  Messages lands, €34.99 when Safari does. It never goes back down.
+- No trial, because three things already stand in for one: the source builds and runs with no fee
+  and no licence key, the servers are MIT and run on their own, and there are 30 days to change your
+  mind for any reason.
+- The licence key is verified offline. There is no account, no login and no phone-home — the app
+  makes no network connections at all, which is checked in CI against the built binary.
 
 ## Links
 
-- Source: https://github.com/mgcrea/mcp-apple-mail
-- How it ships, and why not the App Store: https://github.com/mgcrea/mcp-apple-mail/blob/main/docs/distribution.md
-- What is open, what is sold: https://github.com/mgcrea/mcp-apple-mail/blob/main/docs/licensing.md
+- Source: https://github.com/mgcrea/mcp-cupertino
+- How it ships, and why not the App Store: https://github.com/mgcrea/mcp-cupertino/blob/main/docs/distribution.md
+- What is open, what is sold: https://github.com/mgcrea/mcp-cupertino/blob/main/docs/licensing.md

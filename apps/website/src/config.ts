@@ -82,3 +82,33 @@ export const BODY_SEARCH = {
 } as const;
 
 export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Terminal"] as const;
+
+/**
+ * The launch price, and the ladder published alongside it.
+ *
+ * Rungs are tied to SHIPPED SURFACES, never to dates. A rise tied to the
+ * calendar says latecomers pay more for the same thing, which earns resentment
+ * and teaches people to wait for a sale; a rise tied to a surface says the price
+ * went up because the product got bigger, which is true and is also the roadmap
+ * restated as a reason to buy now. Two rules come with it — every rise is
+ * announced before it happens, and it never goes back down. See
+ * docs/licensing.md, which is the authority on all of this.
+ *
+ * One purchase covers every 1.x release. 2.0 is a new purchase; there is no
+ * subscription and nothing lapses.
+ */
+export const PRICING = {
+  /** Display form. `amount` is what the JSON-LD offer carries. */
+  price: "€14.99",
+  amount: "14.99",
+  currency: "EUR",
+  /** The stable vanity URL. `public/_redirects` sends it to Stripe. */
+  buy: "/buy",
+  /** Generous on purpose: with no trial, this is what makes buying first reasonable. */
+  refundDays: 30,
+  ladder: [
+    { price: "€14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar" },
+    { price: "€24.99", when: "When Messages ships", covers: "+ Messages" },
+    { price: "€34.99", when: "When Safari ships", covers: "+ Safari" },
+  ],
+} as const;

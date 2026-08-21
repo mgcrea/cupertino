@@ -1,0 +1,110 @@
+---
+import { DOCS, PRICING, REPO_URL, SHIPPED } from "../config";
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * The price, and the two things that make it defensible rather than awkward:
+ * the ladder is published in advance, and building it yourself is free.
+ *
+ * That second one is stated here rather than buried, because for this audience
+ * it is a selling point and not a leak. What is sold is the signed build and the
+ * work behind it; anyone who would rather run `make` was never a customer, and
+ * saying so is what makes the rest of the page credible.
+ *
+ * There is no trial, so the refund carries that weight instead — see
+ * docs/licensing.md. Nothing here renders a buy button until SHIPPED.
+ */
+const included = [
+  "Every 1.x release, free. 2.0 is a new purchase; nothing lapses in between.",
+  "Every Mac you own or control. No activation limit and nothing counts your installs.",
+  `${PRICING.refundDays} days to change your mind, for any reason or none.`,
+  "No account, no login, no phone-home. The key verifies on your Mac and nowhere else.",
+];
+---
+
+<section id="pricing" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader
+    eyebrow="Price"
+    heading="Pay once.<br />Then it is yours."
+  >
+    One Full Disk Access grant, held by a notarized binary from an identifiable developer, instead of
+    four grants handed out to whichever editors happened to spawn a server. The servers themselves
+    stay MIT and free forever.
+  </SectionHeader>
+
+  <div class="reveal rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
+    <div class="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-12">
+      <div class="flex flex-none flex-col gap-3 lg:w-[240px]">
+        <div class="font-display text-[44px] leading-none font-semibold tracking-[-0.04em]">
+          {PRICING.price}
+        </div>
+        <div class="text-[14px] leading-[1.6] text-fg-dim">
+          One time, for all of 1.x. Not a subscription.
+        </div>
+
+        {
+          SHIPPED ? (
+            <a
+              href={PRICING.buy}
+              class="mt-1 rounded-[10px] bg-accent px-[22px] py-3 text-center text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
+            >
+              Buy a licence
+            </a>
+          ) : (
+            <div class="mono mt-1 !text-fg-dim">Not on sale yet</div>
+          )
+        }
+      </div>
+
+      <ul class="m-0 flex list-none flex-col gap-3 p-0">
+        {
+          included.map((line) => (
+            <li class="flex gap-3 text-[14.5px] leading-[1.6] text-pretty text-fg-dim">
+              <span class="flex-none text-accent" aria-hidden="true">
+                ·
+              </span>
+              {line}
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+
+  <div class="mono mt-12 mb-6">The ladder, published in advance</div>
+  <dl class="m-0 grid grid-cols-1 gap-0">
+    {
+      PRICING.ladder.map((rung) => (
+        <div class="grid grid-cols-1 gap-1.5 border-t border-rule py-5 last:border-b sm:grid-cols-[120px_180px_1fr] sm:gap-8">
+          <dt class="text-[14px] font-medium text-fg">{rung.price}</dt>
+          <dd class="m-0 text-[14px] leading-[1.6] text-fg-dim">{rung.when}</dd>
+          <dd class="m-0 text-[14px] leading-[1.6] text-pretty text-fg-muted">{rung.covers}</dd>
+        </div>
+      ))
+    }
+  </dl>
+  <p class="mt-6 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-muted">
+    The price rises when a surface lands, never because time passed — and once risen it does not come
+    back down. Buying early is the whole of the discount.
+  </p>
+
+  <p class="mt-10 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-dim">
+    <strong class="font-medium text-fg">Building it yourself needs no fee and no licence key.</strong
+    >{" "}
+    The app's source is public and its
+    <a
+      href={DOCS.appLicense}
+      target="_blank"
+      rel="noopener"
+      class="text-accent transition-colors hover:text-accent-hi">licence</a
+    > grants you the right to compile it and run your own build, on every machine you control, forever.
+    A licence pays for the signed and notarized artifact and the work of keeping it working — never for
+    access. The
+    <a
+      href={REPO_URL}
+      target="_blank"
+      rel="noopener"
+      class="text-accent transition-colors hover:text-accent-hi">servers</a
+    > are MIT and always were.
+  </p>
+</section>

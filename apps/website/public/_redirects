@@ -11,3 +11,12 @@
 /download  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip  302
 /checksum  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip.sha256  302
 /releases  https://github.com/mgcrea/mcp-cupertino/releases  302
+
+# The buy link, kept here for the same reason /download is: the Stripe checkout
+# URL is exactly the kind of destination that moves, and a vanity path means it
+# can move without a site deploy.
+#
+# COMMENTED UNTIL THERE IS A CHECKOUT TO POINT AT. The buy button renders only
+# when SHIPPED is true in src/config.ts, so nothing links here yet — but flipping
+# that flag without uncommenting this line would ship a button to a 404.
+# /buy       https://buy.stripe.com/REPLACE_ME  302

@@ -8,11 +8,12 @@ import Hero from "../components/Hero.astro";
 import Latency from "../components/Latency.astro";
 import MenuBar from "../components/MenuBar.astro";
 import Nav from "../components/Nav.astro";
+import Pricing from "../components/Pricing.astro";
 import Status from "../components/Status.astro";
 import Surfaces from "../components/Surfaces.astro";
 import ToolMarquee from "../components/ToolMarquee.astro";
 import WriteGate from "../components/WriteGate.astro";
-import { APP_NAME, DOWNLOAD, DOCS, REPO_URL, SHIPPED, SITE_URL } from "../config";
+import { APP_NAME, DOWNLOAD, DOCS, PRICING, REPO_URL, SHIPPED, SITE_URL } from "../config";
 import { SURFACES, toolCount } from "../data/surfaces";
 import Layout from "../layouts/Layout.astro";
 
@@ -29,6 +30,12 @@ const total = SURFACES.reduce((n, s) => n + toolCount(s), 0);
  *
  * `downloadUrl` appears only once there is something to download. Announcing one
  * before the first release would put a 404 into search results.
+ *
+ * `offers` is gated on the same flag and for the same reason. A price in
+ * structured data is a claim that the thing can be bought right now; publishing
+ * one against a /buy that does not resolve yet would put an unbuyable offer into
+ * search results, which is the lie the paragraph at the top is about. Both
+ * appear together, at the release, or neither does.
  */
 const schema = {
   "@context": "https://schema.org",
@@ -40,9 +47,20 @@ const schema = {
   url: SITE_URL,
   codeRepository: REPO_URL,
   license: DOCS.appLicense,
-  description: `MCP servers for Apple Mail, Notes and Reminders — ${total} tools across three surfaces, with Calendar in progress — and the signed menu-bar app that holds their one Full Disk Access grant.`,
+  description: `MCP servers for Apple Mail, Notes, Reminders and Calendar — ${total} tools across four surfaces — and the signed menu-bar app that holds their one Full Disk Access grant.`,
   author: { "@type": "Person", name: "Olivier Louvignes" },
-  ...(SHIPPED ? { downloadUrl: `${SITE_URL}${DOWNLOAD.href}` } : {}),
+  ...(SHIPPED
+    ? {
+        downloadUrl: `${SITE_URL}${DOWNLOAD.href}`,
+        offers: {
+          "@type": "Offer",
+          price: PRICING.amount,
+          priceCurrency: PRICING.currency,
+          url: `${SITE_URL}${PRICING.buy}`,
+          availability: "https://schema.org/InStock",
+        },
+      }
+    : {}),
 };
 ---
 
@@ -59,6 +77,7 @@ const schema = {
     <BodySearch />
     <Surfaces />
     <Status />
+    <Pricing />
     <Cta />
   </main>
   <Footer />
