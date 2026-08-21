@@ -1,0 +1,75 @@
+---
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * The Activity window, which was missing from this site entirely — the one
+ * claim on the page that no competing server even attempts, and it was the one
+ * the reader never saw. A server spawned inside an editor is unobservable by
+ * construction: there is no process to look at and no window to open. This
+ * section exists to make that difference concrete.
+ *
+ * Drawn as real window chrome rather than illustrated, for the same reason
+ * FdaPane is: a reader who has used the app recognises it, and a mock that
+ * matches the product needs no caption.
+ *
+ * THE ROWS DELIBERATELY CARRY NO ARGUMENTS. That is not a drawing decision, it
+ * is what the app records — tool names only, never arguments, message contents
+ * or results. A mock showing a subject line here would advertise a feature the
+ * app does not have and would not want.
+ */
+const rows = [
+  { t: "09:41:02", client: "Claude Desktop", tool: "apple_mail_search_messages", kind: "read" },
+  { t: "09:41:02", client: "Claude Desktop", tool: "apple_mail_get_thread", kind: "read" },
+  { t: "09:41:03", client: "Claude Desktop", tool: "apple_notes_search_notes", kind: "read" },
+  { t: "09:40:55", client: "Cursor", tool: "apple_reminders_list_reminders", kind: "read" },
+  { t: "09:40:12", client: "Cursor", tool: "apple_mail_list_accounts", kind: "read" },
+] as const;
+---
+
+<section id="activity" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="Activity" heading="You can watch it<br />the whole time.">
+    Every tool call, live, grouped by the client that made it. It is the answer to “what did the
+    assistant just do with my mail?” — and the reason the servers run under an app you can see
+    rather than inside whichever editor happened to spawn them.
+  </SectionHeader>
+
+  <div
+    class="reveal overflow-hidden rounded-[14px] border border-rule-2 bg-chrome shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+  >
+    <div class="flex items-center gap-2 border-b border-rule-2 bg-chrome-2 px-3.5 py-2.5">
+      <span class="flex gap-[6px]" aria-hidden="true">
+        <span class="block rounded-full bg-fg-muted/40" style="width:10px;height:10px"></span>
+        <span class="block rounded-full bg-fg-muted/40" style="width:10px;height:10px"></span>
+        <span class="block rounded-full bg-fg-muted/40" style="width:10px;height:10px"></span>
+      </span>
+      <span class="mx-auto text-[12px] text-fg">Activity</span>
+    </div>
+
+    {/* Scrolls inside itself: five columns of monospace do not fit a phone, and
+        a table that widens the page is worse than one that scrolls. */}
+    <div class="overflow-x-auto">
+      <ul class="m-0 min-w-[440px] list-none p-0">
+        {
+          rows.map((r) => (
+            <li class="flex items-center gap-3 border-b border-[color-mix(in_srgb,var(--color-rule)_70%,transparent)] px-3.5 py-[9px] last:border-b-0">
+              <span class="mono flex-none">{r.t}</span>
+              <span class="flex-none text-[12.5px] text-fg-dim">{r.client}</span>
+              <span class="flex-1 truncate font-mono text-[12px] text-accent">{r.tool}</span>
+              <span class="mono flex-none !text-ok">{r.kind}</span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+
+    <div class="mono border-t border-rule-2 bg-chrome-2 px-3.5 py-2.5">
+      tool names only · no arguments, no contents, no results
+    </div>
+  </div>
+
+  <p class="reveal mt-6 text-[14px] leading-[1.65] text-fg-muted">
+    The menu bar shows the same thing one level up: which client is talking to which server right
+    now, and how many tools it has called. Nothing here is sent anywhere — the servers make no
+    network connections at all, which CI checks against the built binary rather than the source.
+  </p>
+</section>

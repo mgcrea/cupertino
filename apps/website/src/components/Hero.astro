@@ -1,6 +1,14 @@
 ---
 import { HOSTS, REPO_URL, SHIPPED } from "../config";
 import FdaPane from "./FdaPane.astro";
+
+/** Each one is a section further down, so the strip is a table of contents. */
+const CLAIMS = [
+  { label: "one grant", href: "#permissions" },
+  { label: "writes off by default", href: "#tools" },
+  { label: "every call visible", href: "#activity" },
+  { label: "three surfaces", href: "#surfaces" },
+] as const;
 ---
 
 <section class="relative overflow-hidden pt-[88px] pb-[72px]">
@@ -39,6 +47,25 @@ import FdaPane from "./FdaPane.astro";
         Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to
         every editor that happens to spawn a server.
       </p>
+
+      {/* The grant is the strongest argument and it was, until now, the only one
+          above the fold. A reader who bounces here should have seen that this is
+          a permission story AND a control story: the other three are what the
+          app does once it holds the grant, and each has its own section below. */}
+      <ul class="m-0 flex list-none flex-wrap gap-x-2.5 gap-y-2 p-0">
+        {
+          CLAIMS.map((c) => (
+            <li>
+              <a
+                href={c.href}
+                class="mono block rounded-full border border-rule-2 px-3 py-[5px] transition-colors hover:border-fg-muted hover:!text-fg-dim"
+              >
+                {c.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
 
       <div class="flex flex-wrap items-center gap-3">
         <a

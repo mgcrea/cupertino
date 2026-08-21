@@ -27,9 +27,11 @@ const rows = [
 ---
 
 <section id="latency" class="wrap scroll-mt-20 py-[96px]">
-  <SectionHeader eyebrow="Latency" heading="Read the index.<br />Don't ask Mail.">
+  <SectionHeader eyebrow="Latency" heading="Read the index.<br />Then say how fresh it was.">
     Same query, same mailbox. Apple Events makes Mail.app do the work one message at a time; the
-    index lane reads the Envelope Index directly. That gap is what the grant buys.
+    index lane reads the Envelope Index directly. Reading the index is the easy half — Mail owns
+    that file and is still writing to it, so every result carries how old the index was and whether
+    the read could see the write-ahead log at all.
   </SectionHeader>
 
   <div class="reveal flex flex-col gap-6 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
@@ -52,13 +54,23 @@ const rows = [
     </p>
   </div>
 
-  <p class="reveal mt-6 text-[14px] leading-[1.65] text-fg-muted">
-    Without the grant, Notes still works fully below roughly {LATENCY.notesCeiling}; Mail search
-    falls back to the {(LATENCY.appleEventsMs / 1000).toFixed(0)}-second path. Tools that need the
-    index never disappear — the tool list is a pure function of <code
-      class="font-mono text-[13px] text-fg-dim">allowWrites</code
-    > and nothing else, so they return a structured <code
-      class="font-mono text-[13px] text-fg-dim">degraded</code
-    > result naming what is absent.
-  </p>
+  <div class="reveal mt-6 grid grid-cols-1 gap-x-10 gap-y-4 text-[14px] leading-[1.65] sm:grid-cols-2">
+    <p class="m-0 text-fg-muted">
+      A search result carries <code class="font-mono text-[13px] text-fg-dim">indexAgeSeconds</code
+      >, and a warning when the index could only be opened <code
+        class="font-mono text-[13px] text-fg-dim">immutable</code
+      > — which skips the write-ahead log, so the newest mail is exactly the mail most likely to be
+      missing. A fast wrong answer is the failure mode every indexed reader shares; saying so is
+      the part that is optional.
+    </p>
+    <p class="m-0 text-fg-muted">
+      Without the grant, Notes still works fully below roughly {LATENCY.notesCeiling}; Mail search
+      falls back to the {(LATENCY.appleEventsMs / 1000).toFixed(0)}-second path. Tools that need the
+      index never disappear — the tool list is a pure function of <code
+        class="font-mono text-[13px] text-fg-dim">allowWrites</code
+      > and nothing else, so they return a structured <code
+        class="font-mono text-[13px] text-fg-dim">degraded</code
+      > result naming what is absent.
+    </p>
+  </div>
 </section>
