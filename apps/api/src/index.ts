@@ -14,7 +14,14 @@ import { sendLicense } from "./email";
 import type { LicenseRow } from "./env";
 import { mint } from "./license";
 import { notFoundPage, pendingPage, thanksPage } from "./pages";
-import { checkoutSession, eventEnvelope, resendRequest } from "./schema";
+import {
+  charge,
+  checkoutSession,
+  dispute,
+  eventEnvelope,
+  isFullyRefunded,
+  resendRequest,
+} from "./schema";
 import { priceIdFor, verifySignature } from "./stripe";
 
 /** Long enough to swallow a Stripe redelivery, short enough to be useful. */
@@ -59,30 +66,8 @@ const findBySession = (env: Env, sessionId: string): Promise<LicenseRow | null> 
  * no-op the second time, and the send is attempted again — which is exactly the
  * behaviour wanted when the alternative is a customer who paid and got nothing.
  */
-const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
-  const raw = await request.text();
-  const verified = await verifySignature(
-    raw,
-    request.headers.get("stripe-signature"),
-    env.STRIPE_WEBHOOK_SECRET,
-  );
-  if (!verified.ok) return new Response(`signature: ${verified.reason}`, { status: 400 });
-
-  let envelope: ReturnType<typeof eventEnvelope.safeParse>;
-  try {
-    envelope = eventEnvelope.safeParse(JSON.parse(raw));
-  } catch {
-    return new Response("body is not JSON", { status: 400 });
-  }
-  if (!envelope.success) return new Response("not a Stripe event", { status: 400 });
-  // Every subscribed event arrives here, not just ours. Deciding that BEFORE
-  // insisting on a shape is what keeps an unrelated event type out of the same
-  // retry loop a malformed one belongs in.
-  if (envelope.data.type !== "checkout.session.completed") {
-    return new Response("ignored", { status: 200 });
-  }
-
-  const parsed = checkoutSession.safeParse(envelope.data.data.object);
+const fulfil = async (object: unknown, env: Env): Promise<Response> => {
+  const parsed = checkoutSession.safeParse(object);
   if (!parsed.success) {
     // 400, not 500: something that will never parse should stop being retried,
     // and the message is what says which field Stripe moved.
@@ -102,8 +87,9 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
     const priceId = await priceIdFor(session.id, env.STRIPE_SECRET_KEY);
     await env.DB.prepare(
       `INSERT INTO licenses
-         (id, email, major, key, stripe_session_id, price_id, amount_paid, currency, issued_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, email, major, key, stripe_session_id, payment_intent, price_id, amount_paid,
+          currency, issued_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (stripe_session_id) DO NOTHING`,
     )
       .bind(
@@ -112,6 +98,7 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
         major,
         minted.key,
         session.id,
+        session.payment_intent ?? "",
         priceId,
         session.amount_total ?? 0,
         session.currency ?? "eur",
@@ -132,6 +119,118 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
   if (!sent.ok) return new Response(`email: ${sent.reason}`, { status: 500 });
   await markSent(env, row.id);
   return new Response("ok", { status: 200 });
+};
+
+/**
+ * Mark a licence revoked, by the payment that bought it.
+ *
+ * Guarded on `revoked_at IS NULL` so a redelivered event does not keep moving
+ * the timestamp forward — the date is meant to be when it was revoked, not when
+ * Stripe last mentioned it.
+ *
+ * Nothing here reaches the app. Revocation is baked into a build by
+ * `make revocations`, so this only records the fact; the refunded key keeps
+ * working until the next release, exactly as EULA §4(a) says it will.
+ */
+const revoke = async (env: Env, paymentIntent: string | null | undefined, why: string) => {
+  if (!paymentIntent) {
+    // 200, not 500. Retrying will never make a payment intent appear, and a
+    // three-day retry loop buries the problem; this body shows up in the event
+    // log on the Stripe dashboard, where someone will see it.
+    return new Response(`${why}: no payment intent on the event, nothing revoked`, { status: 200 });
+  }
+  const result = await env.DB.prepare(
+    "UPDATE licenses SET revoked_at = ? WHERE payment_intent = ? AND revoked_at IS NULL",
+  )
+    .bind(new Date().toISOString(), paymentIntent)
+    .run();
+  return new Response(`${why}: revoked ${result.meta.changes ?? 0}`, { status: 200 });
+};
+
+/**
+ * `charge.refunded` also fires for a PARTIAL refund, which is the trap. Handing
+ * back two euros of a fifteen euro licence is a goodwill gesture; treating it as
+ * a revocation would take the product away from someone who still owns it.
+ */
+const refunded = async (object: unknown, env: Env): Promise<Response> => {
+  const parsed = charge.safeParse(object);
+  if (!parsed.success) return new Response(`charge: ${explain(parsed.error)}`, { status: 400 });
+  if (!isFullyRefunded(parsed.data)) {
+    return new Response("partial refund: licence left alone", { status: 200 });
+  }
+  return revoke(env, parsed.data.payment_intent, "refunded");
+};
+
+const disputed = async (object: unknown, env: Env): Promise<Response> => {
+  const parsed = dispute.safeParse(object);
+  if (!parsed.success) return new Response(`dispute: ${explain(parsed.error)}`, { status: 400 });
+  return revoke(env, parsed.data.payment_intent, "disputed");
+};
+
+/**
+ * A dispute that closes in our favour means the claim failed and the customer
+ * did pay after all, so the licence comes back. Any other outcome leaves it
+ * revoked.
+ *
+ * In practice this usually costs nothing to honour: disputes take weeks, and
+ * unless a release went out in the meantime the revocation was never baked into
+ * a build to begin with.
+ */
+const disputeClosed = async (object: unknown, env: Env): Promise<Response> => {
+  const parsed = dispute.safeParse(object);
+  if (!parsed.success) return new Response(`dispute: ${explain(parsed.error)}`, { status: 400 });
+  const { payment_intent: paymentIntent, status } = parsed.data;
+  if (status !== "won") {
+    return new Response(`dispute ${status ?? "closed"}: licence stays revoked`, { status: 200 });
+  }
+  if (!paymentIntent) {
+    return new Response("dispute won: no payment intent, nothing restored", { status: 200 });
+  }
+  const result = await env.DB.prepare(
+    "UPDATE licenses SET revoked_at = NULL WHERE payment_intent = ?",
+  )
+    .bind(paymentIntent)
+    .run();
+  return new Response(`dispute won: restored ${result.meta.changes ?? 0}`, { status: 200 });
+};
+
+/**
+ * Verify, then route on the event type.
+ *
+ * Every subscribed event lands here, not just the ones handled. Deciding that
+ * BEFORE insisting on a shape is what keeps an unrelated event type out of the
+ * same retry loop a malformed one belongs in.
+ */
+const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
+  const raw = await request.text();
+  const verified = await verifySignature(
+    raw,
+    request.headers.get("stripe-signature"),
+    env.STRIPE_WEBHOOK_SECRET,
+  );
+  if (!verified.ok) return new Response(`signature: ${verified.reason}`, { status: 400 });
+
+  let envelope: ReturnType<typeof eventEnvelope.safeParse>;
+  try {
+    envelope = eventEnvelope.safeParse(JSON.parse(raw));
+  } catch {
+    return new Response("body is not JSON", { status: 400 });
+  }
+  if (!envelope.success) return new Response("not a Stripe event", { status: 400 });
+
+  const object = envelope.data.data.object;
+  switch (envelope.data.type) {
+    case "checkout.session.completed":
+      return fulfil(object, env);
+    case "charge.refunded":
+      return refunded(object, env);
+    case "charge.dispute.created":
+      return disputed(object, env);
+    case "charge.dispute.closed":
+      return disputeClosed(object, env);
+    default:
+      return new Response("ignored", { status: 200 });
+  }
 };
 
 const handleThanks = async (url: URL, env: Env): Promise<Response> => {

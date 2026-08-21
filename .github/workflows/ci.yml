@@ -53,6 +53,14 @@ jobs:
         run: pnpm run build
       - name: TypeScript 🔍
         run: pnpm run typecheck
+      # Confirms the committed revocation list still matches D1. It does not
+      # regenerate: the file in git is what the build uses, and fetching it here
+      # would make a Cloudflare outage an outage in releases. With no token —
+      # a fork, a pull request, a clean clone — the script skips and exits 0.
+      - name: Revocation list 🔍
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/generate-revocations.mjs --check
       # The suite is entirely offline: osascript is faked, the Envelope Index is
       # a fixture built with node:sqlite, and .emlx files are written to a temp
       # dir. APPLE_MAIL_INTEGRATION is deliberately never set here — a runner
@@ -179,6 +187,38 @@ jobs:
   # release — never from the website, whose Cloudflare assets binding caps a
   # single file at 25 MiB against a bundle that embeds a universal Node runtime.
   # See docs/distribution.md.
+  deploy-api:
+    name: Deploy the licence API
+    runs-on: ubuntu-latest
+    needs: test
+    # Its own tag namespace, like the app's. Both are excluded from publish-npm
+    # above, because the tag glob `*-v*.*.*` would otherwise route them there.
+    if: startsWith(github.ref, 'refs/tags/api-v')
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+      - name: Setup pnpm 🔧
+        uses: pnpm/action-setup@v6
+      - name: Setup node 🔧
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          check-latest: true
+          cache: "pnpm"
+      - name: Install 🪄
+        run: pnpm install --frozen-lockfile
+      # Before the deploy, not after: a Worker that is live against a database
+      # missing a column it reads fails on a real payment. Migrations here are
+      # additive by construction — see apps/api/migrations.
+      - name: Migrate D1 🗄️
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @mgcrea/cupertino-api exec wrangler d1 migrations apply cupertino-licenses --remote
+      - name: Deploy 🚀
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @mgcrea/cupertino-api exec wrangler deploy
+
   release-app:
     name: Release Cupertino.app
     runs-on: macos-latest

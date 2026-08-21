@@ -266,6 +266,29 @@ That is honest and it will still sting at 3.3×, so the D1 row records `amount_p
 from the very first sale — fair upgrade pricing later is impossible without knowing what people
 actually paid, and that number cannot be reconstructed after the fact.
 
+### The seller side is its own project
+
+`apps/api` — a Cloudflare Worker on `api.cupertino.mgcrea.io` — rather than a route bolted onto the
+marketing site. Three reasons, and they all point the same way:
+
+- The site is static assets whose `public/_redirects` serves `/download`, the permanent URL both the
+  Homebrew cask and `config.ts` depend on. Putting a script in front of that risks shadowing it, and
+  the failure would be silent and total.
+- `apps/website/tsconfig.json` is `include: ["**/*"]` over a Node-shaped base config. Worker code
+  needs `@cloudflare/workers-types` and a bundler resolution; co-locating means fighting that or
+  carving out exceptions forever.
+- The signing key has no business living on the Worker that serves public HTML.
+
+The cost is a second deploy target and a second hostname, which is why `/thanks` renders from the API
+rather than the site. That is the right trade: a marketing copy edit can no longer take fulfilment
+down, and fulfilment can no longer take the marketing site down.
+
+The same format is implemented three times — `scripts/lib/license.mjs` on Node, `apps/api/src/license.ts`
+against WebCrypto, and `apps/apple/Cupertino/License.swift` in CryptoKit — because none of the three
+can import the others. What keeps them honest is that the signature covers the **encoded** payload
+rather than the parsed object, so only bytes have to agree, and a test asserts the Worker and Node
+produce byte-identical keys from identical input.
+
 ### Three stores, one job each
 
 | Question                                  | Lives in                  | Why there                                                 |

@@ -9,9 +9,9 @@
     {
       "binding": "DB",
       "database_name": "cupertino-licenses",
-      // Replaced by the id `wrangler d1 create cupertino-licenses` prints.
-      // The zeros work for --local, which keys on the name instead.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // From `wrangler d1 create cupertino-licenses`. Only the remote binding
+      // needs it; `--local` keys on the name, so miniflare ignores this value.
+      "database_id": "650f4f59-f793-428d-a4dc-76845995a511",
       "migrations_dir": "./migrations"
     }
   ],

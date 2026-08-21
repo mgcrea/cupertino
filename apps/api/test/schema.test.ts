@@ -9,7 +9,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { checkoutSession, eventEnvelope, resendRequest } from "../src/schema";
+import {
+  charge,
+  checkoutSession,
+  dispute,
+  eventEnvelope,
+  isFullyRefunded,
+  resendRequest,
+} from "../src/schema";
 
 describe("eventEnvelope", () => {
   it("accepts an event type this Worker does not handle", () => {
@@ -66,4 +73,57 @@ describe("resendRequest", () => {
       expect(resendRequest.safeParse(input).success).toBe(false);
     });
   }
+});
+
+describe("isFullyRefunded", () => {
+  // The partial case is the whole reason this is a function. `charge.refunded`
+  // fires for a two-euro goodwill refund exactly as it does for the full amount,
+  // and treating the two alike would take a licence away from someone who still
+  // owns it.
+  const cases: [string, { amount?: number; amount_refunded?: number }, boolean][] = [
+    ["a full refund", { amount: 1499, amount_refunded: 1499 }, true],
+    [
+      "an over-refund, which Stripe permits with fees",
+      { amount: 1499, amount_refunded: 1500 },
+      true,
+    ],
+    ["a partial refund", { amount: 1499, amount_refunded: 200 }, false],
+    ["a refund of nothing", { amount: 1499, amount_refunded: 0 }, false],
+    ["no refund field at all", { amount: 1499 }, false],
+    ["a zero-amount charge", { amount: 0, amount_refunded: 0 }, false],
+    ["nothing known", {}, false],
+  ];
+
+  for (const [label, input, expected] of cases) {
+    it(`${expected ? "revokes" : "leaves alone"}: ${label}`, () => {
+      expect(isFullyRefunded({ id: "ch_1", ...input })).toBe(expected);
+    });
+  }
+});
+
+describe("charge and dispute", () => {
+  it("accepts a charge carrying the payment intent a licence is matched by", () => {
+    const result = charge.safeParse({
+      id: "ch_1",
+      payment_intent: "pi_1",
+      amount: 1499,
+      amount_refunded: 1499,
+    });
+    expect(result.success && result.data.payment_intent).toBe("pi_1");
+  });
+
+  it("accepts a charge with no payment intent, so the handler can say so", () => {
+    // Refusing here would 400 and make Stripe retry something unfixable. The
+    // handler answers 200 with an explanation instead.
+    expect(charge.safeParse({ id: "ch_1", amount: 1499 }).success).toBe(true);
+  });
+
+  it("reads a dispute outcome", () => {
+    const result = dispute.safeParse({ id: "dp_1", payment_intent: "pi_1", status: "won" });
+    expect(result.success && result.data.status).toBe("won");
+  });
+
+  it("rejects a charge with no id", () => {
+    expect(charge.safeParse({ amount: 1499 }).success).toBe(false);
+  });
 });

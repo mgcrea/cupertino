@@ -145,6 +145,14 @@ smoke: ## Handshake both servers through the bridge, as CI does directly
 audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"
 
+# Run this after a refund, then commit the diff. It is a source change like any
+# other, deliberately: the app cannot consult a list at run time — it makes no
+# network connections at all — so revocation is something a BUILD carries. A
+# refunded key keeps working until the next release and then stops, which is
+# what EULA §4(a) tells the buyer.
+revocations: ## Rewrite the baked-in revocation list from D1
+	@node scripts/generate-revocations.mjs
+
 servers: ## Bundle the MCP servers self-contained (no node_modules at runtime)
 	@pnpm exec tsdown --config apps/apple/tsdown.servers.config.ts -l warn
 	@for s in $(SURFACES); do \
@@ -241,4 +249,4 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke audit servers node bundle sign notarize icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke audit revocations servers node bundle sign notarize icon clean

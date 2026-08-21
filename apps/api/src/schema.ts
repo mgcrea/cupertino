@@ -28,6 +28,8 @@ export const eventEnvelope = z.object({
  */
 export const checkoutSession = z.object({
   id: z.string().min(1),
+  /** How a later refund or dispute finds its way back to this licence. */
+  payment_intent: z.string().nullish(),
   amount_total: z.number().int().nullish(),
   currency: z.string().nullish(),
   payment_status: z.string().nullish(),
@@ -48,5 +50,40 @@ export const resendRequest = z.object({
   // trailing space. Piping puts the normalisation first, where it belongs.
   email: z.string().trim().toLowerCase().max(320).pipe(z.email()),
 });
+
+/**
+ * A charge, as `charge.refunded` delivers it.
+ *
+ * `amount_refunded` matters as much as the event name: Stripe fires
+ * `charge.refunded` for a PARTIAL refund too, and refunding two euros of a
+ * fifteen euro licence is a goodwill gesture, not a revocation.
+ */
+export const charge = z.object({
+  id: z.string().min(1),
+  payment_intent: z.string().nullish(),
+  amount: z.number().int().nullish(),
+  amount_refunded: z.number().int().nullish(),
+});
+
+/** A dispute, as `charge.dispute.created` and `.closed` deliver it. */
+export const dispute = z.object({
+  id: z.string().min(1),
+  payment_intent: z.string().nullish(),
+  /** `won`, `lost`, `warning_closed`, … Only `won` restores a licence. */
+  status: z.string().nullish(),
+});
+
+export type Charge = z.infer<typeof charge>;
+
+/**
+ * Was the whole thing given back?
+ *
+ * A pure function because the partial-refund case is the one that would quietly
+ * revoke a paying customer, and that deserves a test rather than a code read.
+ */
+export const isFullyRefunded = (paid: Charge): boolean => {
+  const total = paid.amount ?? 0;
+  return total > 0 && (paid.amount_refunded ?? 0) >= total;
+};
 
 export type CheckoutSession = z.infer<typeof checkoutSession>;

@@ -25,6 +25,14 @@ land together at the first release. Until then this section is the running recor
 - `scripts/audit-network.sh`, gating the "no network connections" claim in CI and runnable by
   anyone against the `.app` they downloaded.
 - Phase-0 probes for Messages, Calendar and Safari.
-- `LICENSE` (MIT, `packages/*`) and `apps/apple/LICENSE` (source-available).
+- `LICENSE` (MIT, `packages/*`) and `apps/apple/LICENSE` (source-available), plus `apps/apple/EULA`
+  and the succession commitments in `docs/succession.md` that it incorporates by reference.
+- Offline licence keys — Ed25519, verified locally against a public key compiled into the app, with
+  no activation server and no phone-home. The relay refuses without one; `allowWrites` is untouched
+  in every state, because writes are a safety control and never the paywall.
+- `apps/api` — a Cloudflare Worker turning a Stripe payment into a key, storing which key went to
+  whom in D1, and emailing it. Refunds and lost disputes revoke; a won dispute restores.
+- `make revocations` — regenerates the revocation list baked into each build. Revocation lands at
+  build time because the app is not allowed to ask anyone anything at run time.
 
 [unreleased]: https://github.com/mgcrea/mcp-cupertino/commits/main
