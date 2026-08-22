@@ -238,6 +238,16 @@ enum DemoSeed {
   /// This is also the isolation boundary: without it the automation glyphs and
   /// the Full Disk Access dot describe the capturing Mac, so the same commit
   /// produces a green image on one machine and an orange one on another.
+  /// The version the marketing images show.
+  ///
+  /// Pinned for the reason at the top of this file: the real one is whatever the
+  /// pbxproj default happens to be on the machine that captured — `1.0`, not
+  /// `1.0.0`, because nothing bumps MARKETING_VERSION locally and only CI sets
+  /// it from the tag. A capture would bake that into a marketing image, and a
+  /// version that changes every release would churn the golden gate into noise.
+  /// Bump this deliberately, when new marketing images are wanted.
+  nonisolated static let version = "1.0.0"
+
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted
 

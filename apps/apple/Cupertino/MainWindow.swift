@@ -136,6 +136,18 @@ struct MainView: View {
         }
       }
       .buttonStyle(.plain)
+      // Last, and quiet: the two lines above are states that can need acting on,
+      // and this one never does. Opens Settings, where the build number, the
+      // commit and the copy button are.
+      Button { SettingsOpener.show(.general) } label: {
+        HStack(spacing: 6) {
+          Text("Version \(AppInfo.shortVersion)")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+          Spacer()
+        }
+      }
+      .buttonStyle(.plain)
     }
     .padding(.horizontal, 12)
     .padding(.bottom, 10)

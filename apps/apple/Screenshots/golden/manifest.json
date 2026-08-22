@@ -10,6 +10,23 @@
         "--golden",
         "apps/apple/Screenshots/golden"
       ],
+      "at": "2026-08-22T12:47:44Z",
+      "count": 3,
+      "cwd": "/Users/olivier/Projects/apps/cupertino",
+      "host": "oliviermacbookpro.local",
+      "pid": 1735,
+      "user": "olivier"
+    },
+    {
+      "appshotVersion": "0.9.0",
+      "argv": [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
       "at": "2026-08-22T05:37:52Z",
       "count": 3,
       "cwd": "/Users/olivier/Projects/apps/cupertino",
@@ -20,21 +37,21 @@
   ],
   "entries": {
     "activity~dark.png": {
-      "bytes": 374598,
+      "bytes": 374541,
       "height": 1144,
-      "sha256": "8f6753c89ad7e2a0de9be67e8a72dfa017af54f9e580bc396cf1150cb6abbcc8",
+      "sha256": "0636b4dec0dfbc080ec898f152850cef63dc86801a8e90daacede93c1c914d8f",
       "width": 2240
     },
     "connections~dark.png": {
-      "bytes": 291185,
+      "bytes": 291200,
       "height": 1144,
-      "sha256": "8d84be013df2e04e7dbc1863b615d71aa9f01159d4e67d266c209c647790e187",
+      "sha256": "ad6f0703d8397978609978996c96168bd723885a6bbaa924cee15598dbed22b3",
       "width": 2240
     },
     "surface~dark.png": {
-      "bytes": 207936,
+      "bytes": 208244,
       "height": 1144,
-      "sha256": "894edc88998482c260a7dd9ce38d5533cd9dbf7540f8b20a2b19bb89fd60dbd9",
+      "sha256": "13c7af169cdf9ba1a53ef57164e1c6c09e3e797c152e48482f70bca4b7f4c1c8",
       "width": 2240
     }
   },

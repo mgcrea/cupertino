@@ -1,12 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// The tabs, and the key the selection persists under.
+/// The panes, and the key the selection persists under.
 ///
-/// Persisted rather than held in `@State` because opening Settings *at* a tab is
-/// how the first-run licence prompt works: write the selection, then open the
-/// window. A binding threaded down from the `Settings` scene would need the App
-/// struct to own state that only one pane cares about.
+/// Persisted rather than held in `@State` because opening Settings *at* a pane
+/// is how the first-run licence prompt works: write the selection, then open the
+/// window. It is also what makes a deep link land on a window that is already
+/// open — `@AppStorage` observes the write, so `SettingsOpener.show(.licence)`
+/// moves the sidebar selection whether the window was built a moment ago or has
+/// been sitting behind Xcode for an hour.
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case permissions
@@ -16,6 +18,15 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   var id: String { rawValue }
 
   static let defaultsKey = "settingsPane"
+
+  /// How the app behaves…
+  static let configuration: [SettingsPane] = [.general, .permissions, .clients]
+
+  /// …and what was bought, which is a different question and the only reason
+  /// the sidebar is in two groups rather than one list of four. Somebody opens
+  /// Licence because of a refusal or a receipt, never because they are tuning
+  /// something.
+  static let entitlement: [SettingsPane] = [.licence]
 
   var title: String {
     switch self {
@@ -40,15 +51,29 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 ///
 /// See `HostedWindow` for why this is an `NSWindow` rather than a SwiftUI
 /// `Settings` scene: the scene opens through an app menu that `LSUIElement`
-/// removes, so its button did nothing at all.
+/// removes, so its button did nothing at all. `MainMenu` puts the ⌘, back by
+/// hand.
 @MainActor
 enum SettingsWindowController {
   private static let hosted = HostedWindow(
-    title: "Cupertino Settings", autosaveName: "settings",
+    // Renamed from "settings" deliberately. The old autosaved frame was sized
+    // for a 580pt tab view; this window has a sidebar and a minimum a good deal
+    // wider, and reopening into a frame smaller than the content can occupy is
+    // how a window comes back with its detail column crushed to nothing.
+    // A new name is a one-time reset of position and size, and nothing else.
+    title: "Cupertino Settings", autosaveName: "settings-sidebar",
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
     UserDefaults.standard.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
+    hosted.show()
+  }
+
+  /// Settings, without naming a pane — ⌘, and the app menu item, where nobody
+  /// has said which one they want. The persisted selection stands, so this
+  /// reopens on whatever was last being read instead of resetting to General.
+  /// Every `show(_:)` caller is a deep link and keeps overriding it.
+  static func show() {
     hosted.show()
   }
 }
@@ -57,6 +82,10 @@ enum SettingsWindowController {
 enum SettingsOpener {
   static func show(_ pane: SettingsPane) {
     Task { @MainActor in SettingsWindowController.show(pane) }
+  }
+
+  static func show() {
+    Task { @MainActor in SettingsWindowController.show() }
   }
 }
 
@@ -68,20 +97,69 @@ enum SettingsOpener {
 /// About, none of which is a glance. Those live here, where there is room to
 /// explain them, and the popover went back to being a status view with the
 /// actions that are genuinely urgent.
+///
+/// A sidebar rather than the tab strip this used to be. Tabs price every pane
+/// at one icon and one word across the top, which was survivable at four and is
+/// the reason nothing could be added to it; a source list costs a column and
+/// then stays free. It also puts Settings in the same shape as the main window,
+/// and it is what every Mac app people already have open does — System Settings
+/// and Xcode included.
 struct SettingsView: View {
   let model: StatusModel
   @AppStorage(SettingsPane.defaultsKey) private var selection = SettingsPane.general.rawValue
 
+  /// `List(selection:)` drives an `Optional` for a single selection, and the
+  /// stored value is a `String` because that is what `@AppStorage` can hold.
+  /// Bridging here rather than mirroring into `@State` keeps one source of
+  /// truth: a `@State` copy seeded once at init is exactly how a deep link into
+  /// an already-open window stops working.
+  private var pane: Binding<SettingsPane?> {
+    Binding(
+      get: { SettingsPane(rawValue: selection) ?? .general },
+      set: { selection = ($0 ?? .general).rawValue })
+  }
+
+  private var current: SettingsPane { SettingsPane(rawValue: selection) ?? .general }
+
   var body: some View {
-    TabView(selection: $selection) {
-      ForEach(SettingsPane.allCases) { pane in
-        content(for: pane)
-          .tabItem { Label(pane.title, systemImage: pane.symbol) }
-          .tag(pane.rawValue)
+    NavigationSplitView {
+      List(selection: pane) {
+        Section {
+          ForEach(SettingsPane.configuration) { row($0) }
+        }
+        Section {
+          ForEach(SettingsPane.entitlement) { row($0) }
+        }
       }
+      .navigationSplitViewColumnWidth(min: 172, ideal: 192, max: 240)
+    } detail: {
+      detail
     }
-    .frame(width: 580)
+    // Wider than the 580 the tabs needed, because the sidebar is new width that
+    // the content does not get to use. The minimum is what keeps the widest row
+    // in Permissions — an app icon, a name, a status and a control — on one line.
+    .frame(minWidth: 720, idealWidth: 760, minHeight: 480, idealHeight: 540)
     .onAppear { model.refresh() }
+  }
+
+  private func row(_ pane: SettingsPane) -> some View {
+    Label(pane.title, systemImage: pane.symbol).tag(pane)
+  }
+
+  /// The pane's name is drawn in the content rather than left to the title bar,
+  /// which keeps the window called "Cupertino Settings" in ⌘-Tab and in the
+  /// Window menu while the heading still says which page this is.
+  private var detail: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text(current.title)
+        .font(.title2)
+        .fontWeight(.semibold)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+
+      content(for: current)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   @ViewBuilder
@@ -95,73 +173,89 @@ struct SettingsView: View {
   }
 }
 
+/// Every pane is a grouped `Form`, which is what draws the inset cards, the
+/// hairlines between rows and the trailing-edge controls. Doing it by hand — a
+/// `VStack` of `HStack`s, as this file used to — is how four panes end up with
+/// four slightly different row heights and three different label widths.
 struct GeneralPane: View {
   let model: StatusModel
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
+  @State private var copied = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Cupertino \(AppInfo.version)").font(.headline)
-        Text(AppInfo.identity).font(.caption).foregroundStyle(.secondary)
+    Form {
+      Section {
+        LabeledContent {
+          // Selectable *and* a button. Selecting a caption with a trackpad to
+          // paste it into an issue is fiddly enough that people retype it, and
+          // a retyped build number is the one that turns out to be wrong.
+          Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(AppInfo.buildLine, forType: .string)
+            copied = true
+          } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+          }
+          .buttonStyle(.borderless)
+          .help("Copy build details for a bug report")
+          .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+          }
+        } label: {
+          Text("Cupertino \(AppInfo.version)")
+          Text(AppInfo.identityLine)
+        }
+        .textSelection(.enabled)
       }
-
-      Divider()
 
       UpdatesSection()
 
-      Divider()
-
-      VStack(alignment: .leading, spacing: 6) {
-        Toggle("Launch at login", isOn: $launchAtLogin)
-          .toggleStyle(.checkbox)
-          .disabled(!model.location.isStable)
-          .onChange(of: launchAtLogin) { _, value in
-            loginError = LoginItem.set(value)
-            // Trust the service, not the checkbox: a refused registration has
-            // to put the box back rather than claim something untrue.
-            launchAtLogin = LoginItem.isEnabled
-          }
-
-        if let loginError {
-          Text(loginError).font(.caption).foregroundStyle(.red)
-            .fixedSize(horizontal: false, vertical: true)
-        } else {
+      Section {
+        Toggle(isOn: $launchAtLogin) {
+          Text("Launch at login")
           Text(
             "Cupertino starts on demand when a client connects. This only removes the wait on the first call."
           )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        }
+        .disabled(!model.location.isStable)
+        .onChange(of: launchAtLogin) { _, value in
+          loginError = LoginItem.set(value)
+          // Trust the service, not the checkbox: a refused registration has to
+          // put the box back rather than claim something untrue.
+          launchAtLogin = LoginItem.isEnabled
+        }
+      } header: {
+        Text("Startup")
+      } footer: {
+        if let loginError {
+          Text(loginError).foregroundStyle(.red)
         }
       }
 
-      Divider()
-
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Location").font(.subheadline).bold()
-        if let warning = model.location.warning {
-          Label(warning, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .font(.caption)
-            .fixedSize(horizontal: false, vertical: true)
-          Button("Reveal in Finder") { model.location.revealInFinder() }
-            .controlSize(.small)
-        } else {
-          Text(
-            "Installed where the clients expect it. Moving Cupertino breaks the bridge path written into their configs, not the permission grant."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+      Section {
+        LabeledContent {
+          if model.location.warning != nil {
+            Button("Reveal in Finder") { model.location.revealInFinder() }
+          }
+        } label: {
+          Text("Location")
+          // Not about the grant — that follows the signature and survives a
+          // move. It is the bridge path written into other apps' configs that
+          // breaks.
+          if let warning = model.location.warning {
+            Text(warning).foregroundStyle(.orange)
+          } else {
+            Text(
+              "Installed where the clients expect it. Moving Cupertino breaks the bridge path written into their configs, not the permission grant."
+            )
+          }
         }
       }
-
-      Spacer(minLength: 0)
     }
-    .padding(20)
-    .frame(minHeight: 340, alignment: .topLeading)
+    .formStyle(.grouped)
   }
 }
 
@@ -169,124 +263,226 @@ struct PermissionsPane: View {
   let model: StatusModel
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack {
-          Label {
-            Text("Full Disk Access").bold()
-          } icon: {
-            Image(
-              systemName: model.diskAccess == .granted
-                ? "checkmark.circle.fill" : "xmark.circle.fill"
-            )
-            .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
-          }
-          Spacer()
-          if model.diskAccess != .granted {
+    Form {
+      Section {
+        LabeledContent {
+          if model.diskAccess == .granted {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+          } else {
             Button("Grant…") { Permissions.openDiskAccessSettings() }
-              .buttonStyle(.glass)
-              .controlSize(.small)
           }
+        } label: {
+          Text("Full Disk Access")
+          // One row, not one per surface: the grant is indivisible, and showing
+          // it per surface would imply a containment that does not exist.
+          Text(StatusStyle.diskAccessHint(model.diskAccess))
         }
-        // One row, not one per surface: the grant is indivisible, and showing it
-        // per surface would imply a containment that does not exist.
-        Text(StatusStyle.diskAccessHint(model.diskAccess))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
       }
 
-      Divider()
-
-      VStack(alignment: .leading, spacing: 10) {
-        Text("Automation and writes").font(.subheadline).bold()
-        Text(
-          "Automation lets Cupertino drive each app through Apple Events. Writes decide which tools an assistant can see at all — the write tools are not registered when it is off, so this is not merely a permission to refuse later."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
+      // Automation and writes were one row per surface carrying both, which
+      // needed a paragraph above the table to explain that the two are
+      // unrelated. Two sections say it without the paragraph: they are
+      // different questions about the same four apps, and each row now has one
+      // control at its trailing edge like every other row in this window.
+      Section {
         ForEach(Surface.all) { surface in
-          HStack(alignment: .firstTextBaseline) {
-            // Same arrangement as the main window's sidebar: the app's own icon
-            // names the row, and the status glyph rides with the caption that
-            // spells the status out.
-            Label {
-              Text(surface.displayName)
-            } icon: {
-              SurfaceIconView(surface: surface)
-            }
-            .frame(width: 130, alignment: .leading)
-
-            HStack(spacing: 5) {
-              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
-              Text(StatusStyle.caption(model.automation[surface.id]))
-                .foregroundStyle(.secondary)
-            }
-            .font(.caption)
-            .frame(width: 130, alignment: .leading)
-
-            WritesToggle(surface: surface)
-
-            Spacer()
-
+          LabeledContent {
             switch model.automation[surface.id] {
             case .notDetermined:
               Button("Allow…") { model.requestAutomation(surface) }
-                .buttonStyle(.glass).controlSize(.small)
             case .denied:
               // A denial cannot be re-prompted; it has to change in Settings.
-              Button("Settings…") { Permissions.openAutomationSettings() }.controlSize(.small)
+              Button("Settings…") { Permissions.openAutomationSettings() }
             default:
-              EmptyView()
+              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
             }
+          } label: {
+            SurfaceLabel(surface: surface, caption: StatusStyle.caption(model.automation[surface.id]))
           }
         }
+      } header: {
+        Text("Automation")
+      } footer: {
+        Text("Automation lets Cupertino drive each app through Apple Events.")
       }
 
-      Spacer(minLength: 0)
+      Section {
+        ForEach(Surface.all) { surface in
+          WritesToggle(surface: surface, style: .row)
+        }
+      } header: {
+        Text("Writes")
+      } footer: {
+        Text(
+          "Writes decide which tools an assistant can see at all — the write tools are not registered when this is off, so it is not merely a permission to refuse later."
+        )
+      }
     }
-    .padding(20)
-    .frame(minHeight: 340, alignment: .topLeading)
+    .formStyle(.grouped)
+  }
+}
+
+/// A form row's leading half for one surface: the app's own icon, its name, and
+/// whatever this pane has to say about it underneath.
+///
+/// Spelled out rather than left to `LabeledContent`'s two-`Text` convention,
+/// which produces the title-and-description pair only when the label is Text and
+/// nothing else — and these rows lead with an icon.
+struct SurfaceLabel: View {
+  let surface: Surface
+  var caption: String?
+
+  var body: some View {
+    Label {
+      VStack(alignment: .leading, spacing: 1) {
+        Text(surface.displayName)
+        if let caption {
+          Text(caption)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+    } icon: {
+      SurfaceIconView(surface: surface)
+    }
   }
 }
 
 struct ClientsPane: View {
   let model: StatusModel
 
+  /// A client we cannot find is not a client to nag anybody about. This is also
+  /// the entire implementation of "does not support ChatGPT desktop": it is not
+  /// in `ClientWiring.clients`, so there is no row and no explanation to
+  /// maintain.
+  private var visible: [ClientWiring.Client] {
+    ClientWiring.clients.filter { model.clients[$0].map { $0 != .notInstalled } ?? false }
+  }
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text(
-        "Cupertino writes its own bridge path into each client's config. Re-run these after moving the app, or after a new surface ships."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-
-      // The `code` command is installed separately from VS Code itself, and
-      // the row is gated on the app rather than on the CLI: a false negative
-      // would hide the row entirely, which is worse than a paste that says
-      // "command not found" and names the thing to fix.
-      Text(
-        "Clients with a command keep their config in a format this app will not rewrite. Paste the command into a terminal — for Visual Studio Code that needs its \"code\" shell command installed."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-
-      ClientsSection(model: model)
-
-      if let error = model.lastError {
-        Text(error).font(.caption).foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
+    Form {
+      Section {
+        if visible.isEmpty {
+          Text("No MCP clients found on this Mac.").foregroundStyle(.secondary)
+        }
+        ForEach(visible) { client in
+          ClientRow(
+            client: client,
+            status: model.clients[client] ?? .notInstalled,
+            configure: { model.configure(client) })
+        }
+      } header: {
+        Text("MCP clients")
+      } footer: {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(
+            "Cupertino writes its own bridge path into each client's config. Re-run these after moving the app, or after a new surface ships."
+          )
+          // The `code` command is installed separately from VS Code itself, and
+          // the row is gated on the app rather than on the CLI: a false negative
+          // would hide the row entirely, which is worse than a paste that says
+          // "command not found" and names the thing to fix.
+          Text(
+            "Clients with a command keep their config in a format this app will not rewrite. Paste the command into a terminal — for Visual Studio Code that needs its \"code\" shell command installed."
+          )
+          if let error = model.lastError {
+            Text(error).foregroundStyle(.red)
+          }
+        }
+        .fixedSize(horizontal: false, vertical: true)
       }
-
-      Spacer(minLength: 0)
     }
-    .padding(20)
-    .frame(minHeight: 340, alignment: .topLeading)
+    .formStyle(.grouped)
+  }
+}
+
+/// One client, and the one action it can take.
+///
+/// A view of its own rather than a branch inside the pane, because `copied` has
+/// to be per-row: with a single `copiedID` on the section, copying one client's
+/// command while another's two-second reset is still in flight clears the wrong
+/// label. `ForEach` identity scopes `@State` correctly for free.
+private struct ClientRow: View {
+  let client: ClientWiring.Client
+  let status: ClientWiring.Status
+  let configure: () -> Void
+  @State private var copied = false
+
+  var body: some View {
+    LabeledContent {
+      action
+    } label: {
+      Label {
+        VStack(alignment: .leading, spacing: 1) {
+          Text(client.displayName)
+          if let caption {
+            Text(caption)
+              .font(.caption)
+              .foregroundStyle(status.isFault ? .red : .secondary)
+          }
+        }
+      } icon: {
+        Image(systemName: status == .configured ? "checkmark.circle.fill" : "circle.dashed")
+          .foregroundStyle(status == .configured ? .green : .secondary)
+      }
+    }
+  }
+
+  private var caption: String? {
+    switch status {
+    case .incomplete(let missing): "missing \(missing.joined(separator: ", "))"
+    case .unreadable(let why): why
+    default: nil
+    }
+  }
+
+  @ViewBuilder private var action: some View {
+    if case .unreadable = status {
+      EmptyView()
+    } else {
+      switch client.wiring {
+      // Not edited automatically on purpose: these files are JSONC, TOML, or —
+      // in Claude Code's case — strict JSON that holds API credentials and that
+      // running sessions write to concurrently. See `ClientWiring.Wiring`.
+      case .command:
+        Button(copied ? "Copied" : "Copy command") {
+          guard let commands = ClientWiring.commands(for: client) else { return }
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(commands, forType: .string)
+          copied = true
+          // Confirmation, not a permanent state: the button has to invite a
+          // second copy after the app has moved and the paths changed.
+          Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+          }
+        }
+
+      case .json:
+        switch status {
+        case .configured:
+          Button("Reveal") { ClientWiring.reveal(client) }
+        case .stale:
+          // Points at a previous build — the common case after moving the app.
+          Button("Update") { configure() }
+        case .incomplete:
+          // Wired before a surface existed. Configure writes all of
+          // Surface.all, so the same button finishes the job.
+          Button("Update") { configure() }
+        default:
+          Button("Configure") { configure() }
+        }
+      }
+    }
+  }
+}
+
+extension ClientWiring.Status {
+  /// Whether the caption under a client's name is a problem or just a note.
+  var isFault: Bool {
+    if case .unreadable = self { return true }
+    return false
   }
 }
 
@@ -336,7 +532,6 @@ enum StatusStyle {
   }
 }
 
-
 /// The update controls, directly under the version number because that is where
 /// somebody wondering whether they are current has already looked.
 ///
@@ -348,29 +543,27 @@ struct UpdatesSection: View {
   private var updates = UpdateController.shared
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Text("Updates").font(.subheadline).bold()
-
-      Toggle("Check for updates automatically", isOn: $automatic)
-        .toggleStyle(.checkbox)
-        .onChange(of: automatic) { _, on in
-          updates.setAutomatic(on)
-          // Answering here is answering the consent card too. Leaving it armed
-          // would ask again about a decision already made in this pane.
-          UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
-        }
-
-      HStack(spacing: 8) {
-        Button("Check Now…") { updates.checkNow() }
-          .controlSize(.small)
-          .disabled(updates.isChecking)
-        if let last = updates.lastCheck {
-          Text("Last checked \(last.formatted(.relative(presentation: .named)))")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
+    Section {
+      Toggle(isOn: $automatic) {
+        Text("Check for updates automatically")
+      }
+      .onChange(of: automatic) { _, on in
+        updates.setAutomatic(on)
+        // Answering here is answering the consent card too. Leaving it armed
+        // would ask again about a decision already made in this pane.
+        UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
       }
 
+      LabeledContent {
+        Button("Check Now…") { updates.checkNow() }
+          .disabled(updates.isChecking)
+      } label: {
+        Text("Updates")
+        Text(lastCheck)
+      }
+    } header: {
+      Text("Updates")
+    } footer: {
       Text(
         """
         This is the only network connection Cupertino makes, and it makes none \
@@ -379,9 +572,14 @@ struct UpdatesSection: View {
         your licence key, not a machine id.
         """
       )
-      .font(.caption)
-      .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
     }
+  }
+
+  /// A sentence either way. The row previously showed nothing at all before the
+  /// first check, which reads as a missing value rather than as the answer.
+  private var lastCheck: String {
+    guard let last = updates.lastCheck else { return "Not checked yet" }
+    return "Last checked \(last.formatted(.relative(presentation: .named)))"
   }
 }

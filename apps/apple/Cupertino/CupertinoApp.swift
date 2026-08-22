@@ -5,6 +5,11 @@ import SwiftUI
 /// item. `MenuBarExtra` content is built lazily, so this cannot live there.
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Before the demo-mode return: the app menu belongs to the app, not to the
+    // host, and ⌘, has to work on a screenshot build for the same reason it has
+    // to work on a shipped one.
+    MainMenu.installSettingsItem()
+
     // Screenshot mode never starts the host. Binding the socket would collide
     // with the developer's real Cupertino, spawn four Node servers per launch,
     // and write real log lines into the seeded fixture — and every screen this
@@ -194,7 +199,15 @@ struct StatusMenu: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Cupertino").font(.headline)
+      // Baseline-aligned so the version reads as a suffix to the name rather
+      // than as a second heading. The popover is capped at 320pt and its button
+      // row is already full, so this goes beside the title — the one piece of
+      // horizontal space left that costs nothing.
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Text("Cupertino").font(.headline)
+        Text(AppInfo.shortVersion).font(.caption).foregroundStyle(.secondary)
+        Spacer()
+      }
 
       // First, and in the popover rather than behind a tab. This is the one
       // state where nothing works at all, and whoever is reading it has just
@@ -282,7 +295,11 @@ struct StatusMenu: View {
       HStack {
         Button("Open Cupertino") { MainWindowController.show() }
           .buttonStyle(.glass)
-        Button("Settings…") { SettingsOpener.show(.general) }
+        // ⌘, as well, matching the app menu item. The main menu already
+        // answers that chord app-wide, popover or no popover; declaring it here
+        // is what puts the shortcut where somebody looking for it would look.
+        Button("Settings…") { SettingsOpener.show() }
+          .keyboardShortcut(",", modifiers: .command)
         Spacer()
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
@@ -408,124 +425,44 @@ struct TrialBanner: View {
 /// menu was drawn. That is exactly how `allowWrites.mail` went back to 0 after
 /// being set to 1.
 struct WritesToggle: View {
+  /// Where the toggle is being drawn, which is the only thing that differs
+  /// between the two callers. The key stays in one place: two views reading the
+  /// same `@AppStorage` key agree by construction, which is exactly what the
+  /// cached copy above did not.
+  enum Style {
+    /// Tucked under the surface it belongs to, in the main window's detail
+    /// card. The surface is already named above it, so the toggle names itself.
+    case inline
+    /// A Settings row, where the surface has to name itself and the switch
+    /// belongs at the trailing edge like every other control in that form.
+    case row
+  }
+
+  private let surface: Surface
+  private let style: Style
   @AppStorage private var allowWrites: Bool
 
-  init(surface: Surface) {
+  init(surface: Surface, style: Style = .inline) {
+    self.surface = surface
+    self.style = style
     _allowWrites = AppStorage(wrappedValue: false, "allowWrites.\(surface.id)")
   }
 
   var body: some View {
-    Toggle("Allow writes", isOn: $allowWrites)
-      .toggleStyle(.checkbox)
-      .font(.caption)
-      .padding(.leading, 20)
-  }
-}
-
-
-/// One-click wiring into the MCP clients on this Mac.
-struct ClientsSection: View {
-  let model: StatusModel
-
-  /// A client we cannot find is not a client to nag anybody about. This is
-  /// also the entire implementation of "does not support ChatGPT desktop":
-  /// it is not in `ClientWiring.clients`, so there is no row and no
-  /// explanation to maintain.
-  private var visible: [ClientWiring.Client] {
-    ClientWiring.clients.filter { model.clients[$0].map { $0 != .notInstalled } ?? false }
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("MCP clients").font(.subheadline).bold()
-
-      if visible.isEmpty {
-        Text("No MCP clients found on this Mac.")
-          .font(.caption).foregroundStyle(.secondary)
-      }
-
-      ForEach(visible) { client in
-        ClientRow(
-          client: client,
-          status: model.clients[client] ?? .notInstalled,
-          configure: { model.configure(client) })
+    switch style {
+    case .inline:
+      Toggle("Allow writes", isOn: $allowWrites)
+        .toggleStyle(.checkbox)
+        .font(.caption)
+        .padding(.leading, 20)
+    case .row:
+      Toggle(isOn: $allowWrites) {
+        SurfaceLabel(surface: surface)
       }
     }
   }
 }
 
-/// One client, and the one action it can take.
-///
-/// A view of its own rather than a branch inside `ClientsSection`, because
-/// `copied` has to be per-row: with a single `copiedID` on the section,
-/// copying one client's command while another's two-second reset is still in
-/// flight clears the wrong label. `ForEach` identity scopes `@State` correctly
-/// for free.
-private struct ClientRow: View {
-  let client: ClientWiring.Client
-  let status: ClientWiring.Status
-  let configure: () -> Void
-  @State private var copied = false
-
-  var body: some View {
-    HStack {
-      Label {
-        Text(client.displayName)
-      } icon: {
-        Image(systemName: status == .configured ? "checkmark.circle.fill" : "circle.dashed")
-          .foregroundStyle(status == .configured ? .green : .secondary)
-      }
-      Spacer()
-
-      if case .incomplete(let missing) = status {
-        Text("missing \(missing.joined(separator: ", "))")
-          .font(.caption).foregroundStyle(.secondary)
-      }
-      if case .unreadable(let why) = status {
-        Text(why).font(.caption).foregroundStyle(.red)
-      } else {
-        action
-      }
-    }
-  }
-
-  @ViewBuilder private var action: some View {
-    switch client.wiring {
-    // Not edited automatically on purpose: these files are JSONC, TOML, or —
-    // in Claude Code's case — strict JSON that holds API credentials and that
-    // running sessions write to concurrently. See `ClientWiring.Wiring`.
-    case .command:
-      Button(copied ? "Copied" : "Copy command") {
-        guard let commands = ClientWiring.commands(for: client) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(commands, forType: .string)
-        copied = true
-        // Confirmation, not a permanent state: the button has to invite a
-        // second copy after the app has moved and the paths changed.
-        Task {
-          try? await Task.sleep(for: .seconds(2))
-          copied = false
-        }
-      }
-      .controlSize(.small)
-
-    case .json:
-      switch status {
-      case .configured:
-        Button("Reveal") { ClientWiring.reveal(client) }.controlSize(.small)
-      case .stale:
-        // Points at a previous build — the common case after moving the app.
-        Button("Update") { configure() }.controlSize(.small)
-      case .incomplete:
-        // Wired before a surface existed. Configure writes all of
-        // Surface.all, so the same button finishes the job.
-        Button("Update") { configure() }.controlSize(.small)
-      default:
-        Button("Configure") { configure() }.controlSize(.small)
-      }
-    }
-  }
-}
 
 /// What is talking to Cupertino right now.
 ///

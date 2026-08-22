@@ -7,6 +7,16 @@
 	     at build time — GENERATE_INFOPLIST_FILE stays YES. This file exists solely
 	     because SUPublicEDKey is not a key Xcode knows about, and there is no
 	     INFOPLIST_KEY_ spelling for it. -->
+	<!-- The commit this bundle was built from, substituted from the
+	     CUPERTINO_GIT_COMMIT build setting. CFBundleVersion is already the commit
+	     COUNT, which orders builds but does not identify one: two branches at the
+	     same depth share it. This is what turns a bug report into a diff.
+
+	     Empty in an Xcode-only build, because Xcode has no git; `make app` and CI
+	     both pass it. AppInfo renders that absence rather than hiding it. -->
+	<key>CupertinoGitCommit</key>
+	<string>$(CUPERTINO_GIT_COMMIT)</string>
+
 	<key>SUFeedURL</key>
 	<string>https://cupertino.mgcrea.io/appcast.xml</string>
 	<key>SUPublicEDKey</key>

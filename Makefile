@@ -29,6 +29,16 @@ SURFACES     := mail notes reminders calendar
 # default, which nothing bumps. Empty locally, where the pbxproj value stands.
 # Command-line variables propagate to the sub-makes `build-release` runs.
 XCARGS       ?=
+# The commit a build came from, for the About line. `--dirty` because a hash
+# that does not describe the code that actually ran is worse than no hash: it
+# points a bug report at a diff nobody can reproduce. Empty outside a git
+# checkout rather than failing — a release tarball is still buildable.
+# `diff --quiet HEAD`, not `diff --quiet`: the bare form compares the worktree to
+# the index, so anything already `git add`-ed reads as clean and a staged-but-
+# uncommitted build would claim a hash that does not describe it. Untracked files
+# are deliberately not counted — marketing drafts and scratch files would mark
+# every developer build dirty, and a marker that is always on says nothing.
+GIT_COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
 APP     ?= apps/apple/.build/Build/Products/$(CONFIG)/Cupertino.app
 INSTALLED := /Applications/Cupertino.app
 BRIDGE  := $(APP)/Contents/Helpers/cupertino-bridge
@@ -55,7 +65,8 @@ build: ## Build both halves: the npm servers and the app (Debug)
 # error that says nothing about what actually broke.
 app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@set -o pipefail; xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
-		-configuration $(CONFIG) -derivedDataPath apps/apple/.build $(XCARGS) build \
+		-configuration $(CONFIG) -derivedDataPath apps/apple/.build \
+		CUPERTINO_GIT_COMMIT=$(GIT_COMMIT) $(XCARGS) build \
 		| { grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true; }
 
 run: app dev-config ## Build, then (re)launch the menu bar app
