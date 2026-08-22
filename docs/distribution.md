@@ -49,7 +49,8 @@ user a System Settings trip each time. One grant covering every surface is both 
 more honest description of what was granted.
 
 The fixed costs point the same way. A signing certificate, a notarization pipeline, CI secrets, an
-icon, a Homebrew cask and an update channel are paid once per bundle, not once per server.
+icon, a Homebrew cask and an update channel are paid once per bundle, not once per server. Two of
+those are now paid: the notarization pipeline in 1.0.0, the update channel in 1.1.0.
 
 And the bundle identifier is the most expensive string in the project: changing it is a new TCC
 identity, so every existing user re-grants Full Disk Access. It has to be right before the first
@@ -188,10 +189,22 @@ Inner-out, hardened runtime throughout.
 Universal on both binaries: `lipo` the two Node downloads, and build the launcher
 `-arch arm64 -arch x86_64`.
 
-Distribute the stapled zip and a Homebrew cask. In CI, add a macOS release job on `v*.*.*`
-alongside `publish-npm` — import a base64 p12 into a temporary keychain, notarize with an App Store
-Connect API key, attach the stapled zip to the GitHub release. The existing `-Werror` launcher
-compile stays a PR check.
+**Built, since 1.0.0.** The `release-app` job in `.github/workflows/ci.yml` runs on `app-v*` rather
+than the `v*.*.*` this originally proposed, because the monorepo tags per artifact: it imports a
+base64 p12 into a temporary keychain, notarizes with an App Store Connect API key, verifies the
+artifact and attaches the stapled zip plus its SHA-256 to the GitHub release. The `-Werror` launcher
+compile stayed a PR check.
+
+**The update channel is built too, since 1.1.0**, and it is the one piece of this that changed a
+published claim rather than merely adding a job — see [licensing.md](licensing.md). Sparkle, checks
+off unless asked for, a static EdDSA-signed `appcast.xml` attached to each release and reached
+through `cupertino.mgcrea.io/appcast.xml`. No server: the signature is what makes the hosting
+untrusted, so a static file on GitHub is sufficient.
+
+**The Homebrew cask is still not built.** `apps/website/src/config.ts` advertises
+`brew install --cask mgcrea/tap/cupertino` and the tap does not exist, so that command fails today.
+It matters more than it looks: it is the only channel that can move a 1.0.0 install forward, since
+1.0.0 shipped with no updater in it.
 
 ## What this does to the permission story
 
