@@ -137,15 +137,26 @@ describe("composeCard", () => {
   });
 
   it("keeps every mark clear of the band X crops away", () => {
-    // X renders summary_large_image at 2:1; og:image is 1.91:1.
+    // X renders summary_large_image at 2:1; og:image is 1.91:1, so it trims this
+    // much off each edge. The inset has to cover it with room to spare.
     const trimmed = (SOCIAL_CARD.HEIGHT - SOCIAL_CARD.WIDTH / 2) / 2;
     assert.ok(trimmed < SOCIAL_CARD.SAFE_INSET, "the inset must cover the real crop");
-    for (const y of [...svg.matchAll(/\by="(\d+(?:\.\d+)?)"/g)].map((m) => Number(m[1]))) {
-      assert.ok(
-        y >= SOCIAL_CARD.SAFE_INSET && y <= SOCIAL_CARD.HEIGHT - SOCIAL_CARD.SAFE_INSET,
-        `a mark sits at y=${y}, outside the safe band`,
-      );
-    }
+
+    // Only card-space coordinates: the y inside the icon group belongs to the
+    // icon's own 1024 grid and means nothing here.
+    const [, iconTop] = /translate\(\d+ (\d+)\)/.exec(svg);
+    const baselines = [...svg.matchAll(/<text[^>]*\by="(\d+)"/g)].map((m) => Number(m[1]));
+    const sizes = [...svg.matchAll(/font-size="(\d+)"/g)].map((m) => Number(m[1]));
+    assert.equal(baselines.length, 3, "wordmark, headline, subhead");
+
+    const top = Number(iconTop);
+    // Descenders reach roughly a quarter of the em below the baseline.
+    const bottom = Math.max(...baselines.map((y, i) => y + (sizes[i] ?? 0) * 0.25));
+    assert.ok(top >= SOCIAL_CARD.SAFE_INSET, `the artwork starts at y=${top}`);
+    assert.ok(
+      bottom <= SOCIAL_CARD.HEIGHT - SOCIAL_CARD.SAFE_INSET,
+      `the copy reaches y=${Math.round(bottom)}`,
+    );
   });
 
   it("centres the lockup as one block, as the banner does", () => {
