@@ -89,7 +89,14 @@ jobs:
           scripts/audit-network.sh
       # Proves the built server actually speaks MCP over stdio, which a unit
       # test using an in-memory transport cannot.
+      #
+      # macOS only, and not merely as an optimisation: packages/core/src/cli.ts
+      # refuses to start on any other platform and exits 1 before the transport
+      # is connected, because these servers drive macOS apps. Run on ubuntu this
+      # step can never pass — and it failed silently for a while, because
+      # `2>/dev/null` hides the very message that says why.
       - name: MCP handshake 🤝
+        if: runner.os == 'macOS'
         run: |
           for server in mail notes reminders calendar; do
             printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
