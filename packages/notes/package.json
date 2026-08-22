@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-notes",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Model Context Protocol server for the macOS Apple Notes app",
   "keywords": [
     "apple",
@@ -12,16 +12,20 @@
   ],
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "homepage": "https://cupertino.mgcrea.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/notes"
   },
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "bin": {
     "apple-notes-mcp": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "os": [
     "darwin"
@@ -48,7 +52,7 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "@mgcrea/mcp-apple-core": "workspace:*",
+    "@mgcrea/mcp-apple-core": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },

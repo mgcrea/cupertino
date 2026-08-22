@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Shared machinery for the Apple-app MCP servers: the osascript boundary, TCC-aware errors, and read-only SQLite access",
   "keywords": [
     "apple",
@@ -13,13 +13,17 @@
   ],
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "homepage": "https://cupertino.mgcrea.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/core"
   },
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "os": [
     "darwin"

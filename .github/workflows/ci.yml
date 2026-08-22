@@ -160,8 +160,15 @@ jobs:
       - name: Install 🪄
         run: pnpm install --frozen-lockfile
       - name: Upgrade npm 🔧
-        # OIDC trusted publishing needs a recent npm CLI
+        # OIDC trusted publishing needs a recent npm CLI. pnpm shells out to it
+        # for the token exchange, so this matters even though npm never publishes.
         run: npm install -g npm@latest
+      # `prepublishOnly` builds only the tagged package, and its dts generation
+      # reads core's `.d.ts` — which is gitignored and would not exist. `-r`
+      # orders the workspace topologically, so core is built first, exactly as
+      # the `test` job does.
+      - name: Build 🏗️
+        run: pnpm -r build
       # A version already on npm cannot be republished, so re-running this job —
       # after re-pushing a tag, or a manual re-run — would fail on a duplicate.
       # Skip instead, so the tag stays the source of truth.
@@ -189,10 +196,16 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+      # `pnpm publish`, never `npm publish`. Every surface package depends on core
+      # as `workspace:^`, and npm does not understand that protocol — it would ship
+      # the literal string in the tarball and every `npm i` would fail with
+      # `Unsupported URL Type "workspace:"`. pnpm substitutes the real version at
+      # pack time. The idempotency check above would have called that a success.
+      # `--no-git-checks` because the job runs on a detached tag, not a branch.
       - name: Publish 🚀
         if: steps.published.outputs.exists == 'false'
         working-directory: ${{ steps.pkg.outputs.dir }}
-        run: npm publish --provenance --access public
+        run: pnpm publish --provenance --access public --no-git-checks
 
   github-release:
     name: GitHub release

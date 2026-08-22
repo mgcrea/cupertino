@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-calendar",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Model Context Protocol server for the macOS Apple Calendar app",
   "keywords": [
     "apple",
@@ -13,16 +13,20 @@
   ],
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "homepage": "https://cupertino.mgcrea.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/calendar"
   },
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "bin": {
     "apple-calendar-mcp": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "os": [
     "darwin"
@@ -49,7 +53,7 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "@mgcrea/mcp-apple-core": "workspace:*",
+    "@mgcrea/mcp-apple-core": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
