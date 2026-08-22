@@ -142,6 +142,12 @@ const phoneShape = (value) => {
 /** Digits only. The lowest common denominator every strategy below starts from. */
 const digitsOf = (value) => String(value ?? "").replace(/\D/g, "");
 
+/** Tally one key into one index. Absent keys are skipped, never counted as "". */
+const add = (map, key) => {
+  if (!key) return;
+  map.set(key, (map.get(key) ?? 0) + 1);
+};
+
 /**
  * The suffix key, which is how phone matching is done everywhere in practice.
  *
@@ -265,6 +271,22 @@ doc.findings.layout = safe(() => {
     sourceCount: sources.length,
     sources,
     groupContainerExists: listable(GROUP_CONTAINER) || fileFacts(GROUP_CONTAINER).exists,
+    // docs/surfaces.md records only that this exists and returns EPERM. Names
+    // and sizes of Apple's own container files are not personal data, and
+    // knowing whether a second store lives here decides whether the layout
+    // question above has a third answer.
+    groupContainer: safe(
+      () =>
+        readdirSync(GROUP_CONTAINER, { withFileTypes: true })
+          .filter((e) => !e.name.startsWith("."))
+          .slice(0, 20)
+          .map((e) => ({
+            name: e.name,
+            kind: e.isDirectory() ? "dir" : "file",
+            sizeBytes: e.isDirectory() ? null : fileFacts(join(GROUP_CONTAINER, e.name)).sizeBytes,
+          })),
+      () => null,
+    ),
   };
 });
 
@@ -288,7 +310,6 @@ if (opened?.db) {
   };
 
   const tables = schema.tables;
-  const hasTable = (t) => tables.includes(t);
   const colsOf = (t) => columnInfo(t).map((c) => c.name);
 
   /**
@@ -414,7 +435,8 @@ if (opened?.db) {
   /** Q4b. The id bridge, for whichever lane ends up authoritative. */
   doc.findings.idBridge = safe(() => {
     const live = doc.findings.appleEventsSample?.id ?? null;
-    if (!live) return { tested: false, reason: "no live person id (Apple Events lane unavailable)" };
+    if (!live)
+      return { tested: false, reason: "no live person id (Apple Events lane unavailable)" };
     return findIdBridge(db, tables, columnInfo, [
       { label: "person.id", value: String(live) },
       { label: "person.id uuid", value: uuidOf(live) },
@@ -452,7 +474,8 @@ if (opened?.db) {
     if (!chat.readable) return { tested: false, reason: "chat.db not readable (Full Disk Access)" };
 
     const chatOpened = openStore(CHAT_DB);
-    if (!chatOpened.db) return { tested: false, reason: `chat.db did not open: ${chatOpened.error}` };
+    if (!chatOpened.db)
+      return { tested: false, reason: `chat.db did not open: ${chatOpened.error}` };
 
     try {
       const chatTools = tableTools(chatOpened.db);
@@ -487,10 +510,12 @@ if (opened?.db) {
         `SELECT "${valueCol}" AS v FROM "${PHONE}" WHERE "${valueCol}" IS NOT NULL AND "${valueCol}" <> ''`,
       );
 
-      const index = { exact: new Map(), digits: new Map(), s10: new Map(), s9: new Map(), s7: new Map() };
-      const add = (map, key) => {
-        if (!key) return;
-        map.set(key, (map.get(key) ?? 0) + 1);
+      const index = {
+        exact: new Map(),
+        digits: new Map(),
+        s10: new Map(),
+        s9: new Map(),
+        s7: new Map(),
       };
       for (const row of stored) {
         const v = String(row.v);
@@ -629,10 +654,19 @@ if (opened?.db) {
   doc.findings.open = { ok: false, error: opened?.error ?? null };
   doc.notes.push(
     doc.findings.layout?.root?.exists && !doc.findings.layout?.root?.readable
-      ? "The store exists but cannot be read. That is Full Disk Access, not a missing file — grant it and re-run."
+      ? "The store exists but cannot be opened. That is a permission, not a missing file — re-run with the grant."
       : doc.findings.layout?.root?.exists
         ? "The store exists but did not open."
         : "No AddressBook database at the expected path.",
+  );
+  // Deliberately not asserted as Full Disk Access. Contacts is the one store
+  // where access(2) succeeds while open() returns EPERM (see probe-kit's
+  // `readable`), which is the signature of the dedicated Contacts TCC service
+  // rather than of the whole-disk grant. Whether Full Disk Access alone opens
+  // this file is exactly what a granted run settles — and if it does not, the
+  // app needs a permission state it does not model, as Safari already does.
+  doc.notes.push(
+    "UNSETTLED: whether Full Disk Access alone opens this store, or whether the separate Contacts privacy grant is also required. A granted run answers it.",
   );
 }
 
@@ -684,7 +718,9 @@ if (args.json) {
     `  root database         exists ${yn(lay.root?.exists)} / readable ${yn(lay.root?.readable)}` +
       `   (${lay.root?.sizeBytes ?? "?"} B, wal ${lay.root?.walSizeBytes ?? 0} B)`,
   );
-  L.push(`  per-account sources   ${lay.sourceCount ?? "?"}  (listable ${yn(lay.sourcesListable)})`);
+  L.push(
+    `  per-account sources   ${lay.sourceCount ?? "?"}  (listable ${yn(lay.sourcesListable)})`,
+  );
   const agg = doc.findings.aggregation ?? {};
   if (agg.tested) {
     L.push(
@@ -692,6 +728,9 @@ if (args.json) {
     );
   }
   L.push(`  group container       ${yn(lay.groupContainerExists)}`);
+  for (const e of lay.groupContainer ?? []) {
+    L.push(`     ${e.kind.padEnd(4)} ${e.name}${e.sizeBytes === null ? "" : `  ${e.sizeBytes} B`}`);
+  }
   L.push(`  aggregation           ${doc.findings.aggregation?.verdict ?? "not tested"}`);
   L.push("");
   L.push("APPLE EVENTS — the lane Messages does not have");
