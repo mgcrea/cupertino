@@ -287,12 +287,33 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 sparkle-keys: sparkle ## Generate the EdDSA update-signing keypair (once, ever)
 	@$(SPARKLE_TOOLS)/generate_keys
 	@echo ""
+	@echo "  Then run 'make sparkle-key-shred' — an exported key left in the working"
+	@echo "  tree is one 'git add -A' from being committed."
+	@echo ""
 	@echo "  Put the public key above into apps/apple/Cupertino-Info.plist (SUPublicEDKey),"
 	@echo "  and export the private key for CI with:"
 	@echo ""
-	@echo "    $(SPARKLE_TOOLS)/generate_keys -x sparkle_key.pem"
-	@echo "    gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle_key.pem && rm -P sparkle_key.pem"
+	@echo "    $(SPARKLE_TOOLS)/generate_keys -x sparkle_key.pem   # -x EXPORTS; without it you get a NEW key"
+	@echo "    gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle_key.pem"
 	@echo ""
+
+# Not `rm -P`: that flag is BSD-only, and a Mac with Homebrew's coreutils ahead
+# of /bin on PATH gets GNU rm, which errors on it. Chained after `gh secret set`
+# with &&, that error leaves the private key sitting in the working tree — the
+# one command whose whole job was to remove it, failing silently enough that the
+# file is still there afterwards. Overwrite first, then unlink by absolute path.
+sparkle-key-shred: ## Overwrite and remove an exported sparkle_key.pem
+	@# One shell, not four: each @-line is its own process, so an early `exit 0`
+	@# in the guard would still be followed by a `wc` against a file that is not
+	@# there — the target failing precisely when it had nothing to do.
+	@if [ ! -f sparkle_key.pem ]; then \
+		echo "  no sparkle_key.pem here — nothing to shred"; \
+	else \
+		dd if=/dev/urandom of=sparkle_key.pem bs=$$(wc -c < sparkle_key.pem) count=1 \
+			conv=notrunc 2>/dev/null; \
+		/bin/rm -f sparkle_key.pem; \
+		echo "  sparkle_key.pem overwritten and removed — the keychain copy is untouched"; \
+	fi
 
 # Signed against the STAPLED zip, which is why this is not folded into
 # `notarize`: that target re-creates Cupertino.zip after stapling, so a signature
