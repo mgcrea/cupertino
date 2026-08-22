@@ -1,8 +1,8 @@
 # Which surfaces, and what each one costs
 
 The per-surface findings live in [notes.md](notes.md), [reminders.md](reminders.md),
-[messages.md](messages.md), [calendar.md](calendar.md), [safari.md](safari.md) and
-[envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
+[messages.md](messages.md), [calendar.md](calendar.md), [safari.md](safari.md),
+[contacts.md](contacts.md) and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
 be reached at all, what a new surface costs to add, and the rules the phase-0 probes have taught that
 now generalise across surfaces.
 
@@ -34,15 +34,15 @@ Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dict
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status          |
-| --------- | -------------------------------------------- | --------------- |
-| Mail      | file lane required — 74 s search             | implemented     |
-| Notes     | Apple Events usable below ~5k notes          | implemented     |
-| Reminders | dictionary complete for the core model       | implemented     |
-| Messages  | **file lane mandatory** — no read API exists | probed, unbuilt |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented     |
-| Safari    | two lanes see disjoint things                | probed, unbuilt |
-| Contacts  | unprobed                                     | —               |
+| Surface   | Lane verdict                                   | Status          |
+| --------- | ---------------------------------------------- | --------------- |
+| Mail      | file lane required — 74 s search               | implemented     |
+| Notes     | Apple Events usable below ~5k notes            | implemented     |
+| Reminders | dictionary complete for the core model         | implemented     |
+| Messages  | **file lane mandatory** — no read API exists   | probed, unbuilt |
+| Calendar  | **file lane mandatory** — 3.4 s range query    | implemented     |
+| Safari    | two lanes see disjoint things                  | probed, unbuilt |
+| Contacts  | file lane only — 0 ms, but the store is plural | implemented     |
 
 ### Beyond the probed set
 
@@ -135,11 +135,14 @@ which resolves only about half of open tabs.
 
 ## Still open across all surfaces
 
-- **No schema fixtures captured** for Messages or Safari. (Calendar's is captured, and the premise
+- **No schema fixtures captured** for Messages or Safari. (Contacts' is captured —
+  `packages/contacts/test/fixtures/contacts-store.sql`, 94 objects, no rows.) (Calendar's is captured, and the premise
   of this note was wrong: `writeFixture` creates the directory, so `--write` never needed the package
   to exist first.)
-- **Contacts is unprobed.** `group.com.apple.contacts` exists and returns EPERM, so it has a file
-  lane; nothing else is known.
+- **Contacts needs a permission the app does not model.** It sits behind its own TCC service, not
+  Full Disk Access, and unlike FDA it PROMPTS — see [contacts.md](contacts.md). Whether FDA alone
+  opens the store is measured in one direction only. `Permissions.swift` now owes two states, this
+  one and Safari's.
 - **`Permissions.swift` models two permission states.** Safari needs three — see
   [safari.md](safari.md).
 - **The four hardcoded surface lists** were tolerable at two surfaces and are now at FOUR — Calendar

@@ -302,9 +302,10 @@ pnpm probe:reminders # Reminders — the store path is a glob, so finding it is 
 pnpm probe:messages  # chat.db — no Apple Events read lane exists, so this one needs the grant
 pnpm probe:calendar  # settles whether Calendar has a file lane at all
 pnpm probe:safari    # History.db, and the Reading List hiding inside Bookmarks.plist
+pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Full Disk Access
 ```
 
-Messages and Safari are **probed but unbuilt**: there is a phase-0 probe and no package.
+Messages, Safari and Contacts are **probed but unbuilt**: there is a phase-0 probe and no package.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

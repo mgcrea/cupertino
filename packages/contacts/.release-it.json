@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "contacts-v${version}",
+    "commitMessage": "release(contacts): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-contacts v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

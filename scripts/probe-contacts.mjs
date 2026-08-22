@@ -68,6 +68,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  APPLE_EPOCH_OFFSET,
+  aggNumericAsText,
   appleEventsLane,
   detectEpoch,
   dumpSchema,
@@ -141,6 +143,25 @@ const phoneShape = (value) => {
 
 /** Digits only. The lowest common denominator every strategy below starts from. */
 const digitsOf = (value) => String(value ?? "").replace(/\D/g, "");
+
+/**
+ * A resolution rate under an arbitrary weight.
+ *
+ * `weightOf` returning 0 drops a handle from BOTH sides of the ratio rather than
+ * counting it as a miss — that is what makes "top-25" a rate over 25 handles
+ * instead of a rate over all of them with 758 forced zeros.
+ */
+const weigh = (lookup, weightOf, pool) => {
+  let hitW = 0;
+  let totalW = 0;
+  for (const v of pool) {
+    const w = weightOf(v);
+    if (!w) continue;
+    totalW += w;
+    if ((lookup(v) ?? 0) === 1) hitW += w;
+  }
+  return totalW ? Number(((hitW / totalW) * 100).toFixed(1)) : null;
+};
 
 /** Tally one key into one index. Absent keys are skipped, never counted as "". */
 const add = (map, key) => {
@@ -290,13 +311,105 @@ doc.findings.layout = safe(() => {
   };
 });
 
-const opened = doc.findings.layout?.root?.readable ? openStore(AB_ROOT_DB) : null;
+/**
+ * EVERY store, opened at once — and the primary is chosen by measurement.
+ *
+ * The first granted run reported 0% resolution across all five strategies, and
+ * that number was a probe bug rather than a finding: the root database holds
+ * TWO records while the account source holds 425, so every query below it ran
+ * against an empty `ZABCDPHONENUMBER`. A 0% that comes from an empty table looks
+ * exactly like a 0% that comes from numbers failing to match, which is the same
+ * class of error `docs/messages.md` records for its swallowed BigInt throw — a
+ * section written to catch a silent failure being silently wrong itself.
+ *
+ * So: no store is privileged by its path. Open them all, count them all, and let
+ * the one holding the most records answer the schema questions. The rest is
+ * unioned, because the address book is genuinely spread across accounts.
+ */
+const storeCandidates = [
+  { label: "root", path: AB_ROOT_DB },
+  ...sourcePaths.map((path, i) => ({ label: `source-${i + 1}`, path })),
+];
+
+const stores = [];
+for (const candidate of storeCandidates) {
+  if (!fileFacts(candidate.path).readable) {
+    stores.push({ ...candidate, opened: false, reason: "not readable" });
+    continue;
+  }
+  const o = openStore(candidate.path);
+  if (!o.db) {
+    stores.push({ ...candidate, opened: false, reason: o.error });
+    continue;
+  }
+  const tools = tableTools(o.db);
+  const schema = safe(
+    () => dumpSchema(o.db),
+    () => null,
+  );
+  /**
+   * `ZABCDRECORD` is a Core Data single-table inheritance root: contacts,
+   * groups, containers and an info row all live in it, separated only by
+   * `Z_ENT`. Counting the table counts all four, which is how a 421-contact
+   * address book reports 425 records and looks like it has four duplicates.
+   *
+   * The entity numbers are resolved through `Z_PRIMARYKEY` by NAME rather than
+   * hardcoded, because Core Data assigns them per model version and a number
+   * that is right today is not a number to build a filter on.
+   */
+  const contactEnts = safe(
+    () =>
+      tools
+        .all(`SELECT Z_ENT AS ent, Z_NAME AS name FROM Z_PRIMARYKEY`)
+        .filter((r) => /^(ABCD)?(Subscribed)?Contact$/i.test(String(r.name)))
+        .map((r) => Number(r.ent)),
+    () => [],
+  );
+  const entFilter = contactEnts.length ? `WHERE Z_ENT IN (${contactEnts.join(",")})` : "";
+  stores.push({
+    ...candidate,
+    opened: true,
+    o,
+    tools,
+    schema,
+    contactEnts,
+    contacts: safe(
+      () => tools.one(`SELECT COUNT(*) AS c FROM ZABCDRECORD ${entFilter}`)?.c ?? null,
+      () => null,
+    ),
+    records: tools.countOf("ZABCDRECORD"),
+    phoneRows: tools.countOf("ZABCDPHONENUMBER"),
+    emailRows: tools.countOf("ZABCDEMAILADDRESS"),
+  });
+}
+
+const live = stores.filter((st) => st.opened);
+// Most records wins. Ties do not matter — the schema is what is being read here,
+// and two stores with the same count have the same schema.
+const primary =
+  live.toSorted((a, b) => (b.contacts ?? b.records ?? 0) - (a.contacts ?? a.records ?? 0))[0] ??
+  null;
+
+doc.findings.stores = stores.map((st) => ({
+  label: st.label,
+  opened: st.opened,
+  reason: st.reason ?? null,
+  contacts: st.contacts ?? null,
+  contactEntities: st.contactEnts ?? null,
+  records: st.records ?? null,
+  phoneRows: st.phoneRows ?? null,
+  emailRows: st.emailRows ?? null,
+  fingerprint: st.schema?.fingerprint ?? null,
+  primary: st === primary,
+}));
+
+const opened = primary?.o ?? null;
 let ddlRows = null;
 
 if (opened?.db) {
   const db = opened.db;
   doc.sqlite = opened.sqlite;
-  const { columnInfo, countOf, one, all } = tableTools(db);
+  const { columnInfo, countOf, one } = tableTools(db);
 
   doc.findings.open = { ok: true, mode: opened.mode, ms: opened.openMs, walBlind: opened.walBlind };
 
@@ -327,7 +440,7 @@ if (opened?.db) {
     record: findTable(/ABCDRECORD$/i),
     phone: findTable(/PHONE/i),
     email: findTable(/EMAIL/i),
-    postal: findTable(/POSTAL|ADDRESS$/i),
+    postal: findTable(/POSTAL/i),
     // Apple has to normalize numbers for search and for caller ID, so a
     // normalized index table probably exists. Whether it does decides how much
     // work the resolver has to do itself.
@@ -352,11 +465,16 @@ if (opened?.db) {
     // normalized form and its name is not guessable across macOS releases.
     const profile = {};
     for (const col of textCols) {
-      const rows = all(
-        `SELECT "${col}" AS v FROM "${PHONE}" WHERE "${col}" IS NOT NULL AND "${col}" <> '' LIMIT 400`,
-      );
+      const rows = [];
+      for (const st of live) {
+        rows.push(
+          ...st.tools.all(
+            `SELECT "${col}" AS v FROM "${PHONE}" WHERE "${col}" IS NOT NULL AND "${col}" <> '' LIMIT 400`,
+          ),
+        );
+      }
       if (!rows.length) {
-        profile[col] = { populated: 0 };
+        profile[col] = { sampled: 0 };
         continue;
       }
       const shapes = {};
@@ -367,7 +485,10 @@ if (opened?.db) {
         totalLen += String(r.v).length;
       }
       profile[col] = {
-        populated: rows.length,
+        // A sample, and labelled as one. `LIMIT 400` per store is plenty for a
+        // shape distribution and nowhere near the row count — reporting it as if
+        // it covered the column would overstate what was measured.
+        sampled: rows.length,
         avgLength: Math.round(totalLen / rows.length),
         shapes,
       };
@@ -375,7 +496,7 @@ if (opened?.db) {
     return {
       tested: true,
       table: PHONE,
-      rows: countOf(PHONE),
+      rows: live.reduce((n, st) => n + (st.phoneRows ?? 0), 0),
       columns: cols.map((c) => `${c.name}:${c.type}`),
       profile,
     };
@@ -400,8 +521,19 @@ if (opened?.db) {
     const dateCols = colsOf(RECORD).filter((c) => /DATE|MODIF|CREAT/i.test(c));
     const out = {};
     for (const col of dateCols) {
+      // `.raw`, not the object. Passing the whole result in reports every column
+      // as "no dates present" — `detectEpoch` calls Number() on it and gets NaN.
+      // A fully populated ZCREATIONDATE read as empty is the same silent shape
+      // docs/messages.md records for its swallowed BigInt throw, and it survived
+      // one granted run of this probe before being caught.
       const max = maxNumericAsText(db, RECORD, col);
-      out[col] = max === null ? { tested: false, reason: "no rows" } : detectEpoch(max);
+      out[col] = max?.raw
+        ? {
+            ...detectEpoch(max.raw),
+            digits: max.digits,
+            exceedsSafeInteger: max.exceedsSafeInteger,
+          }
+        : { tested: false, reason: "no rows above zero" };
     }
     return { tested: true, table: RECORD, columns: out };
   });
@@ -434,12 +566,12 @@ if (opened?.db) {
 
   /** Q4b. The id bridge, for whichever lane ends up authoritative. */
   doc.findings.idBridge = safe(() => {
-    const live = doc.findings.appleEventsSample?.id ?? null;
-    if (!live)
+    const personId = doc.findings.appleEventsSample?.id ?? null;
+    if (!personId)
       return { tested: false, reason: "no live person id (Apple Events lane unavailable)" };
     return findIdBridge(db, tables, columnInfo, [
-      { label: "person.id", value: String(live) },
-      { label: "person.id uuid", value: uuidOf(live) },
+      { label: "person.id", value: String(personId) },
+      { label: "person.id uuid", value: uuidOf(personId) },
     ]);
   });
 
@@ -484,6 +616,46 @@ if (opened?.db) {
       );
       if (!handles.length) return { tested: false, reason: "no handles in chat.db" };
 
+      /**
+       * HOW MUCH each handle is actually used.
+       *
+       * A rate over DISTINCT handles answers "how many of the strangers who ever
+       * texted me are in my address book", and the answer to that is obviously
+       * "not many" — it is dominated by one-message senders from years ago. The
+       * question a Messages server raises is different: when someone reads their
+       * conversations, how often does a name appear instead of a number?
+       *
+       * That is the volume-weighted rate, and it is the direct analogue of
+       * Safari's 60.7%, which was measured over OPEN TABS — the working set —
+       * rather than over all 7,797 history rows. Both numbers are reported,
+       * because the gap between them is itself the finding.
+       *
+       * `message.date` is nanoseconds since 2001 here, which node:sqlite refuses
+       * to read as a number at all (docs/messages.md). The divisor is detected
+       * rather than assumed, and the raw column is never SELECTed — only divided
+       * down inside SQL, where SQLite's own integers are big enough.
+       */
+      const dateMax = aggNumericAsText(chatOpened.db, "message", "date");
+      const dateEpoch = dateMax?.raw ? detectEpoch(dateMax.raw) : { tested: false };
+      const divisor = dateEpoch?.divisor ?? 1;
+      const cutoffApple = Date.now() / 1000 - APPLE_EPOCH_OFFSET - 365 * 86_400;
+
+      const volumeRows = chatTools.all(
+        `SELECT h.id AS v, COUNT(*) AS n
+           FROM message m JOIN handle h ON m.handle_id = h.ROWID
+          WHERE h.id IS NOT NULL AND h.id <> ''
+          GROUP BY h.id`,
+      );
+      const recentRows = chatTools.all(
+        `SELECT h.id AS v, COUNT(*) AS n
+           FROM message m JOIN handle h ON m.handle_id = h.ROWID
+          WHERE h.id IS NOT NULL AND h.id <> '' AND (m.date / ${divisor}) > ?
+          GROUP BY h.id`,
+        cutoffApple,
+      );
+      const volume = new Map(volumeRows.map((r) => [String(r.v), r.n]));
+      const recent = new Map(recentRows.map((r) => [String(r.v), r.n]));
+
       // Partition first. An SMS shortcode or a no-reply address can never resolve
       // and counting it as a miss would understate a resolver that works fine.
       const emails = [];
@@ -506,9 +678,18 @@ if (opened?.db) {
         phoneCols[0];
       if (!valueCol) return { tested: false, reason: "no text column on the phone table" };
 
-      const stored = all(
-        `SELECT "${valueCol}" AS v FROM "${PHONE}" WHERE "${valueCol}" IS NOT NULL AND "${valueCol}" <> ''`,
-      );
+      // UNIONED across every store that opened. Reading only the primary would
+      // repeat the bug this section was rewritten to fix, one level down: a
+      // second account's numbers are not optional context, they are half the
+      // address book.
+      const stored = [];
+      for (const st of live) {
+        stored.push(
+          ...st.tools.all(
+            `SELECT "${valueCol}" AS v FROM "${PHONE}" WHERE "${valueCol}" IS NOT NULL AND "${valueCol}" <> ''`,
+          ),
+        );
+      }
 
       const index = {
         exact: new Map(),
@@ -526,12 +707,34 @@ if (opened?.db) {
         add(index.s7, suffix(v, 7));
       }
 
+      // Apple maintains its own normalized column, so measure it rather than
+      // reinventing one: ZLASTFOURDIGITS is what Contacts uses for caller ID.
+      // Four digits over ~970 numbers is expected to collide heavily — the
+      // question a server actually needs answered is whether it works as a cheap
+      // PREFILTER, which its ambiguous count answers directly.
+      const lastFourCol = phoneCols.find((c) => /LASTFOUR/i.test(c)) ?? null;
+      const indexLastFour = new Map();
+      if (lastFourCol) {
+        for (const st of live) {
+          for (const row of st.tools.all(
+            `SELECT "${lastFourCol}" AS v FROM "${PHONE}" WHERE "${lastFourCol}" IS NOT NULL AND "${lastFourCol}" <> ''`,
+          )) {
+            add(indexLastFour, digitsOf(row.v));
+          }
+        }
+      }
+
       const strategies = {
         exact: (v) => index.exact.get(v),
         digits: (v) => index.digits.get(digitsOf(v)),
         "last-10": (v) => index.s10.get(suffix(v, 10)),
         "last-9": (v) => index.s9.get(suffix(v, 9)),
         "last-7": (v) => index.s7.get(suffix(v, 7)),
+        ...(lastFourCol
+          ? {
+              [lastFourCol.replace(/^Z/, "").toLowerCase()]: (v) => indexLastFour.get(suffix(v, 4)),
+            }
+          : {}),
       };
 
       const phoneResults = {};
@@ -551,6 +754,37 @@ if (opened?.db) {
         };
       }
 
+      /**
+       * The same strategies, weighted three ways. Each denominator answers a
+       * different question, and only the last two bear on whether a Messages
+       * server reads well:
+       *
+       *   handles   every correspondent ever, one vote each
+       *   messages  weighted by how much was actually said
+       *   recent    the last 365 days only — the working set
+       *   top-25    the busiest conversations, which is what anyone opens
+       */
+      const byVolume = phones
+        .filter((v) => (volume.get(v) ?? 0) > 0)
+        .toSorted((a, b) => (volume.get(b) ?? 0) - (volume.get(a) ?? 0));
+      const top25 = new Set(byVolume.slice(0, 25));
+      const top100 = new Set(byVolume.slice(0, 100));
+
+      const weighted = {};
+      for (const [name, lookup] of Object.entries(strategies)) {
+        weighted[name] = {
+          byMessages: weigh(lookup, (v) => volume.get(v) ?? 0, phones),
+          byRecentMessages: weigh(lookup, (v) => recent.get(v) ?? 0, phones),
+          top25: weigh(lookup, (v) => (top25.has(v) ? 1 : 0), phones),
+          top100: weigh(lookup, (v) => (top100.has(v) ? 1 : 0), phones),
+        };
+      }
+
+      // The long tail, stated outright — it is what makes the unweighted rate
+      // look catastrophic and the weighted one look fine.
+      const singletons = phones.filter((v) => (volume.get(v) ?? 0) === 1).length;
+      const silent = phones.filter((v) => !volume.get(v)).length;
+
       // Email is the easy half and worth reporting separately, because a rate
       // that averages the two hides which one is the problem.
       let emailResolved = 0;
@@ -561,11 +795,15 @@ if (opened?.db) {
         )?.name;
         if (addrCol) {
           const emailIndex = new Map();
-          for (const row of all(
-            `SELECT "${addrCol}" AS v FROM "${EMAIL}" WHERE "${addrCol}" IS NOT NULL AND "${addrCol}" <> ''`,
-          )) {
-            const key = String(row.v).toLowerCase();
-            emailIndex.set(key, (emailIndex.get(key) ?? 0) + 1);
+          for (const st of live) {
+            for (const row of st.tools.all(
+              `SELECT "${addrCol}" AS v FROM "${EMAIL}" WHERE "${addrCol}" IS NOT NULL AND "${addrCol}" <> ''`,
+            )) {
+              emailIndex.set(
+                String(row.v).toLowerCase(),
+                (emailIndex.get(String(row.v).toLowerCase()) ?? 0) + 1,
+              );
+            }
           }
           for (const v of emails) {
             const n = emailIndex.get(v.toLowerCase()) ?? 0;
@@ -584,7 +822,13 @@ if (opened?.db) {
         shortcodeHandles: shortcodes.length,
         storedNumbers: stored.length,
         valueColumn: valueCol,
+        dateEpoch: dateEpoch?.epoch ?? null,
+        messagesCounted: volumeRows.reduce((n, r) => n + r.n, 0),
+        recentMessagesCounted: recentRows.reduce((n, r) => n + r.n, 0),
+        singletonHandles: singletons,
+        silentHandles: silent,
         phone: phoneResults,
+        weighted,
         email: {
           resolved: emailResolved,
           ambiguous: emailAmbiguous,
@@ -600,56 +844,34 @@ if (opened?.db) {
   /** Q1b. Does the root database aggregate the sources, or is it one account? */
   doc.findings.aggregation = safe(() => {
     if (!RECORD) return { tested: false, reason: "no record table found" };
-    const rootCount = countOf(RECORD);
-    const live = doc.findings.appleEventsReads?.count?.value ?? null;
-
-    // Each source opened on its own. They are small, and the sum is the only way
-    // to tell an aggregate root database from a root database that is merely the
-    // local account sitting beside the accounts that hold everything.
-    const perSource = [];
-    let sourceTotal = 0;
-    for (const path of sourcePaths) {
-      const o = openStore(path);
-      if (!o.db) {
-        perSource.push({ opened: false, records: null });
-        continue;
-      }
-      const n = safe(
-        () => o.db.prepare(`SELECT COUNT(*) AS c FROM "${RECORD}"`).get().c,
-        () => null,
-      );
-      if (typeof n === "number") sourceTotal += n;
-      perSource.push({ opened: true, records: typeof n === "number" ? n : null });
-      safe(() => o.db.close());
-    }
+    const rootStore = stores.find((st) => st.label === "root");
+    const rootCount = rootStore?.opened ? (rootStore.contacts ?? rootStore.records) : null;
+    // Contacts, not rows. ZABCDRECORD also holds groups, containers and an info
+    // row, and counting those is what makes a matching address book look like it
+    // has spare duplicates.
+    const unionTotal = live.reduce((n, st) => n + (st.contacts ?? st.records ?? 0), 0);
+    const livePeople = doc.findings.appleEventsReads?.count?.value ?? null;
 
     return {
       tested: true,
       rootRecords: rootCount,
-      appleEventsPeople: live,
-      sourceRecords: perSource,
-      sourceTotal,
-      // The comparison that answers it. Equal means the root file is the whole
-      // address book and a server opens one store; short means the sources have
-      // to be unioned, and the count of them is not known ahead of time.
-      // Three numbers, and the disagreements between them are the finding.
+      unionTotal,
+      appleEventsPeople: livePeople,
+      storesOpened: live.length,
       // Apple Events is the only INDEPENDENT count — it is what Contacts.app
       // itself shows — so it is the yardstick rather than one more reading.
       verdict:
-        live === null
-          ? sourcePaths.length === 0
-            ? "no per-account sources: the root database is the whole address book"
-            : `unknown — Apple Events lane unavailable, so there is no independent count to compare ${rootCount} root against ${sourceTotal} across ${sourcePaths.length} sources`
-          : rootCount === live
-            ? "root database matches the live count: one store is enough"
-            : rootCount < live
-              ? `root database is SHORT by ${live - rootCount}: the ${sourcePaths.length} sources must be unioned (they hold ${sourceTotal})`
-              : `root database has ${rootCount - live} MORE than the live count: duplicates, soft-deleted rows, or both`,
-      perSourceProbed: perSource.length,
+        livePeople === null
+          ? `unknown — Apple Events lane unavailable; root holds ${rootCount}, ${live.length} store(s) hold ${unionTotal}`
+          : rootCount === livePeople
+            ? "the root database is the whole address book: one store is enough"
+            : unionTotal >= livePeople
+              ? `the root database holds ${rootCount} of ${livePeople}: the ${live.length} store(s) must be unioned, and unioned they cover it (${unionTotal})`
+              : `even unioned the stores hold ${unionTotal} against ${livePeople} live: something is not being read`,
     };
   });
 
-  safe(() => db.close());
+  for (const st of live) safe(() => st.o.db.close());
 } else {
   doc.findings.open = { ok: false, error: opened?.error ?? null };
   doc.notes.push(
@@ -681,6 +903,17 @@ const best = res.tested
       .toSorted((a, b) => b.resolved - a.resolved || a.ambiguous - b.ambiguous)[0]
   : null;
 
+/**
+ * The verdict reads the WORKING SET, not the long tail.
+ *
+ * An unweighted rate over every handle ever seen is dominated by one-message
+ * senders and answers a question nobody asked. What decides whether a Messages
+ * server reads well is how often a name appears in the conversations someone
+ * actually opens.
+ */
+const bestWeighted = best ? (res.weighted?.[best.name] ?? {}) : {};
+const decisive = bestWeighted.byRecentMessages ?? bestWeighted.byMessages ?? best?.rate ?? null;
+
 doc.verdict = {
   storeReadable: Boolean(opened?.db),
   fingerprint: doc.findings.schema?.fingerprint ?? null,
@@ -691,14 +924,16 @@ doc.verdict = {
   bestPhoneAmbiguous: best?.ambiguous ?? null,
   emailRate: res.email?.rate ?? null,
   // The decision this probe exists to inform.
+  decisiveRate: decisive,
+  weightedBest: bestWeighted,
   messagesReadable:
-    best === null
+    decisive === null
       ? "unknown — resolution not measured"
-      : best.rate >= 90
-        ? "yes — a resolver makes Messages output readable"
-        : best.rate >= 60
-          ? "partly — 'unknown sender' has to be a first-class output state"
-          : "no — most handles will not resolve; reconsider what a Messages server can claim",
+      : decisive >= 90
+        ? "yes — in the conversations people actually read, a name almost always resolves"
+        : decisive >= 60
+          ? "mostly — 'unknown sender' has to be a first-class output state, not an error"
+          : "no — even weighted by what is actually read, most correspondents stay unnamed",
 };
 
 // ─── report ──────────────────────────────────────────────────────────────────
@@ -721,10 +956,19 @@ if (args.json) {
   L.push(
     `  per-account sources   ${lay.sourceCount ?? "?"}  (listable ${yn(lay.sourcesListable)})`,
   );
+  for (const st of doc.findings.stores ?? []) {
+    L.push(
+      `     ${st.primary ? "*" : " "} ${st.label.padEnd(9)} ${
+        st.opened
+          ? `${String(st.contacts ?? "?").padStart(4)} contacts / ${String(st.records ?? "?").padStart(4)} rows  ${String(st.phoneRows ?? "?").padStart(4)} phones  ${String(st.emailRows ?? "?").padStart(4)} emails  ${st.fingerprint}`
+          : `not opened — ${st.reason}`
+      }`,
+    );
+  }
   const agg = doc.findings.aggregation ?? {};
   if (agg.tested) {
     L.push(
-      `  records               root ${agg.rootRecords ?? "?"}   sources ${agg.sourceTotal ?? "?"}   live ${agg.appleEventsPeople ?? "?"}`,
+      `  union / live          ${agg.unionTotal ?? "?"} / ${agg.appleEventsPeople ?? "?"}   (* = read for schema)`,
     );
   }
   L.push(`  group container       ${yn(lay.groupContainerExists)}`);
@@ -765,12 +1009,14 @@ if (args.json) {
     if (ph.tested) {
       L.push(`  table                 ${ph.table}  (${ph.rows} rows)`);
       for (const [col, p] of Object.entries(ph.profile)) {
-        if (!p.populated) continue;
+        if (!p.sampled) continue;
         const shapes = Object.entries(p.shapes)
           .toSorted((a, b) => b[1] - a[1])
           .map(([s, n]) => `${s} ${n}`)
           .join(", ");
-        L.push(`  ${col.padEnd(20)}  avg ${String(p.avgLength).padStart(3)} chars   ${shapes}`);
+        L.push(
+          `  ${col.padEnd(20)}  ${String(p.sampled).padStart(4)} sampled   avg ${String(p.avgLength).padStart(3)} chars   ${shapes}`,
+        );
       }
     } else {
       L.push(`  not tested            ${ph.reason}`);
@@ -795,6 +1041,21 @@ if (args.json) {
       L.push("");
       L.push("  Ambiguous is not a smaller kind of hit. A handle matching two");
       L.push("  contacts puts the wrong name on someone's messages.");
+      L.push("");
+      L.push("  WEIGHTED — one vote per handle is the wrong denominator. These are");
+      L.push("  the same strategies against what is actually read.");
+      L.push(
+        `  ${res.messagesCounted ?? "?"} messages counted, ${res.recentMessagesCounted ?? "?"} in the last 365 days;` +
+          ` ${res.singletonHandles ?? "?"} handles sent exactly one, ${res.silentHandles ?? "?"} sent none`,
+      );
+      L.push("");
+      L.push("     strategy       handles   by messages   last 365d      top-25     top-100");
+      for (const [name, w] of Object.entries(res.weighted ?? {})) {
+        const raw = res.phone[name]?.rate;
+        L.push(
+          `     ${name.padEnd(13)} ${String(raw ?? "—").padStart(6)}%  ${String(w.byMessages ?? "—").padStart(11)}%  ${String(w.byRecentMessages ?? "—").padStart(9)}%  ${String(w.top25 ?? "—").padStart(9)}%  ${String(w.top100 ?? "—").padStart(9)}%`,
+        );
+      }
     } else {
       L.push(`  not tested            ${res.reason}`);
     }
@@ -803,10 +1064,14 @@ if (args.json) {
     const ep = doc.findings.epoch ?? {};
     if (ep.tested) {
       for (const [col, e] of Object.entries(ep.columns)) {
+        if (!e.epoch) continue;
         L.push(
-          `  ${col.padEnd(20)}  ${e.epoch ?? e.reason}${e.latestYear ? `  (latest ${e.latestYear})` : ""}`,
+          `  ${col.padEnd(26)}  ${e.epoch}${e.latestYear ? `  (latest ${e.latestYear})` : ""}` +
+            `${e.exceedsSafeInteger ? "   EXCEEDS SAFE INTEGER — read as BigInt" : ""}`,
         );
       }
+      const empty = Object.entries(ep.columns).filter(([, e]) => !e.epoch).length;
+      if (empty) L.push(`  ${"(unpopulated)".padEnd(26)}  ${empty} more date columns hold no rows`);
     }
     const me = doc.findings.meCard ?? {};
     if (me.tested) {
@@ -831,6 +1096,9 @@ if (args.json) {
       `${doc.verdict.bestPhoneRate === null ? "" : `  ${doc.verdict.bestPhoneRate}% clean, ${doc.verdict.bestPhoneAmbiguous} ambiguous`}`,
   );
   L.push(`  email        : ${doc.verdict.emailRate === null ? "—" : `${doc.verdict.emailRate}%`}`);
+  L.push(
+    `  weighted     : ${doc.verdict.decisiveRate === null ? "—" : `${doc.verdict.decisiveRate}% of recent traffic resolves`}`,
+  );
   L.push(`  Messages     : ${doc.verdict.messagesReadable}`);
   for (const n of doc.notes) L.push(`  note: ${n}`);
   L.push("");
