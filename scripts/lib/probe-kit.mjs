@@ -347,8 +347,17 @@ export const dumpSchema = (db) => {
          ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, name`,
     )
     .all()
-    // sqlite_sequence is created implicitly by AUTOINCREMENT and cannot be declared.
-    .filter((r) => r.name !== "sqlite_sequence");
+    /**
+     * SQLite's own bookkeeping tables, which cannot be declared.
+     *
+     * `sqlite_sequence` comes from AUTOINCREMENT; `sqlite_stat1` and friends come
+     * from ANALYZE. Replaying either raises "object name reserved for internal
+     * use", which makes the whole fixture unusable — found when Messages' capture
+     * would not load, because that store has been analysed and Calendar's had
+     * not. The prefix is reserved by SQLite, so excluding all of it is exactly
+     * right rather than a widening guess.
+     */
+    .filter((r) => !/^sqlite_/i.test(String(r.name)));
   return {
     ddlRows,
     objectCount: ddlRows.length,
