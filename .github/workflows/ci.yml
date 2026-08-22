@@ -298,8 +298,19 @@ jobs:
         run: |
           printf '%s' "${{ secrets.AC_KEY_P8_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/ac.p8"
           export AC_KEY_PATH="$RUNNER_TEMP/ac.p8"
+          # CFBundleVersion is the commit count, not github.run_number, so that a
+          # tag always produces the same number. docs/licensing.md sells
+          # reproducible builds and published checksums; a build number that
+          # changes on every re-run makes the same source produce a different
+          # binary and a different SHA-256, which is the one thing that claim
+          # cannot survive. Needs the fetch-depth: 0 checkout above — a shallow
+          # clone would silently count only what it fetched.
+          build=$(git rev-list --count HEAD)
+          test "$build" -gt 0 2>/dev/null \
+            || { echo "::error::could not count commits; is this a shallow clone?"; exit 1; }
+          echo "CFBundleVersion=$build (from $(git rev-parse --short HEAD))"
           make build-release \
-            XCARGS="MARKETING_VERSION=${{ steps.version.outputs.version }} CURRENT_PROJECT_VERSION=${{ github.run_number }}"
+            XCARGS="MARKETING_VERSION=${{ steps.version.outputs.version }} CURRENT_PROJECT_VERSION=$build"
       # Every claim the download page makes, checked against the artifact that is
       # about to be uploaded rather than against the tree it was built from.
       - name: Verify the artifact 🔍
