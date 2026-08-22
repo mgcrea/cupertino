@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { composeLockup, LOCKUP } from "./lockup.mjs";
+import { composeCard, composeLockup, LOCKUP, SOCIAL_CARD, wordmarkWidth } from "./lockup.mjs";
 
 const design = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "design");
 const icon = readFileSync(join(design, "cupertino-icon.svg"), "utf8");
@@ -107,6 +107,71 @@ describe("composeLockup", () => {
             gradients: { wash: { ...palette.gradients.wash, angle: 90 } },
           }),
       ],
+    ];
+    for (const [name, run] of cases) {
+      it(name, () => assert.throws(run, /cupertino-lockup:/));
+    }
+  });
+});
+
+describe("composeCard", () => {
+  const copy = {
+    ground: "#0b0c0f",
+    headline: "Mail, Notes, Reminders and Calendar, for Claude",
+    subhead: "One Full Disk Access grant instead of four",
+  };
+  const svg = composeCard(icon, palette, copy);
+
+  it("carries the same mark as the README lockup, not a copy of it", () => {
+    // Both compositions go through embedIcon, so the geometry is one string in
+    // one file. If this ever diverges, the artwork has forked.
+    assert.ok(svg.includes("M-40 848 Q320 660 660 848 T1120 824 V1064 H-40 Z"));
+    assert.ok(svg.includes('cx="512" cy="424" r="124"'));
+  });
+
+  it("reverses the wordmark out in the palette's light, over the site's ground", () => {
+    assert.ok(svg.includes(`fill="${palette.colors.sun}"`));
+    assert.ok(svg.includes(`fill="${copy.ground}"`));
+    // The ink colour is for the light plate; it has no business on a dark card.
+    assert.ok(!svg.includes(`fill="${palette.colors.ink}"`));
+  });
+
+  it("keeps every mark clear of the band X crops away", () => {
+    // X renders summary_large_image at 2:1; og:image is 1.91:1.
+    const trimmed = (SOCIAL_CARD.HEIGHT - SOCIAL_CARD.WIDTH / 2) / 2;
+    assert.ok(trimmed < SOCIAL_CARD.SAFE_INSET, "the inset must cover the real crop");
+    for (const y of [...svg.matchAll(/\by="(\d+(?:\.\d+)?)"/g)].map((m) => Number(m[1]))) {
+      assert.ok(
+        y >= SOCIAL_CARD.SAFE_INSET && y <= SOCIAL_CARD.HEIGHT - SOCIAL_CARD.SAFE_INSET,
+        `a mark sits at y=${y}, outside the safe band`,
+      );
+    }
+  });
+
+  it("centres the lockup as one block, as the banner does", () => {
+    const block = SOCIAL_CARD.ICON + SOCIAL_CARD.GAP + wordmarkWidth(SOCIAL_CARD.WORD);
+    const iconX = Math.round((SOCIAL_CARD.WIDTH - block) / 2);
+    assert.ok(svg.includes(`translate(${iconX} `), "the icon is not where centring puts it");
+    assert.equal(iconX, SOCIAL_CARD.WIDTH - (iconX + block));
+  });
+
+  it("centres the two copy lines without pinning them", () => {
+    // The wordmark is pinned because a READER's font substitutes; these two are
+    // baked to PNG at build time, so pinning would only distort them.
+    assert.equal(svg.match(/text-anchor="middle"/g).length, 2);
+    assert.ok(svg.includes(`>${copy.headline}</text>`));
+    assert.ok(svg.includes(`>${copy.subhead}</text>`));
+    assert.equal(svg.match(/textLength=/g).length, 1, "only the wordmark is pinned");
+  });
+
+  describe("refuses to guess", () => {
+    const cases = [
+      ["a ground that is not a colour", () => composeCard(icon, palette, { ...copy, ground: "" })],
+      [
+        "a palette with no light to reverse out in",
+        () => composeCard(icon, { ...palette, colors: {} }, copy),
+      ],
+      ["copy with no subhead", () => composeCard(icon, palette, { ...copy, subhead: "" })],
     ];
     for (const [name, run] of cases) {
       it(name, () => assert.throws(run, /cupertino-lockup:/));

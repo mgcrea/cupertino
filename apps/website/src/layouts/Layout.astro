@@ -1,5 +1,5 @@
 ---
-import { APP_NAME } from "../config";
+import { APP_NAME, SOCIAL_CARD, X_HANDLE } from "../config";
 import "../styles/global.css";
 
 type SchemaObject = Record<string, unknown>;
@@ -8,6 +8,8 @@ export interface Props {
   title?: string;
   description?: string;
   ogImage?: string;
+  /** Describes the picture, not the product. Pass one with any custom `ogImage`. */
+  ogImageAlt?: string;
   schema?: SchemaObject | SchemaObject[];
 }
 
@@ -16,6 +18,7 @@ const {
   description =
     "A macOS menu-bar app that lets Claude read Mail, Notes, Reminders and Calendar on your Mac. Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to every editor that happens to spawn a server.",
   ogImage = "/og-image.png",
+  ogImageAlt = SOCIAL_CARD.alt,
   schema,
 } = Astro.props;
 
@@ -45,13 +48,31 @@ const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonicalHref} />
-    <meta property="og:image" content={ogImageHref} />
     <meta property="og:site_name" content={APP_NAME} />
+    {/*
+      Dimensions are declared so a scraper can lay the card out before the image
+      arrives — without them the first share of a cold URL can render blank while
+      the crawler is still fetching, and that first share is usually the one that
+      matters. They describe the default card; a page passing its own `ogImage`
+      is responsible for matching the shape.
+    */}
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:image:width" content={String(SOCIAL_CARD.width)} />
+    <meta property="og:image:height" content={String(SOCIAL_CARD.height)} />
+    <meta property="og:image:alt" content={ogImageAlt} />
 
+    {/*
+      X renders `summary_large_image` at 2:1 and og:image is 1.91:1, so it trims
+      a sliver off the top and bottom — `composeCard` in scripts/lib/lockup.mjs
+      keeps the artwork clear of that band.
+    */}
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content={X_HANDLE} />
+    <meta name="twitter:creator" content={X_HANDLE} />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageHref} />
+    <meta name="twitter:image:alt" content={ogImageAlt} />
 
     {
       schemaEntries.map((entry) => (

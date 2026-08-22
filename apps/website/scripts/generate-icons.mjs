@@ -19,6 +19,9 @@ import { fileURLToPath } from "node:url";
 
 import sharp from "sharp";
 
+import { composeCard } from "../../../scripts/lib/lockup.mjs";
+import { SOCIAL_CARD } from "../src/config.ts";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const pub = join(here, "..", "public");
 const design = join(here, "..", "..", "..", "design");
@@ -72,17 +75,16 @@ await png(
   180,
 );
 
-// The OG card is the mark on the page's own background, so a shared link
-// matches the site it opens.
-const mark = await sharp(Buffer.from(icon), { density: 400 }).resize(300, 300).png().toBuffer();
-const [w, h] = [1200, 630];
+// The OG card is what a link to the site looks like on X, Slack and iMessage.
+// It is the lockup reversed out of the page's own background, over two lines the
+// site owns — composed by scripts/lib/lockup.mjs, which is also what writes the
+// README banner, so the artwork cannot fork between the two.
+//
+// The words come from src/config.ts rather than from here: they are a claim
+// about the product, and this file has no business being the authority on one.
+const card = composeCard(icon, JSON.parse(await source("colors.json")), SOCIAL_CARD);
 await writeFile(
   join(pub, "og-image.png"),
-  await sharp({
-    create: { width: w, height: h, channels: 4, background: { r: 11, g: 12, b: 15, alpha: 1 } },
-  })
-    .composite([{ input: mark, top: (h - 300) / 2, left: (w - 300) / 2 }])
-    .png()
-    .toBuffer(),
+  await sharp(Buffer.from(card), { density: 200 }).png().toBuffer(),
 );
-console.log(`  og-image.png  ${w}×${h}`);
+console.log(`  og-image.png  ${SOCIAL_CARD.width}×${SOCIAL_CARD.height}`);

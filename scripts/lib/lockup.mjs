@@ -38,15 +38,17 @@ const GAP = 45;
 
 const FONT_SIZE = 104;
 const FONT_WEIGHT = 600;
+
 /**
- * The width "Cupertino" is pinned to: its natural advance in SF Pro Display
- * semibold at FONT_SIZE, tightened by the 2% tracking the wordmark carries
- * everywhere else. Measured with CoreText rather than guessed — 457.5 natural,
- * 441.0 tracked — because there is no font metric available at render time to
- * derive it from, and a wrong value here shows up as a stretched or squeezed
- * word rather than as an error. Re-measure if the string or the size changes.
+ * The advance of "Cupertino" per em of font size, in SF Pro Display semibold,
+ * tightened by the 2% tracking the wordmark carries everywhere else. Measured
+ * with CoreText at 104px rather than guessed — 457.5 natural, 441.0 tracked —
+ * because there is no font metric available at render time to derive it from,
+ * and a wrong value shows up as a stretched or squeezed word rather than as an
+ * error. Re-measure if the STRING changes; the size is free, because this is a
+ * ratio and `wordmarkWidth` scales it.
  */
-const TEXT_WIDTH = 441;
+const WORDMARK_EM = 441 / 104;
 
 /**
  * SF's cap height as a fraction of the em, measured (73.3 at 104). The word is
@@ -55,6 +57,11 @@ const TEXT_WIDTH = 441;
  * reads high.
  */
 const CAP_RATIO = 0.705;
+
+/** The width the wordmark is pinned to at a given size. */
+export const wordmarkWidth = (fontSize) => Math.round(fontSize * WORDMARK_EM);
+
+const TEXT_WIDTH = wordmarkWidth(FONT_SIZE);
 
 const FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif';
@@ -112,22 +119,12 @@ const viewBoxOf = (svg) => {
 };
 
 /**
- * Composes the lockup from the generated icon and the shared palette.
- *
- * @param {string} iconSvg contents of `design/cupertino-icon.svg`
- * @param {object} palette parsed `design/colors.json`
- * @param {string} [word] the wordmark; re-measure TEXT_WIDTH if you change it
- * @returns {string} the lockup SVG
+ * The icon, as a `<g>` ready to drop into a larger document at any size. Both
+ * compositions go through here, so neither can acquire its own copy of the
+ * artwork — which is the failure this whole module exists to prevent.
  */
-export const composeLockup = (iconSvg, palette, word = "Cupertino") => {
-  const ink = palette?.colors?.ink;
-  const wash = palette?.gradients?.wash;
-  expect(ink, "colors.json has no `colors.ink`");
-  expect(wash?.stops?.length === 2, "colors.json has no two-stop `gradients.wash`");
-  expect(wash.angle === 180, `the wash gradient is not vertical (angle ${wash.angle})`);
-
+const embedIcon = (iconSvg, { x, y, size, indent }) => {
   const source = viewBoxOf(iconSvg);
-  const scale = ICON / source;
 
   const body = namespaceIds(bodyOf(iconSvg), "icon-")
     // The icon's own provenance comment and group title belong to that file, not
@@ -140,19 +137,57 @@ export const composeLockup = (iconSvg, palette, word = "Cupertino") => {
   expect(body.includes("<circle"), "the sun is missing from the icon body");
   expect((body.match(/<path\b/g) ?? []).length >= 2, "the hills are missing from the icon body");
 
-  // The pair is centred as one block, not centred individually: the eye reads
-  // the icon and the word as a single object, so the whitespace belongs outside.
-  const blockWidth = ICON + GAP + TEXT_WIDTH;
-  const iconX = Math.round((WIDTH - blockWidth) / 2);
-  const iconY = Math.round((HEIGHT - ICON) / 2);
-  const textX = iconX + ICON + GAP;
-  const baseline = Math.round(HEIGHT / 2 + (CAP_RATIO * FONT_SIZE) / 2);
-
-  const indented = body
+  const pad = " ".repeat(indent);
+  const inner = body
     .split("\n")
-    .map((line) => (line.trim() ? `    ${line.trim()}` : ""))
+    .map((line) => (line.trim() ? `${pad}  ${line.trim()}` : ""))
     .filter(Boolean)
     .join("\n");
+
+  return `${pad}<g transform="translate(${x} ${y}) scale(${size / source})">\n${inner}\n${pad}</g>`;
+};
+
+/**
+ * The wordmark, pinned to its measured width. See WORDMARK_EM for why it is
+ * pinned rather than tracked, and why that is not the same decision in a PNG as
+ * it is in an SVG the reader's browser lays out.
+ */
+const wordmark = ({ x, baseline, size, fill, word, indent }) => {
+  const pad = " ".repeat(indent);
+  return `${pad}<text x="${x}" y="${baseline}" fill="${fill}"
+${pad}      font-family='${FONT_STACK}' font-size="${size}" font-weight="${FONT_WEIGHT}"
+${pad}      textLength="${wordmarkWidth(size)}" lengthAdjust="spacingAndGlyphs">${escapeXml(
+    word,
+  )}</text>`;
+};
+
+/** The x the icon starts at when icon + gap + word is centred in `canvasWidth`. */
+const centredBlock = (canvasWidth, iconSize, gap, fontSize) => {
+  const blockWidth = iconSize + gap + wordmarkWidth(fontSize);
+  const iconX = Math.round((canvasWidth - blockWidth) / 2);
+  return { blockWidth, iconX, textX: iconX + iconSize + gap };
+};
+
+/**
+ * Composes the lockup from the generated icon and the shared palette.
+ *
+ * @param {string} iconSvg contents of `design/cupertino-icon.svg`
+ * @param {object} palette parsed `design/colors.json`
+ * @param {string} [word] the wordmark; re-measure WORDMARK_EM if you change it
+ * @returns {string} the lockup SVG
+ */
+export const composeLockup = (iconSvg, palette, word = "Cupertino") => {
+  const ink = palette?.colors?.ink;
+  const wash = palette?.gradients?.wash;
+  expect(ink, "colors.json has no `colors.ink`");
+  expect(wash?.stops?.length === 2, "colors.json has no two-stop `gradients.wash`");
+  expect(wash.angle === 180, `the wash gradient is not vertical (angle ${wash.angle})`);
+
+  // The pair is centred as one block, not centred individually: the eye reads
+  // the icon and the word as a single object, so the whitespace belongs outside.
+  const { iconX, textX } = centredBlock(WIDTH, ICON, GAP, FONT_SIZE);
+  const iconY = Math.round((HEIGHT - ICON) / 2);
+  const baseline = Math.round(HEIGHT / 2 + (CAP_RATIO * FONT_SIZE) / 2);
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}"
      viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="${escapeXml(word)}">
@@ -167,15 +202,109 @@ export const composeLockup = (iconSvg, palette, word = "Cupertino") => {
     </linearGradient>
   </defs>
   <rect width="${WIDTH}" height="${HEIGHT}" rx="${RADIUS}" fill="url(#wash)"/>
-  <g transform="translate(${iconX} ${iconY}) scale(${scale})">
-${indented}
-  </g>
-  <text x="${textX}" y="${baseline}" fill="${ink}"
-        font-family='${FONT_STACK}' font-size="${FONT_SIZE}" font-weight="${FONT_WEIGHT}"
-        textLength="${TEXT_WIDTH}" lengthAdjust="spacingAndGlyphs">${escapeXml(word)}</text>
+${embedIcon(iconSvg, { x: iconX, y: iconY, size: ICON, indent: 2 })}
+${wordmark({ x: textX, baseline, size: FONT_SIZE, fill: ink, word, indent: 2 })}
+</svg>
+`;
+};
+
+// ── The social card ───────────────────────────────────────────────────────────
+//
+// What a link to the site looks like on X, Slack, iMessage and everywhere else
+// that reads og:image. It was the bare icon on the page's own black, which said
+// nothing: the card's title and description render BELOW the image in small
+// grey type that truncates on a phone, so the image is the whole message and an
+// orange square is not one.
+//
+// Two constraints shape it, and neither is obvious.
+//
+// X renders `summary_large_image` at 2:1 and og:image is 1.91:1, so it trims
+// roughly 15px off the top and bottom. SAFE_INSET keeps every mark well clear of
+// that band — the crop is silent, and a headline losing its descenders is the
+// kind of thing nobody sees until it is public.
+//
+// And unlike the README lockup, this is BAKED: `pnpm icons` renders it to PNG
+// once and commits the result, so the font resolves on the machine that ran the
+// command rather than on the reader's. That is safe here only because the repo
+// is already macOS-only — `make icon` needs appshot, the screenshots need a Mac,
+// and package.json declares `"os": ["darwin"]`. Rendering this on Linux CI would
+// silently swap the typeface. Nothing enforces that; it is why this comment is.
+
+const CARD = { WIDTH: 1200, HEIGHT: 630, SAFE_INSET: 60 };
+
+/** The card's own scale: a smaller lockup than the README's, over two lines of copy. */
+const CARD_ICON = 132;
+const CARD_GAP = 33;
+const CARD_WORD = 78;
+const CARD_HEADLINE = 38;
+const CARD_SUBHEAD = 28;
+
+/** Where the lockup's optical centre sits. Above the copy, above the canvas centre. */
+const CARD_LOCKUP_MID = 250;
+const CARD_HEADLINE_Y = 404;
+const CARD_SUBHEAD_Y = 460;
+
+const cardLine = ({ text, y, size, fill, weight, opacity }) =>
+  `  <text x="${CARD.WIDTH / 2}" y="${y}" fill="${fill}"${
+    opacity ? ` opacity="${opacity}"` : ""
+  } text-anchor="middle"
+        font-family='${FONT_STACK}' font-size="${size}" font-weight="${weight}">${escapeXml(
+    text,
+  )}</text>`;
+
+/**
+ * Composes the og:image card — the lockup reversed out of the site's own
+ * background, over a headline and a subhead.
+ *
+ * The two lines are NOT pinned with `textLength` the way the wordmark is. That
+ * pin exists to survive a reader's font substitution; here the font is resolved
+ * once at build time, and pinning arbitrary sentences would distort them for no
+ * gain. `text-anchor="middle"` keeps them centred whatever they measure.
+ *
+ * @param {string} iconSvg contents of `design/cupertino-icon.svg`
+ * @param {object} palette parsed `design/colors.json`
+ * @param {object} copy `{ ground, headline, subhead }` — the site owns the words
+ * @returns {string} the card SVG, for sharp to rasterise
+ */
+export const composeCard = (iconSvg, palette, { ground, headline, subhead, word = "Cupertino" }) => {
+  const light = palette?.colors?.sun;
+  expect(light, "colors.json has no `colors.sun` to reverse the wordmark out in");
+  expect(/^#[0-9a-f]{6}$/i.test(ground ?? ""), `the card ground is not a hex colour (${ground})`);
+  expect(headline && subhead, "the card needs both a headline and a subhead");
+
+  const { iconX, textX } = centredBlock(CARD.WIDTH, CARD_ICON, CARD_GAP, CARD_WORD);
+  const iconY = Math.round(CARD_LOCKUP_MID - CARD_ICON / 2);
+  const baseline = Math.round(CARD_LOCKUP_MID + (CAP_RATIO * CARD_WORD) / 2);
+
+  // The crop is silent, so the check cannot be. Descenders reach roughly a
+  // quarter of the em below the baseline.
+  const lowest = CARD_SUBHEAD_Y + CARD_SUBHEAD * 0.25;
+  expect(iconY >= CARD.SAFE_INSET, "the lockup sits inside the band X crops away");
+  expect(
+    lowest <= CARD.HEIGHT - CARD.SAFE_INSET,
+    `the subhead reaches ${Math.round(lowest)}, inside the band X crops away`,
+  );
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD.WIDTH}" height="${CARD.HEIGHT}"
+     viewBox="0 0 ${CARD.WIDTH} ${CARD.HEIGHT}" role="img" aria-label="${escapeXml(word)}">
+  <!-- GENERATED by apps/website/scripts/generate-icons.mjs — do not edit. -->
+  <title>${escapeXml(word)}</title>
+  <rect width="${CARD.WIDTH}" height="${CARD.HEIGHT}" fill="${ground}"/>
+${embedIcon(iconSvg, { x: iconX, y: iconY, size: CARD_ICON, indent: 2 })}
+${wordmark({ x: textX, baseline, size: CARD_WORD, fill: light, word, indent: 2 })}
+${cardLine({ text: headline, y: CARD_HEADLINE_Y, size: CARD_HEADLINE, fill: light, weight: 500 })}
+${cardLine({
+    text: subhead,
+    y: CARD_SUBHEAD_Y,
+    size: CARD_SUBHEAD,
+    fill: light,
+    weight: 400,
+    opacity: "0.62",
+  })}
 </svg>
 `;
 };
 
 /** Exported for the tests, which assert the geometry rather than re-derive it. */
 export const LOCKUP = { WIDTH, HEIGHT, RADIUS, ICON, GAP, TEXT_WIDTH, FONT_SIZE };
+export const SOCIAL_CARD = { ...CARD, ICON: CARD_ICON, GAP: CARD_GAP, WORD: CARD_WORD };

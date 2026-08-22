@@ -7,6 +7,8 @@
  * a `packages/<surface>/src/tools/index.ts`, the tree is right and this file is stale.
  */
 
+import { SURFACES } from "./data/surfaces.ts";
+
 export const SITE_DOMAIN = "cupertino.mgcrea.io";
 export const SITE_URL = `https://${SITE_DOMAIN}`;
 
@@ -14,6 +16,7 @@ export const APP_NAME = "Cupertino";
 export const BUNDLE_ID = "io.mgcrea.cupertino";
 
 export const REPO_URL = "https://github.com/mgcrea/mcp-cupertino";
+
 export const ISSUES_URL = `${REPO_URL}/issues`;
 export const DOCS = {
   distribution: `${REPO_URL}/blob/main/docs/distribution.md`,
@@ -22,6 +25,50 @@ export const DOCS = {
   notes: `${REPO_URL}/blob/main/docs/notes.md`,
   /** The app's own licence — source-available, not the repo-root MIT. */
   appLicense: `${REPO_URL}/blob/main/apps/apple/LICENSE`,
+} as const;
+
+/**
+ * The account X attributes the card to. Both `twitter:site` (the publisher) and
+ * `twitter:creator` (the author) are the same handle here, because they are the
+ * same person — splitting them would be a fiction.
+ */
+export const X_HANDLE = "@mgcrea";
+
+/** Small counts are spelled out; a digit mid-sentence reads as a spec sheet. */
+const SPELLED = ["no", "one", "two", "three", "four", "five", "six", "seven"];
+
+/** "Mail, Notes, Reminders and Calendar" — however many there turn out to be. */
+const surfaceList = SURFACES.map((s) => s.name)
+  .join(", ")
+  .replace(/, ([^,]+)$/, " and $1");
+
+/**
+ * The og:image card. `pnpm icons` bakes these two lines into `og-image.png`, so
+ * editing them here is only half the change — re-run it, or the picture and the
+ * page disagree.
+ *
+ * They deliberately do not repeat the page title. X renders og:title and
+ * og:description as text beneath the image, so a card that restates the title
+ * spends its one visual asset saying something already on screen. The title
+ * carries the argument ("Four apps hold your whole disk"); these carry what the
+ * thing *is*.
+ *
+ * `alt` is the accessible description X and Mastodon both expose, capped at 420
+ * characters. It describes the picture, not the product.
+ *
+ * The surfaces are read from `data/surfaces.ts` rather than typed out, for the
+ * reason CLAUDE.md gives about every other count on this site: the price ladder
+ * has Messages shipping, and the day it does, a hand-written "four" here becomes
+ * a claim the product no longer matches.
+ */
+export const SOCIAL_CARD = {
+  headline: `${surfaceList}, for Claude`,
+  subhead: `One Full Disk Access grant instead of ${SPELLED[SURFACES.length] ?? SURFACES.length}`,
+  alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${surfaceList}, for Claude”.`,
+  /** Matches `--color-bg` in global.css: the card is the page's own background. */
+  ground: "#0b0c0f",
+  width: 1200,
+  height: 630,
 } as const;
 
 /**
