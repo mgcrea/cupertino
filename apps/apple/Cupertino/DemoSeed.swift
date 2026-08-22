@@ -380,12 +380,12 @@ enum DemoSeed {
   /// The version the marketing images show.
   ///
   /// Pinned for the reason at the top of this file: the real one is whatever the
-  /// pbxproj default happens to be on the machine that captured — `1.0`, not
-  /// `1.0.0`, because nothing bumps MARKETING_VERSION locally and only CI sets
-  /// it from the tag. A capture would bake that into a marketing image, and a
-  /// version that changes every release would churn the golden gate into noise.
+  /// capturing Mac's nearest `app-v*` tag says, which moves the moment a release
+  /// is cut. A capture would bake that into a marketing image, so every tag would
+  /// churn the golden gate into noise — and the images would claim a version
+  /// before the store listing showing them had caught up.
   /// Bump this deliberately, when new marketing images are wanted.
-  nonisolated static let version = "1.0.0"
+  nonisolated static let version = "1.1.0"
 
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted

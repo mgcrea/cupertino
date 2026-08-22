@@ -24,13 +24,32 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts safari
+SURFACES     := mail notes reminders calendar contacts messages safari
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
-# default, which nothing bumps. Empty locally, where the pbxproj value stands.
+# default, which nothing bumps. Empty locally, where VERSION_ARGS stands in.
 # Command-line variables propagate to the sub-makes `build-release` runs.
 XCARGS       ?=
+# What a local build calls itself, from the same two facts CI derives it from:
+# the nearest `app-v*` tag and the commit count. Without this a `make install`
+# app inherited the pbxproj default and sat in /Applications calling itself 1.0
+# — two minors behind what shipped, which is confusing on its own, and below the
+# appcast's build number, so Sparkle offered a developer their own build as an
+# update and would have quietly replaced it with the release.
+# Empty outside a git checkout, or in a clone fetched without tags, and there
+# the pbxproj default stands — the same fallback GIT_COMMIT takes below, and for
+# the same reason: a release tarball is still buildable.
+APP_VERSION  := $(shell git describe --tags --match 'app-v*' --abbrev=0 2>/dev/null | sed 's/^app-v//')
+APP_BUILD    := $(shell git rev-list --count HEAD 2>/dev/null)
+# Emitted only when XCARGS does not already carry the setting. CI passes both
+# from the tag and `bundle` forwards that string to this same xcodebuild, so
+# emitting them unconditionally would put each setting on the command line twice
+# and leave the shipped version to whichever duplicate xcodebuild honours — a
+# coin flip that only ever lands on a tag push, where it is too late to notice.
+# Standing aside keeps the release path byte-identical to what it was.
+VERSION_ARGS := $(if $(findstring MARKETING_VERSION,$(XCARGS)),,$(if $(APP_VERSION),MARKETING_VERSION=$(APP_VERSION)))
+VERSION_ARGS += $(if $(findstring CURRENT_PROJECT_VERSION,$(XCARGS)),,$(if $(APP_BUILD),CURRENT_PROJECT_VERSION=$(APP_BUILD)))
 # The commit a build came from, for the About line. `--dirty` because a hash
 # that does not describe the code that actually ran is worse than no hash: it
 # points a bug report at a diff nobody can reproduce. Empty outside a git
@@ -68,7 +87,7 @@ build: ## Build both halves: the npm servers and the app (Debug)
 app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@set -o pipefail; xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
 		-configuration $(CONFIG) -derivedDataPath apps/apple/.build \
-		CUPERTINO_GIT_COMMIT=$(GIT_COMMIT) $(XCARGS) build \
+		CUPERTINO_GIT_COMMIT=$(GIT_COMMIT) $(VERSION_ARGS) $(XCARGS) build \
 		| { grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true; }
 
 run: app dev-config ## Build, then (re)launch the menu bar app
@@ -504,7 +523,7 @@ SHOT_SCREENS := surface prompt activity connections settings
 # inside a backslash continuation — putting the generated region in the middle of
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
-SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \

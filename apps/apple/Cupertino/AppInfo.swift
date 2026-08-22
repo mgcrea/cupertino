@@ -53,10 +53,12 @@ enum AppInfo {
 
   /// The major version a licence key has to name to unlock this build.
   ///
-  /// Nothing bumps `MARKETING_VERSION` in the pbxproj — CI overrides it from the
-  /// `app-v*` tag and a local build keeps the default. So this reads 1 on every
-  /// developer's Mac whatever tag is checked out, which is expected rather than
-  /// a bug, and only ever wrong in a direction that is easy to notice.
+  /// Nothing bumps `MARKETING_VERSION` in the pbxproj. CI overrides it from the
+  /// `app-v*` tag, and the Makefile derives the same thing locally, so this
+  /// tracks the checked-out tag rather than the pbxproj default — a build made
+  /// on a 2.x tag gates like the 2.x it claims to be. The default only stands
+  /// where there is no tag to read: a source tarball, or a clone fetched
+  /// without them, where it reads 1 and errs toward unlocking.
   static var major: Int {
     let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
     return Int(short.split(separator: ".").first ?? "") ?? 1
