@@ -10,6 +10,23 @@
         "--golden",
         "apps/apple/Screenshots/golden"
       ],
+      "at" : "2026-08-22T20:42:08Z",
+      "count" : 5,
+      "cwd" : "/Users/olivier/Projects/apps/cupertino",
+      "host" : "oliviermacbookpro.local",
+      "pid" : 29851,
+      "user" : "olivier"
+    },
+    {
+      "appshotVersion" : "0.9.0",
+      "argv" : [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
       "at" : "2026-08-22T19:36:17Z",
       "count" : 5,
       "cwd" : "/Users/olivier/Projects/apps/cupertino",
@@ -71,33 +88,33 @@
   ],
   "entries" : {
     "activity~dark.png" : {
-      "bytes" : 395816,
+      "bytes" : 396000,
       "height" : 1144,
-      "sha256" : "dcf7c6b7561c40d7c95a28f941daef6aa69aadfd196c08ee078402f7519c696f",
+      "sha256" : "2499fea19a178d8fae604d88d667bc5a105bdf1f1a3658f5ef76e81bead10acd",
       "width" : 2240
     },
     "connections~dark.png" : {
-      "bytes" : 313980,
+      "bytes" : 313694,
       "height" : 1144,
-      "sha256" : "ab52373e2afcc0682f22d6a0f51b05112ae596f7510e9524fe4c7b946a905ac1",
+      "sha256" : "e1219cd9b4ddaede9df7e61b8bdbe676d8aa5505cd8c57a14d672fe5c9bbc1ca",
       "width" : 2240
     },
     "prompt~dark.png" : {
-      "bytes" : 267121,
+      "bytes" : 267274,
       "height" : 1144,
-      "sha256" : "1b1033b1450b63a6bb4b9cc689454e3f376be98ee746205e5f3ba22830b32cf4",
+      "sha256" : "1cd46fb8efd584092e3d8e8dca7b5ba23f6c9b6f9f4647663e7320373bbce7eb",
       "width" : 2240
     },
     "settings~dark.png" : {
-      "bytes" : 256561,
+      "bytes" : 254699,
       "height" : 1544,
-      "sha256" : "f6ed685ea3e7a001c49fae88fc3a3e05f625cdf4377e24e6c1c8f2c0a09f2805",
+      "sha256" : "54aec67490a5ffe44f34840e62970e99f7c518c10261ce5c305480179cdeadbc",
       "width" : 2000
     },
     "surface~dark.png" : {
-      "bytes" : 229513,
+      "bytes" : 229555,
       "height" : 1144,
-      "sha256" : "2ce2b543ba1364a580e8dcc75963b7a5708df9a27a2cb718efdf4440bcd979f1",
+      "sha256" : "ee61e3b5be47bda8c5a6e2e99df6cca48849fc5a982594657b0776a6e810d17b",
       "width" : 2240
     }
   },

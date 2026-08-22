@@ -113,7 +113,7 @@ export const SHIPPED = true;
  * Shown in the nav and carried in the JSON-LD, both gated on SHIPPED: a version
  * printed before there is a release names something nobody can download.
  */
-export const APP_VERSION = "1.1.0";
+export const APP_VERSION = "1.2.0";
 
 /**
  * The release lives on GitHub, never here. A Cloudflare assets binding caps a

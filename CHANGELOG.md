@@ -11,6 +11,65 @@ summary.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-22
+
+Two new surfaces, taking Cupertino from five Apple apps to seven. Both ship inside the bundle;
+the single Full Disk Access grant and the write toggles work exactly as they already did.
+
+### Added
+
+- **Safari.** History, live tabs and the Reading List, read-only — there is no write tool in this
+  surface at all, so the Writes toggle does not appear for it. Measured against a captured schema
+  fixture rather than assumed: the tab/history join rate and the Reading List counts in
+  `docs/safari.md` come from that run.
+- **Messages.** Chats, messages and search, plus a `send` gated behind the Messages write toggle
+  like every other write in the app.
+
+  Worth knowing why it is shaped this way: Messages has no Apple Events read path. Every read
+  through the scripting dictionary fails, and it answers _"Application isn't running"_ even while
+  it is running, because it is a windowless background process that declines to wake for a script.
+  So reads go through the file lane and Apple Events is a write lane and nothing else. `send` picks
+  its target by chat guid from `list_chats`, since Messages will not enumerate participants for a
+  script, and then finds the sent row afterwards, because Apple Events hands back no identifier for
+  what it just sent. About 3% of messages keep their text only in an archived `NSArchiver` blob
+  that SQL cannot reach; this server decodes it rather than returning an empty body.
+
+### Fixed
+
+- **Allow… on a surface whose app is closed.** The button re-ran the same call and wrote back the
+  same state, so it did nothing, twice. `AEDeterminePermissionToAutomateTarget` does not launch its
+  target even when asked to prompt — measured on macOS 26.6, `askUserIfNeeded: true` still returns
+  `procNotFound` while the app is closed. Cupertino now opens the target without activating it,
+  polls until TCC can answer, then asks: 53ms on a closed Contacts.app in testing.
+
+  This was unreachable for as long as every surface was an app people leave open, which is why
+  Contacts is what exposed it — it sits closed on most Macs, so "not running" is that surface's
+  normal state rather than an edge case. Button labels and destinations now come from one place, so
+  the popover, the Settings pane and the surface detail cannot drift apart; the Settings pane also
+  gains a real control where it previously fell through to an icon with nothing to click.
+
+### Shipped in 1.1.0, not written down
+
+Present in the 1.1.0 build and missing from its notes, recorded here so they are not lost. If you
+are on 1.1.0 you already have these.
+
+- The menu bar glyph now lights when a client is connected, so the icon itself says whether
+  anything is talking to Cupertino right now. The main window's footer gained a live client count.
+- Surfaces that only read no longer show a permanently-pending Automation prompt or a Writes toggle
+  that gates nothing; they say _"not needed — this surface reads only"_ instead.
+- Cupertino has its own accent color rather than following whatever accent System Settings happens
+  to be set to.
+- A window someone had resized by hand came back the wrong size, because SwiftUI re-applied its own
+  fitted width on a layout pass landing after the window was already shown. A size you chose now
+  wins.
+
+### Internal
+
+- Local builds derive `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from the nearest `app-v*`
+  tag and the commit count, the same way CI does. A `make install` app used to inherit the pbxproj
+  default and call itself 1.0 — below the appcast's build number, so Sparkle offered a developer
+  their own build as an update.
+
 ## [1.1.0] - 2026-08-22
 
 ### Added
