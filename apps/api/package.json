@@ -14,6 +14,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "secrets:prod": "node ../../scripts/push-worker-secrets.mjs .prod.vars",
     "migrate": "wrangler d1 migrations apply cupertino-licenses --remote",
     "migrate:local": "wrangler d1 migrations apply cupertino-licenses --local",
     "test": "vitest run",

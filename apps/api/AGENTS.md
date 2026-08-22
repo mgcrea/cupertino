@@ -15,6 +15,17 @@ pnpm migrate             # …to the real one. Deliberately separate commands.
 pnpm deploy              # wrangler deploy, by hand or from the api-v* tag in CI
 ```
 
+Two secret files, and only one of them is a wrangler convention. `.dev.vars` is read automatically by
+`wrangler dev` and holds **test-mode** credentials. `.prod.vars` is read by nothing; it stages the
+**live** ones between creating them in Stripe and running `pnpm secrets:prod`, which pushes them
+deliberately rather than as a side effect of a deploy. Both are gitignored, and both have a
+`.example` beside them.
+
+The three live values must be the same mode together. A live webhook secret with a test API key
+fulfils and records no `price_id`; the reverse rejects every real payment with a 400. `secrets:prod`
+refuses a file with any blank value for that reason — a half-applied set fails in ways that read as a
+code bug.
+
 Copy `.dev.vars.example` to `.dev.vars` first — it is gitignored and holds the signing key in plain
 text.
 

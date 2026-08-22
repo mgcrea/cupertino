@@ -30,4 +30,10 @@ apps/apple/.build/
 # lets anyone mint licences.
 .dev.vars
 .dev.vars.*
+# Not a wrangler convention — nothing reads it automatically, which is the point.
+# It is the staging area for live credentials between creating them in Stripe and
+# pushing them with `pnpm secrets:prod`, and it holds the one secret that is shown
+# exactly once: the live webhook signing secret.
+.prod.vars
+.prod.vars.*
 .wrangler/
