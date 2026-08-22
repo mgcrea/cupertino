@@ -1084,8 +1084,21 @@ if (args.json) {
       L.push(`  link columns          ${link.linkColumns.join(", ") || "none found"}`);
       L.push(`  container columns     ${link.containerColumns.join(", ") || "none found"}`);
     }
+    // The write lane depends on this: it addresses a person by the id Apple
+    // Events returns, and the file lane only knows ZUNIQUEID.
     const bridge = doc.findings.idBridge ?? {};
-    if (bridge.tested === false) L.push(`  id bridge             not tested — ${bridge.reason}`);
+    if (bridge.tested === false) {
+      L.push(`  id bridge             not tested — ${bridge.reason}`);
+    } else if (bridge.found) {
+      for (const h of bridge.hits ?? []) {
+        L.push(`  id bridge             ${h.table}.${h.column}  (${h.form}, ${h.rows} rows)`);
+      }
+    } else {
+      L.push(
+        `  id bridge             NONE — no store column holds the id Apple Events returns` +
+          ` (${bridge.textColumnsScanned ?? "?"} text columns scanned)`,
+      );
+    }
   }
 
   L.push("");

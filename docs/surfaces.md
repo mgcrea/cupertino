@@ -25,7 +25,8 @@ No surface has needed the third lane. Calendar looked like it would and did not 
 
 `NSAppleScriptEnabled` read from each installed app's `Info.plist`.
 
-**Scriptable** — Apple Events lane available: Reminders, Messages (writes only), Calendar, Contacts,
+**Scriptable** — Apple Events lane available: Reminders, Messages (writes only), Calendar,
+Contacts (writes only — its dictionary has no delete command at all),
 Photos, Safari, Shortcuts, Music, TV, Finder, Preview, QuickTime Player, Terminal, Script Editor,
 Xcode, System Settings.
 
@@ -34,15 +35,15 @@ Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dict
 
 ## State of play
 
-| Surface   | Lane verdict                                   | Status          |
-| --------- | ---------------------------------------------- | --------------- |
-| Mail      | file lane required — 74 s search               | implemented     |
-| Notes     | Apple Events usable below ~5k notes            | implemented     |
-| Reminders | dictionary complete for the core model         | implemented     |
-| Messages  | **file lane mandatory** — no read API exists   | probed, unbuilt |
-| Calendar  | **file lane mandatory** — 3.4 s range query    | implemented     |
-| Safari    | two lanes see disjoint things                  | probed, unbuilt |
-| Contacts  | file lane only — 0 ms, but the store is plural | implemented     |
+| Surface   | Lane verdict                                 | Status          |
+| --------- | -------------------------------------------- | --------------- |
+| Mail      | file lane required — 74 s search             | implemented     |
+| Notes     | Apple Events usable below ~5k notes          | implemented     |
+| Reminders | dictionary complete for the core model       | implemented     |
+| Messages  | **file lane mandatory** — no read API exists | probed, unbuilt |
+| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented     |
+| Safari    | two lanes see disjoint things                | probed, unbuilt |
+| Contacts  | file-lane reads, 0 ms; store is plural       | implemented     |
 
 ### Beyond the probed set
 
@@ -77,14 +78,26 @@ boundary, the exists-vs-readable split, the `ro`→`immutable` ladder, schema du
 epoch detection and the fixture writer. The first three probes predate it and still carry their own
 copies.
 
-**The surface list is hardcoded in four places** and every new surface must be added to all of them:
+**The surface list lives in [`surfaces.json`](../surfaces.json)** and every other copy is generated
+from it by `make surfaces`. `make surfaces-check` fails on drift and runs in CI, so a hand-edit to a
+generated region is a red build rather than a shipped inconsistency.
 
-| File                                    | Form                     |
-| --------------------------------------- | ------------------------ |
-| `apps/apple/Cupertino/Surfaces.swift`   | `Surface.all`            |
-| `apps/apple/CupertinoBridge/main.swift` | `let known = [...]`      |
-| `.github/workflows/ci.yml`              | the stdio handshake loop |
-| `Makefile`                              | `SURFACES :=`            |
+| File                                    | Form                                                             |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| `apps/apple/Cupertino/Surfaces.swift`   | `Surface.all`                                                    |
+| `apps/apple/CupertinoBridge/main.swift` | `let known = [...]`                                              |
+| `Makefile`                              | `SURFACES :=` and `SHOT_WRITES :=`                               |
+| `.github/workflows/ci.yml`              | the stdio handshake loop                                         |
+| `apps/apple/tsdown.servers.config.ts`   | the bundler's entry map                                          |
+| `Cupertino.xcodeproj/project.pbxproj`   | the Apple Events consent string, ×2                              |
+| `scripts/wiring-check.swift`            | the surfaces it checks                                           |
+| `apps/website/src/data/surfaces.ts`     | the `id` union (not the tool names)                              |
+| `.mcp.json`                             | the dev bridge entries (written, not checked — it is gitignored) |
+
+Adding a surface is one manifest entry and `make surfaces`. Two things are deliberately NOT generated:
+the website's tool names, which are transcribed from `packages/<id>/src/tools/` because a wrong name
+there is a claim the servers do not honour, and the marketing prose, which the site derives from its
+own `SURFACES` array at build time.
 
 Releases need no change — the tag convention (`<slug>-v0.1.0` → `packages/<slug>`) already handles
 any new package.
@@ -139,12 +152,17 @@ which resolves only about half of open tabs.
   `packages/contacts/test/fixtures/contacts-store.sql`, 94 objects, no rows.) (Calendar's is captured, and the premise
   of this note was wrong: `writeFixture` creates the directory, so `--write` never needed the package
   to exist first.)
-- **Contacts needs a permission the app does not model.** It sits behind its own TCC service, not
-  Full Disk Access, and unlike FDA it PROMPTS — see [contacts.md](contacts.md). Whether FDA alone
-  opens the store is measured in one direction only. `Permissions.swift` now owes two states, this
-  one and Safari's.
+- **Contacts needs a permission the app does not act on.** It sits behind its own TCC service, not
+  Full Disk Access, and unlike FDA it PROMPTS — see [contacts.md](contacts.md). `surfaces.json` now
+  records which grant gates each store and `Surface.storePermission` carries it into the app, but
+  `Permissions.swift` still only ever checks Full Disk Access, so a Contacts store that cannot be
+  opened is still reported with the wrong advice. Whether FDA alone opens it is measured in one
+  direction only. That pane owes two states, this one and Safari's.
 - **`Permissions.swift` models two permission states.** Safari needs three — see
   [safari.md](safari.md).
-- **The four hardcoded surface lists** were tolerable at two surfaces and are now at FOUR — Calendar
-  went in by hand, touching `Surfaces.swift`, `main.swift`, the Makefile and the CI matrix. That was
-  the threshold this note set. Generate them from one manifest before adding Messages.
+- ~~**The four hardcoded surface lists.**~~ Done, and the count was understated: it was ten, not four.
+  `surfaces.json` plus `scripts/generate-surfaces.mjs` replaced all of them when Contacts went in as
+  the fifth surface, and `make surfaces-check` runs in CI. Two findings from doing it: a `#` comment
+  cannot sit inside a Makefile backslash continuation, so `SHOT_WRITES` had to become its own
+  variable; and generating the Apple Events consent string from `usesAppleEvents` means a read-only
+  surface no longer widens the permission the app asks for.

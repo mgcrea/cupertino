@@ -80,6 +80,7 @@ mcp-cupertino/
   packages/mail/        @mgcrea/mcp-apple-mail   ← this repo, history preserved
   packages/notes/
   packages/reminders/
+  packages/contacts/    implemented
   packages/messages/    not started
   apps/apple/           the Cupertino.app build
   apps/website/         the marketing site
@@ -237,7 +238,7 @@ Disk Access is granted to something.
 | Notes     | `~/Library/Group Containers/group.com.apple.notes/`              | EPERM | usable alone below ~5k notes     |
 | Reminders | `~/Library/Group Containers/group.com.apple.reminders/`          | EPERM | workable                         |
 | Messages  | `~/Library/Messages/chat.db` — **probed**                        | EPERM | none — measured, see below       |
-| Contacts  | `~/Library/Application Support/AddressBook/`                     | EPERM | limited                          |
+| Contacts  | `~/Library/Application Support/AddressBook/` — **implemented**   | EPERM | own TCC grant, not FDA           |
 | Safari    | `~/Library/Safari/History.db` — **probed**                       | EPERM | live tabs only, no history       |
 | Calendar  | `…/group.com.apple.calendar/Calendar.sqlitedb` — **implemented** | EPERM | too slow — 3.4 s at 1,349 events |
 
@@ -300,6 +301,7 @@ measurements do not support that. What they support is below.
 | Mail      | 74 s search            | —        | index, required    | no               |
 | Calendar  | 3,355 ms / 1,349       | ~2.5 ms  | 1 ms to open       | no               |
 | Messages  | none exists            | —        | only door          | impossible       |
+| Contacts  | fast, but cannot index | ~0.15 ms | 0 ms, plural       | no — see below   |
 | Safari    | disjoint, not slower   | —        | the past only      | n/a — see below  |
 | Notes     | 97 ms / 921            | 0.105 ms | attachments, scale | **yes**          |
 | Reminders | dictionary is complete | —        | tags, attachments  | **yes**          |
@@ -307,9 +309,12 @@ measurements do not support that. What they support is below.
 Apple Events is a viable read path on two surfaces out of six. So:
 
 - **Reads go through the file lane.** For a new surface, do not build an Apple Events read lane at
-  all. Messages, Calendar and Safari get file-lane reads and nothing else. Calendar shipped on
-  exactly that shape and it held: no `jxa/read.ts` exists in `packages/calendar`, and a test asserts
-  it never will.
+  all. Messages, Calendar, Contacts and Safari get file-lane reads and nothing else. Calendar
+  shipped on exactly that shape and it held: no `jxa/read.ts` exists in `packages/calendar`, and a
+  test asserts it never will. Contacts is the sharper case, and the reason the rule is about
+  CAPABILITY rather than speed: its dictionary answers in ~65 ms, comfortably fast, and is still
+  useless for the one thing the surface exists to do. Resolving a phone number means a suffix-keyed
+  index over every stored number, and no quantity of round trips produces one.
 - **Writes go through Apple Events, always.** Not a preference: `PRAGMA query_only` is set because
   the app owns the store, holds it open and reconciles it against a server, so writing to it corrupts
   sync state. Every write verb on every surface is an Apple Event.

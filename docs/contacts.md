@@ -226,8 +226,10 @@ the probe, not findings about the store.
 - **The unresolved busiest correspondents.** About four of the top twenty-five do not resolve; whether
   they are businesses, second numbers, or contacts genuinely absent from the address book is unknown,
   and it decides whether 84% is a floor or a ceiling.
-- **Writes are unprobed and unwanted.** Contacts is scriptable for writes, but nothing in the Messages
-  use case needs them, and creating a contact from a tool call was not attempted.
+- **The live write trial has not been run.** The write lane is built and its scripts compile, but no
+  contact has been created or edited on a real machine yet. Two things it must settle: whether
+  `ZUNIQUEID` and `person.id()` are the same string (the code does not assume it — see below), and
+  whether `save()` persists on an iCloud account without a Contacts window open.
 - **`ZABCDCONTACTINDEX`** is named but unexamined. It is Apple's own normalized search index and may
   make text search cheaper than a `LIKE` over `ZABCDRECORD`.
 
@@ -271,3 +273,58 @@ than oversights: the surface list is hardcoded in ten places and `surfaces.md` s
 from a manifest before adding a fifth; the published price ladder ties rungs to Messages and Safari,
 not to Contacts; and Contacts may be better shipped as part of Messages than as a surface of its own,
 since resolving handles is what it is for.
+
+## Writes, added afterwards
+
+Contacts shipped read-only and gained two write tools later, which reversed a decision this document
+had recorded. What that cost, stated plainly: **this surface no longer needs zero permissions.** Reads
+are still file-lane and prompt for nothing, but a write is an Apple Event, so the first one asks for
+Automation access to Contacts — and the app's consent string now names it. With `allowWrites` off,
+nothing in the server sends an Apple Event and the old property still holds exactly.
+
+Writes go through Apple Events because they have to: the store is opened `PRAGMA query_only` on every
+surface here, since Contacts owns it and reconciles it against iCloud.
+
+### The dictionary is four verbs
+
+Measured from `sdef /System/Applications/Contacts.app` on macOS 26.6:
+
+| Command  | What it does                             |
+| -------- | ---------------------------------------- |
+| `make`   | create a person, or a phone/email on one |
+| `add`    | put a person in a group                  |
+| `remove` | take a person OUT OF A GROUP             |
+| `save`   | commit everything                        |
+
+That is the entire list, across all three suites — the Standard Suite here contains only `make`.
+
+**The string "delete" appears zero times in the dictionary.** So there is no `delete_contacts` tool,
+and there is no delete script to add one from. `remove` is about group membership, not deletion.
+Whether Cocoa Scripting answers an undeclared `delete` event anyway is a separate and unmeasured
+question, and guessing at it would risk destroying a real person's card on the strength of an
+assumption. A test asserts no script contains the word.
+
+### `save` is explicit, and global
+
+This is the finding that makes Contacts unlike Calendar and Reminders, where assigning a property
+persists immediately. Contacts holds edits in an unsaved buffer — the application class even carries
+an `unsaved` property — and `save` is documented as "Save **all** Contacts changes".
+
+Two consequences, both in the code:
+
+- **A write that forgets `save()` silently does nothing**, and its own read-back agrees, because the
+  live object really did change. Every script saves and _then_ re-reads; a test pins that ordering.
+- **`save()` is not scoped to our change.** It commits whatever else is pending, including an edit
+  someone has half-typed in the Contacts window. Both tool descriptions say so.
+
+### The id bridge is not assumed
+
+The file lane holds `ZABCDRECORD.ZUNIQUEID`; Apple Events addresses people by whatever `person.id()`
+returns. That those agree is unmeasured, and this project has been wrong about exactly this before —
+Calendar's event id bridge was exact at 198/198 while `calendar.uid()` threw for every calendar.
+
+So `findPerson` tries `byId()` first and falls back to a bulk `people.id()` fetch matched on the UUID
+substring. That fallback is affordable precisely here: the whole id list measured 63–73 ms over 421
+people, against the 1.8 s that made the same trick unusable for Calendar's events. A mismatch in id
+_form_ therefore costs one extra round trip instead of producing a wrong "not found", which is the
+failure that looks like the contact was deleted.

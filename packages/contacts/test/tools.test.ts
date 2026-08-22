@@ -32,7 +32,7 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
 };
 
 describe("tool registration", () => {
-  it("registers four read tools", async () => {
+  it("registers five read tools", async () => {
     expect(await toolNames(await connect())).toEqual([
       "apple_contacts_diagnostics",
       "apple_contacts_get_contact",
@@ -43,14 +43,34 @@ describe("tool registration", () => {
   });
 
   /**
-   * This surface has no mutating tool at all, and that is a decision rather than
-   * an omission — editing someone's address book from a tool call was never part
-   * of what Contacts was probed for. Adding one has to break this test first.
+   * The write gate, which is the product's central claim: with writes off the
+   * mutating tools are not refused, they are never registered, so the host is
+   * never told they exist.
+   *
+   * This test used to assert the two lists were IDENTICAL — Contacts shipped
+   * read-only on purpose. That assertion was the tripwire for exactly this
+   * change, and replacing it was a deliberate decision, not an accident.
    */
-  it("registers the SAME tools with writes enabled", async () => {
-    expect(await toolNames(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }))).toEqual(
-      await toolNames(await connect()),
-    );
+  it("adds exactly two write tools when writes are enabled", async () => {
+    const withWrites = await toolNames(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }));
+    const readOnly = await toolNames(await connect());
+    expect(withWrites.filter((n) => !readOnly.includes(n))).toEqual([
+      "apple_contacts_create_contact",
+      "apple_contacts_update_contact",
+    ]);
+    expect(readOnly.filter((n) => !withWrites.includes(n))).toEqual([]);
+  });
+
+  /**
+   * Contacts' scripting dictionary has NO delete command — `sdef` contains the
+   * string zero times, and the whole command list is make, add, remove and save.
+   * Writes go through Apple Events because the store is `PRAGMA query_only`, so
+   * no verb means no capability. A tool named for it would be a promise the
+   * dictionary cannot keep.
+   */
+  it("never registers a delete tool, because there is no way to honour one", async () => {
+    const names = await toolNames(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }));
+    expect(names.filter((n) => /delete|remove/.test(n))).toEqual([]);
   });
 
   /**
@@ -68,8 +88,21 @@ describe("tool registration", () => {
     ).toEqual(await toolNames(await connect()));
   });
 
-  it("never announces a tool that could write", async () => {
+  it("marks every read tool read-only, and every write tool not", async () => {
     const { tools } = await (await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" })).listTools();
+    for (const t of tools) {
+      const isWrite = /create|update/.test(t.name);
+      expect(t.annotations?.readOnlyHint).toBe(!isWrite);
+    }
+  });
+
+  /**
+   * With writes off, nothing in this server can send an Apple Event — which is
+   * what keeps the "a read-only surface needs no Automation grant" property
+   * true for anyone who never turns writes on.
+   */
+  it("registers no tool that reaches Apple Events when writes are off", async () => {
+    const { tools } = await (await connect()).listTools();
     for (const t of tools) expect(t.annotations?.readOnlyHint).toBe(true);
   });
 });

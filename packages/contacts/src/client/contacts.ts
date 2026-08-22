@@ -1,7 +1,19 @@
-import { IndexUnavailableError, type Logger } from "@mgcrea/mcp-apple-core";
+import {
+  createOsascriptRunner,
+  IndexUnavailableError,
+  withBusyRetry,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
-import { ContactsUnavailableError } from "./errors.js";
+import {
+  CONTACTS_SURFACE,
+  ContactNotFoundError,
+  ContactWriteNotPersistedError,
+  ContactsUnavailableError,
+} from "./errors.js";
+import { CREATE_CONTACT, UPDATE_CONTACT } from "./jxa/write.js";
 import { locateStores, type LocateResult } from "./locate.js";
 import { resolveHandles, summarise, type ResolvedHandle } from "./resolve.js";
 import {
@@ -26,8 +38,35 @@ import {
 export type CreateClientOptions = {
   config: Config;
   logger?: Logger;
+  /** Injected by tests so nothing spawns a process or touches real Contacts. */
+  osascript?: OsascriptRunner;
   /** Injected by tests. */
   home?: string;
+};
+
+/** The scalar fields a write may set. Absent means "leave alone". */
+export type ContactFields = {
+  firstName?: string | null;
+  lastName?: string | null;
+  nickname?: string | null;
+  organization?: string | null;
+  jobTitle?: string | null;
+  department?: string | null;
+  note?: string | null;
+  company?: boolean;
+};
+
+export type LabelledValue = { label?: string; value: string };
+
+/** What a write reports: what Contacts stored, re-read after the save. */
+export type WriteResult = {
+  ref: string | null;
+  personId: string | null;
+  name: string | null;
+  organization: string | null;
+  phones: { label: string | null; value: string | null }[];
+  emails: { label: string | null; value: string | null }[];
+  source: "apple-events";
 };
 
 export type LaneStatus = {
@@ -48,6 +87,8 @@ export class AppleContactsClient {
   readonly #logger: Logger | undefined;
   readonly #home: string | undefined;
 
+  readonly #runner: OsascriptRunner;
+
   #located: LocateResult | null = null;
   #index: ContactsIndex | null = null;
   #indexTried = false;
@@ -57,6 +98,14 @@ export class AppleContactsClient {
     this.#config = opts.config;
     this.#logger = opts.logger;
     this.#home = opts.home;
+    this.#runner =
+      opts.osascript ??
+      createOsascriptRunner({
+        surface: CONTACTS_SURFACE,
+        osascriptPath: opts.config.osascriptPath,
+        timeoutMs: opts.config.osascriptTimeoutMs,
+        ...(opts.logger ? { logger: opts.logger } : {}),
+      });
   }
 
   get config(): Config {
@@ -156,6 +205,96 @@ export class AppleContactsClient {
   } {
     const results = resolveHandles(handles, this.lookup());
     return { results, summary: summarise(results) };
+  }
+
+  // ─── writes ────────────────────────────────────────────────────────────────
+  // Apple Events, always. The store is opened `PRAGMA query_only` because
+  // Contacts owns it and reconciles it against iCloud, so writing to it would
+  // corrupt sync state — the lane policy in docs/distribution.md, not a
+  // preference. There is no delete: the dictionary has no such command.
+
+  async #run<T>(scriptText: string, params: unknown): Promise<T> {
+    try {
+      return await withBusyRetry(() => this.#runner.run<T>(scriptText, params));
+    } catch (err) {
+      const code = (err as { details?: { code?: string } })?.details?.code;
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === "CONTACT_NOT_FOUND") throw new ContactNotFoundError(message);
+      if (code === "CREATE_NOT_PERSISTED" || code === "UPDATE_NOT_PERSISTED") {
+        throw new ContactWriteNotPersistedError(message);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Invalidate the read lane after a write.
+   *
+   * The index and the resolver lookup are both built once and kept, so a contact
+   * created through Apple Events would otherwise stay invisible to `resolve` for
+   * the life of the process — the exact "wrote it, cannot find it" confusion the
+   * id bridge exists to prevent.
+   */
+  #invalidate(): void {
+    this.#index?.close();
+    this.#index = null;
+    this.#lookup = null;
+    this.#indexTried = false;
+  }
+
+  #shapeWrite(data: Record<string, unknown>): WriteResult {
+    const personId = typeof data.id === "string" ? data.id : null;
+    const shaped = (key: string) =>
+      Array.isArray(data[key])
+        ? (data[key] as Record<string, unknown>[]).map((r) => ({
+            label: typeof r.label === "string" ? r.label : null,
+            value: typeof r.value === "string" ? r.value : null,
+          }))
+        : [];
+    return {
+      // Best effort: the file-lane ref needs a shard and a rowid, and the write
+      // lane knows neither. A caller that wants one searches again — which is
+      // also the only way to be sure the new row reached the store.
+      ref: null,
+      personId,
+      name: typeof data.name === "string" ? data.name : null,
+      organization: typeof data.organization === "string" ? data.organization : null,
+      phones: shaped("phones"),
+      emails: shaped("emails"),
+      source: "apple-events",
+    };
+  }
+
+  async createContact(input: {
+    fields: ContactFields;
+    phones?: readonly LabelledValue[];
+    emails?: readonly LabelledValue[];
+  }): Promise<WriteResult> {
+    const data = await this.#run<Record<string, unknown>>(CREATE_CONTACT, {
+      fields: input.fields,
+      phones: input.phones ?? [],
+      emails: input.emails ?? [],
+      allowLaunch: true,
+    });
+    this.#invalidate();
+    return this.#shapeWrite(data);
+  }
+
+  async updateContact(input: {
+    personId: string;
+    fields: ContactFields;
+    phones?: readonly LabelledValue[];
+    emails?: readonly LabelledValue[];
+  }): Promise<WriteResult> {
+    const data = await this.#run<Record<string, unknown>>(UPDATE_CONTACT, {
+      personId: input.personId,
+      fields: input.fields,
+      phones: input.phones ?? [],
+      emails: input.emails ?? [],
+      allowLaunch: true,
+    });
+    this.#invalidate();
+    return this.#shapeWrite(data);
   }
 
   status(): LaneStatus {

@@ -1,11 +1,12 @@
 # Cupertino
 
-> MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders and
-> Calendar — and the signed menu-bar app that holds their one Full Disk Access grant instead of
+> MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar and
+> Contacts — and the signed menu-bar app that holds their one Full Disk Access grant instead of
 > handing it to every editor.
 
-Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Not shipped yet: the
-signed app and the `@mgcrea/mcp-apple-*` packages land together at the first release.
+Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0: the
+signed app ships from GitHub releases, and the `@mgcrea/mcp-apple-*` packages are MIT but not on
+npm yet — the app carries them.
 
 ## The argument
 
@@ -25,13 +26,17 @@ signed app and the `@mgcrea/mcp-apple-*` packages land together at the first rel
 - Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
 - Calendar — 9 tools (6 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`
+- Contacts — 7 tools (5 always registered, 2 write-gated). `@mgcrea/mcp-apple-contacts`. Turns a
+  phone number or an email address into a name, which is what makes a Messages server readable
+  later. Its reads need no Automation grant — only the two write tools reach Apple Events. There is
+  no delete tool because Contacts' scripting dictionary has no delete command.
 - Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
 
 ## Price
 
 - $14.99 once, covering every 1.x release. Not a subscription, nothing lapses, and 2.0 is a separate
   purchase. EU buyers are quoted and charged €14.99, VAT included — that is not a conversion of the
-  dollar figure, which is quoted tax-exclusive. Not on sale yet — the app has not shipped.
+  dollar figure, which is quoted tax-exclusive.
 - The ladder is published in advance and tied to shipped surfaces rather than dates: $24.99 when
   Messages lands, $34.99 when Safari does. It never goes back down.
 - A 30-minute trial, started by pressing a button and never armed on its own. Every surface at full
