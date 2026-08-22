@@ -283,23 +283,30 @@ struct PermissionsPane: View {
       // Automation and writes were one row per surface carrying both, which
       // needed a paragraph above the table to explain that the two are
       // unrelated. Two sections say it without the paragraph: they are
-      // different questions about the same four apps, and each row now has one
+      // different questions about the same apps, and each row now has one
       // control at its trailing edge like every other row in this window.
       Section {
         ForEach(Surface.all) { surface in
           LabeledContent {
-            switch model.automation[surface.id] {
-            case .notDetermined:
-              Button("Allow…") { model.requestAutomation(surface) }
-            case .denied:
-              // A denial cannot be re-prompted; it has to change in Settings.
-              Button("Settings…") { Permissions.openAutomationSettings() }
-            default:
-              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+            if surface.usesAppleEvents {
+              switch model.automation[surface.id] {
+              case .notDetermined:
+                Button("Allow…") { model.requestAutomation(surface) }
+              case .denied:
+                // A denial cannot be re-prompted; it has to change in Settings.
+                Button("Settings…") { Permissions.openAutomationSettings() }
+              default:
+                Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+                  .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+              }
+            } else {
+              Image(systemName: StatusStyle.automationIcon(surface, nil))
+                .foregroundStyle(StatusStyle.automationTint(surface, nil))
             }
           } label: {
-            SurfaceLabel(surface: surface, caption: StatusStyle.caption(model.automation[surface.id]))
+            SurfaceLabel(
+              surface: surface,
+              caption: StatusStyle.automationCaption(surface, model.automation[surface.id]))
           }
         }
       } header: {
@@ -309,7 +316,10 @@ struct PermissionsPane: View {
       }
 
       Section {
-        ForEach(Surface.all) { surface in
+        // Only the surfaces that HAVE a write tool. A toggle for a server that
+        // registers none would gate nothing while implying otherwise, which is
+        // the opposite of what this section is for.
+        ForEach(Surface.all.filter(\.supportsWrites)) { surface in
           WritesToggle(surface: surface, style: .row)
         }
       } header: {
@@ -493,6 +503,23 @@ extension ClientWiring.Status {
 /// that disagrees between the menu and Settings is a small bug that reads as a
 /// big one.
 enum StatusStyle {
+  /// A surface with no Apple Events lane has no automation state to report, and
+  /// every other caption here would be a lie about it: "not yet asked" implies
+  /// something will ask, and a cross implies something is broken. Nothing is
+  /// going to ask, because the server never scripts the app — which is a fact
+  /// worth showing rather than hiding, since it means one permission fewer.
+  static func automationIcon(_ surface: Surface, _ status: AutomationStatus?) -> String {
+    surface.usesAppleEvents ? icon(status) : "minus.circle"
+  }
+
+  static func automationTint(_ surface: Surface, _ status: AutomationStatus?) -> Color {
+    surface.usesAppleEvents ? tint(status) : .secondary
+  }
+
+  static func automationCaption(_ surface: Surface, _ status: AutomationStatus?) -> String {
+    surface.usesAppleEvents ? caption(status) : "not needed — this surface reads only"
+  }
+
   static func icon(_ status: AutomationStatus?) -> String {
     switch status {
     case .granted: "checkmark.circle.fill"
@@ -555,11 +582,13 @@ struct UpdatesSection: View {
         UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
       }
 
+      // The row's whole label is the answer to "am I current", because the
+      // section header already said the word Updates and a row titled the same
+      // thing under it says nothing twice.
       LabeledContent {
         Button("Check Now…") { updates.checkNow() }
           .disabled(updates.isChecking)
       } label: {
-        Text("Updates")
         Text(lastCheck)
       }
     } header: {

@@ -124,10 +124,37 @@ struct CupertinoApp: App {
     // The mark, not an SF Symbol. MenuBarIcon is a template image: pure black
     // plus alpha, so AppKit tints it for light, dark and the highlighted state
     // rather than us drawing three of them.
-    MenuBarExtra("Cupertino", image: "MenuBarIcon") {
+    MenuBarExtra {
       StatusMenu(model: model)
+    } label: {
+      MenuBarLabel()
     }
     .menuBarExtraStyle(.window)
+  }
+}
+
+/// The menu bar glyph, and the only thing in the app that changes on its own
+/// without anyone opening a window.
+///
+/// A separate `View` rather than an `Image` inline in the Scene: `MenuBarExtra`'s
+/// `(_:image:)` initialiser takes an asset *name*, resolved once when the Scene
+/// is built, so a state change cannot reach it. A label closure gives a real
+/// view whose body re-runs when `Sessions.live` changes.
+///
+/// `.isEmpty` and not a count. This says *whether* anything is connected, which
+/// is the question the menu bar can answer in one glyph at 18pt; how many is
+/// what the popover is for.
+struct MenuBarLabel: View {
+  private var sessions = Sessions.shared
+
+  var body: some View {
+    Image(sessions.live.isEmpty ? "MenuBarIcon" : "MenuBarIconActive")
+      // The asset carries template-rendering-intent, but SwiftUI resolves an
+      // Image by name without consulting it, so a plain Image ships black-on-
+      // black in a dark menu bar. AppKit does the tinting; this only says it may.
+      .renderingMode(.template)
+      .accessibilityLabel(
+        sessions.live.isEmpty ? "Cupertino" : "Cupertino — a client is connected")
   }
 }
 
@@ -168,8 +195,13 @@ final class StatusModel {
     location = .current
     hostError = ServerHost.shared.startupError
     diskAccess = Permissions.diskAccess()
+    // Only the surfaces that actually send an Apple Event. Asking TCC about a
+    // surface that never scripts anything would report it as "not yet asked"
+    // forever, and put an Allow… button on a permission nothing would use.
     automation = Dictionary(
-      uniqueKeysWithValues: Surface.all.map { ($0.id, Permissions.automation(for: $0.bundleID)) })
+      uniqueKeysWithValues: Surface.all
+        .filter(\.usesAppleEvents)
+        .map { ($0.id, Permissions.automation(for: $0.bundleID)) })
     clients = Dictionary(
       uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
   }
@@ -187,6 +219,7 @@ final class StatusModel {
 
   /// Off the main thread: the prompt blocks until answered.
   func requestAutomation(_ surface: Surface) {
+    guard surface.usesAppleEvents else { return }
     Task.detached {
       let result = Permissions.requestAutomation(for: surface.bundleID)
       await MainActor.run { self.automation[surface.id] = result }
@@ -254,11 +287,11 @@ struct StatusMenu: View {
           Label {
             Text(surface.displayName)
           } icon: {
-            Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-              .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+            Image(systemName: StatusStyle.automationIcon(surface, model.automation[surface.id]))
+              .foregroundStyle(StatusStyle.automationTint(surface, model.automation[surface.id]))
           }
           Spacer()
-          switch model.automation[surface.id] {
+          switch surface.usesAppleEvents ? model.automation[surface.id] : nil {
           case .notDetermined:
             // Ask here, where the dialog is expected, rather than letting the
             // first tool call block on it 30 seconds into a conversation.
@@ -270,7 +303,7 @@ struct StatusMenu: View {
             Button("Settings…") { Permissions.openAutomationSettings() }
               .controlSize(.small)
           default:
-            Text(StatusStyle.caption(model.automation[surface.id]))
+            Text(StatusStyle.automationCaption(surface, model.automation[surface.id]))
               .font(.caption)
               .foregroundStyle(.secondary)
           }

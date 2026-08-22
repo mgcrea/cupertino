@@ -122,6 +122,9 @@ struct MainView: View {
   /// Full Disk Access belongs here and nowhere else — `DiskAccessStatus` is
   /// deliberately app-wide, and a copy of it per surface would imply a
   /// containment that does not exist.
+  /// Distinct clients, not connections. See the comment at the use site.
+  private var clientCount: Int { Sessions.shared.grouped.count }
+
   private var sidebarStatus: some View {
     VStack(alignment: .leading, spacing: 6) {
       Divider()
@@ -139,15 +142,51 @@ struct MainView: View {
       // Last, and quiet: the two lines above are states that can need acting on,
       // and this one never does. Opens Settings, where the build number, the
       // commit and the copy button are.
-      Button { SettingsOpener.show(.general) } label: {
-        HStack(spacing: 6) {
+      HStack(spacing: 6) {
+        Button { SettingsOpener.show(.general) } label: {
           Text("Version \(AppInfo.shortVersion)")
             .font(.caption)
             .foregroundStyle(.tertiary)
-          Spacer()
         }
+        .buttonStyle(.plain)
+
+        Spacer()
+
+        // Clients, never sessions. Every MCP client opens one connection per
+        // surface it is configured with, so `live.count` is
+        // clients × surfaces × concurrent shells — the demo fixture alone is 18
+        // sessions from 3 clients, and "18 clients connected" is simply false.
+        // `grouped` is the same collapse the Connections pane shows, so the two
+        // numbers cannot disagree.
+        //
+        // Absent at zero rather than "0 clients": this line sits under two
+        // others that are always present, and a permanent zero is a row that
+        // only ever says nothing is happening.
+        if clientCount > 0 {
+          Button { pane = .connections } label: {
+            Text(clientCount == 1 ? "1 client" : "\(clientCount) clients")
+              .font(.caption)
+              .foregroundStyle(.tertiary)
+          }
+          .buttonStyle(.plain)
+          .help("Show connections")
+        }
+
+        // The one entrance that says so. Every other route out of this window
+        // into Settings is a status line that happens to be a button, and each
+        // goes to the pane its own line is about — which is the right behaviour
+        // and no help at all to somebody who does not already know they are
+        // buttons. The app menu carrying ⌘, is not the answer either: it exists
+        // only while a window is open, which is a rule nobody should have to
+        // learn about a menu bar app.
+        Button { SettingsOpener.show() } label: {
+          Image(systemName: "gearshape")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        }
+        .buttonStyle(.plain)
+        .help("Settings (⌘,)")
       }
-      .buttonStyle(.plain)
     }
     .padding(.horizontal, 12)
     .padding(.bottom, 10)

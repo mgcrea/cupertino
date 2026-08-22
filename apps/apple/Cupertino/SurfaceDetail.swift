@@ -59,13 +59,13 @@ struct SurfaceDetail: View {
   private var accessSection: some View {
     Card("Access") {
       HStack {
-        Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-          .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+        Image(systemName: StatusStyle.automationIcon(surface, model.automation[surface.id]))
+          .foregroundStyle(StatusStyle.automationTint(surface, model.automation[surface.id]))
         Text("Automation")
         Spacer()
-        Text(StatusStyle.caption(model.automation[surface.id]))
+        Text(StatusStyle.automationCaption(surface, model.automation[surface.id]))
           .foregroundStyle(.secondary)
-        if model.automation[surface.id] != .granted {
+        if surface.usesAppleEvents && model.automation[surface.id] != .granted {
           Button("Allow…") { model.requestAutomation(surface) }
             .buttonStyle(.glass)
             .controlSize(.small)
@@ -73,12 +73,14 @@ struct SurfaceDetail: View {
       }
       .font(.callout)
 
-      Divider()
+      if surface.supportsWrites {
+        Divider()
 
-      // Safety, not licensing. docs/licensing.md rules out gating writes behind
-      // the licence, and this toggle behaves identically either way.
-      WritesToggle(surface: surface)
-        .padding(.leading, 0)
+        // Safety, not licensing. docs/licensing.md rules out gating writes behind
+        // the licence, and this toggle behaves identically either way.
+        WritesToggle(surface: surface)
+          .padding(.leading, 0)
+      }
     }
   }
 
