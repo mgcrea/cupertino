@@ -1,21 +1,43 @@
 ---
 /**
- * The product shot. Cupertino has no window — it is a menu-bar icon and a
- * dropdown — so this strip *is* the app, and a conventional screenshot section
- * would have nothing to show.
+ * The first product shot: the surface Cupertino shows uninvited. It is drawn
+ * rather than captured because a menu-bar dropdown is a high-layer panel that
+ * `appshot` cannot photograph — it only takes ordinary windows — and because
+ * this strip has to reflow on a phone, which an image cannot.
+ *
+ * It is no longer the ONLY thing there is to show. `Screens.astro` carries real
+ * captures of the main window, so keep this drawing honest against them: the
+ * row list here is built from `Surface.all`, the same table the app's sidebar
+ * uses.
  *
  * Beside it, one exchange in a host: the two tools a real question actually
- * calls, with the index lane's measured timings.
+ * calls, with their measured timings and the lane each one came off.
+ *
+ * Both numbers are measured and both are 97 ms, which looks like a typo and is
+ * not. Mail's is the Envelope Index (docs/mail-body.md — "the 97 ms the index
+ * lane already costs for subject and sender"); Notes' is a bulk `plaintext`
+ * fetch filtered in JS over Apple Events (docs/notes.md — 69 hits over 249,719
+ * chars). Two lanes, same answer, which is the whole point of having two.
+ *
+ * This block previously showed Notes at 41 ms and captioned both calls as the
+ * index lane. The 41 was in no document anywhere, and the caption contradicted
+ * the Surfaces section below, which correctly says Notes needs no grant at all
+ * to search. Numbers here come from docs/ or they do not go here.
  */
+import { WIRING } from "../config";
 import { SURFACES } from "../data/surfaces";
 import Logo from "./Logo.astro";
 
-/** One row per surface: the app builds this menu from `Surface.all`. */
-const items = SURFACES.map((s) => ({ name: s.name, lane: "index lane" }));
+/**
+ * One row per surface: the app builds this menu from `Surface.all`, and each
+ * row's trailing caption is its Automation status — `StatusStyle.caption` in
+ * SettingsWindow.swift. It is NOT a lane label; the app does not show one here.
+ */
+const items = SURFACES.map((s) => ({ name: s.name, status: "automation allowed" }));
 
 const calls = [
-  { tool: "apple_mail_search_messages", ms: 97 },
-  { tool: "apple_notes_search_notes", ms: 41 },
+  { tool: "apple_mail_search_messages", ms: 97, lane: "index" },
+  { tool: "apple_notes_search_notes", ms: 97, lane: "events" },
 ] as const;
 ---
 
@@ -66,7 +88,7 @@ const calls = [
                 aria-hidden="true"
               />
               <span class="text-fg">{i.name}</span>
-              <span class="mono ml-auto">{i.lane}</span>
+              <span class="mono ml-auto">{i.status}</span>
             </li>
           ))
         }
@@ -87,11 +109,32 @@ const calls = [
 
       <div class="my-1.5 h-px bg-rule-2"></div>
 
+      {/* The real menu. It used to read "Copy .mcp.json snippet / Activity… /
+          Open diagnostics…", none of which the app has — and Screens.astro now
+          sits on the same page showing the actual window, so a reader can hold
+          the two side by side. The clients section is the interesting one: it
+          writes the config rather than handing over a snippet to paste. */}
       <ul class="m-0 list-none p-0 text-[12.5px] text-fg-dim">
-        <li class="px-2 py-[7px]">Copy .mcp.json snippet</li>
-        <li class="px-2 py-[7px]">Activity…</li>
-        <li class="px-2 py-[7px]">Open diagnostics…</li>
-        <li class="px-2 py-[7px]">Quit Cupertino</li>
+        {
+          WIRING.automatic.map((client) => (
+            <li class="flex items-center gap-2 px-2 py-[7px]">
+              <span class="text-fg">{client}</span>
+              <span class="mono ml-auto !text-ok">configured</span>
+            </li>
+          ))
+        }
+        <li class="flex items-center gap-2 px-2 py-[7px]">
+          <span class="text-fg">{WIRING.command}</span>
+          <span class="mono ml-auto">copy command</span>
+        </li>
+      </ul>
+
+      <div class="my-1.5 h-px bg-rule-2"></div>
+
+      <ul class="m-0 list-none p-0 text-[12.5px] text-fg-dim">
+        <li class="px-2 py-[7px]">Open Cupertino</li>
+        <li class="px-2 py-[7px]">Settings…</li>
+        <li class="px-2 py-[7px]">Quit</li>
       </ul>
     </div>
   </div>
@@ -108,15 +151,16 @@ const calls = [
           <div class="flex flex-wrap items-center gap-2.5 rounded-lg border border-rule bg-bg-3 px-3.5 py-2.5">
             <span class="font-mono text-[12px] text-accent">{c.tool}</span>
             <span class="mono ml-auto">
-              read · {c.ms} ms
+              read · {c.lane} · {c.ms} ms
             </span>
           </div>
         ))
       }
     </div>
     <p class="m-0 text-[13.5px] leading-[1.6] text-fg-muted">
-      Both reads came off the index lane. The same two questions over Apple Events would have taken
-      the better part of two minutes.
+      Two different lanes, and it does not matter which. Mail came off the Envelope Index, because
+      asking Mail.app the same thing takes 74 seconds. Notes came off Apple Events, because below
+      roughly 5k notes the grant buys nothing there — so it is not asked for.
     </p>
   </div>
 </section>
