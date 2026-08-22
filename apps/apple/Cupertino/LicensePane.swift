@@ -39,15 +39,27 @@ struct LicensePane: View {
   @State private var revision = 0
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      status
-      Divider()
-      editor
-      Divider()
-      footer
+    // The same grouped form as the other three panes. This one is mostly prose
+    // rather than controls, which is why the sections carry it in their footers:
+    // a footer is where a form puts an explanation, and it keeps the two things
+    // somebody came here to *do* — read the status, paste a key — as the only
+    // rows in the cards.
+    Form {
+      Section {
+        status
+      } footer: {
+        footer
+      }
+
+      Section {
+        editor
+      } header: {
+        Text("Licence key")
+      } footer: {
+        Text("Paste your key, or drop the Cupertino.license file anywhere in this window.")
+      }
     }
-    .padding(20)
-    .frame(minWidth: 520, maxWidth: .infinity, minHeight: 400, alignment: .topLeading)
+    .formStyle(.grouped)
     .onAppear { entry = LicenseStore.raw ?? "" }
     .onDrop(of: [.fileURL], isTargeted: nil, perform: accept)
   }
@@ -172,10 +184,6 @@ struct LicensePane: View {
 
   private var editor: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("Paste your key, or drop the Cupertino.license file anywhere in this window.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
       TextEditor(text: $entry)
         .font(.system(.caption, design: .monospaced))
         .frame(height: 92)
@@ -213,8 +221,6 @@ struct LicensePane: View {
       "One key covers every \(AppInfo.major).x release and every Mac you own — it is issued to you, "
         + "not to a machine, and nothing counts your installs."
     )
-    .font(.caption)
-    .foregroundStyle(.secondary)
     .fixedSize(horizontal: false, vertical: true)
   }
 
