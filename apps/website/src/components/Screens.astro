@@ -25,6 +25,7 @@
 import { Picture } from "astro:assets";
 import activityShot from "../assets/shots/activity.png";
 import connectionsShot from "../assets/shots/connections.png";
+import settingsShot from "../assets/shots/settings.png";
 import surfaceShot from "../assets/shots/surface.png";
 import SectionHeader from "./SectionHeader.astro";
 
@@ -54,8 +55,15 @@ const shots = [
     image: connectionsShot,
     id: "connections",
     title: "Every session, ungrouped",
-    body: "One row per connection, because each client opens one per server it is wired to. Four terminals and two GUI clients is eighteen rows, and this is the pane that shows them.",
-    alt: "Cupertino's connections pane: eighteen live sessions from claude-ai, claude-code and cursor-vscode across the four surfaces.",
+    body: "One row per connection, because each client opens one per server it is wired to — and a client you have run several times over opens several. Three clients is eighteen rows here, and this is the pane that shows them.",
+    alt: "Cupertino's connections pane: eighteen live sessions from claude-ai, claude-code and cursor-vscode across mail, notes, reminders and calendar.",
+  },
+  {
+    image: settingsShot,
+    id: "settings",
+    title: "The gate, per surface",
+    body: "Automation is asked for one app at a time, and writes are a separate switch again. With one off, that surface's mutating tools are never registered — so an agent is not refused, it is never told they exist.",
+    alt: "Cupertino's Permissions settings: Full Disk Access granted, automation allowed for Mail, Notes, Reminders, Calendar and Contacts, and write toggles on for Mail only.",
   },
 ] as const;
 ---

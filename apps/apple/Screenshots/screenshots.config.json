@@ -45,7 +45,7 @@
   },
 
   "//screens": "Order here IS the order of the framed set — it stamps the 01-, 02- prefix. The capture filenames stay unnumbered, so reordering never renames an image. `id` matches <id>~dark.png in source/, and it is also the -ScreenshotStage value DemoSeed.Stage parses.",
-  "//website": "The basename `appshot compose website` writes into apps/website/src/assets/shots/. All four are on the site; a screen with no `website` key would be framed-set-only.",
+  "//website": "The basename `appshot compose website` writes into apps/website/src/assets/shots/. Four of the five are on the site. `prompt` is deliberately framed-set-only: it is the same Log pane as `activity` with a different fixture, so on a page that already carries Examples.astro and the hero card it would be a third telling of one idea — while as a store plate, captioned with the prompt itself, it is the best of the set.",
   "screens": [
     {
       "//": "The title used to open with a literal \"Four\", which Contacts invalidated the day it shipped — the same drift apps/website/src/config.ts exists to prevent, in the one file that cannot compute a count. It no longer states one. The subtitle still names the surfaces because a caption that will not say which apps is not worth the plate; it is the line to revisit when Messages lands.",
@@ -57,7 +57,6 @@
     {
       "//": "Captioned with the prompt itself, which is why `prompt` is its own stage rather than a second crop of `activity`: DemoSeed.heroTurnLogLines seeds this pane with that one question's trace and nothing else. The subtitle is HERO_TURN.prompt in apps/website/src/data/examples.ts, verbatim — that file is the authority, the site checks its own half at build time, and nothing yet checks this copy of it.",
       "id": "prompt",
-      "website": "prompt",
       "title": "Ask in plain English.",
       "subtitle": "\u201cWhat did I promise Marie last week, and is any of it on my calendar?\u201d"
     },
