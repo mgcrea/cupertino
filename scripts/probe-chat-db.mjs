@@ -79,6 +79,7 @@ import {
   writeFixture,
   yn,
 } from "./lib/probe-kit.mjs";
+import { decodeAttributedBody, outline } from "./lib/typedstream.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -296,6 +297,136 @@ if (opened?.db) {
       avgBlobBytes: attributed?.avgBlobBytes ? Math.round(attributed.avgBlobBytes) : null,
       archiveHeaderHex: magic,
       archiveHeaderAscii: magicAscii,
+    };
+  });
+
+  /**
+   * Q1.5. DOES THE DECODER ACTUALLY WORK? — the gate before any package code.
+   *
+   * `scripts/lib/typedstream.mjs` was written against ground truth rather than
+   * against a reading of the format: `NSArchiver` still ships on macOS 26 and is
+   * what wrote every blob in this store, so archiving a KNOWN string through it
+   * produces a fixture whose plaintext nobody has to guess. Nineteen offline
+   * tests pass on that basis.
+   *
+   * That proves the decoder against eight blobs Apple's archiver made TODAY. It
+   * does not prove it against 97,092 blobs written by a decade of iOS versions,
+   * and the difference is exactly the kind of gap this project keeps falling
+   * into. So this measures it, and the oracle is free: **`text` is populated on
+   * 94,049 rows and the blob on 97,092**, so ~94k rows are labelled examples.
+   * Decode the blob, compare to the column, count the disagreements.
+   *
+   * If that agreement is not essentially total, the 3,043 blob-only rows cannot
+   * be trusted either and the decoder needs work before a server ships it.
+   *
+   * REDACTION: no message text, ever. Counts, rates, lengths and Apple's own
+   * class names only. Failing blobs are described by `outline()`, which reduces
+   * every string to `<str len=N>` and keeps only Apple constants.
+   */
+  doc.findings.decoder = safe(() => {
+    if (!hasTable("message")) return { tested: false, reason: "no message table" };
+    const cols = colsOf("message");
+    if (!cols.includes("attributedBody")) {
+      return { tested: false, reason: "message has no attributedBody column" };
+    }
+
+    const stats = {
+      rows: 0,
+      decoded: 0,
+      failed: 0,
+      withAttributes: 0,
+      // The oracle.
+      comparable: 0,
+      exact: 0,
+      differs: 0,
+      // The rows that only the decoder can answer.
+      blobOnly: 0,
+      blobOnlyDecoded: 0,
+      emptyDecode: 0,
+    };
+    const failureReasons = {};
+    const classCounts = {};
+    const failureOutlines = [];
+    const diffShapes = [];
+
+    const started = performance.now();
+    // Streamed in pages so a 216 MB store never lands in memory at once.
+    const PAGE = 5_000;
+    let lastRowid = 0;
+    for (;;) {
+      const page = all(
+        `SELECT ROWID AS rowid, "text" AS text, "attributedBody" AS blob
+           FROM message
+          WHERE ROWID > ? AND "attributedBody" IS NOT NULL
+          ORDER BY ROWID LIMIT ${PAGE}`,
+        lastRowid,
+      );
+      if (!page.length) break;
+      lastRowid = page.at(-1).rowid;
+
+      for (const row of page) {
+        stats.rows += 1;
+        const blob = row.blob;
+        const buf = Buffer.isBuffer(blob) ? blob : Buffer.from(blob ?? []);
+        const result = decodeAttributedBody(buf);
+        const hasText = typeof row.text === "string" && row.text.length > 0;
+        if (!hasText) stats.blobOnly += 1;
+
+        if (!result.ok) {
+          stats.failed += 1;
+          failureReasons[result.error] = (failureReasons[result.error] ?? 0) + 1;
+          if (failureOutlines.length < 5) {
+            failureOutlines.push({ reason: result.error, tokens: outline(buf, 40) });
+          }
+          continue;
+        }
+
+        stats.decoded += 1;
+        if (result.hasAttributes) stats.withAttributes += 1;
+        if (result.text.length === 0) stats.emptyDecode += 1;
+        if (!hasText) stats.blobOnlyDecoded += 1;
+        for (const cls of result.classes) classCounts[cls] = (classCounts[cls] ?? 0) + 1;
+
+        if (hasText) {
+          stats.comparable += 1;
+          if (result.text === row.text) stats.exact += 1;
+          else {
+            stats.differs += 1;
+            // Shapes only. A diff is the most tempting thing to print and the
+            // one thing that would put two people's messages in a report.
+            if (diffShapes.length < 10) {
+              diffShapes.push({
+                textChars: row.text.length,
+                decodedChars: result.text.length,
+                decodedIsPrefix: row.text.startsWith(result.text),
+                textIsPrefix: result.text.startsWith(row.text),
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const ms = Math.round(performance.now() - started);
+    return {
+      tested: true,
+      ms,
+      msPerThousand: stats.rows ? Math.round((ms / stats.rows) * 1000) : null,
+      ...stats,
+      decodeRate: stats.rows ? Number(((stats.decoded / stats.rows) * 100).toFixed(2)) : null,
+      // THE NUMBER. Agreement with the column, on every row that has both.
+      oracleAgreement: stats.comparable
+        ? Number(((stats.exact / stats.comparable) * 100).toFixed(3))
+        : null,
+      failureReasons,
+      // Apple's own class names. Which ones appear says what the blobs contain.
+      classes: Object.fromEntries(
+        Object.entries(classCounts)
+          .toSorted((a, b) => b[1] - a[1])
+          .slice(0, 15),
+      ),
+      failureOutlines,
+      diffShapes,
     };
   });
 
@@ -603,6 +734,51 @@ if (args.json) {
       L.push(
         `       so the server must read them as BigInt or TEXT — a plain SELECT looks like "no dates".`,
       );
+    }
+    L.push("");
+    L.push("DECODER — validated against the `text` column as an oracle");
+    const dec = doc.findings.decoder ?? {};
+    if (dec.tested) {
+      L.push(
+        `  blobs walked          ${dec.rows}  in ${dec.ms} ms  (${dec.msPerThousand} ms / 1000)`,
+      );
+      L.push(`  decoded / failed      ${dec.decoded} / ${dec.failed}   (${dec.decodeRate}%)`);
+      L.push(
+        `  AGREES WITH text      ${dec.exact} / ${dec.comparable}   (${dec.oracleAgreement}%)` +
+          `${dec.differs ? `   ${dec.differs} DISAGREE` : ""}`,
+      );
+      L.push(
+        `  blob-only rows        ${dec.blobOnly}  of which decoded ${dec.blobOnlyDecoded}` +
+          `   <- what the column cannot answer`,
+      );
+      L.push(`  carry attribute runs  ${dec.withAttributes}  (not decoded, by design)`);
+      L.push(`  decoded to empty      ${dec.emptyDecode}`);
+      if (Object.keys(dec.failureReasons ?? {}).length) {
+        L.push("  failures by reason");
+        for (const [reason, n] of Object.entries(dec.failureReasons)) {
+          L.push(`     ${String(n).padStart(6)}  ${reason}`);
+        }
+      }
+      if (Object.keys(dec.classes ?? {}).length) {
+        L.push(
+          `  classes seen          ${Object.entries(dec.classes)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(", ")}`,
+        );
+      }
+      for (const f of dec.failureOutlines ?? []) {
+        L.push(`  failing blob (${f.reason})`);
+        L.push(`     ${f.tokens.join(" ")}`);
+      }
+      for (const d of dec.diffShapes ?? []) {
+        L.push(
+          `  disagreement          text=${d.textChars} chars, decoded=${d.decodedChars}` +
+            `${d.decodedIsPrefix ? ", decoded is a PREFIX of text" : ""}` +
+            `${d.textIsPrefix ? ", text is a PREFIX of decoded" : ""}`,
+        );
+      }
+    } else {
+      L.push(`  not tested            ${dec.reason}`);
     }
     L.push("");
     const s = doc.findings.search ?? {};

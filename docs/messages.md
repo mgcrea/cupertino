@@ -82,6 +82,72 @@ This is Notes' `ZDATA` again, found the same way. It is worth repeating the less
 records: an earlier claim there was wrong because it sampled `LIMIT 1` and landed on an outlier.
 Sample more than one row before describing a blob format.
 
+### The decoder, written against ground truth
+
+`scripts/lib/typedstream.mjs`, with 19 offline tests in `typedstream.test.mjs`.
+
+The format was not inferred. **`NSArchiver` is deprecated and still ships on macOS 26 — and it is what
+wrote every blob in this store** — so archiving an `NSAttributedString` with a known plaintext gives a
+fixture nobody has to guess at:
+
+```
+04 0b "streamtyped" 81 e8 03      header
+84 01 40                          START, type "@" — an object
+84 84 84 12 "NSAttributedString" 00
+84 84 84 08 "NSString" 01
+84 01 2b  0c "Hello, world"       START, type "+", then the bytes
+86                                END
+```
+
+Three things a reading of the format would have got wrong, each caught by a fixture:
+
+- **Lengths are in BYTES of UTF-8.** `Café ☕️ déjà vu — 日本語` declares 36 for 21 UTF-16 units. Slicing
+  by character count desynchronises the walk and corrupts everything after it.
+- **Past 127 the length takes the `0x81` int16 form** — measured at `81 90 01` for a 400-byte payload.
+- **`84 01 2b` cannot be scanned for.** `0x84` is a valid UTF-8 continuation byte, so that sequence
+  occurs inside real messages. Only a structural walk that consumes each payload by its declared
+  length stays in sync.
+
+**Text only, and that is now measured rather than assumed.** Attribute values are back-_referenced_
+rather than inline — an attachment archives as
+`92 84 98 98 22 "__kIMFileTransferGUIDAttributeName" 86`, where `98` indexes the object table — so
+reading them means rebuilding that table. And nothing needs it: the only attribute worth having is the
+file-transfer GUID, and attachments are already reachable relationally through
+`message_attachment_join`, 17,529 rows. The placeholder character (U+FFFC) survives in the text, so
+the position is not lost either.
+
+### Measured against the whole store
+
+The fixtures prove the decoder against blobs Apple's archiver wrote today; they prove nothing about
+blobs written by a decade of iOS versions. So `pnpm probe:messages` runs it over every one and checks
+it against `text`, which is populated on 94,043 rows — **94k labelled examples, free.**
+
+|                           |                                          |
+| ------------------------- | ---------------------------------------- |
+| Blobs walked              | 97,094 in **183 ms** (2 ms per thousand) |
+| Decoded                   | **97,094 — none failed**                 |
+| **Agreement with `text`** | **94,043 / 94,043 — 100.000%**           |
+| Blob-only rows recovered  | **3,051 of 3,051**                       |
+| Carry attribute runs      | 97,081 (not decoded, by design)          |
+| Decoded to empty          | 13                                       |
+
+Classes reached on the way to the text: `NSAttributedString` and `NSString` on every blob,
+`NSMutableAttributedString` / `NSMutableString` on 66,107 of them.
+
+**The first run failed twice, and both were this decoder's bug rather than the format's.** Both
+reported "token limit exceeded" — and both had ALREADY read their text, 936 and 2,095 bytes, before
+exhausting the walk on attribute runs whose result is discarded anyway. Two real messages were being
+thrown away for work nobody wanted.
+
+The walk now stops at the first payload. That took failures to zero, cut the time by a third, and is
+visible in the class list: `NSDictionary`, `NSNumber` and `NSURL` used to appear and no longer do,
+because they only ever lived in the attribute runs after the text. Pinned by a regression test that
+buries a known-good blob under 200 KB of rubbish — what follows the text must not be able to affect
+the text.
+
+Budget for the server: **~2 ms per thousand messages**, so decoding a 500-message page costs about a
+millisecond. There is no reason to store the decoded text or to decode lazily.
+
 ## The dates do not fit in a JavaScript number
 
 Every populated date column is **nanoseconds since 2001-01-01**, 18 digits, latest value in 2026:
@@ -152,14 +218,35 @@ store, and cannot hand its result to a read tool. Whether that is acceptable, or
 should re-resolve by scanning the store for a recent row on the target chat, is a decision that has
 to be taken deliberately rather than discovered later.
 
+## The schema does not replay cleanly, twice over
+
+Both found by trying to build the offline test database from `--write`'s output, and both are worth
+knowing before the next surface is captured.
+
+**`sqlite_stat1` cannot be declared.** ANALYZE creates it, and replaying its `CREATE TABLE` raises
+`object name reserved for internal use`, which kills the whole fixture. `scripts/lib/probe-kit.mjs`
+filtered `sqlite_sequence` and nothing else; it now excludes the entire reserved `sqlite_` prefix.
+Calendar's capture never hit this because that store had not been analysed — so this was latent for
+every surface, not specific to Messages.
+
+**27 triggers call functions that only exist inside Messages.app.** `verify_chat`, `guid_for_chat`,
+`before_delete_attachment_path`, `delete_attachment_path`, `after_delete_message_plugin` and
+`delete_chat_background_before_deleting_chat` are registered by Messages on its own connection, so
+any INSERT or DROP that fires one dies with `no such function` in a plain `node:sqlite` database.
+
+The fixture keeps the triggers, because it is a record of the schema. The test suite strips them at
+replay, which is where the constraint actually is — it exercises SELECTs, and a trigger that can only
+run inside Messages.app has nothing to say about them. Worth remembering as a general point: **a
+captured schema is not necessarily a runnable one.**
+
 ## Still open
 
 - **`date_retracted` / `date_recovered`** — no rows here, so their epoch is assumed, not measured.
 - **The two unresolvable attachments** — offloaded, deleted, or a path convention this probe does not
   handle.
-- **Whether `attributedBody` carries formatting that matters**, or is only ever a redundant copy of
-  `text` plus attachment placeholders. This decides whether the decoder must preserve structure or
-  merely extract a string.
+- **The 322 messages with neither text nor blob.** Probably group events — someone joined, someone
+  left, a name changed — which `item_type` would separate. Unmeasured, and it decides whether a
+  reader should skip them or render them.
 - **The send path is untested.** Probing it would mean sending a real message to a real person, which
   is not a measurement worth taking without asking first.
 - **No schema fixture captured.** `--write` would emit `packages/messages/test/fixtures/chat-db.sql`,
