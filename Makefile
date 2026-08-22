@@ -142,6 +142,12 @@ smoke: ## Handshake both servers through the bridge, as CI does directly
 			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
 	done
 
+wiring-check: ## Assert the config merge leaves other people's files alone
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/wiring-check \
+		apps/apple/Cupertino/ClientWiringMerge.swift scripts/wiring-check.swift
+	@apps/apple/.build/wiring-check
+
 audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"
 
@@ -434,4 +440,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke audit revocations servers node bundle sign notarize icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize icon clean

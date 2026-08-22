@@ -261,6 +261,17 @@ struct ClientsPane: View {
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
 
+      // The `code` command is installed separately from VS Code itself, and
+      // the row is gated on the app rather than on the CLI: a false negative
+      // would hide the row entirely, which is worse than a paste that says
+      // "command not found" and names the thing to fix.
+      Text(
+        "Clients with a command keep their config in a format this app will not rewrite. Paste the command into a terminal — for Visual Studio Code that needs its \"code\" shell command installed."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+
       ClientsSection(model: model)
 
       if let error = model.lastError {

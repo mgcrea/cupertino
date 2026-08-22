@@ -84,6 +84,42 @@ export const BODY_SEARCH = {
 export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Terminal"] as const;
 
 /**
+ * The clients Cupertino wires up for you, and how.
+ *
+ * Not the same list as HOSTS above, and deliberately so: HOSTS is the *problem*
+ * — four hosts, four whole-disk grants — while this is what the app does about
+ * it. `ClientWiring.swift` is the authority on both the membership and the
+ * split, and the split is not about how popular a client is.
+ *
+ * `automatic` is every client whose config is strict JSON with servers under a
+ * top-level `mcpServers`: the app merges its four entries in, keeps a backup
+ * and leaves every other key alone.
+ *
+ * `command` is the clients whose config is not ours to rewrite. Visual Studio
+ * Code's is JSONC and Codex's is TOML, and re-serialising either would delete
+ * the comments in a file the user maintains by hand. Claude Code's
+ * `~/.claude.json` is strict JSON and technically writable, but it holds API
+ * credentials and running sessions write to it concurrently, so a
+ * read-modify-write from a menu bar could drop somebody else's change. All
+ * three get a line to paste instead — for the two with a CLI, one that the
+ * client itself executes.
+ *
+ * ChatGPT is on neither list: it takes remote HTTP connectors and cannot spawn
+ * a local stdio server at all.
+ */
+export const WIRING = {
+  automatic: ["Claude Desktop", "Cursor", "LM Studio", "Windsurf"],
+  command: ["Claude Code", "Visual Studio Code", "Codex CLI"],
+  /**
+   * How many of each `MenuBar.astro` draws. It is a fixed-height mock of a
+   * 320pt popover, and the real one only ever lists the clients you actually
+   * have installed — usually two or three. Drawing all seven would make the
+   * mock less honest, not more.
+   */
+  mockRows: { automatic: 2, command: 1 },
+} as const;
+
+/**
  * The evaluation window, in minutes. `Trial.duration` in
  * apps/apple/Cupertino/Trial.swift is the authority; this is the copy's mirror
  * of it.

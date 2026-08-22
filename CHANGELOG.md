@@ -34,5 +34,14 @@ land together at the first release. Until then this section is the running recor
   whom in D1, and emailing it. Refunds and lost disputes revoke; a won dispute restores.
 - `make revocations` — regenerates the revocation list baked into each build. Revocation lands at
   build time because the app is not allowed to ask anyone anything at run time.
+- Client wiring beyond Claude — one-click config for Claude Desktop, Cursor, LM Studio and
+  Windsurf, and a copyable command for Claude Code, Visual Studio Code and Codex. The split is not
+  about popularity: the app merges only into strict JSON it can rewrite without destroying
+  something, and hands over a line to paste for JSONC, TOML, and the one file running sessions
+  write to concurrently. Claude Code also gained a status of its own, read-only — it is how a
+  config left behind by a new surface becomes visible instead of silently incomplete.
+- `make wiring-check` — a standalone `swiftc` gate over `ClientWiringMerge`, asserting that a merge
+  keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
+  when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
 [unreleased]: https://github.com/mgcrea/mcp-cupertino/commits/main

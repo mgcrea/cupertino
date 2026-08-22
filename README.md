@@ -69,10 +69,19 @@ can have both. The app only ever touches its own `cupertino-*` keys — an `appl
 belonging to some other server is left alone.
 
 Cupertino is machine configuration, not a project dependency, so it belongs in a per-user config:
-one file for Claude Desktop, one for Cursor, and `--scope user` for Claude Code, which is what the
-app's copyable command uses. Deliberately **not** `--scope project`, which writes an `.mcp.json`
-meant to be committed — that entry is an absolute path into a bundle on one Mac, backed by one
-person's Full Disk Access grant, and it would be useless to a teammate and unwise to offer them.
+one file each for Claude Desktop, Cursor, LM Studio and Windsurf, and `--scope user` for the CLIs,
+which is what the app's copyable commands use. Deliberately **not** `--scope project`, which writes
+an `.mcp.json` meant to be committed — that entry is an absolute path into a bundle on one Mac,
+backed by one person's Full Disk Access grant, and it would be useless to a teammate and unwise to
+offer them.
+
+Which clients get written and which get a command is not about popularity. The app merges into a
+config only when it is strict JSON with servers under `mcpServers`; Visual Studio Code's is JSONC
+and Codex's is TOML, and re-serialising either would delete the comments in a file maintained by
+hand. Claude Code's `~/.claude.json` is strict JSON, but it holds credentials and running sessions
+write to it concurrently, so a read-modify-write from a menu bar could drop somebody else's change.
+Those three get a line to paste. ChatGPT is absent entirely: it takes remote HTTP connectors and
+cannot spawn a local stdio server at all.
 
 This repo's own [`.mcp.json`](.mcp.json) is the exception, and it names its servers
 `cupertino-*-dev` on purpose: it points at `apps/apple/.build`, so working on the app means having
@@ -179,7 +188,7 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 | Full Disk Access                    | granted or not, with the button that opens the right Settings pane                  |
 | Mail / Notes / Reminders / Calendar | Automation status per app, the consent prompt, and the writes toggle                |
 | Connections                         | which client is talking to which server right now, and how many tools it has called |
-| MCP clients                         | one-click wiring for Claude Desktop and Cursor; a copyable command for Claude Code  |
+| MCP clients                         | one-click wiring for Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for Claude Code, VS Code and Codex |
 | Activity…                           | opens a window listing every tool call, live                                        |
 
 The **Activity** window records tool _names_ only — never arguments, message contents or results.

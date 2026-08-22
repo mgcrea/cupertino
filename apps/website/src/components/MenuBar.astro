@@ -113,20 +113,28 @@ const calls = [
           Open diagnostics…", none of which the app has — and Screens.astro now
           sits on the same page showing the actual window, so a reader can hold
           the two side by side. The clients section is the interesting one: it
-          writes the config rather than handing over a snippet to paste. */}
+          writes the config rather than handing over a snippet to paste.
+
+          A subset, via WIRING.mockRows — the real popover lists only the
+          clients you have installed, so all seven rows would be less honest
+          than three, not more. */}
       <ul class="m-0 list-none p-0 text-[12.5px] text-fg-dim">
         {
-          WIRING.automatic.map((client) => (
+          WIRING.automatic.slice(0, WIRING.mockRows.automatic).map((client) => (
             <li class="flex items-center gap-2 px-2 py-[7px]">
               <span class="text-fg">{client}</span>
               <span class="mono ml-auto !text-ok">configured</span>
             </li>
           ))
         }
-        <li class="flex items-center gap-2 px-2 py-[7px]">
-          <span class="text-fg">{WIRING.command}</span>
-          <span class="mono ml-auto">copy command</span>
-        </li>
+        {
+          WIRING.command.slice(0, WIRING.mockRows.command).map((client) => (
+            <li class="flex items-center gap-2 px-2 py-[7px]">
+              <span class="text-fg">{client}</span>
+              <span class="mono ml-auto">copy command</span>
+            </li>
+          ))
+        }
       </ul>
 
       <div class="my-1.5 h-px bg-rule-2"></div>

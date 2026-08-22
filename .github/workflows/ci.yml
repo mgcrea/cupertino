@@ -84,6 +84,15 @@ jobs:
             -DNODE_PATH='"/usr/bin/false"' \
             -DSERVER_PATH='"/dev/null"' \
             -o /tmp/launcher-check packages/mail/native/launcher.c
+      # ClientWiring merges into config files this app does not own, so the
+      # properties it promises out loud — unrelated keys survive, the previous
+      # contents are recoverable, a crash mid-write cannot truncate — are worth
+      # a gate. Standalone swiftc for the same reason the launcher above is:
+      # the Xcode project has no test target and adding one costs more than
+      # the code under test.
+      - name: Wiring merge 🔧
+        if: runner.os == 'macOS'
+        run: make wiring-check
       # docs/licensing.md sells the app partly on it being unable to reach the
       # network, so that claim is a gate rather than a sentence in a README.
       # Unsigned is fine: the audit reads symbols, and signing does not add any.
