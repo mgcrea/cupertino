@@ -11,6 +11,39 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **Updates.** Cupertino can now check for updates and install them. 1.0.0 shipped with no way to
+  reach the people running it, which for an app holding Full Disk Access means a security fix that
+  never arrives — and it means a refunded licence key keeps working, since the revocation list is
+  baked in at build time and only lands when someone updates.
+- A consent card, asked once, and an **Updates** section in Settings › General with a Check Now
+  button.
+
+### Changed
+
+- **The network claim.** Cupertino used to make no network connections at all, and that sentence was
+  on the front page. It is now: _makes one network connection, and only if you ask for it._ Said
+  plainly, because people bought 1.0.0 on the stronger version — the app gained a network
+  capability, and the honest thing is to say so rather than to quietly reword a page.
+
+  What has not changed: automatic checks are **off** in the shipped bundle and stay off until you
+  answer the card or press Check Now; nothing is even constructed until then; the check reads one
+  file and sends no identifier with it, not your licence key and not a machine id; updates never
+  install without somebody clicking Install; and the licence is still verified entirely offline.
+
+  `scripts/audit-network.sh` now checks the exception rather than being weakened around it. It
+  discovers every binary in the bundle instead of naming two by hand, allows Sparkle a specific list
+  of symbols and fails on anything beyond it, and asserts against the shipped `Info.plist` that
+  automatic checks are off. Worth knowing why: a Sparkle-linked app passes a naive symbol audit,
+  because `URLSession` is named inside the framework and never in the app binary. Run unchanged, the
+  old script would have called this app network-free.
+
+### Note for 1.0.0 users
+
+1.0.0 has no updater in it, so it cannot pull this one down. Updating to 1.1.0 is a manual
+download this once — after that the mechanism is there. `brew upgrade --cask cupertino` also works.
+
 ## [1.0.0] - 2026-08-22
 
 First signed release of `Cupertino.app`. The `@mgcrea/mcp-apple-*` packages are not on npm yet —

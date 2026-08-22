@@ -84,15 +84,32 @@ contradicts its own pitch, and the next section is why that matters more than us
 
 ## Three claims worth more than the licence
 
-1. **The app makes no network connections.** There is no `URLSession`, no Sparkle and no HTTP
-   anywhere in `apps/apple/Cupertino` or `apps/apple/CupertinoBridge`. The one socket in the codebase is
-   `socket(AF_UNIX, SOCK_STREAM, 0)` in `ServerHost.swift` — a filesystem entry, mode-restricted to
-   the one user, carrying stdio between the app and its own servers. For a process holding Full
-   Disk Access that is a strong claim and a cheap one for anyone to verify, so it belongs on the
-   front page rather than in a footnote. Because it is load-bearing for the sale it is checked
-   rather than asserted; the next section is how. It is also a **constraint**: adding an update
-   check makes it false, so if Sparkle ever lands it becomes the single documented exception and the
-   claim gets reworded, not quietly dropped.
+1. **The app makes one network connection, and only if you ask for it.** That one is the update
+   check, and it is the single documented exception this section promised in advance — Sparkle
+   landed in 1.1.0, so the claim is reworded here rather than quietly dropped.
+
+   Everything else still holds. There is no `URLSession` and no HTTP anywhere in
+   `apps/apple/Cupertino` or `apps/apple/CupertinoBridge`; the licence is still verified offline;
+   nothing phones home. The one socket in our own code is `socket(AF_UNIX, SOCK_STREAM, 0)` in
+   `ServerHost.swift` — a filesystem entry, mode-restricted to the one user, carrying stdio between
+   the app and its own servers.
+
+   What the update check does: reads `https://cupertino.mgcrea.io/appcast.xml`, and sends no
+   identifier with the request — not the licence key, not a machine id. It is **off in the shipped
+   bundle**, and stays off until somebody either answers the consent card or presses Check Now.
+   Nothing is even constructed until then: `UpdateController` holds a `nil` updater, because Sparkle
+   starts a scheduler the moment it exists, and a claim resting on a flag is weaker than one resting
+   on the absence of the machinery.
+
+   Why admit a network capability at all, in the one app whose pitch is not having one: the app
+   holds Full Disk Access, and 1.0.0 shipped with no way to reach the people running it. A security
+   fix nobody receives is not a fix, and the revocation list in `Revocations.swift` is baked in at
+   build time, so a refund only actually revokes when that user updates. The exception buys both.
+
+   Because it is load-bearing for the sale it is checked rather than asserted, and the check now
+   covers the exception too: `scripts/audit-network.sh` asserts that the shipped `Info.plist` has
+   automatic checks off, the feed pointed at our domain and a well-formed public key. The next
+   section is how.
 
 2. **Reproducible builds and published checksums.** Open source closes the gap between what the
    source says and what the binary does only if the two are known to correspond. Publish the hash of
@@ -125,24 +142,47 @@ point it at the `.app` they downloaded and get the same answer CI got:
 
 ```console
 $ scripts/audit-network.sh /Applications/Cupertino.app
-  ok    Cupertino          no URL loading, no DNS, no TLS
-  ok    cupertino-bridge   no URL loading, no DNS, no TLS
-  ok    sockets            AF_UNIX only
+  ok    Contents/Frameworks/…/Autoupdate    no URL loading, no DNS, no TLS
+  UPD   Contents/Frameworks/…/Sparkle       reaches the network — the update check, off by default
+  ok    Contents/Helpers/cupertino-bridge   no URL loading, no DNS, no TLS
+  ok    Contents/MacOS/Cupertino            no URL loading, no DNS, no TLS
+  note  Contents/Resources/node             links networking by design — constrained at runtime
+
+  ok    SUEnableAutomaticChecks             false
+  ok    SUFeedURL                           https://cupertino.mgcrea.io/appcast.xml
+  ok    sockets                             AF_UNIX only
 ```
+
+The binary list is **discovered, not declared**. That matters more since Sparkle: a framework, an
+XPC service or a helper that nobody remembered to add to a hardcoded list is exactly what this
+exists to catch, and the previous version of the script named two binaries by hand.
+
+It matters in a second way that is worth stating plainly, because it is the trap this whole design
+is built around. **A Sparkle-linked app passes a naive symbol audit.** The main binary calls
+`SPUStandardUpdaterController`; `URLSession` is named inside `Sparkle.framework`, which a script
+pointed at `Contents/MacOS/Cupertino` never opens. Run unchanged, the old audit would have printed
+`ok  Cupertino  no URL loading, no DNS, no TLS` about an app shipping a full HTTP downloader. So the
+allowance is spelled out symbol by symbol rather than as a pardon for a path, and three things fail:
+any other binary with a network symbol, a Sparkle carrying a symbol the allowance does not name, and
+a bundle that has _lost_ Sparkle while the allowance is still in the script — because a pardon that
+outlives what it pardons is a hole waiting for whatever lands at that path next.
 
 It denies the high-level symbols — `URLSession`, CFNetwork, `Network.framework`, `getaddrinfo`, the
 TLS entry points — and deliberately does **not** deny `socket` / `bind` / `connect`, because the
 AF_UNIX bridge shares those syscalls with the thing being ruled out and so they cannot be the test.
 The assertion that carries the claim is at source level instead: `AF_INET`, `PF_INET` and
 `sockaddr_in` appear nowhere in `apps/apple/`. A socket that never names an internet address family is not
-one.
+one. Build output and vendored dependencies are pruned from that grep, because reading someone
+else's code as though we had written it is not evidence about ours — Sparkle's own test harness
+contains a `sockaddr_in` web server that never ships.
 
 Two properties make it a gate rather than a decoration. It fails when it inspected nothing — a build
 that did not happen is not a pass — and it runs on every macOS CI job, against an unsigned build,
 since signing adds no symbols. `make audit` is the local form.
 
-It covers the Swift binaries only. `Resources/node` links networking by design and is reported
-rather than failed: a general-purpose runtime cannot be symbol-audited into safety, and Node's
+Two components are exempt, and the exemptions are different in kind. Sparkle is _allowed_ a named
+list of symbols and fails on anything beyond it. `Resources/node` is only ever reported, never
+failed: a general-purpose runtime cannot be symbol-audited into safety, and Node's
 permission model (`--permission`, `--allow-fs-read`) covers the filesystem, child processes, workers
 and addons but has no network permission to switch off.
 

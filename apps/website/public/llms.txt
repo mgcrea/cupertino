@@ -45,8 +45,10 @@ signed app and the `@mgcrea/mcp-apple-*` packages land together at the first rel
 - The servers are MIT and run on their own with no key at all. The app is a different matter: its
   source is public and readable, but any build of it — yours or ours — asks for a licence key. A
   licence buys the signed and notarized binary and the upkeep, not access to the source.
-- The licence key is verified offline. There is no account, no login and no phone-home — the app
-  makes no network connections at all, which is checked in CI against the built binary.
+- The licence key is verified offline. There is no account, no login and no phone-home. The app
+  makes exactly one network connection, the update check, and only once you have turned it on or
+  pressed Check Now; it reads one file and sends no identifier. Everything here is checked in CI
+  against the built binary, including that automatic checks are off in the shipped bundle.
 
 ## Links
 

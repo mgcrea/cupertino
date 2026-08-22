@@ -67,10 +67,13 @@ struct MainView: View {
   }
 
   var body: some View {
-    NavigationSplitView {
-      sidebar
-    } detail: {
-      detail
+    VStack(spacing: 0) {
+      UpdateConsentCard()
+      NavigationSplitView {
+        sidebar
+      } detail: {
+        detail
+      }
     }
     .frame(minWidth: 780, minHeight: 460)
     .onAppear { model.refresh() }
@@ -363,5 +366,62 @@ struct MainView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+  }
+}
+
+
+/// Asked once, and as a card rather than a dialog.
+///
+/// The honest default already holds without an answer — nothing constructs an
+/// updater, and nothing resolves a name, until somebody opts in — so stopping
+/// the app to demand one would be theatre. That is `promptForLicenceIfNeeded`'s
+/// reasoning in reverse: the licence pane opens itself because *nothing works*
+/// until the question is answered, and this does not.
+///
+/// It is also the sentence that keeps the claim in docs/licensing.md honest.
+/// Cupertino is sold partly on making no network connections, so the moment it
+/// can make one, the person who bought it on that basis is the one who decides.
+struct UpdateConsentCard: View {
+  @State private var answered = UserDefaults.standard.bool(forKey: UpdateController.choiceMade)
+
+  var body: some View {
+    // Never in a capture: a screenshot is of the product, not of whether this
+    // laptop has answered a question yet.
+    if !answered && !DemoSeed.isEnabled {
+      VStack(alignment: .leading, spacing: 8) {
+        Label("Should Cupertino check for updates?", systemImage: "arrow.down.circle")
+          .font(.subheadline).bold()
+        Text(
+          """
+          Cupertino makes no network connections at all today. Checking for \
+          updates is the one exception, and it is off until you say otherwise. \
+          It reads one file and sends no identifier with it.
+          """
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+        HStack(spacing: 8) {
+          Button("Check automatically") { answer(true) }
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+          Button("Keep updates off") { answer(false) }
+            .controlSize(.small)
+          Text("You can change this in Settings.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(.quaternary.opacity(0.4))
+    }
+  }
+
+  private func answer(_ automatic: Bool) {
+    UpdateController.shared.setAutomatic(automatic)
+    UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
+    answered = true
   }
 }

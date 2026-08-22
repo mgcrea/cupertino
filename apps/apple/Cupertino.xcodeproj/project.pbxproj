@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		0BCE00013100000000000001 /* CupertinoBridge in Embed Helper */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* CupertinoBridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0BCE00013100000000000010 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; };
+		0BCE00013100000000000011 /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,9 +43,21 @@
 			name = "Embed Helper";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0BCE00013100000000000012 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				0BCE00013100000000000011 /* Sparkle.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0BCE00013100000000000013 /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = Vendor/Sparkle.framework; sourceTree = SOURCE_ROOT; };
 		091399AC3035FE8D00800564 /* CupertinoBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; name = CupertinoBridge; path = "cupertino-bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
 		09145EC53035FC8A00D90D97 /* Cupertino.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cupertino.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -73,6 +87,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0BCE00013100000000000010 /* Sparkle.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -129,6 +144,7 @@
 				09145EC13035FC8A00D90D97 /* Sources */,
 				09145EC23035FC8A00D90D97 /* Frameworks */,
 				09145EC33035FC8A00D90D97 /* Resources */,
+				0BCE00013100000000000012 /* Embed Frameworks */,
 				0BCE00013100000000000002 /* Embed Helper */,
 			);
 			buildRules = (
@@ -384,6 +400,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
+				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders and Calendar on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -417,6 +435,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
+				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders and Calendar on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

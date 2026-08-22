@@ -20,3 +20,11 @@
 # is the one to point at when exercising fulfilment end to end; swapping this line
 # is the whole of that switch.
 /buy       https://buy.stripe.com/fZu3cv0xGa0mexe7lcdZ600  302
+
+# The update feed, on the same reasoning as /download: `latest/download` resolves
+# to whatever the newest release published, so shipping an app version never
+# needs a site deploy — and this repo has no CI job that could do one anyway.
+# 302 because the destination is expected to move, and this URL in particular is
+# baked into every binary ever shipped, which is exactly why it must be one we
+# can repoint without asking anyone to update first.
+/appcast.xml  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/appcast.xml  302

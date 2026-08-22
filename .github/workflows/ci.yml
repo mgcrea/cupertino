@@ -99,9 +99,7 @@ jobs:
       - name: No network 🔌
         if: runner.os == 'macOS'
         run: |
-          xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
-            -configuration Debug -derivedDataPath apps/apple/.build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
+          make app XCARGS="CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO"
           scripts/audit-network.sh
       # Proves the built server actually speaks MCP over stdio, which a unit
       # test using an in-memory transport cannot.
@@ -339,10 +337,24 @@ jobs:
       - name: Checksum 🔢
         working-directory: apps/apple/.build
         run: shasum -a 256 Cupertino.zip | tee Cupertino.zip.sha256
+      # After Checksum, and that ordering is load-bearing: `make notarize`
+      # re-creates Cupertino.zip once the ticket is stapled, so a signature made
+      # any earlier would be valid over an artifact with no ticket — Sparkle
+      # would accept the download and Gatekeeper would refuse it on first
+      # launch. Signed here, the published .sha256 and the edSignature describe
+      # the same bytes.
+      - name: Sign the update 🔏
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: make appcast
       - name: Attest provenance 🔏
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: apps/apple/.build/Cupertino.zip
+          # The feed too: it names the bytes Sparkle will install, so it is part
+          # of what a user ends up trusting.
+          subject-path: |
+            apps/apple/.build/Cupertino.zip
+            apps/apple/.build/appcast.xml
       # The asset name carries no version on purpose: it is what makes
       # /releases/latest/download/Cupertino.zip a permanent URL, which the website
       # redirect and the Homebrew cask both point at. The version lives in the tag.
@@ -354,6 +366,7 @@ jobs:
           files: |
             apps/apple/.build/Cupertino.zip
             apps/apple/.build/Cupertino.zip.sha256
+            apps/apple/.build/appcast.xml
       - name: Clean up secrets 🧹
         if: always()
         run: |

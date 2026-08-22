@@ -109,6 +109,10 @@ struct GeneralPane: View {
 
       Divider()
 
+      UpdatesSection()
+
+      Divider()
+
       VStack(alignment: .leading, spacing: 6) {
         Toggle("Launch at login", isOn: $launchAtLogin)
           .toggleStyle(.checkbox)
@@ -328,6 +332,56 @@ enum StatusStyle {
       "Without it, search falls back to Apple Events — usable for Notes, far too slow for Mail."
     case .storeMissing:
       "No Mail or Notes store found on this Mac."
+    }
+  }
+}
+
+
+/// The update controls, directly under the version number because that is where
+/// somebody wondering whether they are current has already looked.
+///
+/// Cupertino is the only thing in this app that can reach the internet, so the
+/// caption says what the check sends in plain terms rather than leaving it to
+/// the privacy policy. See docs/licensing.md.
+struct UpdatesSection: View {
+  @State private var automatic = UpdateController.shared.automatic
+  private var updates = UpdateController.shared
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Updates").font(.subheadline).bold()
+
+      Toggle("Check for updates automatically", isOn: $automatic)
+        .toggleStyle(.checkbox)
+        .onChange(of: automatic) { _, on in
+          updates.setAutomatic(on)
+          // Answering here is answering the consent card too. Leaving it armed
+          // would ask again about a decision already made in this pane.
+          UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
+        }
+
+      HStack(spacing: 8) {
+        Button("Check Now…") { updates.checkNow() }
+          .controlSize(.small)
+          .disabled(updates.isChecking)
+        if let last = updates.lastCheck {
+          Text("Last checked \(last.formatted(.relative(presentation: .named)))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      Text(
+        """
+        This is the only network connection Cupertino makes, and it makes none \
+        at all until you turn this on or press Check Now. It reads one file, \
+        cupertino.mgcrea.io/appcast.xml, and sends no identifier with it: not \
+        your licence key, not a machine id.
+        """
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
     }
   }
 }

@@ -36,7 +36,17 @@ enum DockPresence {
     NSApp.setActivationPolicy(wanted)
     // Becoming `.regular` does not bring the app forward on its own, and the
     // window that triggered this is the reason the user is here.
-    if wanted == .regular { NSApp.activate(ignoringOtherApps: true) }
+    //
+    // Never under `appshot capture`, which launches the app with `open -g` on
+    // purpose and activates it itself in the moment before each shot. An app
+    // that also calls this is fighting the driver for the foreground, and the
+    // symptom is a run dying with "would not come to the front — something else
+    // is stealing activation" on no particular screen, then passing on the next
+    // attempt. `HostedWindow.show()` is guarded for the same reason; the policy
+    // change itself is harmless and stays.
+    if wanted == .regular && !DemoSeed.isEnabled {
+      NSApp.activate(ignoringOtherApps: true)
+    }
   }
 
   /// `NSWindow.willCloseNotification` fires while the window is still visible,

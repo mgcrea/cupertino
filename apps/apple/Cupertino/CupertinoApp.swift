@@ -27,7 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       hostLog("cupertino", .error, error.localizedDescription)
     }
     DockPresence.observe()
+    LoginItem.healIfNeeded()
     promptForLicenceIfNeeded()
+    UpdateController.shared.startIfConsented()
   }
 
   /// A click on the Dock icon, or opening the app while it is already running —

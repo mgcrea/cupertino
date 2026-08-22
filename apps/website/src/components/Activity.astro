@@ -69,7 +69,8 @@ const rows = [
 
   <p class="reveal mt-6 text-[14px] leading-[1.65] text-fg-muted">
     The menu bar shows the same thing one level up: which client is talking to which server right
-    now, and how many tools it has called. Nothing here is sent anywhere — the servers make no
-    network connections at all, which CI checks against the built binary rather than the source.
+    now, and how many tools it has called. None of it is sent anywhere. The one connection Cupertino
+    can make is the update check, it is off until you turn it on, and it carries no identifier —
+    which CI checks against the built binary rather than the source.
   </p>
 </section>

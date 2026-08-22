@@ -51,6 +51,28 @@ arrangement by which someone else can sign something as this identity. If that k
 consequence is that no further builds ship under it — which is the correct failure mode, and the
 reason commitment 1 costs nothing to keep.
 
+### 3b. The update key is held to the same standard, and it is worth more
+
+Since 1.1.0 the app can update itself, which means there is now a second key that can put code on
+your Mac: the EdDSA key that signs the update feed. It deserves naming here rather than in a build
+document, because the thing this whole file is written against — an app holding Full Disk Access
+changing hands quietly — is exactly what an auto-updater makes cheaper.
+
+Stated plainly: **that key plus the Developer ID certificate is enough to hand every user a new
+version of an app that can read their whole disk, with one click and no further question.** That is
+a larger exposure than either key alone, and pretending otherwise would be the kind of omission
+commitment 3 exists to rule out.
+
+So it is held the same way — in the keychain, exported into exactly one repository secret, never an
+organisation-wide one, and never readable by a workflow that a pull request can trigger. It is not
+escrowed and not transferred. Commitment 1 still governs: an acquirer ships under a **new** bundle
+identifier, and no signature of any kind lets them inherit an existing grant instead.
+
+Two things reduce what the key can reach. Automatic checks are **off unless the user turned them
+on**, asserted in CI against the shipped bundle, so a compromised key does not reach a user who
+never opted in. And updates never install silently: `SUAutomaticallyUpdate` is false, so there is
+always a person clicking Install.
+
 ### 4. Abandonment relicenses the app, automatically
 
 If no release and no substantive commit has landed for **twelve consecutive months**, the

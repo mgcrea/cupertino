@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The only keys here are Sparkle's. Everything else about this app's
+	     Info.plist is still INFOPLIST_KEY_* build settings, merged into this file
+	     at build time — GENERATE_INFOPLIST_FILE stays YES. This file exists solely
+	     because SUPublicEDKey is not a key Xcode knows about, and there is no
+	     INFOPLIST_KEY_ spelling for it. -->
+	<key>SUFeedURL</key>
+	<string>https://cupertino.mgcrea.io/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>hEZtsdbIsEdeSrWseZL5HriTCgDioKsEXqLIEsEFEd0=</string>
+
+	<!-- Present and false, never absent. An ABSENT SUEnableAutomaticChecks is what
+	     makes Sparkle show its own "check automatically?" prompt on second launch;
+	     set explicitly, that prompt never appears and Cupertino asks in its own
+	     words instead. scripts/audit-network.sh asserts this value on the shipped
+	     bundle, which is what makes "off by default" checkable rather than claimed. -->
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<!-- Never install without being asked. This app holds Full Disk Access, and a
+	     silent replacement is precisely the mechanism docs/succession.md is written
+	     against. -->
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUSendProfileInfo</key>
+	<false/>
+	<!-- Non-sandboxed, so the XPC services are stripped at bundle time. Saying so
+	     here too means a framework that regrows them still goes unused. -->
+	<key>SUEnableInstallerLauncherService</key>
+	<false/>
+	<key>SUEnableDownloaderService</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+</dict>
+</plist>

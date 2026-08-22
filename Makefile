@@ -12,6 +12,15 @@ NODE_VERSION ?= 24.18.0
 # `arm64 x64` for a release; `arm64` alone builds far faster while iterating.
 NODE_ARCHS   ?= arm64 x64
 STAGED       := apps/apple/.build/staged
+# The updater. Pinned exactly, and checksum-verified against the value in
+# Sparkle's own Package.swift: the audit in scripts/audit-network.sh pardons a
+# specific list of symbols in this framework, and a version that drifted under
+# that allowance would be pardoned for something nobody measured.
+SPARKLE_VERSION  ?= 2.9.6
+SPARKLE_SHA256   := 8d5fb41d960b43f4a68aa14126bf62b098544ec8d191cdcc73eb14e63a8e7606
+SPARKLE_VENDOR   := apps/apple/Vendor
+SPARKLE_FRAMEWORK := $(SPARKLE_VENDOR)/Sparkle.framework
+SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. Mirrors `Surface.all` in apps/apple/Cupertino/Surfaces.swift
 # and `known` in apps/apple/CupertinoBridge/main.swift; adding one means all three.
 SURFACES     := mail notes reminders calendar
@@ -44,7 +53,7 @@ build: ## Build both halves: the npm servers and the app (Debug)
 # xcodebuild's own failure. Without pipefail plus the inner braces, a failed
 # Release build reaches `bundle`, which then fails at `ditto` with a missing-path
 # error that says nothing about what actually broke.
-app: ## Build Cupertino.app (Debug; Release needs the bundled servers)
+app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@set -o pipefail; xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino \
 		-configuration $(CONFIG) -derivedDataPath apps/apple/.build $(XCARGS) build \
 		| { grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true; }
@@ -166,6 +175,31 @@ servers: ## Bundle the MCP servers self-contained (no node_modules at runtime)
 	done
 	@echo "  staged $$(find $(STAGED)/servers -name '*.js' | wc -l | tr -d ' ') server files"
 
+# Vendored rather than resolved through SPM. Sparkle ships its SPM product as a
+# binaryTarget that points at this same zip, so the bytes are identical either
+# way — but a plain `xcodebuild` can consume a framework on disk without a
+# package graph, which keeps `make app` working the way `make node` already does
+# and leaves one pinned-and-checksummed download rather than two mechanisms.
+sparkle: ## Download and stage the pinned Sparkle.framework
+	@mkdir -p apps/apple/.build/sparkle-cache $(SPARKLE_VENDOR)
+	@zip="apps/apple/.build/sparkle-cache/Sparkle-$(SPARKLE_VERSION).zip"; \
+	[ -f "$$zip" ] || curl -fsSL -o "$$zip" \
+		"https://github.com/sparkle-project/Sparkle/releases/download/$(SPARKLE_VERSION)/Sparkle-for-Swift-Package-Manager.zip"; \
+	echo "$(SPARKLE_SHA256)  $$zip" | shasum -a 256 -c - >/dev/null \
+		|| { echo "  Sparkle checksum mismatch — refusing to build against it"; rm -f "$$zip"; exit 1; }; \
+	rm -rf apps/apple/.build/sparkle-cache/unpacked; \
+	unzip -qo "$$zip" -d apps/apple/.build/sparkle-cache/unpacked
+	@rm -rf $(SPARKLE_FRAMEWORK)
+	@ditto apps/apple/.build/sparkle-cache/unpacked/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework \
+		$(SPARKLE_FRAMEWORK)
+	@mkdir -p $(SPARKLE_TOOLS)
+	@ditto apps/apple/.build/sparkle-cache/unpacked/bin $(SPARKLE_TOOLS)
+	@# Sandbox-only, and this app is not sandboxed. Stripped here rather than at
+	@# bundle time so a Debug build audits identically to a Release one — each is
+	@# another Mach-O that scripts/audit-network.sh would otherwise have to pardon.
+	@rm -rf $(SPARKLE_FRAMEWORK)/Versions/B/XPCServices
+	@echo "  Sparkle $(SPARKLE_VERSION) staged: $(SPARKLE_FRAMEWORK)"
+
 node: ## Download and lipo the embedded node runtime
 	@mkdir -p $(STAGED) apps/apple/.build/node-cache
 	@for arch in $(NODE_ARCHS); do \
@@ -181,6 +215,8 @@ node: ## Download and lipo the embedded node runtime
 	@lipo -info $(STAGED)/node | sed 's/^/  /'
 
 RELEASE_APP := apps/apple/.build/Build/Products/Release/Cupertino.app
+RELEASE_SPARKLE := $(RELEASE_APP)/Contents/Frameworks/Sparkle.framework
+TEAM_ID     := 75QE9PRT3V
 
 # `sign` below is what gives the Release bundle its Developer ID signature, so
 # letting xcodebuild sign first is redundant — and on a CI runner it is fatal:
@@ -200,6 +236,18 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 
 # Inner-out, and never in the other order: signing the bundle first and then
 # touching anything inside it invalidates the outer signature.
+#
+# Sparkle needs the same treatment one level down: `Updater.app` and `Autoupdate`
+# are separate signable units that codesign does not reach by being pointed at
+# the framework, and sealing the framework before them invalidates that seal the
+# moment they are touched. Signed at `Sparkle.framework`, never at `Versions/B` —
+# codesign understands versioned bundles, and signing the version directory
+# leaves the outer symlink structure unsealed.
+#
+# --deep is not an option here and never was: it re-signs nested code with the
+# OUTER identity and options and drops nested designated requirements, which is
+# precisely what this enumeration exists to avoid. Apple documents it as
+# unsuitable for signing. `codesign --verify --deep` below is a different verb.
 sign: ## Sign the Release bundle (Developer ID if present, else Apple Development)
 	@id=$$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $$2; exit}'); \
 	if [ -z "$$id" ]; then \
@@ -208,13 +256,102 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		echo "     This build will NOT notarize and will not run on another Mac."; \
 	fi; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
+		"$(RELEASE_SPARKLE)/Versions/B/Updater.app"; \
+	codesign --force --options runtime --timestamp --sign "$$id" \
+		"$(RELEASE_SPARKLE)/Versions/B/Autoupdate"; \
+	codesign --force --options runtime --timestamp --sign "$$id" \
+		"$(RELEASE_SPARKLE)"; \
+	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/node.entitlements "$(RELEASE_APP)/Contents/Resources/node"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
 	@codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1 | sed 's/^/  /'
+	@# The hardened runtime is on and nothing disables library validation, so a
+	@# Sparkle signed by another team fails at dlopen — at launch, on a user's
+	@# Mac, long after this. Assert the team here, where the message is readable.
+	@codesign -dv --verbose=2 "$(RELEASE_SPARKLE)" 2>&1 | grep -q 'TeamIdentifier=$(TEAM_ID)' \
+		|| { echo "  Sparkle is not signed by $(TEAM_ID) — library validation will reject it"; exit 1; }
 	@echo "  size: $$(du -sh "$(RELEASE_APP)" | cut -f1)"
+
+# Run once, ever. The private key goes into the login keychain and the public
+# key into apps/apple/Cupertino-Info.plist, where it is committed.
+#
+# That private key is the most dangerous secret this project has: together with
+# the Developer ID certificate it is enough to hand every user a new version of
+# an app that holds Full Disk Access, with one click and no further question.
+# It belongs in the keychain and in one repository secret, never in an org-wide
+# one and never anywhere a pull_request workflow can read it. See
+# docs/succession.md.
+sparkle-keys: sparkle ## Generate the EdDSA update-signing keypair (once, ever)
+	@$(SPARKLE_TOOLS)/generate_keys
+	@echo ""
+	@echo "  Put the public key above into apps/apple/Cupertino-Info.plist (SUPublicEDKey),"
+	@echo "  and export the private key for CI with:"
+	@echo ""
+	@echo "    $(SPARKLE_TOOLS)/generate_keys -x sparkle_key.pem"
+	@echo "    gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle_key.pem && rm -P sparkle_key.pem"
+	@echo ""
+
+# Signed against the STAPLED zip, which is why this is not folded into
+# `notarize`: that target re-creates Cupertino.zip after stapling, so a signature
+# made any earlier would be a valid EdDSA signature over an artifact that has no
+# ticket — and every first launch would hit Gatekeeper with the signature saying
+# nothing is wrong. Run after `notarize`, so the published .sha256 and the
+# edSignature describe the same bytes.
+appcast: ## Sign the release zip and write a one-item appcast
+	@test -f apps/apple/.build/Cupertino.zip \
+		|| { echo "no apps/apple/.build/Cupertino.zip — run 'make notarize' first" >&2; exit 1; }
+	@test -x $(SPARKLE_TOOLS)/sign_update || $(MAKE) --no-print-directory sparkle
+	@set -e; \
+	if [ -n "$$SPARKLE_ED_PRIVATE_KEY" ]; then \
+		: "# CI. The key reaches sign_update through a file, never argv: a private"; \
+		: "# key on a command line is readable by every process via ps."; \
+		umask 077; printf '%s' "$$SPARKLE_ED_PRIVATE_KEY" > apps/apple/.build/sparkle.key; \
+		sig=$$($(SPARKLE_TOOLS)/sign_update --ed-key-file apps/apple/.build/sparkle.key \
+			apps/apple/.build/Cupertino.zip); \
+		rm -f apps/apple/.build/sparkle.key; \
+	else \
+		: "# A developer's Mac, where generate_keys put the key in the keychain."; \
+		: "# Same signature either way, so the feed can be produced and read"; \
+		: "# locally without exporting the private key to do it."; \
+		sig=$$($(SPARKLE_TOOLS)/sign_update apps/apple/.build/Cupertino.zip); \
+	fi; \
+	version=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+		"$(RELEASE_APP)/Contents/Info.plist"); \
+	build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+		"$(RELEASE_APP)/Contents/Info.plist"); \
+	notes=$$(sed -n "/^## \[$$version\]/,/^## \[/p" CHANGELOG.md | sed '1d;$$d'); \
+	: "# An empty description is not a cosmetic problem: it is the release notes"; \
+	: "# a user reads inside the update dialog before agreeing to replace an app"; \
+	: "# that holds Full Disk Access. Silently shipping nothing there because a"; \
+	: "# heading did not match — '## [1.1]' against '## [1.1.0]' — is exactly the"; \
+	: "# quiet pass the audit script's own counters exist to stop."; \
+	printf '%s' "$$notes" | grep -q '[^[:space:]]' \
+		|| { echo "no CHANGELOG.md section '## [$$version]' — the update dialog would show nothing" >&2; \
+		     rm -f apps/apple/.build/sparkle.key; exit 1; }; \
+	printf '%s\n' \
+	'<?xml version="1.0" encoding="utf-8"?>' \
+	'<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">' \
+	'  <channel>' \
+	'    <title>Cupertino</title>' \
+	'    <link>https://cupertino.mgcrea.io/appcast.xml</link>' \
+	'    <item>' \
+	"      <title>Cupertino $$version</title>" \
+	"      <pubDate>$$(date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>" \
+	"      <sparkle:version>$$build</sparkle:version>" \
+	"      <sparkle:shortVersionString>$$version</sparkle:shortVersionString>" \
+	'      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>' \
+	"      <description><![CDATA[$$notes]]></description>" \
+	"      <enclosure url=\"https://github.com/mgcrea/mcp-cupertino/releases/download/app-v$$version/Cupertino.zip\"" \
+	"        type=\"application/octet-stream\" $$sig/>" \
+	'    </item>' \
+	'  </channel>' \
+	'</rss>' \
+	> apps/apple/.build/appcast.xml
+	@xmllint --noout apps/apple/.build/appcast.xml 2>/dev/null || true
+	@echo "  appcast: apps/apple/.build/appcast.xml"
 
 notarize: ## Submit the signed bundle to Apple and staple the ticket
 	@test -n "$$AC_KEY_ID" || { echo "set AC_KEY_ID, AC_ISSUER_ID and AC_KEY_PATH first" >&2; exit 1; }
