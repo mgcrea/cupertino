@@ -350,11 +350,10 @@ has to be loud, and a loud cap mid-conversation demos worse than a clean refusal
 
 The ladder is published in advance and tied to **shipped surfaces**, not to the calendar:
 
-| Price  | When           | Surfaces                                  |
-| ------ | -------------- | ----------------------------------------- |
-| $14.99 | launch         | Mail, Notes, Reminders, Calendar          |
-| $24.99 | Messages ships | + Messages                                |
-| $34.99 | Safari ships   | + Safari — the full set the probes mapped |
+| Price  | When         | Surfaces                                             |
+| ------ | ------------ | ---------------------------------------------------- |
+| $14.99 | now          | Mail, Notes, Reminders, Calendar, Contacts, Messages |
+| $24.99 | Safari ships | + Safari — the full set the probes mapped            |
 
 The ladder is quoted in dollars because most of the audience is there, but **both currencies are set
 explicitly** on the Stripe price via `currency_options` — the euro figure is not a conversion of the
@@ -373,6 +372,19 @@ Calendar landed in `c740b4f`, before launch rather than after, so it sits in the
 than buying the first rise. The table was written a commit too early; this is the correction, and the
 top rung is one lower for it. A fourth at $49.99 is held rather than promised, because promising a
 price for a surface nobody has built yet is the kind of schedule that gets quietly dropped.
+
+**Contacts and then Messages did the same thing, and the rise was held both times.** So the rule is
+worth stating in the direction that actually binds: a surface landing is what MAY trigger a rise, and
+the two rules above constrain a rise — announced in advance, never reversed. Nothing constrains
+holding one back. Moving a rung to a later surface is always allowed; moving it earlier never is.
+
+The reason for holding it here is not that Messages was small — it is the largest surface in the set
+and the only one that needed a decoder. It is that a ladder exists to make buying early a good deal,
+and a rise landing on an audience that has barely started arriving does the opposite: it prices out
+the earliest buyers, who are the ones taking the risk on an unproven tool. The rung is still there,
+still published, still tied to a surface. It is tied to Safari now, and the top of the ladder came
+down by ten dollars rather than the bottom going up — the second time that has happened, and in both
+cases because the table had been written ahead of what the product had earned.
 
 Tying a rise to a date says latecomers pay more for the same thing, which earns resentment and teaches
 people to wait for a sale. Tying it to surfaces says the price went up because the product got bigger,

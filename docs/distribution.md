@@ -81,7 +81,7 @@ mcp-cupertino/
   packages/notes/
   packages/reminders/
   packages/contacts/    implemented
-  packages/messages/    not started
+  packages/messages/    implemented
   apps/apple/           the Cupertino.app build
   apps/website/         the marketing site
   design/               the one mark, and what `make icon` generates from it
@@ -202,10 +202,20 @@ off unless asked for, a static EdDSA-signed `appcast.xml` attached to each relea
 through `cupertino.mgcrea.io/appcast.xml`. No server: the signature is what makes the hosting
 untrusted, so a static file on GitHub is sufficient.
 
-**The Homebrew cask is still not built.** `apps/website/src/config.ts` advertises
-`brew install --cask mgcrea/tap/cupertino` and the tap does not exist, so that command fails today.
-It matters more than it looks: it is the only channel that can move a 1.0.0 install forward, since
-1.0.0 shipped with no updater in it.
+**The Homebrew cask is built, since 1.1.0.** `mgcrea/homebrew-tap` exists and
+`brew install --cask mgcrea/tap/cupertino` — which `apps/website/src/config.ts` had been advertising
+against a tap that did not exist — now works. It mattered more than it looked: it is the only
+channel that can move a 1.0.0 install forward, since 1.0.0 shipped with no updater in it.
+
+Two things the cask gets right and are easy to get wrong. It pins
+`.../download/app-v#{version}/Cupertino.zip` rather than `/releases/latest/download/`, so a package
+release cannot redirect it; and `livecheck` is anchored to `^app[-/]v?`, because the tag glob in this
+monorepo would otherwise offer a `core-v*` release as an app update. `auto_updates true` keeps brew
+and Sparkle from racing to replace the same bundle: brew is the install channel, Sparkle owns the
+copy afterwards.
+
+The bump is automatic but not unconditional — the `release-app` job skips it with a notice when
+`HOMEBREW_TAP_TOKEN` is unset, so a silently stale cask looks exactly like a successful release.
 
 ## What this does to the permission story
 
@@ -237,9 +247,9 @@ Disk Access is granted to something.
 | Mail      | `~/Library/Mail/V10/MailData/Envelope Index`                     | EPERM | full — implemented               |
 | Notes     | `~/Library/Group Containers/group.com.apple.notes/`              | EPERM | usable alone below ~5k notes     |
 | Reminders | `~/Library/Group Containers/group.com.apple.reminders/`          | EPERM | workable                         |
-| Messages  | `~/Library/Messages/chat.db` — **probed**                        | EPERM | none — measured, see below       |
+| Messages  | `~/Library/Messages/chat.db` — **implemented**                   | EPERM | none — measured, see below       |
 | Contacts  | `~/Library/Application Support/AddressBook/` — **implemented**   | EPERM | own TCC grant, not FDA           |
-| Safari    | `~/Library/Safari/History.db` — **probed**                       | EPERM | live tabs only, no history       |
+| Safari    | `~/Library/Safari/History.db` — **implemented**                  | EPERM | live tabs only, no history       |
 | Calendar  | `…/group.com.apple.calendar/Calendar.sqlitedb` — **implemented** | EPERM | too slow — 3.4 s at 1,349 events |
 
 Two paths that are commonly cited and wrong on this machine: **`~/Library/Reminders` does not
@@ -309,7 +319,7 @@ measurements do not support that. What they support is below.
 Apple Events is a viable read path on two surfaces out of six. So:
 
 - **Reads go through the file lane.** For a new surface, do not build an Apple Events read lane at
-  all. Messages, Calendar, Contacts and Safari get file-lane reads and nothing else. Calendar
+  all. Messages, Calendar and Contacts get file-lane reads and nothing else. Calendar
   shipped on exactly that shape and it held: no `jxa/read.ts` exists in `packages/calendar`, and a
   test asserts it never will. Contacts is the sharper case, and the reason the rule is about
   CAPABILITY rather than speed: its dictionary answers in ~65 ms, comfortably fast, and is still
@@ -318,6 +328,19 @@ Apple Events is a viable read path on two surfaces out of six. So:
 - **Writes go through Apple Events, always.** Not a preference: `PRAGMA query_only` is set because
   the app owns the store, holds it open and reconciles it against a server, so writing to it corrupts
   sync state. Every write verb on every surface is an Apple Event.
+- **Safari is the one exception, and it is an exception to the REASON rather than to the rule.**
+  `packages/safari` ships an Apple Events READ path — `apple_safari_list_tabs` — and that does not
+  breach the policy above, because the policy forbids a slow Apple Events lane that DUPLICATES a
+  fast file lane. Safari's does not duplicate anything. Its two lanes see almost disjoint things:
+  the file lane holds every visit ever made and cannot see the tab in front of you, because Safari
+  never writes open tabs to disk. There is no question the tabs lane answers more slowly than the
+  store; there is a question only it can answer, at 95–1,482 ms.
+
+  The test for a future surface is therefore not "is Apple Events fast enough" but "does the file
+  lane already answer this". Where the answer is no — and it is no exactly once so far — an Apple
+  Events read is a capability rather than a shortcut. `packages/safari` still has no
+  `jxa/history.ts`, and a test asserts it never will.
+
 - **Live state goes through Apple Events.** Safari is the sharp case — only **60.7%** of open tabs
   resolve to a history row, so the lanes genuinely see different things and "what is open right now"
   has no file-lane answer at any speed.
@@ -342,10 +365,16 @@ for Mail or Calendar: a 74-second search and a 3.4-second range query are not a 
 broken product that happens to return the right answer. A promise three of six surfaces cannot keep
 is worse than no promise.
 
-What replaces it is narrower and true: **a read-only surface needs no Automation grant at all.**
-`allowWrites` is off by default, so someone who never enables writes gets zero Automation prompts for
-Messages, Calendar and Safari — just the one Full Disk Access grant the bundle already shares. That
-is a better permission story than the one being retired, and the strongest argument for file-first.
+What replaces it is narrower and true: **with writes off, a surface needs no Automation grant at
+all.** `allowWrites` is off by default, so someone who never enables writes gets zero Automation
+prompts for Messages, Calendar and Safari — just the one Full Disk Access grant the bundle already
+shares. That is a better permission story than the one being retired, and the strongest argument for
+file-first.
+
+Messages is now the cleanest demonstration of it, having been the counter-example when this was
+written. Its send lane made `usesAppleEvents` true, and the surface still sends no Apple Event in its
+default configuration — because on that surface Apple Events can ONLY write. There is no read to
+leak through the gate, which is what makes the claim structural rather than a matter of discipline.
 
 The cost, stated plainly: **Full Disk Access becomes load-bearing for everything.** Nothing works
 before the largest grant. That was already true for Messages; this extends it to the rest.
@@ -372,5 +401,7 @@ to "what did I just give Full Disk Access to".
 - **Quarantine on first exec.** The app is spawned by an MCP host and may never be opened by the
   user. Stapled notarization should satisfy Gatekeeper — test it on a machine that has never seen
   the bundle, because if it does not hold, the double-click path stops being a nicety.
-- **Scope.** Mail is at 0.1.0 and not yet published; `.release-it.json` still has
-  `npm.publish: false`. This document plans four surfaces. Step 2 above deliberately ships one.
+- **Scope.** Settled since 1.1.0: core and the five bundled surfaces are published, versioned
+  with the app rather than on their own count. `.release-it.json` keeps `npm.publish: false`
+  deliberately — release-it bumps and tags, and the `publish-npm` job does the publishing, so
+  a release cannot happen from a laptop without provenance.

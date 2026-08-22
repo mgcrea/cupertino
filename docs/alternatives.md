@@ -111,4 +111,6 @@ comparison to "188" and will keep doing so.
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away.
 
-**Nothing is published yet.** Every project above ships today.
+**Published since 1.1.0.** The six `@mgcrea/mcp-apple-*` packages are on npm and the signed app
+ships from a Homebrew tap, so the distribution gap this section used to record against every
+project above is closed. What is left is reach, not availability.

@@ -27,7 +27,8 @@ No surface has needed the third lane. Calendar looked like it would and did not 
 
 **Scriptable** — Apple Events lane available: Reminders, Messages (writes only), Calendar,
 Contacts (writes only — its dictionary has no delete command at all),
-Photos, Safari, Shortcuts, Music, TV, Finder, Preview, QuickTime Player, Terminal, Script Editor,
+Safari (READS only, and the only one — live tabs, which the file lane cannot see at any price),
+Photos, Shortcuts, Music, TV, Finder, Preview, QuickTime Player, Terminal, Script Editor,
 Xcode, System Settings.
 
 **Not scriptable** — file lane or nothing: Freeform, Journal, Books, Podcasts, Maps, News, Home,
@@ -35,15 +36,36 @@ Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dict
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status          |
-| --------- | -------------------------------------------- | --------------- |
-| Mail      | file lane required — 74 s search             | implemented     |
-| Notes     | Apple Events usable below ~5k notes          | implemented     |
-| Reminders | dictionary complete for the core model       | implemented     |
-| Messages  | **file lane mandatory** — no read API exists | probed, unbuilt |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented     |
-| Safari    | two lanes see disjoint things                | probed, unbuilt |
-| Contacts  | file-lane reads, 0 ms; store is plural       | implemented     |
+| Surface   | Lane verdict                                 | Status      |
+| --------- | -------------------------------------------- | ----------- |
+| Mail      | file lane required — 74 s search             | implemented |
+| Notes     | Apple Events usable below ~5k notes          | implemented |
+| Reminders | dictionary complete for the core model       | implemented |
+| Messages  | **file lane mandatory** — no read API exists | implemented |
+| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented |
+| Safari    | two lanes see disjoint things                | implemented |
+| Contacts  | file-lane reads, 0 ms; store is plural       | implemented |
+
+Every probed surface now has a package. **Safari is the only read-only one**, and that is recorded
+as a decision rather than left as an omission: `surfaces.json` carries the reasoning, and its
+`tools.test.ts` asserts the tool list is IDENTICAL with writes enabled, so a mutating tool cannot
+appear there without that decision being taken again.
+
+Messages was the other one until its send lane landed, and the shape it ended up with is worth
+keeping in view, because it is the one this table's "no read API exists" verdict seemed to rule out.
+Apple Events on that surface is a **write lane and nothing else** — one command, `send` — and the
+thing that made it shippable was not a new measurement but a division of labour between the lanes:
+the file lane picks the target (Messages will not enumerate participants for a script, but it will
+accept a chat guid, and `chat.db` holds one for every conversation) and the file lane finds the sent
+row afterwards (Apple Events returns no identifier for what it sent). Its `jxa.test.ts` asserts
+`read.ts` does not exist, which is the same guard by a different name.
+
+**Safari is the exception to the lane policy, and the exception is principled.**
+[distribution.md](distribution.md) says a new surface gets file-lane reads only, because an Apple
+Events read lane is a slow duplicate of a fast one. Safari's is not a duplicate: its two lanes see
+almost disjoint things, and no amount of file-lane speed answers "what is open right now", because
+Safari never writes it down. It is the one surface here where losing a grant makes the server
+_smaller_ rather than _slower_.
 
 ### Beyond the probed set
 
@@ -148,7 +170,13 @@ which resolves only about half of open tabs.
 
 ## Still open across all surfaces
 
-- **No schema fixtures captured** for Messages or Safari. (Contacts' is captured —
+- **No history schema fixture captured for Safari.** `packages/safari/src/client/store.ts` is
+  therefore written against the EXPECTED DDL, with every column behind a `#col()` guard and the
+  visits→items join column discovered at open time rather than named — so a wrong expectation
+  costs one field instead of the lane, and `test/store.test.ts` pins that degradation. A
+  `Bookmarks.plist` fixture IS captured (synthetic, checked in, and it reproduces the `plutil`
+  NSData failure), so the Reading List walker runs for real in `test/bookmarks.test.ts`.
+- **No schema fixtures captured** for Messages. (Contacts' is captured —
   `packages/contacts/test/fixtures/contacts-store.sql`, 94 objects, no rows.) (Calendar's is captured, and the premise
   of this note was wrong: `writeFixture` creates the directory, so `--write` never needed the package
   to exist first.)
@@ -158,8 +186,35 @@ which resolves only about half of open tabs.
   `Permissions.swift` still only ever checks Full Disk Access, so a Contacts store that cannot be
   opened is still reported with the wrong advice. Whether FDA alone opens it is measured in one
   direction only. That pane owes two states, this one and Safari's.
-- **`Permissions.swift` models two permission states.** Safari needs three — see
-  [safari.md](safari.md).
+- ~~**The Automation row is a dead end while the target app is closed.**~~ Fixed. Contacts is what
+  exposed it: Mail, Notes, Reminders and Calendar are apps people leave open, so `.appNotRunning` was
+  effectively unreachable until a surface arrived that nobody keeps running. MEASURED, macOS 26.6,
+  Contacts quit:
+
+  | bundle                  | running | `askUserIfNeeded: false` | `askUserIfNeeded: true` |
+  | ----------------------- | ------- | ------------------------ | ----------------------- |
+  | `com.apple.AddressBook` | no      | `-600`                   | `-600`                  |
+  | `com.apple.iCal`        | yes     | `0`                      | `0`                     |
+  | `com.apple.reminders`   | yes     | `0`                      | `0`                     |
+  | `com.apple.Notes`       | yes     | `0`                      | `0`                     |
+  | `com.apple.mail`        | yes     | `0`                      | `0`                     |
+
+  So `AEDeterminePermissionToAutomateTarget` does **not** launch its target: asked to prompt, it
+  still returns `procNotFound`. `.appNotRunning` is therefore a precondition rather than a verdict,
+  and three buttons wired straight to `requestAutomation` could never clear it — they re-ran the
+  same call and wrote back the state they started in. Opening the app first settles it in **53 ms**,
+  so `Permissions.launchAndRequestAutomation` opens the target without activating it, polls until
+  TCC will answer, and then asks. The same pass found `.denied` had the identical defect in
+  `SurfaceDetail`, which offered "Allow…" for a denial that cannot be re-prompted; button labels and
+  destinations now come from one `StatusStyle.actionLabel`.
+
+- **`Permissions.swift` models two permission states, and Safari's third is now AVOIDED rather
+  than modelled.** `do JavaScript` needs "Allow JavaScript from Apple Events" — a developer-menu
+  toggle, not a TCC grant, whose own state is unreadable because `defaults read com.apple.Safari
+AllowJavaScriptFromAppleEvents` is itself TCC-protected. `packages/safari` ships no verb that
+  needs it, and `test/jxa.test.ts` asserts no script contains `doJavaScript`, so the app's
+  two-state model stays honest for this surface. The third state is only owed if that verb is ever
+  wanted — see [safari.md](safari.md).
 - ~~**The four hardcoded surface lists.**~~ Done, and the count was understated: it was ten, not four.
   `surfaces.json` plus `scripts/generate-surfaces.mjs` replaced all of them when Contacts went in as
   the fifth surface, and `make surfaces-check` runs in CI. Two findings from doing it: a `#` comment
