@@ -1,5 +1,5 @@
 /**
- * The three shipped surfaces, their tool names, and which of them the write
+ * The four shipped surfaces, their tool names, and which of them the write
  * gate hides.
  *
  * These lists are transcribed from `packages/<surface>/src/tools/index.ts`, and the

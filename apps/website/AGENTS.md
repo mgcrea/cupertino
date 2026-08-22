@@ -43,7 +43,7 @@ by construction and ships straight to production. Check anything CSP-adjacent wi
 - **`src/config.ts`** — every fact that changes between releases: the domain, the repo and doc
   URLs, the measured latencies, `SHIPPED`. `SHIPPED` gates the pre-release pill and the CTA, so the
   site cannot half-announce a release. Never hard-code one of these in a component.
-- **`src/data/surfaces.ts`** — the three surfaces and every tool name, split into `read` (always
+- **`src/data/surfaces.ts`** — the four surfaces and every tool name, split into `read` (always
   registered) and `write` (registered only when `*_ALLOW_WRITES` is true). The homepage JSON-LD,
   the surface cards, the marquee and the write-gate demo all read from it.
 - **Everything else is inline in its component.** No content collection, no CMS.
