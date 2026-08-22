@@ -27,6 +27,7 @@
  * possible failure on this surface. So the edge travels with the result.
  */
 
+import { renderInstant } from "./dates.js";
 import type { Coverage, EventRow } from "./store.js";
 
 export type Truncation = {
@@ -53,12 +54,29 @@ export type MergedRange = {
 /**
  * Identity for deduping.
  *
- * `(uuid, start instant)` rather than uuid alone: two occurrences of the same
+ * `(uuid, rendered start)` rather than uuid alone: two occurrences of the same
  * series are the same event at different times, and collapsing them by uuid
  * would return a weekly meeting once — the exact bug the two-leg design exists
  * to avoid.
+ *
+ * ## Why the RENDERED start and not the raw column
+ *
+ * MEASURED, against a live calendar: an all-day event created through this
+ * server came back TWICE — once from each leg, same uuid, both rendering as
+ * 17 September. `CalendarItem.start_date` and `OccurrenceCache.occurrence_date`
+ * do not hold the identical number for an all-day event, so a key built on the
+ * raw value saw two different events and let both through.
+ *
+ * Rendering first collapses that: two all-day rows for one uuid on one DAY are
+ * the same event, whatever the two columns disagree about underneath. For a
+ * timed event the rendered ISO is second-precision, which also absorbs the
+ * float wobble a REAL column can introduce.
  */
-const keyOf = (r: EventRow): string => `${String(r.uuid).toUpperCase()}|${r.startApple}`;
+const keyOf = (r: EventRow, epochOffset: number): string => {
+  const at = renderInstant(r.startApple, r.startTz, r.allDay, epochOffset);
+  const when = at ? (at.allDay ? at.day : at.iso) : String(r.startApple);
+  return `${String(r.uuid).toUpperCase()}|${when}`;
+};
 
 /**
  * The identity of the occurrence a detached row REPLACES.
@@ -84,6 +102,8 @@ export const mergeRange = (opts: {
   fromApple: number;
   toApple: number;
   limit: number;
+  /** From `StoreCapabilities`, so the dedupe key can render before comparing. */
+  epochOffset: number;
 }): MergedRange => {
   const seen = new Set<string>();
   const out: EventRow[] = [];
@@ -105,7 +125,7 @@ export const mergeRange = (opts: {
       continue;
     }
     if (r.source === "occurrence" && replaced.has(occurrenceSlotOf(r))) continue;
-    const k = keyOf(r);
+    const k = keyOf(r, opts.epochOffset);
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(r);

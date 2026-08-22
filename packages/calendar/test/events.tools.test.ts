@@ -157,6 +157,7 @@ type Page = {
     summary: string;
     allDay: boolean;
     start: { day?: string; iso?: string; timeZone: string | null };
+    end?: { day?: string; iso?: string };
     isOccurrence: boolean;
     seriesRef?: string;
     calendar: string;
@@ -217,6 +218,9 @@ describe("apple_calendar_list_events", () => {
     const holiday = p.events.find((e) => e.summary === "Bank holiday")!;
     expect(holiday.allDay).toBe(true);
     expect(holiday.start.day).toBe("2026-08-24");
+    // `end` is reported raw while the all-day anchoring is unsettled — see the
+    // note in calendar.ts #summarise. The fixture holds next-day local midnight.
+    expect(holiday.end!.day).toBe("2026-08-25");
     expect(holiday.start.timeZone).toBeNull();
     expect(holiday.start.iso).toBeUndefined();
   });

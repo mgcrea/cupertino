@@ -7,6 +7,7 @@ import {
 
 import type { Config } from "../config.js";
 import {
+  parseBound,
   parseDate,
   parseDuration,
   parseRange,
@@ -22,7 +23,7 @@ import {
   IndexUnavailableError,
   PreconditionError,
 } from "./errors.js";
-import { CREATE_EVENT, DELETE_EVENTS, EXCLUDE_OCCURRENCE, UPDATE_EVENT } from "./jxa/write.js";
+import { CREATE_EVENT, DELETE_EVENTS, UPDATE_EVENT } from "./jxa/write.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { mergeRange, type ExpansionState } from "./recurrence.js";
 import { decodeRef, encodeRef, seriesRefOf } from "./ref.js";
@@ -299,6 +300,23 @@ export class AppleCalendarClient {
 
   #summarise(row: EventRow, store: CalendarStore): EventSummary {
     const start = renderInstant(row.startApple, row.startTz, row.allDay, store.caps.epochOffset);
+    /**
+     * OPEN: the all-day `end` convention is not settled, so it is reported RAW.
+     *
+     * Measured against a live calendar, creating one all-day event on
+     * 21 September: Apple Events reads the end back as `2026-09-21T21:59:59`
+     * (23:59:59 local — inclusive), while the store renders a day later. The two
+     * legs also disagree with each other: an occurrence row reports end on the
+     * same day as start, an item row a day after.
+     *
+     * A "subtract a second before rendering" normalisation was tried and turned
+     * out to be a no-op on real data, which means the anchoring differs in a way
+     * that has not been pinned down — `start_date` reads as local midnight while
+     * `end_date` appears to be anchored differently. Guessing again on top of an
+     * unverified premise is how the start-of-day bug got here in the first
+     * place, so this stays raw and documented until the raw columns are read.
+     * See docs/calendar.md, "Still open".
+     */
     const end = renderInstant(
       row.endApple,
       row.endTz ?? row.startTz,
@@ -357,6 +375,7 @@ export class AppleCalendarClient {
       fromApple,
       toApple,
       limit: legLimit,
+      epochOffset: store.caps.epochOffset,
     });
 
     const declined = filters.includeDeclined ?? this.config.includeDeclined;
@@ -573,8 +592,28 @@ export class AppleCalendarClient {
     return store.calendars().find((c) => c.uuid?.toLowerCase() === lower)?.title ?? undefined;
   }
 
+  /**
+   * Run a write script, re-inflating its application-level failures.
+   *
+   * Core turns a `{ok:false, error:{code, message}}` envelope into a generic
+   * `ProtocolError` carrying the code, which surfaces as a bare `"Birthdays"`.
+   * That matters more here than it looks: the store-side writability check is
+   * derived from `subcal_url` and MISSES calendars that are read-only for other
+   * reasons — Birthdays and Siri Suggestions both report `writable() === false`
+   * while carrying no subscription URL. The JXA lane catches them correctly, so
+   * the only thing lost was the explanation. This puts it back.
+   */
   async #run<T>(scriptText: string, params: unknown): Promise<T> {
-    return withBusyRetry(() => this.runner.run<T>(scriptText, params));
+    try {
+      return await withBusyRetry(() => this.runner.run<T>(scriptText, params));
+    } catch (err) {
+      const code = (err as { details?: { code?: string } })?.details?.code;
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === "CALENDAR_NOT_WRITABLE") throw new CalendarNotWritableError(message);
+      if (code === "CALENDAR_NOT_FOUND") throw new CalendarNotFoundError(message);
+      if (code === "EVENT_NOT_FOUND") throw new EventNotFoundError(message);
+      throw err;
+    }
   }
 
   #shapeWrite(data: Record<string, unknown>, calendarUid: string | null): WriteResult {
@@ -606,13 +645,23 @@ export class AppleCalendarClient {
     const now = this.#now();
     const from = parseDate("start", start, now);
     if (end !== undefined) {
-      const to = parseDate("end", end, now);
-      if (to.at.getTime() <= from.at.getTime()) {
+      /**
+       * A bare day as `end` means THROUGH that day, not midnight at its start.
+       *
+       * `parseBound` already encodes this for range queries, and list_events
+       * documents it — "naming the same day for both gives that whole day". Using
+       * plain `parseDate` here made create disagree with list about the same
+       * word: `{start: "2026-09-21", end: "2026-09-21"}`, the natural way to say
+       * "a one-day event", was refused as ending before it began.
+       */
+      const to = parseBound("end", end, "end", now);
+      if (to.getTime() <= from.at.getTime()) {
         throw new PreconditionError(
-          `end (${to.iso}) is not after start (${from.iso}). An event cannot finish before it begins.`,
+          `end (${toLocalIso(to)}) is not after start (${from.iso}). An event cannot finish ` +
+            `before it begins.`,
         );
       }
-      return { startIso: from.iso, endIso: to.iso, allDayHint: from.kind === "allDay" };
+      return { startIso: from.iso, endIso: toLocalIso(to), allDayHint: from.kind === "allDay" };
     }
     const minutes =
       durationMinutes === undefined
@@ -693,45 +742,36 @@ export class AppleCalendarClient {
   }
 
   /**
-   * Delete events, or exclude single occurrences of them.
+   * Delete whole events.
    *
-   * `scope` has no default on purpose. The two outcomes are "one lunch is
-   * cancelled" and "the weekly standup no longer exists", and no default is
-   * safe enough to guess at.
+   * Only whole events: Calendar's scripting interface cannot remove a single
+   * occurrence of a repeating one. `excludedDates` — the property Calendar.app
+   * itself uses for "Delete This Event" — reads back a 1903 sentinel and throws
+   * on assignment, measured on macOS 26.6. So an occurrence ref is refused
+   * rather than silently deleting the whole series, which is the same shape of
+   * refusal `updateEvent` makes and for the same underlying reason.
    */
-  async deleteEvents(
-    refs: readonly string[],
-    scope: "series" | "occurrence",
-  ): Promise<{ results: unknown[]; scope: string }> {
-    const decoded = refs.map((r) => decodeRef(r));
+  async deleteEvents(refs: readonly string[]): Promise<{ results: unknown[]; scope: string }> {
+    const decoded = refs.map((r, i) => ({ ref: refs[i]!, parsed: decodeRef(r) }));
 
-    if (scope === "occurrence") {
-      const results = [];
-      for (const ref of decoded) {
-        if (!ref.occurrenceStart) {
-          throw new PreconditionError(
-            `Scope "occurrence" needs a ref naming one occurrence, and ${JSON.stringify(
-              refs[decoded.indexOf(ref)],
-            )} names a whole event. Use the ref from a list_events result, or pass scope "series".`,
-          );
-        }
-        const data = await this.#run<Record<string, unknown>>(EXCLUDE_OCCURRENCE, {
-          calendar: this.#nameForRefCalendar(ref.calendarUid) ?? null,
-          uid: ref.eventUid,
-          occurrenceStart: ref.occurrenceStart.toISOString(),
-        });
-        results.push(data);
-      }
-      this.invalidate();
-      return { results, scope };
+    const occurrence = decoded.find((d) => d.parsed.isOccurrence);
+    if (occurrence) {
+      throw new PreconditionError(
+        `That ref names one occurrence of a repeating event, and Calendar's scripting interface ` +
+          `cannot delete a single occurrence — the excluded-dates property it would need is not ` +
+          `writable. Deleting the series instead would remove every other occurrence too, so ` +
+          `this is refused rather than done silently. Delete this one in Calendar.app, or pass ` +
+          `the seriesRef from apple_calendar_get_event to delete the whole series.`,
+        { ref: occurrence.ref, seriesRef: seriesRefOf(occurrence.parsed) },
+      );
     }
 
     // Grouped by calendar: findEvent costs one bulk uid fetch per calendar, so
     // deleting five events from one calendar should pay that once, not five times.
     const byCalendar = new Map<string, string[]>();
-    for (const ref of decoded) {
-      const key = ref.calendarUid || "";
-      byCalendar.set(key, [...(byCalendar.get(key) ?? []), ref.eventUid]);
+    for (const { parsed } of decoded) {
+      const key = parsed.calendarUid || "";
+      byCalendar.set(key, [...(byCalendar.get(key) ?? []), parsed.eventUid]);
     }
     const results: unknown[] = [];
     for (const [calendar, uids] of byCalendar) {
@@ -742,7 +782,7 @@ export class AppleCalendarClient {
       results.push(...(data.results ?? []));
     }
     this.invalidate();
-    return { results, scope };
+    return { results, scope: "series" };
   }
 
   lanes(): LaneStatus {

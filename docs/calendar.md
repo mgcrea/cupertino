@@ -233,25 +233,88 @@ message and in [verify.md](verify.md)). Compare a probe fingerprint with a probe
 Reconciling the two orderings is a one-line change in `packages/core` that moves the value for every
 surface at once.
 
+## What a live write trial found
+
+Everything above was measured by reading. This section was measured by _writing_, on a scratch
+calendar, and it changed the code five times — the shapes all compiled and all passed their unit
+tests first.
+
+### All-day events are stored at LOCAL midnight, not UTC
+
+The single worst bug found. `renderInstant` derived an all-day day from UTC components, so on a
+Paris machine every birthday was reported **one day early** — and the ref in the same result
+disagreed with the day beside it:
+
+```
+ref occurrence 20260821T000000+0200   ->   start.day 2026-08-20
+```
+
+The reasoning behind it came from [reminders.md](reminders.md), which records that _Reminders'_
+store holds UTC midnight while its Apple Events lane holds local midnight. That was generalised to
+Calendar without measuring. The unit tests agreed because their fixtures were built on the same
+assumption, and a four-timezone matrix passed while the surface was wrong for every user east of
+Greenwich. **The anchor is a property of the store; measure it per surface.**
+
+### Calendars cannot be addressed by uid over Apple Events
+
+`calendar.uid()` throws `AppleEvent handler failed` (-10000) for **every** calendar, including one
+this process had just created. The event id bridge is exact and was measured; it does not extend to
+calendars, and assuming it did meant every write failed with `CALENDAR_NOT_FOUND` naming a UUID
+Apple Events had never seen.
+
+So calendars cross that boundary **by name**. Which makes duplicate names a real problem: this
+machine has two calendars called `olouvignes@me.com`, and a write that matches more than one is now
+refused rather than resolved by coin flip.
+
+`writable()` is also the only reliable authority on read-only-ness. The store-derived signal
+(`subcal_url` present) flags only `Fêtes (France)`, while Calendar reports `Birthdays` and
+`Siri Suggestions` as unwritable too.
+
+### Two write operations do not exist, and one lied about it
+
+| Operation                | What Calendar actually does                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| Exclude one occurrence   | `excludedDates()` reads back a **1903 sentinel**; assigning to it throws. Unusable. |
+| Delete a repeating event | `C.delete(ev)` **neither throws nor deletes** — count before 1, after 1             |
+| Delete a single event    | works                                                                               |
+
+The exclusion script verified its own work and therefore _reported_ its failure honestly; the delete
+script trusted "it did not throw" and reported `deleted: true` for an event still sitting on the
+calendar. Delete now re-reads the uid list and decides by absence, and single-occurrence delete was
+removed rather than left to fail — `delete_events` refuses an occurrence ref and says why, the same
+shape as `update_event`.
+
+Deleting a _calendar_ is not scriptable either (-10000). Creating one half-works: the calendar
+appears, and the call still reports an error.
+
+### Recurrence rules can be written
+
+`ev.recurrence = "FREQ=WEEKLY;INTERVAL=1;COUNT=4"` is accepted and read back verbatim, and the store
+expanded it into four occurrence rows within seconds — correctly across a DST boundary, with the
+26 October instance at `+01:00` and the earlier ones at `+02:00`, wall-clock preserved. This unblocks
+adding a `recurrence` parameter to `create_event`, which was held back pending exactly this test.
+
+### Both legs can report the same all-day event
+
+An all-day event created through the server came back **twice**, once per leg, same uid, both
+rendering as the same day — `CalendarItem.start_date` and `OccurrenceCache.occurrence_date` do not
+hold the identical number for one. The dedupe key now renders before comparing, so two all-day rows
+for one uid on one day collapse whatever the columns disagree about underneath.
+
 ## Still open
 
-- **The one extra store row** — 1,350 rows against 1,349 Apple Events events. All 1,350 are
-  `entity_type` 2 with a start date, so it is a real event Apple Events did not list rather than a
-  reminder hiding in the table. `CalendarItem.birthday_id` exists and is the obvious suspect.
-- **Writes are implemented but not exercised against a real calendar.** Every script compiles under
-  `osacompile` and the tools are covered by an injected fake runner, which proves the shapes and not
-  the behaviour. What still needs a consented pass on a throwaway calendar: whether Calendar treats
-  an all-day `end` as inclusive or exclusive, and whether the excluded-dates assignment behaves as
-  `EXCLUDE_OCCURRENCE` assumes.
-- **Calendar writability is derived, not measured.** `Calendar` has no explicit writable column, so
-  `isSubscribed` is taken from the presence of `subcal_url`. The `flags`, `type` and `sharing_status`
-  columns may carry a better signal. The JXA lane asks Calendar itself via `writable()`, so this only
-  decides whether the refusal is early and well-named or late and cryptic.
-- **`occurrence_date` vs `occurrence_start_date`.** Leg 2 reads `occurrence_date`, which spans the
-  full ±2 years while `occurrence_start_date` reaches only +256 days — so the latter would silently
-  truncate. The clean set diff supports the choice but does not prove it: the 46 uids Apple Events
-  reported were matched mostly by leg 1, so leg 2's instants are not independently validated.
+- **The all-day `end` convention.** Apple Events reads a one-day event's end back as
+  `23:59:59` local (inclusive); the store renders a day later, and the two legs disagree with each
+  other. A "subtract a second" normalisation was tried and proved a no-op on real data, which means
+  `end_date` is anchored differently from `start_date` in a way not yet pinned down. `end` is
+  reported RAW until the columns are read directly. Guessing twice on the same premise is what put
+  the start-of-day bug here.
+- **The one extra store row** — 1,350 rows against 1,349 Apple Events events. All are `entity_type`
+  2 with a start date, so it is a real event Apple Events did not list. `CalendarItem.birthday_id`
+  is the obvious suspect.
 - **Status codes are inferred.** `status` and `invitationStatus` are read as EventKit's documented
   `EKEventStatus` / `EKParticipantStatus` constants. Likely, not measured — which is why cancelled
   and declined events are only hidden when asked for, and why the raw value is on every result.
 - **`hidden` and `phantom_master` are excluded conservatively** from both legs on the same basis.
+- **`occurrence_date` vs `occurrence_start_date`.** Leg 2 reads `occurrence_date`, which spans the
+  full ±2 years while `occurrence_start_date` reaches only +256 days.

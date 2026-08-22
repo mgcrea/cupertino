@@ -153,15 +153,53 @@ function readback(ev, cal) {
   };
 }
 
-/** Apply the optional fields a create and an update have in common. */
+/**
+ * Apply the optional fields a create and an update have in common.
+ *
+ * ## The dates go first, and in an order that is never briefly invalid
+ *
+ * MEASURED: moving an event later failed with
+ *
+ *     Failed to save event [...], with error
+ *     [{ NSLocalizedDescription = "The start date must be before the end date." }]
+ *
+ * because start and end are two assignments, not one. Setting start to 16:00 on
+ * an event still ending at 15:30 makes the interval invalid, and EventKit
+ * validates on save rather than on assignment. Which order is safe depends on
+ * which way the event is moving, so the current end decides: moving later, the
+ * end is pushed out first; moving earlier, the start is pulled back first.
+ *
+ * They also go BEFORE the text fields. Apple Events has no transaction, so a
+ * failure part-way through leaves whatever already applied — and the first
+ * version of this wrote the new location, then failed on the dates, leaving the
+ * event half-updated. Doing the fragile part first means a date failure changes
+ * nothing else.
+ */
 function applyFields(ev, f) {
+  var newStart = f.startDate !== undefined && f.startDate !== null ? new Date(f.startDate) : null;
+  var newEnd = f.endDate !== undefined && f.endDate !== null ? new Date(f.endDate) : null;
+
+  if (newStart !== null && newEnd !== null) {
+    var currentEnd = prop(function () { return ev.endDate(); }, null);
+    var movingLater = currentEnd === null || newEnd.getTime() >= currentEnd.getTime();
+    if (movingLater) {
+      ev.endDate = newEnd;
+      ev.startDate = newStart;
+    } else {
+      ev.startDate = newStart;
+      ev.endDate = newEnd;
+    }
+  } else if (newStart !== null) {
+    ev.startDate = newStart;
+  } else if (newEnd !== null) {
+    ev.endDate = newEnd;
+  }
+
+  if (f.allDay !== undefined && f.allDay !== null) ev.alldayEvent = Boolean(f.allDay);
   if (f.summary !== undefined && f.summary !== null) ev.summary = String(f.summary);
   if (f.location !== undefined) ev.location = f.location === null ? "" : String(f.location);
   if (f.description !== undefined) ev.description = f.description === null ? "" : String(f.description);
   if (f.url !== undefined) ev.url = f.url === null ? "" : String(f.url);
-  if (f.startDate !== undefined && f.startDate !== null) ev.startDate = new Date(f.startDate);
-  if (f.endDate !== undefined && f.endDate !== null) ev.endDate = new Date(f.endDate);
-  if (f.allDay !== undefined && f.allDay !== null) ev.alldayEvent = Boolean(f.allDay);
 }
 `;
 

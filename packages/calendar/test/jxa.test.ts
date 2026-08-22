@@ -24,7 +24,7 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "client",
 
 describe("JXA scripts", () => {
   it("found every script", () => {
-    expect(SCRIPTS.length).toBe(4);
+    expect(SCRIPTS.length).toBe(3);
   });
 
   it.each(SCRIPTS)("%s passes the interpolation tripwire", (_name, source) => {
@@ -84,12 +84,13 @@ describe("JXA scripts", () => {
   });
 
   /**
-   * A delete that reports success without deleting is the worst lie this
-   * surface could tell, so the exclusion path reads its own work back.
+   * MEASURED, macOS 26.6: `excludedDates` reads back a 1903 sentinel and throws
+   * on assignment, so excluding one occurrence cannot be done over Apple Events
+   * at all. The script that tried was removed rather than left to fail, and the
+   * tool refuses an occurrence ref instead. Pinned so it is not re-added.
    */
-  it("verifies an exclusion actually took, rather than trusting the assignment", () => {
-    expect(write.EXCLUDE_OCCURRENCE).toContain("EXCLUSION_NOT_APPLIED");
-    expect(write.EXCLUDE_OCCURRENCE).toContain("ev.excludedDates = next");
+  it("has no excluded-dates path, because Calendar has no writable one", () => {
+    for (const [, source] of SCRIPTS) expect(source).not.toContain("excludedDates");
   });
 
   /**
@@ -102,6 +103,30 @@ describe("JXA scripts", () => {
   it("has no Apple Events read lane", () => {
     expect(existsSync(join(SRC, "write.ts"))).toBe(true);
     expect(existsSync(join(SRC, "read.ts"))).toBe(false);
+  });
+
+  /**
+   * MEASURED: moving an event later failed with "The start date must be before
+   * the end date" — start and end are two assignments and EventKit validates on
+   * save, so the naive order is briefly invalid. The current end decides which
+   * way round to write them.
+   */
+  it("writes the two dates in an order chosen from the current end", () => {
+    const body = /function applyFields\(ev, f\) \{[\s\S]*?\n\}/.exec(write.CREATE_EVENT)?.[0];
+    expect(body).toBeTruthy();
+    expect(body).toContain("ev.endDate()");
+    expect(body).toContain("movingLater");
+  });
+
+  /**
+   * Apple Events has no transaction. The dates are the assignment most likely to
+   * be refused, so they go first — a failure there then leaves nothing else
+   * changed, rather than a half-updated event with a new location and an old time.
+   */
+  it("applies the fragile dates before the text fields", () => {
+    const body = /function applyFields\(ev, f\) \{[\s\S]*?\n\}/.exec(write.CREATE_EVENT)![0];
+    expect(body.indexOf("ev.startDate")).toBeLessThan(body.indexOf("ev.summary ="));
+    expect(body.indexOf("ev.endDate")).toBeLessThan(body.indexOf("ev.location ="));
   });
 
   // osacompile only exists on macOS; the rest of the suite is portable.

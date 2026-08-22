@@ -42,6 +42,7 @@ const merge = (over: Partial<Parameters<typeof mergeRange>[0]> = {}) =>
     fromApple: T,
     toApple: T + 7 * DAY,
     limit: 200,
+    epochOffset: 978_307_200,
     ...over,
   });
 
@@ -130,6 +131,45 @@ describe("mergeRange", () => {
       ],
     });
     expect(got.rows.map((r) => r.uuid).toSorted()).toEqual(["MOVED", "SERIES"]);
+  });
+
+  /**
+   * REGRESSION, from a live calendar. An all-day event created through this
+   * server came back TWICE — once per leg, same uuid, both rendering as the
+   * same day, because `start_date` and `occurrence_date` do not hold the
+   * identical number for an all-day event. The key renders before comparing.
+   */
+  it("collapses an all-day event that both legs report with different raw starts", () => {
+    const midnight = T;
+    const got = merge({
+      items: [row({ uuid: "ALLDAY", startApple: midnight, source: "item", allDay: true })],
+      occurrences: [
+        // Same day, deliberately not the same number.
+        row({ uuid: "ALLDAY", startApple: midnight + 37, source: "occurrence", allDay: true }),
+      ],
+    });
+    expect(got.rows).toHaveLength(1);
+    expect(got.rows[0]!.source).toBe("item");
+  });
+
+  /** A timed event still dedupes on the instant, absorbing sub-second wobble. */
+  it("collapses a timed duplicate that differs by less than a second", () => {
+    const got = merge({
+      items: [row({ uuid: "TIMED", startApple: T, source: "item" })],
+      occurrences: [row({ uuid: "TIMED", startApple: T + 0.4, source: "occurrence" })],
+    });
+    expect(got.rows).toHaveLength(1);
+  });
+
+  /** But two genuinely different times are still two events. */
+  it("keeps two occurrences an hour apart", () => {
+    const got = merge({
+      occurrences: [
+        row({ uuid: "S", startApple: T, source: "occurrence" }),
+        row({ uuid: "S", startApple: T + 3600, source: "occurrence" }),
+      ],
+    });
+    expect(got.rows).toHaveLength(2);
   });
 
   it("counts rows with no usable start instead of losing them quietly", () => {

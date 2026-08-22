@@ -66,7 +66,9 @@ const fakeRunner = (overrides: Record<string, unknown> = {}) => {
     if (source.includes("p.uids.length")) {
       const uids = (params as { uids: string[] }).uids;
       return (
-        overrides.deleted ?? { results: uids.map((u) => ({ uid: u, found: true, deleted: true })) }
+        overrides.deleted ?? {
+          results: uids.map((u) => ({ uid: u, found: true, deleted: true, repeats: false })),
+        }
       );
     }
     if (source.includes("EXCLUSION_NOT_APPLIED")) {
@@ -194,6 +196,23 @@ describe("apple_calendar_create_event", () => {
     expect((out.run.mock.calls[0]![1] as { allDay: boolean }).allDay).toBe(true);
   });
 
+  /**
+   * `list_events` documents a bare `to` as running through that EVENING, and
+   * create used to read the same word as midnight — so the natural way to say
+   * "a one-day event" was refused as ending before it began.
+   */
+  it("accepts the same bare day for start and end as one whole day", async () => {
+    const out = await call("apple_calendar_create_event", {
+      summary: "One day",
+      start: "2026-09-21",
+      end: "2026-09-21",
+    });
+    expect(out.isError).toBe(false);
+    const p = out.run.mock.calls[0]![1] as { startDate: string; endDate: string; allDay: boolean };
+    expect(p.allDay).toBe(true);
+    expect(Date.parse(p.endDate)).toBeGreaterThan(Date.parse(p.startDate));
+  });
+
   it("refuses a read-only subscribed calendar, naming the cause", async () => {
     const out = await call("apple_calendar_create_event", {
       summary: "Nope",
@@ -203,6 +222,45 @@ describe("apple_calendar_create_event", () => {
     expect(out.isError).toBe(true);
     expect(out.text).toMatch(/read-only/);
     expect(out.text).toMatch(/CalendarNotWritableError/);
+  });
+
+  /**
+   * The store-side writability check is derived from `subcal_url` and misses
+   * calendars that are read-only for other reasons — measured: Birthdays and
+   * Siri Suggestions both report writable()===false with no subscription URL.
+   * The JXA lane catches those, and its bare code is re-inflated so the caller
+   * still gets the explanation rather than just the calendar's name.
+   */
+  it("re-inflates a JXA writability refusal into a named error", async () => {
+    const ref = await refFor("Design review");
+    const { client } = await connect({}, {});
+    void ref;
+    const failing = {
+      run: async () => {
+        const e = new Error("Birthdays") as Error & { details?: { code?: string } };
+        e.details = { code: "CALENDAR_NOT_WRITABLE" };
+        throw e;
+      },
+    };
+    void client;
+    const { createServer: mk } = await import("../src/server.js");
+    const { loadConfig: lc } = await import("../src/config.js");
+    const { server } = mk({
+      config: lc({ APPLE_CALENDAR_STORE: storePath, APPLE_CALENDAR_ALLOW_WRITES: "1" }),
+      osascript: failing as never,
+      now: () => NOW,
+    });
+    const c = new Client({ name: "t", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), c.connect(b)]);
+    const res = (await c.callTool({
+      name: "apple_calendar_create_event",
+      arguments: { summary: "x", calendar: "Work", start: "2026-09-15T10:00" },
+    })) as { content: { text: string }[]; isError?: boolean };
+    const text = res.content.map((x) => x.text).join("");
+    expect(res.isError).toBe(true);
+    expect(text).toMatch(/read-only/);
+    expect(text).toMatch(/CalendarNotWritableError/);
   });
 
   it("refuses an end that is before its start", async () => {
@@ -247,53 +305,66 @@ describe("apple_calendar_update_event", () => {
 describe("apple_calendar_delete_events", () => {
   it("refuses without confirm", async () => {
     const ref = await refFor("Design review");
-    const out = await call("apple_calendar_delete_events", { refs: [ref], scope: "series" });
+    const out = await call("apple_calendar_delete_events", { refs: [ref] });
     expect(out.isError).toBe(true);
     expect(out.run).not.toHaveBeenCalled();
   });
 
-  /**
-   * `scope` has no default. The two outcomes are "one lunch is cancelled" and
-   * "the standing meeting is gone", and no default is safe enough to guess at.
-   */
-  it("requires a scope", async () => {
+  it("deletes a whole event", async () => {
     const ref = await refFor("Design review");
     const out = await call("apple_calendar_delete_events", { refs: [ref], confirm: true });
-    expect(out.isError).toBe(true);
-  });
-
-  it("deletes a whole series when told to", async () => {
-    const ref = await refFor("Design review");
-    const out = await call("apple_calendar_delete_events", {
-      refs: [ref],
-      scope: "series",
-      confirm: true,
-    });
     expect(out.isError).toBe(false);
     expect(out.run.mock.calls[0]![0]).toContain("p.uids.length");
   });
 
-  it("excludes a single occurrence via the excluded-dates path", async () => {
+  /**
+   * MEASURED, macOS 26.6: `C.delete(ev)` on a REPEATING event neither throws nor
+   * deletes, so trusting "it did not throw" reported success for an event still
+   * sitting on the calendar. The script re-reads the uid list and decides by
+   * absence; this pins that a false result survives to the caller intact rather
+   * than being smoothed into a success.
+   */
+  it("passes a verified failure through instead of reporting success", async () => {
+    const ref = await refFor("Design review");
+    const out = await call(
+      "apple_calendar_delete_events",
+      { refs: [ref], confirm: true },
+      {},
+      {
+        deleted: {
+          results: [
+            {
+              uid: "E-ONE",
+              found: true,
+              deleted: false,
+              repeats: true,
+              reason: "Calendar did not delete it and reported no error",
+            },
+          ],
+        },
+      },
+    );
+    expect(out.isError).toBe(false);
+    const doc = out.json() as { results: { deleted: boolean; reason: string }[] };
+    expect(doc.results[0]!.deleted).toBe(false);
+    expect(doc.results[0]!.reason).toMatch(/did not delete/);
+  });
+
+  /**
+   * Calendar cannot delete one occurrence — `excludedDates` is not writable —
+   * so an occurrence ref is refused rather than taking the whole series with it.
+   */
+  it("refuses an occurrence ref instead of deleting the series", async () => {
     const ref = await refFor("Design review");
     const parts = ref.split("/");
     const occurrenceRef = [parts[0], "20260822T090000+0200", parts[2]].join("/");
     const out = await call("apple_calendar_delete_events", {
       refs: [occurrenceRef],
-      scope: "occurrence",
-      confirm: true,
-    });
-    expect(out.isError).toBe(false);
-    expect(out.run.mock.calls[0]![0]).toContain("EXCLUSION_NOT_APPLIED");
-  });
-
-  it("refuses scope occurrence on a ref that names no occurrence", async () => {
-    const ref = await refFor("Design review");
-    const out = await call("apple_calendar_delete_events", {
-      refs: [ref],
-      scope: "occurrence",
       confirm: true,
     });
     expect(out.isError).toBe(true);
-    expect(out.text).toMatch(/names a whole event/);
+    expect(out.text).toMatch(/cannot delete a single occurrence/);
+    expect(out.text).toMatch(/Calendar.app/);
+    expect(out.run).not.toHaveBeenCalled();
   });
 });

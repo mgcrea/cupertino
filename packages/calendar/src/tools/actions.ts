@@ -99,27 +99,27 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
     "apple_calendar_delete_events",
     {
       description:
-        'Delete events. `scope` is required and has no default: "series" removes the event and ' +
-        'EVERY occurrence of it, while "occurrence" removes only the single instance your ref ' +
-        "names, by adding its date to the event's excluded dates — which is what Calendar itself " +
-        'does, and is reversible in the app. "All future occurrences" is not offered, because it ' +
-        "needs two writes with no transaction between them.",
+        "Delete whole events. Each result says whether the event ACTUALLY went — Calendar " +
+        "silently declines to delete a repeating event, reporting no error, so `deleted` is " +
+        "decided by re-reading the calendar rather than by the call succeeding. " +
+        "A ref naming ONE occurrence of a repeating event is refused: " +
+        "Calendar's scripting interface cannot remove a single occurrence, and deleting the " +
+        "series instead would take every other one with it. Delete a single occurrence in " +
+        "Calendar.app, or pass the `seriesRef` from get_event to remove the whole series. " +
+        '"All future occurrences" is not offered either — it needs two writes with no ' +
+        "transaction between them.",
       inputSchema: {
         refs: z
           .array(z.string().min(1))
           .min(1)
           .max(100)
-          .describe("Event refs from a list or search result."),
-        scope: z
-          .enum(["series", "occurrence"])
           .describe(
-            'REQUIRED. "series" deletes the whole event; "occurrence" cancels just the one ' +
-              "instance the ref names. Choosing wrongly here is the difference between " +
-              "cancelling one lunch and deleting a standing meeting.",
+            "Event refs from a list or search result. Each must name a whole event, not one " +
+              "occurrence of a repeating one.",
           ),
         confirm: confirmArg,
       },
     },
-    async ({ refs, scope }) => wrap(() => client.deleteEvents(refs, scope)),
+    async ({ refs }) => wrap(() => client.deleteEvents(refs)),
   );
 };

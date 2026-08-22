@@ -59,11 +59,21 @@ export const UPDATE_EVENT = script(
 );
 
 /**
- * Delete whole events.
+ * Delete whole events, and VERIFY that each one actually went.
+ *
+ * MEASURED, macOS 26.6: `C.delete(ev)` on a RECURRING event neither throws nor
+ * deletes. Event count before 1, after 1, still present — while the same call
+ * removes a non-repeating event correctly. Trusting "it did not throw" therefore
+ * reported `deleted: true` for an event that is still on the calendar, which is
+ * the worst thing a delete can say.
+ *
+ * So the uid list is re-read afterwards and `deleted` is decided by ABSENCE.
+ * The sibling script that excluded one occurrence had this check from the start
+ * and it is what caught that property being broken; this one did not, and this
+ * is what that omission cost.
  *
  * Per-id results rather than a bulk throw: deleting five events where the third
- * has already gone should remove four and say which one was missing, not fail
- * the batch and leave the caller guessing what happened.
+ * has already gone should remove four and say which one was missing.
  */
 export const DELETE_EVENTS = script(
   `
@@ -76,17 +86,40 @@ export const DELETE_EVENTS = script(
     var uid = String(p.uids[i]);
     var ev = findEvent(cal, uid);
     if (!ev) {
-      results.push({ uid: uid, found: false, deleted: false });
+      results.push({ uid: uid, found: false, deleted: false, repeats: false });
       continue;
     }
-    var gone = false;
+    var repeats = false;
     try {
-      C.delete(ev);
-      gone = true;
+      var r = ev.recurrence();
+      repeats = r !== null && r !== undefined && String(r) !== "";
     } catch (e) {
-      gone = false;
+      repeats = false;
     }
-    results.push({ uid: uid, found: true, deleted: gone });
+    var threw = null;
+    try { C.delete(ev); } catch (e) { threw = String(e).slice(0, 120); }
+    results.push({ uid: uid, found: true, deleted: null, repeats: repeats, error: threw });
+  }
+
+  // ONE bulk re-read decides the truth for every id at once.
+  var after = prop(function () { return cal.events.uid(); }, null);
+  for (var j = 0; j < results.length; j++) {
+    if (!results[j].found) continue;
+    if (after === null) {
+      results[j].deleted = null;
+      results[j].reason = "could not re-read the calendar to confirm";
+      continue;
+    }
+    var gone = true;
+    for (var k = 0; k < after.length; k++) {
+      if (String(after[k]) === results[j].uid) gone = false;
+    }
+    results[j].deleted = gone;
+    if (!gone) {
+      results[j].reason = results[j].repeats
+        ? "Calendar did not delete it and reported no error, which is what it does for a repeating event. Delete it in Calendar.app."
+        : "Calendar reported no error but the event is still there.";
+    }
   }
   return ok({ results: results });
 `,
@@ -94,55 +127,24 @@ export const DELETE_EVENTS = script(
 );
 
 /**
- * Remove ONE occurrence of a repeating event, by excluding its date.
+ * REMOVED: excluding one occurrence, which Calendar cannot do.
  *
- * This is what Calendar itself does for "Delete This Event" on a series, and it
- * is reversible in the app by removing the exclusion.
+ * MEASURED, macOS 26.6, against a real repeating event:
  *
- * Two details that are easy to get wrong:
+ *   ev.excludedDates()            -> ["1903-12-31T23:50:39.000Z"]
+ *   ev.excludedDates = [aDate]    -> TypeError: undefined is not an object
  *
- * 1. The whole array is assigned back rather than pushed into. Push-in-place on
- *    an Apple Events list property is not reliable — the mutation happens on a
- *    local copy and never reaches the app.
- * 2. The result is VERIFIED by reading `excludedDates` back and looking for the
- *    instant. Without that check a silent no-op reports success, which on a
- *    delete is the worst possible lie.
+ * The read returns a sentinel rather than the empty list the event actually
+ * has, and the assignment throws — while `ev.summary = "x"` on the very same
+ * specifier works, so this is the property, not the specifier or the lane.
+ *
+ * A script was written here that assigned the whole array back and then read it
+ * again to confirm, precisely because a silent no-op on a delete is the worst
+ * lie this surface could tell. The verification worked: it caught this. But a
+ * write path that can only ever report failure is not a capability, so the tool
+ * no longer offers "delete one occurrence" at all — `delete_events` refuses an
+ * occurrence ref and says why, which is the same shape as `update_event`.
+ *
+ * Deleting a single occurrence is possible in Calendar.app itself, so this is a
+ * limit of the scripting interface rather than of the data.
  */
-export const EXCLUDE_OCCURRENCE = script(
-  `
-  var cal = findCalendar(C, p.calendar);
-  if (!cal) return err("CALENDAR_NOT_FOUND", p.calendar || "(default)");
-  if (!isWritable(cal)) return err("CALENDAR_NOT_WRITABLE", prop(function () { return String(cal.name()); }, "?"));
-
-  var ev = findEvent(cal, String(p.uid));
-  if (!ev) return err("EVENT_NOT_FOUND", String(p.uid));
-
-  var target = new Date(p.occurrenceStart);
-  var current = prop(function () { return ev.excludedDates(); }, []);
-
-  for (var i = 0; i < current.length; i++) {
-    if (sameInstant(current[i], target)) {
-      return ok({ uid: String(p.uid), excluded: true, alreadyExcluded: true, count: current.length });
-    }
-  }
-
-  var next = [];
-  for (var j = 0; j < current.length; j++) next.push(current[j]);
-  next.push(target);
-  ev.excludedDates = next;
-
-  var after = prop(function () { return ev.excludedDates(); }, []);
-  var confirmed = false;
-  for (var k = 0; k < after.length; k++) {
-    if (sameInstant(after[k], target)) confirmed = true;
-  }
-  if (!confirmed) {
-    return err(
-      "EXCLUSION_NOT_APPLIED",
-      "Calendar accepted the excluded-dates assignment but the occurrence is still there."
-    );
-  }
-  return ok({ uid: String(p.uid), excluded: true, alreadyExcluded: false, count: after.length });
-`,
-  { allowLaunch: true },
-);
