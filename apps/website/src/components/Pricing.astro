@@ -41,6 +41,13 @@ const included = [
         <div class="text-[14px] leading-[1.6] text-fg-dim">
           One time, for all of 1.x. Not a subscription.
         </div>
+        {/* Both figures, because they are not a conversion of each other: the
+            dollar price is quoted tax-exclusive and the euro one VAT-inclusive,
+            as each side is normally quoted. Showing only the first would leave
+            an EU buyer without the total they are actually charged. */}
+        <div class="text-[13.5px] leading-[1.6] text-fg-dim">
+          {PRICING.eur.price} in the EU, VAT included.
+        </div>
 
         {
           SHIPPED ? (

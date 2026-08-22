@@ -63,7 +63,7 @@ you, the writes toggle, the log pane.
 
 |            |                                                                          |
 | ---------- | ------------------------------------------------------------------------ |
-| Price      | €14.99 at launch, rising with the surface count — see below              |
+| Price      | $14.99 at launch (€14.99 in the EU), rising with the surface count       |
 | Model      | one-time, per major version — 1.x is free forever, 2.0 is a new purchase |
 | Collection | Stripe, with Stripe Tax on; VAT filed directly through OSS — see below   |
 | Validation | offline, signed licence key, verified locally, no phone-home             |
@@ -233,7 +233,7 @@ is the deletion of an entire subsystem: no trial clock, no Keychain expiry state
 Access starts refusing to work. The licence check becomes one branch — a valid key, or not — and
 [EULA §3](../apps/apple/EULA) says all of this to the buyer in the same words.
 
-The cost is real and worth naming: someone who will not build it and will not risk €14.99 is not
+The cost is real and worth naming: someone who will not build it and will not risk $14.99 is not
 reachable. At this price and this audience that is a small number, and the refund catches most of it.
 
 ### Price, and why it goes up
@@ -242,13 +242,26 @@ The ladder is published in advance and tied to **shipped surfaces**, not to the 
 
 | Price  | When           | Surfaces                                  |
 | ------ | -------------- | ----------------------------------------- |
-| €14.99 | launch         | Mail, Notes, Reminders, Calendar          |
-| €24.99 | Messages ships | + Messages                                |
-| €34.99 | Safari ships   | + Safari — the full set the probes mapped |
+| $14.99 | launch         | Mail, Notes, Reminders, Calendar          |
+| $24.99 | Messages ships | + Messages                                |
+| $34.99 | Safari ships   | + Safari — the full set the probes mapped |
+
+The ladder is quoted in dollars because most of the audience is there, but **both currencies are set
+explicitly** on the Stripe price via `currency_options` — the euro figure is not a conversion of the
+dollar one. Two reasons. Stripe's Adaptive Pricing only converts _out of_ a settlement currency, and
+this account settles in euro alone, so a dollar-only price would put an FX conversion on the seller
+for every sale, including euro ones; naming both keeps that cost in the presented rate, where the
+buyer's bank would have charged it anyway. And EU consumer law expects a VAT-inclusive total, which a
+figure converted at checkout cannot promise in advance.
+
+The consequence is that the two numbers are not equal and are not meant to be: $14.99 is quoted
+tax-exclusive and €14.99 VAT-inclusive, as each side is normally quoted. A US sale therefore nets
+more than a EU one at the same face value — roughly €13.6 against €12.49 — because the EU figure has
+20% French VAT taken out of it. Worth remembering before reading regional variance as a pricing bug.
 
 Calendar landed in `c740b4f`, before launch rather than after, so it sits in the opening rung rather
 than buying the first rise. The table was written a commit too early; this is the correction, and the
-top rung is one lower for it. A fourth at €49.99 is held rather than promised, because promising a
+top rung is one lower for it. A fourth at $49.99 is held rather than promised, because promising a
 price for a surface nobody has built yet is the kind of schedule that gets quietly dropped.
 
 Tying a rise to a date says latecomers pay more for the same thing, which earns resentment and teaches
@@ -257,10 +270,10 @@ which is both true and the roadmap in [surfaces.md](surfaces.md) restated as a r
 Published as a schedule it is a price ladder, a roadmap and genuine urgency in one table.
 
 Two rules come with it. **Every rise is announced before it happens** — a quiet increase reads as
-testing on people. And **it never goes back down**: retreating from €49.99 would insult everyone who
+testing on people. And **it never goes back down**: retreating from $49.99 would insult everyone who
 paid it, so the ladder only ratchets.
 
-The sour spot is the interaction with per-major pricing. Someone who buys 1.x at €14.99 meets 2.0 at
+The sour spot is the interaction with per-major pricing. Someone who buys 1.x at $14.99 meets 2.0 at
 whatever the ladder reached, and [EULA §2](../apps/apple/EULA) deliberately promises them nothing.
 That is honest and it will still sting at 3.3×, so the D1 row records `amount_paid` and `price_id`
 from the very first sale — fair upgrade pricing later is impossible without knowing what people
@@ -345,7 +358,7 @@ Apple-shaped.
 
 Decided, and recorded above so they are not re-opened: one-time per major version, Stripe rather than
 a merchant of record, offline validation as a constraint rather than a preference, no trial at all,
-a surface-tied price ladder from €14.99, and the succession commitments in [succession.md](succession.md).
+a surface-tied price ladder from $14.99, and the succession commitments in [succession.md](succession.md).
 
 And the honest expectation, recorded so it is not mistaken for a forecast: macOS only, developer
 audience, MIT core. This is a modest revenue line and a strong reputation asset, not a business. The

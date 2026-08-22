@@ -97,18 +97,37 @@ export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Termina
  * One purchase covers every 1.x release. 2.0 is a new purchase; there is no
  * subscription and nothing lapses.
  */
+/**
+ * Two currencies, both set explicitly on the Stripe Price via `currency_options`
+ * — never one converted from the other.
+ *
+ * USD leads because most of the audience is there. EUR is listed rather than
+ * left to conversion for two reasons. Stripe's Adaptive Pricing only converts
+ * *out of* a settlement currency, and this account settles in EUR alone, so a
+ * USD-only price would settle through an FX conversion this side pays on every
+ * sale; naming both moves that cost back to the presented rate. And EU consumer
+ * law wants a VAT-inclusive total shown to EU buyers, which a dollar figure
+ * converted at checkout cannot promise in advance.
+ *
+ * So: the USD figure is tax-exclusive and the EUR figure is tax-inclusive. That
+ * is the ordinary convention on each side, not an inconsistency — but it does
+ * mean the two numbers are not meant to be equal, and `Pricing.astro` has to
+ * show both rather than pick one.
+ */
 export const PRICING = {
   /** Display form. `amount` is what the JSON-LD offer carries. */
-  price: "€14.99",
+  price: "$14.99",
   amount: "14.99",
-  currency: "EUR",
+  currency: "USD",
+  /** Shown alongside, VAT included, as EU buyers are quoted and charged. */
+  eur: { price: "€14.99", amount: "14.99", currency: "EUR" },
   /** The stable vanity URL. `public/_redirects` sends it to Stripe. */
   buy: "/buy",
   /** Generous on purpose: with no trial, this is what makes buying first reasonable. */
   refundDays: 30,
   ladder: [
-    { price: "€14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar" },
-    { price: "€24.99", when: "When Messages ships", covers: "+ Messages" },
-    { price: "€34.99", when: "When Safari ships", covers: "+ Safari" },
+    { price: "$14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar" },
+    { price: "$24.99", when: "When Messages ships", covers: "+ Messages" },
+    { price: "$34.99", when: "When Safari ships", covers: "+ Safari" },
   ],
 } as const;
