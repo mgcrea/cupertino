@@ -143,3 +143,23 @@ Every output is committed, so a checkout builds without running it. The touch ic
 — iOS applies its own mask, and the corner radius applied twice reads pinched — through a
 `replaceOnce` that throws rather than silently passing the artwork through if `make icon`'s output
 shifts.
+
+## The social card is baked, and its words live in `config.ts`
+
+`og-image.png` is the lockup reversed out of the page's own background over two lines of copy,
+composed by `composeCard` in `../../scripts/lib/lockup.mjs` — the same module that writes the README
+banner, so the two cannot fork.
+
+- **The copy is `SOCIAL_CARD` in `src/config.ts`, and the surfaces come from `data/surfaces.ts`.**
+  Editing a line there is half the change: `pnpm icons` bakes it into the PNG, and until you run
+  that, the picture and the page disagree. Nothing checks this.
+- **It is rendered here, not in the reader's browser.** The wordmark's `textLength` pin exists for
+  the README's SVG, where a reader's font substitutes; in this PNG the font resolves on whichever
+  machine ran `pnpm icons`. That is safe only because the repo is already macOS-only — rendering it
+  on Linux CI would silently swap the typeface for a fallback.
+- **X crops it.** `summary_large_image` renders at 2:1 while og:image is 1.91:1, so roughly 15px
+  comes off the top and bottom. `composeCard` throws if a mark strays into that band; keep new
+  elements inside `SAFE_INSET`.
+- **`Layout.astro` declares the dimensions and the alt text**, and both `twitter:site` and
+  `twitter:creator` carry `X_HANDLE`. A page passing its own `ogImage` must pass `ogImageAlt` with
+  it and match the 1200×630 shape the width/height tags promise.

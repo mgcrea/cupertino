@@ -82,9 +82,14 @@ await png(
 //
 // The words come from src/config.ts rather than from here: they are a claim
 // about the product, and this file has no business being the authority on one.
+//
+// `palette: true` because the card is flat ground, one gradient and text — 54 KB
+// against 200 KB truecolour, with no banding visible on the icon's sky at this
+// size. It is committed to the repo and fetched by every crawler that sees a
+// link, so the four bytes an alpha channel would buy are not worth 150 KB.
 const card = composeCard(icon, JSON.parse(await source("colors.json")), SOCIAL_CARD);
 await writeFile(
   join(pub, "og-image.png"),
-  await sharp(Buffer.from(card), { density: 200 }).png().toBuffer(),
+  await sharp(Buffer.from(card), { density: 200 }).png({ palette: true }).toBuffer(),
 );
 console.log(`  og-image.png  ${SOCIAL_CARD.width}×${SOCIAL_CARD.height}`);

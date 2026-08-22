@@ -249,8 +249,8 @@ const cardLine = ({ text, y, size, fill, weight, opacity }) =>
     opacity ? ` opacity="${opacity}"` : ""
   } text-anchor="middle"
         font-family='${FONT_STACK}' font-size="${size}" font-weight="${weight}">${escapeXml(
-    text,
-  )}</text>`;
+          text,
+        )}</text>`;
 
 /**
  * Composes the og:image card — the lockup reversed out of the site's own
@@ -266,7 +266,11 @@ const cardLine = ({ text, y, size, fill, weight, opacity }) =>
  * @param {object} copy `{ ground, headline, subhead }` — the site owns the words
  * @returns {string} the card SVG, for sharp to rasterise
  */
-export const composeCard = (iconSvg, palette, { ground, headline, subhead, word = "Cupertino" }) => {
+export const composeCard = (
+  iconSvg,
+  palette,
+  { ground, headline, subhead, word = "Cupertino" },
+) => {
   const light = palette?.colors?.sun;
   expect(light, "colors.json has no `colors.sun` to reverse the wordmark out in");
   expect(/^#[0-9a-f]{6}$/i.test(ground ?? ""), `the card ground is not a hex colour (${ground})`);
@@ -294,13 +298,13 @@ ${embedIcon(iconSvg, { x: iconX, y: iconY, size: CARD_ICON, indent: 2 })}
 ${wordmark({ x: textX, baseline, size: CARD_WORD, fill: light, word, indent: 2 })}
 ${cardLine({ text: headline, y: CARD_HEADLINE_Y, size: CARD_HEADLINE, fill: light, weight: 500 })}
 ${cardLine({
-    text: subhead,
-    y: CARD_SUBHEAD_Y,
-    size: CARD_SUBHEAD,
-    fill: light,
-    weight: 400,
-    opacity: "0.62",
-  })}
+  text: subhead,
+  y: CARD_SUBHEAD_Y,
+  size: CARD_SUBHEAD,
+  fill: light,
+  weight: 400,
+  opacity: "0.62",
+})}
 </svg>
 `;
 };
