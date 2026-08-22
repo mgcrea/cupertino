@@ -366,4 +366,12 @@ describe("fileFacts", () => {
     assert.equal(facts.readable, false, "access must fail");
     chmodSync(locked, 0o600);
   });
+
+  it("treats a listable directory as readable", () => {
+    // `readable` opens the file rather than calling access(2), because on a
+    // TCC-protected store access(2) can succeed where open fails — measured on
+    // Contacts. macOS refuses to open a directory for reading, so the EISDIR
+    // fallback has to hold: Reminders' store path IS a directory.
+    assert.equal(fileFacts(scratch).readable, true);
+  });
 });

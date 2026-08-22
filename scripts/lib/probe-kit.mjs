@@ -16,7 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { accessSync, constants, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -84,7 +84,31 @@ export const safe = (fn, onErr) => {
 export const readable = (p) =>
   safe(
     () => {
-      accessSync(p, constants.R_OK);
+      // `access(2)` IS NOT ENOUGH, measured rather than assumed. On macOS 26.6
+      // with no Full Disk Access:
+      //
+      //   Calendar / Messages / Safari / Notes   stat ok, access EPERM, open EPERM
+      //   Contacts (AddressBook-v22.abcddb)      stat ok, access OK,    open EPERM
+      //
+      // Contacts sits behind its own TCC service rather than only behind Full
+      // Disk Access, and its enforcement lands on `open` while letting `access`
+      // through. So the helper written to escape the `stat` trap had walked into
+      // the next version of the same trap, and reported a store as readable that
+      // no probe could open.
+      //
+      // Opening the file is the only test that answers the question actually
+      // being asked. It costs a file descriptor.
+      let fd;
+      try {
+        fd = openSync(p, "r");
+      } catch (err) {
+        // A directory is a legitimate target here (Reminders' container is one)
+        // and macOS refuses to open one for reading.
+        if (err?.code !== "EISDIR") throw err;
+        readdirSync(p);
+        return true;
+      }
+      closeSync(fd);
       return true;
     },
     () => false,
