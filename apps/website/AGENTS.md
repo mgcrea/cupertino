@@ -19,13 +19,19 @@ workspace at once. oxfmt formats the `.css`, `.mjs` and `.ts` here but leaves `.
 
 ## `src/assets/shots/` belongs to the pipeline
 
-The app screenshots in `Screens.astro` are captured, not placed. Four of them, not five: the
-pipeline captures a `prompt` screen too, and `screenshots.config.json` deliberately gives it no
-`website` key — it is the same Log pane as `activity` with a one-turn fixture, which earns a store
-plate captioned with the prompt but would be a third telling of one idea on a page that already
-has `Examples.astro` and the hero card. `make screenshots` from the
+The five app screenshots in `Screens.astro` are captured, not placed. `make screenshots` from the
 repository root builds Cupertino, launches it in demo mode onto each screen, checks the result
 against committed goldens, and writes the images here.
+
+Two of the five — `prompt` and `activity` — are the _same_ Log pane, and they earn separate slots
+only because their fixtures differ: one question's trace, then the general log with a refused write
+in it. The captions are what carries that; captioned loosely they read as the same picture twice.
+`prompt`'s fixture is `DemoSeed.heroTurnLogLines`, a hand-kept mirror of `HERO_TURN` in
+`src/data/examples.ts` — nothing checks the two agree, so change them together.
+
+The figures' anchors are prefixed `shot-`. `Activity.astro` owns the bare `#activity` and the hero's
+"every call visible" chip points at it, so an unprefixed id here is a duplicate in the page and an
+ambiguous anchor.
 
 **That command deletes every `.png` in `src/assets/shots/` before writing.** Do not park anything
 else in the directory, and do not edit the files — the next capture overwrites them. To change what

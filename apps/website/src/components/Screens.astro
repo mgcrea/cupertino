@@ -25,6 +25,7 @@
 import { Picture } from "astro:assets";
 import activityShot from "../assets/shots/activity.png";
 import connectionsShot from "../assets/shots/connections.png";
+import promptShot from "../assets/shots/prompt.png";
 import settingsShot from "../assets/shots/settings.png";
 import surfaceShot from "../assets/shots/surface.png";
 import SectionHeader from "./SectionHeader.astro";
@@ -36,6 +37,15 @@ import SectionHeader from "./SectionHeader.astro";
  * section header has already said what the app is, so these say what each
  * particular pane answers. The two rot separately and should.
  */
+/**
+ * `id` is the capture's name; the anchor it becomes is prefixed `shot-`.
+ *
+ * `Activity.astro` further up owns the bare `#activity`, and the hero's "every
+ * call visible" chip points at it. Unprefixed, these put a duplicate id in the
+ * page and made that anchor ambiguous — which nothing caught, because nothing
+ * links to them: they are deep links for a reader sharing one shot, not
+ * navigation.
+ */
 const shots = [
   {
     image: surfaceShot,
@@ -45,10 +55,17 @@ const shots = [
     alt: "Cupertino's Mail pane: automation allowed, the Envelope Index readable, writes enabled, and five connected clients.",
   },
   {
+    image: promptShot,
+    id: "prompt",
+    title: "One question, end to end",
+    body: "The same pane as below, seeded with a single turn: “What did I promise Marie last week, and is any of it on my calendar?” Contacts leads, because the question names a person and every other surface is addressed by handle.",
+    alt: "Cupertino's log showing one turn: a Contacts search, two Mail calls and a Calendar range query, all reads.",
+  },
+  {
     image: activityShot,
     id: "activity",
     title: "The log, live",
-    body: "Every call as it happens, filterable by surface. Tool names only — never arguments, message contents or results — and a refused write shows up as a refusal.",
+    body: "The same pane again, this time across everything a working day sends at it. Tool names only — never arguments, message contents or results — and a refused write shows up as a refusal.",
     alt: "Cupertino's activity log: timestamped calls across mail, notes, reminders and calendar, with a refused write to Reminders in red.",
   },
   {
@@ -78,7 +95,7 @@ const shots = [
   <div class="flex flex-col gap-14">
     {
       shots.map(({ image, id, title, body, alt }) => (
-        <figure id={id} class="reveal m-0 scroll-mt-24">
+        <figure id={`shot-${id}`} class="reveal m-0 scroll-mt-24">
           {/* Widths are the rendered CSS widths, not the source's — the shot is
               2240px wide at 2x, so 1120 is the 1x plate and 2240 the retina one.
               avif then webp, with the PNG as the fallback the <picture> keeps. */}
