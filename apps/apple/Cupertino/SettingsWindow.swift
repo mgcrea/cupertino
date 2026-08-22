@@ -61,7 +61,8 @@ enum SettingsWindowController {
     // wider, and reopening into a frame smaller than the content can occupy is
     // how a window comes back with its detail column crushed to nothing.
     // A new name is a one-time reset of position and size, and nothing else.
-    title: "Cupertino Settings", autosaveName: "settings-sidebar",
+    title: "Cupertino Settings", autosaveName: "settings-panes",
+    contentSize: NSSize(width: 760, height: 560),
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
