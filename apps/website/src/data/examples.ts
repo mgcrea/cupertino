@@ -64,6 +64,12 @@ export const EXAMPLES: readonly Example[] = [
     proves: "Reads one surface, writes another. Both write gates off by default.",
   },
   {
+    prompt: "What did Marc say about the deposit? He texted me sometime last spring.",
+    uses: ["messages", "contacts"],
+    proves:
+      "Searches by name rather than by phone number, and reads the messages SQL alone cannot see — since March 2026, that is all of them.",
+  },
+  {
     prompt: "Did anyone ever reply to the invoice I sent on the 3rd?",
     uses: ["mail"],
     proves: "The whole pitch, for someone who has never edited a config file.",
@@ -94,7 +100,7 @@ export const surfaceName = (id: Surface["id"]): string =>
 /**
  * The hero's picture: one prompt, and the calls it became.
  *
- * It is deliberately NOT one of the six above. `Examples.astro` sits directly
+ * It is deliberately NOT one of those above. `Examples.astro` sits directly
  * under the hero, and a reader who meets the same sentence twice inside one
  * screen learns nothing the second time.
  *

@@ -15,7 +15,17 @@ import Status from "../components/Status.astro";
 import Surfaces from "../components/Surfaces.astro";
 import ToolMarquee from "../components/ToolMarquee.astro";
 import WriteGate from "../components/WriteGate.astro";
-import { APP_NAME, DOWNLOAD, DOCS, PRICING, REPO_URL, SHIPPED, SITE_URL, SPELLED } from "../config";
+import {
+  APP_NAME,
+  APP_VERSION,
+  DOWNLOAD,
+  DOCS,
+  PRICING,
+  REPO_URL,
+  SHIPPED,
+  SITE_URL,
+  SPELLED,
+} from "../config";
 import { SURFACES, toolCount } from "../data/surfaces";
 import Layout from "../layouts/Layout.astro";
 
@@ -59,6 +69,9 @@ const schema = {
   author: { "@type": "Person", name: "Olivier Louvignes" },
   ...(SHIPPED
     ? {
+        // Alongside downloadUrl on purpose: a softwareVersion is a claim about
+        // a build that exists, so it appears exactly when the download does.
+        softwareVersion: APP_VERSION,
         downloadUrl: `${SITE_URL}${DOWNLOAD.href}`,
         offers: {
           "@type": "Offer",

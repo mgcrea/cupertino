@@ -97,6 +97,25 @@ export const SOCIAL_CARD = {
 export const SHIPPED = true;
 
 /**
+ * The app version currently shipping, as a bare marketing version.
+ *
+ * The `app-v*` git tag is the authority: nothing bumps `MARKETING_VERSION` in
+ * the pbxproj, CI overrides it from the tag name (see the release-app job in
+ * .github/workflows/ci.yml), so the newest tag *is* what people are running.
+ * This is that tag's mirror, the way TRIAL below mirrors `Trial.swift` — and
+ * the CHANGELOG heading is a third copy of the same number. Nothing checks the
+ * three agree; bump this in the release commit.
+ *
+ * It deliberately does not carry a build number. `CFBundleVersion` is a commit
+ * count, which orders builds but identifies none of them, and it is not a fact
+ * a visitor can do anything with.
+ *
+ * Shown in the nav and carried in the JSON-LD, both gated on SHIPPED: a version
+ * printed before there is a release names something nobody can download.
+ */
+export const APP_VERSION = "1.1.0";
+
+/**
  * The release lives on GitHub, never here. A Cloudflare assets binding caps a
  * single file at 25 MiB and the bundle embeds a universal Node runtime, so the
  * site could not serve it even if hosting it were a good idea — see
@@ -213,6 +232,13 @@ export const TRIAL = { minutes: 30 } as const;
  * announced before it happens, and it never goes back down. See
  * docs/licensing.md, which is the authority on all of this.
  *
+ * **A surface landing is what MAY trigger a rise, not what forces one.** Three
+ * have now landed into the opening rung rather than buying a rise — Calendar
+ * before launch, then Contacts, then Messages — and the ladder is shorter each
+ * time rather than the price being higher. That direction is the safe one: the
+ * rules above bind a rise, and nothing binds holding one back. Moving a rung's
+ * trigger to a LATER surface is always allowed; moving it earlier is not.
+ *
  * One purchase covers every 1.x release. 2.0 is a new purchase; there is no
  * subscription and nothing lapses.
  */
@@ -249,8 +275,15 @@ export const PRICING = {
    */
   refundDays: 30,
   ladder: [
-    { price: "$14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar, Contacts" },
-    { price: "$24.99", when: "When Messages ships", covers: "+ Messages" },
-    { price: "$34.99", when: "When Safari ships", covers: "+ Safari" },
+    {
+      price: "$14.99",
+      when: "Now",
+      covers: "Mail, Notes, Reminders, Calendar, Contacts, Messages",
+    },
+    {
+      price: "$24.99",
+      when: "When Safari ships",
+      covers: "+ Safari — the full set the probes mapped",
+    },
   ],
 } as const;

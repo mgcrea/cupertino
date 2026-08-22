@@ -1,6 +1,6 @@
 ---
 import { SPELLED } from "../config";
-import { NOT_STARTED, SURFACES, toolCount } from "../data/surfaces";
+import { SURFACES, toolCount } from "../data/surfaces";
 import SectionHeader from "./SectionHeader.astro";
 import SurfaceGlyph from "./SurfaceGlyph.astro";
 
@@ -20,7 +20,7 @@ const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />
     which is the whole reason they live together.
   </SectionHeader>
 
-  <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-5">
+  <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
     {
       SURFACES.map((s) => (
         <article class="flex flex-col gap-4 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
@@ -52,7 +52,7 @@ const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />
     }
   </div>
 
-  <div class="reveal mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-5">
+  <div class="reveal mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
     {
       SURFACES.map((s) => (
         <p class="m-0 text-[13px] leading-[1.6] text-fg-muted">
@@ -62,15 +62,4 @@ const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />
       ))
     }
   </div>
-
-  <p class="reveal mt-8 border-t border-rule pt-6 text-[14px] text-fg-muted">
-    {
-      NOT_STARTED.map((n) => (
-        <span>
-          <span class="text-fg-dim">{n.name}</span> is not started — {n.why}, so it is the one
-          surface that cannot ship without Full Disk Access at all.
-        </span>
-      ))
-    }
-  </p>
 </section>

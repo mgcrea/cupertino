@@ -1,8 +1,8 @@
 # Cupertino
 
-> MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar and
-> Contacts — and the signed menu-bar app that holds their one Full Disk Access grant instead of
-> handing it to every editor.
+> MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar,
+> Contacts and Messages — and the signed menu-bar app that holds their one Full Disk Access grant
+> instead of handing it to every editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0: the
 signed app ships from GitHub releases, and the `@mgcrea/mcp-apple-*` packages are MIT but not on
@@ -27,10 +27,17 @@ npm yet — the app carries them.
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
 - Calendar — 9 tools (6 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`
 - Contacts — 7 tools (5 always registered, 2 write-gated). `@mgcrea/mcp-apple-contacts`. Turns a
-  phone number or an email address into a name, which is what makes a Messages server readable
-  later. Its reads need no Automation grant — only the two write tools reach Apple Events. There is
+  phone number or an email address into a name, which is what makes the Messages server readable.
+  Its reads need no Automation grant — only the two write tools reach Apple Events. There is
   no delete tool because Contacts' scripting dictionary has no delete command.
-- Messages — not started. It has no Apple Events read path, so it cannot ship without the grant.
+- Messages — 6 tools (5 always registered, 1 write-gated). `@mgcrea/mcp-apple-messages`. iMessage,
+  SMS and RCS out of chat.db, with names resolved through Contacts. The only surface with no read
+  fallback at all: every read through Messages' own scripting interface fails, so Full Disk Access
+  is mandatory rather than an upgrade. It is also the only one where Apple Events is a write lane
+  and nothing else — `send` is the single mutating command the dictionary offers, and with writes
+  off no Apple Event is ever sent. Roughly 3% of messages across all history keep their text only
+  in an archived blob that SQL cannot reach, and since Apple stopped writing the plain column in
+  early 2026 that is ~100% of recent ones, so the server decodes them.
 
 ## Price
 
@@ -38,7 +45,8 @@ npm yet — the app carries them.
   purchase. EU buyers are quoted and charged €14.99, VAT included — that is not a conversion of the
   dollar figure, which is quoted tax-exclusive.
 - The ladder is published in advance and tied to shipped surfaces rather than dates: $24.99 when
-  Messages lands, $34.99 when Safari does. It never goes back down.
+  Safari lands. It never goes back down. It also works one way only — a surface can land without
+  moving the price, and Calendar, Contacts and Messages all did; the price never moves without one.
 - A 30-minute trial, started by pressing a button and never armed on its own. Every surface at full
   function, with the write toggles behaving exactly as they will after paying. It is held in memory
   and never written to disk, so quitting and reopening starts another one; nothing prevents that and

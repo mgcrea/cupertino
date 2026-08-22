@@ -1,5 +1,5 @@
 ---
-import { DOWNLOAD, PRICING, REPO_URL, SHIPPED } from "../config";
+import { APP_VERSION, DOWNLOAD, PRICING, REPO_URL, SHIPPED } from "../config";
 import Button from "./Button.astro";
 import Logo from "./Logo.astro";
 
@@ -16,12 +16,38 @@ const links = [
   class="sticky top-0 z-50 border-b border-rule bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] backdrop-blur-[20px] backdrop-saturate-[180%]"
 >
   <div class="wrap flex h-[58px] items-center justify-between gap-6">
-    <a href="/" class="flex flex-none items-center gap-[10px] text-fg">
-      <Logo size={23} />
-      <span class="font-display text-[14.5px] leading-none font-[590] tracking-[-0.02em]"
-        >Cupertino</span
-      >
-    </a>
+    <div class="flex flex-none items-center gap-2.5">
+      <a href="/" class="flex items-center gap-[10px] text-fg">
+        <Logo size={23} />
+        <span class="font-display text-[14.5px] leading-none font-[590] tracking-[-0.02em]"
+          >Cupertino</span
+        >
+      </a>
+
+      {/* The shipping version, beside the wordmark rather than in the button
+          cluster: it is an identifying detail like the mark itself, not a call
+          to action, and that cluster is already the whole funnel at every
+          width. It links to the releases list, which is where the number leads
+          anyway — someone reading it wants the notes for it or the build
+          itself, and both are on that one page.
+
+          Gated on SHIPPED for the reason config.ts gives: before a release
+          there is no version to name. Hidden below `sm`, where the wordmark and
+          the price button already fill the bar. `hidden` is safe here because
+          this is a plain anchor, not a `Button` — see the note below. */}
+      {
+        SHIPPED && (
+          <a
+            href={DOWNLOAD.releases}
+            target="_blank"
+            rel="noopener"
+            class="hidden rounded-full border border-rule px-2 py-[3px] font-mono text-[10.5px] leading-none font-medium text-fg-muted transition-colors hover:border-accent hover:text-accent-hi sm:block"
+          >
+            {APP_VERSION}
+          </a>
+        )
+      }
+    </div>
 
     <nav class="hidden items-center gap-[30px] md:flex">
       {

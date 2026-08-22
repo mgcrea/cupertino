@@ -17,10 +17,18 @@
  *
  * So these are generic objects — an envelope, a ruled page, a checklist, a date
  * grid — on one 20-unit grid, one stroke weight, `currentColor` throughout.
- * They read as a set, which the four real icons emphatically do not.
+ * They read as a set, which the real icons emphatically do not.
+ *
+ * The prop takes `Surface["id"]`, which is generated from `surfaces.json`, so a
+ * surface added to the manifest typechecks here before it has artwork — and
+ * renders an empty frame rather than failing the build. Draw the glyph when the
+ * surface reaches `SURFACES`; an id with no branch below is one that is in the
+ * manifest but not yet on this page.
  */
+import type { Surface } from "../data/surfaces";
+
 export interface Props {
-  id: "mail" | "notes" | "reminders" | "calendar" | "contacts";
+  id: Surface["id"];
   size?: number;
   class?: string;
 }
@@ -74,6 +82,17 @@ const { id, size = 18, class: className } = Astro.props;
         <rect x="2.5" y="3.5" width="15" height="13" rx="3" />
         <circle cx="10" cy="8.75" r="2.15" />
         <path d="M6.4 13.9a3.9 3.9 0 0 1 7.2 0" />
+      </>
+    )
+  }
+  {
+    id === "messages" && (
+      <>
+        {/* A speech bubble with a reply tail: a conversation, not Apple's
+            green balloon. The two lines are message text, unequal because a
+            transcript is not a paragraph. */}
+        <path d="M17 11.25a4.25 4.25 0 0 1-4.25 4.25H8.5L4.5 18v-2.9A4.25 4.25 0 0 1 3 11.25v-3.5A4.25 4.25 0 0 1 7.25 3.5h5.5A4.25 4.25 0 0 1 17 7.75Z" />
+        <path d="M6.9 8.4h6.2M6.9 11.4h3.9" />
       </>
     )
   }

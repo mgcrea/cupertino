@@ -79,9 +79,9 @@ by construction and ships straight to production. Check anything CSP-adjacent wi
 ## Where things live
 
 - **`src/config.ts`** — every fact that changes between releases: the domain, the repo and doc
-  URLs, the measured latencies, `SHIPPED`. `SHIPPED` gates the pre-release pill and the CTA, so the
-  site cannot half-announce a release. Never hard-code one of these in a component.
-- **`src/data/surfaces.ts`** — the four surfaces and every tool name, split into `read` (always
+  URLs, the measured latencies, `SHIPPED`, `APP_VERSION`. `SHIPPED` gates the pre-release pill and
+  the CTA, so the site cannot half-announce a release. Never hard-code one of these in a component.
+- **`src/data/surfaces.ts`** — every shipped surface and every tool name, split into `read` (always
   registered) and `write` (registered only when `*_ALLOW_WRITES` is true). The homepage JSON-LD,
   the surface cards, the marquee and the write-gate demo all read from it.
 - **Everything else is inline in its component.** No content collection, no CMS.
@@ -103,6 +103,11 @@ The repo is the authority on what ships, and this site is downstream of it.
   **A string outside a SHIPPED branch has to be true on its own.** That is not theoretical: the
   hero's buttons were never gated at all, so they went on inviting people to "watch the repo" for
   the whole period after the app had actually shipped, with no way to buy it above the fold.
+- **`APP_VERSION` is a mirror of the `app-v*` tag, and nothing checks it.** Nothing bumps
+  `MARKETING_VERSION` in the pbxproj — CI overrides it from the tag name — so the newest `app-v*`
+  tag is what people are actually running, and this file plus the CHANGELOG heading are two hand-
+  kept copies of it. The nav badge and the JSON-LD `softwareVersion` both read it, so a stale value
+  is a version claim in search results as well as on the page. Bump it in the release commit.
 - **The no-network claim is load-bearing and checked.** `scripts/audit-network.sh` at the repo root
   gates it in CI. If that check is ever relaxed, the Status row here comes down first.
 - **Unofficial, not affiliated with Apple** stays in the hero caption and the footer.
