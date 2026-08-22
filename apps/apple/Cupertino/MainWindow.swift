@@ -81,11 +81,21 @@ struct MainView: View {
     List(selection: $pane) {
       Section("Surfaces") {
         ForEach(Surface.all) { surface in
+          // The app's own icon leads the row, so the sidebar reads as a list of
+          // the four apps rather than of four abstractions — and the automation
+          // status moves to the trailing edge instead of being displaced by it.
+          // Both facts fit; one was standing in for the other.
           Label {
-            Text(surface.displayName)
+            HStack(spacing: 6) {
+              Text(surface.displayName)
+              Spacer(minLength: 4)
+              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+                .font(.caption)
+                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+                .help(StatusStyle.caption(model.automation[surface.id]))
+            }
           } icon: {
-            Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-              .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+            SurfaceIconView(surface: surface)
           }
           .tag(Pane.surface(surface.id))
         }

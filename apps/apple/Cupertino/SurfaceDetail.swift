@@ -40,13 +40,19 @@ struct SurfaceDetail: View {
     .task(id: surface.id) { await resolveStore() }
   }
 
+  /// The icon is the system's, fetched at runtime — see `SurfaceIcon`. It also
+  /// answers a question the bundle id underneath it cannot: whether the app it
+  /// names is actually installed.
   private var heading: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(surface.displayName).font(.title2)
-      Text(surface.bundleID)
-        .font(.system(.caption, design: .monospaced))
-        .foregroundStyle(.secondary)
-        .textSelection(.enabled)
+    HStack(spacing: 12) {
+      SurfaceIconView(surface: surface, size: 40)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(surface.displayName).font(.title2)
+        Text(surface.bundleID)
+          .font(.system(.caption, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .textSelection(.enabled)
+      }
     }
   }
 

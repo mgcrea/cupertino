@@ -1,0 +1,78 @@
+---
+/**
+ * One line glyph per surface, drawn here rather than taken from Apple.
+ *
+ * **These are deliberately not the real app icons.** Apple's guidelines for
+ * third-party use of its trademarks and copyrights do not permit shipping
+ * Mail's, Notes', Reminders' or Calendar's artwork in someone else's marketing
+ * material, and SF Symbols is licensed for apps on Apple platforms — not for a
+ * web page. Downloading four `.icns` files out of `/System/Applications` and
+ * serving them from `public/` would be redistributing Apple artwork from a
+ * domain that says "unofficial, not affiliated with Apple" three lines below.
+ *
+ * The app is the place where the real icons belong and where they are used:
+ * `SurfaceIcon.swift` asks `NSWorkspace` for each app's icon at runtime, which
+ * redistributes nothing and is what every macOS app does. Do not mirror that
+ * here by exporting them.
+ *
+ * So these are generic objects — an envelope, a ruled page, a checklist, a date
+ * grid — on one 20-unit grid, one stroke weight, `currentColor` throughout.
+ * They read as a set, which the four real icons emphatically do not.
+ */
+export interface Props {
+  id: "mail" | "notes" | "reminders" | "calendar";
+  size?: number;
+  class?: string;
+}
+
+const { id, size = 18, class: className } = Astro.props;
+---
+
+<svg
+  viewBox="0 0 20 20"
+  width={size}
+  height={size}
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  aria-hidden="true"
+  class:list={className}
+  style={`width:${size}px;height:${size}px`}
+>
+  {
+    id === "mail" && (
+      <>
+        <rect x="2.5" y="4.75" width="15" height="10.5" rx="2.5" />
+        <path d="M4 7 9.1 10.7a1.5 1.5 0 0 0 1.8 0L16 7" />
+      </>
+    )
+  }
+  {
+    id === "notes" && (
+      <>
+        <rect x="4" y="2.5" width="12" height="15" rx="2.5" />
+        <path d="M4 6.75h12M7.25 10.25h5.5M7.25 13.5h3.5" />
+      </>
+    )
+  }
+  {
+    id === "reminders" && (
+      <>
+        <circle cx="5.75" cy="7" r="1.75" fill="currentColor" stroke="none" />
+        <circle cx="5.75" cy="13" r="1.75" />
+        <path d="M9.75 7h5M9.75 13h5" />
+      </>
+    )
+  }
+  {
+    id === "calendar" && (
+      <>
+        <rect x="2.5" y="4.25" width="15" height="13.25" rx="2.5" />
+        <path d="M2.5 8.25h15M6.75 2.5v3.25M13.25 2.5v3.25" />
+        <circle cx="6.9" cy="12.4" r="1.15" fill="currentColor" stroke="none" />
+      </>
+    )
+  }
+</svg>

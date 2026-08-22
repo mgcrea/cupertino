@@ -205,18 +205,24 @@ struct PermissionsPane: View {
 
         ForEach(Surface.all) { surface in
           HStack(alignment: .firstTextBaseline) {
+            // Same arrangement as the main window's sidebar: the app's own icon
+            // names the row, and the status glyph rides with the caption that
+            // spells the status out.
             Label {
               Text(surface.displayName)
             } icon: {
-              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+              SurfaceIconView(surface: surface)
             }
             .frame(width: 130, alignment: .leading)
 
-            Text(StatusStyle.caption(model.automation[surface.id]))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 130, alignment: .leading)
+            HStack(spacing: 5) {
+              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+              Text(StatusStyle.caption(model.automation[surface.id]))
+                .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .frame(width: 130, alignment: .leading)
 
             WritesToggle(surface: surface)
 

@@ -1,6 +1,7 @@
 ---
 import { NOT_STARTED, SURFACES, toolCount } from "../data/surfaces";
 import SectionHeader from "./SectionHeader.astro";
+import SurfaceGlyph from "./SurfaceGlyph.astro";
 ---
 
 <section id="surfaces" class="wrap scroll-mt-20 py-[96px]">
@@ -14,10 +15,16 @@ import SectionHeader from "./SectionHeader.astro";
     {
       SURFACES.map((s) => (
         <article class="flex flex-col gap-4 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
-          <div class="flex items-baseline justify-between gap-3">
-            <h3 class="m-0 font-display text-[22px] font-semibold tracking-[-0.03em] text-fg">
-              {s.name}
-            </h3>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              {/* Our own glyph, never Apple's icon — see SurfaceGlyph.astro. */}
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-[9px] border border-rule-2 bg-bg text-accent">
+                <SurfaceGlyph id={s.id} />
+              </span>
+              <h3 class="m-0 font-display text-[22px] font-semibold tracking-[-0.03em] text-fg">
+                {s.name}
+              </h3>
+            </div>
             <span class="mono !text-accent">{toolCount(s)} tools</span>
           </div>
 
