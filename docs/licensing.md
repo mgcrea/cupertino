@@ -33,8 +33,9 @@ So closing the app would cost exactly the thing being sold, and buy only protect
 | the signed build | sold             | the notarized artifact, the update channel, the maintenance |
 
 It used to say here that "build it yourself if you would rather not pay" was an honest position. It
-was never a true one: the gate in `ServerHost.swift` asks for a key without caring which compiler
-produced the binary, so a self-built copy refuses exactly as a downloaded one does. The source is
+is not a true one, and no build ever shipped under it: the gate in `ServerHost.swift` asks for a key
+without caring which compiler produced the binary, so a self-built copy refuses exactly as a
+downloaded one does. The source is
 open to be **read** — that is what a Full Disk Access grant is owed — and reading it is not the same
 promise as running it for free. `apps/apple/LICENSE` §1(c) claimed the second one for a while and no
 longer does.
