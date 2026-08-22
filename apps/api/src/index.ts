@@ -66,7 +66,7 @@ const findBySession = (env: Env, sessionId: string): Promise<LicenseRow | null> 
  * no-op the second time, and the send is attempted again — which is exactly the
  * behaviour wanted when the alternative is a customer who paid and got nothing.
  */
-const fulfil = async (object: unknown, env: Env): Promise<Response> => {
+const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Response> => {
   const parsed = checkoutSession.safeParse(object);
   if (!parsed.success) {
     // 400, not 500: something that will never parse should stop being retried,
@@ -88,8 +88,8 @@ const fulfil = async (object: unknown, env: Env): Promise<Response> => {
     await env.DB.prepare(
       `INSERT INTO licenses
          (id, email, major, key, stripe_session_id, payment_intent, price_id, amount_paid,
-          currency, issued_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          currency, issued_at, livemode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (stripe_session_id) DO NOTHING`,
     )
       .bind(
@@ -103,6 +103,7 @@ const fulfil = async (object: unknown, env: Env): Promise<Response> => {
         session.amount_total ?? 0,
         session.currency ?? "eur",
         minted.issuedAt,
+        livemode ? 1 : 0,
       )
       .run();
     // Re-read rather than trusting the insert: on a race the row that won is the
@@ -221,7 +222,7 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
   const object = envelope.data.data.object;
   switch (envelope.data.type) {
     case "checkout.session.completed":
-      return fulfil(object, env);
+      return fulfil(object, env, envelope.data.livemode);
     case "charge.refunded":
       return refunded(object, env);
     case "charge.dispute.created":
