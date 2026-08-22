@@ -75,6 +75,14 @@ await png(
   180,
 );
 
+// The Stripe product image, shown beside the line item on the hosted checkout.
+// It is a URL on Stripe's side, not an upload — `product.images` on the live
+// product points here — so the mark on the checkout page changes when the site
+// deploys, and never needs the payment link touched. 512 is generous for a
+// thumbnail; the plate keeps its own corner radius, because Stripe rounds the
+// container far less than the squircle does and cropping would show.
+await png(icon, "product-image.png", 512);
+
 // The OG card is what a link to the site looks like on X, Slack and iMessage.
 // It is the lockup reversed out of the page's own background, over two lines the
 // site owns — composed by scripts/lib/lockup.mjs, which is also what writes the

@@ -138,11 +138,16 @@ Two consequences worth keeping:
   dark menu bar. Nothing does that on the web, so `MenuBar.astro` applies `filter:invert(1)` by
   hand. It is not a colour asset and must not be recoloured.
 
-`pnpm icons` also renders `favicon-32.png`, `apple-touch-icon.png` and `og-image.png` with sharp.
-Every output is committed, so a checkout builds without running it. The touch icon is squared first
-— iOS applies its own mask, and the corner radius applied twice reads pinched — through a
-`replaceOnce` that throws rather than silently passing the artwork through if `make icon`'s output
-shifts.
+`pnpm icons` also renders `favicon-32.png`, `apple-touch-icon.png`, `product-image.png` and
+`og-image.png` with sharp. Every output is committed, so a checkout builds without running it. The
+touch icon is squared first — iOS applies its own mask, and the corner radius applied twice reads
+pinched — through a `replaceOnce` that throws rather than silently passing the artwork through if
+`make icon`'s output shifts.
+
+`product-image.png` has a reader outside this site: it is the `images` entry on the live Stripe
+product, so it is what a buyer sees beside the line item on the checkout page. Stripe stores the URL
+and fetches it, which means **the checkout only picks up a new mark once the site deploys** — and
+also that renaming or removing this file breaks a page nothing in this repo builds.
 
 ## The social card is baked, and its words live in `config.ts`
 
