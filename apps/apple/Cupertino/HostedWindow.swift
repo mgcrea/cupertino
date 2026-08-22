@@ -75,7 +75,11 @@ final class HostedWindow {
       // however wide the longest footer sentence would like to be. That came
       // out at 1120pt: a Settings window the exact size of the main window,
       // rather than the smaller thing that opens in front of it.
-      if !remembered, let contentSize {
+      // `|| DemoSeed.isEnabled`: a remembered frame is the developer's, and a
+      // capture must not inherit whatever size they last dragged this window
+      // to. Outside screenshot mode a remembered frame still wins, which is the
+      // whole point of autosaving one.
+      if !remembered || DemoSeed.isEnabled, let contentSize {
         created.setContentSize(contentSize)
       }
       created.center()

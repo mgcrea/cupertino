@@ -431,20 +431,40 @@ enum DemoSeed {
   /// state restoration, and an autosaved frame is a separate mechanism.
   nonisolated private static let contentSize = NSSize(width: 1120, height: 540)
 
-  /// The Settings window's own size, and it must not be the one above.
+  /// The Settings window's size, and it is the size that window is *created*
+  /// at — not one applied to it afterwards.
   ///
-  /// Two reasons, and the second is the one that bites. It is a different shape
-  /// — a 192pt sidebar beside a grouped form, whose rows wrap below about 720 —
-  /// so the main window's 1120x540 photographs as a Settings window with a lake
-  /// of empty form in it. And appshot takes the *largest* ordinary window, so
-  /// two windows pinned to identical sizes is a coin flip over which one gets
-  /// photographed; keeping this smaller means a future change that opens both
-  /// windows at once still cannot produce a duplicate capture by accident.
+  /// Two dead ends are worth recording, because both look right.
   ///
-  /// 960x600 is the store canvas's own 1.6:1, and wide enough to keep the
-  /// widest Permissions row — an app icon, a name, a status and a control — on
-  /// one line.
-  nonisolated private static let settingsContentSize = NSSize(width: 960, height: 600)
+  /// Resizing the window after `show()` does not survive. `HostedWindow.show()`
+  /// already documents why: SwiftUI sizes a `NavigationSplitView` window from
+  /// its content on a layout pass landing *after* `show()` has returned, that
+  /// comes out at 1120pt, and nothing set beforehand survives it. `pin()` runs
+  /// on `didBecomeKey`, inside that window, so it loses — and it loses
+  /// asymmetrically, which is what made it hard to see: the first capture came
+  /// out 1120x540, SwiftUI's width with the *main* window's height, and looked
+  /// like a plausible screenshot of a Settings pane with a lake of empty
+  /// sidebar in it.
+  ///
+  /// Giving the *content* an exact `.frame(width:height:)` in demo mode — the
+  /// usual advice when an AppKit resize loses to a SwiftUI content clamp — is
+  /// worse: on a `NavigationSplitView` it conflicts with the split view's own
+  /// constraints and AppKit throws from `_NSSplitViewItemViewWrapper
+  /// updateConstraints`, so the app dies during the first display cycle and the
+  /// run fails with "the window never appeared".
+  ///
+  /// What works is the size the window is born with, because `HostedWindow`
+  /// already pins that against the late pass for its own reasons.
+  ///
+  /// Taller than the main window on purpose, and sized to the content rather
+  /// than to a round number — the same rule `contentSize` above is chosen by.
+  /// Permissions is the longest pane: Full Disk Access, then Automation and
+  /// then Writes, one row per surface each, and the write gate is the whole
+  /// reason this screen is captioned the way it is. 880 fitted all of it and
+  /// left an empty third below, which photographs as a product nobody uses;
+  /// 740 ends just under the footer sentence. Shortening it further starts
+  /// cropping the write toggles, under a caption promising one per surface.
+  nonisolated static let settingsContentSize = NSSize(width: 1000, height: 740)
 
   @MainActor private static func pin(_ window: NSWindow) {
     // Sheets and panels are windows too, and forcing a main-window size onto a

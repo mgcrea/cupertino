@@ -65,7 +65,11 @@ enum SettingsWindowController {
     // how a window comes back with its detail column crushed to nothing.
     // A new name is a one-time reset of position and size, and nothing else.
     title: "Cupertino Settings", autosaveName: autosaveName,
-    contentSize: NSSize(width: 760, height: 560),
+    // Screenshot mode opens it at the capture size instead. It has to be *this*
+    // number rather than a resize later on: `HostedWindow` pins the frame the
+    // window was created with against SwiftUI's own layout pass, and anything
+    // set after `show()` loses to that pass. See `DemoSeed.settingsContentSize`.
+    contentSize: DemoSeed.isEnabled ? DemoSeed.settingsContentSize : NSSize(width: 760, height: 560),
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
