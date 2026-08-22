@@ -11,5 +11,8 @@
 // revocation cannot take effect before the next build regardless.
 
 enum Revocations {
-  static let ids: Set<String> = []
+  static let ids: Set<String> = [
+    "01M0K3QSKCDHPXF14CMNJS0BK2",
+    "01M0KWV15Q1H65T87RCW5QZNAA",
+  ]
 }

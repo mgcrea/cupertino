@@ -31,11 +31,19 @@ const args = process.argv.slice(2);
 const check = args.includes("--check");
 const local = args.includes("--local");
 
-// A pull request from a fork has no secrets, and neither does a clean clone.
-// Neither is a failure: the committed file is the source of truth for the build,
-// and this only ever confirms it.
-if (!local && !process.env.CLOUDFLARE_API_TOKEN) {
-  console.log("skipped: no CLOUDFLARE_API_TOKEN, leaving the committed list alone");
+// The skip is for --check only, and only for CI. A pull request from a fork has
+// no secrets and neither does a clean clone; failing there would turn "we cannot
+// confirm this" into "the build is broken", which it is not — the committed file
+// is what the build uses.
+//
+// Writing is the opposite case and must never skip. A developer authenticates
+// wrangler with `wrangler login`, not a token in the environment, so guarding the
+// write path on CLOUDFLARE_API_TOKEN made `make revocations` print "skipped" and
+// change nothing — after a refund, silently leaving the refunded key working
+// while looking like it had been handled. Let wrangler's own auth decide, and
+// let it fail loudly when there is none.
+if (check && !local && !process.env.CLOUDFLARE_API_TOKEN) {
+  console.log("skipped: no CLOUDFLARE_API_TOKEN, cannot confirm against D1");
   process.exit(0);
 }
 
