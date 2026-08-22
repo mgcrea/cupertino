@@ -183,13 +183,13 @@ it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_
 
 The menu bar is Cupertino's whole surface — there is no Dock icon and no main window.
 
-| Section                             | What it answers                                                                     |
-| ----------------------------------- | ----------------------------------------------------------------------------------- |
-| Full Disk Access                    | granted or not, with the button that opens the right Settings pane                  |
-| Mail / Notes / Reminders / Calendar | Automation status per app, the consent prompt, and the writes toggle                |
-| Connections                         | which client is talking to which server right now, and how many tools it has called |
+| Section                             | What it answers                                                                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Full Disk Access                    | granted or not, with the button that opens the right Settings pane                                                         |
+| Mail / Notes / Reminders / Calendar | Automation status per app, the consent prompt, and the writes toggle                                                       |
+| Connections                         | which client is talking to which server right now, and how many tools it has called                                        |
 | MCP clients                         | one-click wiring for Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for Claude Code, VS Code and Codex |
-| Activity…                           | opens a window listing every tool call, live                                        |
+| Activity…                           | opens a window listing every tool call, live                                                                               |
 
 The **Activity** window records tool _names_ only — never arguments, message contents or results.
 It is the answer to "what did the assistant just do with my mail?", and the reason the servers run
