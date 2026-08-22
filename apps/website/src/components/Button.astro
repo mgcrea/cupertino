@@ -1,0 +1,52 @@
+---
+/**
+ * The one place a call to action is styled.
+ *
+ * There are now four of them on the page — nav, hero, pricing card, closing
+ * plate — and they were four hand-written class strings that had already drifted
+ * apart in radius and padding. A button that looks slightly different in the nav
+ * than in the hero reads as two different offers, which is the opposite of what
+ * a conversion path wants.
+ *
+ * `external` is opt-in rather than inferred from the href, because the two
+ * off-site links that matter most are opposite cases: GitHub wants a new tab,
+ * `/download` must not have one — it is a redirect to a zip, and a tab that
+ * opens only to close itself is worse than no tab.
+ */
+interface Props {
+  href: string;
+  /** primary is the accent fill; there is at most one per viewport. */
+  variant?: "primary" | "secondary" | "quiet";
+  size?: "sm" | "md" | "lg";
+  external?: boolean;
+  class?: string;
+}
+
+const { href, variant = "primary", size = "md", external = false, class: className } = Astro.props;
+
+const VARIANTS = {
+  primary: "bg-accent font-medium text-accent-ink hover:bg-accent-hi",
+  secondary: "border border-rule-2 text-fg hover:border-fg-muted",
+  quiet:
+    "bg-[color-mix(in_srgb,var(--color-fg)_8%,transparent)] text-fg hover:bg-accent hover:text-accent-ink",
+} as const;
+
+const SIZES = {
+  sm: "rounded-lg px-[13px] py-[7px] text-[13px]",
+  md: "rounded-[10px] px-[19px] py-[11px] text-[14px]",
+  lg: "rounded-[10px] px-[22px] py-3 text-[14.5px]",
+} as const;
+---
+
+<a
+  href={href}
+  {...external ? { target: "_blank", rel: "noopener" } : {}}
+  class:list={[
+    "inline-flex items-center justify-center gap-1.5 text-center whitespace-nowrap transition-colors",
+    VARIANTS[variant],
+    SIZES[size],
+    className,
+  ]}
+>
+  <slot />
+</a>

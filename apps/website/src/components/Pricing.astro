@@ -1,5 +1,6 @@
 ---
-import { DOCS, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import { DOCS, DOWNLOAD, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import Button from "./Button.astro";
 import SectionHeader from "./SectionHeader.astro";
 
 /**
@@ -43,33 +44,60 @@ const included = [
 
   <div class="reveal rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
     <div class="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-12">
-      <div class="flex flex-none flex-col gap-3 lg:w-[240px]">
-        <div class="font-display text-[44px] leading-none font-semibold tracking-[-0.04em]">
-          {PRICING.price}
-        </div>
-        <div class="text-[14px] leading-[1.6] text-fg-dim">
-          One time, for all of 1.x. Not a subscription.
-        </div>
-        {/* Both figures, because they are not a conversion of each other: the
-            dollar price is quoted tax-exclusive and the euro one VAT-inclusive,
-            as each side is normally quoted. Showing only the first would leave
-            an EU buyer without the total they are actually charged. */}
-        <div class="text-[13.5px] leading-[1.6] text-fg-dim">
-          {PRICING.eur.price} in the EU, VAT included.
+      {/* The price and the button are one plate rather than four stacked lines.
+          They were the latter, and the button read as the last item in a list
+          of facts instead of as the thing the section exists to offer — the
+          accent wash is the same idiom as the closing plate, at a quarter of
+          the strength. */}
+      <div
+        class="relative flex flex-none flex-col gap-3 overflow-hidden rounded-[14px] border border-rule-2 bg-bg-3 p-6 lg:w-[268px]"
+      >
+        <div
+          class="pointer-events-none absolute inset-x-0 top-0 h-[140px]"
+          style="background:radial-gradient(70% 100% at 50% 0%,rgba(242,137,92,.13) 0%,transparent 72%)"
+          aria-hidden="true"
+        >
         </div>
 
-        {
-          SHIPPED ? (
-            <a
-              href={PRICING.buy}
-              class="mt-1 rounded-[10px] bg-accent px-[22px] py-3 text-center text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
-            >
-              Buy a licence
-            </a>
-          ) : (
-            <div class="mono mt-1 !text-fg-dim">Not on sale yet</div>
-          )
-        }
+        <div class="relative flex flex-col gap-3">
+          <div class="font-display text-[52px] leading-none font-semibold tracking-[-0.04em]">
+            {PRICING.price}
+          </div>
+          <div class="text-[14px] leading-[1.6] text-fg-dim">
+            One time, for all of 1.x. Not a subscription.
+          </div>
+          {/* Both figures, because they are not a conversion of each other: the
+              dollar price is quoted tax-exclusive and the euro one VAT-inclusive,
+              as each side is normally quoted. Showing only the first would leave
+              an EU buyer without the total they are actually charged. */}
+          <div class="text-[13.5px] leading-[1.6] text-fg-dim">
+            {PRICING.eur.price} in the EU, VAT included.
+          </div>
+
+          {
+            SHIPPED ? (
+              <>
+                <Button href={PRICING.buy} size="lg" class="mt-2 w-full">
+                  Buy a licence
+                </Button>
+                {/* The second path out of the plate is a link, not a second
+                    button: two filled shapes side by side make the reader pick
+                    before they have been told the difference between them. */}
+                <a
+                  href={DOWNLOAD.href}
+                  class="text-center text-[13.5px] text-fg-dim underline underline-offset-2 transition-colors hover:text-accent-hi"
+                >
+                  or try it free for {TRIAL.minutes} minutes
+                </a>
+                <div class="mono mt-1 text-center">
+                  {PRICING.refundDays}-day refund · no account
+                </div>
+              </>
+            ) : (
+              <div class="mono mt-1 !text-fg-dim">Not on sale yet</div>
+            )
+          }
+        </div>
       </div>
 
       <ul class="m-0 flex list-none flex-col gap-3 p-0">

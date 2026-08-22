@@ -1,5 +1,6 @@
 ---
-import { REPO_URL } from "../config";
+import { DOWNLOAD, PRICING, REPO_URL, SHIPPED } from "../config";
+import Button from "./Button.astro";
 import Logo from "./Logo.astro";
 
 const links = [
@@ -25,22 +26,51 @@ const links = [
     <nav class="hidden items-center gap-[30px] md:flex">
       {
         links.map((l) => (
-          <a
-            href={l.href}
-            class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi"
-          >
+          <a href={l.href} class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi">
             {l.label}
           </a>
         ))
       }
     </nav>
 
-    <a
-      href={REPO_URL}
-      target="_blank"
-      rel="noopener"
-      class="rounded-lg bg-[color-mix(in_srgb,var(--color-fg)_8%,transparent)] px-[13px] py-[7px] text-[13px] whitespace-nowrap text-fg transition-colors hover:bg-accent hover:text-accent-ink"
-      >GitHub <span class="opacity-60">↗</span></a
-    >
+    {/* The bar is the only element that survives a scroll, so it carries the
+        whole funnel: try it, or buy it. Three buttons do not fit a phone, so
+        they drop in order of how replaceable they are — GitHub is also in the
+        footer and the Status table, Download is also in the closing plate, and
+        the price is the one thing with nowhere else to be at every scroll
+        position. It carries the figure rather than the word "Buy" alone,
+        because a price shown before the click is the honesty the ladder below
+        is built on. */}
+    {/* The responsive hiding is on a wrapper rather than on the button itself,
+        and has to stay there. `Button` sets `inline-flex`, and Tailwind emits
+        `.inline-flex` AFTER `.hidden` in the utilities layer — so `hidden` on
+        the button loses to its own base class and the button shows at every
+        width. Same specificity, later wins; nothing about it is visible in the
+        markup. */}
+    <div class="flex flex-none items-center gap-2">
+      {
+        SHIPPED ? (
+          <>
+            <span class="hidden lg:block">
+              <Button href={REPO_URL} external variant="quiet" size="sm">
+                GitHub <span class="opacity-60">↗</span>
+              </Button>
+            </span>
+            <span class="hidden sm:block">
+              <Button href={DOWNLOAD.href} variant="secondary" size="sm">
+                Download
+              </Button>
+            </span>
+            <Button href={PRICING.buy} size="sm">
+              Buy <span class="opacity-70">·</span> {PRICING.price}
+            </Button>
+          </>
+        ) : (
+          <Button href={REPO_URL} external variant="quiet" size="sm">
+            GitHub <span class="opacity-60">↗</span>
+          </Button>
+        )
+      }
+    </div>
   </div>
 </header>

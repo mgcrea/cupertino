@@ -1,5 +1,6 @@
 ---
-import { DOWNLOAD, REPO_URL, SHIPPED, TRIAL } from "../config";
+import { DOWNLOAD, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import Button from "./Button.astro";
 import Logo from "./Logo.astro";
 ---
 
@@ -27,25 +28,38 @@ import Logo from "./Logo.astro";
         SHIPPED ? (
           <>
             <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
-              Signed with a Developer ID and notarized by Apple. Run every surface for {TRIAL.minutes}{" "}
-              minutes before you decide.
+              Signed with a Developer ID and notarized by Apple. One payment covers every 1.x
+              release, on every Mac you own — or run every surface for {TRIAL.minutes} minutes first
+              and decide afterwards.
             </p>
 
-            {/* Not target="_blank": this is a download, and a tab that opens only to
-                close itself is worse than no tab. */}
-            <a
-              href={DOWNLOAD.href}
-              class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
-            >
-              Download for macOS
-            </a>
+            {/* The hero's order, reversed. A reader who has arrived here has been
+                through the latency numbers, the write gate and the ladder, so the
+                open question is no longer "does this work" but "is it worth
+                $14.99" — and the button that answers it should be the filled one.
+                Download stays one click away rather than one scroll back up. */}
+            <div class="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+              <Button href={PRICING.buy} size="lg" class="w-full sm:w-auto">
+                Buy a licence <span class="opacity-70">·</span> {PRICING.price}
+              </Button>
+              {/* Not external: this is a download, and a tab that opens only to
+                  close itself is worse than no tab. */}
+              <Button
+                href={DOWNLOAD.href}
+                variant="secondary"
+                size="lg"
+                class="w-full sm:w-auto"
+              >
+                Download for macOS
+              </Button>
+            </div>
 
             <code class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted">
               {DOWNLOAD.cask}
             </code>
 
             <p class="m-0 text-[12.5px] text-fg-muted">
-              {DOWNLOAD.requires} ·{" "}
+              {DOWNLOAD.requires} · {PRICING.refundDays}-day refund ·{" "}
               <a class="underline underline-offset-2 hover:text-fg-dim" href={DOWNLOAD.checksum}>
                 SHA-256
               </a>{" "}
@@ -62,14 +76,9 @@ import Logo from "./Logo.astro";
               host at the built CLIs.
             </p>
 
-            <a
-              href={REPO_URL}
-              target="_blank"
-              rel="noopener"
-              class="rounded-[10px] bg-accent px-[22px] py-3 text-[14.5px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
-            >
+            <Button href={REPO_URL} external size="lg">
               Watch the repo →
-            </a>
+            </Button>
 
             <code class="rounded-lg border border-rule bg-bg-3 px-4 py-2.5 font-mono text-[12.5px] text-fg-muted">
               git clone mcp-cupertino && pnpm build

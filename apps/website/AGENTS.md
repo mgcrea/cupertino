@@ -78,14 +78,38 @@ The repo is the authority on what ships, and this site is downstream of it.
 - **Tool counts come from the tree, not from the root README.** `packages/<surface>/src/tools/`
   is what registers them; the README has drifted before. The v4 design canvas still shows Reminders
   as "in progress, no server yet" — it shipped, with 11 tools, and the site follows the code.
-- **`SHIPPED` is false and everything says so.** Nothing is on npm and the app is not signed and
-  released, so the CTA is "watch the repo" and the status block says "not shipped yet". Flipping
-  `SHIPPED` is a release step, not a copy edit — and the JSON-LD is deliberately
-  `SoftwareApplication` with no offer, because a price or availability here would be a
-  structured-data lie.
+- **`SHIPPED` is true, and its other branch is still live code.** The app released at 1.0.0, so
+  the nav, hero, pricing plate and closing plate each render their shipped half — a download
+  button, a buy button carrying the price, and a `SoftwareApplication` schema that now does carry
+  an offer. Keep the `!SHIPPED` half rather than deleting it; it is what the site falls back to if
+  a release is ever pulled.
+  **A string outside a SHIPPED branch has to be true on its own.** That is not theoretical: the
+  hero's buttons were never gated at all, so they went on inviting people to "watch the repo" for
+  the whole period after the app had actually shipped, with no way to buy it above the fold.
 - **The no-network claim is load-bearing and checked.** `scripts/audit-network.sh` at the repo root
   gates it in CI. If that check is ever relaxed, the Status row here comes down first.
 - **Unofficial, not affiliated with Apple** stays in the hero caption and the footer.
+
+## Every call to action goes through `Button.astro`
+
+Nav, hero, pricing plate and closing plate were four hand-written class strings that had already
+drifted in radius and padding. They are one component now — `variant` is `primary` (the accent
+fill, at most one per viewport), `secondary` or `quiet`, and `size` is `sm`/`md`/`lg`.
+
+`external` is opt-in rather than inferred from the href, because the two off-site links that matter
+most want opposite behaviour: GitHub wants a new tab, and `/download` must not have one — it
+redirects to a zip, and a tab that opens only to close itself is worse than no tab.
+
+**Never put `hidden` on a `Button` directly.** It will not work, and nothing in the markup shows
+why. `Button` sets `inline-flex`, and Tailwind emits `.inline-flex` _after_ `.hidden` in the
+utilities layer — equal specificity, later declaration wins, so the button stays visible at every
+width. The nav hides its two optional buttons with a wrapping `<span class="hidden sm:block">`
+instead. The breakpoint variants are safe on either element, because they land in media queries
+that come after the whole base layer.
+
+The order the buttons drop in on a narrow viewport is deliberate: GitHub first (it is also in the
+footer and the Status table), then Download (also in the closing plate), leaving the price — the
+one thing with nowhere else to be at every scroll position.
 
 ## Design source and brand marks
 

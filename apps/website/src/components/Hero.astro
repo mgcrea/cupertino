@@ -1,5 +1,6 @@
 ---
-import { HOSTS, REPO_URL, SHIPPED } from "../config";
+import { DOWNLOAD, HOSTS, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import Button from "./Button.astro";
 import FdaPane from "./FdaPane.astro";
 
 /** Each one is a section further down, so the strip is a table of contents. */
@@ -67,22 +68,48 @@ const CLAIMS = [
         }
       </ul>
 
+      {/* Download leads HERE and Buy leads in the closing plate, deliberately.
+          A reader at the top has been told the grant argument and nothing else;
+          the honest next step for them is the trial, which costs them nothing
+          and answers the only question they actually have — does this work
+          against MY mail. By the closing plate they have read the latency
+          numbers, the write gate and the price ladder, and the order flips.
+          The nav carries the price at both ends for whoever skipped ahead. */}
       <div class="flex flex-wrap items-center gap-3">
-        <a
-          href={REPO_URL}
-          target="_blank"
-          rel="noopener"
-          class="rounded-[10px] bg-accent px-[19px] py-[11px] text-[14px] font-medium text-accent-ink transition-colors hover:bg-accent-hi"
-          >Watch the repo →</a
-        >
-        <a
-          href="#run"
-          class="rounded-[10px] border border-rule-2 px-[19px] py-[11px] text-[14px] text-fg transition-colors hover:border-fg-muted"
-          >Run it from source</a
-        >
+        {
+          SHIPPED ? (
+            <>
+              {/* Not external: this is a download, and a tab that opens only to
+                  close itself is worse than no tab. */}
+              <Button href={DOWNLOAD.href}>Download for macOS</Button>
+              <Button href={PRICING.buy} variant="secondary">
+                Buy a licence <span class="text-fg-dim">·</span> {PRICING.price}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button href={REPO_URL} external>
+                Watch the repo →
+              </Button>
+              <Button href="#run" variant="secondary">
+                Run it from source
+              </Button>
+            </>
+          )
+        }
       </div>
 
-      <p class="mono m-0">MIT servers · unofficial, not affiliated with Apple</p>
+      <div class="flex flex-col gap-1.5">
+        {
+          SHIPPED && (
+            <p class="mono m-0">
+              {DOWNLOAD.requires} · {TRIAL.minutes}-minute trial, no account · {PRICING.refundDays}-day
+              refund
+            </p>
+          )
+        }
+        <p class="mono m-0">MIT servers · unofficial, not affiliated with Apple</p>
+      </div>
     </div>
 
     <!-- The before/after. Four grants collapsing to one, in the pane the reader
