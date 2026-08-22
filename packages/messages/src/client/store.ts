@@ -23,9 +23,12 @@ import { decodeAttributedBody } from "./typedstream.js";
  *
  * ## Three measurements this file is built on
  *
- * **The blob is the norm.** 97,094 rows carry `attributedBody` and 94,043 carry
- * `text`; 3,051 have only the blob. A reader that selects `text` returns nothing
- * for one message in thirty-two, silently. Every read here goes through
+ * **The blob is the norm, and increasingly the only thing there.** 97,094 rows
+ * carry `attributedBody` and 94,043 carry `text`; 3,051 have only the blob. That
+ * 3.1% is an average over a decade, and it hides the real shape: measured
+ * through this server, 2016-2025 are ~99% plain `text` and everything from
+ * MARCH 2026 ONWARD is blob-only. A reader that selects `text` would today
+ * report that the conversation stopped in February. Every read here goes through
  * `#body()`, which prefers the column and falls back to the decoder — validated
  * at **100.000% agreement across all 94,043 rows** where both exist, with zero failures
  * across all 97,094.
@@ -393,6 +396,73 @@ export class MessagesStore {
   }
 
   chats(limit: number): ChatRow[] {
+    return this.#chats("", [], limit);
+  }
+
+  /** One chat, by the guid a ref carries. Null when it has been deleted. */
+  chatByGuid(guid: string): ChatRow | null {
+    return this.#chats(`WHERE c."guid" = ?`, [guid], 1)[0] ?? null;
+  }
+
+  /**
+   * The chats that already exist with a set of handles, newest first.
+   *
+   * This is what makes a send addressable at all. Messages will not enumerate
+   * participants for a script, so the write lane cannot look a person up — but
+   * it can address a chat by guid, and the guid lives here. The read lane
+   * choosing the target for the write lane is the whole arrangement; see
+   * `client/jxa/core.ts`.
+   *
+   * Handles are matched as given. Suffix matching happens a layer up in
+   * `client/messages.ts`, where `packages/contacts`' measured `suffixKey` is
+   * available and the candidate list is the store's own 1,075 handles.
+   */
+  chatsForHandles(handles: readonly string[], limit = 10): ChatRow[] {
+    if (!handles.length) return [];
+    const marks = handles.map(() => "?").join(", ");
+    return this.#chats(
+      `WHERE c."ROWID" IN (
+           SELECT chj."chat_id"
+             FROM "chat_handle_join" chj
+             JOIN "handle" h2 ON h2."ROWID" = chj."handle_id"
+            WHERE h2."id" IN (${marks}))`,
+      [...handles],
+      limit,
+    );
+  }
+
+  /**
+   * Outgoing messages in a set of chats since an instant — the send's receipt.
+   *
+   * `docs/messages.md` recorded that Apple Events returns no chat identifier, so
+   * a send "cannot report what it wrote by id". That is true of the write lane
+   * alone and false of the pair: the row Messages writes for an outgoing message
+   * is an ordinary row in this table, and a narrow window plus the target chat
+   * identifies it. Matching on text as well would be wrong — two identical
+   * messages a minute apart are a normal thing to send — so the caller passes a
+   * `sinceApple` taken immediately BEFORE the send and takes the oldest match.
+   */
+  sentSince(chatGuids: readonly string[], sinceApple: number, limit = 10): MessageRow[] {
+    const m = this.caps.messageColumns;
+    if (!chatGuids.length || !m.has("date")) return [];
+    const marks = chatGuids.map(() => "?").join(", ");
+    const fromMe = m.has("is_from_me") ? `AND m."is_from_me" = 1` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT ${this.#messageColumns()}
+           FROM "message" m
+           ${this.#joins()}
+          WHERE c."guid" IN (${marks})
+            AND ${appleSecondsSql('m."date"')} >= ?
+            ${fromMe}
+          ORDER BY m."date" ASC
+          LIMIT ${Math.max(1, Math.trunc(limit))}`,
+      )
+      .all(...([...chatGuids, sinceApple] as never[])) as Record<string, unknown>[];
+    return rows.map((r) => this.#toRow(r));
+  }
+
+  #chats(where: string, params: readonly unknown[], limit: number): ChatRow[] {
     const c = this.caps.chatColumns;
     const rows = this.db
       .prepare(
@@ -407,11 +477,12 @@ export class MessagesStore {
            FROM "chat" c
            LEFT JOIN "chat_message_join" cmj ON cmj."chat_id" = c."ROWID"
            LEFT JOIN "message" m ON m."ROWID" = cmj."message_id"
+          ${where}
           GROUP BY c."ROWID"
           ORDER BY MAX(m."date") DESC
           LIMIT ${Math.max(1, Math.trunc(limit))}`,
       )
-      .all() as Record<string, unknown>[];
+      .all(...(params as never[])) as Record<string, unknown>[];
 
     const participants = this.#participants(rows.map((r) => Number(r.rowid)));
     return rows.map((r) => {

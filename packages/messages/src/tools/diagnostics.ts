@@ -18,15 +18,21 @@ export const registerDiagnosticsTools = (server: McpServer, client: AppleMessage
     async () =>
       wrap(async () => {
         const status = client.status();
+        const writes = client.config.allowWrites;
         return {
           server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
           lane: {
             reads: "file lane (read-only SQLite)",
-            writes: "none — this server registers no mutating tool",
+            writes: writes
+              ? "apple_messages_send_message, over Apple Events. The only mutating command " +
+                "the Messages dictionary offers."
+              : "off — APPLE_MESSAGES_ALLOW_WRITES is not set, so the send tool is not " +
+                "registered and this server sends no Apple Event at all.",
             appleEvents:
-              "no read path exists. Measured: every attempt fails, and Messages answers " +
-              '"Application isn\'t running" even while it is running, because it is a ' +
-              "windowless background process that declines to wake for a script.",
+              "no read path exists, and never will. Measured: every read attempt fails, and " +
+              'Messages answers "Application isn\'t running" even while it is running, because ' +
+              "it is a windowless background process that declines to wake for a script. " +
+              "Sending is the one thing that works.",
           },
           store: {
             path: status.located.storePath,
@@ -43,19 +49,27 @@ export const registerDiagnosticsTools = (server: McpServer, client: AppleMessage
             "Full Disk Access is MANDATORY here, unlike every other surface in this bundle. " +
               "There is no Apple Events read lane to fall back to, so without the grant this " +
               "server can do nothing at all.",
-            "Roughly 3% of messages store their text only in an archived blob, not in a plain " +
-              "column. Those are decoded on read; `textSource` on each result says which lane " +
-              "answered. A tool that read the column alone would silently return nothing for " +
-              "one message in thirty-two.",
+            "Messages stopped writing the plain `text` column between late February and late " +
+              "March 2026: every message since is stored only as an archived blob, which is " +
+              "decoded here. `textSource` on each result says which lane answered. Across all " +
+              "history the blob-only share is about 3%, but for anything recent it is ~100%, " +
+              "so a reader without the decoder would report that the conversation stopped in " +
+              "February.",
             "Names come from Contacts, which has its own separate permission. `unknown` is a " +
               "normal outcome and not an error — about one in six of even the busiest " +
               "correspondents has no contact card. When `contacts.available` is false, nobody " +
               "looked at all and every handle is raw.",
             "Tapbacks are rows in the message table. They are filtered out of conversations by " +
               "default and reported on the message they target instead.",
-            "This server cannot send. Sending was deliberately never probed, and Apple Events " +
-              "returns no chat identifier at all, so a sent message could not be reconciled " +
-              "against anything read here.",
+            writes
+              ? "Sending is real and immediate, and it is the ONLY thing this server can " +
+                "change — the dictionary has no edit, delete, mark-as-read or reaction " +
+                "command. Messages hands back no identifier for what it sent, so the sent row " +
+                'is found by re-reading the store; `reconciliation: "pending"` means it has ' +
+                "not appeared yet, which is not a failure and must not be retried."
+              : "This server cannot send: APPLE_MESSAGES_ALLOW_WRITES is off. With it on, one " +
+                "tool appears — apple_messages_send_message — and it is the only mutating " +
+                "command the Messages dictionary offers.",
           ],
         };
       }),

@@ -11,7 +11,7 @@ export const MESSAGES_SURFACE: SurfaceContext = {
 };
 
 /**
- * Recorded, and unused by every read path.
+ * Used by exactly one code path, and unused by every read.
  *
  * Messages is the one surface with NO Apple Events read lane at all — measured,
  * not assumed. `docs/messages.md` records every attempt failing, and the reason
@@ -20,8 +20,8 @@ export const MESSAGES_SURFACE: SurfaceContext = {
  * windowless background process that declines to wake for a script. The liveness
  * check and the app's own answer disagree and neither is lying.
  *
- * The id is here for a future send path, which is the only thing Apple Events
- * can do on this surface.
+ * The id is the liveness check for `send`, which is the only thing Apple Events
+ * can do on this surface — see `client/jxa/core.ts`.
  */
 export const MESSAGES_BUNDLE_ID = "com.apple.MobileSMS";
 
@@ -71,5 +71,38 @@ export class MessagesUnavailableError extends AppleAutomationError {
 
   constructor(reason: string) {
     super(reason, {});
+  }
+}
+
+/**
+ * Messages would not accept any form of recipient for a send.
+ *
+ * Its own error because the cause is almost never the recipient. Every rung of
+ * the ladder in `client/jxa/core.ts` except the first one enumerates something,
+ * and enumeration is exactly what this app refuses — so the usual cause of this
+ * error is that the chat is new (no guid in the store to address it by) rather
+ * than that the person does not exist. The message says so, because "not found"
+ * would send a caller looking for a typo that is not there.
+ */
+export class SendTargetNotFoundError extends AppleAutomationError {
+  override readonly name = "SendTargetNotFoundError";
+
+  constructor(recipient: string, attempts: readonly string[]) {
+    super(
+      `Messages would not resolve "${recipient}" to a chat or participant, so nothing was sent. ` +
+        `This usually means there is no existing conversation with them on this Mac: Messages ` +
+        `refuses to enumerate participants for a script, so an existing chat is the only handle ` +
+        `this server can address reliably. Open the conversation once in Messages.app and retry.`,
+      { recipient, attempts: [...attempts] },
+    );
+  }
+}
+
+/** Messages accepted the target and then refused the send itself. */
+export class SendFailedError extends AppleAutomationError {
+  override readonly name = "SendFailedError";
+
+  constructor(message: string, attempts: readonly string[]) {
+    super(`Messages refused the send: ${message}`, { attempts: [...attempts] });
   }
 }

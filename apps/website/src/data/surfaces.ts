@@ -1,5 +1,5 @@
 /**
- * The five shipped surfaces, their tool names, and which of them the write
+ * The shipped surfaces, their tool names, and which of them the write
  * gate hides.
  *
  * These lists are transcribed from `packages/<surface>/src/tools/index.ts`, and the
@@ -17,7 +17,7 @@
 export interface Surface {
   /** Anchor id and display key. */
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "safari";
+  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "messages" | "safari";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -153,11 +153,27 @@ export const SURFACES: readonly Surface[] = [
     withoutGrant:
       "Nothing — but it asks for the Contacts permission rather than the whole disk, and unlike Full Disk Access that one prompts.",
   },
+  {
+    id: "messages",
+    name: "Messages",
+    pkg: "@mgcrea/mcp-apple-messages",
+    read: [
+      "apple_messages_list_chats",
+      "apple_messages_list_messages",
+      "apple_messages_search_messages",
+      "apple_messages_get_message",
+      "apple_messages_diagnostics",
+    ],
+    // One, and it is the whole dictionary. `sdef` lists three commands — send,
+    // login and logout — and the other two would sign the user out of iMessage
+    // on every device they own. There is no edit, delete, mark-as-read or
+    // reaction verb to expose. See docs/messages.md.
+    write: ["apple_messages_send_message"],
+    pitch:
+      "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — and sends, behind the write gate.",
+    withoutGrant:
+      "Nothing at all. Every read through Messages' own scripting interface fails, so this is the one surface with no second lane to degrade to.",
+  },
 ] as const;
 
 export const toolCount = (s: Surface) => s.read.length + s.write.length;
-
-/** Messages has no Apple Events read path at all, so it cannot ship without the grant. */
-export const NOT_STARTED = [
-  { name: "Messages", why: "no read API exists without the file lane" },
-] as const;

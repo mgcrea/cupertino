@@ -1,15 +1,31 @@
 import {
   AppleContactsClient,
+  emailKey,
+  handleKind,
   loadConfig as loadContactsConfig,
+  suffixKey,
   type ResolvedHandle,
 } from "@mgcrea/mcp-apple-contacts";
-import { IndexUnavailableError, type Logger } from "@mgcrea/mcp-apple-core";
+import {
+  createOsascriptRunner,
+  IndexUnavailableError,
+  withBusyRetry,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
 import { renderInstant, toAppleSeconds } from "./dates.js";
-import { MessagesUnavailableError } from "./errors.js";
+import {
+  ChatNotFoundError,
+  MESSAGES_SURFACE,
+  MessagesUnavailableError,
+  SendFailedError,
+  SendTargetNotFoundError,
+} from "./errors.js";
+import { SEND_MESSAGE } from "./jxa/write.js";
 import { locateStore, type LocateResult } from "./locate.js";
-import { encodeChatRef, encodeMessageRef } from "./ref.js";
+import { decodeChatRef, encodeChatRef, encodeMessageRef } from "./ref.js";
 import { openStore, type ChatRow, type MessageRow, type MessagesStore } from "./store.js";
 
 /**
@@ -52,6 +68,33 @@ export type CreateClientOptions = {
   home?: string;
   /** Injected by tests, so no test reaches the developer's real address book. */
   contacts?: AppleContactsClient | null;
+  /** Injected by tests, so no test sends a real message to a real person. */
+  osascript?: OsascriptRunner;
+};
+
+/**
+ * What a send actually knows, which is less than a caller might assume.
+ *
+ * `sent` means Messages accepted the command without throwing. `delivered` is
+ * not a field here at all, because nothing in either lane reports it at send
+ * time. What closes the gap is `message`: the row the file lane found afterwards
+ * — a real ref, usable with `apple_messages_get_message` like any other.
+ */
+export type SendResult = {
+  sent: true;
+  /** Which rung of the ladder in `client/jxa/core.ts` answered. */
+  strategy: string;
+  targetKind: string;
+  /** The chat the file lane chose, when it could choose one. */
+  chatRef: string | null;
+  chat: string | null;
+  to: Correspondent | null;
+  /** Whether Messages had to be launched. A launch is visible to the user. */
+  launched: boolean;
+  /** `matched` | `pending` | `unavailable` — see `#reconcile`. */
+  reconciliation: string;
+  message: RenderedMessage | null;
+  note?: string;
 };
 
 export type Correspondent = {
@@ -107,6 +150,16 @@ export class AppleMessagesClient {
   #contactsTried: boolean;
   #resolved = new Map<string, ResolvedHandle>();
 
+  /**
+   * Built even when writes are off, and that costs nothing.
+   *
+   * `createOsascriptRunner` spawns no process until something calls it, and with
+   * `allowWrites` off nothing does — the send tool is never registered. So this
+   * server still sends no Apple Event and still asks for no Automation grant in
+   * its default configuration, which is the claim `surfaces.json` makes.
+   */
+  readonly #runner: OsascriptRunner;
+
   constructor(opts: CreateClientOptions) {
     this.#config = opts.config;
     this.#logger = opts.logger;
@@ -114,6 +167,14 @@ export class AppleMessagesClient {
     // `null` means "explicitly none" (tests); `undefined` means "make one".
     this.#contacts = opts.contacts ?? null;
     this.#contactsTried = opts.contacts !== undefined;
+    this.#runner =
+      opts.osascript ??
+      createOsascriptRunner({
+        surface: MESSAGES_SURFACE,
+        osascriptPath: opts.config.osascriptPath,
+        timeoutMs: opts.config.osascriptTimeoutMs,
+        ...(opts.logger ? { logger: opts.logger } : {}),
+      });
   }
 
   get config(): Config {
@@ -300,6 +361,170 @@ export class AppleMessagesClient {
       messages: c.messages,
       lastMessageAt: renderInstant(c.lastMessageAt),
     }));
+  }
+
+  // ─── writes ────────────────────────────────────────────────────────────────
+  // One verb, and it is the only thing Apple Events can do on this surface.
+  //
+  // The shape is unlike every other surface here. Elsewhere a write is a
+  // round-trip: change something, re-read it, report what the app stored.
+  // Messages cannot re-read — every read through its scripting dictionary fails
+  // — so the write lane fires and the FILE lane reports. See `#reconcile`.
+
+  /**
+   * Pick the chat to address, using the store.
+   *
+   * Handles are matched the way `packages/contacts` measured them rather than by
+   * string equality: a caller who types `06 12 34 56 78` and a store that holds
+   * `+33612345678` are the same person, and `suffixKey`'s last-9 rule is what
+   * says so. The candidate set is the store's own handles — 1,075 on the
+   * measured machine — so this is a scan over a list that is already in memory.
+   */
+  #chatFor(input: { chatRef?: string | undefined; to?: string | undefined }): {
+    guid: string | null;
+    chat: ChatRow | null;
+    handle: string | null;
+  } {
+    // `store()`, not `#require()`. A send is the one operation on this surface
+    // that can work without the file lane — the JXA ladder's lower rungs guess a
+    // chat guid from the handle — so an unreadable store degrades the RESULT
+    // (no ref to report) rather than blocking the send. Reads still refuse.
+    const store = this.store();
+    if (input.chatRef) {
+      const guid = decodeChatRef(input.chatRef);
+      const chat = store?.chatByGuid(guid) ?? null;
+      if (store && !chat) throw new ChatNotFoundError(input.chatRef);
+      return { guid, chat, handle: chat?.participants[0] ?? null };
+    }
+    const to = input.to?.trim();
+    if (!to) return { guid: null, chat: null, handle: null };
+    if (!store) return { guid: null, chat: null, handle: to };
+
+    const kind = handleKind(to);
+    const wantedSuffix = kind === "phone" ? suffixKey(to) : null;
+    const wantedEmail = kind === "email" ? emailKey(to) : null;
+    const candidates = store.handles().filter((h) => {
+      if (h === to) return true;
+      if (wantedEmail) return emailKey(h) === wantedEmail;
+      if (wantedSuffix) return suffixKey(h) === wantedSuffix;
+      return false;
+    });
+    if (!candidates.length) return { guid: null, chat: null, handle: to };
+
+    // A one-to-one chat wins over a group with the same person in it: "message
+    // Alice" must not land in a six-person thread Alice happens to be in.
+    const chats = store.chatsForHandles(candidates, 25);
+    const direct = chats.find((c) => !c.isGroup) ?? null;
+    return { guid: direct?.guid ?? null, chat: direct, handle: candidates[0] ?? to };
+  }
+
+  /**
+   * Find the row Messages wrote, or say plainly that it was not found.
+   *
+   * `docs/messages.md` left this as an open question — "whether a send should
+   * re-resolve by scanning the store for a recent row on the target chat" — and
+   * this is the answer, because the alternative is a send that can report
+   * nothing at all. Apple Events hands back no identifier of any kind.
+   *
+   * Three things make the match safe rather than merely plausible:
+   *
+   *   1. `since` is taken BEFORE the send, so nothing earlier can match.
+   *   2. The window is scoped to the target chat.
+   *   3. Text is compared when it is available, which separates our row from one
+   *      the user sent from their phone in the same second. Only when it is not
+   *      available does the oldest row in the window win.
+   *
+   * A miss is `pending`, never an error: the send already happened, and iMessage
+   * writes its row asynchronously. Reporting a failure there would be the worst
+   * possible lie — it would invite a retry that sends the message twice.
+   */
+  async #reconcile(guid: string, since: number, text: string): Promise<RenderedMessage | null> {
+    const deadline = Date.now() + this.#config.sendReconcileMs;
+    for (;;) {
+      // Reopen: this handle was opened before the send, and the point is to see
+      // what another process has written since.
+      this.#invalidate();
+      const store = this.store();
+      if (!store) return null;
+      const rows = store.sentSince([guid], since, 10);
+      const hit = rows.find((r) => r.text !== null && r.text === text) ?? rows[0];
+      if (hit) return this.#render([hit])[0] ?? null;
+      if (Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  #invalidate(): void {
+    this.#store?.close();
+    this.#store = null;
+    this.#storeTried = false;
+  }
+
+  /**
+   * Send one message. A real one, to a real person, immediately.
+   *
+   * Everything difficult about this is in `client/jxa/core.ts`; what is left
+   * here is choosing the target from the file lane and reconciling afterwards.
+   */
+  async sendMessage(input: {
+    chatRef?: string | undefined;
+    to?: string | undefined;
+    text: string;
+    service?: string | undefined;
+  }): Promise<SendResult> {
+    const { guid, chat, handle } = this.#chatFor(input);
+    const since = toAppleSeconds(new Date(Date.now() - 2_000));
+
+    let data: {
+      strategy?: unknown;
+      targetKind?: unknown;
+      launched?: unknown;
+      attempts?: unknown;
+    };
+    try {
+      data = await withBusyRetry(() =>
+        this.#runner.run<Record<string, unknown>>(SEND_MESSAGE, {
+          ...(guid ? { chatGuid: guid } : {}),
+          ...(handle ? { handle } : {}),
+          ...(input.service ? { service: input.service } : {}),
+          text: input.text,
+          allowLaunch: true,
+        }),
+      );
+    } catch (err) {
+      const details = (err as { details?: { code?: string; detail?: unknown } })?.details;
+      const attempts = Array.isArray(details?.detail) ? (details.detail as string[]) : [];
+      const message = err instanceof Error ? err.message : String(err);
+      if (details?.code === "SEND_TARGET_NOT_FOUND") {
+        throw new SendTargetNotFoundError(input.chatRef ?? input.to ?? "", attempts);
+      }
+      if (details?.code === "SEND_FAILED") throw new SendFailedError(message, attempts);
+      throw err;
+    }
+
+    const message = guid ? await this.#reconcile(guid, since, input.text) : null;
+    if (handle) this.#resolve([handle]);
+    return {
+      sent: true,
+      strategy: typeof data.strategy === "string" ? data.strategy : "unknown",
+      targetKind: typeof data.targetKind === "string" ? data.targetKind : "unknown",
+      chatRef: guid ? encodeChatRef(guid) : null,
+      chat: chat?.displayName ?? null,
+      to: handle ? this.#correspondent(handle) : null,
+      launched: data.launched === true,
+      reconciliation: message ? "matched" : guid ? "pending" : "unavailable",
+      message,
+      ...(message
+        ? {}
+        : {
+            note: guid
+              ? "Messages accepted the send, but no matching row had appeared in the store yet. " +
+                "That is normal for a slow network — re-run apple_messages_list_messages on this " +
+                "chat rather than sending again."
+              : "Messages accepted the send, but there was no existing chat to reconcile it " +
+                "against, so no ref can be reported for it. Read the chat back once it exists.",
+          }),
+    };
   }
 
   /** Bounds for a range query, as apple-seconds. */

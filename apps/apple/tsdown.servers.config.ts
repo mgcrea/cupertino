@@ -56,6 +56,7 @@ export default defineConfig({
     "reminders/dist/cli": here("../../packages/reminders/src/cli.ts"),
     "calendar/dist/cli": here("../../packages/calendar/src/cli.ts"),
     "contacts/dist/cli": here("../../packages/contacts/src/cli.ts"),
+    "messages/dist/cli": here("../../packages/messages/src/cli.ts"),
     "safari/dist/cli": here("../../packages/safari/src/cli.ts"),
     // </generated:surfaces>
   },

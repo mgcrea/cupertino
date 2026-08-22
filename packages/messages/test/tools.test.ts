@@ -35,7 +35,7 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
 };
 
 describe("tool registration", () => {
-  it("registers four read tools", async () => {
+  it("registers five read tools", async () => {
     expect(await toolNames(await connect())).toEqual([
       "apple_messages_diagnostics",
       "apple_messages_get_message",
@@ -46,16 +46,26 @@ describe("tool registration", () => {
   });
 
   /**
-   * v1 has no send tool, and that is a decision rather than an omission.
-   * `docs/messages.md`: sending was never probed because "probing it would mean
-   * sending a real message to a real person" — and Apple Events returns no chat
-   * identifier at all, so a send could never be reconciled against a read.
-   * Adding one has to break this test first.
+   * Writes add exactly one tool, because the dictionary has exactly one usable
+   * mutating command. `login` and `logout` are the other two and are not
+   * exposed; there is no edit, delete, mark-as-read or reaction verb at all.
+   * A second one appearing here is a decision, and it has to break this first.
    */
-  it("registers the SAME tools with writes enabled", async () => {
-    expect(await toolNames(await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" }))).toEqual(
-      await toolNames(await connect()),
-    );
+  it("adds exactly one tool with writes enabled", async () => {
+    const off = await toolNames(await connect());
+    const on = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" }));
+    expect(on.filter((n) => !off.includes(n))).toEqual(["apple_messages_send_message"]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  /**
+   * The write gate is the product's central claim, and on this surface it is a
+   * permission claim too: sending is the only thing Apple Events can do here, so
+   * with writes off no Apple Event is ever sent and no Automation grant is ever
+   * requested. See `surfaces.json`.
+   */
+  it("hides the send tool completely when writes are off", async () => {
+    expect(await toolNames(await connect())).not.toContain("apple_messages_send_message");
   });
 
   /** MCP clients cache the tool list, so it must not vary with a runtime condition. */
@@ -70,9 +80,19 @@ describe("tool registration", () => {
     ).toEqual(await toolNames(await connect()));
   });
 
-  it("never announces a tool that could write", async () => {
-    const { tools } = await (await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" })).listTools();
+  it("never announces a tool that could write when writes are off", async () => {
+    const { tools } = await (await connect()).listTools();
     for (const t of tools) expect(t.annotations?.readOnlyHint).toBe(true);
+  });
+
+  it("marks the send tool as neither read-only nor idempotent", async () => {
+    const { tools } = await (await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" })).listTools();
+    const send = tools.find((t) => t.name === "apple_messages_send_message");
+    expect(send?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    });
   });
 });
 

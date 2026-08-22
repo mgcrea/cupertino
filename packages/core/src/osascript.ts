@@ -51,7 +51,10 @@ export type Logger = {
 /** The envelope every JXA script returns. Application failures come back on exit 0. */
 export type JxaEnvelope<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string } };
+  // Extra keys on `error` are carried through onto the thrown error's details.
+  // Messages' send ladder uses this to report which targeting strategies were
+  // tried and why each failed, which is the only diagnostic that surface has.
+  | { ok: false; error: { code: string; message: string; [key: string]: unknown } };
 
 export type OsascriptRunner = {
   /** Run a static script with one JSON-serialisable parameter object. */
@@ -189,14 +192,14 @@ export const createOsascriptRunner = (opts: OsascriptOptions): OsascriptRunner =
     if (!envelope.ok) {
       // Application-level failures come back on exit 0 so that a non-zero exit
       // unambiguously means infrastructure. Re-inflate them into real errors.
-      const { code, message } = envelope.error;
+      const { code, message, ...rest } = envelope.error;
       // MAIL_NOT_RUNNING predates the generic name and is still emitted by the
       // Mail prelude; both mean the same thing.
       if (code === "APP_NOT_RUNNING" || code === "MAIL_NOT_RUNNING") {
         throw new AppNotRunningError(opts.surface);
       }
       if (code === "NOT_AUTHORIZED") throw new TccDeniedError(opts.surface);
-      throw new ProtocolError(message, { code });
+      throw new ProtocolError(message, { code, ...rest });
     }
 
     opts.logger?.debug?.("osascript ok");

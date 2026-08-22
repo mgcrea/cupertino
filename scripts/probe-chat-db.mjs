@@ -70,6 +70,7 @@ import {
   maskIdentity,
   maxNumericAsText,
   openStore,
+  osascript,
   parseArgs,
   safe,
   tableTools,
@@ -145,6 +146,44 @@ const CHAT_IDS = `
 function run(argv) {
   var M = Application("Messages");
   return JSON.stringify({ ids: M.chats.id() });
+}
+`;
+
+/**
+ * The send lane's target ladder, stopped one step short of `send`.
+ *
+ * Mirrors `packages/messages/src/client/jxa/core.ts` rung for rung. Kept in two
+ * places on purpose: this one must be readable as a measurement without the
+ * package around it, and it must NOT contain a send at all — a probe that could
+ * message somebody by accident is not a probe anyone should run.
+ */
+const RESOLVE_TARGET = `
+function run(argv) {
+  var p = JSON.parse(argv[0]);
+  var M = Application("Messages");
+  var out = {};
+  function attempt(name, fn) {
+    var t0 = new Date().getTime();
+    try {
+      out[name] = { ok: true, ms: new Date().getTime() - t0, value: fn() };
+    } catch (e) {
+      out[name] = { ok: false, ms: new Date().getTime() - t0, error: String(e).slice(0, 160) };
+    }
+  }
+  // Rung 1, and the whole question: does Messages know the store's guid?
+  attempt("chatByStoreGuid", function () {
+    return String(M.chats.byId(p.chatGuid).id()) === p.chatGuid;
+  });
+  // Rung 2: the guid composed from the handle rather than read.
+  attempt("chatByComposedGuid", function () {
+    return String(M.chats.byId(p.service + ";-;" + p.handle).id()).length > 0;
+  });
+  // Rungs 3 and 4 enumerate, and are expected to fail on this surface.
+  attempt("accounts", function () { return M.accounts().length; });
+  attempt("participantByHandle", function () {
+    return M.participants.whose({ handle: p.handle })().length;
+  });
+  return JSON.stringify({ attempts: out });
 }
 `;
 
@@ -271,6 +310,36 @@ if (opened?.db) {
         )
       : null;
 
+    /**
+     * The same split, PER YEAR — because the aggregate hides the finding.
+     *
+     * 3.1% blob-only reads like an edge case. It is an average over a decade:
+     * measured through the built server, 2016-2025 are ~99% plain `text` and
+     * everything from March 2026 onward is blob-only, because Apple stopped
+     * writing the column. A probe that reports only the total would let a reader
+     * conclude the decoder is optional, which for anything recent it is not.
+     *
+     * `date` is nanoseconds and overflows a JS double, so the year is taken in
+     * SQL — the same reason every date in this file is read as TEXT or divided
+     * down before it reaches JavaScript.
+     */
+    const byYear = hasAttributed
+      ? all(
+          `SELECT CAST(strftime('%Y', (CAST("date" AS REAL) / 1000000000.0) + 978307200, 'unixepoch') AS INTEGER) AS year,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN ${emptyText} AND attributedBody IS NOT NULL THEN 1 ELSE 0 END) AS blobOnly
+             FROM message
+            WHERE "date" > 0
+            GROUP BY year
+            ORDER BY year`,
+        ).map((r) => ({
+          year: r.year,
+          total: r.total,
+          blobOnly: r.blobOnly,
+          blobOnlyPct: r.total ? Number(((r.blobOnly / r.total) * 100).toFixed(1)) : null,
+        }))
+      : [];
+
     // The archive header, so the doc can name the format instead of guessing it.
     const magic = hasAttributed
       ? (one(
@@ -297,6 +366,7 @@ if (opened?.db) {
       avgBlobBytes: attributed?.avgBlobBytes ? Math.round(attributed.avgBlobBytes) : null,
       archiveHeaderHex: magic,
       archiveHeaderAscii: magicAscii,
+      byYear,
     };
   });
 
@@ -596,6 +666,64 @@ if (opened?.db) {
     return { ...result, idShape: maskIdentity(sample) };
   });
 
+  // ─── The send lane's first rung, measured without sending anything ────────
+  //
+  // `--send-target=<handle>` answers the one question the send lane rests on
+  // and cannot answer for itself: **is Messages' `chat.id` the same string as
+  // `chat.guid` in the store?** If it is, a send can be addressed by a guid the
+  // file lane already holds, which is the whole design (see docs/messages.md).
+  // If it is not, every send falls through to rungs that enumerate — and
+  // enumeration is what this app refuses.
+  //
+  // Nothing here sends. `resolveTarget` is exercised up to the point of `send`
+  // and no further, so the worst this can do is launch Messages and ask for an
+  // Automation grant. Output is masked: a guid contains a phone number.
+  const SEND_TARGET = args.valueOf("send-target", "");
+  if (SEND_TARGET) {
+    const digits = SEND_TARGET.replaceAll(/\D/g, "");
+    const suffix = digits.length >= 9 ? digits.slice(-9) : null;
+    const row = safe(
+      () =>
+        db
+          .prepare(
+            `SELECT c."guid" AS guid, c."service_name" AS service
+               FROM "chat" c
+               JOIN "chat_handle_join" chj ON chj."chat_id" = c."ROWID"
+               JOIN "handle" h ON h."ROWID" = chj."handle_id"
+              WHERE c."style" = 45
+                AND (h."id" = ? ${suffix ? `OR h."id" LIKE ?` : ""})
+              LIMIT 1`,
+          )
+          .get(...(suffix ? [SEND_TARGET, `%${suffix}`] : [SEND_TARGET])),
+      () => null,
+    );
+
+    if (!row?.guid) {
+      doc.findings.sendTarget = {
+        tested: false,
+        reason: "No one-to-one chat in the store has that handle. Rung 1 cannot be tested for it.",
+      };
+    } else if (!aeLane.available) {
+      doc.findings.sendTarget = { tested: false, reason: aeLane.reason };
+    } else {
+      const result = osascript(RESOLVE_TARGET, {
+        chatGuid: row.guid,
+        handle: SEND_TARGET,
+        service: row.service ?? "iMessage",
+      });
+      doc.findings.sendTarget = {
+        tested: true,
+        storeGuidShape: String(row.guid).replace(/;[^;]*$/, ";<handle>"),
+        attempts: Object.fromEntries(
+          Object.entries(result?.attempts ?? {}).map(([k, v]) => [
+            k,
+            v.ok ? v.value : `failed: ${maskIdentity(String(v.error))}`,
+          ]),
+        ),
+      };
+    }
+  }
+
   db.close();
 } else {
   doc.findings.open = { ok: false, error: opened?.error ?? null };
@@ -678,6 +806,26 @@ if (args.json) {
     L.push(`     ^ any read path at all: ${yn(anyReadWorked)}`);
   }
   L.push("");
+
+  const st = doc.findings.sendTarget;
+  if (st) {
+    L.push("Send targeting (--send-target; resolves only, never sends)");
+    if (!st.tested) {
+      L.push(`  SKIPPED               ${st.reason}`);
+    } else {
+      L.push(`  store guid shape      ${st.storeGuidShape}`);
+      for (const [k, v] of Object.entries(st.attempts)) {
+        L.push(`  ${k.padEnd(20)} ${v}`);
+      }
+      L.push(
+        `     ^ chatByStoreGuid true means a send can be addressed by a guid the file lane holds,`,
+      );
+      L.push(`       which is what packages/messages relies on. False means every send falls`);
+      L.push(`       through to rungs that enumerate, and enumeration is what this app refuses.`);
+    }
+    L.push("");
+  }
+
   L.push("File lane (Full Disk Access — mandatory for this surface)");
   L.push(`  path                  ${doc.findings.store.path}`);
   L.push(
@@ -713,6 +861,19 @@ if (args.json) {
       L.push(
         `     archive header     ${body.archiveHeaderAscii ?? "n/a"}  (${body.archiveHeaderHex ?? "-"})`,
       );
+      if ((body.byYear ?? []).length) {
+        L.push("");
+        L.push("     BLOB-ONLY BY YEAR — the aggregate above hides this");
+        for (const y of body.byYear) {
+          const bar = "#".repeat(Math.round((y.blobOnlyPct ?? 0) / 5));
+          L.push(
+            `     ${y.year}  ${String(y.total).padStart(6)} msgs  ${String(y.blobOnly).padStart(6)} blob-only  ${String(y.blobOnlyPct).padStart(5)}%  ${bar}`,
+          );
+        }
+        L.push(
+          "     Apple stopped writing `text` in 2026; from then on the decoder is the only lane.",
+        );
+      }
       L.push(
         `     blob bytes         avg ${body.avgBlobBytes ?? "?"}, max ${body.maxBlobBytes ?? "?"}`,
       );

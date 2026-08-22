@@ -5,6 +5,7 @@ export {
   type CreateClientOptions,
   type RenderedChat,
   type RenderedMessage,
+  type SendResult,
 } from "./client/messages.js";
 export {
   appleSecondsSql,
@@ -22,6 +23,8 @@ export {
   MessageNotFoundError,
   MessagesUnavailableError,
   SchemaDriftError,
+  SendFailedError,
+  SendTargetNotFoundError,
 } from "./client/errors.js";
 export {
   ATTACHMENTS_RELATIVE,
@@ -55,6 +58,8 @@ export {
  * the `text` column across 94,043 real rows, and zero failures across all 97,094 — see docs/messages.md.
  */
 export { decodeAttributedBody, outline, type DecodedBody } from "./client/typedstream.js";
+export { PRELUDE } from "./client/jxa/core.js";
+export { SEND_MESSAGE } from "./client/jxa/write.js";
 export { loadConfig, type Config } from "./config.js";
 export { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 export { registerTools, type ToolContext } from "./tools/index.js";

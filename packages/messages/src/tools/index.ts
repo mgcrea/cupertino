@@ -1,19 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleMessagesClient } from "../client/messages.js";
+import { registerActionTools } from "./actions.js";
 import { registerChatTools } from "./chats.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
 
 export type ToolContext = {
   /**
-   * Accepted and deliberately unused.
+   * Gates the one mutating tool, `send_message`.
    *
-   * v1 registers no mutating tool, so there is nothing for the flag to gate. The
-   * shape is kept so this surface matches the others and so a send path has an
-   * obvious place to hang itself. `tools.test.ts` asserts the tool list is
-   * IDENTICAL with writes on and off, which is what stops one being added here
-   * without that decision being taken deliberately.
+   * It also gates every Apple Event this server can send, because sending is the
+   * only thing Apple Events can do here — there is no read lane to fall back to
+   * and never can be. So with writes off this server is not merely read-only, it
+   * is inert with respect to Messages.app: it opens a file and nothing else.
    */
   allowWrites: boolean;
 };
@@ -21,9 +21,10 @@ export type ToolContext = {
 /**
  * Register the Apple Messages tools.
  *
- * All read-only, which on this surface is a permission claim too: with no Apple
- * Events lane at all, this server never asks for an Automation grant. What it
- * does need is Full Disk Access, and it needs it absolutely — see `diagnostics`.
+ * Five reads, always. One write, only when `allowWrites` is on — and on this
+ * surface the flag carries a permission claim as well as a safety one: with it
+ * off no Apple Event is ever sent, so no Automation grant is ever requested.
+ * What is needed either way is Full Disk Access, absolutely — see `diagnostics`.
  *
  * The registered set does NOT vary with whether the store is readable. That is a
  * runtime condition, and MCP clients cache the tool list.
@@ -31,9 +32,10 @@ export type ToolContext = {
 export const registerTools = (
   server: McpServer,
   client: AppleMessagesClient,
-  _ctx: ToolContext,
+  ctx: ToolContext,
 ): void => {
   registerDiagnosticsTools(server, client);
   registerChatTools(server, client);
   registerMessageTools(server, client);
+  if (ctx.allowWrites) registerActionTools(server, client);
 };

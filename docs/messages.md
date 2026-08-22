@@ -6,8 +6,12 @@ DDL only — no message text, no handles, no chat names.
 
 **Conclusion: buildable, and more expensive than it looks.** The store is rich, fast and complete.
 But three things have to be budgeted before a single tool is written — a typedstream decoder, BigInt
-date handling, and the fact that writes cannot be reconciled against reads. None of them is
-discoverable from the schema alone.
+date handling, and the fact that Apple Events hands back no identifier for anything it does. None of
+them is discoverable from the schema alone.
+
+The third one is no longer a blocker but it did shape the design: see
+[the send lane](#the-send-lane) below, where the file lane both chooses the target and finds the
+sent row, because the write lane can do neither.
 
 ## The numbers
 
@@ -81,6 +85,36 @@ exceptional case has the relationship backwards.
 This is Notes' `ZDATA` again, found the same way. It is worth repeating the lesson that document
 records: an earlier claim there was wrong because it sampled `LIMIT 1` and landed on an outlier.
 Sample more than one row before describing a blob format.
+
+### The 3.1% is a historical average, and it is now ~100%
+
+Measured through the built server against the live store, sampling the newest 100 messages in each
+window:
+
+| Window      | from `text` | from the decoder |
+| ----------- | ----------- | ---------------- |
+| 2016        | 149         | 0                |
+| 2019        | 145         | 5                |
+| 2021        | 148         | 2                |
+| 2023        | 149         | 1                |
+| 2025-08     | 100         | 0                |
+| 2026-01     | 100         | 0                |
+| 2026-02     | 94          | 6                |
+| **2026-03** | **0**       | **99**           |
+| 2026-06     | 1           | 99               |
+| 2026-08     | 0           | 100              |
+
+**Apple stopped populating the `text` column between late February and late March 2026.** Everything
+since lives only in `attributedBody`.
+
+So the headline number below — 3,051 of 97,416, one message in thirty-two — is an average over a
+decade of history, and it badly understates what the decoder is for. On this machine every message
+from the last six months is blob-only. A Messages server without a typedstream decoder would not be
+missing an edge case; it would report that the conversation stopped in February.
+
+That also means the ratio will keep climbing on its own, and any future probe run should expect it.
+(Sampling caveat: each window returns its newest 100, so a busy month is sampled from its last few
+days. That is enough to locate the transition, not to date it precisely.)
 
 ### The decoder, written against ground truth
 
@@ -218,6 +252,11 @@ store, and cannot hand its result to a read tool. Whether that is acceptable, or
 should re-resolve by scanning the store for a recent row on the target chat, is a decision that has
 to be taken deliberately rather than discovered later.
 
+**Taken: the scan.** See [the send lane](#the-send-lane). The bridge is still unanswerable in the
+direction it was asked — no identifier comes back — but it does not have to be answered in that
+direction, because the store is authoritative about what was sent and the send is bounded in time
+and scoped to one chat.
+
 ## The schema does not replay cleanly, twice over
 
 Both found by trying to build the offline test database from `--write`'s output, and both are worth
@@ -239,6 +278,108 @@ replay, which is where the constraint actually is — it exercises SELECTs, and 
 run inside Messages.app has nothing to say about them. Worth remembering as a general point: **a
 captured schema is not necessarily a runnable one.**
 
+## The send lane
+
+Added after the read half shipped. Everything above stands; this section is about the one thing
+Apple Events can do here.
+
+### The dictionary, measured
+
+`sdef /System/Applications/Messages.app`, macOS 26.6. Three commands, total:
+
+| command  | shape                                              | shipped        |
+| -------- | -------------------------------------------------- | -------------- |
+| `send`   | `file` **or** `text`, `to` a participant or a chat | yes, text only |
+| `login`  | log in to all accounts                             | no             |
+| `logout` | log out of all accounts                            | no             |
+
+There is no edit, no delete, no mark-as-read, no typing indicator and no reaction. **Everything this
+server can show you, it cannot change** — a much sharper limit than any other surface here, and one
+that comes from the dictionary rather than from a decision.
+
+`login`/`logout` are not exposed: `logout` signs the user out of iMessage on every device they own,
+which is not something to put behind a tool call, and there is no read path to justify `login`.
+
+`send`'s direct parameter is typed `file` OR `text`. **Only the text form ships.** A tool that
+transfers an arbitrary local path to a remote person is an exfiltration primitive whose blast radius,
+unlike the text form's, is not bounded by what the model can say. `test/jxa.test.ts` asserts no
+script contains `Path(`, so shipping it means taking that decision again.
+
+The classes are worth recording because one of them is load-bearing:
+
+| class         | id shape                                    | note                                   |
+| ------------- | ------------------------------------------- | -------------------------------------- |
+| `chat`        | "A guid identifier for this chat"           | the bridge — see below                 |
+| `participant` | `01234567-89AB-…-456789ABCDEF:+11234567890` | account UUID, colon, handle            |
+| `account`     | `service type` is one of SMS, iMessage, RCS | `buddy` is a synonym for `participant` |
+
+### Addressing something Messages will not let you enumerate
+
+`send` needs a `participant` or a `chat`, and the ordinary way to obtain either is to enumerate —
+which is precisely what this app refuses. So the write lane cannot look anybody up.
+
+But `chat` carries `id`, and the file lane holds `chat.guid` for all 1,027 chats in the store. **The
+read lane picks the target and the write lane addresses it by id**, which is the only arrangement
+where neither lane has to do the thing it cannot. It is also a concrete answer to "what did the Full
+Disk Access grant buy": on this surface it buys the ability to send to a named person at all.
+
+That the two guids are the same string is **not assumed** — it is the exact class of thing this
+project has been wrong about before. So `client/jxa/core.ts` is a ladder, every rung records why it
+failed, and the strategy that answered comes back in the tool result:
+
+| rung | how                                                               | enumerates? |
+| ---- | ----------------------------------------------------------------- | ----------- |
+| 1    | `chats.byId(guid)`, guid from `chat.db`                           | no          |
+| 2    | `chats.byId("iMessage;-;+15551234567")`, composed from the handle | no          |
+| 3    | `accounts.whose({serviceType})` → `participants.whose({handle})`  | yes         |
+| 4    | `participants.whose({handle})`                                    | yes         |
+
+Rungs 3 and 4 are expected to fail with "Application isn't running", and are kept because they cost
+one round trip and because they are the form every AppleScript example uses — if launching the app
+does wake the scripting interface, they are what works.
+
+### Reconciliation, which is what made this shippable
+
+A send that returns `{ok: true}` and stops would be claiming delivery on the strength of a command
+that did not throw. Instead the client takes `since` immediately **before** the send and then polls
+`chat.db` for an outgoing row in the target chat, matching on text where it is available.
+
+| outcome       | meaning                                                                      |
+| ------------- | ---------------------------------------------------------------------------- |
+| `matched`     | the row was found; the result carries a real `m1:` ref, usable by every read |
+| `pending`     | Messages accepted the send and has not written the row yet                   |
+| `unavailable` | there was no existing chat to look in                                        |
+
+**`pending` is not a failure**, and the tool description says so twice, because the obvious reaction
+to a failure is to retry and a retry here sends the message twice.
+
+### Still unverified, and it is the important part
+
+**No send has been executed against a live Messages.** The whole lane is written from the dictionary
+and from the store, and its tests run against a fake `osascript` — deliberately, because a suite that
+sends on every `pnpm test` is not a suite anyone can run. What that leaves open:
+
+- **Whether rung 1 works at all** — i.e. whether Messages' `chat.id` really is `chat.guid`. If it is
+  not, every send falls through to rung 2 and then to the rungs that enumerate, and the practical
+  answer becomes "sending works only to a chat whose guid Messages happens to compose the same way".
+- **Whether launching the app wakes the scripting interface.** The reads were measured against a
+  running background process; a foreground launch was never tried.
+- **How long the outgoing row takes to appear**, which is what `APPLE_MESSAGES_SEND_RECONCILE_MS`
+  (5,000 by default) is guessing at.
+
+The first two are measurable **without sending anything**:
+
+```
+pnpm probe:messages --launch --send-target=+15551234567
+```
+
+That runs the same ladder and stops one step short of `send`, reporting whether Messages' `chat.id`
+matches the guid the store holds for that conversation. Output is masked — a chat guid contains a
+phone number. The worst it can do is launch Messages and prompt for an Automation grant.
+
+The remaining question needs a real send, and the honest first one is a message to **your own
+handle** — Messages lets you do that, and it is the only send whose recipient consented in advance.
+
 ## Still open
 
 - **`date_retracted` / `date_recovered`** — no rows here, so their epoch is assumed, not measured.
@@ -247,7 +388,5 @@ captured schema is not necessarily a runnable one.**
 - **The 322 messages with neither text nor blob.** Probably group events — someone joined, someone
   left, a name changed — which `item_type` would separate. Unmeasured, and it decides whether a
   reader should skip them or render them.
-- **The send path is untested.** Probing it would mean sending a real message to a real person, which
-  is not a measurement worth taking without asking first.
-- **No schema fixture captured.** `--write` would emit `packages/messages/test/fixtures/chat-db.sql`,
-  but there is no `packages/messages` yet and creating one is out of scope for a phase-0 probe.
+- **The send path is still untested against a live Messages** — see the section above for exactly
+  what that leaves open and for the one safe way to measure it.

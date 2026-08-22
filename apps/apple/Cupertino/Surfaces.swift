@@ -145,6 +145,48 @@ struct Surface: Identifiable, Hashable {
       envPrefix: "APPLE_CONTACTS_"
     ),
     Surface(
+      id: "messages",
+      displayName: "Messages",
+      // The bundle id disagrees with the display name, as Calendar's does:
+      // Messages.app is still com.apple.MobileSMS underneath. It is the
+      // liveness check for the send script and is used by nothing else.
+      //
+      // usesAppleEvents is TRUE for exactly one verb, and the asymmetry is
+      // the whole story of this surface. Every READ through the scripting
+      // dictionary fails — measured, not assumed — and Messages answers
+      // "Application isn't running" even while NSRunningApplication reports
+      // it running, because it is a windowless background process that
+      // declines to wake for a script. `send` is the one command that works,
+      // so Apple Events here is a WRITE lane and nothing else. With
+      // APPLE_MESSAGES_ALLOW_WRITES off, no Apple Event is ever sent and no
+      // Automation grant is ever requested.
+      //
+      // supportsWrites is TRUE, and it covers exactly one tool.
+      // `sdef` lists three commands — send, login, logout — and only send
+      // is exposed: logging a user out of iMessage on every device they own
+      // is not something to do behind a tool call. There is no edit, delete,
+      // mark-as-read or reaction verb in the dictionary at all.
+      //
+      // The send is reconciled through the FILE lane, which is what made it
+      // shippable. Apple Events returns no identifier for what it sent —
+      // docs/messages.md called the id bridge unanswerable by construction —
+      // so the outgoing row is found by re-reading chat.db afterwards. The
+      // read lane also picks the target: Messages will not enumerate
+      // participants for a script, but it will accept a chat guid, and the
+      // store holds one for every conversation.
+      //
+      // Full Disk Access is MANDATORY here rather than an upgrade. Every
+      // other surface degrades to a slower server without it; this one has
+      // no second lane and simply does not exist. docs/distribution.md
+      // retired "try before you grant" partly because of this surface.
+      bundleID: "com.apple.MobileSMS",
+      usesAppleEvents: true,
+      supportsWrites: true,
+      storePath: "Library/Messages/chat.db",
+      storePermission: .fullDiskAccess,
+      envPrefix: "APPLE_MESSAGES_"
+    ),
+    Surface(
       id: "safari",
       displayName: "Safari",
       // The only surface whose two lanes are NOT fallbacks for each other.
