@@ -16,7 +16,7 @@
 # URL is exactly the kind of destination that moves, and a vanity path means it
 # can move without a site deploy.
 #
-# COMMENTED UNTIL THERE IS A CHECKOUT TO POINT AT. The buy button renders only
-# when SHIPPED is true in src/config.ts, so nothing links here yet — but flipping
-# that flag without uncommenting this line would ship a button to a 404.
-# /buy       https://buy.stripe.com/REPLACE_ME  302
+# The live payment link, created from the 1.x launch price. Its twin in test mode
+# is the one to point at when exercising fulfilment end to end; swapping this line
+# is the whole of that switch.
+/buy       https://buy.stripe.com/fZu3cv0xGa0mexe7lcdZ600  302

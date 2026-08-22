@@ -28,7 +28,13 @@ const rows = [
     v: "Not on the App Store — the sandbox denies ~/Library/Mail whatever you grant. A stapled zip and a Homebrew cask instead.",
     href: DOCS.distribution,
   },
-  { k: "Release", v: "Not shipped yet. The app and the npm packages land together." },
+  {
+    // Not gated by SHIPPED, so it has to be true on its own: the app shipped
+    // without the packages, which is the opposite of what this row promised.
+    k: "Release",
+    v: "The signed app ships from GitHub releases. The MCP servers are MIT but not on npm yet — the app carries them.",
+    href: REPO_URL,
+  },
 ] as const;
 ---
 

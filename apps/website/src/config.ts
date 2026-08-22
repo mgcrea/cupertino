@@ -25,11 +25,14 @@ export const DOCS = {
 } as const;
 
 /**
- * Nothing is published yet: the signed app and the npm packages land together.
- * Flip this when the first release ships — it gates every "not shipped yet"
- * string and the CTA, so the site cannot half-announce.
+ * True since app-v1.0.0. It gates the CTA and the buy button, so the site cannot
+ * half-announce — but it does not gate every string: anything outside a SHIPPED
+ * branch has to be true on its own, which the Status "Release" row was not.
+ *
+ * The app shipped WITHOUT the npm packages, so any copy still promising they
+ * land together is stale rather than merely early.
  */
-export const SHIPPED = false;
+export const SHIPPED = true;
 
 /**
  * The release lives on GitHub, never here. A Cloudflare assets binding caps a
