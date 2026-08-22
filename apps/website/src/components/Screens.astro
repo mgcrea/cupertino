@@ -1,0 +1,95 @@
+---
+/**
+ * The real app, photographed.
+ *
+ * Everything else on this page that looks like macOS is drawn in HTML —
+ * `Activity.astro`, `FdaPane.astro`, `MenuBar.astro`, `Status.astro` — and each
+ * of those is drawn on purpose: they need content a capture cannot give them
+ * (FdaPane is a before/after of the same pane), or they need to reflow on a
+ * phone in a way an image cannot. This section is the other half of that: the
+ * window as it actually renders, so a reader can check the drawings against it.
+ *
+ * The images are NOT hand-placed. `make screenshots` captures them from a real
+ * build in demo mode, gates them against committed goldens, and writes them
+ * into src/assets/shots — which that command CLEARS on every run. Do not park
+ * anything else in that directory, and do not edit these files: the next
+ * capture overwrites them. To change what a shot shows, change the fixture in
+ * apps/apple/Cupertino/DemoSeed.swift.
+ *
+ * Imported through astro:assets rather than referenced out of public/, for two
+ * reasons: these are 2240px PNGs that would otherwise ship unoptimised, and a
+ * missing capture then fails `astro build` outright instead of building clean
+ * and 404ing in production.
+ */
+import { Picture } from "astro:assets";
+import activityShot from "../assets/shots/activity.png";
+import connectionsShot from "../assets/shots/connections.png";
+import surfaceShot from "../assets/shots/surface.png";
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * The captions are deliberately NOT the ones in
+ * apps/apple/Screenshots/screenshots.config.json. That file captions the framed
+ * store-shaped visuals, which are read alone and out of context; here the
+ * section header has already said what the app is, so these say what each
+ * particular pane answers. The two rot separately and should.
+ */
+const shots = [
+  {
+    image: surfaceShot,
+    id: "surface",
+    title: "One pane per surface",
+    body: "Whether the app can be driven, whether its store can be read, and who is talking to it — for Mail, Notes, Reminders and Calendar, one at a time.",
+    alt: "Cupertino's Mail pane: automation allowed, the Envelope Index readable, writes enabled, and five connected clients.",
+  },
+  {
+    image: activityShot,
+    id: "activity",
+    title: "The log, live",
+    body: "Every call as it happens, filterable by surface. Tool names only — never arguments, message contents or results — and a refused write shows up as a refusal.",
+    alt: "Cupertino's activity log: timestamped calls across mail, notes, reminders and calendar, with a refused write to Reminders in red.",
+  },
+  {
+    image: connectionsShot,
+    id: "connections",
+    title: "Every session, ungrouped",
+    body: "One row per connection, because each client opens one per server it is wired to. Four terminals and two GUI clients is eighteen rows, and this is the pane that shows them.",
+    alt: "Cupertino's connections pane: eighteen live sessions from claude-ai, claude-code and cursor-vscode across the four surfaces.",
+  },
+] as const;
+---
+
+<section id="screens" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="The app" heading="A window, not<br />a background process.">
+    Cupertino runs as a menu-bar app you can open. That is the point of holding the servers in one
+    signed process rather than spawning them inside whichever editor asked first: there is something
+    to look at, and it tells you what happened.
+  </SectionHeader>
+
+  <div class="flex flex-col gap-14">
+    {
+      shots.map(({ image, id, title, body, alt }) => (
+        <figure id={id} class="reveal m-0 scroll-mt-24">
+          {/* Widths are the rendered CSS widths, not the source's — the shot is
+              2240px wide at 2x, so 1120 is the 1x plate and 2240 the retina one.
+              avif then webp, with the PNG as the fallback the <picture> keeps. */}
+          <Picture
+            src={image}
+            alt={alt}
+            widths={[720, 1120, 2240]}
+            sizes="(min-width: 1180px) 1120px, 100vw"
+            formats={["avif", "webp"]}
+            fallbackFormat="png"
+            class="block h-auto w-full rounded-[14px] border border-rule-2 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+          />
+          <figcaption class="mt-5 grid grid-cols-1 gap-2 lg:grid-cols-[1fr_1.15fr] lg:gap-16">
+            <h3 class="m-0 font-display text-[20px] font-semibold tracking-[-0.03em] text-fg">
+              {title}
+            </h3>
+            <p class="m-0 text-[14.5px] leading-[1.65] text-pretty text-fg-dim">{body}</p>
+          </figcaption>
+        </figure>
+      ))
+    }
+  </div>
+</section>

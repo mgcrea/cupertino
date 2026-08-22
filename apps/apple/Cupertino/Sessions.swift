@@ -39,6 +39,19 @@ final class Sessions {
     live.append(Session(id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0))
   }
 
+  /// Seed a fully-formed session at a fixed instant, for `DemoSeed` only.
+  ///
+  /// The live path builds a session across three calls — `opened`, then `named`
+  /// and `counted` as the handshake and the traffic arrive — because that is
+  /// the order the wire delivers them in. A fixture has no wire, and threading
+  /// it through the same three steps would only be ceremony.
+  func openDemo(surface: String, client: String, pid: Int32, calls: Int, startedAt: Date) {
+    live.append(
+      Session(
+        id: UUID(), surface: surface, pid: pid, startedAt: startedAt, client: client,
+        calls: calls))
+  }
+
   func closed(id: UUID) {
     live.removeAll { $0.id == id }
   }

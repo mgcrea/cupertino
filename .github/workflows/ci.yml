@@ -28,6 +28,13 @@ jobs:
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v5
+        with:
+          # The website imports apps/website/src/assets/shots/*.png through
+          # astro:assets, and those are LFS-tracked. A checkout without this
+          # gets 131-byte pointer files that are still named .png, so the
+          # `Build` step below fails inside sharp with an error about the image
+          # format rather than about the checkout.
+          lfs: true
       - name: Setup pnpm 🔧
         uses: pnpm/action-setup@v6
       - name: Setup node 🔧

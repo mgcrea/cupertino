@@ -1,0 +1,42 @@
+{
+  "accepts": [
+    {
+      "appshotVersion": "0.9.0",
+      "argv": [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
+      "at": "2026-08-22T05:37:52Z",
+      "count": 3,
+      "cwd": "/Users/olivier/Projects/apps/cupertino",
+      "host": "oliviermacbookpro.local",
+      "pid": 35032,
+      "user": "olivier"
+    }
+  ],
+  "entries": {
+    "activity~dark.png": {
+      "bytes": 374598,
+      "height": 1144,
+      "sha256": "8f6753c89ad7e2a0de9be67e8a72dfa017af54f9e580bc396cf1150cb6abbcc8",
+      "width": 2240
+    },
+    "connections~dark.png": {
+      "bytes": 291185,
+      "height": 1144,
+      "sha256": "8d84be013df2e04e7dbc1863b615d71aa9f01159d4e67d266c209c647790e187",
+      "width": 2240
+    },
+    "surface~dark.png": {
+      "bytes": 207936,
+      "height": 1144,
+      "sha256": "894edc88998482c260a7dd9ce38d5533cd9dbf7540f8b20a2b19bb89fd60dbd9",
+      "width": 2240
+    }
+  },
+  "schema": 1
+}

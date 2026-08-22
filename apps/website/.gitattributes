@@ -1,0 +1,15 @@
+# The app captures the site renders. Same reasoning as apps/apple/.gitattributes:
+# large binaries rewritten in full whenever the UI changes, so without LFS every
+# screenshot refresh adds the whole set to history, forever, in every clone.
+#
+# They are committed rather than generated at build time because `astro build`
+# imports them through astro:assets — a clone that has not just run
+# `make screenshots` still has to build the site, CI included. That is also why
+# the `test` job in .github/workflows/ci.yml checks out with `lfs: true`:
+# without it these arrive as 131-byte pointer files still named .png, and sharp
+# fails on them with an error about the image format rather than the checkout.
+#
+# This file lives in apps/website/ rather than at the repo root because its
+# patterns are relative to its own directory. Hoisting it up would silently stop
+# matching, and the next refresh would commit these as ordinary blobs.
+src/assets/shots/*.png filter=lfs diff=lfs merge=lfs -text

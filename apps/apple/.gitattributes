@@ -1,0 +1,14 @@
+# The goldens are large binaries rewritten in full on every UI change, and every
+# refresh would otherwise add the whole set to history, permanently, in every
+# clone. LFS is what makes committing them affordable — which is what makes the
+# gate reviewable at all: an untracked baseline is only "whatever this machine
+# captured last".
+#
+# This file lives beside Cupertino.xcodeproj rather than at the repo root
+# because its patterns are relative to its own directory. Hoisting it up one
+# level would silently stop matching, and the next refresh would commit the
+# goldens as ordinary blobs with nothing complaining.
+#
+# Only golden/. source/, appstore/ and website output are regenerated on every
+# run and gitignored; the config is text.
+Screenshots/golden/*.png filter=lfs diff=lfs merge=lfs -text

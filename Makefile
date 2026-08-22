@@ -285,6 +285,14 @@ SHOT_SCREENS := surface activity connections
 # out. macOS renders the app against the capturing Mac's System Settings, and
 # none of that lives in this repo:
 #
+#   -allowWrites.<surface>  The per-surface write gate, read straight out of
+#       UserDefaults by `WritesToggle`'s @AppStorage. Unpinned it is whatever the
+#       capturing Mac has opted into, so the same commit photographs Mail with
+#       writes on here and off on a clean machine — and the checkbox is the one
+#       control in these screens that makes a safety claim. Mail on, the rest
+#       off, which is the story the log fixture tells too: opt in per surface,
+#       and watch the refusal when you have not. Needs no app code; launch
+#       arguments land in NSArgumentDomain, which @AppStorage already reads.
 #   -AppleAccentColor / -AppleHighlightColor  Assets.xcassets/AccentColor.colorset
 #       declares no colour, which is Xcode's template default and means the app
 #       follows System Settings. That tint reaches the sidebar's selected row and
@@ -299,6 +307,8 @@ SHOT_SCREENS := surface activity connections
 # would end the string at the shell. Inner values use single quotes; appshot's
 # own splitting is quote-aware.
 SHOT_ARGS := -ScreenshotMode YES \
+             -allowWrites.mail YES -allowWrites.notes NO \
+             -allowWrites.reminders NO -allowWrites.calendar NO \
              -AppleLocale en_US -AppleLanguages '(en)' \
              -AppleAccentColor 4 -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
              -AppleShowScrollBars WhenScrolling
@@ -310,6 +320,14 @@ SHOT_ARGS := -ScreenshotMode YES \
 # a duration. A padded number here would be that guess coming back.
 SHOT_SETTLE := 0.3
 
+# Only `screenshots-capture` needs this, and the asymmetry is not a mistake.
+# `appshot run` reads the appearances out of the config's "appearances" key;
+# `appshot capture` does not — it has its own --appearances flag defaulting to
+# `dark, light`. So the standalone capture target has to say `dark` out loud or
+# it produces a light set that nothing downstream expects: six files where the
+# gate's expected set is three. Keep this equal to the config's key.
+SHOT_APPEARANCES := dark
+
 SHOT_DIR      := apps/apple/Screenshots
 SHOT_SOURCE   := $(SHOT_DIR)/source
 SHOT_GOLDEN   := $(SHOT_DIR)/golden
@@ -317,10 +335,19 @@ SHOT_APPSTORE := $(SHOT_DIR)/appstore
 SHOT_CONFIG   := $(SHOT_DIR)/screenshots.config.json
 
 # Pipeline-owned: `compose website` DELETES every .png in this directory before
-# writing. That is why it is `public/shots/` and not `public/` — the latter holds
-# og-image.png, favicon-32.png and apple-touch-icon.png, which `make icon`
-# generates and a compose run would silently erase.
-SHOT_WEBSITE := $(abspath apps/website/public/shots)
+# writing, so nothing hand-made may be parked in it. That is why it is a
+# dedicated `shots/` directory and not the site's asset root.
+#
+# src/assets, not public/, so astro:assets processes them — these are 2240px
+# PNGs and the landing page would otherwise ship ~860 KB of unoptimised image.
+# It also buys the better failure: a capture that is missing breaks `astro
+# build` outright, where a public/ reference would build clean and 404 in
+# production.
+#
+# Absolute, because this is the one path that leaves the app's own tree.
+# $(abspath) is purely lexical and never stats, so a typo here yields a
+# plausible wrong path that `compose website` will happily create.
+SHOT_WEBSITE := $(abspath apps/website/src/assets/shots)
 
 .PHONY: screenshots screenshots-capture screenshots-check screenshots-update \
         screenshots-seal screenshots-selftest screenshots-appstore \
@@ -357,6 +384,7 @@ screenshots-capture: app ## Capture only (no gate, no compose)
 		--out "$(SHOT_SOURCE)" \
 		--config "$(SHOT_CONFIG)" \
 		--screens $(SHOT_SCREENS) \
+		--appearances $(SHOT_APPEARANCES) \
 		--extra-args="$(SHOT_ARGS)" \
 		--settle $(SHOT_SETTLE) \
 		--ready-file \

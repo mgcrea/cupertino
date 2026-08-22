@@ -37,7 +37,9 @@ struct MainView: View {
   /// selection. A non-optional binding compiles, and then the sidebar highlight
   /// moves while the detail pane stays where it was — selection updating in
   /// AppKit but never reaching this state.
-  @State private var pane: Pane? = .log
+  /// The staged driver reaches a screen by relaunching onto it rather than by
+  /// clicking through to it, so the initial selection *is* the navigation.
+  @State private var pane: Pane? = DemoSeed.isEnabled ? DemoSeed.stage.pane : .log
   @State private var surface: String = MainView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
@@ -72,6 +74,10 @@ struct MainView: View {
     }
     .frame(minWidth: 780, minHeight: 460)
     .onAppear { model.refresh() }
+    // A fact, not a duration: the body has run and the model is populated. That
+    // is what `--ready-file` wants, and it is why `--settle` can stay at its
+    // floor instead of being padded until the screen "looks about right".
+    .task { DemoSeed.signalReady() }
   }
 
   /// The sidebar carries its own material on macOS 26, which is why the glass

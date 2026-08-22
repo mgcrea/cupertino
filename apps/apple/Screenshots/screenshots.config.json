@@ -1,0 +1,66 @@
+{
+  "//": "Captions, theme and order for `appshot compose`. Text, so marketing copy changes without touching code or re-capturing. See the `screenshots-*` targets in the root Makefile.",
+
+  "//output": "The Mac App Store's 16:10 canvas. Cupertino does not ship on the App Store — docs/distribution.md settles that — but this is still the right size: it is the one shape the compositor accepts, it is what a README, a Product Hunt gallery and an OG card all want, and it means the framed set is upload-ready if that decision is ever revisited. DemoSeed pins the window to 1120x700, the same 1.6:1, so the capture fills the width without letterboxing.",
+  "output": { "width": 2880, "height": 1800 },
+
+  "//appearances": "Dark only, on purpose. apps/website/src/styles/global.css: \"Dark is the base, not an override... there is no light theme to be faithful to and none is invented here.\" Capturing light too would double the run and commit three goldens that nothing renders and nobody reviews. Adding \"light\" here and to the Makefile's APPEARANCES is the whole change if the site ever grows one.",
+  "appearances": ["dark"],
+
+  "//fontFamily": "SF Pro Display is NOT part of a stock macOS install — it ships in Apple's SF font pack. `make screenshots-doctor` refuses to compose if it does not resolve, which is the only way to catch a silent substitution.",
+  "fontFamily": "'SF Pro Display', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif",
+
+  "layout": {
+    "margin": 180,
+    "textTop": 150,
+    "titleFontSize": 104,
+    "titleWeight": 700,
+    "titleLineHeight": 1.12,
+    "subtitleFontSize": 46,
+    "subtitleWeight": 500,
+    "textGap": 30,
+    "screenshotGap": 90,
+    "cornerRadius": 26,
+    "shadow": { "blur": 52, "opacity": 0.34, "dy": 26 },
+    "maxTitleLines": 2
+  },
+
+  "//themes": "The icon's own sky ramp, warmed into the ink the site already uses: #F2895C over #0B0C0F. Deliberately not a second palette — apps/website/src/styles/global.css is the one that exists, and a store image in colours the site does not use reads as a different product.",
+  "themes": {
+    "dark": {
+      "background": {
+        "angle": 145,
+        "stops": [
+          { "offset": 0, "color": "#241A15" },
+          { "offset": 0.55, "color": "#141319" },
+          { "offset": 1, "color": "#0B0C0F" }
+        ]
+      },
+      "title": "#F4F2EF",
+      "subtitle": "#9B9A96"
+    }
+  },
+
+  "//screens": "Order here IS the order of the framed set — it stamps the 01-, 02- prefix. The capture filenames stay unnumbered, so reordering never renames an image. `id` matches <id>~dark.png in source/, and it is also the -ScreenshotStage value DemoSeed.Stage parses.",
+  "//website": "The basename `appshot compose website` writes into apps/website/public/shots/. All three are on the site; a screen with no `website` key would be framed-set-only.",
+  "screens": [
+    {
+      "id": "surface",
+      "website": "surface",
+      "title": "Four Apple apps. One permission.",
+      "subtitle": "Mail, Notes, Reminders and Calendar, brokered by a single signed app."
+    },
+    {
+      "id": "activity",
+      "website": "activity",
+      "title": "You can watch it the whole time.",
+      "subtitle": "Every tool call, live — tool names only, never your content."
+    },
+    {
+      "id": "connections",
+      "website": "connections",
+      "title": "Every client. Every session.",
+      "subtitle": "See exactly what is connected, and what it has asked for."
+    }
+  ]
+}

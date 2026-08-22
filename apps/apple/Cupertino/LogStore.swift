@@ -34,6 +34,16 @@ final class LogStore {
   }
 
   func clear() { entries.removeAll() }
+
+  /// Seed one entry at a fixed instant, for `DemoSeed` only.
+  ///
+  /// Separate from `append` rather than an optional `at:` parameter on it: the
+  /// live path must never be able to pass a date, because a caller that could
+  /// choose the timestamp is a caller that could get it wrong, and every real
+  /// line is stamped when it happens.
+  func appendDemo(at: Date, surface: String, level: Level, _ text: String) {
+    entries.append(Entry(at: at, surface: surface, level: level, text: text))
+  }
 }
 
 /// Post a log line from any thread.

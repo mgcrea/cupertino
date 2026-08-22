@@ -17,6 +17,27 @@ Before committing: `pnpm check` and `pnpm build` from here, then `pnpm lint` and
 `pnpm format:check` **from the repository root** — both are root-only commands covering every
 workspace at once. oxfmt formats the `.css`, `.mjs` and `.ts` here but leaves `.astro` alone.
 
+## `src/assets/shots/` belongs to the pipeline
+
+The three app screenshots in `Screens.astro` are captured, not placed. `make screenshots` from the
+repository root builds Cupertino, launches it in demo mode onto each screen, checks the result
+against committed goldens, and writes the images here.
+
+**That command deletes every `.png` in `src/assets/shots/` before writing.** Do not park anything
+else in the directory, and do not edit the files — the next capture overwrites them. To change what
+a shot shows, change the fixture in `apps/apple/Cupertino/DemoSeed.swift` and re-run.
+
+They are committed via Git LFS (see `.gitattributes` here) because `astro build` imports them
+through `astro:assets`, so a clone that has not just run a capture still has to build. A checkout
+without `git lfs pull` gets 131-byte pointer files still named `.png`, and the build then fails
+inside sharp complaining about the image format rather than about the checkout.
+
+The hand-drawn macOS mocks — `Activity.astro`, `FdaPane.astro`, `MenuBar.astro`, `Status.astro` —
+are **not** superseded by these. Each is drawn because it needs something a capture cannot give it:
+content that differs between two states, a layout that reflows on a phone, or a surface `appshot`
+cannot photograph at all (a menu-bar dropdown is a high-layer panel, not an ordinary window). Keep
+them honest against the captures rather than replacing them.
+
 ## There is one theme
 
 Dark, and no toggle. The design canvas is drawn dark-first and has no light artboard, so a light

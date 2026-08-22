@@ -257,6 +257,27 @@ make smoke          # handshake every server through the bridge
 make stop           # quit and remove the socket
 ```
 
+The app's screenshots are captured rather than taken by hand — `apps/apple/Screenshots/` holds the
+config and the committed goldens, and the website renders the output:
+
+```bash
+make screenshots          # capture, gate against the goldens, compose both sets
+make screenshots-check     # gate only — fails if the UI drifted
+make screenshots-update    # accept the captures as the new goldens (review the diffs first)
+make screenshots-selftest  # prove the gate fails when it should
+```
+
+A run takes over the pointer and the active app at the moment of each shot, so do not use the
+machine while it runs. It needs Screen Recording permission for the **terminal**, never for
+Cupertino itself. `make screenshots-doctor` checks that and the two other things that otherwise
+fail silently: whether the caption font resolves, and whether the output size is one a store would
+accept.
+
+What the screenshots show is fixture data from `apps/apple/Cupertino/DemoSeed.swift`, not this Mac:
+in `-ScreenshotMode` the app starts no host, seeds its own log and sessions, and answers the
+permission and store questions from a table. Without that the images would report one laptop's TCC
+state and print its home directory into the marketing site.
+
 Phase-0 probes are repo-wide and read-only. They need the permission of the surface they measure,
 and redact their output to counts, timings and DDL:
 

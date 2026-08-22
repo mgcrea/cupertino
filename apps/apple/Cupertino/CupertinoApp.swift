@@ -5,6 +5,17 @@ import SwiftUI
 /// item. `MenuBarExtra` content is built lazily, so this cannot live there.
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Screenshot mode never starts the host. Binding the socket would collide
+    // with the developer's real Cupertino, spawn four Node servers per launch,
+    // and write real log lines into the seeded fixture — and every screen this
+    // photographs is one the app can draw without a single connection.
+    if DemoSeed.isEnabled {
+      DemoSeed.apply()
+      DockPresence.observe()
+      MainWindowController.show()
+      return
+    }
+
     let location = InstallLocation.current
     hostLog(
       "cupertino", .info,
@@ -127,6 +138,21 @@ final class StatusModel {
   init() { refresh() }
 
   func refresh() {
+    // Every line below reads the capturing Mac: TCC for the automation glyphs,
+    // `access(2)` for the Full Disk Access dot, and the file system for which
+    // MCP clients are installed. All three are correct facts about the wrong
+    // subject — a screenshot is of the product, not of this laptop — so demo
+    // mode answers them from a table instead. See `DemoSeed`.
+    guard !DemoSeed.isEnabled else {
+      location = .current
+      hostError = nil
+      diskAccess = DemoSeed.diskAccess
+      automation = Dictionary(
+        uniqueKeysWithValues: Surface.all.map { ($0.id, DemoSeed.automation) })
+      clients = Dictionary(
+        uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.Status.configured) })
+      return
+    }
     location = .current
     hostError = ServerHost.shared.startupError
     diskAccess = Permissions.diskAccess()

@@ -42,7 +42,16 @@ final class HostedWindow {
     }
     // An accessory app does not come forward on its own, so the window would
     // otherwise open behind whatever the user was looking at.
-    NSApp.activate(ignoringOtherApps: true)
+    //
+    // Except under `appshot capture`, which launches with `open -g` on purpose
+    // and activates for the moment of each shot. An app calling this at launch
+    // is then fighting the driver for the foreground, and the symptom is one
+    // shot in a run dying with "would not come to the front", on no particular
+    // screen, passing on the next attempt. Ordering our *own* windows front is
+    // still fine — that is order within the app, not which app is active.
+    if !DemoSeed.isEnabled {
+      NSApp.activate(ignoringOtherApps: true)
+    }
     window?.makeKeyAndOrderFront(nil)
     DockPresence.update()
   }

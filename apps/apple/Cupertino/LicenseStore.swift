@@ -22,8 +22,25 @@ enum LicenseStore {
     UserDefaults.standard.string(forKey: defaultsKey)
   }
 
+  /// Set by `DemoSeed` and by nothing else.
+  ///
+  /// A screenshot has to show the licensed state, and it cannot get there the
+  /// honest way: every valid key is Ed25519-signed, so the only alternative to
+  /// this flag is committing a real working licence key to the repository.
+  ///
+  /// This is not a hole in the licence check. `apps/apple/LICENSE` §1(c) already
+  /// grants anyone the right to compile this source and run it with no key at
+  /// all, so there is nothing here to defend — and the flag is unreachable in a
+  /// shipped build regardless, since `DemoSeed.isEnabled` is false without a
+  /// launch argument.
+  nonisolated(unsafe) static var demoLicensed = false
+
   static var check: LicenseCheck {
-    LicenseKey.check(raw)
+    if demoLicensed {
+      return .valid(
+        License(id: "demo", email: "you@example.com", major: AppInfo.major, issuedAt: "2026-01-15"))
+    }
+    return LicenseKey.check(raw)
   }
 
   static var current: License? {

@@ -157,6 +157,13 @@ struct SurfaceDetail: View {
   /// Off the main actor: resolving Mail's store walks up to nineteen candidate
   /// paths, and this runs again every time the selection changes.
   private func resolveStore() async {
+    // Isolation, not cosmetics. The real path is absolute and rooted at the
+    // capturing Mac's home directory, so the honest version of this row puts
+    // `/Users/<whoever built this>/…` into the marketing site and the README.
+    if DemoSeed.isEnabled {
+      store = DemoSeed.storePath(for: surface).map { .found(path: $0, readable: true) } ?? .missing
+      return
+    }
     let surface = surface
     let resolved: StoreStatus = await Task.detached(priority: .userInitiated) {
       guard let path = Permissions.resolveStore(surface) else { return StoreStatus.missing }
