@@ -51,3 +51,9 @@ apps/apple/Vendor/
 
 # Internal planning, not for a public repo.
 marketing/
+
+# The Sparkle update-signing private key, if it is ever exported from the
+# keychain again for CI. Committing it would hand anyone who can read this repo
+# the ability to ship a signed update to an app holding Full Disk Access.
+sparkle_key.pem
+*.pem

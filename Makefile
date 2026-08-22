@@ -440,13 +440,19 @@ SHOT_SCREENS := surface activity connections
 #       off, which is the story the log fixture tells too: opt in per surface,
 #       and watch the refusal when you have not. Needs no app code; launch
 #       arguments land in NSArgumentDomain, which @AppStorage already reads.
-#   -AppleAccentColor / -AppleHighlightColor  Assets.xcassets/AccentColor.colorset
-#       declares no colour, which is Xcode's template default and means the app
-#       follows System Settings. That tint reaches the sidebar's selected row and
-#       every `.accentColor` log line, i.e. all three screens. Pinned to 4 (blue)
-#       because that is what the macOS default renders as. NEEDING THIS LINE IS A
-#       FINDING: giving the colorset Cupertino's own #F2895C is the real fix, and
-#       it is a product decision this pipeline should not make on its own.
+#   -AppleHighlightColor  The text-selection background, which is still System
+#       Settings' to choose. Nothing is selected in these screens, so this is
+#       insurance for the log pane's `.textSelection(.enabled)` rather than a
+#       dependency — but it is ambient, and ambient is what this list is for.
+#
+#       `-AppleAccentColor` used to be here too, pinned to 4 (blue), because
+#       AccentColor.colorset declared no colour and the app therefore followed
+#       System Settings — the tint reaching the sidebar selection and every
+#       `.accentColor` log line, i.e. all three screens. That was a finding, not
+#       a solution: it made the captures deterministic while every real user
+#       still saw their own accent. The colorset now carries Cupertino's own
+#       ramp (#F2895C on dark, #B0532F on light), which makes the flag a no-op,
+#       and a flag that does nothing is the next person's dead flag.
 #   -AppleLocale / -AppleLanguages  Locale.current drives every formatter.
 #   -AppleShowScrollBars  `Always` bakes a scrollbar into the log pane.
 #
@@ -457,7 +463,7 @@ SHOT_ARGS := -ScreenshotMode YES \
              -allowWrites.mail YES -allowWrites.notes NO \
              -allowWrites.reminders NO -allowWrites.calendar NO \
              -AppleLocale en_US -AppleLanguages '(en)' \
-             -AppleAccentColor 4 -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
+             -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
              -AppleShowScrollBars WhenScrolling
 
 # A floor, not the whole wait: appshot then polls frames and shoots once the
