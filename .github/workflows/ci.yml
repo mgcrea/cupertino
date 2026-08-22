@@ -163,12 +163,6 @@ jobs:
         # OIDC trusted publishing needs a recent npm CLI. pnpm shells out to it
         # for the token exchange, so this matters even though npm never publishes.
         run: npm install -g npm@latest
-      # `prepublishOnly` builds only the tagged package, and its dts generation
-      # reads core's `.d.ts` — which is gitignored and would not exist. `-r`
-      # orders the workspace topologically, so core is built first, exactly as
-      # the `test` job does.
-      - name: Build 🏗️
-        run: pnpm -r build
       # A version already on npm cannot be republished, so re-running this job —
       # after re-pushing a tag, or a manual re-run — would fail on a duplicate.
       # Skip instead, so the tag stays the source of truth.
@@ -184,6 +178,19 @@ jobs:
             exit 1
           fi
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "name=$(node -p "require('./$dir/package.json').name")" >> "$GITHUB_OUTPUT"
+      # `prepublishOnly` builds only the tagged package, and its dts generation
+      # reads core's `.d.ts` — which is gitignored and would not exist on a cold
+      # checkout. The `...` suffix selects the package AND its workspace
+      # dependencies, in topological order, so core is built first.
+      #
+      # NOT `pnpm -r build`, which was the first attempt and broke this job: it
+      # builds apps/website too, whose images are LFS-tracked. Only the `test`
+      # job checks out with `lfs: true`, so here astro got 131-byte pointer
+      # files and died in NoImageMetadata — a marketing-site failure stopping an
+      # npm publish that has nothing to do with it.
+      - name: Build 🏗️
+        run: pnpm --filter "${{ steps.pkg.outputs.name }}..." build
       - name: Check npm for this version 🔍
         id: published
         working-directory: ${{ steps.pkg.outputs.dir }}
