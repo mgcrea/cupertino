@@ -39,7 +39,8 @@ off cannot see that they exist.
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes       |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 9 tools, ranges/search/recurrence + gated writes  |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
-| Messages  | —                                          | not started                                                     |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 6 tools, chats/search/decoded text + gated send   |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.
@@ -48,8 +49,30 @@ They share one bundle and one Full Disk Access grant, which is the whole reason 
 
 ## Quick start
 
-**Nothing is published to npm yet.** Both servers run from source today; the signed `Cupertino.app`
-and the `@mgcrea/mcp-apple-*` packages land together at the first release.
+Each server is on npm and runs straight from `npx` — for Claude Code, a `.mcp.json` beside your
+project:
+
+```json
+{
+  "mcpServers": {
+    "apple-mail": {
+      "command": "npx",
+      "args": ["-y", "@mgcrea/mcp-apple-mail"]
+    },
+    "apple-notes": {
+      "command": "npx",
+      "args": ["-y", "@mgcrea/mcp-apple-notes"]
+    }
+  }
+}
+```
+
+The packages are MIT and need no licence key. What they do need is a permission, and on npm you
+grant it to whatever launches them — your editor, your terminal — which is the trade the signed
+[`Cupertino.app`](https://cupertino.mgcrea.io) exists to avoid: one Full Disk Access grant held by a
+notarized binary, instead of one per host. See [docs/licensing.md](docs/licensing.md).
+
+Or run them from source:
 
 ```bash
 git clone https://github.com/mgcrea/mcp-cupertino.git
@@ -58,22 +81,7 @@ pnpm install
 pnpm build
 ```
 
-Point your MCP host at the built CLIs — for Claude Code, a `.mcp.json` beside your project:
-
-```json
-{
-  "mcpServers": {
-    "apple-mail": {
-      "command": "node",
-      "args": ["/abs/path/to/mcp-cupertino/packages/mail/dist/cli.js"]
-    },
-    "apple-notes": {
-      "command": "node",
-      "args": ["/abs/path/to/mcp-cupertino/packages/notes/dist/cli.js"]
-    }
-  }
-}
-```
+then point your host at `packages/<surface>/dist/cli.js` by absolute path.
 
 Writes are off unless you ask for them — see [Configuration](#configuration).
 
@@ -134,13 +142,15 @@ Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
 
 **What works without Full Disk Access:**
 
-| Surface   | Without the grant                                                                                                                                                                                                  |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                   |
-| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                      |
-| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                             |
-| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                 |
-| Contacts  | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top. |
+| Surface   | Without the grant                                                                                                                                                                                                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                                                                                                                |
+| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                                                                                                                   |
+| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                                                                                                                          |
+| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                                                                                                              |
+| Contacts  | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top.                                                                                              |
+| Messages  | **nothing at all.** No Apple Events read path exists — Messages answers "Application isn't running" even while running — so there is no second lane and no degraded mode. A send can still be attempted, but with no store to pick the target from or reconcile against, it usually cannot be addressed at all. |
+| Safari    | **live tabs, and only those.** The one surface whose lanes are not fallbacks for each other: Apple Events sees what is open now, the file lane sees everything else. History, bookmarks and the Reading List all need the grant.                                                                                |
 
 Tools that need the index don't disappear when it's missing — the tool list is a pure function of
 `allowWrites` and nothing else, because MCP clients cache it. They return a structured `degraded`
@@ -192,8 +202,8 @@ rather than coming back short — a short list of events is indistinguishable fr
 | `resolve_handles` `search_contacts` `list_contacts` `get_contact` | `create_contact` `update_contact` |
 | `diagnostics`                                                     |                                   |
 
-`resolve_handles` turns phone numbers and email addresses into names, which is what a Messages
-server will need to be readable at all. Read `status` on each result rather than assuming a name came
+`resolve_handles` turns phone numbers and email addresses into names, which is what makes the
+Messages surface readable at all. Read `status` on each result rather than assuming a name came
 back: `unknown` is common and not an error, and `ambiguous` means two contacts share the number, so
 no name is returned rather than a guess.
 
@@ -201,13 +211,63 @@ no name is returned rather than a guess.
 writes go through Apple Events on every surface here because the store is read-only by policy. See
 [docs/contacts.md](docs/contacts.md).
 
+### Messages
+
+| Always available                               | Write-gated    |
+| ---------------------------------------------- | -------------- |
+| `list_chats` `list_messages` `search_messages` | `send_message` |
+| `get_message` `diagnostics`                    |                |
+
+**One write tool, because the dictionary has one usable command.** `sdef` lists `send`, `login` and
+`logout`; the other two would sign the user out of iMessage on every device they own. There is no
+edit, delete, mark-as-read or reaction verb to expose.
+
+This is the only surface where Apple Events is a **write lane and nothing else** — every read
+through it fails, so with `APPLE_MESSAGES_ALLOW_WRITES` off no Apple Event is ever sent and no
+Automation grant is ever requested.
+
+`send_message` prefers a `chatRef` from `list_chats` over a raw handle, because Messages refuses to
+enumerate participants for a script: an existing conversation is the only target that can be
+addressed reliably. Apple Events hands back no identifier for what it sent, so the result is
+reconciled against `chat.db` — `reconciliation: "matched"` carries a real message ref, and
+`"pending"` means Messages accepted the send but has not written the row yet. **Pending is not a
+failure, and retrying it sends the message twice.**
+
+About 3% of messages across all history keep their text only in an archived `NSArchiver` blob that
+SQL cannot reach — and Apple stopped writing the plain column in early 2026, so for anything recent
+it is ~100%. This server decodes them; `textSource` on every result says which lane answered. See
+[docs/messages.md](docs/messages.md).
+
+### Safari
+
+| Always available                                   | Write-gated |
+| -------------------------------------------------- | ----------- |
+| `search_history` `get_page` `list_tabs`            | — none      |
+| `list_bookmarks` `list_reading_list` `diagnostics` |             |
+
+**Read-only, and the write column is empty on purpose.** Opening a URL or adding to the Reading
+List is an Apple Event that navigates a real, visible browser, and no write on this surface was
+ever probed.
+
+`list_tabs` is the only tool in the whole bundle that works without Full Disk Access — it needs an
+Automation grant instead, and Safari has to be running. A tab's `history` field being null means
+**not found in history**, never "never visited": only about 55% of open tabs match a history row,
+because redirects, session parameters and pages never committed to history all produce a URL that
+is simply not there.
+
+**There is no `do JavaScript` tool.** That verb needs "Allow JavaScript from Apple Events", a
+Safari developer-menu toggle which is not a TCC grant and whose own state cannot be read reliably.
+Shipping it would mean reporting a healthy surface whose most powerful capability silently fails.
+See [docs/safari.md](docs/safari.md).
+
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
-`apple_contacts_`.
+`apple_contacts_` / `apple_messages_` / `apple_safari_`.
 
 ## Configuration
 
 Environment only — these servers hold no secret of their own, so there is no config file. Prefix
-is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_` or `APPLE_CONTACTS_`.
+is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_CONTACTS_`,
+`APPLE_MESSAGES_` or `APPLE_SAFARI_`.
 
 | Variable                 | Default       | What                                                           |
 | ------------------------ | ------------- | -------------------------------------------------------------- |
@@ -276,7 +336,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/mail-body.md](docs/mail-body.md)           | the body-search lane, and how it is decided   |
 | [docs/notes.md](docs/notes.md)                   | Apple Notes phase-0 measurements              |
 | [docs/reminders.md](docs/reminders.md)           | Apple Reminders phase-0 measurements          |
-| [docs/messages.md](docs/messages.md)             | Apple Messages phase-0 measurements           |
+| [docs/messages.md](docs/messages.md)             | Apple Messages: measurements, decoder, send   |
 | [docs/calendar.md](docs/calendar.md)             | Apple Calendar phase-0 measurements           |
 | [docs/safari.md](docs/safari.md)                 | Safari phase-0 measurements                   |
 | [docs/envelope-index.md](docs/envelope-index.md) | Mail's observed `Envelope Index` schema       |
@@ -341,18 +401,19 @@ pnpm probe:mail-body # which lane can search message bodies — needs Full Disk 
 pnpm probe:notes     # Notes — the Apple Events half runs without it
 pnpm probe:reminders # Reminders — the store path is a glob, so finding it is itself privileged
 pnpm probe:messages  # chat.db — no Apple Events read lane exists, so this one needs the grant
+                     #   --send-target=<handle> also checks the send lane's targeting, without sending
 pnpm probe:calendar  # settles whether Calendar has a file lane at all
 pnpm probe:safari    # History.db, and the Reading List hiding inside Bookmarks.plist
 pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Full Disk Access
 ```
 
-Messages and Safari are **probed but unbuilt**: there is a phase-0 probe and no package.
+Every probed surface now has a package. **Safari is read-only** — it registers no mutating tool, and that is a recorded decision rather than an omission: opening a URL or adding to the Reading List navigates a real, visible browser and was never probed. See [docs/safari.md](docs/safari.md). Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v0.1.0`,
-`reminders-v0.1.0`, `calendar-v0.1.0`, `core-v0.1.0`. The app is tagged `app-v1.0.0` and releases on its own lane —
+Releases are tagged per package, so a tag names what it publishes: `mail-v1.1.0`,
+`reminders-v1.1.0`, `calendar-v1.1.0`, `core-v1.1.0`. The app is tagged `app-v1.1.0` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 

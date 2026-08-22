@@ -4,8 +4,8 @@ Notable changes to this repository. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and every published artifact follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v0.1.0`,
-`notes-v0.1.0`, `reminders-v0.1.0`, `core-v0.1.0` for the npm packages, and `app-v1.0.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.1.0`,
+`notes-v1.1.0`, `reminders-v1.1.0`, `core-v1.1.0` for the npm packages, and `app-v1.1.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 
