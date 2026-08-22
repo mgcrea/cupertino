@@ -35,7 +35,10 @@ struct WiringCheck {
   static func entries(_ command: String = bridge) -> [String: [String: Any]] {
     Dictionary(
       uniqueKeysWithValues: surfaces.map {
-        ("cupertino-\($0.id)", ["command": command, "args": ["--server=\($0.id)"]] as [String: Any])
+        (
+          "cupertino-\($0.id)",
+          ["command": command, "args": ["--server=\($0.id)"]] as [String: Any]
+        )
       })
   }
   static var legacy: [String: String] {

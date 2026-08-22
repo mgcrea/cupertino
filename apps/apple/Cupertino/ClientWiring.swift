@@ -296,7 +296,12 @@ enum ClientWiring {
   private static func entryJSON(for surface: Surface) -> String {
     var object = entry(for: surface)
     object["name"] = serverKey(for: surface)
-    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+    // `.withoutEscapingSlashes` matters here in a way it does not in a file:
+    // this string is pasted into a terminal and read by a person, and every
+    // path in it would otherwise arrive as `\/Applications\/Cupertino.app`.
+    guard
+      let data = try? JSONSerialization.data(
+        withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]),
       let string = String(data: data, encoding: .utf8)
     else { return "" }
     return string
