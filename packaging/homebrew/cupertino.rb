@@ -13,7 +13,7 @@ cask "cupertino" do
   url "https://github.com/mgcrea/mcp-cupertino/releases/download/app-v#{version}/Cupertino.zip",
       verified: "github.com/mgcrea/mcp-cupertino/"
   name "Cupertino"
-  desc "Menu bar broker giving MCP clients access to Mail, Notes, Reminders and Calendar"
+  desc "Menu bar broker giving MCP clients access to your Apple apps"
   homepage "https://cupertino.mgcrea.io/"
 
   livecheck do
@@ -31,7 +31,7 @@ cask "cupertino" do
   # install channel and the way off 1.0.0, which shipped with no updater in it;
   # Sparkle owns the copy afterwards.
   auto_updates true
-  depends_on macos: ">= :tahoe"
+  depends_on macos: :tahoe
 
   app "Cupertino.app"
 
