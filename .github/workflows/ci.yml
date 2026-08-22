@@ -60,6 +60,13 @@ jobs:
         run: pnpm run build
       - name: TypeScript 🔍
         run: pnpm run typecheck
+      # The surface list lives in surfaces.json and is generated into nine other
+      # files, including BOTH copies of the Apple Events consent string. This is
+      # what makes the manifest the source of truth rather than a suggestion: a
+      # hand-edit to any generated region fails here instead of shipping a
+      # Release whose consent prompt names the wrong apps.
+      - name: Surface manifest 🔍
+        run: make surfaces-check
       # Confirms the committed revocation list still matches D1. It does not
       # regenerate: the file in git is what the build uses, and fetching it here
       # would make a Cloudflare outage an outage in releases. With no token —
@@ -112,7 +119,9 @@ jobs:
       - name: MCP handshake 🤝
         if: runner.os == 'macOS'
         run: |
-          for server in mail notes reminders calendar; do
+          # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
+          for server in mail notes reminders calendar contacts; do
+          # </generated:surfaces>
             printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
               | node "packages/$server/dist/cli.js" 2>/dev/null | tee "/tmp/handshake-$server.json"
             grep -q '"serverInfo"' "/tmp/handshake-$server.json"

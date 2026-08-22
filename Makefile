@@ -21,9 +21,11 @@ SPARKLE_SHA256   := 8d5fb41d960b43f4a68aa14126bf62b098544ec8d191cdcc73eb14e63a8e
 SPARKLE_VENDOR   := apps/apple/Vendor
 SPARKLE_FRAMEWORK := $(SPARKLE_VENDOR)/Sparkle.framework
 SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
-# The surfaces the app brokers. Mirrors `Surface.all` in apps/apple/Cupertino/Surfaces.swift
-# and `known` in apps/apple/CupertinoBridge/main.swift; adding one means all three.
-SURFACES     := mail notes reminders calendar
+# The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
+# after editing the manifest, never this line. `make surfaces-check` is what CI runs.
+# <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
+SURFACES     := mail notes reminders calendar contacts
+# </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
 # default, which nothing bumps. Empty locally, where the pbxproj value stands.
@@ -403,6 +405,12 @@ ICON_SKY     = $(HASH)FFD08A,$(HASH)F2895C
 ICON_RADIUS := 230
 ICON_MENUBAR := design/cupertino-menubar.svg
 
+surfaces: ## Regenerate every copy of the surface list from surfaces.json
+	@node scripts/generate-surfaces.mjs
+
+surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
+	@node scripts/generate-surfaces.mjs --check
+
 icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.svg
 	@appshot icon build --from $(ICON_MARK) \
 		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
@@ -491,9 +499,16 @@ SHOT_SCREENS := surface activity connections
 # Quoting: the whole value already sits inside --extra-args="…", so a nested `"`
 # would end the string at the shell. Inner values use single quotes; appshot's
 # own splitting is quote-aware.
+# The write toggles the screenshots are taken with: Mail on so the write tools
+# appear, everything else off. Its own variable because a comment cannot sit
+# inside a backslash continuation — putting the generated region in the middle of
+# SHOT_ARGS is a `missing separator` error, which is how this was found.
+# <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO
+# </generated:surfaces-shot>
+
 SHOT_ARGS := -ScreenshotMode YES \
-             -allowWrites.mail YES -allowWrites.notes NO \
-             -allowWrites.reminders NO -allowWrites.calendar NO \
+             $(SHOT_WRITES) \
              -AppleLocale en_US -AppleLanguages '(en)' \
              -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
              -AppleShowScrollBars WhenScrolling
@@ -619,4 +634,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize surfaces surfaces-check icon clean

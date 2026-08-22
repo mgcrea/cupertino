@@ -1,5 +1,5 @@
 /**
- * The four shipped surfaces, their tool names, and which of them the write
+ * The five shipped surfaces, their tool names, and which of them the write
  * gate hides.
  *
  * These lists are transcribed from `packages/<surface>/src/tools/index.ts`, and the
@@ -16,7 +16,9 @@
 
 export interface Surface {
   /** Anchor id and display key. */
-  id: "mail" | "notes" | "reminders" | "calendar";
+  // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
+  id: "mail" | "notes" | "reminders" | "calendar" | "contacts";
+  // </generated:surfaces>
   name: string;
   pkg: string;
   /** Always registered. */
@@ -129,6 +131,27 @@ export const SURFACES: readonly Surface[] = [
       "Ranges, search and repeating events expanded properly, with three mutating tools behind the write gate.",
     withoutGrant:
       "Nothing — the only surface with no Apple Events read path fast enough to be a fallback.",
+  },
+  {
+    id: "contacts",
+    name: "Contacts",
+    pkg: "@mgcrea/mcp-apple-contacts",
+    read: [
+      "apple_contacts_resolve_handles",
+      "apple_contacts_search_contacts",
+      "apple_contacts_list_contacts",
+      "apple_contacts_get_contact",
+      "apple_contacts_diagnostics",
+    ],
+    // Two, not three. Contacts' scripting dictionary has no delete command of
+    // any kind — make, add, remove and save are the whole list — and writes go
+    // through Apple Events because the store is query_only, so there is no way
+    // to honour a delete tool. See docs/contacts.md.
+    write: ["apple_contacts_create_contact", "apple_contacts_update_contact"],
+    pitch:
+      "Turns a phone number into a name, and creates or edits a card. Reads need no Automation prompt at all; only the two write tools do.",
+    withoutGrant:
+      "Nothing — but it asks for the Contacts permission rather than the whole disk, and unlike Full Disk Access that one prompts.",
   },
 ] as const;
 

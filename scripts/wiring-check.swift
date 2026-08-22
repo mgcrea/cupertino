@@ -25,11 +25,16 @@ struct WiringCheck {
     }
   }
 
-  /// The four surfaces, as `ClientWiring` hands them over.
+  /// The surfaces, as `ClientWiring` hands them over. Generated — see surfaces.json.
+  // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
   static let surfaces = [
-    (id: "mail", label: "Mail"), (id: "notes", label: "Notes"),
-    (id: "reminders", label: "Reminders"), (id: "calendar", label: "Calendar"),
+    (id: "mail", label: "Mail"),
+    (id: "notes", label: "Notes"),
+    (id: "reminders", label: "Reminders"),
+    (id: "calendar", label: "Calendar"),
+    (id: "contacts", label: "Contacts"),
   ]
+  // </generated:surfaces>
   static let bridge = "/Applications/Cupertino.app" + ClientWiringMerge.bridgeSuffix
 
   static func entries(_ command: String = bridge) -> [String: [String: Any]] {

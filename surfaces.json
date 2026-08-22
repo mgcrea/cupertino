@@ -1,0 +1,123 @@
+{
+  "$schema": "./scripts/surfaces.schema.json",
+  "$comment": [
+    "THE SURFACE LIST. Every other copy of it is generated from this file by",
+    "`make surfaces` (scripts/generate-surfaces.mjs), and CI fails if any of them",
+    "has drifted.",
+    "",
+    "This exists because docs/surfaces.md set a threshold and the repo crossed it.",
+    "The list was hardcoded in ten places — Surfaces.swift, the bridge's `known`,",
+    "two spots in the Makefile, the CI handshake loop, the server bundler, BOTH",
+    "copies of the Apple Events usage string in project.pbxproj, wiring-check.swift",
+    "and .mcp.json — and Calendar went in by hand, touching all of them. The note",
+    "said to generate them from one manifest before adding a fifth. Contacts is the",
+    "fifth.",
+    "",
+    "Adding a surface: add an entry here, run `make surfaces`, review the diff.",
+    "Nothing below is free-form — `scripts/surfaces.schema.json` is enforced by the",
+    "generator before it writes anything."
+  ],
+  "surfaces": [
+    {
+      "id": "mail",
+      "displayName": "Mail",
+      "npmName": "@mgcrea/mcp-apple-mail",
+      "bundleId": "com.apple.mail",
+      "usesAppleEvents": true,
+      "supportsWrites": true,
+      "storePath": "Library/Mail/V*/MailData/Envelope Index",
+      "storePermission": "full-disk-access",
+      "envPrefix": "APPLE_MAIL_",
+      "notes": [
+        "The V number moves between macOS releases, which is why",
+        "packages/mail/src/client/locate.ts asks Mail itself first. For a",
+        "status row a glob is enough; the server does the real resolution."
+      ]
+    },
+    {
+      "id": "notes",
+      "displayName": "Notes",
+      "npmName": "@mgcrea/mcp-apple-notes",
+      "bundleId": "com.apple.Notes",
+      "usesAppleEvents": true,
+      "supportsWrites": true,
+      "storePath": "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
+      "storePermission": "full-disk-access",
+      "envPrefix": "APPLE_NOTES_",
+      "notes": []
+    },
+    {
+      "id": "reminders",
+      "displayName": "Reminders",
+      "npmName": "@mgcrea/mcp-apple-reminders",
+      "bundleId": "com.apple.reminders",
+      "usesAppleEvents": true,
+      "supportsWrites": true,
+      "storePath": "Library/Group Containers/group.com.apple.reminders",
+      "storePermission": "full-disk-access",
+      "envPrefix": "APPLE_REMINDERS_",
+      "notes": [
+        "The container, not the store. Reminders keeps its data in",
+        "Container_v1/Stores/Data-<UUID>.sqlite, and a UUID cannot be probed by",
+        "name — `resolveStore` only expands a glob in a directory component.",
+        "Reading the directory is the right question anyway: it is exactly the",
+        "`containerListable` signal packages/reminders/src/client/locate.ts uses,",
+        "because without the grant the container cannot even be listed, so the",
+        "store cannot be located at all."
+      ]
+    },
+    {
+      "id": "calendar",
+      "displayName": "Calendar",
+      "npmName": "@mgcrea/mcp-apple-calendar",
+      "bundleId": "com.apple.iCal",
+      "usesAppleEvents": true,
+      "supportsWrites": true,
+      "storePath": "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
+      "storePermission": "full-disk-access",
+      "envPrefix": "APPLE_CALENDAR_",
+      "notes": [
+        "NOT `com.apple.Calendar`, which does not exist. Calendar.app kept the",
+        "bundle id it shipped with as iCal, and this is the only surface in the",
+        "table where the display name and the bundle id disagree — the same",
+        "shape of trap as `com.apple.Notes` vs `com.apple.reminders` above,",
+        "which this project has already been caught by once.",
+        "",
+        "A constant filename, unlike Reminders' generated UUID directory. That",
+        "makes this the best Full Disk Access probe in the table: `access(2)`",
+        "on a known path answers the question directly, with no listing step",
+        "that could fail for its own reasons."
+      ]
+    },
+    {
+      "id": "contacts",
+      "displayName": "Contacts",
+      "npmName": "@mgcrea/mcp-apple-contacts",
+      "bundleId": "com.apple.AddressBook",
+      "usesAppleEvents": true,
+      "supportsWrites": true,
+      "storePath": "Library/Application Support/AddressBook",
+      "storePermission": "contacts",
+      "envPrefix": "APPLE_CONTACTS_",
+      "notes": [
+        "Reads are file-lane and need no Automation grant; writes are Apple",
+        "Events, like every other surface, because the store is query_only.",
+        "With allowWrites off this server sends no Apple Event at all, which",
+        "is the only reason `usesAppleEvents` being true is not the whole",
+        "story — see docs/contacts.md.",
+        "",
+        "There is no delete verb. `sdef` for Contacts contains the string",
+        "\"delete\" zero times: make, add, remove and save are the whole",
+        "command list, and `remove` only takes a person out of a group.",
+        "",
+        "The DIRECTORY, not a database. Contacts keeps one store per account",
+        "under Sources/<uuid>/ plus a root file that held ONE contact of 421",
+        "on the probed machine. Naming the root database would point the",
+        "status row at a file that is present, readable and empty.",
+        "",
+        "And it is not Full Disk Access that gates it: Contacts has its own",
+        "TCC service, which — unlike Full Disk Access — prompts."
+      ]
+    }
+  ]
+}

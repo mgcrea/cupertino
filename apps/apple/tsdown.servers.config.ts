@@ -50,10 +50,13 @@ export default defineConfig({
     // `servers/<id>/` that resolves to a single shared `servers/package.json`,
     // which cannot carry two different versions. The staging step writes a
     // real package.json beside each `dist/`.
+    // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
     "mail/dist/cli": here("../../packages/mail/src/cli.ts"),
     "notes/dist/cli": here("../../packages/notes/src/cli.ts"),
     "reminders/dist/cli": here("../../packages/reminders/src/cli.ts"),
     "calendar/dist/cli": here("../../packages/calendar/src/cli.ts"),
+    "contacts/dist/cli": here("../../packages/contacts/src/cli.ts"),
+    // </generated:surfaces>
   },
   outDir: here("./.build/staged/servers"),
   format: ["esm"],

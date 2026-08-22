@@ -404,7 +404,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders and Calendar on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar and Contacts on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -440,7 +440,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders and Calendar on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar and Contacts on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

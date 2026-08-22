@@ -45,7 +45,9 @@ func die(_ message: String, code: Int32 = 1) -> Never {
 // what it was told because a launcher that does is a way for any local process
 // to read the whole disk with a permission granted for mail. The app validates
 // this against its own table too; this check is here so a typo fails fast.
-let known = ["mail", "notes", "reminders", "calendar"]
+// <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
+let known = ["mail", "notes", "reminders", "calendar", "contacts"]
+// </generated:surfaces>
 
 var requested: String?
 for argument in CommandLine.arguments.dropFirst() {
