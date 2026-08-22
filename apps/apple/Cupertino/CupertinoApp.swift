@@ -45,7 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// always already up.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     guard !hasVisibleWindows else { return true }
-    if !LicenseStore.isLicensed && !UserDefaults.standard.bool(forKey: Self.licencePromptShown) {
+    if !Entitlement.current.allowsServers
+      && !UserDefaults.standard.bool(forKey: Self.licencePromptShown)
+    {
       UserDefaults.standard.set(true, forKey: Self.licencePromptShown)
       SettingsOpener.show(.licence)
     } else {
@@ -82,7 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// carries the banner. The pane opens the first time a person opens the app.
   private func promptForLicenceIfNeeded() {
     guard !CommandLine.arguments.contains(BridgeProtocol.backgroundFlag) else { return }
-    guard !LicenseStore.isLicensed,
+    // `Entitlement`, not `LicenseStore`: someone who started a trial two minutes
+    // ago has something to run with, and opening the licence pane at them is
+    // answering a question they have already answered.
+    guard !Entitlement.current.allowsServers,
       !UserDefaults.standard.bool(forKey: Self.licencePromptShown)
     else { return }
     UserDefaults.standard.set(true, forKey: Self.licencePromptShown)
@@ -192,10 +197,7 @@ struct StatusMenu: View {
       // First, and in the popover rather than behind a tab. This is the one
       // state where nothing works at all, and whoever is reading it has just
       // been told by their assistant that a server failed to start.
-      if case .refused(let reason) = LicenseStore.check {
-        LicenceBanner(reason: reason)
-        Divider()
-      }
+      EntitlementNotice()
 
       // Not about the grant — that follows the signature and survives a move.
       // It is the bridge path written into other apps' configs that breaks.
@@ -298,8 +300,42 @@ struct StatusMenu: View {
 /// The reason string is the same sentence `ServerHost` hands the bridge, which
 /// hands it to the MCP host, which files it in a log nobody opens. Saying it
 /// here as well is the difference between "it broke" and "I know why".
+/// Whichever of the three things is worth saying here, and nothing when the
+/// answer is "licensed" — a paying customer does not need a status line about
+/// it every time they open the popover.
+///
+/// On a timeline because a trial ends on a clock rather than on an event. A
+/// popover left open across the end of the window would otherwise keep offering
+/// a countdown that had already run out, which is the same lie as showing a
+/// stale "running" glyph for a server that died.
+struct EntitlementNotice: View {
+  @State private var revision = 0
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 15)) { _ in
+      VStack(alignment: .leading, spacing: 12) {
+        switch Entitlement.current {
+        case .licensed:
+          EmptyView()
+        case .trial:
+          TrialBanner()
+          Divider()
+        case .refused(let reason):
+          LicenceBanner(reason: reason) { revision += 1 }
+          Divider()
+        }
+      }
+    }
+    .id(revision)
+  }
+}
+
 struct LicenceBanner: View {
   let reason: String
+  /// Called after a trial is armed, so the popover redraws now rather than at
+  /// the next tick. Pressing a button and watching nothing happen for fifteen
+  /// seconds reads as a broken button.
+  var onStartTrial: () -> Void = {}
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -315,7 +351,45 @@ struct LicenceBanner: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-      Button("Enter a licence key…") { SettingsOpener.show(.licence) }
+      HStack(spacing: 8) {
+        // The trial leads, and only until it has been used. Somebody reading
+        // this has just been told a server failed to start; the useful offer is
+        // the one that makes it work in the next ten seconds, not the one that
+        // opens a checkout.
+        if !Trial.hasRun {
+          Button("Start a \(Int(Trial.duration / 60))-minute trial") {
+            Trial.start()
+            onStartTrial()
+          }
+          .buttonStyle(.glassProminent)
+          Button("Enter a key…") { SettingsOpener.show(.licence) }
+            .buttonStyle(.glass)
+        } else {
+          Button("Enter a licence key…") { SettingsOpener.show(.licence) }
+            .buttonStyle(.glassProminent)
+        }
+      }
+      .controlSize(.small)
+    }
+  }
+}
+
+/// The trial, while it is running.
+///
+/// Deliberately not styled as a warning. Nothing is wrong — everything is
+/// working, on purpose, and the orange triangle belongs to the state where it
+/// is not.
+struct TrialBanner: View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Label("Trial · \(Trial.remainingText)", systemImage: "clock")
+        .foregroundStyle(.blue)
+        .font(.caption)
+      Text("Every surface is running. When the window closes the servers stop, and your assistant will report the connection dropped.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
         .buttonStyle(.glassProminent)
         .controlSize(.small)
     }

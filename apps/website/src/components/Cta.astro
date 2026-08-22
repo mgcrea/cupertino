@@ -1,5 +1,5 @@
 ---
-import { DOWNLOAD, REPO_URL, SHIPPED } from "../config";
+import { DOWNLOAD, REPO_URL, SHIPPED, TRIAL } from "../config";
 import Logo from "./Logo.astro";
 ---
 
@@ -27,8 +27,8 @@ import Logo from "./Logo.astro";
         SHIPPED ? (
           <>
             <p class="m-0 max-w-[46ch] text-[15.5px] leading-[1.65] text-pretty text-fg-dim">
-              Signed with a Developer ID and notarized by Apple. Building it yourself needs no fee
-              and no licence key.
+              Signed with a Developer ID and notarized by Apple. Run every surface for {TRIAL.minutes}{" "}
+              minutes before you decide.
             </p>
 
             {/* Not target="_blank": this is a download, and a tab that opens only to

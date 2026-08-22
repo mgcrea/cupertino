@@ -32,8 +32,12 @@ So closing the app would cost exactly the thing being sold, and buy only protect
 | `apps/apple/`    | source-available | readable and buildable for yourself, binary rights reserved |
 | the signed build | sold             | the notarized artifact, the update channel, the maintenance |
 
-"Build it yourself if you would rather not pay" is an honest position and a defensible one. Most
-people will pay rather than install Xcode, and the ones who will not were never customers.
+It used to say here that "build it yourself if you would rather not pay" was an honest position. It
+was never a true one: the gate in `ServerHost.swift` asks for a key without caring which compiler
+produced the binary, so a self-built copy refuses exactly as a downloaded one does. The source is
+open to be **read** — that is what a Full Disk Access grant is owed — and reading it is not the same
+promise as running it for free. `apps/apple/LICENSE` §1(c) claimed the second one for a while and no
+longer does.
 
 **Both halves are now written down.** [`LICENSE`](../LICENSE) at the root is plain MIT, covering
 `packages/*`, `scripts/` and `docs/`; [`apps/apple/LICENSE`](../apps/apple/LICENSE) is the Cupertino
@@ -41,9 +45,10 @@ Source-Available License, which disclaims its own open-source status in the seco
 than leaving anyone to work it out.
 
 Its shape is the one this section argues for. Section 1 grants use, study, modification, source
-redistribution — so a public fork or a pull request is fine — and, explicitly, **compiling it and
-running your own build with no fee and no licence key**. Section 2 reserves exactly one thing:
-handing a _binary_ to someone else. Auditing is not merely tolerated but named in 1(e): publishing
+redistribution — so a public fork or a pull request is fine — and compiling it for any machine you
+control. It does **not** grant running it without a key, and Section 2(b) reserves the validation
+explicitly, so the licence and the binary now say the same thing. Section 2 otherwise reserves
+exactly one thing: handing a _binary_ to someone else. Auditing is not merely tolerated but named in 1(e): publishing
 benchmarks, security findings, disassembly and the quotes needed to support them requires no
 permission and no notice, because a licence that made an audit a favour would defeat the point of
 being readable at all.
@@ -67,7 +72,7 @@ you, the writes toggle, the log pane.
 | Model      | one-time, per major version — 1.x is free forever, 2.0 is a new purchase |
 | Collection | Stripe, with Stripe Tax on; VAT filed directly through OSS — see below   |
 | Validation | offline, signed licence key, verified locally, no phone-home             |
-| Trial      | none — see below; the refund is the trial                                |
+| Trial      | thirty minutes, full function, held in memory — see below                |
 
 **Writes are not the paywall.** Gating them behind the licence would make the free tier the safe one
 and the paid tier the dangerous one — backwards as a sales message and worse as a default.
@@ -210,31 +215,95 @@ page sells the claim it protects. An activation call would break a green CI job 
 promise. CryptoKit and the Keychain trip none of those symbols, so offline verification is free of
 CI risk and online verification is not merely undesirable but unavailable.
 
-The second constraint is `apps/apple/LICENSE` §1(c): anyone may already compile and run their own
-build with no fee and no key. So **no effort goes into anti-tamper** — no obfuscation, no integrity
-self-checks, no hardened trial storage. All of it is unenforceable by construction against an audience
-that can run `make build-release` legally, and every hour spent on it is an hour not spent on the
-people who paid. The deterrent is that the key carries the buyer's email and the app renders it.
+The second constraint is that the source is public. §1(c) no longer grants a keyless run, but it does
+grant compiling, and the gate is a dozen lines in a file anyone can open — so removing it is a matter
+of minutes for exactly the audience this sells to. So **no effort goes into anti-tamper** — no
+obfuscation, no integrity self-checks, no hardened trial storage. All of it is unenforceable by
+construction against people who can read the check, §2(b) makes deleting it a breach rather than a
+puzzle worth setting, and every hour spent on it is an hour not spent on the people who paid. The
+deterrent is legal and social — the key carries the buyer's email and the app renders it — never
+technical, and pretending otherwise would only cost the audit its readability.
 
-### No trial, because three already exist
+### The trial, and the question a refund cannot answer
 
-A time-limited trial is the standard answer to "nobody pays before they have seen it work", and it is
-the wrong one here — not because the objection is weak but because it is already answered three times
-over, none of them needing a clock:
+This section used to say **no trial, because three already exist** — build it, run the servers alone,
+or buy it and refund. That is reversed, and the reasoning is recorded here rather than quietly
+replaced, because the old argument was a good one and deserves to be overturned in public.
 
-- **Build it.** `apps/apple/LICENSE` §1(c) grants compiling and running your own build, on every
-  machine you control, forever, with no fee and no key. It is the same program, not a crippled demo.
-- **Run the servers alone.** They are MIT and on npm. They do the work; the app holds the permission.
-- **Buy it and change your mind.** Thirty days, no reason required, no form.
+Three things were wrong with it.
 
-So the refund _is_ the trial, with the payment step in front of it rather than behind. What that buys
-is the deletion of an entire subsystem: no trial clock, no Keychain expiry state, no degraded mode, no
-"one trial per machine" fiction to pretend to enforce, and no moment where a tool holding Full Disk
-Access starts refusing to work. The licence check becomes one branch — a valid key, or not — and
-[EULA §3](../apps/apple/EULA) says all of this to the buyer in the same words.
+**"Build it" was never true.** The gate in `ServerHost.swift` does not care how the binary was
+produced, so a copy compiled from this repository refuses to start servers exactly as a downloaded
+one does. `apps/apple/LICENSE` §1(c) granted the opposite in writing for a while. That is now
+resolved the other way — the grant no longer promises a keyless run, the EULA preamble matches, and
+the pricing page says it in the same breath as the licence link: yours or ours, a build asks for a
+key. Auditing never needed the freedom that sentence was giving away.
 
-The cost is real and worth naming: someone who will not build it and will not risk $14.99 is not
-reachable. At this price and this audience that is a small number, and the refund catches most of it.
+**A refund answers "is it worth it", not "does it work".** Those are different questions and only
+the first survives being asked after payment. This product drives Mail, Notes, Reminders and
+Calendar through `osascript` and read-only SQLite, against store paths that move between macOS
+releases — `Surfaces.swift` says so about Mail's `V*` directory — with TCC grants that can be
+silently wrong. The probability that it simply does not work on a given Mac is real and not small.
+Asking somebody to pay to find that out is asking them to place a bet; the refund removes the loss
+but not the wager, and the feeling of being asked to gamble is what loses the sale.
+
+**The mistake would have been undiscoverable.** This is the one that settles it. The app measures
+nothing and phones nowhere, by design and by promise, so somebody who meets "server failed to start"
+and closes the window leaves no trace anywhere — no funnel, no drop-off, no denominator under the
+Stripe number. There is no version of "ship without it and watch what happens", because nothing
+watches. Under that kind of ignorance the right choice is the one that fails cheaply, and a trial
+nobody needed costs some free half-hours to people who were never going to pay.
+
+Worth naming separately: the failure moment is an **error**, not a pitch. Nobody arrives at it from a
+pricing page. They arrive because their assistant broke mid-task, and "broken" converts worse than
+"costs money" however generous the refund is.
+
+#### What shipped
+
+Thirty minutes, started by a person from the licence pane or the popover, at full function — every
+surface, writes obeying their own switches. `Trial.swift` holds the deadline in memory and
+`Entitlement` joins it to the key check, so the four places that ask — the gate, the banner, the
+status line, the pane — get one answer rather than three reconstructions of it.
+
+It is a **verification window, not a usage allowance**, and saying so is what makes the rest of the
+design defensible. The deadline dies with the process, so relaunching starts another one. That is
+not an oversight: of the four things the old section refused to build — a clock, an expiry state on
+disk, a degraded mode, a "one trial per machine" fiction — only the clock exists, and it is gone at
+quit. Somebody relaunching every half hour to read their own mail has chosen a worse experience than
+paying $14.99, and the code to stop them is the anti-tamper work this project has already ruled out
+as unenforceable by construction.
+
+**Expiry reaps the servers it started**, and this is the part the first cut got wrong. Refusing new
+connections looks sufficient and is not: an MCP host opens one stdio connection when the editor
+launches and holds it until the editor quits, so a gate that only turned away newcomers would hand
+out a thirty-minute window that actually expired the next time somebody closed Cursor — or never.
+`ServerHost` therefore records the pids it admits on a trial and SIGTERMs them at the deadline, the
+child exits through the same path as any other disconnect, and the assistant reports a dropped
+connection. The instinct it overrules — that a tool holding Full Disk Access should not go dark
+mid-sentence — is right about a _licence_ and wrong about a trial: the deadline was named on the
+button that started it, and a window that cannot close is not a window.
+
+A key entered while the window is open stops nothing. The half hour bought the answer it was for.
+
+The refund is not replaced. It keeps the question it was always good at, and the two stop competing
+to be the same feature: the trial answers _does this work on my Mac_, the refund answers _was it
+worth the money_. [EULA §3](../apps/apple/EULA) puts it to the buyer in those terms.
+
+#### Two paywalls considered and rejected
+
+Recorded so they are not re-opened by whoever next notices that the free tier proves nothing.
+
+**Writes behind the licence.** Rejected twice over. It inverts safety and monetization — the free
+tier becomes the safe one and the paid tier the dangerous one — and worse, it gives away the actual
+product: what is sold is the brokered Full Disk Access grant, and a _read_ through the bridge has
+already spent it. Free reads means free product for most of what an assistant does, with only the
+dangerous half priced.
+
+**A cap on reads.** Rejected because of how it fails rather than because it is stingy. A truncated
+`list_messages` returns a plausible, complete-looking page, and the assistant then says "you have no
+mail from them" with total confidence. That is `b422f2b` — stop lying about writes that silently
+failed — reintroduced on the read side, where it is harder to notice. A cap honest enough to be safe
+has to be loud, and a loud cap mid-conversation demos worse than a clean refusal.
 
 ### Price, and why it goes up
 
@@ -357,7 +426,8 @@ Apple-shaped.
 - Whether the servers ever need a second licence. They do not today.
 
 Decided, and recorded above so they are not re-opened: one-time per major version, Stripe rather than
-a merchant of record, offline validation as a constraint rather than a preference, no trial at all,
+a merchant of record, offline validation as a constraint rather than a preference, a thirty-minute
+in-memory trial that verifies rather than evaluates — with writes and reads both left ungated,
 a surface-tied price ladder from $14.99, and the succession commitments in [succession.md](succession.md).
 
 And the honest expectation, recorded so it is not mistaken for a forecast: macOS only, developer

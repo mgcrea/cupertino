@@ -1,20 +1,29 @@
 ---
-import { DOCS, PRICING, REPO_URL, SHIPPED } from "../config";
+import { DOCS, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
 import SectionHeader from "./SectionHeader.astro";
 
 /**
  * The price, and the two things that make it defensible rather than awkward:
- * the ladder is published in advance, and building it yourself is free.
+ * the ladder is published in advance, and there are two separate ways to find
+ * out whether this is for you before you commit.
  *
- * That second one is stated here rather than buried, because for this audience
- * it is a selling point and not a leak. What is sold is the signed build and the
- * work behind it; anyone who would rather run `make` was never a customer, and
- * saying so is what makes the rest of the page credible.
+ * Those two are not interchangeable and the copy must not blur them. The trial
+ * answers "does this work against MY mail" — technical, asked first, and the
+ * only honest answer to it is running the thing. The refund answers "was it
+ * worth the money" — commercial, asked afterwards. EULA §3 opens on exactly
+ * this distinction and this section mirrors it.
  *
- * There is no trial, so the refund carries that weight instead — see
- * docs/licensing.md. Nothing here renders a buy button until SHIPPED.
+ * This page used to claim that compiling the source needed no licence key. It
+ * is not true: the gate in `ServerHost.swift` runs on `Entitlement.current`,
+ * which knows licensed / trial / refused and nothing whatever about how the
+ * binary was produced. A reader who acted on it would have spent an evening
+ * reaching the same refusal. Do not reintroduce it in any form — the fee was
+ * never the point, the key is.
+ *
+ * Nothing here renders a buy button until SHIPPED.
  */
 const included = [
+  `A ${TRIAL.minutes}-minute trial, every surface at full function. Press the button; nothing arms itself.`,
   "Every 1.x release, free. 2.0 is a new purchase; nothing lapses in between.",
   "Every Mac you own or control. No activation limit and nothing counts your installs.",
   `${PRICING.refundDays} days to change your mind, for any reason or none.`,
@@ -96,22 +105,29 @@ const included = [
   </p>
 
   <p class="mt-10 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-dim">
-    <strong class="font-medium text-fg">Building it yourself needs no fee and no licence key.</strong
-    >{" "}
-    The app's source is public and its
-    <a
-      href={DOCS.appLicense}
-      target="_blank"
-      rel="noopener"
-      class="text-accent transition-colors hover:text-accent-hi">licence</a
-    > grants you the right to compile it and run your own build, on every machine you control, forever.
-    A licence pays for the signed and notarized artifact and the work of keeping it working — never for
-    access. The
+    <strong class="font-medium text-fg">Run the servers on their own and pay nothing.</strong>{" "}
+    The
     <a
       href={REPO_URL}
       target="_blank"
       rel="noopener"
       class="text-accent transition-colors hover:text-accent-hi">servers</a
-    > are MIT and always were.
+    > are MIT and always were — they need no key, and they do the work. What a licence buys is the app:
+    the signed and notarized binary that holds one Full Disk Access grant on their behalf, and the work
+    of keeping it working. Its source is public for a reason that has nothing to do with price: nobody
+    should grant Full Disk Access to software they cannot read. Read it, build it, run your own — the
+    <a
+      href={DOCS.appLicense}
+      target="_blank"
+      rel="noopener"
+      class="text-accent transition-colors hover:text-accent-hi">licence</a
+    > is explicit that any build asks for a key, rather than leaving you to find out at the first run.
+  </p>
+
+  <p class="mt-6 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-muted">
+    The trial is held in memory and never written to disk, so quitting Cupertino and opening it again
+    starts another one. Nothing stops you and nothing pretends to. When the window closes it closes
+    properly: the servers it started are stopped, and your assistant reports a dropped connection.
+    A deadline named on the button that started it is not a window if it cannot shut.
   </p>
 </section>

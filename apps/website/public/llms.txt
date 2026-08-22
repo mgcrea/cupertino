@@ -4,8 +4,8 @@
 > Calendar — and the signed menu-bar app that holds their one Full Disk Access grant instead of
 > handing it to every editor.
 
-Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed app and the
-`@mgcrea/mcp-apple-*` packages land together at the first release.
+Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Not shipped yet: the
+signed app and the `@mgcrea/mcp-apple-*` packages land together at the first release.
 
 ## The argument
 
@@ -29,13 +29,22 @@ Unofficial. Not affiliated with Apple. macOS only. Not shipped yet: the signed a
 
 ## Price
 
-- €14.99 once, covering every 1.x release. Not a subscription, nothing lapses, and 2.0 is a separate
-  purchase. Not on sale yet — the app has not shipped.
-- The ladder is published in advance and tied to shipped surfaces rather than dates: €24.99 when
-  Messages lands, €34.99 when Safari does. It never goes back down.
-- No trial, because three things already stand in for one: the source builds and runs with no fee
-  and no licence key, the servers are MIT and run on their own, and there are 30 days to change your
-  mind for any reason.
+- $14.99 once, covering every 1.x release. Not a subscription, nothing lapses, and 2.0 is a separate
+  purchase. EU buyers are quoted and charged €14.99, VAT included — that is not a conversion of the
+  dollar figure, which is quoted tax-exclusive. Not on sale yet — the app has not shipped.
+- The ladder is published in advance and tied to shipped surfaces rather than dates: $24.99 when
+  Messages lands, $34.99 when Safari does. It never goes back down.
+- A 30-minute trial, started by pressing a button and never armed on its own. Every surface at full
+  function, with the write toggles behaving exactly as they will after paying. It is held in memory
+  and never written to disk, so quitting and reopening starts another one; nothing prevents that and
+  nothing pretends to. When it closes, the servers it started are stopped — refusing only new
+  connections would not close it, since an MCP host opens one stdio connection and holds it for the
+  life of the editor.
+- The trial answers whether Cupertino works against your mail. The 30-day refund answers whether it
+  was worth the money. They are different questions and both are available.
+- The servers are MIT and run on their own with no key at all. The app is a different matter: its
+  source is public and readable, but any build of it — yours or ours — asks for a licence key. A
+  licence buys the signed and notarized binary and the upkeep, not access to the source.
 - The licence key is verified offline. There is no account, no login and no phone-home — the app
   makes no network connections at all, which is checked in CI against the built binary.
 

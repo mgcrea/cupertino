@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Hosts the MCP servers, so that Cupertino — not the MCP client — is the
 /// process macOS holds responsible for reading Mail and driving Apple Events.
@@ -18,6 +19,16 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
   private var listenFD: Int32 = -1
   private let queue = DispatchQueue(label: "io.mgcrea.cupertino.host", qos: .userInitiated)
+
+  /// Servers admitted on a trial, so the window can actually close on them.
+  ///
+  /// The host otherwise keeps no state — a connection lives on the stack inside
+  /// `serve`/`run` and dies with it, which `Sessions` documents as the reason it
+  /// exists. This is the one exception, and it is deliberately a set of pids
+  /// rather than a reach back into `Sessions`: that type is observation for the
+  /// Activity window, nothing in the host reads from it, and making the reaper
+  /// the first thing that does would quietly turn a view model into a registry.
+  private let trialPIDs = OSAllocatedUnfairLock<Set<Int32>>(initialState: [])
 
   /// Why the socket never came up, if it did not. Kept rather than only logged:
   /// a host that failed to listen is the one state where nothing will ever
@@ -183,12 +194,31 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // docs/licensing.md rules that out, because it would make the free tier the
     // safe one and the paid tier the dangerous one.
     //
+    // A key or an open trial window, and nothing else is consulted.
+    //
+    // Refusing here is necessary and nowhere near sufficient for the trial. An
+    // MCP host opens one stdio connection when the editor launches and keeps it
+    // for the life of that editor, so a gate that only turned away *new*
+    // connections would hand out a thirty-minute window that really expired
+    // whenever somebody next quit Cursor. `endTrialSessions` closes the ones
+    // admitted here; this is the point that records which those are.
+    //
     // Logged as well as replied. The bridge relays this sentence to its MCP
     // host, where it lands in a log file nobody opens; the Activity window is
     // where someone will actually look for it.
-    if case .refused(let reason) = LicenseStore.check {
+    var onTrial = false
+    switch Entitlement.current {
+    case .licensed:
+      break
+    case .trial:
+      onTrial = true
+      hostLog(surface.id, .info, "trial: \(Trial.remainingText)")
+    case .refused(let reason):
       hostLog(surface.id, .error, "refused: \(reason)")
-      reply(client, "err \(reason) — open Cupertino to enter a licence key")
+      reply(
+        client,
+        "err \(reason) — open Cupertino to enter a licence key, or to start a "
+          + "\(Int(Trial.duration / 60))-minute trial")
       return
     }
 
@@ -203,10 +233,35 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     reply(client, BridgeProtocol.ok)
-    run(surface: surface, binaries: binaries, client: client)
+    run(surface: surface, binaries: binaries, client: client, onTrial: onTrial)
   }
 
-  private func run(surface: Surface, binaries: ServerBinaries, client: Int32) {
+  /// Close every server started on the trial, when the window closes.
+  ///
+  /// SIGTERM rather than SIGKILL, and rather than tearing down the socket from
+  /// this end: the child gets to exit on its own, `run`'s pumps see EOF, the
+  /// session is removed from the Activity window and the exit is logged by the
+  /// same path as any other. The MCP host sees its server exit and reports a
+  /// dropped connection; reconnecting lands on the refusal above, which is the
+  /// sentence that explains why.
+  func endTrialSessions() {
+    let pids = trialPIDs.withLock { live -> Set<Int32> in
+      let taken = live
+      live.removeAll()
+      return taken
+    }
+    // A key entered during the window keeps everything running. The half hour
+    // bought the answer it was for; taking the servers away from somebody who
+    // has just paid because a timer they have already satisfied went off would
+    // be indefensible.
+    guard !LicenseStore.isLicensed else { return }
+    for pid in pids {
+      hostLog("host", .info, "trial ended — stopping server (pid \(pid))")
+      kill(pid, SIGTERM)
+    }
+  }
+
+  private func run(surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool) {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
@@ -240,6 +295,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
     let session = UUID()
     let pid = process.processIdentifier
+    if onTrial { trialPIDs.withLock { $0.insert(pid) } }
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
     }
@@ -280,6 +336,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     group.wait()
     process.waitUntilExit()
+    // Whether it was reaped or the client simply went away: a pid is reused by
+    // the kernel eventually, and a stale one left here is a signal sent to
+    // whatever inherits the number.
+    if onTrial { trialPIDs.withLock { $0.remove(pid) } }
     Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
     hostLog(surface.id, .info, "server exited (\(process.terminationStatus))")
   }

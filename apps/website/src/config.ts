@@ -84,6 +84,24 @@ export const BODY_SEARCH = {
 export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Terminal"] as const;
 
 /**
+ * The evaluation window, in minutes. `Trial.duration` in
+ * apps/apple/Cupertino/Trial.swift is the authority; this is the copy's mirror
+ * of it.
+ *
+ * It exists because the licence gate refuses at the MCP handshake, so without
+ * it nobody could find out whether the servers work against *their* mail before
+ * paying. That is a technical question and it is asked first; `refundDays`
+ * below answers the commercial one.
+ *
+ * Three properties the copy must not overstate: it is started by hand, never
+ * armed automatically; it runs every surface at full function, with writes
+ * obeying their own toggles; and it is held in memory, so quitting and
+ * reopening starts another one. Nothing enforces one per machine and nothing
+ * pretends to — see EULA §3(a), which says so in those words.
+ */
+export const TRIAL = { minutes: 30 } as const;
+
+/**
  * The launch price, and the ladder published alongside it.
  *
  * Rungs are tied to SHIPPED SURFACES, never to dates. A rise tied to the
@@ -123,7 +141,11 @@ export const PRICING = {
   eur: { price: "€14.99", amount: "14.99", currency: "EUR" },
   /** The stable vanity URL. `public/_redirects` sends it to Stripe. */
   buy: "/buy",
-  /** Generous on purpose: with no trial, this is what makes buying first reasonable. */
+  /**
+   * Generous on purpose. The trial answers whether Cupertino works against your
+   * mail; this answers whether it was worth the money, which is a different
+   * question and is asked second. See TRIAL and EULA §3.
+   */
   refundDays: 30,
   ladder: [
     { price: "$14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar" },

@@ -140,25 +140,40 @@ struct MainView: View {
 
   @ViewBuilder
   private var licenceLine: some View {
-    switch LicenseStore.check {
-    case .valid(let license):
-      Button { SettingsOpener.show(.licence) } label: {
-        HStack(spacing: 6) {
-          Circle().fill(Color.green).frame(width: 7, height: 7)
-          Text("Licensed").font(.caption)
-          Spacer()
+    // The countdown is the reason for the timeline: this line sits in a window
+    // somebody leaves open while they try the thing out, so it is the one most
+    // likely to be on screen when the window closes.
+    TimelineView(.periodic(from: .now, by: 15)) { _ in
+      switch Entitlement.current {
+      case .licensed(let license):
+        Button { SettingsOpener.show(.licence) } label: {
+          HStack(spacing: 6) {
+            Circle().fill(Color.green).frame(width: 7, height: 7)
+            Text("Licensed").font(.caption)
+            Spacer()
+          }
         }
+        .buttonStyle(.plain)
+        .help(license.email)
+      case .trial:
+        Button { SettingsOpener.show(.licence) } label: {
+          HStack(spacing: 6) {
+            Circle().fill(Color.blue).frame(width: 7, height: 7)
+            Text("Trial · \(Trial.remainingText)").font(.caption)
+            Spacer()
+          }
+        }
+        .buttonStyle(.plain)
+        .help("Every surface is running, exactly as a licensed copy would")
+      case .refused:
+        Button { SettingsOpener.show(.licence) } label: {
+          Label("Unlicensed", systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.orange)
+        }
+        .buttonStyle(.plain)
+        .help("Servers will not start until a key is entered or a trial is started")
       }
-      .buttonStyle(.plain)
-      .help(license.email)
-    case .refused:
-      Button { SettingsOpener.show(.licence) } label: {
-        Label("Unlicensed", systemImage: "exclamationmark.triangle.fill")
-          .font(.caption)
-          .foregroundStyle(.orange)
-      }
-      .buttonStyle(.plain)
-      .help("Servers will not start until a key is entered")
     }
   }
 

@@ -12,11 +12,12 @@ its own terms; see Section 10.
 
 WHAT THIS IS
 
-You are buying a build, not access to the code. The code is readable by anyone
-and compiling it yourself costs nothing and needs no license key — that is
-written into the source license and is not a loophole. What a license key pays
-for is the signed and notarized artifact, the work of keeping it working across
-macOS releases, and the commitments in Sections 7 through 9.
+You are buying a build, not access to the code. The code is readable by anyone,
+and is meant to be read: a program asking for Full Disk Access should be one you
+can audit. Reading it and compiling it are free. Running any build of it, yours
+or ours, asks for a license key. What that key pays for is the signed and
+notarized artifact, the work of keeping it working across macOS releases, and
+the commitments in Sections 7 through 9.
 
 1. THE LICENSE
 
@@ -44,22 +45,45 @@ promised here.
 
 3. EVALUATING IT BEFORE YOU BUY
 
-There is no time-limited trial, because there are already three ways to find out
-whether this works for you and none of them needs a clock:
+Two questions, and only one of them can honestly be answered after payment.
 
-  (a) Build it. The source is public and the license covering it grants you the
-      right to compile it and run your own build, on every machine you control,
-      for as long as you like, with no fee and no key. That is not a crippled
-      demo — it is the same program.
+Whether Cupertino is worth the price is a judgment, and Section 5 makes it a safe
+one to get wrong: thirty days, a full refund, no reason required and no form to
+fill in. Whether it works at all — against your mail, your notes, your reminders
+and your calendars, on the version of macOS you are actually running — is a fact
+about your machine, and you are entitled to that one before paying rather than
+after.
+
+  (a) The trial settles the second question and nothing else. Press the button in
+      the license pane or in the menu bar and the app runs every surface, at full
+      function, for thirty minutes. Nothing is held back and nothing is crippled:
+      the write controls obey their own switches exactly as they will after you
+      pay, so what you learn in that half hour stays true afterwards.
+
+      It is a verification window, not a usage allowance. It is held in memory
+      and never written to disk, so quitting the app and opening it again starts
+      another one. We have not built the machinery to prevent that and do not
+      intend to. We would rather say so plainly than have you find out and
+      wonder what else went unsaid.
+
+      When the window closes, the servers stop. That includes servers your
+      assistant is already connected to, which will report the connection as
+      dropped. We would rather state that here than have it arrive as a
+      surprise: an MCP client holds one connection for as long as your editor
+      is open, so a window that spared running servers would not be thirty
+      minutes, it would be until you next quit your editor.
+
+      If you enter a key while the window is open, nothing stops. The trial has
+      already done its job by then.
+
   (b) Run the servers on their own. They are MIT licensed and published to npm.
       They do the work; the app holds the permission and the convenience.
   (c) Buy it and change your mind. Section 5 refunds you in full within 30 days,
-      for any reason or none. In practice this is the trial, with the payment
-      step in front of it instead of behind.
+      for any reason or none.
 
 Nothing is withheld from a purchase and no capability is reserved. In particular
 the write controls are a safety feature, not a paid one, and behave identically
-however you obtained the build.
+however you obtained the build and whether or not you have paid.
 
 4. VALIDATION IS OFFLINE, AND WHAT THAT COSTS
 
