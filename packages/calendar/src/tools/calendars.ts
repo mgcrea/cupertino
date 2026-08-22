@@ -15,8 +15,11 @@ export const registerCalendarTools = (server: McpServer, client: AppleCalendarCl
     "apple_calendar_list_calendars",
     {
       description:
-        "List every calendar, with the account it belongs to and whether it can be written to. " +
-        "Subscribed calendars — holidays, birthdays, anything added by URL — are read-only.",
+        "List every calendar with the account it belongs to, whether it is SHARED with other " +
+        "people, and whether it looks writable. Two cautions. `isShared` means anything you " +
+        "write there is visible to the others on it. And `isSubscribed` catches URL-subscribed " +
+        "calendars but not every read-only one — Birthdays and Siri Suggestions are also " +
+        "read-only — so a write can still be refused by Calendar itself.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },

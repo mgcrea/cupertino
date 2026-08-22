@@ -45,12 +45,13 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
     "apple_calendar_create_event",
     {
       description:
-        "Create an event. THIS IS A REAL EVENT ON A REAL CALENDAR: on a shared, CalDAV or " +
-        "Exchange calendar it syncs within seconds and other people see it, and there is no " +
-        "draft state. Subscribed calendars (holidays, birthdays, anything added by URL) are " +
-        "read-only and will be refused. This tool cannot add attendees — that would email a " +
-        "person. The result reports what Calendar actually stored, which is not always what was " +
-        "asked for.",
+        "Create an event. THIS IS A REAL EVENT ON A REAL CALENDAR: on an iCloud, CalDAV or " +
+        "Exchange calendar it syncs within seconds and there is no draft state and no undo. " +
+        "Check apple_calendar_list_calendars first — writing to one where `isShared` is true is " +
+        "visible to everyone else on that calendar, so prefer a personal one unless the user " +
+        "meant to share it. Read-only calendars are refused. This tool cannot add attendees, " +
+        "which would email a person. The result reports what Calendar actually stored, which is " +
+        "not always what was asked for.",
       inputSchema: {
         summary: z.string().min(1).describe("The event's title."),
         calendar: calendarArg,
@@ -75,7 +76,11 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
     "apple_calendar_update_event",
     {
       description:
-        "Change an existing event. Only whole events can be edited: a ref naming ONE occurrence " +
+        "Change an existing event. On a shared calendar the change is visible to everyone else " +
+        "on it. Note that Apple Events has no transaction: if a change is refused part-way " +
+        "through, earlier fields may already have been written, so the result is the truth " +
+        "about what the event now looks like. Only whole events can be edited: a ref naming " +
+        "ONE occurrence " +
         "of a repeating event is refused, because Calendar's scripting interface cannot detach a " +
         "single occurrence and applying the change to the series would move every other one too. " +
         'To change a single occurrence, delete it with scope "occurrence" and create a ' +

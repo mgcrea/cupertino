@@ -301,6 +301,49 @@ rendering as the same day — `CalendarItem.start_date` and `OccurrenceCache.occ
 hold the identical number for one. The dedupe key now renders before comparing, so two all-day rows
 for one uid on one day collapse whatever the columns disagree about underneath.
 
+## iCloud, checked separately
+
+The write trial above ran on a LOCAL calendar, which is not the same thing. iCloud calendars are
+CalDAV-backed, so a second pass created, moved and deleted one event in a personal iCloud calendar.
+
+|                              |                                                                |
+| ---------------------------- | -------------------------------------------------------------- |
+| Store sees a new event after | **0.2 s** — Calendar writes the local mirror first, then syncs |
+| Timezone on a CET date       | correct: 15:00 Paris stored as `14:00Z`, rendered `+01:00`     |
+| Cross-lane read-back         | exact, item leg, notes and location intact                     |
+| Delete (non-repeating)       | works, and the verification confirms it                        |
+
+So there is no sync latency to design around: the store is the local mirror and is written
+synchronously. Nothing about iCloud needed different handling.
+
+**It did find a bug that had nothing to do with iCloud.** Moving an event _later_ failed with
+
+```
+Failed to save event [...], with error
+[{ NSLocalizedDescription = "The start date must be before the end date." }]
+```
+
+`applyFields` assigned `startDate` and then `endDate`, so pushing an event later left it momentarily
+starting after it ended, and EventKit validates on save. The local trial never caught it because it
+only ever changed a summary and a location, never a time. The order is now chosen from the event's
+current end — end first when moving later, start first when moving earlier.
+
+The same failure exposed a second problem: the new location had already been written before the
+dates were refused, leaving the event half-updated. Apple Events has no transaction, so the fragile
+assignment goes first — a date failure now changes nothing else — and `update_event` says so.
+
+## Shared calendars
+
+`sharing_status` is 1 on the calendars known to be shared and 0 or NULL elsewhere, so
+`list_calendars` now reports `isShared`. Writing to one is visible to everyone else on it, which
+nothing in the output previously said. The mapping is inferred from three observed values, so the raw
+`sharingStatus` stays on the result.
+
+Related, and measured: **`isSubscribed` is not a complete writability signal.** It is derived from
+`subcal_url` and flags only URL-subscribed calendars, while `Birthdays` and `Siri Suggestions` report
+`writable() === false` without one. The JXA lane asks Calendar directly and refuses correctly; its
+bare error code is now re-inflated so the caller still gets the explanation.
+
 ## Still open
 
 - **The all-day `end` convention.** Apple Events reads a one-day event's end back as

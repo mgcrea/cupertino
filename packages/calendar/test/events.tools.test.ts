@@ -44,6 +44,10 @@ beforeAll(() => {
      VALUES (1, 1, 'Work', 'CAL-1', '#f00', 'CalDAV', 0, NULL),
             (2, 1, 'Holidays', 'CAL-2', '#0f0', 'Subscribed', 1, 'https://example.test/ics')`,
   );
+  db.exec(
+    `INSERT INTO Calendar (ROWID, store_id, title, UUID, color, type, display_order, sharing_status)
+     VALUES (3, 1, 'Shared', 'CAL-3', '#00f', 'CalDAV', 2, 1)`,
+  );
   const item = db.prepare(
     `INSERT INTO CalendarItem
        (ROWID, UUID, summary, description, start_date, end_date, all_day, start_tz,
@@ -175,11 +179,26 @@ describe("apple_calendar_list_calendars", () => {
       accountName: string;
       isSubscribed: boolean;
     }[];
-    expect(cals.map((c) => c.title)).toEqual(["Work", "Holidays"]);
+    expect(cals.map((c) => c.title)).toEqual(["Work", "Holidays", "Shared"]);
     expect(cals[0]!.accountName).toBe("iCloud");
     expect(cals.find((c) => c.title === "Holidays")!.isSubscribed).toBe(true);
     expect(cals.find((c) => c.title === "Work")!.isSubscribed).toBe(false);
   });
+});
+
+/**
+ * Writing to a shared calendar is visible to the other people on it, and
+ * nothing else in the output says so. Derived from `sharing_status`, with the
+ * raw value kept alongside because the mapping is inferred.
+ */
+it("flags a shared calendar", async () => {
+  const cals = (await call("apple_calendar_list_calendars")).json as {
+    title: string;
+    isShared: boolean;
+    sharingStatus: number | null;
+  }[];
+  expect(cals.find((c) => c.title === "Shared")!.isShared).toBe(true);
+  expect(cals.find((c) => c.title === "Work")!.isShared).toBe(false);
 });
 
 describe("apple_calendar_list_events", () => {

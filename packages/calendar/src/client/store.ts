@@ -147,6 +147,17 @@ export type IndexCalendar = {
   accountName: string | null;
   isSubscribed: boolean;
   isPublished: boolean;
+  /**
+   * Whether this calendar is shared with other people.
+   *
+   * Derived from `sharing_status`, and INFERRED rather than measured: the only
+   * values observed are 0, 1 and NULL, with 1 on the two calendars known to be
+   * shared. The raw value stays on the result so a caller can disagree.
+   *
+   * It matters because writing to a shared calendar is visible to whoever else
+   * is on it, and nothing else in the output says so.
+   */
+  isShared: boolean;
   sharingStatus: number | null;
 };
 
@@ -451,6 +462,7 @@ export class CalendarStore {
       // flags bit whose meaning has not been measured.
       isSubscribed: Boolean(text(r.subcalUrl)),
       isPublished: bool(r.isPublished),
+      isShared: (num(r.sharingStatus) ?? 0) > 0,
       sharingStatus: num(r.sharingStatus),
     }));
   }
