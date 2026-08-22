@@ -225,6 +225,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # NOT the latest release, and this is load-bearing rather than tidy.
+          # GitHub awards "Latest" to whichever release is newest by date, and
+          # apps/website/src/config.ts points the download button and the
+          # checksum link at /releases/latest/download/Cupertino.zip. A
+          # `core-v*` release carries no such asset, so without this the first
+          # npm tag silently 404s the website's download button until the next
+          # app release takes the badge back.
+          #
+          # `make_latest: false`, not `prerelease: true`: these are real
+          # releases, and marking them pre-release to dodge the badge would be
+          # a lie told to a UI.
+          make_latest: false
 
   # The app ships as a Developer ID signed, notarized zip attached to a GitHub
   # release — never from the website, whose Cloudflare assets binding caps a
@@ -385,6 +397,10 @@ jobs:
         with:
           name: Cupertino ${{ steps.version.outputs.version }}
           generate_release_notes: true
+          # Explicit, though it is also the default: the app owns the "Latest"
+          # slot because /releases/latest/download/Cupertino.zip is what the
+          # website and the docs hand people. The package lane opts out above.
+          make_latest: true
           files: |
             apps/apple/.build/Cupertino.zip
             apps/apple/.build/Cupertino.zip.sha256
