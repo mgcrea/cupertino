@@ -14,10 +14,11 @@
 // for that rather than surprised by it.
 //
 // None of this is a tamper defence and none of it should become one.
-// apps/apple/LICENSE §1(c) already grants anyone the right to compile the app
-// and run it with no key at all, so effort spent hardening this is effort spent
-// against a door that is deliberately open. What it buys is a key that cannot be
-// forged or altered — not a program that cannot be modified.
+// apps/apple/LICENSE §1(c) grants compiling, the source is public, and the gate
+// it feeds is a dozen readable lines — so hardening this is unenforceable by
+// construction against the audience it sells to. §2(b) makes deleting the check
+// a breach rather than a puzzle worth setting. What this buys is a key that
+// cannot be forged or altered — not a program that cannot be modified.
 //
 // Dependency-free (node builtins only), like the probes. apps/api implements the
 // same format against WebCrypto, and the two must agree byte for byte — which is

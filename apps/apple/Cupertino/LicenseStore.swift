@@ -28,11 +28,11 @@ enum LicenseStore {
   /// honest way: every valid key is Ed25519-signed, so the only alternative to
   /// this flag is committing a real working licence key to the repository.
   ///
-  /// This is not a hole in the licence check. `apps/apple/LICENSE` §1(c) already
-  /// grants anyone the right to compile this source and run it with no key at
-  /// all, so there is nothing here to defend — and the flag is unreachable in a
-  /// shipped build regardless, since `DemoSeed.isEnabled` is false without a
-  /// launch argument.
+  /// This is not a hole in the licence check. The source is public and the gate
+  /// is a dozen readable lines in `ServerHost.swift`, so anyone minded to bypass
+  /// it would edit those rather than find their way here — and the flag is
+  /// unreachable in a shipped build regardless, since `DemoSeed.isEnabled` is
+  /// false without a launch argument.
   nonisolated(unsafe) static var demoLicensed = false
 
   static var check: LicenseCheck {

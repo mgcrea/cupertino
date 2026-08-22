@@ -40,10 +40,13 @@ enum LicenseCheck {
 /// CryptoKit trips none of them; an activation call would trip all of them.
 ///
 /// Nor is any of this a tamper defence. `apps/apple/LICENSE` §1(c) grants
-/// anyone the right to compile this and run it with no key, so hardening it
-/// would be work spent against a door held open on purpose. It buys a key that
-/// cannot be forged. It does not buy — and must not pretend to buy — a binary
-/// that cannot be modified.
+/// compiling, the source is public, and the gate this feeds is a dozen readable
+/// lines in `ServerHost.swift` — so removing it is minutes of work for exactly
+/// the audience this sells to, and no amount of hardening changes that. §2(b)
+/// makes deleting the check a breach rather than a puzzle worth setting; the
+/// deterrent is legal and social, never technical. This buys a key that cannot
+/// be forged. It does not buy — and must not pretend to buy — a binary that
+/// cannot be modified.
 enum LicenseKey {
   /// Namespaces the format. A v2 key would carry a different one and be refused
   /// by name here rather than failing somewhere less legible.
