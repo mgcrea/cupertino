@@ -68,7 +68,10 @@ describe("the fixture itself", () => {
   });
 });
 
-describe("BOOKMARKS_WALK", () => {
+// Runs the real /usr/bin/osascript against the fixture, which is the whole
+// point of this suite — and which only exists on macOS. The `fixture itself`
+// block above is pure file reading and stays portable.
+describe.skipIf(process.platform !== "darwin")("BOOKMARKS_WALK", () => {
   it("reads every leaf, at every depth", async () => {
     const r = await walk();
     expect(r.entries.map((e) => e.url).toSorted()).toEqual([

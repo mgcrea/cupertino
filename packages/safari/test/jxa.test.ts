@@ -39,7 +39,9 @@ describe("JXA scripts", () => {
     expect(source).toContain("function run(argv)");
   });
 
-  it.each(SCRIPTS)("%s compiles", (name, source) => {
+  // osacompile only exists on macOS; the rest of the suite is portable.
+  const onDarwin = process.platform === "darwin";
+  it.skipIf(!onDarwin).each(SCRIPTS)("%s compiles", (name, source) => {
     const dir = mkdtempSync(join(tmpdir(), "safari-jxa-"));
     const file = join(dir, `${name}.js`);
     writeFileSync(file, source);
