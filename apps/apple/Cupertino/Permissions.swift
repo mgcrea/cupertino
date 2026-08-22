@@ -191,4 +191,59 @@ enum Permissions {
   static func isRunning(_ bundleID: String) -> Bool {
     !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
   }
+
+  /// Launch `bundleID`, wait for it to register, then ask for consent.
+  ///
+  /// MEASURED, macOS 26.6, Contacts quit:
+  ///
+  ///     com.apple.AddressBook  askUserIfNeeded:false = -600  askUserIfNeeded:true = -600
+  ///
+  /// So `askUserIfNeeded: true` does **not** launch the target — it returns
+  /// `procNotFound` exactly as the silent check does. An Allow… button wired
+  /// straight to `requestAutomation` therefore cannot work while the app is
+  /// closed: it re-runs the same call and writes back the same `.appNotRunning`,
+  /// which is a button that looks live and provably does nothing.
+  ///
+  /// That state used to be unreachable in practice because Mail, Notes,
+  /// Reminders and Calendar are all apps people leave open. Contacts is not —
+  /// it sits closed on most Macs, so for that surface `.appNotRunning` is the
+  /// *normal* state rather than an edge case, and the dead button is what
+  /// somebody actually meets.
+  ///
+  /// `.appNotRunning` is a precondition, not a verdict: the only way to answer
+  /// the question is to open the app. Blocks — the consent dialog does too, so
+  /// the caller is already off the main thread.
+  static func launchAndRequestAutomation(for bundleID: String) -> AutomationStatus {
+    guard
+      let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+    else { return .appNotRunning }
+
+    if !isRunning(bundleID) {
+      let config = NSWorkspace.OpenConfiguration()
+      // Behind Cupertino's own window. Somebody clicking a permission row in
+      // Settings asked to answer a question, not to be dropped into Contacts.
+      config.activates = false
+      config.addsToRecentItems = false
+
+      let done = DispatchSemaphore(value: 0)
+      NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in done.signal() }
+      _ = done.wait(timeout: .now() + 10)
+
+      // Registering as running and being ready to answer an Apple Event are
+      // different moments, and the callback above only reports the first. Poll
+      // rather than sleeping a guessed interval: a cold launch off a slow disk
+      // is much slower than a warm one, and a fixed wait has to be wrong in one
+      // direction or the other.
+      let deadline = Date().addingTimeInterval(10)
+      while Date() < deadline {
+        if case .appNotRunning = automation(for: bundleID) {
+          Thread.sleep(forTimeInterval: 0.1)
+          continue
+        }
+        break
+      }
+    }
+
+    return requestAutomation(for: bundleID)
+  }
 }

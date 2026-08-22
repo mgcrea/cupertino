@@ -65,10 +65,25 @@ struct SurfaceDetail: View {
         Spacer()
         Text(StatusStyle.automationCaption(surface, model.automation[surface.id]))
           .foregroundStyle(.secondary)
-        if surface.usesAppleEvents && model.automation[surface.id] != .granted {
-          Button("Allow…") { model.requestAutomation(surface) }
-            .buttonStyle(.glass)
-            .controlSize(.small)
+        // One label and one destination per state, from `StatusStyle`, so this
+        // row cannot drift from the popover and the Permissions pane.
+        //
+        // This used to hardcode "Allow…" for every state that was not granted,
+        // which made two provably dead buttons: `.denied` cannot be
+        // re-prompted at all, and `.appNotRunning` re-ran a call that returns
+        // `procNotFound` until the app is opened.
+        if surface.usesAppleEvents,
+          let label = StatusStyle.actionLabel(model.automation[surface.id])
+        {
+          Button(label) {
+            if model.automation[surface.id] == .denied {
+              Permissions.openAutomationSettings()
+            } else {
+              model.requestAutomation(surface)
+            }
+          }
+          .buttonStyle(.glass)
+          .controlSize(.small)
         }
       }
       .font(.callout)

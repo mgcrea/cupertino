@@ -302,10 +302,22 @@ struct PermissionsPane: View {
             if surface.usesAppleEvents {
               switch model.automation[surface.id] {
               case .notDetermined:
-                Button("Allow…") { model.requestAutomation(surface) }
+                Button(StatusStyle.actionLabel(.notDetermined) ?? "") {
+                  model.requestAutomation(surface)
+                }
               case .denied:
                 // A denial cannot be re-prompted; it has to change in Settings.
-                Button("Settings…") { Permissions.openAutomationSettings() }
+                Button(StatusStyle.actionLabel(.denied) ?? "") {
+                  Permissions.openAutomationSettings()
+                }
+              case .appNotRunning:
+                // Used to land in `default:` and paint a bare moon with nothing
+                // to click — a dead end on the one surface that sits in this
+                // state permanently, since Contacts is the Apple app nobody
+                // leaves open. The button opens it and then asks.
+                Button(StatusStyle.actionLabel(.appNotRunning) ?? "") {
+                  model.requestAutomation(surface)
+                }
               default:
                 Image(systemName: StatusStyle.icon(model.automation[surface.id]))
                   .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
@@ -531,6 +543,30 @@ enum StatusStyle {
     surface.usesAppleEvents ? caption(status) : "not needed — this surface reads only"
   }
 
+  /// What the button on an automation row should say, or nil when the row has
+  /// nothing left to offer.
+  ///
+  /// Shared for the same reason the glyphs are: three call sites paint this row
+  /// — the popover, the Permissions pane and the surface detail — and a button
+  /// that says something different in each is a small bug that reads as a big
+  /// one.
+  ///
+  /// `.appNotRunning` gets "Open…" rather than "Allow…" because opening the app
+  /// is literally what the click does. TCC returns `procNotFound` for a closed
+  /// target whether or not it is asked to prompt (measured — see
+  /// `Permissions.launchAndRequestAutomation`), so consent cannot be requested
+  /// until the app is running, and a button promising to allow something would
+  /// be describing a step that has to happen first.
+  static func actionLabel(_ status: AutomationStatus?) -> String? {
+    switch status {
+    case .granted: nil
+    // A denial cannot be re-prompted; it has to change in Settings.
+    case .denied: "Settings…"
+    case .appNotRunning: "Open…"
+    default: "Allow…"
+    }
+  }
+
   static func icon(_ status: AutomationStatus?) -> String {
     switch status {
     case .granted: "checkmark.circle.fill"
@@ -553,7 +589,9 @@ enum StatusStyle {
     case .granted: "automation allowed"
     case .denied: "automation denied"
     case .notDetermined, .none: "not yet asked"
-    case .appNotRunning: "not running"
+    // Not a verdict — TCC cannot answer while the app is closed, so this is a
+    // step that has not happened yet rather than a permission that was refused.
+    case .appNotRunning: "not running — open it to check"
     case .failed(let code): "error \(code)"
     }
   }

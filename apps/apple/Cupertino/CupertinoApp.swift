@@ -220,11 +220,22 @@ final class StatusModel {
     refresh()
   }
 
-  /// Off the main thread: the prompt blocks until answered.
+  /// Off the main thread: the prompt blocks until answered, and so does the
+  /// launch below it.
+  ///
+  /// `.appNotRunning` takes the launching path because TCC cannot answer the
+  /// question at all while the target is closed — measured, and spelled out on
+  /// `Permissions.launchAndRequestAutomation`. Asking again without opening the
+  /// app writes back the state it started in, which is the shape of a button
+  /// that does nothing.
   func requestAutomation(_ surface: Surface) {
     guard surface.usesAppleEvents else { return }
+    let needsLaunch = automation[surface.id] == .appNotRunning
     Task.detached {
-      let result = Permissions.requestAutomation(for: surface.bundleID)
+      let result =
+        needsLaunch
+        ? Permissions.launchAndRequestAutomation(for: surface.bundleID)
+        : Permissions.requestAutomation(for: surface.bundleID)
       await MainActor.run { self.automation[surface.id] = result }
     }
   }
@@ -298,13 +309,25 @@ struct StatusMenu: View {
           case .notDetermined:
             // Ask here, where the dialog is expected, rather than letting the
             // first tool call block on it 30 seconds into a conversation.
-            Button("Allow…") { model.requestAutomation(surface) }
-              .buttonStyle(.glass)
-              .controlSize(.small)
+            Button(StatusStyle.actionLabel(.notDetermined) ?? "") {
+              model.requestAutomation(surface)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
           case .denied:
             // A denial cannot be re-prompted; it has to be changed in Settings.
-            Button("Settings…") { Permissions.openAutomationSettings() }
-              .controlSize(.small)
+            Button(StatusStyle.actionLabel(.denied) ?? "") {
+              Permissions.openAutomationSettings()
+            }
+            .controlSize(.small)
+          case .appNotRunning:
+            // Same reasoning as the Permissions pane: consent cannot be asked
+            // for a closed app, so the only useful control opens it first.
+            Button(StatusStyle.actionLabel(.appNotRunning) ?? "") {
+              model.requestAutomation(surface)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
           default:
             Text(StatusStyle.automationCaption(surface, model.automation[surface.id]))
               .font(.caption)
