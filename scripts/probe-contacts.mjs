@@ -237,6 +237,9 @@ if (aeLane.available) {
  * and "denied" look identical to anything that only asks whether a path is
  * there. Conflating them is what sent Calendar toward EventKit for a week.
  */
+/** Real paths, kept out of the report. `doc` never carries one. */
+const sourcePaths = [];
+
 doc.findings.layout = safe(() => {
   const sources = [];
   if (listable(AB_SOURCES)) {
@@ -245,13 +248,13 @@ doc.findings.layout = safe(() => {
       () => [],
     )) {
       if (!entry.isDirectory()) continue;
-      const db = join(AB_SOURCES, entry.name, "AddressBook-v22.abcddb");
-      const facts = fileFacts(db);
-      if (facts.exists) {
-        // The directory name is an account UUID. It is not a secret, but it is
-        // not needed either, so only its shape is recorded.
-        sources.push({ source: uuidOf(entry.name) ? "<uuid>" : "<named>", ...facts, path: undefined });
-      }
+      const dbPath = join(AB_SOURCES, entry.name, "AddressBook-v22.abcddb");
+      const { path: _drop, ...facts } = fileFacts(dbPath);
+      if (!facts.exists) continue;
+      sourcePaths.push(dbPath);
+      // The directory name is an account UUID. Not a secret, but not needed
+      // either, so only its shape is recorded.
+      sources.push({ source: uuidOf(entry.name) ? "<uuid>" : "<named>", ...facts });
     }
   }
   return {
@@ -574,32 +577,49 @@ if (opened?.db) {
     if (!RECORD) return { tested: false, reason: "no record table found" };
     const rootCount = countOf(RECORD);
     const live = doc.findings.appleEventsReads?.count?.value ?? null;
+
+    // Each source opened on its own. They are small, and the sum is the only way
+    // to tell an aggregate root database from a root database that is merely the
+    // local account sitting beside the accounts that hold everything.
     const perSource = [];
-    for (const src of doc.findings.layout?.sources ?? []) {
-      if (!src.readable) {
-        perSource.push({ readable: false, records: null });
+    let sourceTotal = 0;
+    for (const path of sourcePaths) {
+      const o = openStore(path);
+      if (!o.db) {
+        perSource.push({ opened: false, records: null });
         continue;
       }
-      // Reopened one at a time; a source database is small.
-      const o = openStore(join(AB_SOURCES, "…"));
-      perSource.push({ readable: true, records: o.db ? null : null, note: "see sourceRecords" });
-      safe(() => o.db?.close());
+      const n = safe(
+        () => o.db.prepare(`SELECT COUNT(*) AS c FROM "${RECORD}"`).get().c,
+        () => null,
+      );
+      if (typeof n === "number") sourceTotal += n;
+      perSource.push({ opened: true, records: typeof n === "number" ? n : null });
+      safe(() => o.db.close());
     }
+
     return {
       tested: true,
       rootRecords: rootCount,
       appleEventsPeople: live,
+      sourceRecords: perSource,
+      sourceTotal,
       // The comparison that answers it. Equal means the root file is the whole
       // address book and a server opens one store; short means the sources have
       // to be unioned, and the count of them is not known ahead of time.
+      // Three numbers, and the disagreements between them are the finding.
+      // Apple Events is the only INDEPENDENT count — it is what Contacts.app
+      // itself shows — so it is the yardstick rather than one more reading.
       verdict:
         live === null
-          ? "unknown — Apple Events lane unavailable, so there is no independent count"
+          ? sourcePaths.length === 0
+            ? "no per-account sources: the root database is the whole address book"
+            : `unknown — Apple Events lane unavailable, so there is no independent count to compare ${rootCount} root against ${sourceTotal} across ${sourcePaths.length} sources`
           : rootCount === live
             ? "root database matches the live count: one store is enough"
             : rootCount < live
-              ? `root database is SHORT by ${live - rootCount}: sources must be unioned`
-              : `root database has ${rootCount - live} MORE than the live count: duplicates or soft-deleted rows`,
+              ? `root database is SHORT by ${live - rootCount}: the ${sourcePaths.length} sources must be unioned (they hold ${sourceTotal})`
+              : `root database has ${rootCount - live} MORE than the live count: duplicates, soft-deleted rows, or both`,
       perSourceProbed: perSource.length,
     };
   });
@@ -665,6 +685,12 @@ if (args.json) {
       `   (${lay.root?.sizeBytes ?? "?"} B, wal ${lay.root?.walSizeBytes ?? 0} B)`,
   );
   L.push(`  per-account sources   ${lay.sourceCount ?? "?"}  (listable ${yn(lay.sourcesListable)})`);
+  const agg = doc.findings.aggregation ?? {};
+  if (agg.tested) {
+    L.push(
+      `  records               root ${agg.rootRecords ?? "?"}   sources ${agg.sourceTotal ?? "?"}   live ${agg.appleEventsPeople ?? "?"}`,
+    );
+  }
   L.push(`  group container       ${yn(lay.groupContainerExists)}`);
   L.push(`  aggregation           ${doc.findings.aggregation?.verdict ?? "not tested"}`);
   L.push("");
