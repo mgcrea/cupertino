@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="design/cupertino-lockup.svg" alt="Cupertino" width="560">
+</p>
+
 # Cupertino
 
 MCP servers for the Apple apps already on your Mac, and the signed app that grants them their

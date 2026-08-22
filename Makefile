@@ -250,6 +250,10 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 		-e 's|</defs>|<clipPath id="c"><rect width="1024" height="1024" rx="$(ICON_RADIUS)"/></clipPath></defs>|;' \
 		-e 's|<g transform=|<g clip-path="url($(HASH)c)" transform=|;' \
 		design/cupertino-icon.svg
+	@# The README banner is composed from the icon above, never drawn beside it.
+	@# The lockup that lived in the design canvas was hand-drawn, and its hills
+	@# stopped matching the mark two revisions before anyone noticed.
+	@node scripts/generate-lockup.mjs
 	@appshot icon check --out apps/apple/Cupertino/Cupertino.icon
 	@# The menu bar glyph is authored, not composed — but the imageset needs the
 	@# file *inside* it, so design/ stays the one copy anyone edits.

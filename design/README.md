@@ -2,7 +2,7 @@
 
 Direction `1f` — the place the app is named for: two hills, one low sun.
 
-One source, three renderings, one command:
+One source, four renderings, one command:
 
 ```bash
 make icon
@@ -13,9 +13,10 @@ make icon
 | `cupertino-mark.svg`                     | **the source.** Sun and hills on a transparent sky, 1024×1024. Edit this. |
 | `colors.json`                            | palette and gradients                                                     |
 | `cupertino-icon.svg`                     | _generated_ — plated vector for the web/README/docs                       |
+| `cupertino-lockup.svg`                   | _generated_ — the icon and the word, banner for the README                |
 | `../apps/apple/Cupertino/Cupertino.icon` | _generated_ — the Icon Composer bundle Xcode compiles                     |
 
-`make icon` writes both generated files and audits the bundle. Never hand-edit them: the mark is
+`make icon` writes every generated file and audits the bundle. Never hand-edit them: the mark is
 the only geometry, which is the whole point of generating the rest from it.
 
 ## Why the sky is a flag and not artwork
@@ -103,6 +104,20 @@ invisible at the size you will be looking at it.
 to keep in step. `make icon` copies the file into `MenuBarIcon.imageset`, which is why that copy is
 listed as generated above.
 
-## Not generated from here
+## The horizontal lockup
 
-The horizontal lockup still lives in the design canvas, not in this folder.
+`cupertino-lockup.svg` sets the plated icon beside the word on the `wash` gradient from
+`colors.json`, and it is **composed from `cupertino-icon.svg`, not drawn beside it** — the generator
+embeds that file whole and scales it, so the sky, the squircle and the bleed clip are inherited
+rather than repeated.
+
+That is not fussiness. The lockup that lived in the design canvas was hand-drawn alongside the mark,
+and its hills had been a single simplified path for two revisions before anyone noticed. A lockup
+nothing generates is a lockup nothing checks.
+
+One number is not inherited: `textLength`. GitHub serves the file inside an `<img>`, so the wordmark
+resolves against the reader's fonts — SF Pro Display on a Mac, something else everywhere else,
+measuring differently and pushing the composition off its own plate. The run is pinned to the width
+it was laid out for and `lengthAdjust="spacingAndGlyphs"` absorbs the difference. The value is a
+CoreText measurement of the string at the size it is set in, so changing either means re-measuring
+it; `scripts/lib/lockup.mjs` says so where the constant is defined.
