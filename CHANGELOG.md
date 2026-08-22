@@ -11,8 +11,11 @@ summary.
 
 ## [Unreleased]
 
-**Nothing is published yet.** The signed `Cupertino.app` and the `@mgcrea/mcp-apple-*` packages
-land together at the first release. Until then this section is the running record.
+## [1.0.0] - 2026-08-22
+
+First signed release of `Cupertino.app`. The `@mgcrea/mcp-apple-*` packages are not on npm yet —
+the servers ship inside the bundle, and a host that would rather run them directly can build them
+from source.
 
 ### Added
 
@@ -28,8 +31,17 @@ land together at the first release. Until then this section is the running recor
 - `LICENSE` (MIT, `packages/*`) and `apps/apple/LICENSE` (source-available), plus `apps/apple/EULA`
   and the succession commitments in `docs/succession.md` that it incorporates by reference.
 - Offline licence keys — Ed25519, verified locally against a public key compiled into the app, with
-  no activation server and no phone-home. The relay refuses without one; `allowWrites` is untouched
-  in every state, because writes are a safety control and never the paywall.
+  no activation server and no phone-home. The relay refuses without a key or an open trial window;
+  `allowWrites` is untouched in every state, because writes are a safety control and never the
+  paywall.
+- A 30-minute trial, started by hand from the licence pane or the menu bar and never armed on its
+  own. Every surface at full function, with the write toggles behaving exactly as they will after
+  paying — it answers whether Cupertino works against your own mail, which is a different question
+  from whether it is worth the money and is asked first. The deadline is held in memory and never
+  written to disk, so quitting and reopening starts another one and nothing pretends otherwise.
+  When the window closes the servers it started are stopped: an MCP host opens one stdio connection
+  and holds it for the life of the editor, so refusing only new connections would have handed out a
+  half hour that really expired whenever somebody next quit their editor.
 - `apps/api` — a Cloudflare Worker turning a Stripe payment into a key, storing which key went to
   whom in D1, and emailing it. Refunds and lost disputes revoke; a won dispute restores.
 - `make revocations` — regenerates the revocation list baked into each build. Revocation lands at
@@ -44,4 +56,5 @@ land together at the first release. Until then this section is the running recor
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/commits/main
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...HEAD
+[1.0.0]: https://github.com/mgcrea/mcp-cupertino/releases/tag/app-v1.0.0
