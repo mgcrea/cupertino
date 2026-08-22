@@ -55,13 +55,16 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 /// hand.
 @MainActor
 enum SettingsWindowController {
+  /// See `MainWindowController.autosaveName`.
+  static let autosaveName = "settings-panes"
+
   private static let hosted = HostedWindow(
     // Renamed from "settings" deliberately. The old autosaved frame was sized
     // for a 580pt tab view; this window has a sidebar and a minimum a good deal
     // wider, and reopening into a frame smaller than the content can occupy is
     // how a window comes back with its detail column crushed to nothing.
     // A new name is a one-time reset of position and size, and nothing else.
-    title: "Cupertino Settings", autosaveName: "settings-panes",
+    title: "Cupertino Settings", autosaveName: autosaveName,
     contentSize: NSSize(width: 760, height: 560),
     content: { SettingsView(model: StatusModel.shared) })
 
@@ -141,6 +144,10 @@ struct SettingsView: View {
     // in Permissions — an app icon, a name, a status and a control — on one line.
     .frame(minWidth: 720, idealWidth: 760, minHeight: 480, idealHeight: 540)
     .onAppear { model.refresh() }
+    // The `settings` stage photographs this window, so this is the one that
+    // gets to say the screen is ready. MainView's own signal is inert on that
+    // stage — see `DemoSeed.ReadySource`.
+    .task { DemoSeed.signalReady(from: .settings) }
   }
 
   private func row(_ pane: SettingsPane) -> some View {

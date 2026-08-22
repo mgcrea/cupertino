@@ -45,23 +45,93 @@ enum DemoSeed {
   /// is the trade: ten launches instead of two, in exchange for a pipeline that
   /// never touches the accessibility tree and therefore cannot be broken by
   /// renaming a label.
-  enum Stage: String {
+  enum Stage: String, CaseIterable {
     case surface
+    case prompt
     case activity
     case connections
+    case settings
+
+    /// Which window the shutter is aimed at.
+    ///
+    /// `settings` is the only stage that is not the main window, and it is the
+    /// one most likely to fail *silently*: appshot photographs the largest
+    /// ordinary window, so leaving the main window on screen captures that
+    /// instead — at exactly the right size, showing a real screen, with nothing
+    /// in the run saying a word. `openStagedWindow()` below is what stops it —
+    /// the main window is simply never opened on this stage — and `ReadySource`
+    /// is what stops the shutter firing before the Settings window is up.
+    var subject: Subject {
+      switch self {
+      case .settings: .settings(.permissions)
+      case .surface, .prompt, .activity, .connections: .main
+      }
+    }
+
+    enum Subject {
+      case main
+      case settings(SettingsPane)
+    }
+
+    /// Which view's `.task` is allowed to report readiness for this stage.
+    var readySource: ReadySource {
+      switch self {
+      case .settings: .settings
+      case .surface, .prompt, .activity, .connections: .main
+      }
+    }
 
     /// Where the main window's sidebar selection starts.
+    ///
+    /// `prompt` and `activity` are the same pane on purpose. They differ in what
+    /// the log is seeded with, not in what is on screen: `activity` is the
+    /// general-purpose fixture that exercises every level, and `prompt` is one
+    /// question's trace and nothing else. Two stages rather than one because a
+    /// caption quoting a prompt is only honest if the log under it shows the
+    /// calls that prompt actually made.
     var pane: MainView.Pane {
       switch self {
       case .surface: .surface("mail")
-      case .activity: .log
+      case .prompt, .activity: .log
       case .connections: .connections
+      // Never seen: `openStagedWindow()` never builds `MainView` on this
+      // stage at all, so this value exists only because the switch must be
+      // exhaustive.
+      case .settings: .log
+      }
+    }
+
+    /// The log fixture this stage photographs.
+    ///
+    /// Exhaustive rather than `default:`, so adding a stage is a compile error
+    /// here instead of a silent inheritance of the sampler — which is the same
+    /// failure the `fatalError` on an unparseable stage exists to prevent, one
+    /// level down: a good-looking capture of content nobody chose.
+    var logLines: [(String, LogStore.Level, String)] {
+      switch self {
+      case .prompt: DemoSeed.heroTurnLogLines
+      case .surface, .activity, .connections, .settings: DemoSeed.logLines
       }
     }
   }
 
   /// Deliberately non-optional with no fallback to a default screen.
   ///
+  /// Which view reported that its screen is ready.
+  ///
+  /// `MainView` and `SettingsView` both call `signalReady(from:)` from their
+  /// own `.task`, and only the one matching the current stage's `readySource`
+  /// is honoured. `openStagedWindow()` means only one of the two is built on
+  /// any given stage, so today the check never fires — it is here because the
+  /// failure it prevents is silent and the cost is a switch. The moment
+  /// anything opens both windows, whichever view renders first would report a
+  /// screen the shutter is not aimed at, and the capture would be of a window
+  /// that had not finished drawing.
+  enum ReadySource {
+    case main
+    case settings
+  }
+
   /// A stage argument that does not parse must be loud. The silent version of
   /// this bug produces a valid, correctly sized, good-looking capture of the
   /// *wrong* screen, filed under the right name — which is the one screenshot
@@ -87,6 +157,32 @@ enum DemoSeed {
     pinFormatting()
     seedStores()
     observeWindows()
+  }
+
+  /// The one window this launch opens, chosen by the stage.
+  ///
+  /// Opening the *right* window is the whole of the secondary-window problem,
+  /// and it is worth saying why it is solved here rather than by hiding the
+  /// wrong one later. appshot photographs the largest ordinary window, so the
+  /// obvious approach — open both, then `orderOut` the main one before the
+  /// shutter — has to run at activation time, and that is exactly when appshot
+  /// is resolving its window list in two steps (`CGWindowListCopyWindowInfo`
+  /// for ids and z-order, then `SCShareableContent` for the images). Reordering
+  /// windows between those two steps makes the ids stop matching and kills the
+  /// run on a random shot.
+  ///
+  /// It also deadlocks against `--ready-file`, which is how this was found:
+  /// appshot waits for the readiness signal *before* it activates, so a
+  /// presentation driven off `didBecomeActive` never runs, and the run fails
+  /// with "the app never signalled ready within 8.0s" on the settings shot.
+  ///
+  /// Never opening the second window is strictly simpler than hiding it, and
+  /// there is nothing left to race.
+  @MainActor static func openStagedWindow() {
+    switch stage.subject {
+    case .main: MainWindowController.show()
+    case .settings(let pane): SettingsWindowController.show(pane)
+    }
   }
 
   // MARK: - Ambient state
@@ -181,6 +277,49 @@ enum DemoSeed {
     ("mail", .call, "apple_mail_get_thread"),
   ]
 
+  /// One turn's trace, for the `prompt` stage.
+  ///
+  /// The plate this seeds is captioned with a prompt, so the log under it has to
+  /// be what *that* prompt produced and nothing else. `logLines` above is
+  /// deliberately a sampler: it exercises every level, including a refused write
+  /// to Reminders. Captioned with a prompt it would show surfaces the reader was
+  /// never told were involved and a refusal for a request that asks nothing of
+  /// them, which reads as the app doing things behind your back — the exact
+  /// opposite of the claim.
+  ///
+  /// **The authority is `HERO_TURN` in apps/website/src/data/examples.ts**, and
+  /// this is a hand-kept mirror of it, because Swift cannot read that file. Keep
+  /// the prompt in `screenshots.config.json`, the calls here and `HERO_TURN`
+  /// itself in step; the site enforces its own half at build time (every call a
+  /// READ tool that `data/surfaces.ts` actually registers) and nothing yet
+  /// enforces this one.
+  ///
+  /// Contacts leads, and that is the point of the turn: the prompt names a
+  /// person, and every other surface is addressed by handle. Contacts logs no
+  /// `allowWrites` line, unlike the two below it — `Surfaces.swift` registers no
+  /// write tool for it by construction, so there is no toggle to report.
+  ///
+  /// The same prohibition as above applies and matters more here, because the
+  /// caption is a sentence about the reader's own mail: **no arguments, and no
+  /// search terms.** Four calls is what the turn takes, so four is what this
+  /// shows — it fills perhaps half the pane, and padding it with calls the
+  /// prompt did not make is the one fix that is not available.
+  nonisolated private static let heroTurnLogLines: [(String, LogStore.Level, String)] = [
+    ("cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"),
+    ("contacts", .info, "initialize"),
+    ("contacts", .info, "tools/list"),
+    ("mail", .info, "initialize"),
+    ("mail", .info, "tools/list"),
+    ("mail", .info, "allowWrites=false"),
+    ("calendar", .info, "initialize"),
+    ("calendar", .info, "tools/list"),
+    ("calendar", .info, "allowWrites=false"),
+    ("contacts", .call, "apple_contacts_search_contacts"),
+    ("mail", .call, "apple_mail_search_messages"),
+    ("mail", .call, "apple_mail_get_thread"),
+    ("calendar", .call, "apple_calendar_list_events"),
+  ]
+
   /// Live sessions, as the handshake actually reports them.
   ///
   /// The client names are raw `clientInfo.name` values — `claude-code`,
@@ -218,7 +357,7 @@ enum DemoSeed {
   @MainActor private static func seedStores() {
     LicenseStore.demoLicensed = true
 
-    for (index, line) in logLines.enumerated() {
+    for (index, line) in stage.logLines.enumerated() {
       LogStore.shared.appendDemo(
         at: at(40, 48 + index), surface: line.0, level: line.1, line.2)
     }
@@ -292,12 +431,39 @@ enum DemoSeed {
   /// state restoration, and an autosaved frame is a separate mechanism.
   nonisolated private static let contentSize = NSSize(width: 1120, height: 540)
 
+  /// The Settings window's own size, and it must not be the one above.
+  ///
+  /// Two reasons, and the second is the one that bites. It is a different shape
+  /// — a 192pt sidebar beside a grouped form, whose rows wrap below about 720 —
+  /// so the main window's 1120x540 photographs as a Settings window with a lake
+  /// of empty form in it. And appshot takes the *largest* ordinary window, so
+  /// two windows pinned to identical sizes is a coin flip over which one gets
+  /// photographed; keeping this smaller means a future change that opens both
+  /// windows at once still cannot produce a duplicate capture by accident.
+  ///
+  /// 960x600 is the store canvas's own 1.6:1, and wide enough to keep the
+  /// widest Permissions row — an app icon, a name, a status and a control — on
+  /// one line.
+  nonisolated private static let settingsContentSize = NSSize(width: 960, height: 600)
+
   @MainActor private static func pin(_ window: NSWindow) {
     // Sheets and panels are windows too, and forcing a main-window size onto a
     // sheet blows out its layout.
     guard window.styleMask.contains(.titled), window.canBecomeMain else { return }
 
-    window.setContentSize(contentSize)
+    // Matched on the autosave name rather than the title, which is a string
+    // that could be localized, and rather than "the first window", which is
+    // whatever order AppKit happened to open them in. A window this does not
+    // recognise is left at whatever size it chose — better an odd size in one
+    // capture than a wrong size forced on every future window.
+    let size: NSSize
+    switch window.frameAutosaveName {
+    case MainWindowController.autosaveName: size = contentSize
+    case SettingsWindowController.autosaveName: size = settingsContentSize
+    default: return
+    }
+
+    window.setContentSize(size)
     window.center()
 
     // Focus is visible twice, and the second one is the flake. Beyond which
@@ -325,8 +491,8 @@ enum DemoSeed {
   /// Called from `MainView` once its body has run with the model populated. If
   /// the signal never arrives appshot fails the run rather than reverting to
   /// the guess, which is the entire point of using it.
-  nonisolated static func signalReady() {
-    guard isEnabled,
+  nonisolated static func signalReady(from source: ReadySource) {
+    guard isEnabled, stage.readySource == source,
       let path = UserDefaults.standard.string(forKey: Key.readyFile)
     else { return }
     FileManager.default.createFile(atPath: path, contents: nil)
@@ -334,7 +500,11 @@ enum DemoSeed {
 }
 
 extension DemoSeed.Stage {
+  /// Derived from `allCases`, not restated. The hand-written list this replaced
+  /// had to be edited in lockstep with the enum, and the only thing that reads
+  /// it is the `fatalError` that fires when a stage does not parse — so the one
+  /// message telling you which stages exist was the one most likely to be stale.
   static var allNames: String {
-    [Self.surface, .activity, .connections].map(\.rawValue).joined(separator: ", ")
+    allCases.map(\.rawValue).joined(separator: ", ")
   }
 }

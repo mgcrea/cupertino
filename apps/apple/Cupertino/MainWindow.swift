@@ -17,8 +17,14 @@ import SwiftUI
 /// foreground, or clicked the Dock icon.
 @MainActor
 enum MainWindowController {
+  /// Also the window's `frameAutosaveName`, which is how `DemoSeed` tells this
+  /// window apart from the Settings one — it has to size them differently, and
+  /// the `settings` stage has to order *this* one out. Matching on the title
+  /// would be matching on a localizable string.
+  static let autosaveName = "main"
+
   private static let hosted = HostedWindow(
-    title: "Cupertino", autosaveName: "main",
+    title: "Cupertino", autosaveName: autosaveName,
     content: { MainView(model: StatusModel.shared) })
 
   static func show() { hosted.show() }
@@ -80,7 +86,7 @@ struct MainView: View {
     // A fact, not a duration: the body has run and the model is populated. That
     // is what `--ready-file` wants, and it is why `--settle` can stay at its
     // floor instead of being padded until the screen "looks about right".
-    .task { DemoSeed.signalReady() }
+    .task { DemoSeed.signalReady(from: .main) }
   }
 
   /// The sidebar carries its own material on macOS 26, which is why the glass

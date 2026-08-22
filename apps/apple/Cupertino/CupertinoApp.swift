@@ -17,7 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if DemoSeed.isEnabled {
       DemoSeed.apply()
       DockPresence.observe()
-      MainWindowController.show()
+      // Not `MainWindowController.show()`: the `settings` stage photographs a
+      // different window, and the main one must not merely be hidden but never
+      // opened. See `DemoSeed.openStagedWindow`.
+      DemoSeed.openStagedWindow()
       return
     }
 

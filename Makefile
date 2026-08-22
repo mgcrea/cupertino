@@ -462,7 +462,7 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 # complete, correct-looking set into a directory nobody reads, while the real
 # one keeps last week's images.
 
-SHOT_SCREENS := surface activity connections
+SHOT_SCREENS := surface prompt activity connections settings
 
 # Every flag the screens depend on, passed explicitly. Anything omitted falls
 # back to whatever is persisted in the capturing Mac's UserDefaults — which is

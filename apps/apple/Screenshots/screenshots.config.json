@@ -45,13 +45,21 @@
   },
 
   "//screens": "Order here IS the order of the framed set — it stamps the 01-, 02- prefix. The capture filenames stay unnumbered, so reordering never renames an image. `id` matches <id>~dark.png in source/, and it is also the -ScreenshotStage value DemoSeed.Stage parses.",
-  "//website": "The basename `appshot compose website` writes into apps/website/public/shots/. All three are on the site; a screen with no `website` key would be framed-set-only.",
+  "//website": "The basename `appshot compose website` writes into apps/website/src/assets/shots/. All four are on the site; a screen with no `website` key would be framed-set-only.",
   "screens": [
     {
+      "//": "The title used to open with a literal \"Four\", which Contacts invalidated the day it shipped — the same drift apps/website/src/config.ts exists to prevent, in the one file that cannot compute a count. It no longer states one. The subtitle still names the surfaces because a caption that will not say which apps is not worth the plate; it is the line to revisit when Messages lands.",
       "id": "surface",
       "website": "surface",
-      "title": "Four Apple apps. One permission.",
-      "subtitle": "Mail, Notes, Reminders and Calendar, brokered by a single signed app."
+      "title": "Your Apple apps. One permission.",
+      "subtitle": "Mail, Notes, Reminders, Calendar and Contacts, brokered by a single signed app."
+    },
+    {
+      "//": "Captioned with the prompt itself, which is why `prompt` is its own stage rather than a second crop of `activity`: DemoSeed.heroTurnLogLines seeds this pane with that one question's trace and nothing else. The subtitle is HERO_TURN.prompt in apps/website/src/data/examples.ts, verbatim — that file is the authority, the site checks its own half at build time, and nothing yet checks this copy of it.",
+      "id": "prompt",
+      "website": "prompt",
+      "title": "Ask in plain English.",
+      "subtitle": "\u201cWhat did I promise Marie last week, and is any of it on my calendar?\u201d"
     },
     {
       "id": "activity",
@@ -64,6 +72,13 @@
       "website": "connections",
       "title": "Every client. Every session.",
       "subtitle": "See exactly what is connected, and what it has asked for."
+    },
+    {
+      "//": "The only screen that is not the main window. DemoSeed.stageSettings orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. The Permissions pane rather than General: the write gate is the claim that needs a picture, and this is where a reader sees it is off per surface rather than a global switch.",
+      "id": "settings",
+      "website": "settings",
+      "title": "Writes are off until you say so.",
+      "subtitle": "One toggle per surface — and with it off, the mutating tools are never registered at all."
     }
   ]
 }
