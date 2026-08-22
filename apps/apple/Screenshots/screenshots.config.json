@@ -25,14 +25,17 @@
     "maxTitleLines": 2
   },
 
-  "//themes": "The icon's own sky ramp, warmed into the ink the site already uses: #F2895C over #0B0C0F. Deliberately not a second palette — apps/website/src/styles/global.css is the one that exists, and a store image in colours the site does not use reads as a different product.",
+  "//themes": "\"Horizon\": the mark's own composition rather than a quotation of its colours. Cupertino is a low sun over two hills, so the warmth is a floor under the window and the ink is above the title, where the type needs it. Still not a second palette — apps/website/src/styles/global.css is the one that exists, and a store image in colours the site does not use reads as a different product.",
+  "//angle": "270 = bottom-up. Degrees CLOCKWISE, y-DOWN, and appshot means it literally: offset 0 lands where the axis starts, so at 270 that is the bottom edge. The old JS compositor fed the angle through an SVG gradientTransform in objectBoundingBox units and then skewed it by the canvas aspect ratio, which is why the 145 that used to be here rendered at about 135. Do not port an angle from that era without re-rendering it.",
+  "//floor": "The warm floor and the window's drop shadow (layout.shadow: blur 52, opacity 0.34) occupy the same band, so #8A4A2E is chosen to sit under the shadow rather than compete with it. Lifting it toward the accent's own #F2895C is what makes the shadow read as dirt. The 0.24 stop is what keeps it a floor instead of a wash.",
   "themes": {
     "dark": {
       "background": {
-        "angle": 145,
+        "angle": 270,
         "stops": [
-          { "offset": 0, "color": "#241A15" },
-          { "offset": 0.55, "color": "#141319" },
+          { "offset": 0, "color": "#8A4A2E" },
+          { "offset": 0.24, "color": "#2A1C1C" },
+          { "offset": 0.6, "color": "#121319" },
           { "offset": 1, "color": "#0B0C0F" }
         ]
       },

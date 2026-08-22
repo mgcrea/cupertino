@@ -115,6 +115,10 @@ describe("composeLockup", () => {
 });
 
 describe("composeCard", () => {
+  const plateStops = [
+    { offset: 0, color: "#8A4A2E" },
+    { offset: 1, color: "#0B0C0F" },
+  ];
   const copy = {
     ground: "#0b0c0f",
     headline: "Mail, Notes, Reminders and Calendar, for Claude",
@@ -175,9 +179,65 @@ describe("composeCard", () => {
     assert.equal(svg.match(/textLength=/g).length, 1, "only the wordmark is pinned");
   });
 
+  describe("grounds the card on the store plate's gradient", () => {
+    // The same object appshot renders behind the framed store visuals, passed
+    // through verbatim by generate-icons.mjs. 270 is appshot's convention for
+    // bottom-up — degrees clockwise, y-down — NOT the CSS one colors.json uses.
+    const plate = {
+      angle: 270,
+      stops: [
+        { offset: 0, color: "#8A4A2E" },
+        { offset: 1, color: "#0B0C0F" },
+      ],
+    };
+    const ramped = composeCard(icon, palette, { ...copy, ground: plate });
+
+    it("puts offset 0 at the bottom edge, as appshot does", () => {
+      // appshot projects the canvas corners onto the axis; for 270 that is a
+      // vertical line from the bottom to the top. If this ever flips, the card
+      // and the store plates are quoting the same stops upside down from each
+      // other, which no test of either one alone would catch.
+      const axis =
+        /<linearGradient[^>]*x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/.exec(ramped);
+      assert.ok(axis, "no userSpaceOnUse axis was emitted");
+      const [, x1, y1, x2, y2] = axis.map(Number);
+      assert.equal(x1, SOCIAL_CARD.WIDTH / 2);
+      assert.equal(x2, SOCIAL_CARD.WIDTH / 2);
+      assert.equal(y1, SOCIAL_CARD.HEIGHT, "offset 0 must land on the bottom edge");
+      assert.equal(y2, 0);
+    });
+
+    it("carries every stop, and fills from the gradient rather than a colour", () => {
+      for (const { offset, color } of plate.stops) {
+        assert.ok(ramped.includes(`<stop offset="${offset}" stop-color="${color}"/>`));
+      }
+      assert.ok(ramped.includes('fill="url(#plate)"'));
+    });
+
+    it("still takes a flat hex, which is the simpler answer when it is one", () => {
+      const flat = composeCard(icon, palette, copy);
+      assert.ok(flat.includes(`fill="${copy.ground}"`));
+      // Not "no <linearGradient>": the embedded icon brings its own sky ramp.
+      // What must be absent is the plate the ground would have added.
+      assert.ok(!flat.includes('id="plate"'));
+    });
+  });
+
   describe("refuses to guess", () => {
     const cases = [
       ["a ground that is not a colour", () => composeCard(icon, palette, { ...copy, ground: "" })],
+      [
+        "a gradient with only one stop",
+        () =>
+          composeCard(icon, palette, {
+            ...copy,
+            ground: { angle: 270, stops: [{ offset: 0, color: "#000000" }] },
+          }),
+      ],
+      [
+        "a gradient with no angle",
+        () => composeCard(icon, palette, { ...copy, ground: { stops: plateStops } }),
+      ],
       [
         "a palette with no light to reverse out in",
         () => composeCard(icon, { ...palette, colors: {} }, copy),

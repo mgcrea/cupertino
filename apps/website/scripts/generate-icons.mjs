@@ -26,6 +26,32 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pub = join(here, "..", "public");
 const design = join(here, "..", "..", "..", "design");
 
+/**
+ * The App Store compositing config, two directories over in the Apple half.
+ *
+ * The card's ground is not stated here, and not in `src/config.ts` either: it is
+ * `themes.dark.background` in that file, the same object appshot renders behind
+ * every framed store visual. One definition, so a new plate lands on the store
+ * images and the og:image together — `make screenshots-compose && pnpm icons`.
+ *
+ * The angle convention is appshot's (degrees clockwise, y-down) and NOT the CSS
+ * one `design/colors.json` uses for `sky` and `wash`. `composeCard` takes it raw
+ * for exactly that reason; do not route it through the palette.
+ */
+const plateGround = async () => {
+  const path = join(here, "..", "..", "apple", "Screenshots", "screenshots.config.json");
+  let background;
+  try {
+    background = JSON.parse(await readFile(path, "utf8"))?.themes?.dark?.background;
+  } catch (cause) {
+    throw new Error(`cannot read the store plate config at ${path}`, { cause });
+  }
+  if (!background?.stops?.length) {
+    throw new Error(`${path} has no themes.dark.background.stops to ground the card on`);
+  }
+  return background;
+};
+
 /** Loud on a missing source: a silent skip here ships a stale mark. */
 const source = async (name) => {
   try {
@@ -91,11 +117,17 @@ await png(icon, "product-image.png", 512);
 // The words come from src/config.ts rather than from here: they are a claim
 // about the product, and this file has no business being the authority on one.
 //
-// `palette: true` because the card is flat ground, one gradient and text — 54 KB
-// against 200 KB truecolour, with no banding visible on the icon's sky at this
-// size. It is committed to the repo and fetched by every crawler that sees a
-// link, so the four bytes an alpha channel would buy are not worth 150 KB.
-const card = composeCard(icon, JSON.parse(await source("colors.json")), SOCIAL_CARD);
+// `palette: true` survives the four-stop ground, which was worth checking rather
+// than assuming: quantising costs 106 distinct steps across the warm floor
+// against truecolour's 152, but the widest flat band is 27px either way and the
+// biggest step between adjacent rows is 2/255 — below anything visible on a dark
+// warm ramp. Truecolour is 202 KB against 50 KB for that, on the one image every
+// crawler that sees a link fetches. If the ground ever gets a light or saturated
+// stop, re-measure before trusting this comment.
+const card = composeCard(icon, JSON.parse(await source("colors.json")), {
+  ...SOCIAL_CARD,
+  ground: await plateGround(),
+});
 await writeFile(
   join(pub, "og-image.png"),
   await sharp(Buffer.from(card), { density: 200 }).png({ palette: true }).toBuffer(),
