@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-reminders",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Model Context Protocol server for the macOS Apple Reminders app",
   "keywords": [
     "apple",
@@ -11,15 +11,15 @@
     "reminders",
     "todo"
   ],
+  "homepage": "https://cupertino.mgcrea.io",
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
-  "homepage": "https://cupertino.mgcrea.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/reminders"
   },
-  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "bin": {
     "apple-reminders-mcp": "dist/cli.js"
   },

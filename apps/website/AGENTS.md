@@ -19,7 +19,11 @@ workspace at once. oxfmt formats the `.css`, `.mjs` and `.ts` here but leaves `.
 
 ## `src/assets/shots/` belongs to the pipeline
 
-The three app screenshots in `Screens.astro` are captured, not placed. `make screenshots` from the
+The app screenshots in `Screens.astro` are captured, not placed. Four of them, not five: the
+pipeline captures a `prompt` screen too, and `screenshots.config.json` deliberately gives it no
+`website` key — it is the same Log pane as `activity` with a one-turn fixture, which earns a store
+plate captioned with the prompt but would be a third telling of one idea on a page that already
+has `Examples.astro` and the hero card. `make screenshots` from the
 repository root builds Cupertino, launches it in demo mode onto each screen, checks the result
 against committed goldens, and writes the images here.
 

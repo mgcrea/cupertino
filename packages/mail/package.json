@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-mail",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Model Context Protocol server for the macOS Apple Mail app",
   "keywords": [
     "apple",
@@ -11,15 +11,15 @@
     "mcp",
     "model-context-protocol"
   ],
+  "homepage": "https://cupertino.mgcrea.io",
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
-  "homepage": "https://cupertino.mgcrea.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
     "directory": "packages/mail"
   },
-  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
   "bin": {
     "apple-mail-mcp": "dist/cli.js"
   },
