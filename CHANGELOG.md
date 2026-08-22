@@ -11,6 +11,8 @@ summary.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-22
+
 ### Added
 
 - **Updates.** Cupertino can now check for updates and install them. 1.0.0 shipped with no way to
@@ -89,5 +91,6 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...HEAD
+[1.1.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...app-v1.1.0
 [1.0.0]: https://github.com/mgcrea/mcp-cupertino/releases/tag/app-v1.0.0
