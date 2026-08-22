@@ -30,7 +30,7 @@ SUPPORT := $(HOME)/Library/Application Support/io.mgcrea.cupertino
 help: ## Show this help
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-21s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  servers: pnpm -r build | test | typecheck, pnpm lint | format"
 	@echo ""
@@ -176,8 +176,16 @@ node: ## Download and lipo the embedded node runtime
 
 RELEASE_APP := apps/apple/.build/Build/Products/Release/Cupertino.app
 
+# `sign` below is what gives the Release bundle its Developer ID signature, so
+# letting xcodebuild sign first is redundant — and on a CI runner it is fatal:
+# automatic signing demands a "Mac Development" certificate for the team, which
+# a release machine has no reason to hold. It passes on a developer Mac only
+# because an Apple Development certificate happens to be in the keychain, so the
+# break shows up for the first time in CI. Debug keeps automatic signing, which
+# the TCC identity of a locally installed build depends on.
 bundle: servers node ## Build, stage and sign a Release Cupertino.app
-	@$(MAKE) --no-print-directory app CONFIG=Release
+	@$(MAKE) --no-print-directory app CONFIG=Release \
+		XCARGS="$(XCARGS) CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO"
 	@rm -rf "$(RELEASE_APP)/Contents/Resources/servers" "$(RELEASE_APP)/Contents/Resources/node"
 	@ditto "$(STAGED)/servers" "$(RELEASE_APP)/Contents/Resources/servers"
 	@ditto "$(STAGED)/node" "$(RELEASE_APP)/Contents/Resources/node"
@@ -245,6 +253,155 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 	@# files. It reads design/ directly, so nothing is copied — but the PNGs it
 	@# derives are committed, and only this command's output makes them stale.
 	@echo "  next: pnpm --filter @mgcrea/cupertino-website icons"
+
+# ── App screenshots ───────────────────────────────────────────────────────────
+#
+# One tool, `appshot` — never a pile of per-project scripts. Install it with
+# `cd ~/Projects/appshot && make install`.
+#
+# Cupertino does not ship on the App Store (docs/distribution.md settles that),
+# so the framed set is not a store upload: it is what the README, a Product Hunt
+# gallery and a social card want, and it costs nothing extra once the captures
+# exist. The website set is the half with a live consumer today.
+#
+# PATHS ARE REPO-ROOT RELATIVE, unlike the canonical template's app-relative
+# ones. `appshot` has no notion of a project root — every path resolves against
+# the process working directory — so the rule that matters is that they all
+# agree with wherever make runs. There is one Makefile here, at the root, by the
+# deliberate decision recorded at the top of this file; adding a sub-Makefile at
+# apps/apple just to make the paths shorter would be the delegator that decision
+# rejected. The hazard to know: `capture --out` and `compose --out` CREATE their
+# directories, so running these from anywhere but the repo root writes a
+# complete, correct-looking set into a directory nobody reads, while the real
+# one keeps last week's images.
+
+SHOT_SCREENS := surface activity connections
+
+# Every flag the screens depend on, passed explicitly. Anything omitted falls
+# back to whatever is persisted in the capturing Mac's UserDefaults — which is
+# how a screenshot ends up describing one laptop rather than the product.
+#
+# The second and third lines are not app-specific and are the ones people leave
+# out. macOS renders the app against the capturing Mac's System Settings, and
+# none of that lives in this repo:
+#
+#   -AppleAccentColor / -AppleHighlightColor  Assets.xcassets/AccentColor.colorset
+#       declares no colour, which is Xcode's template default and means the app
+#       follows System Settings. That tint reaches the sidebar's selected row and
+#       every `.accentColor` log line, i.e. all three screens. Pinned to 4 (blue)
+#       because that is what the macOS default renders as. NEEDING THIS LINE IS A
+#       FINDING: giving the colorset Cupertino's own #F2895C is the real fix, and
+#       it is a product decision this pipeline should not make on its own.
+#   -AppleLocale / -AppleLanguages  Locale.current drives every formatter.
+#   -AppleShowScrollBars  `Always` bakes a scrollbar into the log pane.
+#
+# Quoting: the whole value already sits inside --extra-args="…", so a nested `"`
+# would end the string at the shell. Inner values use single quotes; appshot's
+# own splitting is quote-aware.
+SHOT_ARGS := -ScreenshotMode YES \
+             -AppleLocale en_US -AppleLanguages '(en)' \
+             -AppleAccentColor 4 -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
+             -AppleShowScrollBars WhenScrolling
+
+# A floor, not the whole wait: appshot then polls frames and shoots once the
+# window stops changing. It can stay at the default because the app does not
+# guess here at all — DemoSeed.signalReady touches --ready-file's path once
+# MainView's body has run with the model populated, which is a fact rather than
+# a duration. A padded number here would be that guess coming back.
+SHOT_SETTLE := 0.3
+
+SHOT_DIR      := apps/apple/Screenshots
+SHOT_SOURCE   := $(SHOT_DIR)/source
+SHOT_GOLDEN   := $(SHOT_DIR)/golden
+SHOT_APPSTORE := $(SHOT_DIR)/appstore
+SHOT_CONFIG   := $(SHOT_DIR)/screenshots.config.json
+
+# Pipeline-owned: `compose website` DELETES every .png in this directory before
+# writing. That is why it is `public/shots/` and not `public/` — the latter holds
+# og-image.png, favicon-32.png and apple-touch-icon.png, which `make icon`
+# generates and a compose run would silently erase.
+SHOT_WEBSITE := $(abspath apps/website/public/shots)
+
+.PHONY: screenshots screenshots-capture screenshots-check screenshots-update \
+        screenshots-seal screenshots-selftest screenshots-appstore \
+        screenshots-website screenshots-compose screenshots-doctor screenshots-clean
+
+## A capture run takes over the pointer and the active app at the moment of each
+## shot — don't use the machine while it runs, and a stray click can land in an
+## image. It needs Screen Recording permission for the TERMINAL running it;
+## nothing is granted to Cupertino itself. `--wait` queues behind another
+## project's run on this Mac instead of failing.
+
+screenshots: app ## Capture, gate against the goldens, and compose both sets
+	appshot run \
+		--app "$(APP)" \
+		--config "$(SHOT_CONFIG)" \
+		--source "$(SHOT_SOURCE)" \
+		--golden "$(SHOT_GOLDEN)" \
+		--appstore-out "$(SHOT_APPSTORE)" \
+		--website-out "$(SHOT_WEBSITE)" \
+		--screens $(SHOT_SCREENS) \
+		--extra-args="$(SHOT_ARGS)" \
+		--settle $(SHOT_SETTLE) \
+		--ready-file \
+		--wait
+
+screenshots-capture: app ## Capture only (no gate, no compose)
+	@# --config checks $(SHOT_SCREENS) against the config's screens[].id BEFORE
+	@# launching anything, so a typo staging the wrong screen under the right
+	@# filename fails now rather than ninety seconds later.
+	@# --extra-args needs the `=`: the value starts with `-`, and without it
+	@# ArgumentParser reads it as appshot's own flags.
+	appshot capture \
+		--app "$(APP)" \
+		--out "$(SHOT_SOURCE)" \
+		--config "$(SHOT_CONFIG)" \
+		--screens $(SHOT_SCREENS) \
+		--extra-args="$(SHOT_ARGS)" \
+		--settle $(SHOT_SETTLE) \
+		--ready-file \
+		--wait
+
+screenshots-check: ## Fail if the captures drifted from the goldens
+	@# --config checks the exact expected SET, and it is the only thing that can
+	@# see two captures that are the same image — the tell that a
+	@# -ScreenshotStage value did nothing and one screen was photographed twice
+	@# under two names. Count and file validity say nothing about that, and each
+	@# would match its golden, because the golden came from the same broken run.
+	@# --require-manifest refuses a baseline nothing can vouch for: `accept`
+	@# seals the goldens (sha256 per file, plus who accepted them and with what
+	@# arguments) and this verifies the seal before comparing anything.
+	appshot check --source "$(SHOT_SOURCE)" --golden "$(SHOT_GOLDEN)" \
+		--config "$(SHOT_CONFIG)" --require-manifest
+
+screenshots-update: ## Accept the captures as the new goldens (review the diffs first)
+	appshot accept --source "$(SHOT_SOURCE)" --golden "$(SHOT_GOLDEN)"
+	@$(MAKE) --no-print-directory screenshots-compose
+
+screenshots-seal: ## Adopt the goldens on disk as the sealed baseline (one-time)
+	appshot seal --golden "$(SHOT_GOLDEN)"
+
+screenshots-selftest: ## Prove the golden gate actually fails when it should
+	appshot selftest --golden "$(SHOT_GOLDEN)"
+
+screenshots-appstore: ## Compose the framed, captioned visuals
+	appshot compose appstore \
+		--config "$(SHOT_CONFIG)" --source "$(SHOT_SOURCE)" --out "$(SHOT_APPSTORE)"
+
+screenshots-website: ## Emit bare app captures into apps/website/public/shots
+	appshot compose website \
+		--config "$(SHOT_CONFIG)" --source "$(SHOT_SOURCE)" --out "$(SHOT_WEBSITE)"
+
+screenshots-compose: screenshots-appstore screenshots-website ## Recompose both sets (no re-capture)
+
+screenshots-doctor: ## Check what fails silently: font, Screen Recording, config
+	appshot doctor --config "$(SHOT_CONFIG)"
+
+screenshots-clean: ## Remove generated captures and composites (keeps the goldens)
+	@# Deliberately not $(SHOT_WEBSITE): a clean target must not delete another
+	@# half of the repo's assets, and only a full capture run regenerates them.
+	@rm -rf $(SHOT_SOURCE) $(SHOT_APPSTORE) $(SHOT_DIR)/diff
+	@echo "Removed generated screenshots. Goldens in $(SHOT_GOLDEN) kept."
 
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
