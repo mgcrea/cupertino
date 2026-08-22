@@ -171,12 +171,18 @@ This agreement grants you no rights in the source code, and the source license
 grants you no rights in these builds. The two are independent, and you may hold
 both at once.
 
-You may study, modify and compile the source under its own terms, and doing so
-requires no key and no payment. Section 2(b) of that license asks you not to
-circumvent or strip the license validation in builds distributed here, or to
-distribute anything designed to do so; that request applies to you under this
-agreement too. Building an unvalidated binary for your own use from the published
-source is expressly permitted and is not circumvention.
+You may study, modify and compile the source under its own terms, and reading and
+compiling it cost nothing. Running the result is a separate matter: the license
+check is in the source, so a build you compile yourself asks for a key exactly as
+a build from us does. Section 1(c) of that license grants you the compiling, not
+a keyless run.
+
+Section 2(b) of that license asks you not to circumvent or strip the license
+validation, or to distribute anything designed to do so; that request applies to
+you under this agreement too. We have built no defences against your doing it
+anyway, and we do not intend to — the check is a dozen readable lines and
+obscuring them would only cost the audit the readability it exists for. What
+stands between the two is this sentence, not a technical measure.
 
 11. TERMINATION
 

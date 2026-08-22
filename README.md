@@ -319,13 +319,14 @@ a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA
 
 Two, because the halves are not the same thing.
 
-| Part                        | Licence                                                                                                  |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `packages/*`, `scripts/`    | [MIT](LICENSE) — libraries, vendor them freely                                                           |
-| `apps/apple/`               | [source-available](apps/apple/LICENSE) — read, audit, build for yourself; binary redistribution reserved |
-| the signed, notarized build | sold, under the [EULA](apps/apple/EULA) shipped with it                                                  |
+| Part                        | Licence                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| `packages/*`, `scripts/`    | [MIT](LICENSE) — libraries, vendor them freely                                                |
+| `apps/apple/`               | [source-available](apps/apple/LICENSE) — read, audit, compile; binary redistribution reserved |
+| the signed, notarized build | sold, under the [EULA](apps/apple/EULA) shipped with it                                       |
 
-Cupertino asks for Full Disk Access, so the source stays readable. **Building it yourself needs no
-fee and no licence key** — that is written into the licence, not offered as a concession. What is
-sold is the notarized binary and the maintenance behind it. The reasoning is in
-[docs/licensing.md](docs/licensing.md).
+Cupertino asks for Full Disk Access, so the source stays readable — that is what such a grant is
+owed, and reading it is the point. Running it is a separate question: the licence check lives in the
+source, so any build asks for a key, yours or ours. What is sold is the notarized binary and the
+maintenance behind it. The servers are MIT and run on their own with no key at all. The reasoning is
+in [docs/licensing.md](docs/licensing.md).
