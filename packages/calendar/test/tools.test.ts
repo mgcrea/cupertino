@@ -113,8 +113,21 @@ describe("apple_calendar_diagnostics", () => {
     expect(doc.permissions.fullDiskAccess).toMatch(/^unknown/);
   });
 
+  /**
+   * Forces the unreadable store rather than inheriting the machine's own, the
+   * way the test above it does. `howToGrant` is emitted only when the store is
+   * unreadable, so a bare connect() asserts on whatever the host happens to be:
+   * it passed on a developer Mac and failed on a CI runner, where the path is
+   * absent and reads as readable.
+   */
   it("names the System Settings pane when the store cannot be read", async () => {
-    const out = await call(await connect(), "apple_calendar_diagnostics");
+    const out = await call(
+      await connect({
+        APPLE_CALENDAR_INDEX_MODE: "auto",
+        APPLE_CALENDAR_STORE: "/nope/x.sqlitedb",
+      }),
+      "apple_calendar_diagnostics",
+    );
     const doc = out.json() as { permissions: { howToGrant?: string[] } };
     expect(doc.permissions.howToGrant?.join(" ")).toMatch(/Full Disk Access/);
   });
