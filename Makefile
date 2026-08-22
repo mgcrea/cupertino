@@ -24,7 +24,7 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts
+SURFACES     := mail notes reminders calendar contacts safari
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj

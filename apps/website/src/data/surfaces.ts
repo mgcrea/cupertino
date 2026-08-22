@@ -17,7 +17,7 @@
 export interface Surface {
   /** Anchor id and display key. */
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-  id: "mail" | "notes" | "reminders" | "calendar" | "contacts";
+  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "safari";
   // </generated:surfaces>
   name: string;
   pkg: string;

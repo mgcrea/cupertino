@@ -144,6 +144,45 @@ struct Surface: Identifiable, Hashable {
       storePermission: .contacts,
       envPrefix: "APPLE_CONTACTS_"
     ),
+    Surface(
+      id: "safari",
+      displayName: "Safari",
+      // The only surface whose two lanes are NOT fallbacks for each other.
+      // Everywhere else both lanes reach the same data and the choice is
+      // speed. Here they see almost disjoint things: Apple Events sees only
+      // what is open right now, the file lane sees everything except that.
+      // An ungranted Safari server is not a slower Safari server, it is a
+      // different and much smaller one.
+      //
+      // So usesAppleEvents is TRUE while supportsWrites is FALSE, which no
+      // other surface does. Apple Events is a READ lane here, and that does
+      // not breach the lane policy in docs/distribution.md: the policy
+      // forbids a slow Apple Events read lane that DUPLICATES the file lane.
+      // Live tabs are not duplicated by anything. The file lane cannot
+      // answer 'what is open right now' at any price, because Safari never
+      // writes it down.
+      //
+      // storePath names History.db, but the grant covers a directory:
+      // Bookmarks.plist sits beside it and holds the Reading List. One file
+      // is named because the status row needs one path to test, and history
+      // is the larger half.
+      //
+      // supportsWrites is FALSE for v0.1. Opening a URL or adding to the
+      // Reading List is an Apple Event that navigates a real, visible
+      // browser, and docs/safari.md records that no write was ever probed.
+      //
+      // A THIRD permission exists and is deliberately not needed. Safari's
+      // `do JavaScript` requires 'Allow JavaScript from Apple Events', a
+      // developer-menu toggle that is not a TCC grant and whose own state is
+      // unreadable. This server ships no verb that needs it, which is what
+      // keeps Permissions.swift's two-state model honest for this surface.
+      bundleID: "com.apple.Safari",
+      usesAppleEvents: true,
+      supportsWrites: false,
+      storePath: "Library/Safari/History.db",
+      storePermission: .fullDiskAccess,
+      envPrefix: "APPLE_SAFARI_"
+    ),
   ]
   // </generated:surfaces>
 

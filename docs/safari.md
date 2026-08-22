@@ -1,6 +1,8 @@
 # Safari, measured
 
-Measured by `scripts/probe-safari.mjs` on macOS 26.6, 7,797 history items and 28 open tabs.
+Measured by `scripts/probe-safari.mjs` on macOS 26.6. Re-run on a granted machine after
+`packages/safari` was built; the numbers below are from that second run (7,814 history items,
+76 open tabs). The schema fingerprint was unchanged between runs, so the DDL is stable.
 Regenerate on each new macOS release. Output is redacted harder than any other surface: **no URLs,
 no page titles, no domains**. A single URL can name a person, an employer and a medical condition, so
 tab URLs are masked to a shape (`https://<host:25>/<1 segments>`) before they can reach the report.
@@ -12,12 +14,12 @@ Safari server is not a slower Safari server; it is a different and much smaller 
 
 ## The files
 
-| File              | Size      | Notes                                            |
-| ----------------- | --------- | ------------------------------------------------ |
-| `History.db`      | 6,606,848 | 16 objects, 9 tables, fingerprint `1d20bcd2b9a5` |
-| `Bookmarks.plist` | 880,559   | binary plist — holds the Reading List            |
-| `Downloads.plist` | 3,871     | unexamined                                       |
-| `CloudTabs.db`    | absent    | not present on this machine                      |
+| File              | Size      | Notes                                                |
+| ----------------- | --------- | ---------------------------------------------------- |
+| `History.db`      | 6,615,040 | 16 objects, 9 tables, fingerprint `1d20bcd2b9a5`     |
+| `Bookmarks.plist` | 880,559   | binary plist — holds the Reading List                |
+| `Downloads.plist` | 9,431     | unexamined — this server reports it, never parses it |
+| `CloudTabs.db`    | absent    | not present on this machine                          |
 
 All under `~/Library/Safari/`, all EPERM without Full Disk Access. Opened `mode=ro` in 0 ms.
 
@@ -25,10 +27,10 @@ All under `~/Library/Safari/`, all EPERM without Full Disk Access. Opened `mode=
 
 |                        |                        |
 | ---------------------- | ---------------------- |
-| History items          | 7,797                  |
-| History visits         | 19,329                 |
-| `LIKE` search on url   | **11 ms** — 7,411 hits |
-| `LIKE` search on title | **2 ms** — 14,788 hits |
+| History items          | 7,814                  |
+| History visits         | 19,384                 |
+| `LIKE` search on url   | **16 ms** — 7,424 hits |
+| `LIKE` search on title | **4 ms** — 14,833 hits |
 
 There is no index-vs-Apple-Events tradeoff to litigate here, because there is nothing to trade: the
 store is small, the queries are milliseconds, and Apple Events cannot answer them at any price.
@@ -57,21 +59,30 @@ everything else, walking it with `objectForKey`/`objectAtIndex`. The data keys a
 touched, so their unrepresentability stops mattering. `osascript` inherits Full Disk Access from
 whatever launched it, exactly as the rest of the file lane does.
 
-## Only 60.7% of open tabs resolve to a history row
+## Only 55.3% of open tabs resolve to a history row
 
 Safari offers no opaque id shared between the lanes. **The only join key is the URL itself**, which
 makes the join trivially available and trivially lossy:
 
-| Of 28 open tabs           |        |
+| Of 76 open tabs           |        |
 | ------------------------- | ------ |
-| Exact URL match           | 12     |
-| Match after stripping `?` | 5      |
-| **Unmatched**             | **11** |
+| Exact URL match           | 19     |
+| Match after stripping `?` | 23     |
+| **Unmatched**             | **34** |
 
 A tool that enriches a live tab with its history — visit count, last visited, title — **must treat a
 miss as normal rather than as an error**. Redirects, session parameters and pages never committed to
 history all produce a tab whose URL is simply not there. The URL column is `history_items.url`,
 confirmed by scanning every TEXT column.
+
+**The query-string fallback is the larger half of this working.** Stripping `?` takes the match rate
+from 19 to 42 out of 76 — it more than doubles it. The first run, over 28 tabs, made it look like a
+5-of-17 tidy-up; at 76 tabs it is 23 of 42. `packages/safari` applies it on every lookup, and this
+is the measurement that justifies the second round trip.
+
+Both runs agree on the shape and disagree on the rate: 60.7% over 28 tabs, 55.3% over 76. Neither is
+"the" number, which is the useful finding — a tool description should say "about half" and treat any
+particular figure as a sample.
 
 ## What the file lane buys
 
@@ -109,18 +120,71 @@ reports **unknown** rather than guessing. It deliberately does not attempt `do J
 out — a failed attempt is user-visible, and a probe should not be the thing that teaches someone
 their browser can be scripted.
 
+## Built
+
+`packages/safari` ships this surface: six read tools, no write tool, 115 tests. Three decisions
+came out of building it that this document did not anticipate.
+
+**The epoch is detected at runtime, not hardcoded.** The obvious response to the `visit_time` bug
+below was to write the corrected value into the code. That would have been wrong. A misread epoch
+produces dates that are well-formed and off by 31 years, which no test on synthetic data catches
+and no reader notices. So `introspect()` reads the store's own newest timestamp and resolves the
+epoch from it, and when nothing fits it reports `confident: false` and every date renders **null**.
+An absent timestamp is a visible gap somebody reports; a confident wrong one is not.
+
+**The schema is treated as unconfirmed, because it is.** The fixture below was never captured, so
+every column in `store.ts` sits behind a `#col()` guard that yields `NULL AS alias` when absent,
+and the visits→items join column is DISCOVERED at open time from a candidate list rather than
+named. `SchemaDriftError` fires for exactly one condition — a missing `history_items` — and
+everything else is a reported capability downgrade. `test/store.test.ts` pins that: a renamed join
+column, an absent visits table and a missing title column each yield a working server with null
+fields, not an exception.
+
+**The third permission is avoided rather than modelled.** Since `do JavaScript` is the only verb
+needing "Allow JavaScript from Apple Events", not shipping that verb removes the problem entirely.
+`test/jxa.test.ts` asserts no script contains `doJavaScript`, so this cannot erode quietly. The
+finding below stands for whenever that verb is wanted; it is no longer a blocker.
+
+**The Reading List walker now runs for real.** Not against a real `Bookmarks.plist` — that still
+needs the grant — but against a synthetic binary plist checked in at
+`packages/safari/test/fixtures/Bookmarks.plist`, which reproduces the exact `plutil` failure
+(verified by a test that asserts `plutil -convert json` still fails on it), executed through the
+real `osascript` runner. That found one bug this document's version also has: the ROOT node is a
+`WebBookmarkTypeList` whose `Title` is the empty string, so treating any non-null title as a path
+segment prefixes every folder path with a leading slash.
+
 ## Still open
 
-- **Reading List counts.** The plist walk was rewritten after `plutil` failed and has been verified
-  against a fixture reproducing that exact error, but **not yet run against a real
-  `Bookmarks.plist`**. Folder, leaf, item and unread counts are pending one granted run.
-- **The `visit_time` epoch.** The first granted run reported `apple-nanoseconds`, which was a probe
-  bug — the plausibility window accepted the degenerate 2001 anchor reading. Fixed and verified
-  across all epoch shapes; the corrected value (expected `apple-seconds`) awaits a re-run. See
-  [calendar.md](calendar.md) for the full account of that bug.
-- **`Downloads.plist`** — 3,871 bytes, unexamined.
+- ~~**Reading List counts.**~~ Measured: 6 folders, 200 leaves, tree depth 2. The Reading List
+  holds **164 items, 138 of them unread** and 154 carrying preview text. That 84% unread rate is
+  the finding that justifies a Reading List tool at all — it is a queue people add to far faster
+  than they drain, so "what have I saved and not read" is a real question with a large answer.
+- ~~**The `visit_time` epoch.**~~ Confirmed **apple-seconds** (latest visit 2026) on the re-run, as
+  expected. The probe bug that reported nanoseconds is fixed — see [calendar.md](calendar.md) for
+  that account. `packages/safari` detects the epoch from the store at open time anyway rather than
+  hardcoding this result, because the failure mode is a date that is well-formed and wrong by 31
+  years, which nothing downstream can notice.
+- **`Downloads.plist`** — 9,431 bytes, still unexamined. `packages/safari` reports its presence in
+  diagnostics and never parses it.
 - **`CloudTabs.db`** — absent here, so tabs open on other devices are unmeasured.
 - **Writes.** Opening a URL or adding to the Reading List is an Apple Event and was not attempted;
   it navigates a real browser.
-- **No schema fixture captured.** `--write` would emit `packages/safari/test/fixtures/`, and there is
-  no `packages/safari` yet.
+- ~~**No history schema fixture captured.**~~ Captured:
+  `packages/safari/test/fixtures/safari-history.sql`, schema only, replayed by
+  `packages/safari/test/store.test.ts`. Every open question it was meant to settle came back the
+  way the code had guessed — the join column is `history_item`, the primary key is `id`, and
+  `url TEXT NOT NULL UNIQUE` — and all three are now pinned by tests.
+
+  Two things the guess had NOT anticipated. `history_items.id` is `AUTOINCREMENT`, so rowids are
+  not reused and the reuse hazard `packages/messages` designed against does not exist here; the
+  URL ref stands on the cross-lane identity argument alone, which is what it always rested on.
+  And `history_visits` carries a **`synthesized`** flag, which Safari's own
+  `history_visits__last_visit` index orders by. What it means is unmeasured, so nothing in
+  `packages/safari` filters or ranks on it.
+
+- **What `history_visits.synthesized` means.** Plausibly redirect intermediates or otherwise
+  non-navigational rows. It is in Safari's own last-visit index, so it is load-bearing for Safari;
+  until it is measured, treating it as either would change which visit counts as "the last one" on
+  the strength of an assumption.
+- **`history_items_to_tags` / `history_tags`** — two tables the probe writeup never mentioned and
+  this server does not read.

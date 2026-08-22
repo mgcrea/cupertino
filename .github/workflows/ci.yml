@@ -120,7 +120,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-          for server in mail notes reminders calendar contacts; do
+          for server in mail notes reminders calendar contacts safari; do
           # </generated:surfaces>
             printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
               | node "packages/$server/dist/cli.js" 2>/dev/null | tee "/tmp/handshake-$server.json"

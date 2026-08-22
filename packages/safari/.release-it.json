@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "safari-v${version}",
+    "commitMessage": "release(safari): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-safari v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}
