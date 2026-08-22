@@ -1,0 +1,71 @@
+{
+  "name": "@mgcrea/mcp-apple-messages",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for the macOS Apple Messages app",
+  "keywords": [
+    "apple",
+    "apple-messages",
+    "chat",
+    "imessage",
+    "macos",
+    "mcp",
+    "messages",
+    "model-context-protocol"
+  ],
+  "homepage": "https://cupertino.mgcrea.io",
+  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
+  "license": "MIT",
+  "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
+    "directory": "packages/messages"
+  },
+  "bin": {
+    "apple-messages-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@mgcrea/mcp-apple-contacts": "workspace:^",
+    "@mgcrea/mcp-apple-core": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
