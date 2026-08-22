@@ -32,11 +32,18 @@ through `astro:assets`, so a clone that has not just run a capture still has to 
 without `git lfs pull` gets 131-byte pointer files still named `.png`, and the build then fails
 inside sharp complaining about the image format rather than about the checkout.
 
-The hand-drawn macOS mocks — `Activity.astro`, `FdaPane.astro`, `MenuBar.astro`, `Status.astro` —
-are **not** superseded by these. Each is drawn because it needs something a capture cannot give it:
-content that differs between two states, a layout that reflows on a phone, or a surface `appshot`
-cannot photograph at all (a menu-bar dropdown is a high-layer panel, not an ordinary window). Keep
-them honest against the captures rather than replacing them.
+The hand-drawn macOS mocks — `Activity.astro`, `MenuBar.astro`, `Status.astro` — are **not**
+superseded by these. Each is drawn because it needs something a capture cannot give it: content that
+differs between two states, a layout that reflows on a phone, or a surface `appshot` cannot
+photograph at all (a menu-bar dropdown is a high-layer panel, not an ordinary window). Keep them
+honest against the captures rather than replacing them.
+
+`Hero.astro`'s card is a third thing again, and the distinction matters. It is a **diagram**, not a
+mock: one prompt and the calls it became, a view the app does not render anywhere. So it is drawn in
+the page's own card idiom — `rounded-[16px] border border-rule bg-bg-2` — and never in window
+chrome, which would promise a pane that does not exist. `FdaPane.astro` used to hold that slot with
+a Full Disk Access before/after; it was retired because `Grant.astro` already makes that argument,
+two sections further down and with the context to parse it.
 
 ## There is one theme
 

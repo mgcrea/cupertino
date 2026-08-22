@@ -1,14 +1,19 @@
 ---
-import { DOWNLOAD, HOSTS, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import { DOWNLOAD, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import { HERO_TURN, surfaceName } from "../data/examples";
 import Button from "./Button.astro";
-import FdaPane from "./FdaPane.astro";
+import SurfaceGlyph from "./SurfaceGlyph.astro";
 
 /** Each one is a section further down, so the strip is a table of contents. */
 const CLAIMS = [
   { label: "one grant", href: "#permissions" },
   { label: "writes off by default", href: "#tools" },
   { label: "every call visible", href: "#activity" },
-  { label: "four surfaces", href: "#surfaces" },
+  // Was "four surfaces". A hand-written count is the thing this site forbids
+  // everywhere else — see the SOCIAL_CARD note in config.ts — and breadth is a
+  // comparison this product loses anyway (docs/alternatives.md). What replaces
+  // it is a claim the reader can go and check.
+  { label: "no phone-home", href: "#status" },
 ] as const;
 ---
 
@@ -40,19 +45,29 @@ const CLAIMS = [
       <h1
         class="m-0 font-display text-[clamp(38px,5.6vw,64px)] leading-[1.02] font-semibold tracking-[-0.045em] text-balance"
       >
-        Four apps hold your whole disk.<br /><span class="text-accent">It should be one.</span>
+        Put your agent to work<br /><span class="text-accent"
+          >in your everyday Apple apps.</span
+        >
       </h1>
 
       <p class="m-0 max-w-[52ch] text-[16.5px] leading-[1.62] text-pretty text-fg-dim">
-        Cupertino is a menu-bar app that lets Claude read Mail, Notes, Reminders and Calendar on your Mac.
-        Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to
-        every editor that happens to spawn a server.
+        Cupertino puts the Apple apps on your Mac behind MCP, for any agent that speaks it. One Full
+        Disk Access grant, held by a signed menu-bar app you can watch — instead of one for every
+        editor that happens to spawn a server.
       </p>
 
-      {/* The grant is the strongest argument and it was, until now, the only one
-          above the fold. A reader who bounces here should have seen that this is
-          a permission story AND a control story: the other three are what the
-          app does once it holds the grant, and each has its own section below. */}
+      {/* The H1 used to be "Four apps hold your whole disk. It should be one."
+          It is a better sentence than this one and it is still on the page, as
+          the #permissions header, where the reader has the context to parse it.
+          Above the fold it failed twice: it hard-codes a count the price ladder
+          will invalidate, and read cold it parses as "Mail and Notes hold my
+          disk" — it is the punchline to an argument the page has not made yet.
+
+          The grant is the reason to pick this over the free ones; it is not the
+          reason to want the category. Full Disk Access is not a capability —
+          grant it to Terminal and you get a 54-table schema and a 74-second
+          query. So capability leads and the grant follows in the same breath,
+          and the chips below say this is a control story too. */}
       <ul class="m-0 flex list-none flex-wrap gap-x-2.5 gap-y-2 p-0">
         {
           CLAIMS.map((c) => (
@@ -69,8 +84,9 @@ const CLAIMS = [
       </ul>
 
       {/* Download leads HERE and Buy leads in the closing plate, deliberately.
-          A reader at the top has been told the grant argument and nothing else;
-          the honest next step for them is the trial, which costs them nothing
+          A reader at the top has been told what it does and why the grant is
+          held here; the honest next step for them is the trial, which costs
+          them nothing
           and answers the only question they actually have — does this work
           against MY mail. By the closing plate they have read the latency
           numbers, the write gate and the price ladder, and the order flips.
@@ -112,29 +128,67 @@ const CLAIMS = [
       </div>
     </div>
 
-    <!-- The before/after. Four grants collapsing to one, in the pane the reader
-         has actually seen.
+    {/* The H1's promise, made mechanical: a sentence a person would actually
+        type, and the calls Cupertino served for it.
 
-         Stacked below `sm`: a row of "Visual Studio Code" plus its toggle has a
-         min-content width of roughly 205px, so two panes side by side cannot
-         fit a phone however hard flex-1 tries — they simply push the page wider
-         than the viewport. -->
-    <div class="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:gap-6">
-      <FdaPane
-        rows={HOSTS}
-        caption={`${HOSTS.length} grants · ${HOSTS.length} whole disks`}
-        class="sm:flex-1"
-      />
-      <span class="flex-none self-center text-[20px] text-fg-muted" aria-hidden="true">
-        <span class="sm:hidden">↓</span><span class="hidden sm:inline">→</span>
-      </span>
-      <FdaPane
-        rows={["Cupertino"]}
-        caption="1 grant · every host"
-        branded
-        tone="ok"
-        class="sm:flex-1 sm:self-start"
-      />
+        This was a before/after of the Full Disk Access pane — the previous
+        headline ("Four apps hold your whole disk. It should be one.") drawn as
+        pixels, and left behind when the headline was rewritten above. Two
+        things were wrong with keeping it. `Grant.astro` makes that argument
+        two sections down, larger and to a reader who by then has the context
+        to parse it, so the hero was spending its one visual asset previewing a
+        later section — the same waste the SOCIAL_CARD note in config.ts
+        forbids. And it put nothing Apple-app-shaped above the fold: the whole
+        picture was a settings pane listing code editors, on a page whose
+        subject is Mail, Notes, Reminders, Calendar and Contacts, and beneath a
+        social card that leads with exactly those five names.
+
+        The grant did not leave the fold. It is in the paragraph, in the `one
+        grant` chip, and in the caption at the bottom of this card. It is just
+        not the picture any more.
+
+        Drawn as a card, not as window chrome. Nothing in the app renders this
+        view, and dressing a diagram as a window would promise a pane that does
+        not exist — `Activity.astro` gets the chrome because it is drawing
+        something real. It is also what keeps the two apart: no traffic lights,
+        no timestamps, no client column here.
+
+        Prompt and rows both come from `data/examples.ts`, which fails the
+        build if a name is not a registered READ tool of a shipped surface. The
+        caption is only allowed to say "reads only" because of that check. */}
+    <div
+      class="rounded-[16px] border border-rule bg-bg-2 p-6 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)] sm:p-7"
+    >
+      <p class="m-0 flex gap-3 text-[16.5px] leading-[1.55] text-pretty text-fg">
+        {/* A literal, matching the Examples cards below — the same mark means
+            the same thing in both places: this part is what you typed. */}
+        <span class="mt-[3px] flex-none font-mono text-accent" aria-hidden="true">›</span>
+        <span>{HERO_TURN.prompt}</span>
+      </p>
+
+      <p class="mono m-0 mt-5 border-t border-rule pt-4">What your agent called</p>
+
+      {/* No answer, and there must not be one. What comes back is the model's
+          work, not Cupertino's, and a mocked-up reply would advertise someone
+          else's output as this product's. */}
+      <ul class="mt-3 mb-0 flex list-none flex-col gap-2.5 p-0">
+        {
+          HERO_TURN.calls.map((call) => (
+            <li class="flex items-center gap-2.5">
+              <span class="flex size-[15px] flex-none items-center justify-center text-accent">
+                <SurfaceGlyph id={call.surface} size={15} />
+              </span>
+              <span class="sr-only">{surfaceName(call.surface)}</span>
+              <span class="flex-1 truncate font-mono text-[12.5px] text-fg-dim">{call.tool}</span>
+              <span class="mono flex-none !text-ok">read</span>
+            </li>
+          ))
+        }
+      </ul>
+
+      <p class="mono m-0 mt-5 border-t border-rule pt-4">
+        reads only · one grant · nothing left the Mac
+      </p>
     </div>
   </div>
 </section>

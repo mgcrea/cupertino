@@ -2,6 +2,7 @@
 import Activity from "../components/Activity.astro";
 import BodySearch from "../components/BodySearch.astro";
 import Cta from "../components/Cta.astro";
+import Examples from "../components/Examples.astro";
 import Footer from "../components/Footer.astro";
 import Grant from "../components/Grant.astro";
 import Hero from "../components/Hero.astro";
@@ -14,11 +15,17 @@ import Status from "../components/Status.astro";
 import Surfaces from "../components/Surfaces.astro";
 import ToolMarquee from "../components/ToolMarquee.astro";
 import WriteGate from "../components/WriteGate.astro";
-import { APP_NAME, DOWNLOAD, DOCS, PRICING, REPO_URL, SHIPPED, SITE_URL } from "../config";
+import { APP_NAME, DOWNLOAD, DOCS, PRICING, REPO_URL, SHIPPED, SITE_URL, SPELLED } from "../config";
 import { SURFACES, toolCount } from "../data/surfaces";
 import Layout from "../layouts/Layout.astro";
 
 const total = SURFACES.reduce((n, s) => n + toolCount(s), 0);
+
+/** Both read from the data. The description used to spell out the four by hand. */
+const surfaceList = SURFACES.map((s) => s.name)
+  .join(", ")
+  .replace(/, ([^,]+)$/, " and $1");
+const surfaceCount = SPELLED[SURFACES.length] ?? SURFACES.length;
 
 /**
  * SoftwareApplication rather than Product: nothing is for sale yet, and a price
@@ -48,7 +55,7 @@ const schema = {
   url: SITE_URL,
   codeRepository: REPO_URL,
   license: DOCS.appLicense,
-  description: `MCP servers for Apple Mail, Notes, Reminders and Calendar — ${total} tools across four surfaces — and the signed menu-bar app that holds their one Full Disk Access grant.`,
+  description: `MCP servers for Apple ${surfaceList} — ${total} tools across ${surfaceCount} surfaces — and the signed menu-bar app that holds their one Full Disk Access grant.`,
   author: { "@type": "Person", name: "Olivier Louvignes" },
   ...(SHIPPED
     ? {
@@ -69,6 +76,10 @@ const schema = {
   <Nav />
   <main>
     <Hero />
+    {/* Directly under the hero: the H1 promises an agent put to work, and this
+        is the section that says what that means before the page starts arguing
+        about permissions. */}
+    <Examples />
     <MenuBar />
     <ToolMarquee />
     <Grant />

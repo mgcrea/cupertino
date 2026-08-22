@@ -34,8 +34,12 @@ export const DOCS = {
  */
 export const X_HANDLE = "@mgcrea";
 
-/** Small counts are spelled out; a digit mid-sentence reads as a spec sheet. */
-const SPELLED = ["no", "one", "two", "three", "four", "five", "six", "seven"];
+/**
+ * Small counts are spelled out; a digit mid-sentence reads as a spec sheet.
+ * Exported because headings need it too: the Surfaces heading used to open with
+ * a literal "Four", which is exactly the drift this file exists to prevent.
+ */
+export const SPELLED = ["no", "one", "two", "three", "four", "five", "six", "seven"];
 
 /** "Mail, Notes, Reminders and Calendar" — however many there turn out to be. */
 const surfaceList = SURFACES.map((s) => s.name)
@@ -50,11 +54,24 @@ const surfaceList = SURFACES.map((s) => s.name)
  * They deliberately do not repeat the page title. X renders og:title and
  * og:description as text beneath the image, so a card that restates the title
  * spends its one visual asset saying something already on screen. The title
- * carries the argument ("Four apps hold your whole disk"); these carry what the
- * thing *is*.
+ * carries the promise ("Put your agent to work in your everyday Apple apps");
+ * these carry the specifics it leaves out — which apps, and what it costs you
+ * in permissions.
+ *
+ * It said "for Claude" until the hero stopped naming a host. Claude is the
+ * biggest MCP host and it is still not the only one, and a card that names it
+ * argues against the servers being host-agnostic, which is the thing that makes
+ * them worth adopting.
  *
  * `alt` is the accessible description X and Mastodon both expose, capped at 420
  * characters. It describes the picture, not the product.
+ *
+ * There is no `ground` here any more. The card is composed on the same gradient
+ * the App Store plates are, read by `scripts/generate-icons.mjs` straight out of
+ * `apps/apple/Screenshots/screenshots.config.json` — so changing the plate there
+ * changes the card, and the two cannot quote different grounds at each other.
+ * It used to be a flat `#0b0c0f` stated here, which was true of the page but had
+ * stopped being true of everything else the brand puts a product visual on.
  *
  * The surfaces are read from `data/surfaces.ts` rather than typed out, for the
  * reason CLAUDE.md gives about every other count on this site: the price ladder
@@ -62,11 +79,9 @@ const surfaceList = SURFACES.map((s) => s.name)
  * a claim the product no longer matches.
  */
 export const SOCIAL_CARD = {
-  headline: `${surfaceList}, for Claude`,
+  headline: `${surfaceList}, for any agent`,
   subhead: `One Full Disk Access grant instead of ${SPELLED[SURFACES.length] ?? SURFACES.length}`,
-  alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${surfaceList}, for Claude”.`,
-  /** Matches `--color-bg` in global.css: the card is the page's own background. */
-  ground: "#0b0c0f",
+  alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${surfaceList}, for any agent”.`,
   width: 1200,
   height: 630,
 } as const;
@@ -234,7 +249,7 @@ export const PRICING = {
    */
   refundDays: 30,
   ladder: [
-    { price: "$14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar" },
+    { price: "$14.99", when: "At launch", covers: "Mail, Notes, Reminders, Calendar, Contacts" },
     { price: "$24.99", when: "When Messages ships", covers: "+ Messages" },
     { price: "$34.99", when: "When Safari ships", covers: "+ Safari" },
   ],

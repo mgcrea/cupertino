@@ -13,10 +13,23 @@ export interface Props {
   schema?: SchemaObject | SchemaObject[];
 }
 
+/**
+ * The title tracks the H1, so the tab, the search result and the page all make
+ * the same promise. It is 61 characters, which is about where Google truncates
+ * — do not lengthen it to squeeze "MCP servers" in as well. That phrase is what
+ * a searcher types, and it is carried by the description below, by the JSON-LD
+ * in `pages/index.astro`, and by the repo and npm listings, which are what will
+ * actually rank for it.
+ *
+ * Neither string names a host any more. Claude is the biggest MCP host and it
+ * is not the only one, and the servers being host-agnostic is the thing that
+ * makes them worth adopting — a title that says "for Claude" argues the
+ * opposite in the one line every share and every search result shows.
+ */
 const {
-  title = "Cupertino — Four apps hold your whole disk. It should be one.",
+  title = "Cupertino — put your agent to work in your everyday Apple apps",
   description =
-    "A macOS menu-bar app that lets Claude read Mail, Notes, Reminders and Calendar on your Mac. Full Disk Access is a single, indivisible grant — so give it to one signed app instead of to every editor that happens to spawn a server.",
+    "MCP servers for the Apple apps already on your Mac, for any agent that speaks MCP. One Full Disk Access grant, held by a signed menu-bar app you can watch — instead of one for every editor that happens to spawn a server.",
   ogImage = "/og-image.png",
   ogImageAlt = SOCIAL_CARD.alt,
   schema,

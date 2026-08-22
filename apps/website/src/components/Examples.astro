@@ -1,0 +1,65 @@
+---
+/**
+ * The capability half of the hero's promise, immediately below it.
+ *
+ * The prompts and their rules live in `data/examples.ts`; this file only draws
+ * them. Nothing here hard-codes a surface name — the badges come from `uses`,
+ * so a prompt that names an unshipped surface fails the build in the data file
+ * rather than rendering here.
+ */
+import { EXAMPLES, surfaceName } from "../data/examples";
+import SectionHeader from "./SectionHeader.astro";
+import SurfaceGlyph from "./SurfaceGlyph.astro";
+---
+
+<section id="examples" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="In use" heading="What you actually<br />ask for.">
+    Every one of these carries a constraint — an account, a date bound, a filter. That is the part a
+    shell script gets slowly or gets wrong, and the reason a server earns its place: it holds what
+    the model would otherwise have to re-derive every session.
+  </SectionHeader>
+
+  <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2">
+    {
+      EXAMPLES.map((e) => (
+        <article class="flex flex-col gap-4 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
+          <p class="m-0 flex gap-3 text-[16.5px] leading-[1.55] text-pretty text-fg">
+            {/* A literal, not `&rsaquo;` — an entity inside a JSX-like
+                expression is one more thing that can be escaped rather than
+                rendered, and this one is decoration. */}
+            <span class="mt-[3px] flex-none font-mono text-accent" aria-hidden="true">
+              ›
+            </span>
+            <span>{e.prompt}</span>
+          </p>
+
+          <div class="mt-auto flex flex-wrap items-center gap-2 pt-1">
+            {e.uses.map((id) => (
+              <span class="mono flex items-center gap-1.5 rounded-full border border-rule-2 py-[4px] pr-2.5 pl-2 !text-fg-dim">
+                <span class="flex size-[15px] items-center justify-center text-accent">
+                  <SurfaceGlyph id={id} />
+                </span>
+                {surfaceName(id)}
+              </span>
+            ))}
+            {e.writes && (
+              <span class="mono rounded-full border border-rule-2 px-2.5 py-[4px]">
+                needs the write gate
+              </span>
+            )}
+          </div>
+
+          <p class="m-0 border-t border-rule pt-3.5 text-[13px] leading-[1.6] text-fg-muted">
+            {e.proves}
+          </p>
+        </article>
+      ))
+    }
+  </div>
+
+  <p class="reveal mt-8 border-t border-rule pt-6 text-[14px] text-fg-muted">
+    <span class="text-fg-dim">Writes are off until you turn them on, per surface</span> — and the
+    toggle decides whether the mutating tools are registered at all, so an agent with writes off is
+    never told they exist.
+  </p>
+</section>

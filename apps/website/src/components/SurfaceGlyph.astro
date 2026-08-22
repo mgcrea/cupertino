@@ -20,7 +20,7 @@
  * They read as a set, which the four real icons emphatically do not.
  */
 export interface Props {
-  id: "mail" | "notes" | "reminders" | "calendar";
+  id: "mail" | "notes" | "reminders" | "calendar" | "contacts";
   size?: number;
   class?: string;
 }
@@ -63,6 +63,17 @@ const { id, size = 18, class: className } = Astro.props;
         <circle cx="5.75" cy="7" r="1.75" fill="currentColor" stroke="none" />
         <circle cx="5.75" cy="13" r="1.75" />
         <path d="M9.75 7h5M9.75 13h5" />
+      </>
+    )
+  }
+  {
+    id === "contacts" && (
+      <>
+        {/* A person card: a head and shoulders inside a bounded record, which is
+            what an address book entry is. Not Apple's silhouette. */}
+        <rect x="2.5" y="3.5" width="15" height="13" rx="3" />
+        <circle cx="10" cy="8.75" r="2.15" />
+        <path d="M6.4 13.9a3.9 3.9 0 0 1 7.2 0" />
       </>
     )
   }

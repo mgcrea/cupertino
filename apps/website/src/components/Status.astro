@@ -1,5 +1,6 @@
 ---
-import { DOCS, REPO_URL } from "../config";
+import { DOCS, REPO_URL, SPELLED } from "../config";
+import { SURFACES } from "../data/surfaces";
 
 /**
  * Deliberately the plainest block on the page. Everything here is a claim the
@@ -9,7 +10,7 @@ import { DOCS, REPO_URL } from "../config";
 const rows = [
   {
     k: "Servers",
-    v: "Open source, MIT. All four run from source today.",
+    v: `Open source, MIT. All ${SPELLED[SURFACES.length] ?? SURFACES.length} run from source today.`,
     href: REPO_URL,
   },
   {
@@ -38,7 +39,9 @@ const rows = [
 ] as const;
 ---
 
-<section class="wrap py-[96px]">
+<!-- Anchored because the hero's "no phone-home" chip points here, and the
+     Network row is the whole of that claim — exception included. -->
+<section id="status" class="wrap scroll-mt-20 py-[96px]">
   <div class="mono mb-8">Status</div>
   <dl class="m-0 grid grid-cols-1 gap-0">
     {
