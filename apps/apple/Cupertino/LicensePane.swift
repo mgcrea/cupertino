@@ -70,34 +70,66 @@ struct LicensePane: View {
     // servers are running — the gate will already have stopped starting them.
     // Fifteen seconds is comfortably inside the minute the label rounds to.
     TimelineView(.periodic(from: .now, by: 15)) { _ in
-      VStack(alignment: .leading, spacing: 4) {
-        switch Entitlement.current {
-        case .licensed(let license):
-          Label("Licensed to \(license.email)", systemImage: "checkmark.seal")
-            .foregroundStyle(.green)
-          Text(
-            "Licence \(license.id) · covers \(license.major).x · issued \(day(license.issuedAt))"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        case .trial:
-          Label("Trial · \(Trial.remainingText)", systemImage: "clock")
-            .foregroundStyle(.blue)
-          trialExplanation
-        case .refused(let reason):
-          Label("Unlicensed", systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.orange)
-          Text(reason)
+      // Read once. The badge and the words beside it are two renderings of one
+      // answer, and a trial that ended between two reads of
+      // `Entitlement.current` would have them contradict each other — a blue
+      // clock next to a sentence saying nothing is running.
+      let entitlement = Entitlement.current
+
+      HStack(alignment: .top, spacing: 14) {
+        badge(for: entitlement)
+
+        VStack(alignment: .leading, spacing: 4) {
+          switch entitlement {
+          case .licensed(let license):
+            Text("Licensed to \(license.email)")
+              .foregroundStyle(.green)
+            Text(
+              "Licence \(license.id) · covers \(license.major).x · issued \(day(license.issuedAt))"
+            )
             .font(.caption)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-          explanation
-          trialOffer
+          case .trial:
+            Text("Trial · \(Trial.remainingText)")
+              .foregroundStyle(.blue)
+            trialExplanation
+          case .refused(let reason):
+            Text("Unlicensed")
+              .foregroundStyle(.orange)
+            Text(reason)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            explanation
+            trialOffer
+          }
         }
       }
     }
     .id(revision)
     .textSelection(.enabled)
+  }
+
+  /// The glyph, alone in a column to the left of everything the state has to
+  /// say — rather than inline with the first line, where it used to sit and
+  /// where it could never be taller than one line of text.
+  ///
+  /// Filled, because a filled symbol reads as a state where an outlined one
+  /// reads as a control nobody has switched on yet. Fixed width, because a
+  /// triangle is narrower than a seal and without it every sentence in the
+  /// block shifted sideways the moment a licence expired.
+  private func badge(for entitlement: Entitlement) -> some View {
+    let (symbol, tint): (String, Color) =
+      switch entitlement {
+      case .licensed: ("checkmark.seal.fill", .green)
+      case .trial: ("clock.fill", .blue)
+      case .refused: ("exclamationmark.triangle.fill", .orange)
+      }
+
+    return Image(systemName: symbol)
+      .font(.system(size: 28))
+      .foregroundStyle(tint)
+      .frame(width: 32, alignment: .leading)
   }
 
   /// What a trial is, said where somebody is watching it run.
