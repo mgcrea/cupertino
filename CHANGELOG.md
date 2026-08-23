@@ -4,12 +4,35 @@ Notable changes to this repository. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and every published artifact follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.0`,
-`notes-v1.2.0`, `reminders-v1.2.0`, `core-v1.2.0` for the npm packages, and `app-v1.2.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.1`,
+`notes-v1.2.1`, `reminders-v1.2.1`, `core-v1.2.1` for the npm packages, and `app-v1.2.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 
 ## [Unreleased]
+
+## [1.2.1] - 2026-08-23
+
+A packaging fix: the MCP servers inside the app bundle now start.
+
+### Fixed
+
+- **The bundled servers start.** `@mgcrea/mcp-apple-core` resolves through its `exports` to
+  `dist/index.js`, which the release job never built — and an unresolvable specifier is not an
+  error to rolldown, it is an external one. It said `Module not found, treating it as an external
+dependency`, externalised the import and exited 0. The bare specifier then landed in a bundle
+  that carries no `node_modules`, so a surface could raise `ERR_MODULE_NOT_FOUND` on startup and
+  the MCP host would sit on `Connecting…` until it timed out. `make servers` now builds the
+  workspace packages it inlines rather than assuming something else already did.
+
+### Added
+
+- **`scripts/verify-servers.sh`.** Signing, notarisation and the network audit all describe the
+  bundle; none of them runs it. This asserts that no server imports a specifier the bundle does
+  not contain, then spawns each server under the runtime shipped beside it and makes it answer
+  `initialize`. It runs in `make servers` (static half, no runtime needed), before signing in
+  `make bundle`, and against the built artifact in CI. Point it at a `.app` you downloaded and it
+  answers the same question CI asked.
 
 ## [1.2.0] - 2026-08-22
 
@@ -150,7 +173,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...HEAD
+[1.2.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...app-v1.2.1
 [1.2.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...app-v1.2.0
 [1.1.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...app-v1.1.0
 [1.0.0]: https://github.com/mgcrea/mcp-cupertino/releases/tag/app-v1.0.0
