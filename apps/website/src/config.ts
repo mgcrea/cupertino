@@ -243,22 +243,28 @@ export const WIRING = {
 export const TRIAL = { minutes: 30 } as const;
 
 /**
- * The launch price, and the ladder published alongside it.
+ * The price. There is no ladder any more, and that is the change worth
+ * recording here.
  *
- * Rungs are tied to SHIPPED SURFACES, never to dates. A rise tied to the
- * calendar says latecomers pay more for the same thing, which earns resentment
- * and teaches people to wait for a sale; a rise tied to a surface says the price
- * went up because the product got bigger, which is true and is also the roadmap
- * restated as a reason to buy now. Two rules come with it — every rise is
- * announced before it happens, and it never goes back down. See
- * docs/licensing.md, which is the authority on all of this.
+ * There were three rungs, each tied to a surface shipping rather than to a date
+ * — the argument being that a rise tied to the calendar makes latecomers pay
+ * more for the same thing, while a rise tied to a surface says the product got
+ * bigger. Every rung then came due and every one was held: Calendar landed
+ * before launch, Contacts after it, then Messages and Safari together in 1.2.0.
+ * Four surfaces, no rise.
  *
- * **A surface landing is what MAY trigger a rise, not what forces one.** Three
- * have now landed into the opening rung rather than buying a rise — Calendar
- * before launch, then Contacts, then Messages — and the ladder is shorter each
- * time rather than the price being higher. That direction is the safe one: the
- * rules above bind a rise, and nothing binds holding one back. Moving a rung's
- * trigger to a LATER surface is always allowed; moving it earlier is not.
+ * So the ladder was retired rather than rewritten a fourth time. Two reasons, and
+ * only the second is about money. Every surface the probes mapped now ships, so
+ * there is nothing left to tie a rung to, and docs/licensing.md had already
+ * refused the alternative — "promising a price for a surface nobody has built
+ * yet is the kind of schedule that gets quietly dropped". And a rise is earned
+ * by demand as much as by scope; charging more before the audience arrives
+ * prices out the earliest buyers, who are the ones taking the risk.
+ *
+ * What that leaves is simpler and needs no maintenance: one price, covering
+ * every surface, fixed for every 1.x release once bought. Nothing on the page
+ * announces a future price, because there is no longer one to announce. See
+ * docs/licensing.md, which keeps the history.
  *
  * One purchase covers every 1.x release. 2.0 is a new purchase; there is no
  * subscription and nothing lapses.
@@ -295,16 +301,4 @@ export const PRICING = {
    * question and is asked second. See TRIAL and EULA §3.
    */
   refundDays: 30,
-  ladder: [
-    {
-      price: "$14.99",
-      when: "Now",
-      covers: "Mail, Notes, Reminders, Calendar, Contacts, Messages",
-    },
-    {
-      price: "$24.99",
-      when: "When Safari ships",
-      covers: "+ Safari — the full set the probes mapped",
-    },
-  ],
 } as const;

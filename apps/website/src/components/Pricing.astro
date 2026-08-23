@@ -1,12 +1,19 @@
 ---
 import { DOCS, DOWNLOAD, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
+import { SURFACES } from "../data/surfaces";
 import Button from "./Button.astro";
 import SectionHeader from "./SectionHeader.astro";
 
 /**
- * The price, and the two things that make it defensible rather than awkward:
- * the ladder is published in advance, and there are two separate ways to find
- * out whether this is for you before you commit.
+ * The price, and the two separate ways to find out whether this is for you
+ * before you commit.
+ *
+ * There WAS a published ladder here — three rungs, each tied to a surface
+ * shipping. It is gone, and the reason is worth keeping: every surface the
+ * probes mapped now ships, so each rung came due in turn and each was held
+ * rather than charged. A ladder whose rungs are all behind you is not a ladder,
+ * it is a price with a story attached. See docs/licensing.md, which records the
+ * retirement rather than quietly dropping it.
  *
  * Those two are not interchangeable and the copy must not blur them. The trial
  * answers "does this work against MY mail" — technical, asked first, and the
@@ -115,22 +122,10 @@ const included = [
     </div>
   </div>
 
-  <div class="mono mt-12 mb-6">The ladder, published in advance</div>
-  <dl class="m-0 grid grid-cols-1 gap-0">
-    {
-      PRICING.ladder.map((rung) => (
-        <div class="grid grid-cols-1 gap-1.5 border-t border-rule py-5 last:border-b sm:grid-cols-[120px_180px_1fr] sm:gap-8">
-          <dt class="text-[14px] font-medium text-fg">{rung.price}</dt>
-          <dd class="m-0 text-[14px] leading-[1.6] text-fg-dim">{rung.when}</dd>
-          <dd class="m-0 text-[14px] leading-[1.6] text-pretty text-fg-muted">{rung.covers}</dd>
-        </div>
-      ))
-    }
-  </dl>
-  <p class="mt-6 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-muted">
-    A rise is always tied to a surface landing, never to time passing — and once risen it does not
-    come back down. It works one way only: a surface can land without moving the price, and three
-    have, but the price never moves without one. Buying early is the whole of the discount.
+  <p class="mt-12 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-muted">
+    One price, and it covers all {SURFACES.length} surfaces — the whole set the probes mapped. There
+    is no ladder here any more and no rise announced: what a licence costs is what this page says it
+    costs on the day you read it, and buying it fixes your side of that for every 1.x release.
   </p>
 
   <p class="mt-10 mb-0 max-w-[62ch] text-[14px] leading-[1.65] text-pretty text-fg-dim">

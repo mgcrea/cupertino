@@ -346,16 +346,15 @@ mail from them" with total confidence. That is `b422f2b` — stop lying about wr
 failed — reintroduced on the read side, where it is harder to notice. A cap honest enough to be safe
 has to be loud, and a loud cap mid-conversation demos worse than a clean refusal.
 
-### Price, and why it goes up
+### Price
 
-The ladder is published in advance and tied to **shipped surfaces**, not to the calendar:
+**$14.99 / €14.99, once, for all seven surfaces.** One purchase covers every 1.x release; 2.0 is a
+separate purchase. Nothing lapses and nothing renews.
 
-| Price  | When         | Surfaces                                             |
-| ------ | ------------ | ---------------------------------------------------- |
-| $14.99 | now          | Mail, Notes, Reminders, Calendar, Contacts, Messages |
-| $24.99 | Safari ships | + Safari — the full set the probes mapped            |
+There is no price ladder any more. There was one, it is retired, and the record of it is below —
+deleting it would leave the site looking like it had never promised anything.
 
-The ladder is quoted in dollars because most of the audience is there, but **both currencies are set
+The price is quoted in dollars because most of the audience is there, but **both currencies are set
 explicitly** on the Stripe price via `currency_options` — the euro figure is not a conversion of the
 dollar one. Two reasons. Stripe's Adaptive Pricing only converts _out of_ a settlement currency, and
 this account settles in euro alone, so a dollar-only price would put an FX conversion on the seller
@@ -368,35 +367,55 @@ tax-exclusive and €14.99 VAT-inclusive, as each side is normally quoted. A US 
 more than a EU one at the same face value — roughly €13.6 against €12.49 — because the EU figure has
 20% French VAT taken out of it. Worth remembering before reading regional variance as a pricing bug.
 
-Calendar landed in `c740b4f`, before launch rather than after, so it sits in the opening rung rather
-than buying the first rise. The table was written a commit too early; this is the correction, and the
-top rung is one lower for it. A fourth at $49.99 is held rather than promised, because promising a
-price for a surface nobody has built yet is the kind of schedule that gets quietly dropped.
+#### The ladder, and why it was retired
 
-**Contacts and then Messages did the same thing, and the rise was held both times.** So the rule is
-worth stating in the direction that actually binds: a surface landing is what MAY trigger a rise, and
-the two rules above constrain a rise — announced in advance, never reversed. Nothing constrains
-holding one back. Moving a rung to a later surface is always allowed; moving it earlier never is.
+It was three rungs — $14.99 at launch, $24.99 when Messages shipped, $34.99 when Safari did — each
+tied to a **shipped surface** rather than to a date. The argument for that shape was good and is
+worth keeping even though the table is gone. Tying a rise to the calendar says latecomers pay more
+for the same thing, which earns resentment and teaches people to wait for a sale. Tying it to
+surfaces says the price went up because the product got bigger, which is true and is the roadmap in
+[surfaces.md](surfaces.md) restated as a reason to buy now. Published in advance it was a price
+ladder, a roadmap and genuine urgency in one table.
 
-The reason for holding it here is not that Messages was small — it is the largest surface in the set
-and the only one that needed a decoder. It is that a ladder exists to make buying early a good deal,
-and a rise landing on an audience that has barely started arriving does the opposite: it prices out
-the earliest buyers, who are the ones taking the risk on an unproven tool. The rung is still there,
-still published, still tied to a surface. It is tied to Safari now, and the top of the ladder came
-down by ten dollars rather than the bottom going up — the second time that has happened, and in both
-cases because the table had been written ahead of what the product had earned.
+Every rung then came due, and every one was held:
 
-Tying a rise to a date says latecomers pay more for the same thing, which earns resentment and teaches
-people to wait for a sale. Tying it to surfaces says the price went up because the product got bigger,
-which is both true and the roadmap in [surfaces.md](surfaces.md) restated as a reason to buy now.
-Published as a schedule it is a price ladder, a roadmap and genuine urgency in one table.
+| Surface  | Rung it should have moved | What happened                             |
+| -------- | ------------------------- | ----------------------------------------- |
+| Calendar | landed before launch      | folded into the opening rung              |
+| Contacts | landed after launch       | folded into the opening rung              |
+| Messages | $24.99                    | held; the rung was re-tied to Safari      |
+| Safari   | $34.99                    | held; shipped alongside Messages in 1.2.0 |
 
-Two rules come with it. **Every rise is announced before it happens** — a quiet increase reads as
-testing on people. And **it never goes back down**: retreating from $49.99 would insult everyone who
-paid it, so the ladder only ratchets.
+Four surfaces, no rise, and a table rewritten three times to keep saying so. At that point the
+ladder was documenting its own inaccuracy.
 
-The sour spot is the interaction with per-major pricing. Someone who buys 1.x at $14.99 meets 2.0 at
-whatever the ladder reached, and [EULA §2](../apps/apple/EULA) deliberately promises them nothing.
+**Two reasons it is retired rather than rewritten a fourth time.** Every surface the probes mapped
+now ships, so there is nothing honest left to tie a rung to — and the alternative was already refused
+here in the same breath as the original table: promising a price for a surface nobody has built yet
+is the kind of schedule that gets quietly dropped. And a rise is earned by demand as much as by
+scope. Messages is the largest surface in the set and the only one that needed a decoder; Safari
+added a whole second lane. Neither was small. But charging more before the audience arrives prices
+out the earliest buyers, who are the ones taking the risk on an unproven tool, and only one of scope
+and demand had actually shown up.
+
+So nothing about a future price is published now, in either direction. There is no announced rise and
+no promise never to raise it — a promise costs nothing to make today and binds a version of this
+project that does not exist yet. What is published is the price, and what a purchase fixes: every 1.x
+release, on every Mac you own, regardless of what the page says later.
+
+**If a ladder ever comes back, it comes back the same way it went: announced before it happens, and
+never applied to a licence already sold.** `PRICING.ladder` is gone from `apps/website/src/config.ts`
+along with the table that rendered it, so reinstating one means writing it again from this record —
+which is the right amount of friction for a decision that has been reversed three times.
+
+Two rules came with it and outlive it, because they are about conduct rather than about a table.
+**Every rise is announced before it happens** — a quiet increase reads as testing on people. And
+**a rise is never applied backwards**: a licence is fixed at what was paid for it, for the whole of
+that major version.
+
+The sour spot is the interaction with per-major pricing, and retiring the ladder does not remove it.
+Someone who buys 1.x at $14.99 meets 2.0 at whatever 2.0 costs, and [EULA §2](../apps/apple/EULA)
+deliberately promises them nothing.
 That is honest and it will still sting at 3.3×, so the D1 row records `amount_paid` and `price_id`
 from the very first sale — fair upgrade pricing later is impossible without knowing what people
 actually paid, and that number cannot be reconstructed after the fact.
@@ -481,7 +500,8 @@ Apple-shaped.
 Decided, and recorded above so they are not re-opened: one-time per major version, Stripe rather than
 a merchant of record, offline validation as a constraint rather than a preference, a thirty-minute
 in-memory trial that verifies rather than evaluates — with writes and reads both left ungated,
-a surface-tied price ladder from $14.99, and the succession commitments in [succession.md](succession.md).
+a flat $14.99 with the surface-tied ladder retired, and the succession commitments in
+[succession.md](succession.md).
 
 And the honest expectation, recorded so it is not mistaken for a forecast: macOS only, developer
 audience, MIT core. This is a modest revenue line and a strong reputation asset, not a business. The
