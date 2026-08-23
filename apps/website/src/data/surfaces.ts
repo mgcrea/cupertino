@@ -174,6 +174,30 @@ export const SURFACES: readonly Surface[] = [
     withoutGrant:
       "Nothing at all. Every read through Messages' own scripting interface fails, so this is the one surface with no second lane to degrade to.",
   },
+  {
+    id: "safari",
+    name: "Safari",
+    pkg: "@mgcrea/mcp-apple-safari",
+    read: [
+      "apple_safari_search_history",
+      "apple_safari_get_page",
+      "apple_safari_list_tabs",
+      "apple_safari_list_bookmarks",
+      "apple_safari_list_reading_list",
+      "apple_safari_diagnostics",
+    ],
+    // Empty on purpose, and the only empty column here. Opening a URL or adding
+    // to the Reading List navigates a real, visible browser, and no write on
+    // this surface was ever probed. There is also no `do JavaScript` tool: that
+    // verb needs a developer-menu toggle which is not a TCC grant and whose own
+    // state cannot be read, so shipping it would mean reporting a healthy
+    // surface whose most powerful capability silently fails. See docs/safari.md.
+    write: [],
+    pitch:
+      "History, live tabs and the Reading List. The one surface whose two lanes see different things rather than the same thing at different speeds.",
+    withoutGrant:
+      "Live tabs, and only those — the one thing in the whole bundle that works with no Full Disk Access at all. It needs an Automation grant instead.",
+  },
 ] as const;
 
 export const toolCount = (s: Surface) => s.read.length + s.write.length;

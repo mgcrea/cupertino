@@ -74,14 +74,35 @@ const surfaceList = SURFACES.map((s) => s.name)
  * stopped being true of everything else the brand puts a product visual on.
  *
  * The surfaces are read from `data/surfaces.ts` rather than typed out, for the
- * reason CLAUDE.md gives about every other count on this site: the price ladder
- * has Messages shipping, and the day it does, a hand-written "four" here becomes
- * a claim the product no longer matches.
+ * reason CLAUDE.md gives about every other count on this site. It has been worth
+ * it twice over: a hand-written "four" here would have been wrong the day
+ * Contacts shipped and wrong again at 1.2.0, in a picture nothing in CI looks
+ * at.
+ */
+const spelledSurfaces = SPELLED[SURFACES.length] ?? String(SURFACES.length);
+
+/**
+ * The two lines swapped jobs at seven surfaces, and the reason is mechanical:
+ * **`composeCard` does not fit text.** Both lines are a fixed font size, centred,
+ * with no measuring and no wrap — so a line that outgrows 1200px is clipped at
+ * both ends, silently, in a picture nothing in CI looks at. The enumerated
+ * headline already spanned nearly edge to edge at six names; Safari would have
+ * pushed it over.
+ *
+ * So the COUNT is the headline, where it costs 43 characters however many
+ * surfaces there are, and the NAMES moved to the subhead, which is 28px against
+ * the headline's 38px and has room for several more. Both still come from
+ * `data/surfaces.ts` rather than being typed out, which is the point: the card
+ * cannot fall behind what ships.
+ *
+ * "for any agent" is gone with the swap, and is not missed — the page title
+ * already carries the promise, and this card's job is the specifics the title
+ * leaves out: which apps, and what it costs in permissions.
  */
 export const SOCIAL_CARD = {
-  headline: `${surfaceList}, for any agent`,
-  subhead: `One Full Disk Access grant instead of ${SPELLED[SURFACES.length] ?? SURFACES.length}`,
-  alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${surfaceList}, for any agent”.`,
+  headline: `${spelledSurfaces[0]?.toUpperCase()}${spelledSurfaces.slice(1)} Apple apps, one Full Disk Access grant`,
+  subhead: surfaceList,
+  alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${spelledSurfaces} Apple apps, one Full Disk Access grant”, and the list ${surfaceList}.`,
   width: 1200,
   height: 630,
 } as const;

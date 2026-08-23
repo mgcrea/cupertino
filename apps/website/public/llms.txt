@@ -1,12 +1,12 @@
 # Cupertino
 
 > MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar,
-> Contacts and Messages — and the signed menu-bar app that holds their one Full Disk Access grant
-> instead of handing it to every editor.
+> Contacts, Messages and Safari — and the signed menu-bar app that holds their one Full Disk Access
+> grant instead of handing it to every editor.
 
-Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0: the
-signed app ships from GitHub releases, and the `@mgcrea/mcp-apple-*` packages are MIT but not on
-npm yet — the app carries them.
+Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
+1.2.0 as of August 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+packages are MIT, and apart from `-core` they are not on npm yet — the app carries them.
 
 ## The argument
 
@@ -38,15 +38,24 @@ npm yet — the app carries them.
   off no Apple Event is ever sent. Roughly 3% of messages across all history keep their text only
   in an archived blob that SQL cannot reach, and since Apple stopped writing the plain column in
   early 2026 that is ~100% of recent ones, so the server decodes them.
+- Safari — 6 tools, all always registered. `@mgcrea/mcp-apple-safari`. History, live tabs, bookmarks
+  and the Reading List, read-only. The one surface whose two lanes see almost disjoint things rather
+  than the same thing at different speeds: Apple Events sees what is open right now, the file lane
+  sees everything except that. `list_tabs` is the only tool in the bundle that works with no Full
+  Disk Access at all — it needs an Automation grant instead. There is no write tool and no
+  `do JavaScript` tool: the latter needs a developer-menu toggle that is not a TCC grant and whose
+  state cannot be read, so shipping it would mean reporting a healthy surface whose most powerful
+  capability silently fails.
 
 ## Price
 
 - $14.99 once, covering every 1.x release. Not a subscription, nothing lapses, and 2.0 is a separate
   purchase. EU buyers are quoted and charged €14.99, VAT included — that is not a conversion of the
   dollar figure, which is quoted tax-exclusive.
-- The ladder is published in advance and tied to shipped surfaces rather than dates: $24.99 when
-  Safari lands. It never goes back down. It also works one way only — a surface can land without
-  moving the price, and Calendar, Contacts and Messages all did; the price never moves without one.
+- There is no price ladder and no announced rise. There was one — three rungs tied to surfaces
+  shipping — and every rung came due and was held: Calendar, Contacts, Messages and Safari all landed
+  without moving the price. All seven surfaces now cost $14.99. If a rise ever happens it is
+  announced beforehand and never applied to a licence already sold.
 - A 30-minute trial, started by pressing a button and never armed on its own. Every surface at full
   function, with the write toggles behaving exactly as they will after paying. It is held in memory
   and never written to disk, so quitting and reopening starts another one; nothing prevents that and
