@@ -375,6 +375,12 @@ jobs:
           xcrun stapler validate "$app"
           spctl -a -vvv -t install "$app"
           scripts/audit-network.sh "$app"
+          # The gate the three checks above cannot be: they all describe the
+          # bundle, and a correctly signed, stapled, network-clean bundle whose
+          # servers raise ERR_MODULE_NOT_FOUND on startup passes every one of
+          # them. 1.0.0, 1.1.0 and 1.2.0 did. This one spawns each server under
+          # the runtime that ships beside it and makes it answer initialize.
+          scripts/verify-servers.sh "$app"
       - name: Checksum 🔢
         working-directory: apps/apple/.build
         run: shasum -a 256 Cupertino.zip | tee Cupertino.zip.sha256

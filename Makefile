@@ -200,12 +200,36 @@ audit: app ## Assert the built app cannot reach the network
 revocations: ## Rewrite the baked-in revocation list from D1
 	@node scripts/generate-revocations.mjs
 
-servers: ## Bundle the MCP servers self-contained (no node_modules at runtime)
+# The workspace packages the server bundles inline. NOT an optimisation, and not
+# something a previous command can be assumed to have done: `@mgcrea/mcp-apple-core`
+# resolves through its package.json `exports` to `./dist/index.js`, so an unbuilt
+# core is not a missing file to rolldown — it is an unresolvable specifier, which
+# rolldown externalises with a warning and a zero exit. The bare import then lands
+# in a bundle that has no node_modules to satisfy it.
+#
+# That is exactly how 1.0.0, 1.1.0 and 1.2.0 all shipped seven servers that died
+# on their first line: the release job installs and goes straight to the app,
+# never building the workspace, so core's `dist/` was never there. It passed
+# locally only because a previous `make build` had left one behind.
+#
+# `./packages/**` rather than `-r`: the website is a workspace member too, and
+# building it here would drag in LFS-tracked images for no reason.
+server-deps: ## Build the workspace packages the server bundles inline
+	@pnpm --filter "./packages/**" build
+
+servers: server-deps ## Bundle the MCP servers self-contained (no node_modules at runtime)
 	@pnpm exec tsdown --config apps/apple/tsdown.servers.config.ts -l warn
 	@for s in $(SURFACES); do \
 		python3 -c "import json;src=json.load(open('packages/$$s/package.json'));json.dump({'name':src['name'],'version':src['version'],'type':'module','private':True},open('$(STAGED)/servers/$$s/package.json','w'),indent=2)"; \
 	done
 	@echo "  staged $$(find $(STAGED)/servers -name '*.js' | wc -l | tr -d ' ') server files"
+	@# Static half only: `make servers` has no reason to depend on `make node`,
+	@# and the import check is what would have caught all three broken releases.
+	@# The smoke test runs in `bundle`, against the artifact that actually ships.
+	@scripts/verify-servers.sh $(STAGED) --static-only
+
+verify-servers: ## Assert a built artifact's servers resolve and start
+	@scripts/verify-servers.sh $(or $(APP_PATH),$(RELEASE_APP))
 
 # Vendored rather than resolved through SPM. Sparkle ships its SPM product as a
 # binaryTarget that points at this same zip, so the bytes are identical either
@@ -264,6 +288,11 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 	@ditto "$(STAGED)/servers" "$(RELEASE_APP)/Contents/Resources/servers"
 	@ditto "$(STAGED)/node" "$(RELEASE_APP)/Contents/Resources/node"
 	@install -m 644 apps/apple/EULA "$(RELEASE_APP)/Contents/Resources/EULA.txt"
+	@# Before signing, not after: a signature over a bundle whose servers cannot
+	@# start is precisely what shipped three times, and it is worth nothing. The
+	@# smoke test runs here because this is the first point at which the servers
+	@# and the runtime they will actually be spawned under sit side by side.
+	@scripts/verify-servers.sh "$(RELEASE_APP)"
 	@$(MAKE) --no-print-directory sign
 
 # Inner-out, and never in the other order: signing the bundle first and then
