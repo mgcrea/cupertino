@@ -151,6 +151,24 @@ echo "  Startup — each server answers initialize under its own runtime"
 
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify-servers","version":"1"}}}'
 
+# `timeout` is GNU coreutils. It is NOT on a stock macOS, and a developer who
+# has it from Homebrew cannot tell — the CI runner is where that shows up, which
+# is exactly the class of "works here, not there" this whole script exists to
+# close. perl ships with macOS and its alarm does the same job, so the fallback
+# is not a lesser path: it is the one that runs on the machine that builds
+# releases.
+run_limited() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+  fi
+}
+
 for s in $surfaces; do
   cli="$SERVERS/$s/dist/cli.js"
   [ -f "$cli" ] || continue
@@ -160,7 +178,7 @@ for s in $surfaces; do
   # and it would do so before answering — which reads as a failure of the server
   # rather than of the probe. The sleep is the wait for the reply.
   out=$({ printf '%s\n' "$INIT"; sleep 3; } |
-    timeout 20 "$NODE" "$cli" 2>"$err" | head -c 2000 || true)
+    run_limited 20 "$NODE" "$cli" 2>"$err" | head -c 2000 || true)
 
   if printf '%s' "$out" | grep -q '"protocolVersion"'; then
     version=$(printf '%s' "$out" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
