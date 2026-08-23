@@ -4,8 +4,8 @@ Notable changes to this repository. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and every published artifact follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.1.0`,
-`notes-v1.1.0`, `reminders-v1.1.0`, `core-v1.1.0` for the npm packages, and `app-v1.1.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.0`,
+`notes-v1.2.0`, `reminders-v1.2.0`, `core-v1.2.0` for the npm packages, and `app-v1.2.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 
@@ -150,6 +150,7 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...HEAD
+[1.2.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...app-v1.2.0
 [1.1.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...app-v1.1.0
 [1.0.0]: https://github.com/mgcrea/mcp-cupertino/releases/tag/app-v1.0.0
