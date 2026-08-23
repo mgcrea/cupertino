@@ -265,14 +265,20 @@ Four measurements are load-bearing in the code and each is pinned by a test:
 The lookup builds in **3 ms** over 947 phone keys and 295 email keys, so it is built on first use and
 kept for the life of the process.
 
-### Not registered as an app surface
+### Not registered as an app surface — superseded
 
-The package runs standalone (`node packages/contacts/dist/cli.js`) and is deliberately NOT in
-`Surfaces.swift`, the Makefile, CI or the website. Three reasons, all of which are decisions rather
-than oversights: the surface list is hardcoded in ten places and `surfaces.md` says to generate it
-from a manifest before adding a fifth; the published price ladder ties rungs to Messages and Safari,
-not to Contacts; and Contacts may be better shipped as part of Messages than as a surface of its own,
-since resolving handles is what it is for.
+**All three reasons below have since been answered, and Contacts is now a registered surface**: it is
+in `surfaces.json`, `Surfaces.swift`, the Makefile, CI and the website. Kept because the reasoning is
+what produced `surfaces.json` in the first place.
+
+At the time, the package ran standalone (`node packages/contacts/dist/cli.js`) and was deliberately
+NOT registered. Three reasons, all decisions rather than oversights: the surface list was hardcoded
+in ten places and `surfaces.md` said to generate it from a manifest before adding a fifth — Contacts
+was the fifth, and the manifest is what got built; the price ladder tied its rungs to Messages and
+Safari rather than to Contacts — that ladder has since been retired entirely, see
+[licensing.md](licensing.md); and Contacts looked like it might be better shipped as part of Messages
+than as a surface of its own, which is not how it went: `packages/messages` imports it as a library
+AND it ships as a surface, because resolving handles turned out to be useful on its own.
 
 ## Writes, added afterwards
 
