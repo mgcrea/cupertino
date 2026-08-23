@@ -316,7 +316,7 @@ measurements do not support that. What they support is below.
 | Notes     | 97 ms / 921            | 0.105 ms | attachments, scale | **yes**          |
 | Reminders | dictionary is complete | —        | tags, attachments  | **yes**          |
 
-Apple Events is a viable read path on two surfaces out of six. So:
+Apple Events is a viable read path on two surfaces out of seven. So:
 
 - **Reads go through the file lane.** For a new surface, do not build an Apple Events read lane at
   all. Messages, Calendar and Contacts get file-lane reads and nothing else. Calendar
@@ -362,8 +362,8 @@ once the file lane landed.
 **The measurements retired it, and it should stop being claimed.** It held for Notes (97 ms) and
 holds for Reminders. It never held for Messages, which has no read path at all. And it does not hold
 for Mail or Calendar: a 74-second search and a 3.4-second range query are not a trial, they are a
-broken product that happens to return the right answer. A promise three of six surfaces cannot keep
-is worse than no promise.
+broken product that happens to return the right answer. A promise three of seven surfaces cannot
+keep is worse than no promise.
 
 What replaces it is narrower and true: **with writes off, a surface needs no Automation grant at
 all.** `allowWrites` is off by default, so someone who never enables writes gets zero Automation
@@ -401,7 +401,14 @@ to "what did I just give Full Disk Access to".
 - **Quarantine on first exec.** The app is spawned by an MCP host and may never be opened by the
   user. Stapled notarization should satisfy Gatekeeper — test it on a machine that has never seen
   the bundle, because if it does not hold, the double-click path stops being a nicety.
-- **Scope.** Settled since 1.1.0: core and the five bundled surfaces are published, versioned
-  with the app rather than on their own count. `.release-it.json` keeps `npm.publish: false`
-  deliberately — release-it bumps and tags, and the `publish-npm` job does the publishing, so
-  a release cannot happen from a laptop without provenance.
+- **Scope.** Settled since 1.1.0: core and every bundled surface — seven of them as of 1.2.0 — are
+  in scope to publish, versioned with the app rather than on their own count. `.release-it.json`
+  keeps `npm.publish: false` deliberately — release-it bumps and tags, and the `publish-npm` job
+  does the publishing, so a release cannot happen from a laptop without provenance.
+
+  **In scope is not the same as published, and today only one of them is.** Measured 2026-08-23 with
+  `npm view @mgcrea/mcp-apple-<name> version`: `-core` is really on npm at 1.1.0; `-mail`, `-notes`,
+  `-reminders`, `-calendar` and `-contacts` carry only a `0.0.0-bootstrap` placeholder; `-messages`
+  and `-safari` are not on the registry at all, so those two names are not even reserved. Anything
+  that says the packages are published should say this instead until a `publish-npm` run has
+  actually gone through.

@@ -111,6 +111,14 @@ comparison to "188" and will keep doing so.
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away.
 
-**Published since 1.1.0.** The six `@mgcrea/mcp-apple-*` packages are on npm and the signed app
-ships from a Homebrew tap, so the distribution gap this section used to record against every
-project above is closed. What is left is reach, not availability.
+**Half published, and the half that matters here is not.** The signed app ships from GitHub releases
+and a Homebrew tap, so the app's distribution gap is closed. The packages' is not: measured
+2026-08-23, only `@mgcrea/mcp-apple-core` is really on npm (1.1.0). `-mail`, `-notes`, `-reminders`,
+`-calendar` and `-contacts` carry a `0.0.0-bootstrap` placeholder, and `-messages` and `-safari` are
+not on the registry at all — two unreserved names, which is worth fixing before someone else takes
+them.
+
+This section used to claim the gap was closed for both. It was written from the intent of the
+`publish-npm` job rather than from the registry, which is the same mistake it criticises the
+comparison table for. `npm view @mgcrea/mcp-apple-<name> version` settles it in one line; re-run it
+before restating the claim.
