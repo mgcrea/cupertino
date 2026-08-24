@@ -4,12 +4,41 @@ Notable changes to this repository. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and every published artifact follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.1`,
-`notes-v1.2.1`, `reminders-v1.2.1`, `core-v1.2.1` for the npm packages, and `app-v1.2.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.2`,
+`notes-v1.2.2`, `reminders-v1.2.2`, `core-v1.2.2` for the npm packages, and `app-v1.2.2` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 
 ## [Unreleased]
+
+## [1.2.2] - 2026-08-24
+
+Three fixes to how the app survives things going wrong around it.
+
+### Fixed
+
+- **The menu bar stops responding.** `StatusModel.refresh()` asked TCC about every Apple Events
+  surface synchronously, and SwiftUI runs `refresh()` inside a layout pass.
+  `AEDeterminePermissionToAutomateTarget` does not prompt when told not to, but not prompting is not
+  the same as not blocking: it is a synchronous IPC and can park on a semaphore indefinitely.
+  Measured on 1.2.1 build 192 — two samples 60 seconds apart with the same stack, 2396 of 2396
+  samples, 11 seconds of CPU across 11 hours. The run loop never came back, so clicks did nothing
+  and no bridge could finish a handshake. The permission read now happens off the main thread and
+  publishes back, so a stalled answer leaves the previous glyph on screen instead of freezing the
+  app.
+- **A bridge could abort while reporting a broken pipe.** `warn` wrote through
+  `-[NSFileHandle writeData:]`, which reports a failed write by raising an Objective-C exception
+  rather than returning an error — and Swift cannot catch it. An MCP host that exits closes stdout,
+  the socket and stderr together, so the run that most needed a diagnostic was exactly the run where
+  emitting it killed the relay. `warn` and `hostLog` now use `write(2)` and drop the line rather
+  than the process.
+- **Two copies of Cupertino no longer fight over the socket.** `openSocket` unlinked the socket path
+  unconditionally before binding. That clears a stale entry after a crash, and it also evicts a live
+  one: with a checkout's Debug build and the installed app both reachable from MCP config, whichever
+  started last took the path silently and left the other accepting connections nobody could reach —
+  no error anywhere, and a menu bar that looked healthy. The host now connects to the path first. An
+  answer means another copy is serving and this one refuses with a message that names the situation;
+  no answer means the entry really is stale and it is cleared as before.
 
 ## [1.2.1] - 2026-08-23
 
@@ -173,7 +202,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...HEAD
+[1.2.2]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...app-v1.2.2
 [1.2.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...app-v1.2.1
 [1.2.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...app-v1.2.0
 [1.1.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...app-v1.1.0

@@ -412,8 +412,8 @@ Every probe degrades rather than exits — an app that is not running, or a perm
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v1.2.1`,
-`reminders-v1.2.1`, `calendar-v1.2.1`, `core-v1.2.1`. The app is tagged `app-v1.2.1` and releases on its own lane —
+Releases are tagged per package, so a tag names what it publishes: `mail-v1.2.2`,
+`reminders-v1.2.2`, `calendar-v1.2.2`, `core-v1.2.2`. The app is tagged `app-v1.2.2` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 
