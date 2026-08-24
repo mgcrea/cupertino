@@ -198,15 +198,43 @@ final class StatusModel {
     location = .current
     hostError = ServerHost.shared.startupError
     diskAccess = Permissions.diskAccess()
-    // Only the surfaces that actually send an Apple Event. Asking TCC about a
-    // surface that never scripts anything would report it as "not yet asked"
-    // forever, and put an Allow… button on a permission nothing would use.
-    automation = Dictionary(
-      uniqueKeysWithValues: Surface.all
-        .filter(\.usesAppleEvents)
-        .map { ($0.id, Permissions.automation(for: $0.bundleID)) })
     clients = Dictionary(
       uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
+    refreshAutomation()
+  }
+
+  /// The automation glyphs, gathered off the main thread — and never on it.
+  ///
+  /// `Permissions.automation(for:)` passes `askUserIfNeeded: false`, and that
+  /// was read as making it safe to call while painting a row. It does make it
+  /// safe from *prompting*. It does not make it safe from *blocking*:
+  /// `AEDeterminePermissionToAutomateTarget` is a synchronous IPC, and it can
+  /// park on a semaphore for as long as whatever is on the other end takes.
+  ///
+  /// MEASURED, 1.2.1 build 192, macOS 26.6: the call was reached through
+  /// `NSHostingView.layout()` — SwiftUI running `refresh()` inside a layout
+  /// pass — and never returned. Two samples 60 seconds apart showed the same
+  /// stack, 2396 of 2396 samples, with 11 seconds of CPU across 11 hours. The
+  /// run loop never came back, so the menu bar stopped answering clicks and no
+  /// bridge could complete a handshake. The app looked dead because, for every
+  /// purpose that reaches the main thread, it was.
+  ///
+  /// The rule this encodes: a TCC answer is a status glyph, and a status glyph
+  /// is never worth the run loop. A stalled reply now leaves the previous value
+  /// on screen instead of freezing the app.
+  ///
+  /// Only the surfaces that actually send an Apple Event. Asking TCC about a
+  /// surface that never scripts anything would report it as "not yet asked"
+  /// forever, and put an Allow… button on a permission nothing would use.
+  private func refreshAutomation() {
+    // Strings rather than `Surface` values, so what crosses to the detached
+    // task is unambiguously Sendable no matter what Surface grows later.
+    let targets = Surface.all.filter(\.usesAppleEvents).map { ($0.id, $0.bundleID) }
+    Task.detached {
+      let statuses = targets.map { ($0.0, Permissions.automation(for: $0.1)) }
+      let resolved = Dictionary(uniqueKeysWithValues: statuses)
+      await MainActor.run { self.automation = resolved }
+    }
   }
 
   func configure(_ client: ClientWiring.Client) {

@@ -28,10 +28,37 @@ import Foundation
 // Every write here already checks its return value.
 _ = signal(SIGPIPE, SIG_IGN)
 
-let stderrHandle = FileHandle.standardError
-
+// `write(2)`, not `FileHandle.write` — and this is the same argument as the
+// SIGPIPE line above, applied to the third stream.
+//
+// `-[NSFileHandle writeData:]` reports a failed write by RAISING AN
+// OBJECTIVE-C EXCEPTION, which Swift cannot catch. So the moment stderr went
+// away with the host, the diagnostic path became the crash path: `pump` noticed
+// its write had failed, called `warn` to say so, and `warn` aborted the process
+// on the way out.
+//
+// MEASURED: a SIGABRT in the wild, with `-[NSConcreteFileHandle writeData:]` ->
+// `objc_exception_throw` -> `abort` sitting directly above `warn(_:)` and
+// `closure #1 in pump(from:to:label:)`. An MCP host that exits closes all three
+// pipes at once, so the run that most needs to report something is exactly the
+// run where reporting it kills the relay.
+//
+// A raw write cannot throw. A failed one is ignored on purpose: there is
+// nowhere left to report that the reporting failed, and losing a log line beats
+// losing the process.
 func warn(_ message: String) {
-  stderrHandle.write(Data("[cupertino-bridge] \(message)\n".utf8))
+  let bytes = Array("[cupertino-bridge] \(message)\n".utf8)
+  var offset = 0
+  while offset < bytes.count {
+    let written = bytes.withUnsafeBufferPointer {
+      write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
+    }
+    if written <= 0 {
+      if errno == EINTR { continue }
+      return
+    }
+    offset += written
+  }
 }
 
 func die(_ message: String, code: Int32 = 1) -> Never {

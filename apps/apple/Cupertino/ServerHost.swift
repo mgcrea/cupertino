@@ -38,6 +38,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   enum HostError: LocalizedError {
     case pathTooLong(String)
     case socketFailed(String)
+    case alreadyServing(String)
 
     var errorDescription: String? {
       switch self {
@@ -45,6 +46,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return "socket path exceeds the unix address limit: \(path)"
       case .socketFailed(let detail):
         return "could not listen: \(detail)"
+      case .alreadyServing(let path):
+        return """
+          another copy of Cupertino is already serving \(path). \
+          Quit it before starting this one — most often it is a development \
+          build from a checkout and the copy in /Applications, both launched \
+          by bridges from different MCP entries.
+          """
       }
     }
   }
@@ -75,6 +83,24 @@ nonisolated final class ServerHost: @unchecked Sendable {
   }
 
   // Not `listen()`: that is `Darwin.listen`, which this method calls.
+  /// Is another host answering on this path right now?
+  ///
+  /// `connect(2)` is the only honest test. The file proves nothing — it outlives
+  /// the process that created it — and `stat` cannot tell a live socket from the
+  /// wreckage of one. A refused connection (ECONNREFUSED, or ENOENT for no file
+  /// at all) means nobody is listening and the entry is safe to clear; a
+  /// connection that succeeds belongs to a running Cupertino.
+  ///
+  /// Closed immediately: this is a probe, not a session. The far end sees a
+  /// connection that hangs up before sending a handshake, which `serve` already
+  /// has to tolerate — a bridge whose host quits mid-handshake does the same.
+  private func socketIsLive(_ address: sockaddr_un) -> Bool {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    return address.withSockaddr { connect(fd, $0, $1) } == 0
+  }
+
   private func openSocket() throws {
     let path = BridgeProtocol.socketPath
     guard let address = unixAddress(path) else { throw HostError.pathTooLong(path) }
@@ -84,6 +110,22 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     // A unix socket is a filesystem entry that outlives a crash, so a stale one
     // from a previous run would make bind() fail with EADDRINUSE forever.
+    //
+    // But an unconditional unlink does not only clear stale entries — it evicts
+    // LIVE ones. Two copies of Cupertino share this path (a checkout's Debug
+    // build and /Applications), and the MCP config reaches both: `-dev` entries
+    // point at the checkout, the rest at the installed app, and a bridge starts
+    // whichever its own bundle contains. Whoever started LAST used to win
+    // silently, and the earlier one went on accepting connections on a path that
+    // no longer named it — a listener nobody could reach, with no error anywhere
+    // and a menu bar that looked perfectly healthy.
+    //
+    // So ask first. A socket nobody answers is genuinely stale and safe to
+    // clear; one that accepts a connection belongs to a running host, and taking
+    // it is never the right move.
+    if socketIsLive(address) {
+      throw HostError.alreadyServing(path)
+    }
     unlink(path)
 
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)

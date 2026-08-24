@@ -51,7 +51,25 @@ final class LogStore {
 /// Also mirrored to stderr, which is where it shows up when the app is launched
 /// from a terminal instead of by LaunchServices — the difference between being
 /// able to debug the host and guessing at it.
+/// The stderr mirror goes through `write(2)` for the same reason the bridge's
+/// `warn` does: `-[NSFileHandle writeData:]` raises an Objective-C exception on
+/// a failed write, Swift cannot catch it, and the process aborts. The bridge was
+/// seen dying that way. A GUI app's stderr is usually a pipe LaunchServices
+/// keeps open, so this end is far less exposed — but "usually" is the whole
+/// problem, and a logging call is not something that should be able to take the
+/// app down. A dropped line is the correct failure here.
 func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
-  FileHandle.standardError.write(Data("[\(surface)] \(level.rawValue): \(text)\n".utf8))
+  let bytes = Array("[\(surface)] \(level.rawValue): \(text)\n".utf8)
+  var offset = 0
+  while offset < bytes.count {
+    let written = bytes.withUnsafeBufferPointer {
+      write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
+    }
+    if written <= 0 {
+      if errno == EINTR { continue }
+      break
+    }
+    offset += written
+  }
   Task { @MainActor in LogStore.shared.append(surface: surface, level: level, text) }
 }
