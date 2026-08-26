@@ -434,9 +434,21 @@ to "what did I just give Full Disk Access to".
   keeps `npm.publish: false` deliberately — release-it bumps and tags, and the `publish-npm` job
   does the publishing, so a release cannot happen from a laptop without provenance.
 
-  **In scope is not the same as published, and today only one of them is.** Measured 2026-08-23 with
-  `npm view @mgcrea/mcp-apple-<name> version`: `-core` is really on npm at 1.1.0; `-mail`, `-notes`,
-  `-reminders`, `-calendar` and `-contacts` carry only a `0.0.0-bootstrap` placeholder; `-messages`
-  and `-safari` are not on the registry at all, so those two names are not even reserved. Anything
-  that says the packages are published should say this instead until a `publish-npm` run has
-  actually gone through.
+  **In scope is not the same as published.** Measured 2026-08-26 with
+  `npm view @mgcrea/mcp-apple-<name> version`: `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
+  `-contacts` and `-messages` are on npm at 1.3.0; `-safari` holds a `0.0.0-bootstrap` placeholder
+  and is waiting on a `publish-npm` run for 1.3.0.
+
+  **Two things the 1.3.0 round taught, both worth keeping.** First, npm's OIDC trusted publishing
+  cannot be configured for a package that does not exist yet, so a brand-new name fails the token
+  exchange with a 404 and then falls through to an unauthenticated `PUT` that 404s again — which is
+  exactly how `-messages` and `-safari` failed while five siblings succeeded in the same round. The
+  `0.0.0-bootstrap` placeholder exists to break that circle: publish it once by hand under a
+  `bootstrap` dist-tag (never `latest`, or `npm i` serves a stub), configure the trusted publisher,
+  and every release after that goes through CI.
+
+  Second, and the reason the rule above is worth defending: `-messages@1.3.0` was published from a
+  laptop during that round and therefore **carries no provenance attestation**. npm will not let a
+  version be republished, so that build cannot be fixed — only the next release restores it. That is
+  the failure `npm.publish: false` is there to make impossible, and it happened anyway the moment a
+  publish was run by hand.

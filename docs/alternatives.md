@@ -111,12 +111,17 @@ comparison to "188" and will keep doing so.
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away.
 
-**Half published, and the half that matters here is not.** The signed app ships from GitHub releases
-and a Homebrew tap, so the app's distribution gap is closed. The packages' is not: measured
-2026-08-23, only `@mgcrea/mcp-apple-core` is really on npm (1.1.0). `-mail`, `-notes`, `-reminders`,
-`-calendar` and `-contacts` carry a `0.0.0-bootstrap` placeholder, and `-messages` and `-safari` are
-not on the registry at all — two unreserved names, which is worth fixing before someone else takes
-them.
+**Published, with one asterisk.** The signed app ships from GitHub releases and a Homebrew tap, and
+as of 2026-08-26 the packages ship too: measured with `npm view @mgcrea/mcp-apple-<name> version`,
+`-core`, `-mail`, `-notes`, `-reminders`, `-calendar`, `-contacts` and `-messages` are all on npm at
+1.3.0. `-safari` has its name reserved by a `0.0.0-bootstrap` placeholder and is waiting on a
+`publish-npm` run for 1.3.0 itself.
+
+The asterisk is `-messages`, and it is worth recording rather than quietly enjoying. Its 1.3.0 was
+published **from a laptop, so it carries no provenance attestation** — the one thing
+[distribution.md](distribution.md) keeps `npm.publish: false` in `.release-it.json` to prevent. npm
+forbids republishing a version, so that build cannot be re-signed; the next release is where the
+attestation comes back. Every other package here was published by the `publish-npm` job and has one.
 
 This section used to claim the gap was closed for both. It was written from the intent of the
 `publish-npm` job rather than from the registry, which is the same mistake it criticises the
