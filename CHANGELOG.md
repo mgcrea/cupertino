@@ -59,6 +59,40 @@ summary.
   prompt embeds its surface guide, so a host expanding one hands the model the reference with the
   task. Write-gated prompts follow the write tools exactly — with writes off they are not refused,
   they are not registered.
+- **Mail can rewrite an unsent draft.** `apple_mail_update_draft` replaces a saved draft's body.
+  Mail offers no way to edit one — `message.content` is read-only and the dictionary has no `open`
+  and no `edit` command — so the tool recreates the draft and deletes the original only once the
+  replacement is confirmed present in Drafts, never the other way round. It refuses rather than
+  doing damage: a reply or forward draft (recreating it would drop `In-Reply-To` and silently start
+  a new thread), a draft carrying attachments (they cannot be re-attached), and anything outside the
+  Drafts mailbox (deleting a sent message and writing a lookalike is not editing). In every refusal
+  the original is untouched. The dictionary evidence behind all of this is now written down in
+  [docs/mail-compose.md](docs/mail-compose.md), including that `outgoing message.html content` is
+  documented by Apple as "Does nothing at all (deprecated)" — a write-only property that accepts
+  every assignment and does nothing, which is the first thing anyone tries. Two further findings
+  came from probing a live Mail and contradict the dictionary outright:
+  `account.draftsMailbox` is declared readable and raises "Can't get object." on every account
+  (iCloud, IMAP, Exchange), so the Drafts mailbox is discovered through the unified All Drafts
+  mailbox instead of trusting the documented property; and a freshly saved draft's row id is
+  rewritten by sync within seconds, killing any reference held across it, so the original is
+  refetched by id immediately before deletion. `save()` itself works and lands in under 400 ms.
+- **`APPLE_<SURFACE>_EXPOSE_PROMPTS` turns the prompts and resources off**, defaulting to ON — the
+  opposite of `ALLOW_WRITES`, and deliberately. That one is a safety invariant; this is a cost knob
+  in the family of `MAX_RESULTS`, and modelling it on the write gate would muddy the gate that
+  matters. Measured across all seven servers with writes on, the prompt and resource listings come
+  to ~3.4k tokens against ~18.5k for the tool definitions — about 18% on top of a bill tools
+  dominate either way, with resource contents costing nothing until something reads one. One flag
+  covers both, because a prompt embeds its surface guide and prompts without resources would name a
+  `cupertino://…/guide` that nothing serves. With it off the capability is never declared, so a
+  client asking gets "method not found" rather than an empty list. `diagnostics` reports the flag on
+  every surface, since that tool is still registered when the resources are not.
+- **The app shows each surface's live tool, prompt and resource catalog.** A Capabilities card on
+  the surface detail pane spawns that surface's server and asks it directly — `initialize`,
+  `tools/list`, `prompts/list`, `resources/list` — rather than keeping a hand-written copy that could
+  drift from the servers it describes. Cached per surface AND per write setting, so flipping Allow
+  writes re-probes instead of showing a stale list: that is the point, because this is the only place
+  the app's long-standing claim that writes-off means the mutating tools (and now the prompts that end
+  in one) are never registered rather than refused is actually demonstrated, on screen, live.
 - **Mail can create a mailbox.** `apple_mail_create_mailbox` makes the folder that
   `apple_mail_move_messages` needs to move into — nested with `/`, or local under On My Mac when no
   account is named. Calling it for a name that already exists does nothing and says so, so it is
@@ -67,6 +101,13 @@ summary.
 
 ### Fixed
 
+- **The Activity window under-reported what an agent did.** `RequestObserver` named the tool behind
+  a `tools/call` and counted it, but let `prompts/get` and `resources/read` fall through as bare
+  method names that counted as nothing — so expanding a write workflow like `apple_mail_draft_reply`
+  logged less than a single read. Both now log what they reached for, and both count. The footer
+  under the log grew to match ("Tool, prompt and resource names only — never arguments, message
+  contents or results"): it is load-bearing rather than decoration, and the alternative to growing
+  it was leaving it false.
 - **The host stopped answering after about 64 sessions, silently.** `ServerHost` ran every blocking
   part of a session — the two pumps, the stderr drain, and the `group.wait()` that outlives them —
   on libdispatch's global queues, which are a bounded pool of roughly 64 threads per QoS. A blocked

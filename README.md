@@ -34,7 +34,7 @@ off cannot see that they exist.
 
 | Surface   | Package                                    | Status                                                          |
 | --------- | ------------------------------------------ | --------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 19 tools, search/read/attachments + gated writes  |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes  |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 12 tools, search/read/attachments + gated writes  |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes       |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes  |
@@ -297,6 +297,7 @@ is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_
 | Variable                 | Default       | What                                                           |
 | ------------------------ | ------------- | -------------------------------------------------------------- |
 | `*_ALLOW_WRITES`         | `false`       | register the mutating tools at all                             |
+| `*_EXPOSE_PROMPTS`       | `true`        | register the workflow prompts and `cupertino://` resources     |
 | `*_ACCOUNTS`             | all           | account allowlist (names or UUIDs) — the **read**-side control |
 | `*_ATTACHMENT_DIR`       | `~/Downloads` | the only directory attachments may be written into             |
 | `*_MAX_RESULTS`          | `200`         | cap on any listing                                             |
@@ -308,6 +309,12 @@ is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_
 that is what `*_ACCOUNTS` is for, and it is enforced in exactly one place so no query path escapes
 it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_BODY_MAX_BYTES`,
 `*_BODY_SCAN_MAX`, `*_BODY_SCAN_BYTES` and `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
+
+`*_EXPOSE_PROMPTS` is a cost knob, not a safety gate — which is why it defaults **on** while
+writes default off. Measured across all seven servers with writes enabled, the prompt and resource
+listings come to ~3.4k tokens against ~18.5k for the tool definitions, so about 18% on top of a
+bill that tools dominate either way; resource _contents_ cost nothing until something reads one. If
+context is the problem, running fewer servers is the far bigger lever.
 
 Calendar takes `APPLE_CALENDAR_WORKDAY_START`, `APPLE_CALENDAR_WORKDAY_END` and
 `APPLE_CALENDAR_WORKDAYS` (`mon,tue,wed,thu,fri`), which set the working day
