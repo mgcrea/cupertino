@@ -92,6 +92,73 @@ export const MOVE_MESSAGES = script(`
 `);
 
 /**
+ * Create a mailbox, on an account or in "On My Mac".
+ *
+ * ## Idempotent by inspection, not by catching a failure
+ *
+ * Mail does not refuse a second mailbox with a name one already has — depending
+ * on the account it will either no-op or make a duplicate, and a duplicate is
+ * not something a caller can undo from here. So this looks first and reports
+ * `created: false` for a name that is already taken, which also makes the tool
+ * safe to call before a move without a separate existence check.
+ *
+ * ## Why the result is re-read
+ *
+ * On an IMAP account the SERVER decides whether the name is acceptable and what
+ * it ends up called — a leading dot, a reserved prefix, a namespace the account
+ * cannot write to. `push` reports none of that, so the mailbox is looked up
+ * again afterwards and its absence is an error rather than a silent success.
+ */
+export const CREATE_MAILBOX = script(`
+  var acct = null;
+  if (p.accountUuid) {
+    acct = findAccount(M, p.accountUuid);
+    if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
+  }
+
+  // Local mailboxes hang off the application, account mailboxes off the account.
+  var find = function (name) {
+    if (acct) return resolveMailbox(acct, name);
+    var tops = M.mailboxes();
+    var lower = String(name).toLowerCase();
+    for (var i = 0; i < tops.length; i++) {
+      var box = tops[i];
+      if (String(prop(function () { return box.name(); }, "")).toLowerCase() === lower) return box;
+    }
+    return null;
+  };
+
+  var describe = function (box, created, note) {
+    var out = {
+      created: created,
+      name: prop(function () { return box.name(); }, p.name),
+      account: acct ? prop(function () { return acct.name(); }, null) : null,
+      accountUuid: acct ? prop(function () { return acct.id(); }, null) : null
+    };
+    if (note) out.note = note;
+    return out;
+  };
+
+  var existing = find(p.name);
+  if (existing) {
+    return ok(describe(existing, false, "A mailbox with that name already exists; nothing was created."));
+  }
+
+  var mb = M.Mailbox({ name: p.name });
+  if (acct) acct.mailboxes.push(mb); else M.mailboxes.push(mb);
+
+  var made = find(p.name);
+  if (!made) {
+    return err(
+      "MAILBOX_NOT_CREATED",
+      "Mail accepted the request but no mailbox named " + p.name + " exists afterwards. On an " +
+        "IMAP account the server can reject a name without reporting an error to AppleScript."
+    );
+  }
+  return ok(describe(made, true, null));
+`);
+
+/**
  * Delete messages.
  *
  * Mail's `delete` honours the account's "move deleted messages to Trash"

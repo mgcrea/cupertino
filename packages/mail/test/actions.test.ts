@@ -57,6 +57,26 @@ const harness = () => {
       }
       if (script.includes("M.OutgoingMessage(")) return { sent: false, draft: true };
       if (script.includes("M.forward(original")) return { sent: false, draft: true, mode: "reply" };
+      if (script.includes("M.Mailbox({")) {
+        const name = (params as { name: string }).name;
+        const accountUuid = (params as { accountUuid: string | null }).accountUuid;
+        if (name === "Existing") {
+          return {
+            created: false,
+            name,
+            account: accountUuid ? "iCloud" : null,
+            accountUuid,
+            note: "A mailbox with that name already exists; nothing was created.",
+          };
+        }
+        // The server renames it, which is why the tool reports what Mail re-read.
+        return {
+          created: true,
+          name: name === "Renamed" ? "INBOX.Renamed" : name,
+          account: accountUuid ? "iCloud" : null,
+          accountUuid,
+        };
+      }
       if (script.includes("M.checkForNewMail(")) return { checked: "all accounts" };
       return {};
     }) as OsascriptRunner["run"],
@@ -78,6 +98,7 @@ const textOf = (r: Awaited<ReturnType<Client["callTool"]>>): string =>
 
 const WRITE_TOOLS = [
   "apple_mail_check_for_new_mail",
+  "apple_mail_create_mailbox",
   "apple_mail_delete_messages",
   "apple_mail_forward_message",
   "apple_mail_move_messages",
@@ -117,6 +138,7 @@ describe("confirm gates", () => {
   it.each([
     ["apple_mail_move_messages", { refs: [refFor("INBOX", 1)], destinationMailbox: "Archive" }],
     ["apple_mail_delete_messages", { refs: [refFor("INBOX", 1)] }],
+    ["apple_mail_create_mailbox", { name: "Receipts" }],
   ])("%s refuses without confirm, before touching Mail", async (name, args) => {
     const { runner, recorded } = harness();
     const client = await connect(WRITES, runner);
@@ -260,5 +282,86 @@ describe("batching and refs", () => {
     });
     expect(result.isError).toBe(true);
     expect(recorded.some((r) => r.script.includes("m.readStatus"))).toBe(false);
+  });
+});
+
+/**
+ * `create_mailbox` exists so that `move_messages` has somewhere to move to.
+ * Everything asserted here is about the two failure modes that make it
+ * dangerous rather than merely useful: a duplicate nobody can delete from this
+ * server, and a stale cache that breaks the very move it was created for.
+ */
+describe("apple_mail_create_mailbox", () => {
+  const create = async (args: Record<string, unknown>) => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const res = await client.callTool({
+      name: "apple_mail_create_mailbox",
+      arguments: { confirm: true, ...args },
+    });
+    const text = textOf(res);
+    return { isError: Boolean(res.isError), text, recorded, json: JSON.parse(text) as never };
+  };
+
+  it("creates a local mailbox when no account is named", async () => {
+    const out = await create({ name: "Receipts" });
+    const doc = out.json as { created: boolean; name: string; account: string | null };
+    expect(doc).toMatchObject({ created: true, name: "Receipts", account: null });
+    const call = out.recorded.find((r) => r.script.includes("M.Mailbox({"));
+    expect(call?.params).toMatchObject({ name: "Receipts", accountUuid: null });
+  });
+
+  it("creates it on the named account", async () => {
+    const out = await create({ name: "Receipts", account: "iCloud" });
+    expect((out.json as { accountUuid: string }).accountUuid).toBe(UUID);
+  });
+
+  /** Safe to call before a move without checking first. */
+  it("reports an existing mailbox as untouched rather than failing", async () => {
+    const out = await create({ name: "Existing", account: "iCloud" });
+    const doc = out.json as { created: boolean; note: string };
+    expect(out.isError).toBe(false);
+    expect(doc.created).toBe(false);
+    expect(doc.note).toMatch(/already exists/);
+  });
+
+  /**
+   * An IMAP server decides the final name. Echoing the request back would tell
+   * a caller to move messages into a mailbox that is not what Mail now holds.
+   */
+  it("reports the name Mail re-read, not the one requested", async () => {
+    const out = await create({ name: "Renamed", account: "iCloud" });
+    expect((out.json as { name: string }).name).toBe("INBOX.Renamed");
+  });
+
+  it.each([["/Receipts"], ["Receipts/"], ["Projects//Cupertino"], ["   "]])(
+    "refuses %j before touching Mail",
+    async (name) => {
+      const out = await create({ name });
+      expect(out.isError).toBe(true);
+      expect(out.recorded.some((r) => r.script.includes("M.Mailbox({"))).toBe(false);
+    },
+  );
+
+  /**
+   * The bug this guards against is invisible without it: MailboxMap caches each
+   * account WITH its mailbox names, so a move to a just-created mailbox would
+   * resolve against a list captured before it existed and fail naming a mailbox
+   * this server had made a moment earlier.
+   */
+  it("drops the cached mailbox list so a move can find the new mailbox", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    await client.callTool({ name: "apple_mail_list_accounts", arguments: {} });
+    const before = recorded.filter((r) => r.script.includes("a.emailAddresses()")).length;
+
+    await client.callTool({
+      name: "apple_mail_create_mailbox",
+      arguments: { name: "Receipts", account: "iCloud", confirm: true },
+    });
+    await client.callTool({ name: "apple_mail_list_accounts", arguments: {} });
+
+    const after = recorded.filter((r) => r.script.includes("a.emailAddresses()")).length;
+    expect(after).toBeGreaterThan(before);
   });
 });

@@ -57,6 +57,42 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
   );
 
   server.registerTool(
+    "apple_mail_create_mailbox",
+    {
+      description:
+        "Create a mailbox (a folder). Use this before apple_mail_move_messages when the " +
+        "destination does not exist yet — a move to a mailbox that is not there fails, and this " +
+        'is the only way to make one from here. Nest with "/": "Projects/Cupertino" creates ' +
+        "Cupertino inside Projects. Omit `account` to create a local mailbox under On My Mac. " +
+        "ON A SERVER ACCOUNT (iCloud, Gmail, Exchange, any IMAP) THIS CREATES THE FOLDER ON THE " +
+        "SERVER: it syncs to the user's phone and every other device within seconds, and there " +
+        "is no delete tool here to undo it. Calling it for a name that already exists is safe " +
+        "and does nothing — the result says `created: false`. The name comes back as Mail " +
+        "re-read it, which is not always the one you asked for: an IMAP server can rename or " +
+        "reject it.",
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            'The mailbox name, e.g. "Receipts" or "Projects/Cupertino" for a nested one. Take ' +
+              "the spelling of an existing parent from apple_mail_list_mailboxes.",
+          ),
+        account: z
+          .string()
+          .optional()
+          .describe(
+            "Account name or UUID from apple_mail_list_accounts. Omit for a local mailbox in " +
+              "On My Mac, which stays on this machine.",
+          ),
+        confirm: confirmArg,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ name, account }) => wrap(async () => client.createMailbox(name, account)),
+  );
+
+  server.registerTool(
     "apple_mail_move_messages",
     {
       description:

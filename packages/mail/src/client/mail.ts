@@ -16,6 +16,7 @@ import { MAIL_SURFACE, MessageNotFoundError, PreconditionError } from "./errors.
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
   CHECK_FOR_NEW_MAIL,
+  CREATE_MAILBOX,
   DELETE_MESSAGES,
   MOVE_MESSAGES,
   REPLY_OR_FORWARD,
@@ -983,6 +984,63 @@ export class AppleMailClient {
       }
     }
     return { deleted, failed, movedToTrash, results };
+  }
+
+  /**
+   * Create a mailbox.
+   *
+   * ## Why the cache is dropped afterwards
+   *
+   * `MailboxMap` caches each account together with its mailbox NAMES, and
+   * `resolveMailboxName` answers out of that cache. A mailbox created here and
+   * used as a move destination in the next call would resolve against a list
+   * taken before it existed, so the move would fail with "no destination
+   * mailbox" naming a mailbox this server had just made. Invalidating is not an
+   * optimisation detail; it is what makes create-then-move work.
+   */
+  async createMailbox(
+    name: string,
+    account?: string,
+  ): Promise<{
+    created: boolean;
+    name: string;
+    account: string | null;
+    accountUuid: string | null;
+    note?: string;
+  }> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new PreconditionError("A mailbox name cannot be empty or only whitespace.");
+    }
+    /*
+     * Mail reads "/" as the hierarchy separator, so an empty segment asks for a
+     * mailbox with no name somewhere in the path. Mail's own answer to that is
+     * inconsistent across account types — sometimes a silent no-op, sometimes a
+     * mailbox that cannot be selected — and neither is something the caller can
+     * clean up from here.
+     */
+    if (trimmed.split("/").some((segment) => segment.trim() === "")) {
+      throw new PreconditionError(
+        `"${name}" has an empty path segment. "/" separates levels, so a name may not start or ` +
+          'end with it, e.g. "Projects/Cupertino".',
+      );
+    }
+
+    const resolved = account ? await this.mailboxes.resolveAccount(account) : null;
+    const result = await withBusyRetry(() =>
+      this.runner.run<{
+        created: boolean;
+        name: string;
+        account: string | null;
+        accountUuid: string | null;
+        note?: string;
+      }>(CREATE_MAILBOX, {
+        name: trimmed,
+        accountUuid: resolved?.id ?? null,
+      }),
+    );
+    this.mailboxes.invalidate();
+    return result;
   }
 
   async checkForNewMail(account?: string): Promise<unknown> {
