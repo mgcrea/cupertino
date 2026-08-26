@@ -29,7 +29,8 @@
     "probe:messages": "node scripts/probe-chat-db.mjs",
     "probe:calendar": "node scripts/probe-calendar.mjs",
     "probe:contacts": "node scripts/probe-contacts.mjs",
-    "probe:safari": "node scripts/probe-safari.mjs"
+    "probe:safari": "node scripts/probe-safari.mjs",
+    "probe:stickies": "node scripts/probe-stickies.mjs"
   },
   "devDependencies": {
     "oxfmt": "^0.62.0",
