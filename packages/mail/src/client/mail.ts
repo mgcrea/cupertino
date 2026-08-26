@@ -15,6 +15,7 @@ import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from ".
 import { MAIL_SURFACE, MessageNotFoundError, PreconditionError } from "./errors.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
+  COMPOSER_ACCESS,
   CHECK_FOR_NEW_MAIL,
   CREATE_MAILBOX,
   DELETE_MESSAGES,
@@ -160,6 +161,29 @@ export class AppleMailClient {
       accountDirectory,
     });
     return this.#located;
+  }
+
+  /**
+   * Whether the composer can be reached, and which grant is missing if not.
+   *
+   * Reported by diagnostics rather than only discovered on a failed reply.
+   * Automation-to-Mail and Full Disk Access being granted says nothing about
+   * either of these, and every read tool works without them — so the only
+   * signal used to be a `COMPOSER_NOT_FOUND` on a window that was
+   * demonstrably on screen, with no way to tell which permission was at fault.
+   *
+   * Never throws. A probe that cannot answer must not be the reason
+   * diagnostics fails, and "unknown" is an honest third state.
+   */
+  async composerAccess(): Promise<{
+    accessibility: "granted" | "denied" | "unknown";
+    systemEvents: "granted" | "denied" | "notDetermined" | "error" | "unknown";
+  }> {
+    try {
+      return await this.runner.run(COMPOSER_ACCESS);
+    } catch {
+      return { accessibility: "unknown", systemEvents: "unknown" };
+    }
   }
 
   async lanes(): Promise<LaneStatus> {

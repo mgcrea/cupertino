@@ -15,6 +15,62 @@ import { script } from "./core.js";
  */
 
 /** Set any combination of read / flagged / flagIndex / junk on a batch of ids. */
+/**
+ * The two grants a composer needs, probed separately.
+ *
+ * `composerWindow` reaches Mail's compose window through System Events, and
+ * that single call sits behind TWO different permissions: Automation from the
+ * responsible process to **System Events** (a distinct TCC row from Automation
+ * to Mail, which every other write tool uses), and **Accessibility** for the
+ * responsible process, which is what allows reading UI elements once System
+ * Events will talk at all.
+ *
+ * They have to be reported separately because the failure cannot tell them
+ * apart. `proc.windows()` is wrapped in `prop()`, which swallows the exception
+ * and yields `[]`, so a denied Automation and a denied Accessibility both
+ * arrive as "no window matched" — indistinguishable from Mail genuinely not
+ * having opened one. The old message named Accessibility outright and was read
+ * as authoritative; it was a guess with the other two possibilities hidden.
+ *
+ * The identity being probed is **Cupertino.app**, not the terminal and not
+ * node: `scripts/spike-app-tcc` measured that the app is its own responsible
+ * process and everything beneath it inherits that. This runs under the same
+ * identity as the composer code, so it answers for the process that will
+ * actually be refused.
+ */
+export const COMPOSER_ACCESS = `
+ObjC.import("ApplicationServices");
+function run() {
+  // Accessibility: reading UI elements out of another process.
+  var accessibility = $.AXIsProcessTrusted() ? "granted" : "denied";
+
+  // Automation -> System Events: being allowed to address it at all. Distinct
+  // from Automation -> Mail, and prompted for separately.
+  var systemEvents = "unknown";
+  var detail = null;
+  try {
+    var SE = Application("System Events");
+    SE.processes.name();
+    systemEvents = "granted";
+  } catch (e) {
+    var msg = String(e && e.message ? e.message : e);
+    detail = msg;
+    // Same vocabulary as Permissions.AutomationStatus in the app: -1743 is
+    // errAEEventNotPermitted (refused), -1744 is errAEEventWouldRequireUserConsent
+    // (never asked). They need different advice — one is a toggle to flip, the
+    // other is a prompt nobody has seen yet — so they are not collapsed.
+    if (msg.indexOf("-1743") !== -1) systemEvents = "denied";
+    else if (msg.indexOf("-1744") !== -1) systemEvents = "notDetermined";
+    else systemEvents = "error";
+  }
+
+  return JSON.stringify({
+    ok: true,
+    data: { accessibility: accessibility, systemEvents: systemEvents, detail: detail },
+  });
+}
+`;
+
 export const SET_FLAGS = script(`
   var acct = findAccount(M, p.accountUuid);
   if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
@@ -567,9 +623,14 @@ export const REPLY_OR_FORWARD = script(
     return err(
       "COMPOSER_NOT_FOUND",
       "Mail was asked to open a " + p.mode + " window for \\"" + subject + "\\" and no such window " +
-      "appeared within 8s. If a compose window IS on screen, this Mac has not granted Accessibility " +
-      "to whatever runs this server, which is what reading and filling a composer needs. Nothing " +
-      "was written; check System Settings > Privacy & Security > Accessibility."
+      "was readable within 8s. Nothing was written. If a compose window IS on screen, this is a " +
+      "permission: reaching it needs BOTH Accessibility and Automation to System Events (a " +
+      "different grant from Automation to Mail, which is why every other tool still works), and " +
+      "the two fail identically here. Run apple_mail_diagnostics — it reports them separately and " +
+      "will say which. Both belong to /Applications/Cupertino.app, NOT to your terminal or to " +
+      "node: the app is the process macOS holds responsible and every server inherits its " +
+      "identity. If it is already listed, toggle it off and on — the grant goes stale when the " +
+      "bundle is reinstalled."
     );
   }
 

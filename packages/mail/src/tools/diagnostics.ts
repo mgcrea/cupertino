@@ -28,6 +28,8 @@ export const buildDiagnostics = async (
   // a path and read a byte of it. Without this the report can say Full
   // Disk Access is granted while every file read on an account fails.
   const messageFile = await client.probeMessageFile();
+  // Cheap, and the two permissions nothing else in this report would reveal.
+  const composer = await client.composerAccess();
 
   let accounts: unknown[] = [];
   let accountsError: string | null = null;
@@ -84,6 +86,27 @@ export const buildDiagnostics = async (
     },
     permissions: {
       automation: lanes.applescript === "live" ? "granted" : "denied-or-mail-not-running",
+      // Only the composer needs this, so it is granted independently of the
+      // other two and denied without affecting anything else in this report.
+      // Both only matter to the composer, so they are granted independently of
+      // the other two and denied without affecting anything else in this report.
+      accessibility: composer.accessibility,
+      automationSystemEvents: composer.systemEvents,
+      ...(composer.accessibility === "granted" && composer.systemEvents === "granted"
+        ? {}
+        : {
+            composerNote:
+              "Filling a Mail composer goes through System Events, which needs BOTH of the " +
+              "above: Automation to System Events (a different grant from Automation to Mail) " +
+              "and Accessibility. Until both are granted, apple_mail_reply_to_message and " +
+              "apple_mail_forward_message fail with COMPOSER_NOT_FOUND while every other tool " +
+              "works. Grant them to /Applications/Cupertino.app — not to your terminal and not " +
+              "to node: the app is the process macOS holds responsible, and every server is a " +
+              "grandchild that inherits its identity. Accessibility is in System Settings > " +
+              "Privacy & Security > Accessibility; Automation is under Automation. If the app " +
+              "is already listed, toggle it off and on — the grant goes stale when the bundle " +
+              "is reinstalled.",
+          }),
       fullDiskAccess: located.readable
         ? "granted"
         : located.exists
