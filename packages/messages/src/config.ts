@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import {
   BaseConfigSchema,
   parseBool,
@@ -36,6 +39,15 @@ const ConfigSchema = BaseConfigSchema.extend({
    * is attempted.
    */
   resolveContacts: z.boolean().default(true),
+  /**
+   * The only directory `save_attachment` may write into.
+   *
+   * A boundary rather than a default: the tool's `directory` argument selects a
+   * subdirectory of this and cannot escape it. Saving is write-gated for the
+   * same reason it is in Mail and Notes — it puts a file on the user's disk,
+   * even though it changes nothing in Messages.
+   */
+  attachmentDir: z.string().default(join(homedir(), "Downloads")),
   /** Window for a range query that names only a start. */
   defaultRangeDays: z.number().int().min(1).max(3_660).default(30),
   /**
@@ -59,6 +71,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     storePath: trimmed(env.APPLE_MESSAGES_STORE),
     indexMode: trimmed(env.APPLE_MESSAGES_INDEX_MODE),
     resolveContacts: parseBool(env.APPLE_MESSAGES_RESOLVE_CONTACTS),
+    attachmentDir: trimmed(env.APPLE_MESSAGES_ATTACHMENT_DIR),
     defaultRangeDays: parseIntOpt(env.APPLE_MESSAGES_DEFAULT_RANGE_DAYS),
     sendReconcileMs: parseIntOpt(env.APPLE_MESSAGES_SEND_RECONCILE_MS),
     osascriptPath: trimmed(env.APPLE_MESSAGES_OSASCRIPT_PATH),

@@ -235,8 +235,29 @@ gibberish ("Liked "see you at 8"") rather than as metadata on another message. F
 read.
 
 Attachment bytes resolve: **23 of 25 sampled rows point at a readable file**. The two that did not
-are unexplained — iCloud-offloaded or deleted are both plausible and neither was checked. Worth
-settling before writing an attachment tool, since it decides whether a miss is an error or normal.
+are unexplained — iCloud-offloaded or deleted are both plausible and neither was checked.
+
+That was flagged as worth settling before writing an attachment tool, because it decides whether a
+miss is an error or normal. `apple_messages_save_attachment` settles it the only way the measurement
+supports: **a miss is normal, and is reported as its own outcome.** 8% of sampled rows is far too
+many to treat as breakage, and the two states a caller can act on are distinguishable — a null
+`filename` means the row is there and the bytes are not (offloaded, and the fix is to open the
+conversation in Messages), while a `filename` naming a file that is absent means Messages pruned it.
+Neither is a failure of this server, and both say so.
+
+The tool is also the only one in the repo that reads a filesystem path OUT of a database and copies
+the file it names, so it has a boundary on **both** sides. The destination boundary is the one Mail
+and Notes already enforce: `APPLE_MESSAGES_ATTACHMENT_DIR` is a confinement, `directory` may only
+select inside it, and the leaf name is `basename`d because `transfer_name` is chosen by whoever sent
+the message. The source boundary is this surface's own — `filename` is required to resolve inside
+`~/Library/Messages` before a byte is read. The confinement is the Messages root rather than
+`Attachments` because stickers live in a sibling directory. That check has never fired on a real
+store and is not expected to; it is there so that the day the schema surprises us, the surprise is a
+refusal.
+
+The id a caller passes is `attachment.guid`, never the ROWID, for exactly the reason `ref.ts` gives
+about messages: SQLite reuses freed rowids and Messages deletes constantly, so a rowid listed in one
+turn and used two turns later can name a different file with no error anywhere.
 
 ## The id bridge is unanswerable by construction
 
@@ -384,7 +405,8 @@ handle** — Messages lets you do that, and it is the only send whose recipient 
 
 - **`date_retracted` / `date_recovered`** — no rows here, so their epoch is assumed, not measured.
 - **The two unresolvable attachments** — offloaded, deleted, or a path convention this probe does not
-  handle.
+  handle. Which of the three it is remains unmeasured; `save_attachment` no longer waits on the
+  answer, because it reports the states apart rather than deciding between them.
 - **The 322 messages with neither text nor blob.** Probably group events — someone joined, someone
   left, a name changed — which `item_type` would separate. Unmeasured, and it decides whether a
   reader should skip them or render them.

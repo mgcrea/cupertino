@@ -19,9 +19,22 @@ export const STORE_RELATIVE = join("Library", "Messages", "chat.db");
 /** Attachment bytes live here, referenced by `attachment.filename`. */
 export const ATTACHMENTS_RELATIVE = join("Library", "Messages", "Attachments");
 
+/**
+ * The directory an attachment path is required to sit inside.
+ *
+ * Deliberately the Messages root rather than `Attachments` itself. Measured
+ * shapes of `attachment.filename` include stickers, which Messages keeps in a
+ * sibling directory, so confining to `Attachments` would refuse real files —
+ * and confining to nothing at all would let a row in a database this server
+ * does not write choose which file gets copied out.
+ */
+export const MESSAGES_ROOT_RELATIVE = join("Library", "Messages");
+
 export type LocateResult = StoreFacts & {
   storePath: string;
   attachmentsPath: string;
+  /** Nothing outside this is copied out, whatever the store says. */
+  messagesRoot: string;
   reason: string | null;
 };
 
@@ -44,6 +57,7 @@ export const locateStore = (
     ...facts,
     storePath,
     attachmentsPath: join(home, ATTACHMENTS_RELATIVE),
+    messagesRoot: join(home, MESSAGES_ROOT_RELATIVE),
     reason: facts.readable
       ? null
       : facts.exists

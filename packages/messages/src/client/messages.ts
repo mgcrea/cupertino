@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, resolve as resolvePath, sep } from "node:path";
+
 import {
   AppleContactsClient,
   emailKey,
@@ -20,6 +24,7 @@ import {
   ChatNotFoundError,
   MESSAGES_SURFACE,
   MessagesUnavailableError,
+  PreconditionError,
   SendFailedError,
   SendTargetNotFoundError,
 } from "./errors.js";
@@ -341,6 +346,92 @@ export class AppleMessagesClient {
       reactions: reactions.map((r) => ({ label: r.label, from: this.#correspondent(r.handle) })),
       attachments: store.attachmentsFor(guid),
     };
+  }
+
+  /**
+   * Copy one attachment out of the Messages store onto disk.
+   *
+   * ## Why this is a copy and not an extraction
+   *
+   * Mail's equivalent has to parse MIME out of an `.emlx` because the bytes are
+   * inside the message file. Messages does not work that way: `attachment` rows
+   * point at real files under `~/Library/Messages`, so the work here is finding
+   * the row, deciding the path is one we are willing to read, and copying.
+   *
+   * ## Two boundaries, not one
+   *
+   * The DESTINATION boundary is the same one Mail and Notes enforce:
+   * `attachmentDir` is a confinement, `directory` may only select inside it, and
+   * the leaf name is `basename`d because it comes from whoever sent the message.
+   *
+   * The SOURCE boundary is this surface's own. `filename` comes out of a
+   * database this server never writes, and it is a fully-qualified path: taken
+   * at face value it names any file the process can read. So it is required to
+   * resolve inside the Messages root before a single byte is read. That check
+   * has never fired on a real store and is not expected to — it is here so that
+   * the day the schema surprises us, the surprise is a refusal.
+   */
+  async saveAttachment(
+    attachmentId: string,
+    opts: { directory?: string | undefined; overwrite?: boolean } = {},
+  ): Promise<{ path: string; bytes: number; source: string; mimeType: string | null }> {
+    const store = this.#require();
+    const meta = store.attachmentById(attachmentId);
+    if (!meta) {
+      throw new PreconditionError(
+        `No attachment with id "${attachmentId}". Ids come from apple_messages_get_message and ` +
+          "are the attachment's guid; the message may have been deleted since it was listed.",
+      );
+    }
+    if (!meta.path) {
+      throw new PreconditionError(
+        "That attachment has no file path in the store, which normally means iCloud has " +
+          "offloaded it. Open the conversation in Messages to download it, then try again.",
+      );
+    }
+
+    const home = this.#home ?? homedir();
+    // `~/Library/Messages/…` is the shape the column actually holds — not a
+    // shell convention this can leave to something else to expand.
+    const expanded = meta.path.startsWith("~/") ? join(home, meta.path.slice(2)) : meta.path;
+    const source = resolvePath(expanded);
+    const root = resolvePath(this.located().messagesRoot);
+    if (source !== root && !source.startsWith(root + sep)) {
+      throw new PreconditionError(
+        `Refusing to read ${source}: it is outside ${root}, and this tool only copies files ` +
+          "Messages itself stores.",
+      );
+    }
+    if (!existsSync(source) || !statSync(source).isFile()) {
+      throw new PreconditionError(
+        `The store names ${source} but there is no file there. Messages prunes attachment bytes ` +
+          "while keeping the row, so this is a normal state for an old conversation.",
+      );
+    }
+
+    const dest = resolvePath(this.#config.attachmentDir);
+    const dir = opts.directory ? resolvePath(dest, opts.directory) : dest;
+    if (dir !== dest && !dir.startsWith(dest + sep)) {
+      throw new PreconditionError(
+        `Refusing to write outside ${dest}. Set APPLE_MESSAGES_ATTACHMENT_DIR to change the ` +
+          "destination.",
+      );
+    }
+    // The sender chose `transfer_name`, so it is basename'd before it is
+    // trusted — path traversal wants exactly that field.
+    const name = basename(meta.transferName ?? basename(source));
+    const target = resolvePath(join(dir, name));
+    if (target !== join(dir, name) || !target.startsWith(dir + sep)) {
+      throw new PreconditionError(`Refusing to write outside ${dir}.`);
+    }
+    if (existsSync(target) && !opts.overwrite) {
+      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
+    }
+
+    const bytes = readFileSync(source);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(target, bytes, { mode: 0o600 });
+    return { path: target, bytes: bytes.length, source, mimeType: meta.mimeType };
   }
 
   listChats(limit?: number): RenderedChat[] {

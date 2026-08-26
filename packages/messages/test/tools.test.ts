@@ -46,16 +46,37 @@ describe("tool registration", () => {
   });
 
   /**
-   * Writes add exactly one tool, because the dictionary has exactly one usable
-   * mutating command. `login` and `logout` are the other two and are not
-   * exposed; there is no edit, delete, mark-as-read or reaction verb at all.
-   * A second one appearing here is a decision, and it has to break this first.
+   * Writes add exactly two tools, and the pair is deliberate rather than
+   * incidental — a third appearing here is a decision, and it has to break this
+   * test first.
+   *
+   * `send_message` is the only one that speaks to Messages.app, because the
+   * dictionary has exactly one usable mutating command: `login` and `logout` are
+   * the other two and are not exposed, and there is no edit, delete,
+   * mark-as-read or reaction verb at all. `save_attachment` sends no Apple Event
+   * and changes nothing in Messages; it is gated because it creates a file on
+   * the user's disk, which is how Mail and Notes treat the same operation.
    */
-  it("adds exactly one tool with writes enabled", async () => {
+  it("adds exactly two tools with writes enabled", async () => {
     const off = await toolNames(await connect());
     const on = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" }));
-    expect(on.filter((n) => !off.includes(n))).toEqual(["apple_messages_send_message"]);
+    expect(on.filter((n) => !off.includes(n))).toEqual([
+      "apple_messages_save_attachment",
+      "apple_messages_send_message",
+    ]);
     expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  /**
+   * The permission claim, stated as an assertion rather than as prose: only the
+   * send tool is destructive, so `save_attachment` joining the write gate does
+   * not widen what this server can do to the user's conversations.
+   */
+  it("keeps the send tool the only destructive one", async () => {
+    const { tools } = await (await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" })).listTools();
+    expect(tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name)).toEqual([
+      "apple_messages_send_message",
+    ]);
   });
 
   /**

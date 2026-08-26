@@ -367,20 +367,38 @@ export class MessagesStore {
     });
   }
 
+  /**
+   * The attachments on one message.
+   *
+   * `id` is `attachment.guid`, for the reason `ref.ts` gives at length about
+   * messages: the ROWID is faster and gets REUSED. Every "delete this
+   * conversation" frees a block of attachment ids for the next insert, so a
+   * caller that listed attachments in one turn and saved one two turns later
+   * would write out a different file, silently. The guid is `UNIQUE NOT NULL`
+   * in the shipped schema and is what Apple's own sync joins on.
+   *
+   * `path` is the raw `filename` column, reported so a caller can see WHERE the
+   * bytes are before asking for them — it is frequently `~`-prefixed, and it is
+   * empty for an attachment iCloud has offloaded.
+   */
   attachmentsFor(guid: string): {
-    filename: string | null;
+    id: string | null;
+    path: string | null;
     mimeType: string | null;
     transferName: string | null;
     bytes: number | null;
+    isSticker: boolean;
   }[] {
     if (!this.caps.hasAttachments) return [];
     const a = this.caps.attachmentColumns;
     const rows = this.db
       .prepare(
-        `SELECT ${this.#col(a, "a", "filename")},
+        `SELECT ${this.#col(a, "a", "guid", "id")},
+                ${this.#col(a, "a", "filename", "path")},
                 ${this.#col(a, "a", "mime_type", "mimeType")},
                 ${this.#col(a, "a", "transfer_name", "transferName")},
-                ${this.#col(a, "a", "total_bytes", "bytes")}
+                ${this.#col(a, "a", "total_bytes", "bytes")},
+                ${this.#col(a, "a", "is_sticker", "isSticker")}
            FROM "attachment" a
            JOIN "message_attachment_join" maj ON maj."attachment_id" = a."ROWID"
            JOIN "message" m ON m."ROWID" = maj."message_id"
@@ -388,11 +406,44 @@ export class MessagesStore {
       )
       .all(guid) as Record<string, unknown>[];
     return rows.map((r) => ({
-      filename: text(r.filename),
+      id: text(r.id),
+      path: text(r.path),
       mimeType: text(r.mimeType),
       transferName: text(r.transferName),
       bytes: num(r.bytes),
+      isSticker: num(r.isSticker) === 1,
     }));
+  }
+
+  /** One attachment by its guid, wherever it hangs. Null when it is gone. */
+  attachmentById(id: string): {
+    id: string | null;
+    path: string | null;
+    mimeType: string | null;
+    transferName: string | null;
+    bytes: number | null;
+  } | null {
+    if (!this.caps.hasAttachments) return null;
+    const a = this.caps.attachmentColumns;
+    if (!a.has("guid")) return null;
+    const row = this.db
+      .prepare(
+        `SELECT ${this.#col(a, "a", "guid", "id")},
+                ${this.#col(a, "a", "filename", "path")},
+                ${this.#col(a, "a", "mime_type", "mimeType")},
+                ${this.#col(a, "a", "transfer_name", "transferName")},
+                ${this.#col(a, "a", "total_bytes", "bytes")}
+           FROM "attachment" a WHERE a."guid" = ? LIMIT 1`,
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: text(row.id),
+      path: text(row.path),
+      mimeType: text(row.mimeType),
+      transferName: text(row.transferName),
+      bytes: num(row.bytes),
+    };
   }
 
   chats(limit: number): ChatRow[] {
