@@ -459,6 +459,12 @@ surfaces: ## Regenerate every copy of the surface list from surfaces.json
 surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
 	@node scripts/generate-surfaces.mjs --check
 
+version: ## Propagate the root package.json version into every copy of it
+	@node scripts/generate-version.mjs
+
+version-check: ## Fail if any copy of the version has drifted from package.json
+	@node scripts/generate-version.mjs --check
+
 icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.svg
 	@appshot icon build --from $(ICON_MARK) \
 		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
@@ -682,4 +688,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize surfaces surfaces-check icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check icon clean

@@ -67,6 +67,12 @@ jobs:
       # Release whose consent prompt names the wrong apps.
       - name: Surface manifest 🔍
         run: make surfaces-check
+      # Same contract for the release version. It lived in eleven places and the
+      # release commit bumped ten: the website announced 1.2.0 through both
+      # 1.2.1 and 1.2.2, which is the one copy a visitor reads. The root
+      # package.json is the source now, and a forgotten copy is red here.
+      - name: Version manifest 🔍
+        run: make version-check
       # Confirms the committed revocation list still matches D1. It does not
       # regenerate: the file in git is what the build uses, and fetching it here
       # would make a Cloudflare outage an outage in releases. With no token —
@@ -315,6 +321,19 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # The tag is authoritative about what shipped, but every file in the
+          # commit was generated from the root package.json — so if the release
+          # commit forgot to bump it, this tag is about to ship an app whose
+          # site, packages and CHANGELOG all name the previous release. Refuse
+          # here, where the fix is a commit and a re-tag, rather than after the
+          # notarized zip is public.
+          root=$(node -p "require('./package.json').version")
+          if [ "$root" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at a commit whose package.json says $root."
+            echo "::error::Bump the root version to $version, run \`make version\`, commit, and re-tag."
+            exit 1
+          fi
       # macOS 26 is the deployment target, so a runner image without that SDK
       # fails deep inside xcodebuild with nothing pointing at the cause.
       - name: Check the SDK 🔍

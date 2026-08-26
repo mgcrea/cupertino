@@ -217,6 +217,34 @@ copy afterwards.
 The bump is automatic but not unconditional — the `release-app` job skips it with a notice when
 `HOMEBREW_TAP_TOKEN` is unset, so a silently stale cask looks exactly like a successful release.
 
+### The version number, and where it lives
+
+**The root `package.json` version is the source**, and every other copy is generated from it by
+`make version`. `make version-check` fails on drift and runs in CI, the same contract
+[surfaces.json](surfaces.md) gets. The copies:
+
+| File                         | Form                                            |
+| ---------------------------- | ----------------------------------------------- |
+| `packages/*/package.json`    | the published `version`, all in lockstep        |
+| `apps/website/src/config.ts` | `APP_VERSION`, shown in the nav and the JSON-LD |
+| `README.md`, `CHANGELOG.md`  | the tag examples                                |
+| `CHANGELOG.md`               | a `## [x.y.z]` section — checked, never written |
+
+This exists because the number was hand-kept in eleven places and the 1.2.1 and 1.2.2 release
+commits bumped ten of them. The one they missed was `APP_VERSION`, so the site announced 1.2.0 for
+two releases — the only copy of the number a visitor ever reads.
+
+The `app-v*` tag stays authoritative about what people are RUNNING: nothing bumps
+`MARKETING_VERSION` in the pbxproj and CI overrides it from the tag name. It cannot be what the
+files are generated from, though — they have to be right in the commit the tag points AT, and the
+site builds from a shallow clone with no tags. So the `release-app` job checks the other direction
+and refuses to build when `app-v$X` points at a commit whose root version is not `$X`. Cutting a
+release is: bump the root version, `make version`, write the CHANGELOG section, commit, tag.
+
+`DemoSeed.swift`'s `version` is deliberately not generated. It is the number the marketing images
+show, and tying it to the release would churn the golden-image gate on every tag and claim a version
+before the store listing showing it had caught up. Bump it when new images are wanted.
+
 ## What this does to the permission story
 
 Today Automation is granted to whatever launched the server — VS Code, Terminal, Claude — and only

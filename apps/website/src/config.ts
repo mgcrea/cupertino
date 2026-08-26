@@ -120,12 +120,21 @@ export const SHIPPED = true;
 /**
  * The app version currently shipping, as a bare marketing version.
  *
- * The `app-v*` git tag is the authority: nothing bumps `MARKETING_VERSION` in
- * the pbxproj, CI overrides it from the tag name (see the release-app job in
- * .github/workflows/ci.yml), so the newest tag *is* what people are running.
- * This is that tag's mirror, the way TRIAL below mirrors `Trial.swift` — and
- * the CHANGELOG heading is a third copy of the same number. Nothing checks the
- * three agree; bump this in the release commit.
+ * GENERATED from the root `package.json` by `make version`, and CI fails if it
+ * has drifted. Do not edit the line below; bump the root version and rerun.
+ *
+ * This used to be a hand-kept mirror of the newest `app-v*` tag, with a note
+ * saying nothing checked it agreed with the CHANGELOG heading or the packages.
+ * Nothing did, and it lost: the site said 1.2.0 through both 1.2.1 and 1.2.2 —
+ * the one copy of the number a visitor ever reads, wrong for two releases.
+ *
+ * The tag is still what people are RUNNING (nothing bumps `MARKETING_VERSION`
+ * in the pbxproj, so CI overrides it from the tag name — see the release-app
+ * job in .github/workflows/ci.yml). It just cannot be what this file is
+ * generated from: the value has to be right in the commit the tag points at,
+ * and the site builds from a shallow clone with no tags. That job now refuses
+ * to build a tag whose commit disagrees with the root version, which is what
+ * keeps the two ends honest.
  *
  * It deliberately does not carry a build number. `CFBundleVersion` is a commit
  * count, which orders builds but identifies none of them, and it is not a fact
@@ -134,7 +143,9 @@ export const SHIPPED = true;
  * Shown in the nav and carried in the JSON-LD, both gated on SHIPPED: a version
  * printed before there is a release names something nobody can download.
  */
-export const APP_VERSION = "1.2.0";
+// <generated:version> generated from package.json by `make version` — do not edit by hand
+export const APP_VERSION = "1.2.2";
+// </generated:version>
 
 /**
  * The release lives on GitHub, never here. A Cloudflare assets binding caps a
