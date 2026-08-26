@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon
 import Foundation
 
@@ -29,7 +30,27 @@ enum AutomationStatus: Equatable {
   case failed(OSStatus)
 }
 
+/// Accessibility (UI scripting) status.
+///
+/// Two cases, not three, and that is a fact about TCC rather than a
+/// simplification: `AXIsProcessTrusted` answers false both for a refusal and
+/// for a question nobody has been asked yet, and no API separates them. So
+/// `AutomationStatus.notDetermined` has no counterpart here — the button offers
+/// to ask either way, which is the correct action in both states.
+enum AccessibilityStatus: Equatable {
+  case granted
+  case denied
+}
+
 enum Permissions {
+  /// The app whose UI the composer is read out of.
+  ///
+  /// Automation to System Events is a SEPARATE grant from Automation to Mail,
+  /// which is why `apple_mail_reply_to_message` can fail on a Mac where every
+  /// other Mail tool works. It is not a Surface — nothing registers it, it has
+  /// no store and no tools — so it is named here rather than in `surfaces.json`.
+  static let systemEventsBundleID = "com.apple.systemevents"
+
   /// The event the permission questions are asked about: `core`/`getd`, a
   /// property read — which is what the servers actually send, since every read
   /// in `packages/*/src/client` reaches Apple Events through `osascript` asking
@@ -185,6 +206,48 @@ enum Permissions {
   static func openAutomationSettings() {
     let url = URL(
       string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation")!
+    NSWorkspace.shared.open(url)
+  }
+
+  // MARK: Accessibility
+
+  /// Is this process trusted to read another app's UI?
+  ///
+  /// What `apple_mail_reply_to_message` needs, and the one permission the whole
+  /// app was previously blind to. A reply's body cannot go through the
+  /// scripting interface at all — `content` on a reply reports itself settable
+  /// and then swallows the write — so the composer is filled through the
+  /// accessibility interface, and without this grant that fails while
+  /// Automation and Full Disk Access both read as granted.
+  ///
+  /// Cheap and local: unlike `automation(for:)` this is a lookup, not a
+  /// synchronous IPC, so it is safe to call while painting a row. The freeze
+  /// documented over `StatusModel.refreshAutomation` does not apply.
+  ///
+  /// The identity being asked about is **this app**, which is the point:
+  /// `scripts/spike-app-tcc` measured that everything the app spawns inherits
+  /// its responsible process, so this one answer covers every server.
+  static func accessibility() -> AccessibilityStatus {
+    AXIsProcessTrusted() ? .granted : .denied
+  }
+
+  /// Ask for Accessibility, with the system's prompt visible.
+  ///
+  /// Unlike Automation there is no consent dialog that grants it in place — the
+  /// prompt offers to open System Settings, and the switch has to be flipped by
+  /// hand. What this does buy is the app appearing in that list already, which
+  /// is the part people get stuck on: the pane has a `+` and a file picker, and
+  /// an app that has never asked is simply absent from it.
+  ///
+  /// Returns immediately; the prompt is not modal to us.
+  static func requestAccessibility() {
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+    _ = AXIsProcessTrustedWithOptions(options)
+  }
+
+  static func openAccessibilitySettings() {
+    let url = URL(
+      string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility")!
     NSWorkspace.shared.open(url)
   }
 

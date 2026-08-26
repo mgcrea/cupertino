@@ -338,6 +338,56 @@ struct PermissionsPane: View {
         Text("Automation lets Cupertino drive each app through Apple Events.")
       }
 
+      // Its own section because these two are not per-surface and not
+      // interchangeable with the rows above. They gate ONE thing — filling a
+      // Mail reply or forward — and they gate it together: the composer is
+      // reached through System Events, so both must be granted, and until this
+      // section existed neither was visible anywhere in the app.
+      //
+      // Grouped rather than split across Automation and a lone Accessibility
+      // row, because the failure they produce is identical. `prop()` swallows
+      // the exception either way, so a missing grant of either kind arrives as
+      // the same "no composer window" error — which is exactly how one of them
+      // got diagnosed as the other.
+      Section {
+        LabeledContent {
+          if model.accessibility == .granted {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+          } else {
+            // Two buttons, because the prompt cannot grant it: the first makes
+            // the app appear in the list, the second is where the switch is.
+            HStack {
+              Button("Ask…") { model.requestAccessibility() }
+              Button("Open…") { Permissions.openAccessibilitySettings() }
+            }
+          }
+        } label: {
+          Text("Accessibility")
+          Text(StatusStyle.accessibilityHint(model.accessibility))
+        }
+
+        LabeledContent {
+          switch model.systemEvents {
+          case .granted:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+          case .denied:
+            Button("Open…") { Permissions.openAutomationSettings() }
+          default:
+            Button("Allow…") { model.requestSystemEvents() }
+          }
+        } label: {
+          Text("System Events")
+          Text(StatusStyle.caption(model.systemEvents))
+        }
+      } header: {
+        Text("Mail composer")
+      } footer: {
+        Text(
+          "Replying and forwarding fill Mail's compose window directly, which needs both of "
+            + "these. Every other tool works without them, so a missing grant here shows up only "
+            + "as a reply that will not send.")
+      }
+
       Section {
         // Only the surfaces that HAVE a write tool. A toggle for a server that
         // registers none would gate nothing while implying otherwise, which is
@@ -755,6 +805,15 @@ enum StatusStyle {
     // step that has not happened yet rather than a permission that was refused.
     case .appNotRunning: "not running — open it to check"
     case .failed(let code): "error \(code)"
+    }
+  }
+
+  static func accessibilityHint(_ status: AccessibilityStatus) -> String {
+    switch status {
+    case .granted: "Cupertino can read and fill Mail's compose window."
+    // Not "denied": `AXIsProcessTrusted` cannot tell a refusal from a question
+    // never asked, so the wording has to cover both without claiming either.
+    case .denied: "Not granted. Replies and forwards will fail until it is."
     }
   }
 

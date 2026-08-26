@@ -389,6 +389,7 @@ enum DemoSeed {
 
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted
+  nonisolated static let accessibility: AccessibilityStatus = .granted
 
   /// The store row in `SurfaceDetail`, which otherwise prints an absolute path
   /// under the developer's real home directory into a public image.

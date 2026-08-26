@@ -170,6 +170,11 @@ final class StatusModel {
 
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
+  /// The two grants a Mail composer needs, which nothing else in this window
+  /// covers. Both are about the app itself rather than a surface, so neither
+  /// fits the per-surface `automation` table.
+  private(set) var accessibility: AccessibilityStatus = .denied
+  private(set) var systemEvents: AutomationStatus = .notDetermined
   private(set) var location: InstallLocation = .current
   private(set) var clients: [ClientWiring.Client: ClientWiring.Status] = [:]
   private(set) var lastError: String?
@@ -189,6 +194,8 @@ final class StatusModel {
       location = .current
       hostError = nil
       diskAccess = DemoSeed.diskAccess
+      accessibility = DemoSeed.accessibility
+      systemEvents = DemoSeed.automation
       automation = Dictionary(
         uniqueKeysWithValues: Surface.all.map { ($0.id, DemoSeed.automation) })
       clients = Dictionary(
@@ -198,6 +205,8 @@ final class StatusModel {
     location = .current
     hostError = ServerHost.shared.startupError
     diskAccess = Permissions.diskAccess()
+    // A lookup, not an IPC — safe here, unlike the Automation probes below.
+    accessibility = Permissions.accessibility()
     clients = Dictionary(
       uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
     refreshAutomation()
@@ -230,10 +239,19 @@ final class StatusModel {
     // Strings rather than `Surface` values, so what crosses to the detached
     // task is unambiguously Sendable no matter what Surface grows later.
     let targets = Surface.all.filter(\.usesAppleEvents).map { ($0.id, $0.bundleID) }
+    // System Events goes through the same door and must ride the same detached
+    // task. It is not a Surface, so it cannot come from the list above — but it
+    // is the identical blocking IPC, and running it on the main thread would
+    // reproduce the freeze this whole method exists to avoid.
+    let systemEventsID = Permissions.systemEventsBundleID
     Task.detached {
       let statuses = targets.map { ($0.0, Permissions.automation(for: $0.1)) }
       let resolved = Dictionary(uniqueKeysWithValues: statuses)
-      await MainActor.run { self.automation = resolved }
+      let events = Permissions.automation(for: systemEventsID)
+      await MainActor.run {
+        self.automation = resolved
+        self.systemEvents = events
+      }
     }
   }
 
@@ -266,6 +284,29 @@ final class StatusModel {
         : Permissions.requestAutomation(for: surface.bundleID)
       await MainActor.run { self.automation[surface.id] = result }
     }
+  }
+
+  /// Ask for Automation to System Events.
+  ///
+  /// Detached for the reason in `refreshAutomation`, and doubly so here:
+  /// `requestAutomation` blocks until the user answers the consent dialog,
+  /// which can be minutes.
+  func requestSystemEvents() {
+    Task.detached {
+      let result = Permissions.requestAutomation(for: Permissions.systemEventsBundleID)
+      await MainActor.run { self.systemEvents = result }
+    }
+  }
+
+  /// Ask for Accessibility, then re-read it.
+  ///
+  /// The prompt only offers to open System Settings — the switch is flipped by
+  /// hand — so the answer arrives whenever the window is next brought forward,
+  /// not when this returns. `refresh()` on activation is what actually updates
+  /// the row; this just makes sure the app is listed to flip.
+  func requestAccessibility() {
+    Permissions.requestAccessibility()
+    accessibility = Permissions.accessibility()
   }
 }
 
