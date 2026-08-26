@@ -112,16 +112,15 @@ comparison to "188" and will keep doing so.
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away.
 
 **Published, with one asterisk.** The signed app ships from GitHub releases and a Homebrew tap, and
-as of 2026-08-26 the packages ship too: measured with `npm view @mgcrea/mcp-apple-<name> version`,
-`-core`, `-mail`, `-notes`, `-reminders`, `-calendar`, `-contacts` and `-messages` are all on npm at
-1.3.0. `-safari` has its name reserved by a `0.0.0-bootstrap` placeholder and is waiting on a
-`publish-npm` run for 1.3.0 itself.
+as of 2026-08-26 the packages ship too: all eight — `-core`, `-mail`, `-notes`, `-reminders`,
+`-calendar`, `-contacts`, `-messages` and `-safari` — are on npm at 1.3.0. The distribution gap this
+section was written about is closed.
 
-The asterisk is `-messages`, and it is worth recording rather than quietly enjoying. Its 1.3.0 was
-published **from a laptop, so it carries no provenance attestation** — the one thing
+The asterisk is `-messages` and `-safari`, and it is worth recording rather than quietly enjoying.
+Both were published **from a laptop, so neither carries a provenance attestation** — the one thing
 [distribution.md](distribution.md) keeps `npm.publish: false` in `.release-it.json` to prevent. npm
-forbids republishing a version, so that build cannot be re-signed; the next release is where the
-attestation comes back. Every other package here was published by the `publish-npm` job and has one.
+forbids republishing a version, so those two builds cannot be re-signed; the next release is where
+the attestation comes back. The other six went through the `publish-npm` job and have one.
 
 This section used to claim the gap was closed for both. It was written from the intent of the
 `publish-npm` job rather than from the registry, which is the same mistake it criticises the

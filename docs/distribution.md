@@ -434,21 +434,25 @@ to "what did I just give Full Disk Access to".
   keeps `npm.publish: false` deliberately — release-it bumps and tags, and the `publish-npm` job
   does the publishing, so a release cannot happen from a laptop without provenance.
 
-  **In scope is not the same as published.** Measured 2026-08-26 with
-  `npm view @mgcrea/mcp-apple-<name> version`: `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
-  `-contacts` and `-messages` are on npm at 1.3.0; `-safari` holds a `0.0.0-bootstrap` placeholder
-  and is waiting on a `publish-npm` run for 1.3.0.
+  **All eight are on npm at 1.3.0 as of 2026-08-26**, which closes a gap this section tracked from
+  1.1.0. Two of them got there the wrong way, and that is the part worth keeping.
 
-  **Two things the 1.3.0 round taught, both worth keeping.** First, npm's OIDC trusted publishing
-  cannot be configured for a package that does not exist yet, so a brand-new name fails the token
-  exchange with a 404 and then falls through to an unauthenticated `PUT` that 404s again — which is
-  exactly how `-messages` and `-safari` failed while five siblings succeeded in the same round. The
-  `0.0.0-bootstrap` placeholder exists to break that circle: publish it once by hand under a
-  `bootstrap` dist-tag (never `latest`, or `npm i` serves a stub), configure the trusted publisher,
-  and every release after that goes through CI.
+  **Three things the 1.3.0 round taught.** First, npm's OIDC trusted publishing cannot be configured
+  for a package that does not exist yet, so a brand-new name fails the token exchange with a 404 and
+  then falls through to an unauthenticated `PUT` that 404s again — which is exactly how `-messages`
+  and `-safari` failed while five siblings succeeded in the same round. The `0.0.0-bootstrap`
+  placeholder exists to break that circle: publish it once by hand under a `bootstrap` dist-tag
+  (never `latest`, or `npm i` serves a stub), configure the trusted publisher, and every release
+  after that goes through CI.
 
-  Second, and the reason the rule above is worth defending: `-messages@1.3.0` was published from a
-  laptop during that round and therefore **carries no provenance attestation**. npm will not let a
-  version be republished, so that build cannot be fixed — only the next release restores it. That is
-  the failure `npm.publish: false` is there to make impossible, and it happened anyway the moment a
-  publish was run by hand.
+  Second, and the reason the rule above is worth defending: `-messages@1.3.0` and `-safari@1.3.0`
+  were published from a laptop rather than bootstrapped, and therefore **carry no provenance
+  attestation**. npm will not let a version be republished, so neither build can be fixed — only the
+  next release restores it. That is the failure `npm.publish: false` is there to make impossible,
+  and it happened anyway the moment a publish was run by hand.
+
+  Third, a diagnostic trap: **a newly published package 404s on the read path for several minutes**
+  while its tarball is already fetchable. `npm view` and the packument endpoint both said `-safari`
+  did not exist well after it did, which is how it collected a redundant `0.0.0-bootstrap` published
+  _after_ its 1.3.0. When checking whether a fresh publish landed, ask
+  `/-/package/<name>/dist-tags` or HEAD the tarball URL; do not trust `npm view`.
