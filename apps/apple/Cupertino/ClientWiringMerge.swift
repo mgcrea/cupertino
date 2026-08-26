@@ -152,4 +152,22 @@ enum ClientWiringMerge {
     }
     return backup
   }
+
+  /// The servers a Claude Code **local**-scope entry holds for one folder.
+  ///
+  /// Lives here rather than next to the policy that calls it because it is the
+  /// only genuinely new reading this feature added, and `make wiring-check` can
+  /// only reach what compiles against Foundation alone.
+  ///
+  /// Two shapes mean two different things and must not collapse into one:
+  /// `nil` is "this folder has no entry at all", while an empty dictionary is
+  /// "Claude Code knows this folder and no Cupertino server is in it". The
+  /// first is a folder nobody has wired; the second is one that was wired and
+  /// then emptied, or wired for a different tool entirely. `audit` gives a
+  /// useful answer for the second and a misleading one for the first.
+  static func localScopeServers(in root: [String: Any], folder: String) -> [String: Any]? {
+    guard let projects = root["projects"] as? [String: Any] else { return nil }
+    guard let entry = projects[folder] as? [String: Any] else { return nil }
+    return entry["mcpServers"] as? [String: Any] ?? [:]
+  }
 }

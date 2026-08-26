@@ -421,6 +421,164 @@ enum ClientWiring {
     return backup
   }
 
+  // MARK: - Project folders
+
+  /// Where a folder's wiring goes, and who else can see it.
+  ///
+  /// ## Why this exists at all
+  ///
+  /// Every client above is wired once per user, which is right for an app on
+  /// this Mac. It is wrong for a CLI run in 93 directories: measured on a real
+  /// install, 12 of them had ever called a Cupertino tool, so 87% of sessions
+  /// were carrying ~73 tool definitions they never used. Wiring a folder is how
+  /// someone opts the other 81 out without giving up the 12.
+  ///
+  /// ## The two scopes are not symmetrical, and the difference is not cosmetic
+  ///
+  /// `project` writes a file this app can write — `.mcp.json` is strict JSON
+  /// with servers under `mcpServers`, the identical shape as the four drop-in
+  /// clients, so it inherits the merge, the backup and the atomic write.
+  ///
+  /// `local` cannot be written here, and the refusal is the one `Wiring`
+  /// already documents for Claude Code: `~/.claude.json` is a large file
+  /// holding API credentials that running sessions write to concurrently, so a
+  /// read-modify-write from a menu bar could drop somebody else's change. That
+  /// has not stopped being true because the entry moved under `projects`. So
+  /// `local` hands over a command, exactly as the client row does.
+  ///
+  /// The lopsided UX is the honest one: one option acts, the other delegates,
+  /// and the reason is a property of the file rather than of the feature.
+  enum ProjectScope: String, CaseIterable, Identifiable, Hashable {
+    /// `~/.claude.json` under `projects[<dir>]`. Private to this Mac.
+    case local
+    /// `<dir>/.mcp.json`. Meant to be committed, and visible to collaborators.
+    case project
+
+    var id: String { rawValue }
+
+    var displayName: String {
+      switch self {
+      case .local: "Just me"
+      case .project: "Shared with the repo"
+      }
+    }
+
+    /// Shown next to the choice, because the consequence is the whole decision.
+    ///
+    /// The `project` line is a warning and reads like one. What gets written is
+    /// an absolute path into a bundle on THIS Mac, backed by THIS user's Full
+    /// Disk Access grant — for anyone else who checks the repo out it is a
+    /// broken entry naming an app they may not have. That is the argument the
+    /// Claude Code client row already makes for preferring user scope over
+    /// project scope, and it does not weaken just because a person chose it
+    /// deliberately. Which is why `local` is the default.
+    var consequence: String {
+      switch self {
+      case .local:
+        "Kept in your own Claude Code config. Nothing is added to the folder, and nobody else sees it."
+      case .project:
+        "Writes .mcp.json in the folder, which is normally committed. It names a path inside Cupertino on this Mac, so it will not work for anyone else who checks the repo out."
+      }
+    }
+  }
+
+  /// The file `project` scope writes. Its name is fixed by Claude Code.
+  static func projectConfig(in folder: URL) -> URL {
+    folder.appendingPathComponent(".mcp.json")
+  }
+
+  /// Merge our servers into a folder's `.mcp.json`, leaving everything else be.
+  ///
+  /// Deliberately the same call as `configure(_:)` makes for a client: a folder
+  /// is not a special case of writing, it is the same write at a different
+  /// path, and routing it anywhere else is how the two would drift.
+  @discardableResult
+  static func configureProject(_ folder: URL) throws -> URL? {
+    let path = projectConfig(in: folder)
+    var root: [String: Any] = [:]
+    if FileManager.default.fileExists(atPath: path.path) {
+      root = try ClientWiringMerge.readJSON(path)
+    }
+    let merged = ClientWiringMerge.merged(
+      into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys)
+    let backup = try ClientWiringMerge.write(merged, to: path, backupSuffix: "cupertino-backup")
+    hostLog("cupertino", .info, "configured folder \(folder.path)")
+    return backup
+  }
+
+  /// The lines to paste for `local` scope.
+  ///
+  /// `cd` is part of the command rather than an instruction above it. Local
+  /// scope files the server under whatever directory the CLI was run from, so a
+  /// command pasted into the wrong terminal wires the wrong folder and reports
+  /// success — the failure is silent, which makes it exactly the kind this
+  /// project puts in the command instead of in prose.
+  static func localCommands(for folder: URL) -> String {
+    let cd = "cd \(shellQuoted(folder.path))"
+    let adds = Surface.all.map { surface in
+      "claude mcp add --scope local \(serverKey(for: surface)) -- "
+        + "\(shellQuoted(bridgePath)) --server=\(surface.id)"
+    }
+    return ([cd] + adds).joined(separator: " \\\n  && ")
+  }
+
+  /// Read-only, both scopes.
+  ///
+  /// `local` reads `projects[<dir>].mcpServers` out of `~/.claude.json` — the
+  /// half the client row deliberately ignores, because there it would answer a
+  /// question nobody asked. Here it is the question.
+  static func projectStatus(_ folder: URL, scope: ProjectScope) -> Status {
+    switch scope {
+    case .project:
+      let path = projectConfig(in: folder)
+      guard FileManager.default.fileExists(atPath: path.path) else { return .notConfigured }
+      do { return try audit(path: path, rootKey: "mcpServers") } catch {
+        return .unreadable(error.localizedDescription)
+      }
+    case .local:
+      let path = home.appendingPathComponent(".claude.json")
+      guard let root = try? ClientWiringMerge.readJSON(path) else { return .unknown }
+      guard let servers = ClientWiringMerge.localScopeServers(in: root, folder: folder.path)
+      else { return .notConfigured }
+      return status(
+        from: ClientWiringMerge.audit(
+          servers: servers, expectedCommand: bridgePath, expected: expected))
+    }
+  }
+
+  // MARK: - Remembered folders
+
+  private static let foldersKey = "wiredFolders"
+
+  /// Paths, not security-scoped bookmarks: this app is not sandboxed — see
+  /// `Cupertino.entitlements`, which declares Apple Events and nothing else —
+  /// and a bookmark would buy access it already has while adding a stale-alias
+  /// failure mode to a list that is only ever redrawn.
+  static var rememberedFolders: [URL] {
+    get {
+      (UserDefaults.standard.array(forKey: foldersKey) as? [String] ?? [])
+        .map { URL(fileURLWithPath: $0) }
+    }
+    set {
+      UserDefaults.standard.set(newValue.map(\.path), forKey: foldersKey)
+    }
+  }
+
+  static func remember(_ folder: URL) {
+    var list = rememberedFolders.filter { $0.path != folder.path }
+    list.insert(folder, at: 0)
+    // A list, not a history. Ten is past what anyone scrolls in a settings pane.
+    rememberedFolders = Array(list.prefix(10))
+  }
+
+  static func forget(_ folder: URL) {
+    rememberedFolders = rememberedFolders.filter { $0.path != folder.path }
+  }
+
+  static func reveal(folder: URL) {
+    NSWorkspace.shared.activateFileViewerSelecting([projectConfig(in: folder)])
+  }
+
   static func reveal(_ client: Client) {
     guard let target = client.revealTarget else { return }
     NSWorkspace.shared.activateFileViewerSelecting([target])

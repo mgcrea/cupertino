@@ -426,8 +426,170 @@ struct ClientsPane: View {
         }
         .fixedSize(horizontal: false, vertical: true)
       }
+
+      ProjectFoldersSection(model: model)
     }
     .formStyle(.grouped)
+  }
+}
+
+/// Wiring one folder rather than the whole machine.
+///
+/// A section rather than a pane of its own: it is the same question the rows
+/// above answer — where do these servers get written — and separating them
+/// would invite someone to configure both and wonder why a project has the
+/// servers twice.
+///
+/// ## Why the scope is a control here and not a setting
+///
+/// It was nearly a preference in Settings, and that is the wrong shape. The
+/// choice is genuinely per-folder — this repo wants the entry committed, the
+/// client's repo very much does not — so a single global answer would be wrong
+/// half the time. More to the point, `project` scope writes a file into
+/// somebody's git working tree, and a preference set once and applied silently
+/// months later is the worst possible way to make that decision.
+///
+/// So it is a radio, sitting next to the button, resolved before the open panel
+/// appears. The last choice is remembered, which is the part a setting would
+/// have bought — without moving the decision away from the moment it matters.
+private struct ProjectFoldersSection: View {
+  let model: StatusModel
+
+  @AppStorage("wiring.projectScope") private var scopeRaw = ClientWiring.ProjectScope.local
+    .rawValue
+  @State private var folders: [URL] = ClientWiring.rememberedFolders
+  @State private var copied: URL?
+  @State private var error: String?
+
+  private var scope: ClientWiring.ProjectScope {
+    ClientWiring.ProjectScope(rawValue: scopeRaw) ?? .local
+  }
+
+  var body: some View {
+    Section {
+      Picker(
+        "Visible to",
+        selection: Binding(get: { scope }, set: { scopeRaw = $0.rawValue })
+      ) {
+        ForEach(ClientWiring.ProjectScope.allCases) { option in
+          Text(option.displayName).tag(option)
+        }
+      }
+      .pickerStyle(.radioGroup)
+
+      Text(scope.consequence)
+        .font(.caption)
+        .foregroundStyle(scope == .project ? .orange : .secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+      LabeledContent("Add a folder") {
+        Button("Choose…") { choose() }
+      }
+
+      ForEach(folders, id: \.path) { folder in
+        FolderRow(
+          folder: folder,
+          scope: scope,
+          copied: copied == folder,
+          wire: { wire(folder) },
+          forget: {
+            ClientWiring.forget(folder)
+            folders = ClientWiring.rememberedFolders
+          })
+      }
+    } header: {
+      Text("Project folders")
+    } footer: {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(
+          "Wire a folder when you want these servers in one project rather than everywhere. A Claude Code session started in that folder gets them; every other session stays as it was."
+        )
+        if let error {
+          Text(error).foregroundStyle(.red)
+        }
+      }
+      .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private func choose() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.prompt = "Wire"
+    panel.message = "Choose the project folder to wire Cupertino into."
+    guard panel.runModal() == .OK, let folder = panel.url else { return }
+    ClientWiring.remember(folder)
+    folders = ClientWiring.rememberedFolders
+    wire(folder)
+  }
+
+  /// One button, two behaviours, because the two scopes genuinely differ in
+  /// what this app is willing to do — see `ClientWiring.ProjectScope`.
+  private func wire(_ folder: URL) {
+    error = nil
+    switch scope {
+    case .project:
+      do { try ClientWiring.configureProject(folder) } catch {
+        self.error = error.localizedDescription
+      }
+      folders = ClientWiring.rememberedFolders
+    case .local:
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(ClientWiring.localCommands(for: folder), forType: .string)
+      copied = folder
+      Task {
+        try? await Task.sleep(for: .seconds(2))
+        copied = nil
+      }
+    }
+  }
+}
+
+private struct FolderRow: View {
+  let folder: URL
+  let scope: ClientWiring.ProjectScope
+  let copied: Bool
+  let wire: () -> Void
+  let forget: () -> Void
+
+  private var status: ClientWiring.Status { ClientWiring.projectStatus(folder, scope: scope) }
+
+  var body: some View {
+    LabeledContent {
+      HStack(spacing: 8) {
+        switch scope {
+        case .local:
+          Button(copied ? "Copied" : "Copy command", action: wire)
+        case .project:
+          if status == .configured {
+            Button("Reveal") { ClientWiring.reveal(folder: folder) }
+          } else {
+            Button(status == .notConfigured ? "Write" : "Update", action: wire)
+          }
+        }
+        Button("Remove", action: forget)
+          .buttonStyle(.borderless)
+          .foregroundStyle(.secondary)
+      }
+    } label: {
+      Label {
+        VStack(alignment: .leading, spacing: 1) {
+          Text(folder.lastPathComponent)
+          // The full path, because two repos called `app` is the normal case
+          // and the last component alone would make them indistinguishable.
+          Text(folder.path)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.head)
+        }
+      } icon: {
+        Image(systemName: status == .configured ? "checkmark.circle.fill" : "folder")
+          .foregroundStyle(status == .configured ? .green : .secondary)
+      }
+    }
   }
 }
 

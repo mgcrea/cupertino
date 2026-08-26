@@ -63,6 +63,8 @@ struct WiringCheck {
     incompleteVersusNotConfigured()
     nonObjectJSONRefused()
     backupAndNoLitter()
+    localScopeIsReadCorrectly()
+    projectFileIsJustAnotherMerge()
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 { exit(1) }
@@ -245,4 +247,82 @@ struct WiringCheck {
     check("no backup for a new file", none == nil)
     check("parent directories created", fm.fileExists(atPath: fresh.path))
   }
+
+  /// Local scope, which lives at `projects["<dir>"].mcpServers` in a file this
+  /// app reads and never writes.
+  ///
+  /// The distinction under test is the one that decides which button a folder
+  /// row shows: a folder Claude Code has never heard of and a folder it knows
+  /// with nothing of ours in it are different answers, and collapsing them
+  /// would make an unwired folder claim to be merely incomplete.
+  static func localScopeIsReadCorrectly() {
+    print("local scope lookup")
+    let dir = "/Users/someone/Projects/thing"
+    let root: [String: Any] = [
+      "numStartups": 41,
+      "projects": [
+        dir: ["mcpServers": ["cupertino-mail": ["command": "/A/bridge"]], "allowedTools": []],
+        "/Users/someone/elsewhere": ["allowedTools": []],
+      ],
+    ]
+
+    let mine = ClientWiringMerge.localScopeServers(in: root, folder: dir)
+    check("finds the servers under the folder's own key", mine?.count == 1)
+
+    // Known folder, nothing of ours: an empty dictionary, never nil.
+    let empty = ClientWiringMerge.localScopeServers(in: root, folder: "/Users/someone/elsewhere")
+    check("a known folder with no servers reads as empty, not absent", empty?.isEmpty == true)
+
+    // Unknown folder: nil, so the caller can say "not configured" rather than
+    // running an audit that would report every surface missing.
+    check(
+      "an unknown folder reads as absent",
+      ClientWiringMerge.localScopeServers(in: root, folder: "/nope") == nil)
+
+    // A file with no projects key at all — a fresh install.
+    check(
+      "no projects key reads as absent",
+      ClientWiringMerge.localScopeServers(in: ["numStartups": 1], folder: dir) == nil)
+
+    // The audit still has to work on what comes back.
+    let audit = ClientWiringMerge.audit(
+      servers: mine ?? [:], expectedCommand: "/A/bridge", expected: expected)
+    if case .incomplete(let missing) = audit {
+      check("audits the folder's servers, not the user-scope ones", missing.count == surfaces.count - 1)
+    } else {
+      check("audits the folder's servers, not the user-scope ones", false)
+    }
+  }
+
+  /// Project scope writes `<dir>/.mcp.json`, and the whole point of routing it
+  /// through the same merge is that a repo's existing servers survive. Asserted
+  /// against a realistic committed config rather than a synthetic one.
+  static func projectFileIsJustAnotherMerge() {
+    print("project .mcp.json merge")
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("cupertino-folder-\(UUID().uuidString)")
+    let config = dir.appendingPathComponent(".mcp.json")
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let existing: [String: Any] = [
+      "mcpServers": [
+        "postgres": ["command": "npx", "args": ["-y", "@some/pg-mcp"]]
+      ]
+    ]
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let data = try! JSONSerialization.data(withJSONObject: existing, options: [.prettyPrinted])
+    try! data.write(to: config)
+
+    let root = try! ClientWiringMerge.readJSON(config)
+    let merged = ClientWiringMerge.merged(
+      into: root, rootKey: "mcpServers", entries: entries("/A/bridge"), legacy: legacy)
+    _ = try! ClientWiringMerge.write(merged, to: config, backupSuffix: "cupertino-backup")
+
+    let after = try! ClientWiringMerge.readJSON(config)
+    let servers = after["mcpServers"] as! [String: Any]
+    check("the repo's own server survives", servers["postgres"] != nil)
+    check("every surface was added", surfaces.allSatisfy { servers["cupertino-\($0.id)"] != nil })
+    check("nothing else was invented", servers.count == surfaces.count + 1)
+  }
+
 }
