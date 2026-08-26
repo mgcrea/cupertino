@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { AppleContactsClient } from "../client/contacts.js";
 import { decodeRef } from "../client/ref.js";
-import { fail, ok, wrap } from "./util.js";
+import { fail, ok, wrapResult } from "./util.js";
 
 /**
  * The mutating tools. Registered only when `allowWrites` is on, and never
@@ -62,7 +62,7 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ phones, emails, ...rest }) =>
-      wrap(async () => {
+      wrapResult(async () => {
         // A card with no name at all is not a contact, it is a blank row that
         // has to be found and removed by hand in the UI.
         if (!rest.firstName && !rest.lastName && !rest.organization) {
@@ -105,7 +105,7 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ ref, phones, emails, ...rest }) =>
-      wrap(async () => {
+      wrapResult(async () => {
         const decoded = decodeRef(ref);
         const contact = client.get(decoded.source, decoded.recordPk);
         if (!contact) {

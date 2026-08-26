@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { AppleContactsClient } from "../client/contacts.js";
 import { encodeRef, decodeRef } from "../client/ref.js";
-import { fail, limitArg, ok, wrap } from "./util.js";
+import { fail, limitArg, ok, wrap, wrapResult } from "./util.js";
 
 /**
  * NOTE ON `async` BELOW: core's `wrap` is typed `() => Promise<T>` because most
@@ -77,7 +77,7 @@ export const registerContactTools = (server: McpServer, client: AppleContactsCli
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) =>
-      wrap(async () => {
+      wrapResult(async () => {
         const decoded = decodeRef(ref);
         const contact = client.get(decoded.source, decoded.recordPk);
         if (!contact) {

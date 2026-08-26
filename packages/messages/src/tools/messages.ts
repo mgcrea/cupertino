@@ -13,6 +13,7 @@ import {
   ok,
   toArg,
   wrap,
+  wrapResult,
 } from "./util.js";
 
 /** ISO-8601 in, or a clear refusal. No relative grammar on this surface yet. */
@@ -89,7 +90,7 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) =>
-      wrap(async () => {
+      wrapResult(async () => {
         const message = client.getMessage(decodeMessageRef(ref));
         if (!message) {
           return fail(
