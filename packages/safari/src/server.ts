@@ -1,9 +1,16 @@
-import type { Logger, OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import {
+  registerSurfaceResources,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "./build-info.js";
 import { AppleSafariClient } from "./client/safari.js";
 import type { Config } from "./config.js";
+import { SAFARI_GUIDE } from "./guide.js";
+import { registerPrompts } from "./prompts.js";
+import { buildDiagnostics } from "./tools/diagnostics.js";
 import { registerTools } from "./tools/index.js";
 
 export const SERVER_NAME = BUILD_INFO.name;
@@ -40,6 +47,16 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
+  registerPrompts(server);
+  registerSurfaceResources(server, {
+    surface: "safari",
+    displayName: "Safari",
+    guide: SAFARI_GUIDE,
+    diagnostics: () => buildDiagnostics(client),
+    // No inventory. Safari has no containers you address by name — history,
+    // tabs and the Reading List are three queries, not three folders, and the
+    // guide's job here is to stop them being confused for one another.
+  });
 
   return { server, client };
 };

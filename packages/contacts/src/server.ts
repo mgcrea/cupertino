@@ -1,9 +1,16 @@
-import type { Logger, OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import {
+  registerSurfaceResources,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "./build-info.js";
 import { AppleContactsClient } from "./client/contacts.js";
 import type { Config } from "./config.js";
+import { CONTACTS_GUIDE } from "./guide.js";
+import { registerPrompts } from "./prompts.js";
+import { buildDiagnostics } from "./tools/diagnostics.js";
 import { registerTools } from "./tools/index.js";
 
 export const SERVER_NAME = BUILD_INFO.name;
@@ -40,6 +47,18 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
+  registerPrompts(server);
+  registerSurfaceResources(server, {
+    surface: "contacts",
+    displayName: "Contacts",
+    guide: CONTACTS_GUIDE,
+    diagnostics: () => buildDiagnostics(client),
+    // No inventory. The other surfaces have containers you address by name —
+    // mailboxes, lists, calendars — and this one does not: you reach a contact
+    // by searching for it, never by naming the store it happens to live in.
+    // The stores are reported in diagnostics, where they are a permissions
+    // fact rather than something to filter on.
+  });
 
   return { server, client };
 };

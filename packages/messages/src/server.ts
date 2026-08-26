@@ -1,9 +1,16 @@
-import type { Logger, OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import {
+  registerSurfaceResources,
+  type Logger,
+  type OsascriptRunner,
+} from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "./build-info.js";
 import { AppleMessagesClient } from "./client/messages.js";
 import type { Config } from "./config.js";
+import { MESSAGES_GUIDE } from "./guide.js";
+import { registerPrompts } from "./prompts.js";
+import { buildDiagnostics } from "./tools/diagnostics.js";
 import { registerTools } from "./tools/index.js";
 
 export const SERVER_NAME = BUILD_INFO.name;
@@ -43,6 +50,17 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
+  registerPrompts(server, config.allowWrites);
+  registerSurfaceResources(server, {
+    surface: "messages",
+    displayName: "Messages",
+    guide: MESSAGES_GUIDE,
+    diagnostics: () => buildDiagnostics(client),
+    // No inventory. Chats are unbounded and change constantly, which makes them
+    // a query (apple_messages_list_chats) rather than a fixed set worth
+    // addressing by URI — a resource that is never the same twice is a tool
+    // call wearing a URI.
+  });
 
   return { server, client };
 };

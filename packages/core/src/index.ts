@@ -35,6 +35,20 @@ export {
   type OsascriptRunner,
 } from "./osascript.js";
 export {
+  promptArg,
+  registerWorkflowPrompt,
+  requiredPromptArg,
+  type PromptContext,
+  type WorkflowPrompt,
+} from "./prompts.js";
+export {
+  registerSurfaceResources,
+  RESOURCE_SCHEME,
+  surfaceUri,
+  type ResourceReader,
+  type SurfaceResourceOptions,
+} from "./resources.js";
+export {
   columnsOf,
   CORE_DATA_EPOCH_OFFSET,
   detectEpoch,
