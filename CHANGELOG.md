@@ -67,6 +67,28 @@ summary.
 
 ### Fixed
 
+- **The host stopped answering after about 64 sessions, silently.** `ServerHost` ran every blocking
+  part of a session — the two pumps, the stderr drain, and the `group.wait()` that outlives them —
+  on libdispatch's global queues, which are a bounded pool of roughly 64 threads per QoS. A blocked
+  thread is not an available one, so sessions consumed the pool rather than sharing it, and past the
+  limit newly submitted blocks were never scheduled at all. The block that never ran was
+  `serve(client)`: `accept` kept succeeding, so every new bridge completed its `connect`, wrote its
+  handshake, and then waited forever on a reply from a function that had not started. Nothing logged
+  an error, because from the host's side nothing had failed. Measured on a host up three days: 68
+  threads parked in `_dispatch_group_wait_slow`, `acceptLoop` healthy and blocked in `accept`, 68
+  server processes still alive because their pumps had never run to hand them an EOF, 955 open
+  descriptors, and a probe getting zero bytes back in eight seconds from a socket that accepted it
+  in two. Pumps, drains and sessions now each get a thread of their own, and the stderr drain is no
+  longer a member of the group that gates teardown — logging is not plumbing, and a group member
+  that only ends when the child exits makes every teardown hostage to the child agreeing to go.
+- **A wedged host produced immortal bridges instead of an error.** `cupertino-bridge` waited on the
+  handshake reply with no deadline and nothing watching stdin, so a host that accepted but never
+  answered left the relay alive indefinitely — 67 of them parented to launchd, each still pinning a
+  session's descriptors and threads on the app side, which fed the condition that caused it. The
+  handshake now has a 15s `SO_RCVTIMEO` and says what it means, and the relay ends when _either_
+  direction closes: previously only Cupertino hanging up could end it, so a host that quit was never
+  reason enough for the bridge to stop.
+
 - **Four tools returned their payload wrapped twice.** `wrap()` JSON-encodes whatever its body
   returns, and `apple_messages_get_message`, `apple_contacts_get_contact`,
   `apple_contacts_create_contact` and `apple_contacts_update_contact` had bodies that returned
