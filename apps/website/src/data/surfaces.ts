@@ -52,14 +52,16 @@ export const SURFACES: readonly Surface[] = [
       "apple_mail_send_message",
       "apple_mail_reply_to_message",
       "apple_mail_forward_message",
+      "apple_mail_update_draft",
       "apple_mail_set_message_flags",
       "apple_mail_move_messages",
+      "apple_mail_create_mailbox",
       "apple_mail_delete_messages",
       "apple_mail_check_for_new_mail",
       "apple_mail_save_attachment",
     ],
     pitch:
-      "The deep one. Search, read, threads, attachments and message source across accounts and mailboxes; eight mutating tools behind the write gate.",
+      "The deep one. Search, read, threads, attachments and message source across accounts and mailboxes; ten mutating tools behind the write gate.",
     withoutGrant: "Accounts, mailboxes and writes only — search falls back to the 74-second path.",
   },
   {
@@ -117,6 +119,7 @@ export const SURFACES: readonly Surface[] = [
     read: [
       "apple_calendar_list_events",
       "apple_calendar_search_events",
+      "apple_calendar_find_availability",
       "apple_calendar_get_event",
       "apple_calendar_list_calendars",
       "apple_calendar_list_accounts",
@@ -128,7 +131,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_calendar_delete_events",
     ],
     pitch:
-      "Ranges, search and repeating events expanded properly, with three mutating tools behind the write gate.",
+      "Ranges, search, free time between events, and repeating events expanded properly, with three mutating tools behind the write gate.",
     withoutGrant:
       "Nothing — the only surface with no Apple Events read path fast enough to be a fallback.",
   },
@@ -164,13 +167,17 @@ export const SURFACES: readonly Surface[] = [
       "apple_messages_get_message",
       "apple_messages_diagnostics",
     ],
-    // One, and it is the whole dictionary. `sdef` lists three commands — send,
-    // login and logout — and the other two would sign the user out of iMessage
-    // on every device they own. There is no edit, delete, mark-as-read or
+    // `sdef` lists three commands — send, login and logout — and the other two
+    // would sign the user out of iMessage on every device they own, so send is
+    // the only Apple Event this surface ever sends. `save_attachment` sits
+    // behind the same gate but is not one of the three: it copies a file
+    // already on disk and sends no Apple Event at all, so a surface that is
+    // "nothing without a grant" everywhere else can still save an attachment
+    // with Full Disk Access alone. There is no edit, delete, mark-as-read or
     // reaction verb to expose. See docs/messages.md.
-    write: ["apple_messages_send_message"],
+    write: ["apple_messages_send_message", "apple_messages_save_attachment"],
     pitch:
-      "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — and sends, behind the write gate.",
+      "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — saves attachments, and sends, behind the write gate.",
     withoutGrant:
       "Nothing at all. Every read through Messages' own scripting interface fails, so this is the one surface with no second lane to degrade to.",
   },
