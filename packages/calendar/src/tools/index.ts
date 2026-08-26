@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
 import { registerActionTools } from "./actions.js";
+import { registerAvailabilityTools } from "./availability.js";
 import { registerCalendarTools } from "./calendars.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerEventTools } from "./events.js";
@@ -36,6 +37,7 @@ export const registerTools = (
   registerDiagnosticsTools(server, client, ctx);
   registerCalendarTools(server, client);
   registerEventTools(server, client);
+  registerAvailabilityTools(server, client);
 
   if (!ctx.allowWrites) return;
   registerActionTools(server, client);

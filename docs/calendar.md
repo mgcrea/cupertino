@@ -358,6 +358,49 @@ bare error code is now re-inflated so the caller still gets the explanation.
 - **Status codes are inferred.** `status` and `invitationStatus` are read as EventKit's documented
   `EKEventStatus` / `EKParticipantStatus` constants. Likely, not measured — which is why cancelled
   and declined events are only hidden when asked for, and why the raw value is on every result.
+- **`availability` is inferred too, and held to a stricter standard.** `EKEventAvailability.free`
+  is 1, on the same reasoning. The difference is the direction a wrong reading fails in: misreading
+  `status` hides an event that should have shown, misreading this one reports a booked hour as
+  free. So `find_availability` does not apply it at all unless the caller passes
+  `respectFreeMarking`, every event blocks time by default, and the raw value travels on the
+  result. Measuring the column is the next probe worth running — `SELECT availability, COUNT(*)
+FROM CalendarItem GROUP BY availability` against a calendar with a known free-marked event.
 - **`hidden` and `phantom_master` are excluded conservatively** from both legs on the same basis.
 - **`occurrence_date` vs `occurrence_start_date`.** Leg 2 reads `occurrence_date`, which spans the
   full ±2 years while `occurrence_start_date` reaches only +256 days.
+
+## Free time is the complement, and that changes the error budget
+
+`apple_calendar_find_availability` reports when nothing is on the calendar. Everything else on this
+surface returns what it FOUND; this returns what it did not, and the inversion moves every shortfall
+from harmless to dangerous.
+
+The sentence above about the occurrence cache — "a short list of events is indistinguishable from a
+free afternoon" — is the whole argument. A `list_events` call that misses a repeating meeting
+returns nine events instead of ten, flags `truncated`, and the caller is under-informed. The same
+miss inside an availability query does not shorten the answer: it fills the hour that meeting
+occupies with a slot the model will happily book over.
+
+So the busy set is complete or there is no answer. Three checks, each returning `degraded: true`
+rather than a short list:
+
+| Check                                                           | Why a short list would be a lie                                                                            |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Scan bound** — either SQL leg returning exactly its `LIMIT`   | The limit cuts the TAIL of the window, so the later half of the week comes back uniformly free             |
+| **Expansion** — `hasOccurrenceCache` false                      | A weekly meeting exists on the date its series starts and nowhere else, so every other week reads as empty |
+| **Coverage** — the window running past `OccurrenceCache`'s edge | Past the edge repeating events are simply absent                                                           |
+
+The third clips the window instead of refusing outright, because the part inside the edge is
+genuinely answerable, and reports what it cut in `truncated`. The first two refuse.
+
+Two smaller decisions follow the same rule, and both err toward saying "busy":
+
+- **An all-day event does not block its day by default.** It is as often a birthday as a holiday,
+  and blocking on every one would delete a working day. Ignoring them silently would book over a
+  trip. So the day stays open and the events are reported in `allDayEvents` next to the slots. With
+  `allDayBusy` on, the block is anchored on the day the event RENDERS on and closed at the later of
+  the next midnight and the end column — because that column is the unsettled one above, and erring
+  long hides a slot rather than inventing one.
+- **Working hours are local wall clock**, built from local date components so they hold their
+  numbers across a daylight-saving change. A day that loses an hour has one fewer hour in it, which
+  is what actually happened. `APPLE_CALENDAR_TIMEZONE` is a render override and does not move them.

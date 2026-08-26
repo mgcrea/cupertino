@@ -51,6 +51,7 @@ describe("tool registration", () => {
     const { tools } = await (await connect()).listTools();
     expect(tools.map((t) => t.name).toSorted()).toEqual([
       "apple_calendar_diagnostics",
+      "apple_calendar_find_availability",
       "apple_calendar_get_event",
       "apple_calendar_list_accounts",
       "apple_calendar_list_calendars",

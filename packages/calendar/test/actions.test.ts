@@ -126,6 +126,7 @@ describe("the write gate", () => {
       "apple_calendar_create_event",
       "apple_calendar_delete_events",
       "apple_calendar_diagnostics",
+      "apple_calendar_find_availability",
       "apple_calendar_get_event",
       "apple_calendar_list_accounts",
       "apple_calendar_list_calendars",

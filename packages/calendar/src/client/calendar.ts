@@ -7,6 +7,20 @@ import {
 
 import type { Config } from "../config.js";
 import {
+  alignUp,
+  dayWindows,
+  DEFAULT_WEEKDAYS,
+  localDay,
+  mergeIntervals,
+  nextLocalDayMs,
+  parseClock,
+  startOfLocalDayMs,
+  subtractBusy,
+  weekdaySet,
+  type Interval,
+  type WeekdayKey,
+} from "./availability.js";
+import {
   parseBound,
   parseDate,
   parseDuration,
@@ -73,6 +87,31 @@ export type LaneStatus = {
 const STATUS_CANCELLED = 3;
 const PARTICIPANT_DECLINED = 3;
 
+/**
+ * `EKEventAvailability.free`, on the same inference as the two above — and held
+ * to a stricter standard, because the direction it can fail in is worse.
+ *
+ * Reading this number wrongly makes a busy event look free, which is the one
+ * error `findAvailability` exists to avoid. So unlike `status`, it is not
+ * applied by default at all: `respectFreeMarking` is opt-in, the raw value
+ * travels on every busy block, and until someone measures the column against a
+ * live store every event blocks time regardless of how it is marked.
+ */
+const AVAILABILITY_FREE = 1;
+
+/**
+ * How many events `findAvailability` will read from one leg before refusing.
+ *
+ * `listEvents` over-fetches `limit * 4 + 50` and caps at 5,000 because it only
+ * needs enough rows to fill a page. This tool needs EVERY row in the window, so
+ * the number here is not a page size — it is the point past which the tool
+ * stops claiming to know what is on the calendar. Sized against the measured
+ * store in `docs/calendar.md` (1,350 items, 1,946 cached occurrences across
+ * four years), so a year-long window on an ordinary calendar sits far under it
+ * and a runaway one is caught rather than answered.
+ */
+const BUSY_SCAN_BOUND = 5_000;
+
 export type EventSummary = {
   /** Opaque; feed it back to get_event or a write tool. */
   ref: string;
@@ -120,6 +159,89 @@ export type EventFilters = {
   includeDeclined?: boolean | undefined;
   includeCancelled?: boolean | undefined;
   limit: number;
+};
+
+/**
+ * A window of time nothing is on the calendar, long enough to hold the meeting
+ * that was asked for.
+ */
+export type FreeSlot = {
+  /** Local wall clock with its offset, ready to hand back to create_event. */
+  start: string;
+  end: string;
+  /** The local day it falls on, so a caller can group without re-parsing. */
+  day: string;
+  /** How long the whole gap is — usually longer than the duration requested. */
+  minutes: number;
+};
+
+export type AvailabilityFilters = {
+  from?: string | undefined;
+  to?: string | undefined;
+  durationMinutes: number;
+  calendar?: string | undefined;
+  dayStart: string;
+  dayEnd: string;
+  weekdays?: readonly WeekdayKey[] | undefined;
+  granularityMinutes: number;
+  /** Let an all-day event block its whole day. Off by default — see below. */
+  allDayBusy: boolean;
+  /** Trust `CalendarItem.availability`. Off by default — the mapping is inferred. */
+  respectFreeMarking: boolean;
+  includeDeclined?: boolean | undefined;
+  includeCancelled?: boolean | undefined;
+  limit: number;
+};
+
+/**
+ * Why an availability answer was withheld.
+ *
+ * A separate shape from an empty `slots` array on purpose, and the distinction
+ * is the whole point of the tool: "nothing is free" and "I cannot see enough of
+ * the calendar to say" look identical to a model unless one of them says so.
+ */
+export type AvailabilityRefusal = {
+  degraded: true;
+  capability: string;
+  reason: string;
+  hint: string;
+};
+
+export type AvailabilityResult = {
+  slots: FreeSlot[];
+  durationMinutes: number;
+  window: {
+    from: string;
+    to: string;
+    clamped: boolean;
+    /** True when the start was pulled forward to now, dropping time already past. */
+    startedAtNow: boolean;
+  };
+  workingHours: {
+    dayStart: string;
+    dayEnd: string;
+    weekdays: readonly WeekdayKey[];
+    granularityMinutes: number;
+    /** The zone the working hours were read in — always this machine's. */
+    timeZone: string;
+  };
+  busy: {
+    /** Events that blocked time, after every filter. */
+    blocking: number;
+    /** Contiguous busy intervals they collapsed into. */
+    intervals: number;
+  };
+  /**
+   * All-day events overlapping the window, reported whether or not they were
+   * applied. See `allDayBusy` on the tool for why this is not a default.
+   */
+  allDayEvents: { day: string; summary: string | null; calendar: string | null }[];
+  expansion: ExpansionState;
+  coverage: { from: string; to: string; rows: number } | null;
+  /** Set when the window was cut back to what the expansion actually covers. */
+  truncated?: { reason: string; requestedTo?: string; requestedFrom?: string };
+  /** Set when the window survived every check but held no time at all. */
+  note?: string;
 };
 
 export type CreateClientOptions = {
@@ -475,6 +597,262 @@ export class AppleCalendarClient {
         clamped: false,
       },
       coverage: null,
+    };
+  }
+
+  /**
+   * When nothing is on the calendar, for long enough to hold a meeting.
+   *
+   * ## Why this is not list_events with arithmetic bolted on
+   *
+   * Every other read here returns what it found and flags what it missed, and
+   * a caller reads the flag or does not. This one INVERTS the events: what it
+   * returns is the complement of what it read, so anything the read missed
+   * comes back as free time. A page limit, an unexpanded weekly meeting, an
+   * event past the coverage edge — each of those shortens a `list_events`
+   * result harmlessly and each of them, here, invents a slot that is already
+   * booked. `docs/calendar.md` names the failure directly: "a short list of
+   * events is indistinguishable from a free afternoon."
+   *
+   * So the busy set is either complete or the answer is withheld. Three checks
+   * enforce that, and each returns a refusal rather than a short list:
+   *
+   *   1. the scan bound, so a saturated leg never passes for a quiet week
+   *   2. the expansion, because an unexpanded series is invisible on every
+   *      date but one
+   *   3. the coverage edge, past which repeating events simply are not there
+   *
+   * The third clips the window rather than refusing outright, because the part
+   * inside the edge is genuinely answerable — but it says what it cut.
+   */
+  findAvailability(args: AvailabilityFilters): AvailabilityResult | AvailabilityRefusal {
+    const store = this.#require();
+    const now = this.#now();
+    const range = parseRange(
+      {
+        from: args.from,
+        to: args.to,
+        defaultRangeDays: this.config.defaultRangeDays,
+        maxRangeDays: this.config.maxRangeDays,
+      },
+      now,
+    );
+
+    const dayStart = parseClock("dayStart", args.dayStart);
+    const dayEnd = parseClock("dayEnd", args.dayEnd);
+    const weekdayKeys = args.weekdays?.length ? args.weekdays : DEFAULT_WEEKDAYS;
+    const weekdays = weekdaySet(weekdayKeys);
+    const calendarUuids = this.#calendarUuids(store, args.calendar);
+
+    const fromApple = this.#toApple(range.from, store);
+    const toApple = this.#toApple(range.to, store);
+    const q = {
+      fromApple,
+      toApple,
+      limit: BUSY_SCAN_BOUND,
+      ...(calendarUuids ? { calendarUuids } : {}),
+    };
+    const items = store.rangeItems(q);
+    const occurrences = store.rangeOccurrences(q);
+
+    // A leg that came back exactly full was cut by SQL's LIMIT, and what it cut
+    // is the tail of the window — so the later half of the answer would be
+    // uniformly free. A refusal, not an empty result.
+    if (items.length >= BUSY_SCAN_BOUND || occurrences.length >= BUSY_SCAN_BOUND) {
+      return {
+        degraded: true,
+        capability: "busy-set",
+        reason:
+          `The window holds at least ${BUSY_SCAN_BOUND} events, which is the bound on what this ` +
+          'tool reads. Nothing was computed, so this is not "you have no free time" and not ' +
+          '"you are entirely free" — it is no answer at all.',
+        hint:
+          "Ask for a shorter window, or scope it to the calendars that matter with `calendar`. " +
+          "apple_calendar_list_events will still page through the range as it is.",
+      };
+    }
+
+    const merged = mergeRange({
+      items,
+      occurrences,
+      coverage: store.coverage(),
+      hasOccurrenceCache: store.caps.hasOccurrenceCache,
+      fromApple,
+      toApple,
+      // Nothing may be sliced off: both legs are already under the bound above.
+      limit: items.length + occurrences.length,
+      epochOffset: store.caps.epochOffset,
+    });
+
+    if (merged.expansion === "unavailable") {
+      return {
+        degraded: true,
+        capability: "occurrence-expansion",
+        reason:
+          "Repeating events are not expanded on this store, so a weekly meeting exists on the " +
+          "date its series begins and nowhere else. Every gap computed from that would be wrong " +
+          `in the same direction — free where it is booked. ${merged.expansionReason ?? ""}`.trim(),
+        hint:
+          "Read the schedule directly with apple_calendar_list_events, which reports the same " +
+          "limitation rather than hiding it behind an answer.",
+      };
+    }
+
+    let windowFrom = range.from;
+    let windowTo = range.to;
+    let truncated: AvailabilityResult["truncated"];
+    const cov = merged.coverage;
+    if (cov) {
+      const covFrom = new Date((cov.fromApple + store.caps.epochOffset) * 1000);
+      const covTo = new Date((cov.toApple + store.caps.epochOffset) * 1000);
+      const reason =
+        "the requested window runs past the range this store has expanded, where repeating " +
+        "events are missing entirely; it was cut back rather than reporting that time as free";
+      if (windowTo.getTime() > covTo.getTime()) {
+        truncated = { reason, requestedTo: toLocalIso(range.to) };
+        windowTo = covTo;
+      }
+      if (windowFrom.getTime() < covFrom.getTime()) {
+        truncated = { ...(truncated ?? { reason }), requestedFrom: toLocalIso(range.from) };
+        windowFrom = covFrom;
+      }
+      if (truncated && windowTo.getTime() <= windowFrom.getTime()) {
+        return {
+          degraded: true,
+          capability: "occurrence-coverage",
+          reason:
+            "The whole requested window lies outside the range this store has expanded, so " +
+            "every gap in it would be invented rather than found.",
+          hint:
+            `The expansion reaches ${toLocalIso(covFrom)} to ${toLocalIso(covTo)}. ` +
+            "Ask inside that, or use apple_calendar_list_events, which reports single events " +
+            "correctly at any distance.",
+        };
+      }
+    }
+
+    // Time already gone is not availability. Applied after the coverage cut so
+    // the two reasons a window shrank stay distinguishable in the result.
+    const startedAtNow = windowFrom.getTime() < now.getTime();
+    if (startedAtNow) windowFrom = now;
+
+    const shell = {
+      durationMinutes: args.durationMinutes,
+      window: {
+        from: toLocalIso(windowFrom),
+        to: toLocalIso(windowTo),
+        clamped: range.clamped,
+        startedAtNow,
+      },
+      workingHours: {
+        dayStart: args.dayStart,
+        dayEnd: args.dayEnd,
+        weekdays: weekdayKeys,
+        granularityMinutes: args.granularityMinutes,
+        // The machine's zone, always: working hours are wall-clock hours, and
+        // this server does not re-anchor a calendar day in another zone.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      expansion: merged.expansion,
+      coverage: cov
+        ? {
+            from: this.#fromApple(cov.fromApple, store),
+            to: this.#fromApple(cov.toApple, store),
+            rows: cov.rows,
+          }
+        : null,
+      ...(truncated ? { truncated } : {}),
+    };
+
+    if (windowTo.getTime() <= windowFrom.getTime()) {
+      return {
+        ...shell,
+        slots: [],
+        busy: { blocking: 0, intervals: 0 },
+        allDayEvents: [],
+        note:
+          "The window holds no future time — every moment in it has already passed. Nothing was " +
+          "checked, so this is not a report that you are busy.",
+      };
+    }
+
+    const declined = args.includeDeclined ?? this.config.includeDeclined;
+    const cancelled = args.includeCancelled ?? this.config.includeCancelled;
+    const busy: Interval[] = [];
+    const allDayEvents: AvailabilityResult["allDayEvents"] = [];
+    let blocking = 0;
+
+    for (const row of merged.rows) {
+      if (row.startApple === null) continue;
+      if (!this.#visible(row, { declined, cancelled })) continue;
+      const startMs = (row.startApple + store.caps.epochOffset) * 1000;
+
+      if (row.allDay) {
+        const dayOpen = startOfLocalDayMs(startMs);
+        const dayShut = nextLocalDayMs(startMs);
+        if (dayOpen < windowTo.getTime() && dayShut > windowFrom.getTime()) {
+          const rendered = renderInstant(row.startApple, row.startTz, true, store.caps.epochOffset);
+          allDayEvents.push({
+            day: rendered?.allDay ? rendered.day : localDay(startMs),
+            summary: row.summary,
+            calendar: row.calendarTitle,
+          });
+        }
+        if (!args.allDayBusy) continue;
+        /*
+         * The stored end of an all-day event is not settled — see #summarise,
+         * and docs/calendar.md, "Still open". So the block is anchored on the
+         * DAY the event renders on and closed at the later of the next midnight
+         * and whatever the end column says, which errs long. Long is the safe
+         * direction: an over-long block hides a slot that existed, a short one
+         * offers a slot that did not.
+         */
+        const endMs =
+          row.endApple === null ? dayShut : (row.endApple + store.caps.epochOffset) * 1000;
+        busy.push({ from: dayOpen, to: Math.max(dayShut, startOfLocalDayMs(endMs)) });
+        blocking += 1;
+        continue;
+      }
+
+      if (args.respectFreeMarking && row.availability === AVAILABILITY_FREE) continue;
+      const endMs =
+        row.endApple === null ? startMs : (row.endApple + store.caps.epochOffset) * 1000;
+      // A zero-length event is a marker, not an appointment; it blocks nothing.
+      if (endMs <= startMs) continue;
+      busy.push({ from: startMs, to: endMs });
+      blocking += 1;
+    }
+
+    const blocks = mergeIntervals(busy);
+    const needMs = args.durationMinutes * 60_000;
+    const slots: FreeSlot[] = [];
+    outer: for (const w of dayWindows({
+      from: windowFrom,
+      to: windowTo,
+      dayStart,
+      dayEnd,
+      weekdays,
+    })) {
+      for (const gap of subtractBusy(w, blocks)) {
+        // Align first, then re-measure: a gap opening at 09:07 offers a 09:15
+        // start, and the seven minutes in between are not bookable time.
+        const start = alignUp(gap.from, args.granularityMinutes);
+        if (gap.to - start < needMs) continue;
+        slots.push({
+          start: toLocalIso(new Date(start)),
+          end: toLocalIso(new Date(gap.to)),
+          day: localDay(start),
+          minutes: Math.round((gap.to - start) / 60_000),
+        });
+        if (slots.length >= args.limit) break outer;
+      }
+    }
+
+    return {
+      ...shell,
+      slots,
+      busy: { blocking, intervals: blocks.length },
+      allDayEvents,
     };
   }
 
