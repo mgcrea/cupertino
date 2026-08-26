@@ -34,12 +34,12 @@ off cannot see that they exist.
 
 | Surface   | Package                                    | Status                                                          |
 | --------- | ------------------------------------------ | --------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 18 tools, search/read/attachments + gated writes  |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 19 tools, search/read/attachments + gated writes  |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 12 tools, search/read/attachments + gated writes  |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes       |
-| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 9 tools, ranges/search/recurrence + gated writes  |
+| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes  |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 6 tools, chats/search/decoded text + gated send   |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 7 tools, chats/search/decoded text + gated send   |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
 
@@ -263,6 +263,31 @@ See [docs/safari.md](docs/safari.md).
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
 `apple_contacts_` / `apple_messages_` / `apple_safari_`.
 
+## Prompts and resources
+
+Tools are what an agent _calls_. Two other things every server knows are the wrong shape for a tool,
+because a tool result is not addressable and does not outlive the session that paid for it: the
+inventory every other tool takes as an argument, and the diagnostics that get read one round trip
+after the confusing answer instead of before it.
+
+So each server also exposes **resources**:
+
+| URI                                 | What                                                               |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| `cupertino://<surface>/guide`       | the operating manual — static, so it reads with every grant denied |
+| `cupertino://<surface>/diagnostics` | the live capability and permission report                          |
+| `cupertino://<surface>/inventory`   | accounts and mailboxes / folders / lists / calendars               |
+
+and **workflow prompts**, which hold the constraints a tool description cannot: not "what this call
+does" but what order the calls go in. `apple_mail_triage`, `apple_mail_find_thread`,
+`apple_reminders_whats_due`, `apple_calendar_whats_my_day`, `apple_messages_catch_up` and the rest,
+one to three per surface. Each embeds its surface guide, so a host that expands a prompt hands the
+model the reference material with it.
+
+Write prompts follow the write tools exactly: with writes off, `apple_mail_draft_reply` is not
+refused, it is **not registered**. Full design notes, and what was deliberately left out, in
+[docs/prompts-and-resources.md](docs/prompts-and-resources.md).
+
 ## Configuration
 
 Environment only — these servers hold no secret of their own, so there is no config file. Prefix
@@ -283,6 +308,10 @@ is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_
 that is what `*_ACCOUNTS` is for, and it is enforced in exactly one place so no query path escapes
 it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_BODY_MAX_BYTES`,
 `*_BODY_SCAN_MAX`, `*_BODY_SCAN_BYTES` and `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
+
+Calendar takes `APPLE_CALENDAR_WORKDAY_START`, `APPLE_CALENDAR_WORKDAY_END` and
+`APPLE_CALENDAR_WORKDAYS` (`mon,tue,wed,thu,fri`), which set the working day
+`apple_calendar_find_availability` offers time inside when a call names no hours of its own.
 
 ## The app
 
@@ -327,20 +356,21 @@ Apple Mail for an assistant, and where those tools are ahead.
 
 ## Documentation
 
-|                                                  |                                               |
-| ------------------------------------------------ | --------------------------------------------- |
-| [docs/distribution.md](docs/distribution.md)     | how this ships, and why not the App Store     |
-| [docs/surfaces.md](docs/surfaces.md)             | which surfaces, and what each one costs       |
-| [docs/licensing.md](docs/licensing.md)           | what is open, what is sold, what buys trust   |
-| [docs/alternatives.md](docs/alternatives.md)     | what else reads Apple Mail, and where we lose |
-| [docs/mail-body.md](docs/mail-body.md)           | the body-search lane, and how it is decided   |
-| [docs/notes.md](docs/notes.md)                   | Apple Notes phase-0 measurements              |
-| [docs/reminders.md](docs/reminders.md)           | Apple Reminders phase-0 measurements          |
-| [docs/messages.md](docs/messages.md)             | Apple Messages: measurements, decoder, send   |
-| [docs/calendar.md](docs/calendar.md)             | Apple Calendar phase-0 measurements           |
-| [docs/safari.md](docs/safari.md)                 | Safari phase-0 measurements                   |
-| [docs/envelope-index.md](docs/envelope-index.md) | Mail's observed `Envelope Index` schema       |
-| [docs/verify.md](docs/verify.md)                 | checking the Mail server against a real index |
+|                                                                |                                               |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| [docs/distribution.md](docs/distribution.md)                   | how this ships, and why not the App Store     |
+| [docs/surfaces.md](docs/surfaces.md)                           | which surfaces, and what each one costs       |
+| [docs/licensing.md](docs/licensing.md)                         | what is open, what is sold, what buys trust   |
+| [docs/alternatives.md](docs/alternatives.md)                   | what else reads Apple Mail, and where we lose |
+| [docs/mail-body.md](docs/mail-body.md)                         | the body-search lane, and how it is decided   |
+| [docs/notes.md](docs/notes.md)                                 | Apple Notes phase-0 measurements              |
+| [docs/reminders.md](docs/reminders.md)                         | Apple Reminders phase-0 measurements          |
+| [docs/messages.md](docs/messages.md)                           | Apple Messages: measurements, decoder, send   |
+| [docs/calendar.md](docs/calendar.md)                           | Apple Calendar phase-0 measurements           |
+| [docs/safari.md](docs/safari.md)                               | Safari phase-0 measurements                   |
+| [docs/envelope-index.md](docs/envelope-index.md)               | Mail's observed `Envelope Index` schema       |
+| [docs/prompts-and-resources.md](docs/prompts-and-resources.md) | what the servers expose beyond tools          |
+| [docs/verify.md](docs/verify.md)                               | checking the Mail server against a real index |
 
 ## Working on it
 
@@ -412,10 +442,13 @@ Every probe degrades rather than exits — an app that is not running, or a perm
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
 
+<!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
+
 Releases are tagged per package, so a tag names what it publishes: `mail-v1.2.2`,
 `reminders-v1.2.2`, `calendar-v1.2.2`, `core-v1.2.2`. The app is tagged `app-v1.2.2` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
+<!-- </generated:version> -->
 
 > The repo is `mcp-cupertino`; the npm packages stay `@mgcrea/mcp-apple-*`, because that is what
 > people search npm for. Neither name is load-bearing. The bundle identifier `io.mgcrea.cupertino`

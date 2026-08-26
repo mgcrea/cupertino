@@ -4,12 +4,77 @@ Notable changes to this repository. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and every published artifact follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
+
 Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.2`,
 `notes-v1.2.2`, `reminders-v1.2.2`, `core-v1.2.2` for the npm packages, and `app-v1.2.2` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
+<!-- </generated:version> -->
 
 ## [Unreleased]
+
+### Added
+
+- **Calendar answers "when am I free".** `apple_calendar_find_availability` returns the gaps between
+  events, inside working hours, long enough to hold a meeting of a given length. It is not
+  `list_events` with arithmetic bolted on: it returns the COMPLEMENT of what it read, so every
+  shortfall that merely under-informs a listing instead invents a slot that is already booked. The
+  busy set is complete or there is no answer — a saturated scan, a store that expands no repeating
+  events, and a window past the occurrence cache's edge each return `degraded: true` with a reason
+  rather than a short list. An empty `slots` means booked; `degraded` means unknown, and the two are
+  never the same value. Declined and cancelled events do not block time; all-day events do not
+  either, but they are reported next to the slots so a holiday is visible before it is booked over.
+  Working hours default to 09:00–18:00 on weekdays and are set by `APPLE_CALENDAR_WORKDAY_START`,
+  `APPLE_CALENDAR_WORKDAY_END` and `APPLE_CALENDAR_WORKDAYS`.
+- **Messages can save an attachment.** `apple_messages_save_attachment` copies a photo, video, PDF or
+  voice memo out of a conversation. Mail and Notes have had this since 1.0; Messages listed
+  attachments and then left you with no way to get one. Write-gated like the other two, because it
+  puts a file on the user's disk — it sends no Apple Event and changes nothing in Messages, so the
+  claim that writes-off means no Automation grant still holds. Attachments now carry an `id` (the
+  attachment's guid, never its reusable ROWID) on `apple_messages_get_message`. An attachment iCloud
+  has offloaded is reported as offloaded rather than as a failure.
+- **Every server now exposes prompts and resources, not just tools.** Three resources per surface:
+  `cupertino://<surface>/guide` is the operating manual and is STATIC, so it still reads on a server
+  whose every grant is denied — which is exactly when it is worth reading;
+  `cupertino://<surface>/diagnostics` serves the diagnostics tool's own payload, addressable without
+  spending a call and before the confusing answer rather than after it; and
+  `cupertino://<surface>/inventory` holds the accounts, mailboxes, folders, lists or calendars that
+  every other tool takes as an argument. Contacts, Messages and Safari register only the first two —
+  a contact is reached by searching and never by naming its store, chats are unbounded, and history,
+  tabs and the Reading List are three queries rather than three folders. A resource read that fails
+  returns `degraded` DATA rather than a JSON-RPC error, because a protocol error would delete the
+  diagnostics report at the one moment anyone wants it. The scheme is `cupertino://` and not
+  `apple://`: a URI scheme is a namespace claim, and taking Apple's would read as the affiliation
+  the README disclaims.
+- **Thirteen workflow prompts, one to three per surface.** They hold what no tool description can:
+  not what a call does, but what order the calls go in. `apple_mail_triage` searches instead of
+  paging; `apple_mail_draft_reply` reads the thread first and fills the body, because
+  `reply_to_message` without one leaves an EMPTY draft that must never be reported as a written
+  reply; `apple_reminders_capture_action_items` searches before creating, because nothing on that
+  surface deduplicates; `apple_calendar_schedule` says out loud that nobody was invited, since this
+  server has no `attendees` parameter anywhere on purpose; `apple_contacts_who_is` refuses to guess
+  between ambiguous matches; `apple_messages_send` confirms the handle before an action with no
+  undo, and treats `reconciliation: "pending"` as SENT rather than as something to retry. Each
+  prompt embeds its surface guide, so a host expanding one hands the model the reference with the
+  task. Write-gated prompts follow the write tools exactly — with writes off they are not refused,
+  they are not registered.
+- **Mail can create a mailbox.** `apple_mail_create_mailbox` makes the folder that
+  `apple_mail_move_messages` needs to move into — nested with `/`, or local under On My Mac when no
+  account is named. Calling it for a name that already exists does nothing and says so, so it is
+  safe to call before a move. On a server account it creates the folder ON THE SERVER, which syncs
+  to every device; the tool's description says so and it takes `confirm`.
+
+### Fixed
+
+- **Four tools returned their payload wrapped twice.** `wrap()` JSON-encodes whatever its body
+  returns, and `apple_messages_get_message`, `apple_contacts_get_contact`,
+  `apple_contacts_create_contact` and `apple_contacts_update_contact` had bodies that returned
+  `ok(…)` themselves — so the text a client received was a serialised tool result with the real
+  answer one decode further in. The same mistake swallowed `fail()`: a ref that no longer resolved
+  came back as a SUCCESSFUL call carrying `isError` as data. All four now use `wrapResult()`.
+  Nothing caught it because every assertion read a field off the parsed text and got `undefined`,
+  which reads as "absent" rather than "wrapped twice"; there are now tests on the envelope itself.
 
 ## [1.2.2] - 2026-08-24
 
