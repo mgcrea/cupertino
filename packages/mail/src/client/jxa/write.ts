@@ -250,6 +250,273 @@ export const SEND_MESSAGE = script(
 );
 
 /**
+ * Replace the body of a saved draft, by recreating it.
+ *
+ * ## Why recreating, when "edit the draft" is the obvious thing
+ *
+ * Because Mail's dictionary does not offer it, and that is measured rather than
+ * assumed — see `docs/mail-compose.md`. A saved draft is a `message`, whose
+ * `content` is `access="r"`. There is no `open` command and no `edit` command in
+ * the entire suite, so nothing turns a saved draft back into the `outgoing
+ * message` whose content IS writable. The only class that ever held a reference
+ * from one to the other is `OLD message editor`, marked `hidden` and
+ * "DEPRECATED - DO NOT USE".
+ *
+ * So the body is replaced the only way the interface allows: compose a new
+ * message carrying the old one's recipients and the new text, and remove the
+ * old one.
+ *
+ * ## The order is the safety property
+ *
+ * The replacement is created AND CONFIRMED PRESENT before the original is
+ * deleted, never the other way round. A delete-then-create that fails halfway
+ * has destroyed something the user wrote and cannot get back — this server has
+ * no undo and Mail's Trash may not be in play, since `moveDeletedMessagesToTrash`
+ * is per-account. If the confirmation does not come back, the original is left
+ * exactly where it was and the caller is told there are now two.
+ *
+ * ## What it refuses
+ *
+ * Recreating cannot carry everything across, and the two things it drops are
+ * both invisible in the result:
+ *
+ *   * **Threading.** `In-Reply-To` and `References` are set by Mail's own
+ *     `reply` command, which needs the original message. A recreated reply
+ *     draft looks perfect and starts a new thread.
+ *   * **Attachments.** They can be read but not re-attached; the dictionary has
+ *     no verb for adding one to an outgoing message.
+ *
+ * Both are refused rather than silently dropped. A draft that is correct in
+ * every visible respect except the part nobody checks is the exact failure the
+ * compose path already learned once.
+ */
+export const UPDATE_DRAFT = script(
+  `
+  var acct = findAccount(M, p.accountUuid);
+  if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
+  var mb = resolveMailbox(acct, p.mailbox);
+  if (!mb) return err("MAILBOX_NOT_FOUND", "No mailbox " + p.mailbox + " in that account");
+
+  var original;
+  try {
+    original = mb.messages.byId(p.id);
+    original.subject();
+  } catch (e) {
+    return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
+  }
+
+  /*
+   * Find the account's Drafts mailbox.
+   *
+   * MEASURED, macOS 26.6: account.draftsMailbox is in the dictionary with
+   * access="r" and raises "Can't get object." on EVERY account — iCloud, two
+   * IMAP, one Exchange. The application-level draftsMailbox does resolve, but
+   * it is the unified "All Drafts" smart mailbox and is not what a message
+   * reports as its own container.
+   *
+   * So the name is DISCOVERED rather than guessed: every message in All Drafts
+   * reports its real per-account mailbox, which also makes this correct on a
+   * localised Mail where a hardcoded "Drafts" would not be. The documented
+   * property is still tried first, so this repairs itself if Apple fixes it.
+   */
+  var drafts = prop(function () { return acct.draftsMailbox(); }, null);
+  var acctName = String(prop(function () { return acct.name(); }, ""));
+  if (!drafts) {
+    var all = prop(function () { return M.draftsMailbox(); }, null);
+    var pool = all ? prop(function () { return all.messages(); }, []) : [];
+    for (var d = 0; d < pool.length && d < 200 && !drafts; d++) {
+      var box = prop(function () { return pool[d].mailbox(); }, null);
+      if (!box) continue;
+      var owner = prop(function () { return box.account().name(); }, null);
+      if (owner === null || String(owner) !== acctName) continue;
+      drafts = box;
+    }
+  }
+  if (!drafts) {
+    return err(
+      "DRAFTS_MAILBOX_UNKNOWN",
+      "The Drafts mailbox for " + acctName + " could not be identified: Mail refuses the " +
+      "account's draftsMailbox property, and no message in All Drafts belongs to this account. " +
+      "Nothing was changed. If the account genuinely holds no drafts, then neither does the " +
+      "message you named."
+    );
+  }
+  var draftsName = String(prop(function () { return drafts.name(); }, ""));
+
+  // Only a draft may be rewritten. Editing a SENT or RECEIVED message by
+  // deleting it and writing a lookalike is not editing, it is forgery, and the
+  // ref for one looks exactly like the ref for the other.
+  var here = String(prop(function () { return mb.name(); }, p.mailbox));
+  if (here.toLowerCase() !== draftsName.toLowerCase()) {
+    return err(
+      "NOT_A_DRAFT",
+      "That message is in " + here + ", not in " + draftsName + ". Only an unsent draft can be " +
+      "rewritten: doing this to a sent or received message would delete the real one and leave " +
+      "a lookalike in its place."
+    );
+  }
+
+  var attachments = prop(function () { return original.mailAttachments().length; }, 0);
+  var headers = String(prop(function () { return original.allHeaders(); }, ""));
+  var isReply = /^(in-reply-to|references):/im.test(headers);
+
+  var readAddresses = function (list) {
+    var out = [];
+    var items = prop(function () { return list(); }, []);
+    for (var i = 0; i < items.length; i++) {
+      var box = items[i];
+      var addr = prop(function () { return box.address(); }, null);
+      if (addr) out.push(String(addr));
+    }
+    return out;
+  };
+  var to = readAddresses(function () { return original.toRecipients(); });
+  var cc = readAddresses(function () { return original.ccRecipients(); });
+  var bcc = readAddresses(function () { return original.bccRecipients(); });
+  var oldSubject = String(prop(function () { return original.subject(); }, ""));
+  var sender = String(prop(function () { return original.sender(); }, ""));
+
+  // Everything the caller needs to decide what to do instead, reported on the
+  // refusals as well as on success.
+  var facts = {
+    subject: oldSubject,
+    isReply: isReply,
+    attachments: attachments,
+    recipientCount: to.length + cc.length + bcc.length
+  };
+
+  if (isReply) {
+    return ok({
+      replaced: false, degraded: true, capability: "threading", draft: facts,
+      reason:
+        "This draft is a reply or a forward: its headers carry In-Reply-To or References, and " +
+        "those are written by Mail's own reply command, which needs the original message. " +
+        "Recreating it would produce a draft that looks right and starts a NEW thread.",
+      hint:
+        "Edit the body in Mail directly, or delete this draft and start again with " +
+        "apple_mail_reply_to_message, which threads correctly."
+    });
+  }
+  if (attachments > 0) {
+    return ok({
+      replaced: false, degraded: true, capability: "attachments", draft: facts,
+      reason:
+        "This draft carries " + attachments + " attachment(s). Mail's scripting interface can " +
+        "read an attachment but has no verb for adding one to an outgoing message, so " +
+        "recreating the draft would silently drop them.",
+      hint: "Edit the body in Mail directly, which keeps the attachments."
+    });
+  }
+
+  var subject = p.subject === null || p.subject === undefined ? oldSubject : String(p.subject);
+  if (!subject) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", draft: facts,
+      reason:
+        "This draft has no subject, and the subject is the only handle this server has for " +
+        "finding the replacement again after Mail saves it. Without that confirmation the " +
+        "original cannot be deleted safely, so nothing was changed.",
+      hint: 'Pass the subject argument to give it one, or edit the draft in Mail.'
+    });
+  }
+
+  var replacement = M.OutgoingMessage({ subject: subject, content: p.body || "", visible: true });
+  M.outgoingMessages.push(replacement);
+  if (sender) { try { replacement.sender = sender; } catch (e) {} }
+
+  var lists = [["to", to], ["cc", cc], ["bcc", bcc]];
+  for (var l = 0; l < lists.length; l++) {
+    var kind = lists[l][0];
+    var addrs = lists[l][1];
+    for (var i = 0; i < addrs.length; i++) {
+      if (kind === "to") replacement.toRecipients.push(M.ToRecipient({ address: addrs[i] }));
+      else if (kind === "cc") replacement.ccRecipients.push(M.CcRecipient({ address: addrs[i] }));
+      else replacement.bccRecipients.push(M.BccRecipient({ address: addrs[i] }));
+    }
+  }
+
+  pause(1.2);
+  var unquoted = false;
+  try { unquoted = stripCitation(subject); } catch (e) { unquoted = false; }
+
+  var saved = true;
+  try { replacement.save(); } catch (e) { saved = false; }
+
+  // Ask the Drafts mailbox, not the object we just made: "save() did not throw"
+  // is precisely the kind of evidence the compose path already learned not to
+  // trust. Anything but a new row here means we must not delete the old one.
+  var newId = null;
+  for (var attempt = 0; attempt < 10 && newId === null; attempt++) {
+    pause(0.4);
+    var matches = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
+    for (var k = 0; k < matches.length; k++) {
+      var mid = prop(function () { return matches[k].id(); }, null);
+      if (mid === null || mid === p.id) continue;
+      if (newId === null || mid > newId) newId = mid;
+    }
+  }
+
+  if (newId === null) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", draft: facts, saved: saved,
+      reason:
+        "The replacement was composed but never appeared in " + draftsName + " within four " +
+        "seconds, so it could not be confirmed. THE ORIGINAL DRAFT WAS NOT DELETED — there are " +
+        "now two, and the new one may still be an unsaved window on screen.",
+      hint:
+        "Look at Mail: save or discard the open composer, then decide which draft to keep. " +
+        "Nothing here will delete either of them."
+    });
+  }
+
+  var movesToTrash = prop(function () { return acct.moveDeletedMessagesToTrash(); }, null);
+  var removed = true;
+  var removeError = null;
+  /*
+   * Re-resolve before deleting, never reuse the original reference.
+   *
+   * MEASURED: on a syncing account the row id of a just-saved draft is
+   * REWRITTEN within seconds — a probe watched a confirmed draft move from
+   * 199625 to 199626 while the script was still running, and the reference held
+   * across that gap failed with "Can't get object." The reference fetched at the
+   * top of this script has been through several seconds of polling and a server
+   * round trip by the time we get here, so it is refetched by id.
+   */
+  try {
+    M.delete(mb.messages.byId(p.id));
+  } catch (e) {
+    removed = false;
+    removeError = String(e && e.message ? e.message : e);
+  }
+
+  // Read the id back once more: the same sync rewrite that invalidates the
+  // original can renumber the replacement between confirmation and return.
+  pause(0.4);
+  var settledId = newId;
+  var finals = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
+  for (var f = 0; f < finals.length; f++) {
+    var fid = prop(function () { return finals[f].id(); }, null);
+    if (fid !== null && fid !== p.id && (settledId === newId || fid > settledId)) settledId = fid;
+  }
+
+  return ok({
+    replaced: true,
+    newId: settledId,
+    confirmedId: newId,
+    draftsMailbox: draftsName,
+    subject: subject,
+    recipientCount: facts.recipientCount,
+    bodyLength: String(p.body || "").length,
+    unquoted: unquoted,
+    originalDeleted: removed,
+    originalMovedToTrash: removed ? movesToTrash : null,
+    removeError: removeError
+  });
+`,
+  { allowLaunch: true },
+);
+
+/**
  * Reply to, or forward, an existing message.
  *
  * The body cannot go through the scripting interface. `reply` and `forward`

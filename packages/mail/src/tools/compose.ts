@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
-import { messageRefArg, wrap } from "./util.js";
+import { confirmArg, messageRefArg, wrap } from "./util.js";
 
 /**
  * Composing and sending.
@@ -146,6 +146,49 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
           sendNow: sendNow ?? false,
         });
       }),
+  );
+
+  server.registerTool(
+    "apple_mail_update_draft",
+    {
+      description:
+        "Replace the body of an unsent draft. Mail has no way to edit a saved draft — its " +
+        "`content` is read-only and there is no open or edit command — so this RECREATES it: a " +
+        "new draft with the same recipients and a new body, and the old one deleted once the " +
+        "replacement is confirmed present. The ref you passed in is DEAD afterwards and the " +
+        "result carries the new one. " +
+        "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
+        "it does: on a reply or forward draft, because In-Reply-To is set by Mail's reply " +
+        "command and a recreated one would silently start a new thread; on a draft carrying " +
+        "attachments, because they cannot be re-attached; and on anything that is not in the " +
+        "Drafts mailbox, because deleting a sent or received message and writing a lookalike is " +
+        "not editing. In every refusal the original is untouched. If the replacement cannot be " +
+        "confirmed the original is KEPT and you are told there are now two — never assume a " +
+        "clean swap without reading `replaced`.",
+      inputSchema: {
+        ref: messageRefArg,
+        body: z
+          .string()
+          .min(1)
+          .describe(
+            "The complete new body. This REPLACES the draft's text rather than appending to it, " +
+              "so include everything that should remain — read the draft first with " +
+              "apple_mail_get_message if you are editing rather than rewriting.",
+          ),
+        subject: z
+          .string()
+          .optional()
+          .describe(
+            "A new subject. Defaults to the draft's existing one. A draft with no subject at " +
+              "all is refused unless you pass one, because the subject is how the replacement " +
+              "is found again before the original is deleted.",
+          ),
+        confirm: confirmArg,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    },
+    async ({ ref, body, subject }) =>
+      wrap(async () => client.updateDraft(ref, { body, ...(subject ? { subject } : {}) })),
   );
 };
 

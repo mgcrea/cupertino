@@ -77,6 +77,9 @@ const harness = () => {
           accountUuid,
         };
       }
+      if (script.includes("acct.draftsMailbox()")) {
+        return { replaced: true, newId: 99, subject: "Quarterly numbers", originalDeleted: true };
+      }
       if (script.includes("M.checkForNewMail(")) return { checked: "all accounts" };
       return {};
     }) as OsascriptRunner["run"],
@@ -106,6 +109,7 @@ const WRITE_TOOLS = [
   "apple_mail_save_attachment",
   "apple_mail_send_message",
   "apple_mail_set_message_flags",
+  "apple_mail_update_draft",
 ];
 
 describe("write tool visibility", () => {
@@ -139,6 +143,7 @@ describe("confirm gates", () => {
     ["apple_mail_move_messages", { refs: [refFor("INBOX", 1)], destinationMailbox: "Archive" }],
     ["apple_mail_delete_messages", { refs: [refFor("INBOX", 1)] }],
     ["apple_mail_create_mailbox", { name: "Receipts" }],
+    ["apple_mail_update_draft", { ref: refFor("Drafts", 1), body: "new text" }],
   ])("%s refuses without confirm, before touching Mail", async (name, args) => {
     const { runner, recorded } = harness();
     const client = await connect(WRITES, runner);
@@ -363,5 +368,52 @@ describe("apple_mail_create_mailbox", () => {
 
     const after = recorded.filter((r) => r.script.includes("a.emailAddresses()")).length;
     expect(after).toBeGreaterThan(before);
+  });
+});
+
+describe("apple_mail_update_draft", () => {
+  /**
+   * Blanking a draft and reporting success is indistinguishable from having
+   * written it, so the empty case is refused in the client rather than sent to
+   * a script that would happily carry it out.
+   */
+  it("refuses an empty body before touching Mail", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const res = await client.callTool({
+      name: "apple_mail_update_draft",
+      arguments: { ref: refFor("Drafts", 1), body: "   ", confirm: true },
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/cannot be empty/);
+    expect(recorded.some((r) => r.script.includes("acct.draftsMailbox()"))).toBe(false);
+  });
+
+  it("passes the ref through as account, mailbox and id", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    await client.callTool({
+      name: "apple_mail_update_draft",
+      arguments: { ref: refFor("Drafts", 7), body: "the new text", confirm: true },
+    });
+    const call = recorded.find((r) => r.script.includes("acct.draftsMailbox()"));
+    expect(call?.params).toMatchObject({
+      accountUuid: UUID,
+      mailbox: "Drafts",
+      id: 7,
+      body: "the new text",
+      subject: null,
+    });
+  });
+
+  /** Deleting the user's draft is not something to do on an inferred intent. */
+  it("is marked destructive", async () => {
+    const { runner } = harness();
+    const { tools } = await (await connect(WRITES, runner)).listTools();
+    expect(tools.find((t) => t.name === "apple_mail_update_draft")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    });
   });
 });

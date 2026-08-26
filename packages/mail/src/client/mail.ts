@@ -22,6 +22,7 @@ import {
   REPLY_OR_FORWARD,
   SEND_MESSAGE,
   SET_FLAGS,
+  UPDATE_DRAFT,
 } from "./jxa/write.js";
 import { locateEnvelopeIndex, type LocateResult } from "./locate.js";
 import { MailboxMap, type MailAccount } from "./mailbox-map.js";
@@ -1041,6 +1042,42 @@ export class AppleMailClient {
     );
     this.mailboxes.invalidate();
     return result;
+  }
+
+  /**
+   * Replace a saved draft's body by recreating it.
+   *
+   * The refusals live in the script, next to the properties they are read from,
+   * and come back as ordinary results carrying `replaced: false` rather than as
+   * thrown errors — a caller that cannot rewrite this draft still wants to know
+   * WHY, and what to do instead, and both travel better as data than as a
+   * message string.
+   *
+   * What is enforced here instead is the shape of the request, before Mail is
+   * touched at all: an empty body would silently blank a draft the user wrote,
+   * which is the one outcome nothing downstream could distinguish from success.
+   */
+  async updateDraft(
+    ref: string,
+    opts: { body: string; subject?: string | undefined },
+  ): Promise<Record<string, unknown>> {
+    if (!opts.body.trim()) {
+      throw new PreconditionError(
+        "A replacement body cannot be empty. Blanking a draft and reporting success is " +
+          "indistinguishable from having written it, so it is refused here rather than done. " +
+          "Delete the draft with apple_mail_delete_messages if that is what you meant.",
+      );
+    }
+    const decoded = decodeRef(ref);
+    return withBusyRetry(() =>
+      this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
+        accountUuid: decoded.accountUuid,
+        mailbox: decoded.mailbox,
+        id: decoded.id,
+        body: opts.body,
+        subject: opts.subject ?? null,
+      }),
+    );
   }
 
   async checkForNewMail(account?: string): Promise<unknown> {
