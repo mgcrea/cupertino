@@ -42,6 +42,13 @@ let crowdedStorePath: string;
 
 const schema = (path: string): DatabaseSync => {
   const db = new DatabaseSync(path);
+  // These are throwaway temp-dir fixtures deleted at the end of the run, so
+  // durability buys nothing — an fsync per statement is a pure cost. Measured:
+  // this file's dozen-odd unbatched inserts ran fast on a local SSD but hung
+  // past a 10s hook timeout on a CI runner's disk, which the default
+  // synchronous=FULL is exactly the kind of thing that explains.
+  db.exec("PRAGMA synchronous = OFF");
+  db.exec("PRAGMA journal_mode = MEMORY");
   db.exec(readFileSync(FIXTURE, "utf8"));
   db.exec(`INSERT INTO Store (ROWID, name, type) VALUES (1, 'iCloud', 0)`);
   db.exec(
@@ -238,7 +245,12 @@ beforeAll(() => {
     covered.run(t, t, t, t + 3600);
   }
   crowded.close();
-});
+  // Belt and braces alongside the synchronous=OFF pragmas in schema(): three
+  // stores' worth of setup on a CI runner's disk is not guaranteed to fit
+  // vitest's 10s default even with fsync out of the way, and this hook has no
+  // async work to time out on — it either finishes or the disk is the
+  // problem.
+}, 30_000);
 
 const connect = async (env: NodeJS.ProcessEnv = {}, now: Date = NOW) => {
   const config = loadConfig({ APPLE_CALENDAR_STORE: storePath, ...env });
