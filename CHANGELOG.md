@@ -14,6 +14,13 @@ summary.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-26
+
+Two new mutations for Mail (a mailbox, and a rewrite of an unsent draft) and one for Messages
+(saving an attachment), plus Calendar's first read of the negative space between events. Every
+server also exposes prompts and resources now, not only tools — see
+[docs/prompts-and-resources.md](docs/prompts-and-resources.md).
+
 ### Added
 
 - **Calendar answers "when am I free".** `apple_calendar_find_availability` returns the gaps between
@@ -330,7 +337,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.0...HEAD
+[1.3.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...app-v1.3.0
 [1.2.2]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...app-v1.2.2
 [1.2.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...app-v1.2.1
 [1.2.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...app-v1.2.0
