@@ -5,11 +5,6 @@ import SwiftUI
 /// item. `MenuBarExtra` content is built lazily, so this cannot live there.
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
-    // Before the demo-mode return: the app menu belongs to the app, not to the
-    // host, and ⌘, has to work on a screenshot build for the same reason it has
-    // to work on a shipped one.
-    MainMenu.installSettingsItem()
-
     // Screenshot mode never starts the host. Binding the socket would collide
     // with the developer's real Cupertino, spawn four Node servers per launch,
     // and write real log lines into the seeded fixture — and every screen this
@@ -133,6 +128,32 @@ struct CupertinoApp: App {
       MenuBarLabel()
     }
     .menuBarExtraStyle(.window)
+    // Settings and its ⌘, declared to SwiftUI rather than inserted into
+    // `NSApp.mainMenu` by hand.
+    //
+    // `MainMenu.installSettingsItem()` did the latter and the item did not
+    // survive. MEASURED: the insertion succeeded at launch — no "no app menu
+    // found" in the log — and the live app menu was still About / Services /
+    // Hide / Quit, with a dead ⌘,. SwiftUI installs its own main menu after the
+    // delegate returns and builds another whenever the activation policy flips,
+    // and each one discards whatever was in the menu it replaced. Re-asserting
+    // the item on `didBecomeActive` and after every policy change did not fix it
+    // either: SwiftUI's rebuild lands after those hooks, so the race is not one
+    // that can be won by inserting more often.
+    //
+    // Declared this way the item is part of what SwiftUI rebuilds, so there is
+    // nothing left to race.
+    .commands {
+      // `.appSettings`, not `after: .appInfo`. Both put an item in the app menu,
+      // but only this one is the slot AppKit reserves for Settings, so the
+      // separators around it are Apple's rather than ours to guess at. Measured
+      // with `after: .appInfo`: About / Settings… / separator / Services, which
+      // is one separator short of every stock app menu on the system.
+      CommandGroup(replacing: .appSettings) {
+        Button("Settings…") { SettingsWindowController.show() }
+          .keyboardShortcut(",", modifiers: .command)
+      }
+    }
   }
 }
 
