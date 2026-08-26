@@ -411,9 +411,11 @@ struct MainView: View {
   private var footer: some View {
     HStack {
       // Load-bearing, not decoration. RequestObserver records the method and the
-      // tool name and stops there; keeping this sentence true is a constraint on
-      // anything added to it later.
-      Text("Tool names only — never arguments, message contents or results.")
+      // name of whatever was reached for — a tool, a prompt, a resource URI —
+      // and stops there; keeping this sentence true is a constraint on anything
+      // added to it later. It named tools only until prompts and resources
+      // shipped, at which point the sentence had to grow or stop being true.
+      Text("Tool, prompt and resource names only — never arguments, message contents or results.")
         .font(.caption)
         .foregroundStyle(.secondary)
       Spacer()

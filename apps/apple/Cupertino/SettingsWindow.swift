@@ -349,7 +349,7 @@ struct PermissionsPane: View {
         Text("Writes")
       } footer: {
         Text(
-          "Writes decide which tools an assistant can see at all — the write tools are not registered when this is off, so it is not merely a permission to refuse later."
+          "Writes decide what an assistant can see at all — the write tools, and the prompts that end in one, are not registered when this is off, so it is not merely a permission to refuse later."
         )
       }
     }

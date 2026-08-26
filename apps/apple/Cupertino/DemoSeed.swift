@@ -237,10 +237,10 @@ enum DemoSeed {
   /// The activity log, in the app's own vocabulary.
   ///
   /// **No arguments appear here, and none may be added.** The footer under this
-  /// list says "Tool names only — never arguments, message contents or
-  /// results", `RequestObserver` is written to hold that true, and a fixture
-  /// showing a subject line would put a promise in the marketing image that the
-  /// product deliberately does not make.
+  /// list says "Tool, prompt and resource names only — never arguments, message
+  /// contents or results", `RequestObserver` is written to hold that true, and a
+  /// fixture showing a subject line would put a promise in the marketing image
+  /// that the product deliberately does not make.
   ///
   /// Long enough to fill the pane, because a log with a dozen lines and six
   /// hundred points of empty below it photographs as a product nobody uses. All

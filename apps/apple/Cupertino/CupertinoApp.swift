@@ -503,8 +503,10 @@ struct TrialBanner: View {
 }
 
 /// Writes are withheld by not registering the tools at all
-/// (`packages/*/src/tools/index.ts`), so this decides which tools the assistant
-/// can even *see* — not merely whether it is allowed to use them.
+/// (`packages/*/src/tools/index.ts`) — and, since prompts shipped, the workflow
+/// prompts that end in a mutation too (`packages/*/src/prompts.ts`). So this
+/// decides what the assistant can even *see*, not merely whether it is allowed
+/// to use it.
 ///
 /// `@AppStorage` rather than a copy cached on the model. The cached version read
 /// the defaults once at init and the toggle wrote back from that snapshot, so a

@@ -7,7 +7,8 @@ import Foundation
 /// from that connection's single pump thread, which is why nothing here locks.
 ///
 /// Best effort, and strictly non-blocking: this must never slow or break the
-/// pump. It records **method and tool names only** — never arguments, never
+/// pump. It records **method names, and the name of whatever a request reached
+/// for** — a tool name, a prompt name, a resource URI — never arguments, never
 /// results, which is the claim the Activity window makes on screen.
 final class RequestObserver {
   private let surface: Surface
@@ -54,10 +55,32 @@ final class RequestObserver {
 
     let params = object["params"] as? [String: Any]
 
-    if method == "tools/call", let name = params?["name"] as? String {
+    /*
+     * The three ways a client asks a server to DO something, each identified by
+     * the one param that names what was asked for.
+     *
+     * Reading that param is not a widening of what this records. The claim on
+     * screen is "method and tool names only — never arguments, never results",
+     * and a prompt name and a resource URI are identities in exactly the way a
+     * tool name is: `apple_mail_draft_reply` and `cupertino://mail/inventory`
+     * say WHICH capability was reached, never what was passed to it or what
+     * came back. The alternative is worse than verbose — before this, expanding
+     * a prompt logged a bare `prompts/get` and counted as nothing, so the
+     * Activity window under-reported an agent that had just been handed a
+     * write workflow.
+     */
+    let identifier: String? =
+      switch method {
+      case "tools/call": params?["name"] as? String
+      case "prompts/get": (params?["name"] as? String).map { "prompt: \($0)" }
+      case "resources/read": (params?["uri"] as? String).map { "read: \($0)" }
+      default: nil
+      }
+
+    if let identifier {
       let id = session
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.counted(id: id) }
-      hostLog(surface.id, .call, name)
+      hostLog(surface.id, .call, identifier)
       return
     }
 
