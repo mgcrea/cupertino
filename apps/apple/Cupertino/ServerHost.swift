@@ -194,7 +194,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // server holding a copy of some *other* client's socket keeps that client
       // from ever seeing EOF.
       closeOnExec(client)
-      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      onDedicatedThread("cupertino.session") { [weak self] in
         self?.serve(client)
       }
     }
@@ -366,7 +366,15 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     // stderr is log output by construction: packages/core/src/cli.ts keeps
     // stdout clear because stdout is the JSON-RPC channel.
-    DispatchQueue.global(qos: .utility).async(group: group) {
+    //
+    // Deliberately NOT a member of `group`. Logging is not plumbing, and a
+    // group member that only ends when the child exits makes every teardown
+    // hostage to the child agreeing to go — the group is the two pumps, which
+    // is exactly the set of things that must finish before the socket can be
+    // closed. `process.waitUntilExit()` below still reaps the child, so the
+    // exit status is still reported; the only thing given up is the guarantee
+    // that a final stderr line is logged before the "server exited" line.
+    onDedicatedThread("cupertino.stderr") {
       while true {
         let data = childErr.fileHandleForReading.availableData
         if data.isEmpty { break }
@@ -400,7 +408,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     observe: ((Data) -> Void)? = nil,
     onFinish: @escaping () -> Void
   ) {
-    DispatchQueue.global(qos: .userInitiated).async(group: group) {
+    group.enter()
+    onDedicatedThread("cupertino.pump") {
+      defer { group.leave() }
       var buffer = [UInt8](repeating: 0, count: 64 * 1024)
       while true {
         let n = buffer.withUnsafeMutableBufferPointer { read(source, $0.baseAddress, $0.count) }
@@ -452,6 +462,41 @@ func writeAll(_ fd: Int32, _ data: Data) -> Bool {
 }
 
 func errnoText() -> String { String(cString: strerror(errno)) }
+
+/// Run `body` on a thread of its own, off libdispatch's global pools.
+///
+/// Everything this host does per session blocks: two pumps sit in `read(2)` for
+/// the life of a connection, the stderr drain sits in `availableData`, and `run`
+/// sits in `group.wait()` until the pumps finish. libdispatch's global queues
+/// are a BOUNDED pool — roughly 64 threads per QoS — and a blocked thread is not
+/// a free one, so sessions consumed that pool instead of sharing it.
+///
+/// Past the limit the failure was not slowness, it was silence. Blocks already
+/// submitted stayed queued indefinitely, and the block that never ran was
+/// `serve(client)` in `acceptLoop`. So `accept` kept succeeding, every new
+/// bridge completed its `connect`, wrote its handshake, and then waited on a
+/// reply from a function that was never scheduled. Nothing logged an error,
+/// because from the host's point of view nothing had failed.
+///
+/// MEASURED, on a host that had been up three days: 68 threads on
+/// com.apple.root.user-initiated-qos, every one of them parked in
+/// `_dispatch_group_wait_slow`; `acceptLoop` healthy and blocked in `accept`;
+/// 68 server processes still alive because their pumps had never run to hand
+/// them the EOF that tells them to quit; and a hand-written probe getting zero
+/// bytes back in eight seconds from a socket that had accepted it in two
+/// milliseconds.
+///
+/// A pump is a long-lived blocking task. That is what a thread is for, and
+/// precisely what a bounded work queue is not.
+func onDedicatedThread(_ name: String, _ body: @escaping () -> Void) {
+  let thread = Thread(block: body)
+  thread.name = name
+  // The default is 512 KB and these frames are shallow — a 64 KB read buffer
+  // and nothing recursive — but it is set explicitly because the whole point of
+  // this function is that there may be a great many of these at once.
+  thread.stackSize = 512 * 1024
+  thread.start()
+}
 
 /// Mark `fd` FD_CLOEXEC, so spawned servers do not inherit it.
 func closeOnExec(_ fd: Int32) {

@@ -185,6 +185,25 @@ func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
   return true
 }
 
+// Bound the handshake, because an unbounded one does not fail — it lingers.
+//
+// `connect` succeeding proves only that the listening socket took this
+// connection into its backlog; it says nothing about anyone being ready to
+// answer. A host that accepts but never replies leaves this process blocked in
+// the read below with no timer and nothing watching stdin, so it does not
+// notice its own MCP host quitting and never exits. MEASURED: 67 of these
+// parented to launchd, each still pinning a session's descriptors and threads
+// on the app side, which is what pushed the host further into the state that
+// caused it.
+//
+// SO_RCVTIMEO rather than a watchdog thread: the handshake is the one phase
+// with a deadline, and this keeps the deadline on the read it applies to. It is
+// cleared before the pumps start, where blocking forever is correct.
+var handshakeTimeout = timeval(tv_sec: 15, tv_usec: 0)
+setsockopt(
+  sock, SOL_SOCKET, SO_RCVTIMEO, &handshakeTimeout,
+  socklen_t(MemoryLayout<timeval>.size))
+
 guard writeAll(sock, Array(BridgeProtocol.handshake(server: server).utf8)) else {
   die("handshake write failed: \(String(cString: strerror(errno)))")
 }
@@ -203,6 +222,11 @@ while true {
   if n == 0 { die("Cupertino closed the connection during the handshake") }
   if n < 0 {
     if errno == EINTR { continue }
+    if errno == EAGAIN || errno == EWOULDBLOCK {
+      die(
+        "Cupertino accepted the connection but did not answer the handshake within 15s. "
+          + "It is running but wedged; quit and reopen it.")
+    }
     die("handshake read failed: \(String(cString: strerror(errno)))")
   }
   if byte == UInt8(ascii: "\n") { break }
@@ -220,12 +244,34 @@ if statusLine != BridgeProtocol.ok {
 
 // MARK: - Pump
 
-// Two directions, two threads, blocking reads. The process exits when either
-// side reaches EOF, which is what an MCP host expects when it closes stdin.
-let group = DispatchGroup()
+// Past the handshake, a read that blocks forever is correct: a quiet session is
+// one with nothing to say, not a broken one.
+var noTimeout = timeval(tv_sec: 0, tv_usec: 0)
+setsockopt(
+  sock, SOL_SOCKET, SO_RCVTIMEO, &noTimeout, socklen_t(MemoryLayout<timeval>.size))
 
-func pump(from source: Int32, to sink: Int32, label: String) {
-  DispatchQueue.global(qos: .userInitiated).async(group: group) {
+// Two directions, two threads, blocking reads.
+//
+// Which of them ends the process is the whole question, and it used to be
+// "both". stdin reaching EOF is how an MCP host says it is finished, but the
+// app->stdout pump only ends when Cupertino hangs up — so a host that quit left
+// this relay parked on a socket read with no deadline, alive indefinitely and
+// holding a session open for nobody.
+//
+// So: either direction ends it. The app hanging up ends it at once, because
+// there is nothing left to relay. The host closing stdin ends it after a short
+// grace period — `shutdown(sink, SHUT_WR)` in `pump` has already told the app to
+// wind the session down, and a reply already in flight is worth a moment, but
+// it is a courtesy and must never be unbounded.
+//
+// Threads rather than `DispatchQueue.global()`, for the reason spelled out over
+// `onDedicatedThread` in ServerHost.swift: these block for the life of the
+// session, and a bounded work-queue pool is the wrong home for that.
+let hostGone = DispatchSemaphore(value: 0)
+let appGone = DispatchSemaphore(value: 0)
+
+func pump(from source: Int32, to sink: Int32, label: String, onEnd: @escaping () -> Void) {
+  let thread = Thread {
     var buffer = [UInt8](repeating: 0, count: 64 * 1024)
     while true {
       let n = buffer.withUnsafeMutableBufferPointer { read(source, $0.baseAddress, $0.count) }
@@ -242,12 +288,24 @@ func pump(from source: Int32, to sink: Int32, label: String) {
     }
     // Half-close so the far end sees EOF rather than hanging.
     shutdown(sink, SHUT_WR)
+    onEnd()
   }
+  thread.name = label
+  thread.start()
 }
 
-pump(from: STDIN_FILENO, to: sock, label: "stdin->app")
-pump(from: sock, to: STDOUT_FILENO, label: "app->stdout")
+pump(from: STDIN_FILENO, to: sock, label: "stdin->app") { hostGone.signal() }
+pump(from: sock, to: STDOUT_FILENO, label: "app->stdout") { appGone.signal() }
 
-group.wait()
+let watchdog = Thread {
+  appGone.wait()
+  close(sock)
+  exit(0)
+}
+watchdog.name = "app-hangup"
+watchdog.start()
+
+hostGone.wait()
+_ = appGone.wait(timeout: .now() + 2)
 close(sock)
 exit(0)
