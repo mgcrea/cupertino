@@ -6,8 +6,8 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.2.2`,
-`notes-v1.2.2`, `reminders-v1.2.2`, `core-v1.2.2` for the npm packages, and `app-v1.2.2` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.3.0`,
+`notes-v1.3.0`, `reminders-v1.3.0`, `core-v1.3.0` for the npm packages, and `app-v1.3.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->

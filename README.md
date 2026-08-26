@@ -451,8 +451,8 @@ Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-ki
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v1.2.2`,
-`reminders-v1.2.2`, `calendar-v1.2.2`, `core-v1.2.2`. The app is tagged `app-v1.2.2` and releases on its own lane —
+Releases are tagged per package, so a tag names what it publishes: `mail-v1.3.0`,
+`reminders-v1.3.0`, `calendar-v1.3.0`, `core-v1.3.0`. The app is tagged `app-v1.3.0` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 <!-- </generated:version> -->
