@@ -44,20 +44,28 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
-  registerPrompts(server, config.allowWrites);
-  registerSurfaceResources(server, {
-    surface: "notes",
-    displayName: "Notes",
-    guide: NOTES_GUIDE,
-    diagnostics: () => buildDiagnostics(client, { allowWrites: config.allowWrites }),
-    inventory: {
-      describes: "accounts and folders",
-      read: async () => ({
-        accounts: await client.accounts(),
-        folders: await client.folders(),
-      }),
-    },
-  });
+  /*
+   * One flag, both primitives — see `exposePrompts` in core's config. A prompt
+   * embeds its surface guide, so registering prompts without the resources
+   * would leave every expansion naming a `cupertino://…/guide` that this
+   * server does not serve.
+   */
+  if (config.exposePrompts) {
+    registerPrompts(server, config.allowWrites);
+    registerSurfaceResources(server, {
+      surface: "notes",
+      displayName: "Notes",
+      guide: NOTES_GUIDE,
+      diagnostics: () => buildDiagnostics(client, { allowWrites: config.allowWrites }),
+      inventory: {
+        describes: "accounts and folders",
+        read: async () => ({
+          accounts: await client.accounts(),
+          folders: await client.folders(),
+        }),
+      },
+    });
+  }
 
   return { server, client };
 };

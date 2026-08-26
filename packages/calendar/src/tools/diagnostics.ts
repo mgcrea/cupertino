@@ -83,6 +83,10 @@ export const buildDiagnostics = async (
       : null,
     settings: {
       allowWrites: ctx.allowWrites,
+      // Off means the prompts and the cupertino:// resources are not registered
+      // at all. Reported here because this tool still is, so it stays the one
+      // place that explains a capability the client cannot see.
+      exposePrompts: client.config.exposePrompts,
       accountAllowlist: client.config.accounts,
       calendarAllowlist: client.config.calendars,
       defaultCalendar: client.config.defaultCalendar ?? null,

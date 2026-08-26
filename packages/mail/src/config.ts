@@ -80,6 +80,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
   const raw = {
     allowWrites: parseBool(env.APPLE_MAIL_ALLOW_WRITES),
+    exposePrompts: parseBool(env.APPLE_MAIL_EXPOSE_PROMPTS),
     debug: parseBool(env.APPLE_MAIL_DEBUG),
     accounts: parseList(env.APPLE_MAIL_ACCOUNTS),
     mailRoot: trimmed(env.APPLE_MAIL_ROOT),

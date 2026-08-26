@@ -62,6 +62,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_NOTES_ALLOW_WRITES),
+    exposePrompts: parseBool(env.APPLE_NOTES_EXPOSE_PROMPTS),
     debug: parseBool(env.APPLE_NOTES_DEBUG),
     accounts: parseList(env.APPLE_NOTES_ACCOUNTS),
     storePath: trimmed(env.APPLE_NOTES_STORE),

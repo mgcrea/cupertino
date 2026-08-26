@@ -111,6 +111,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_CALENDAR_ALLOW_WRITES),
+    exposePrompts: parseBool(env.APPLE_CALENDAR_EXPOSE_PROMPTS),
     debug: parseBool(env.APPLE_CALENDAR_DEBUG),
     accounts: parseList(env.APPLE_CALENDAR_ACCOUNTS),
     calendars: parseList(env.APPLE_CALENDAR_CALENDARS),

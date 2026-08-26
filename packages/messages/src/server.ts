@@ -50,17 +50,25 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
-  registerPrompts(server, config.allowWrites);
-  registerSurfaceResources(server, {
-    surface: "messages",
-    displayName: "Messages",
-    guide: MESSAGES_GUIDE,
-    diagnostics: () => buildDiagnostics(client),
-    // No inventory. Chats are unbounded and change constantly, which makes them
-    // a query (apple_messages_list_chats) rather than a fixed set worth
-    // addressing by URI — a resource that is never the same twice is a tool
-    // call wearing a URI.
-  });
+  /*
+   * One flag, both primitives — see `exposePrompts` in core's config. A prompt
+   * embeds its surface guide, so registering prompts without the resources
+   * would leave every expansion naming a `cupertino://…/guide` that this
+   * server does not serve.
+   */
+  if (config.exposePrompts) {
+    registerPrompts(server, config.allowWrites);
+    registerSurfaceResources(server, {
+      surface: "messages",
+      displayName: "Messages",
+      guide: MESSAGES_GUIDE,
+      diagnostics: () => buildDiagnostics(client),
+      // No inventory. Chats are unbounded and change constantly, which makes them
+      // a query (apple_messages_list_chats) rather than a fixed set worth
+      // addressing by URI — a resource that is never the same twice is a tool
+      // call wearing a URI.
+    });
+  }
 
   return { server, client };
 };

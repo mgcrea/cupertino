@@ -43,6 +43,27 @@ export const parseList = (v: string | undefined): string[] | undefined => {
  */
 export const BaseConfigSchema = z.object({
   allowWrites: z.boolean().default(false),
+  /**
+   * Register the workflow prompts and the surface resources.
+   *
+   * ON by default, unlike `allowWrites`, and the difference is the point: the
+   * write gate is a SAFETY invariant — off means a mutation cannot be reached
+   * even by name — while this is a COST knob, in the same family as
+   * `maxResults`. Conflating the two would muddy the one that matters.
+   *
+   * What it costs, measured across all seven servers with writes on: the
+   * prompt and resource listings come to ~3.4k tokens against ~18.5k for the
+   * tool definitions, so roughly 18% on top of a bill that is dominated by
+   * tools either way. Resource CONTENTS cost nothing until something reads
+   * them. The knob exists for hosts that put every listing in the prompt and
+   * for people counting bytes; if context is the problem, running fewer
+   * servers is the bigger lever by far.
+   *
+   * One flag for both, not two, because they ship as a pair: every prompt
+   * embeds its surface guide, and a prompt naming a `cupertino://…/guide` that
+   * nothing serves would be a dangling reference by configuration.
+   */
+  exposePrompts: z.boolean().default(true),
   debug: z.boolean().default(false),
   osascriptPath: z.string().default("/usr/bin/osascript"),
   osascriptTimeoutMs: z.number().int().min(1_000).max(600_000).default(30_000),

@@ -123,6 +123,47 @@ own handler, before our callback is reached. The behaviour is pinned by a test i
 [`packages/core/test/prompts.test.ts`](../packages/core/test/prompts.test.ts) so it is not mistaken
 for a bug in this repo, and the fix belongs upstream.
 
+## What it costs
+
+Measured against the built servers, all seven with writes on, `JSON.stringify` length of each
+listing at ~4 chars per token:
+
+| Surface   | tools       | prompts    | resources  | one expansion |
+| --------- | ----------- | ---------- | ---------- | ------------- |
+| mail      | 19 · ~5,243 | 3 · ~437   | 3 · ~279   | ~966          |
+| notes     | 12 · ~1,906 | 2 · ~232   | 3 · ~281   | ~706          |
+| reminders | 11 · ~2,788 | 2 · ~293   | 3 · ~292   | ~694          |
+| calendar  | 10 · ~3,471 | 2 · ~269   | 3 · ~291   | ~864          |
+| contacts  | 7 · ~1,921  | 1 · ~90    | 2 · ~191   | ~884          |
+| messages  | 7 · ~1,868  | 2 · ~241   | 2 · ~191   | ~964          |
+| safari    | 6 · ~1,258  | 1 · ~124   | 2 · ~187   | ~944          |
+| **total** | **~18,453** | **~1,684** | **~1,710** | —             |
+
+Three things follow, and they are why `exposePrompts` defaults on:
+
+**The listings are ~3.4k tokens, about 18% on top of tools.** Not free, and not where the context
+goes: Mail's tool list alone outweighs every prompt and resource on all seven servers combined. The
+lever that matters for context is running fewer servers.
+
+**Resource contents cost nothing until read.** A listing carries name, URI, description and
+mimeType. The 2.6 KB Mail guide enters context only when something reads it.
+
+**The ~950-token expansion is the guide, and it is the trade being made.** Pay it once instead of
+having the model re-derive "search before you list", "degraded is not empty" and "a body-less reply
+is a blank page" every session — which it does otherwise, sometimes wrongly.
+
+One caveat these numbers cannot settle: whether a host puts the _listings_ in the prompt at all.
+Tools always are. Prompts and resources vary — some hosts inject the list, some fetch it lazily on
+`/` or `@`. The figures above are what the servers emit, not what every host does with them.
+
+`APPLE_<SURFACE>_EXPOSE_PROMPTS=0` turns both off. It is deliberately **not** modelled on the write
+gate: that one is a safety invariant with a claim behind it, this one is a cost knob in the family
+of `maxResults`, and conflating them would muddy the one that matters. One flag rather than two,
+because a prompt embeds its surface guide — prompts without resources would name a
+`cupertino://<surface>/guide` that nothing serves. With it off the capability is never declared, so
+a client asking gets "method not found" rather than an empty list, which is the same shape the
+write gate already uses: absent, not present-and-empty.
+
 ## Adding a surface
 
 Both primitives are registered from `packages/core`, so surface number eight is:

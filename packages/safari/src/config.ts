@@ -58,6 +58,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_SAFARI_ALLOW_WRITES),
+    exposePrompts: parseBool(env.APPLE_SAFARI_EXPOSE_PROMPTS),
     debug: parseBool(env.APPLE_SAFARI_DEBUG),
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),

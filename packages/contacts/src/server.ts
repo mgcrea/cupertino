@@ -47,18 +47,26 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
-  registerPrompts(server);
-  registerSurfaceResources(server, {
-    surface: "contacts",
-    displayName: "Contacts",
-    guide: CONTACTS_GUIDE,
-    diagnostics: () => buildDiagnostics(client),
-    // No inventory. The other surfaces have containers you address by name —
-    // mailboxes, lists, calendars — and this one does not: you reach a contact
-    // by searching for it, never by naming the store it happens to live in.
-    // The stores are reported in diagnostics, where they are a permissions
-    // fact rather than something to filter on.
-  });
+  /*
+   * One flag, both primitives — see `exposePrompts` in core's config. A prompt
+   * embeds its surface guide, so registering prompts without the resources
+   * would leave every expansion naming a `cupertino://…/guide` that this
+   * server does not serve.
+   */
+  if (config.exposePrompts) {
+    registerPrompts(server);
+    registerSurfaceResources(server, {
+      surface: "contacts",
+      displayName: "Contacts",
+      guide: CONTACTS_GUIDE,
+      diagnostics: () => buildDiagnostics(client),
+      // No inventory. The other surfaces have containers you address by name —
+      // mailboxes, lists, calendars — and this one does not: you reach a contact
+      // by searching for it, never by naming the store it happens to live in.
+      // The stores are reported in diagnostics, where they are a permissions
+      // fact rather than something to filter on.
+    });
+  }
 
   return { server, client };
 };

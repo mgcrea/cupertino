@@ -84,3 +84,35 @@ describe("contacts prompts", () => {
     expect(got.messages[1]?.content).toMatchObject({ type: "text" });
   });
 });
+
+/*
+ * The cost knob, not the safety gate. `exposePrompts` defaults ON — the write
+ * gate defaults OFF — because one decides whether a mutation can be reached at
+ * all and the other only decides what a listing weighs. Turning it off must
+ * take BOTH primitives with it: a prompt embeds its surface guide, so prompts
+ * without resources would name a `cupertino://contacts/guide` that nothing serves.
+ */
+describe("contacts exposePrompts", () => {
+  it("registers prompts and resources by default", async () => {
+    const client = await connect();
+    expect((await client.listResources()).resources.length).toBeGreaterThan(0);
+    expect((await client.listPrompts()).prompts.length).toBeGreaterThan(0);
+  });
+
+  it("registers neither when it is off, and stops advertising the capability", async () => {
+    const client = await connect({ APPLE_CONTACTS_EXPOSE_PROMPTS: "0" });
+    // Not an empty list — the capability is never declared, so a client asking
+    // gets "method not found". That is the same shape as the write gate: the
+    // thing is absent rather than present-and-empty.
+    await expect(client.listResources()).rejects.toThrow();
+    await expect(client.listPrompts()).rejects.toThrow();
+  });
+
+  it("leaves the tools untouched", async () => {
+    const on = (await (await connect()).listTools()).tools.length;
+    const off = (await (await connect({ APPLE_CONTACTS_EXPOSE_PROMPTS: "0" })).listTools()).tools
+      .length;
+    expect(off).toBe(on);
+    expect(off).toBeGreaterThan(0);
+  });
+});

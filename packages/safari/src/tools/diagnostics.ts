@@ -19,6 +19,10 @@ export const buildDiagnostics = async (
   const located = status.located;
   return {
     server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
+    // Off means the prompts and the cupertino:// resources are not registered at
+    // all. Reported here because this tool still is, so it stays the one place
+    // that explains a capability the client cannot see.
+    settings: { exposePrompts: client.config.exposePrompts },
     lanes: {
       summary:
         "Safari's two lanes are NOT fallbacks for each other. They see almost disjoint " +

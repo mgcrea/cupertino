@@ -47,16 +47,24 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   });
 
   registerTools(server, client, { allowWrites: config.allowWrites });
-  registerPrompts(server);
-  registerSurfaceResources(server, {
-    surface: "safari",
-    displayName: "Safari",
-    guide: SAFARI_GUIDE,
-    diagnostics: () => buildDiagnostics(client),
-    // No inventory. Safari has no containers you address by name — history,
-    // tabs and the Reading List are three queries, not three folders, and the
-    // guide's job here is to stop them being confused for one another.
-  });
+  /*
+   * One flag, both primitives — see `exposePrompts` in core's config. A prompt
+   * embeds its surface guide, so registering prompts without the resources
+   * would leave every expansion naming a `cupertino://…/guide` that this
+   * server does not serve.
+   */
+  if (config.exposePrompts) {
+    registerPrompts(server);
+    registerSurfaceResources(server, {
+      surface: "safari",
+      displayName: "Safari",
+      guide: SAFARI_GUIDE,
+      diagnostics: () => buildDiagnostics(client),
+      // No inventory. Safari has no containers you address by name — history,
+      // tabs and the Reading List are three queries, not three folders, and the
+      // guide's job here is to stop them being confused for one another.
+    });
+  }
 
   return { server, client };
 };
