@@ -518,7 +518,7 @@ private struct ProjectFoldersSection: View {
   var body: some View {
     Section {
       Picker(
-        "Visible to",
+        "Write to",
         selection: Binding(get: { scope }, set: { scopeRaw = $0.rawValue })
       ) {
         ForEach(ClientWiring.ProjectScope.allCases) { option in
@@ -527,9 +527,9 @@ private struct ProjectFoldersSection: View {
       }
       .pickerStyle(.radioGroup)
 
-      Text(scope.consequence)
+      Text(scope.detail)
         .font(.caption)
-        .foregroundStyle(scope == .project ? .orange : .secondary)
+        .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
       LabeledContent("Add a folder") {

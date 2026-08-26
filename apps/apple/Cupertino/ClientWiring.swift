@@ -423,7 +423,7 @@ enum ClientWiring {
 
   // MARK: - Project folders
 
-  /// Where a folder's wiring goes, and who else can see it.
+  /// Where a folder's wiring is written.
   ///
   /// ## Why this exists at all
   ///
@@ -433,11 +433,14 @@ enum ClientWiring {
   /// were carrying ~73 tool definitions they never used. Wiring a folder is how
   /// someone opts the other 81 out without giving up the 12.
   ///
-  /// ## The two scopes are not symmetrical, and the difference is not cosmetic
+  /// ## The two are not symmetrical, and the difference is not cosmetic
   ///
-  /// `project` writes a file this app can write — `.mcp.json` is strict JSON
-  /// with servers under `mcpServers`, the identical shape as the four drop-in
-  /// clients, so it inherits the merge, the backup and the atomic write.
+  /// Both are read by Claude Code. What separates them is which file holds the
+  /// entry, and only one of those is a file this app is willing to write.
+  ///
+  /// `project` is `.mcp.json` — strict JSON with servers under `mcpServers`,
+  /// the identical shape as the four drop-in clients, so it inherits the merge,
+  /// the backup and the atomic write.
   ///
   /// `local` cannot be written here, and the refusal is the one `Wiring`
   /// already documents for Claude Code: `~/.claude.json` is a large file
@@ -449,35 +452,34 @@ enum ClientWiring {
   /// The lopsided UX is the honest one: one option acts, the other delegates,
   /// and the reason is a property of the file rather than of the feature.
   enum ProjectScope: String, CaseIterable, Identifiable, Hashable {
-    /// `~/.claude.json` under `projects[<dir>]`. Private to this Mac.
+    /// `~/.claude.json` under `projects[<dir>]`, via `claude mcp add --scope local`.
     case local
-    /// `<dir>/.mcp.json`. Meant to be committed, and visible to collaborators.
+    /// `<dir>/.mcp.json`, which this app writes.
     case project
 
     var id: String { rawValue }
 
+    /// Named after the FILE, not after an audience.
+    ///
+    /// These read "Just me" and "Shared with the repo" in an earlier draft,
+    /// which turned a question about where bytes land into a claim about who
+    /// sees them — and the claim was not the app's to make. Whether a
+    /// `.mcp.json` is committed, gitignored or never in a repository at all is
+    /// the user's decision, taken after this one and somewhere else entirely.
     var displayName: String {
       switch self {
-      case .local: "Just me"
-      case .project: "Shared with the repo"
+      case .local: "Your Claude Code config"
+      case .project: "A .mcp.json file"
       }
     }
 
-    /// Shown next to the choice, because the consequence is the whole decision.
-    ///
-    /// The `project` line is a warning and reads like one. What gets written is
-    /// an absolute path into a bundle on THIS Mac, backed by THIS user's Full
-    /// Disk Access grant — for anyone else who checks the repo out it is a
-    /// broken entry naming an app they may not have. That is the argument the
-    /// Claude Code client row already makes for preferring user scope over
-    /// project scope, and it does not weaken just because a person chose it
-    /// deliberately. Which is why `local` is the default.
-    var consequence: String {
+    /// Where it goes and what reads it. Descriptive, in both cases.
+    var detail: String {
       switch self {
       case .local:
-        "Kept in your own Claude Code config. Nothing is added to the folder, and nobody else sees it."
+        "Added to ~/.claude.json under this folder's path, so it stays on this Mac and the folder itself is untouched."
       case .project:
-        "Writes .mcp.json in the folder, which is normally committed. It names a path inside Cupertino on this Mac, so it will not work for anyone else who checks the repo out."
+        "Written as .mcp.json inside the folder, where any Claude Code session opened there picks it up. Commit it or add it to .gitignore — whichever you prefer."
       }
     }
   }

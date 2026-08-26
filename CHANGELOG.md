@@ -23,23 +23,23 @@ summary.
   directories had ever called a Cupertino tool, so 87% of sessions were carrying ~73 tool
   definitions they never used.
 
-  A radio picks who the wiring is visible to, and the two options are not symmetrical:
+  A radio picks which file holds the entry. Both are read by Claude Code; only one is a file this
+  app is willing to write.
 
-  - **Just me** keeps it in your own Claude Code config. The app will not write `~/.claude.json` —
-    it holds API credentials and running sessions write to it concurrently — so this hands over a
-    command to paste, with the `cd` included, because local scope files the server under whatever
-    directory the CLI ran from and a command pasted in the wrong terminal wires the wrong folder
-    and reports success.
-  - **Shared with the repo** writes `.mcp.json` in the folder. That file is strict JSON with servers
-    under `mcpServers`, the same shape as the four clients the app already writes, so it goes
-    through the same merge, backup and atomic swap. It also gets a warning in orange, because what
-    lands in it is an absolute path into a bundle on this Mac backed by this user's Full Disk
-    Access grant, and for anyone else checking the repo out that is a broken entry.
+  - **Your Claude Code config** adds it to `~/.claude.json` under the folder's path, leaving the
+    folder untouched. The app will not write that file — it holds API credentials and running
+    sessions write to it concurrently — so this hands over a command to paste, with the `cd`
+    included, because local scope files the server under whatever directory the CLI ran from and a
+    command pasted in the wrong terminal wires the wrong folder and reports success.
+  - **A .mcp.json file** writes `.mcp.json` in the folder, where any Claude Code session opened
+    there picks it up. That file is strict JSON with servers under `mcpServers`, the same shape as
+    the four clients the app already writes, so it goes through the same merge, backup and atomic
+    swap.
 
   The scope is a control next to the button rather than a preference in Settings: the choice is
-  genuinely per-folder, and a setting made once and applied silently months later is the worst way
-  to decide whether something gets committed into a shared repository. The last choice is
-  remembered, which is the part a preference would have bought.
+  per-folder, and a global setting would be right for whichever kind of repo someone has more of
+  and quietly wrong for the rest. The last choice is remembered, which is the part a preference
+  would have bought.
 
 ## [1.3.0] - 2026-08-26
 
