@@ -18,6 +18,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
   static let shared = ServerHost()
 
   private var listenFD: Int32 = -1
+  /// Held for the lifetime of the process. `flock` releases on close, and on
+  /// death — which is the whole reason it can replace the unlink dance below.
+  private var lockFD: Int32 = -1
+  /// The socket we actually bound, by inode. Anything else answering on our
+  /// path means we were evicted, and `socketWatch` is what notices.
+  private var boundIdentity: (dev: dev_t, ino: ino_t)?
+  private var socketWatch: DispatchSourceTimer?
   private let queue = DispatchQueue(label: "io.mgcrea.cupertino.host", qos: .userInitiated)
 
   /// Servers admitted on a trial, so the window can actually close on them.
@@ -39,6 +46,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     case pathTooLong(String)
     case socketFailed(String)
     case alreadyServing(String)
+    /// The lock was taken, and by whom if the holder wrote itself down.
+    case lockHeld(by: String?)
 
     var errorDescription: String? {
       switch self {
@@ -52,6 +61,19 @@ nonisolated final class ServerHost: @unchecked Sendable {
           Quit it before starting this one — most often it is a development \
           build from a checkout and the copy in /Applications, both launched \
           by bridges from different MCP entries.
+          """
+      case .lockHeld(let holder):
+        // Naming the holder is the point. "Another copy is already serving" was
+        // true and useless: the two copies share a bundle identifier, so the
+        // only way to tell which one answered was to go reading `lsof`. The
+        // holder writes its own path into the lock file precisely so this
+        // sentence can name it.
+        let who = holder.map { "\n\nIt is: \($0)" } ?? ""
+        return """
+          another copy of Cupertino holds the host lock. Quit it before \
+          starting this one — most often it is a development build from a \
+          checkout and the copy in /Applications, both launched by bridges \
+          from different MCP entries.\(who)
           """
       }
     }
@@ -82,23 +104,96 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-  // Not `listen()`: that is `Darwin.listen`, which this method calls.
   /// Is another host answering on this path right now?
   ///
-  /// `connect(2)` is the only honest test. The file proves nothing — it outlives
-  /// the process that created it — and `stat` cannot tell a live socket from the
-  /// wreckage of one. A refused connection (ECONNREFUSED, or ENOENT for no file
-  /// at all) means nobody is listening and the entry is safe to clear; a
-  /// connection that succeeds belongs to a running Cupertino.
+  /// `connect(2)` is the only honest test: the file outlives the process that
+  /// made it, and `stat` cannot tell a live socket from wreckage.
   ///
-  /// Closed immediately: this is a probe, not a session. The far end sees a
-  /// connection that hangs up before sending a handshake, which `serve` already
-  /// has to tolerate — a bridge whose host quits mid-handshake does the same.
+  /// Kept ONLY as the courtesy check in `openSocket`, never again as the way
+  /// two hosts exclude each other — that is the lock's job. The distinction is
+  /// the whole lesson: this answers "is anyone there *right now*", which stops
+  /// being true the instant it returns.
+  ///
+  /// Closed immediately: a probe, not a session. The far end sees a connection
+  /// that hangs up before the handshake, which `serve` already tolerates.
   private func socketIsLive(_ address: sockaddr_un) -> Bool {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
     defer { close(fd) }
     return address.withSockaddr { connect(fd, $0, $1) } == 0
+  }
+
+  /// Where the single-instance lock lives. A sibling of the socket, so the two
+  /// cannot end up in different directories.
+  private static var lockPath: String {
+    (BridgeProtocol.socketDirectory as NSString).appendingPathComponent("cupertino.lock")
+  }
+
+  /// Take the host lock, or fail saying who has it.
+  ///
+  /// This replaces a `connect`-probe followed by `unlink`, and the reason is
+  /// that check-then-act is not an exclusion mechanism. The probe asked "is
+  /// anyone answering?" and the answer was only true at the instant it was
+  /// asked: an incumbent that was restarting, paused under a debugger, or busy
+  /// enough to not accept in time read as absent — and the loser then UNLINKED
+  /// a live socket and bound its own over the top.
+  ///
+  /// MEASURED, in the wild: two hosts, both holding
+  /// `…/io.mgcrea.cupertino/cupertino.sock` in `lsof`, one with 62 live
+  /// sessions and one with 36. The evicted host kept accepting on an inode no
+  /// path pointed at any more, so every NEW bridge reached the other copy — a
+  /// development build with no Full Disk Access — and every mail tool reported
+  /// the grant as missing while System Settings showed it granted.
+  ///
+  /// `flock` cannot be raced: the kernel owns it, `LOCK_NB` fails instead of
+  /// waiting, and it is released on close AND on death. That last part is what
+  /// the unlink was really for — clearing the wreckage of a crash — and the
+  /// kernel does it correctly, which a heuristic cannot.
+  ///
+  /// `closeOnExec` matters as much as the lock. Without it every spawned server
+  /// inherits this descriptor, and a wedged server would go on holding the lock
+  /// after Cupertino quit — locking out the next launch with no process anyone
+  /// could see. Same argument as the listening socket below.
+  private func claimHostLock() throws {
+    let path = Self.lockPath
+    let fd = open(path, O_CREAT | O_RDWR, 0o600)
+    guard fd >= 0 else {
+      throw HostError.socketFailed("could not open \(path): \(errnoText())")
+    }
+    closeOnExec(fd)
+
+    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+      // Read before closing: the holder's note is readable by anyone, the lock
+      // only stops a second *writer* of the socket.
+      let holder = Self.lockHolder()
+      close(fd)
+      throw HostError.lockHeld(by: holder)
+    }
+
+    // Write down who we are, so the next loser gets a sentence naming a path
+    // instead of "another copy". Truncate first: a longer previous line would
+    // otherwise leave a tail behind this one.
+    ftruncate(fd, 0)
+    lseek(fd, 0, SEEK_SET)
+    let identity = "\(getpid())\t\(Bundle.main.bundlePath)\n"
+    _ = writeAll(fd, Data(identity.utf8))
+
+    lockFD = fd
+  }
+
+  /// The path the current lock holder wrote down, if it wrote one.
+  ///
+  /// Best effort by construction — a holder that died mid-write, or an older
+  /// build that never wrote anything, both yield nil and the caller says less
+  /// rather than saying something wrong.
+  private static func lockHolder() -> String? {
+    guard let data = FileManager.default.contents(atPath: lockPath),
+      let line = String(data: data, encoding: .utf8)?
+        .split(separator: "\n").first
+    else { return nil }
+    let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+    guard parts.count == 2 else { return nil }
+    return "\(parts[1]) (pid \(parts[0]))"
   }
 
   private func openSocket() throws {
@@ -108,24 +203,33 @@ nonisolated final class ServerHost: @unchecked Sendable {
     try FileManager.default.createDirectory(
       atPath: BridgeProtocol.socketDirectory, withIntermediateDirectories: true)
 
-    // A unix socket is a filesystem entry that outlives a crash, so a stale one
-    // from a previous run would make bind() fail with EADDRINUSE forever.
+    // Exclusion first, and everything below is safe because of it.
+    try claimHostLock()
+
+    // Belt and braces, for one specific case: a copy that predates the lock.
     //
-    // But an unconditional unlink does not only clear stale entries — it evicts
-    // LIVE ones. Two copies of Cupertino share this path (a checkout's Debug
-    // build and /Applications), and the MCP config reaches both: `-dev` entries
-    // point at the checkout, the rest at the installed app, and a bridge starts
-    // whichever its own bundle contains. Whoever started LAST used to win
-    // silently, and the earlier one went on accepting connections on a path that
-    // no longer named it — a listener nobody could reach, with no error anywhere
-    // and a menu bar that looked perfectly healthy.
+    // An older build never opens the lock file, so ours is uncontended and we
+    // would sail past it and unlink a socket that a running host is still
+    // serving — reintroducing the exact eviction this change exists to stop,
+    // for as long as both versions are installed. That window is not
+    // hypothetical: the `-dev` entries and the installed copy are routinely
+    // different builds.
     //
-    // So ask first. A socket nobody answers is genuinely stale and safe to
-    // clear; one that accepts a connection belongs to a running host, and taking
-    // it is never the right move.
+    // So ask the socket too. This is NOT the exclusion mechanism — the lock is,
+    // and a probe on its own is the check-then-act that failed. It is a
+    // one-way courtesy to a version that cannot answer for itself: if somebody
+    // is serving, stand down and say so.
     if socketIsLive(address) {
+      close(lockFD)
+      lockFD = -1
       throw HostError.alreadyServing(path)
     }
+
+    // NOW the unlink is unconditional and correct. A socket file is a
+    // filesystem entry that outlives the process that made it, so a stale one
+    // would fail `bind` with EADDRINUSE forever — but holding the lock is proof
+    // that whatever left this entry behind is gone, so there is nothing live to
+    // destroy.
     unlink(path)
 
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -152,14 +256,76 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // accepting on.
     closeOnExec(fd)
 
+    // Remember which inode we bound, so `socketWatch` can tell our socket from
+    // somebody else's file at the same path.
+    var bound = stat()
+    if stat(path, &bound) == 0 { boundIdentity = (bound.st_dev, bound.st_ino) }
+
     listenFD = fd
     hostLog("cupertino", .info, "listening at \(path)")
     queue.async { [weak self] in self?.acceptLoop(fd) }
+    startSocketWatch()
   }
 
   func stop() {
+    socketWatch?.cancel()
+    socketWatch = nil
     if listenFD >= 0 { close(listenFD); listenFD = -1 }
     unlink(BridgeProtocol.socketPath)
+    // Closing releases the flock. The file itself stays: unlinking a lock file
+    // is how two processes end up locking two different inodes and both winning.
+    if lockFD >= 0 { close(lockFD); lockFD = -1 }
+  }
+
+  // MARK: - Noticing eviction
+
+  /// Watch for our socket being replaced underneath us.
+  ///
+  /// The lock makes this nearly impossible between two builds that both have
+  /// it — but "nearly" is doing real work: an older build predating the lock,
+  /// or a stray `rm` of the socket, can still leave this host accepting on an
+  /// inode that no path points at. That state is invisible from the inside,
+  /// which is exactly what made it cost 3½ hours of a working day: the host
+  /// looked healthy, kept its existing sessions, and quietly took no new ones.
+  ///
+  /// Five seconds because the cost is one `stat` and the thing being caught is
+  /// measured in hours.
+  private func startSocketWatch() {
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(deadline: .now() + 5, repeating: 5)
+    timer.setEventHandler { [weak self] in self?.checkStillBound() }
+    timer.resume()
+    socketWatch = timer
+  }
+
+  private func checkStillBound() {
+    guard listenFD >= 0, let want = boundIdentity else { return }
+
+    var now = stat()
+    let lost: String?
+    if stat(BridgeProtocol.socketPath, &now) != 0 {
+      lost = "the socket file was removed"
+    } else if now.st_dev != want.dev || now.st_ino != want.ino {
+      lost = "another process replaced the socket file"
+    } else {
+      lost = nil
+    }
+    guard let reason = lost else { return }
+
+    // Stop rather than re-bind. Re-binding is how two hosts take turns evicting
+    // each other forever, and the honest state to be in is "not serving, and
+    // saying so" — `startupError` is what the Settings window reads.
+    let detail =
+      "\(reason) — this copy is no longer reachable and has stopped serving. "
+      + "Quit any other copy of Cupertino, then reopen this one."
+    hostLog("cupertino", .error, detail)
+    startupError = detail
+
+    socketWatch?.cancel()
+    socketWatch = nil
+    let fd = listenFD
+    listenFD = -1  // read by acceptLoop to tell a deliberate stop from a failure
+    if fd >= 0 { close(fd) }
   }
 
   /// Accept forever, and treat "forever" literally.
