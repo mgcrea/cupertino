@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "maps-v${version}",
+    "commitMessage": "release(maps): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-maps v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

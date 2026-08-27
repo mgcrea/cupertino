@@ -58,6 +58,7 @@ export default defineConfig({
     "contacts/dist/cli": here("../../packages/contacts/src/cli.ts"),
     "messages/dist/cli": here("../../packages/messages/src/cli.ts"),
     "safari/dist/cli": here("../../packages/safari/src/cli.ts"),
+    "maps/dist/cli": here("../../packages/maps/src/cli.ts"),
     // </generated:surfaces>
   },
   outDir: here("./.build/staged/servers"),

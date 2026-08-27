@@ -82,7 +82,7 @@ const surfaceList = SURFACES.map((s) => s.name)
 const spelledSurfaces = SPELLED[SURFACES.length] ?? String(SURFACES.length);
 
 /**
- * The two lines swapped jobs at seven surfaces, and the reason is mechanical:
+ * The two lines swapped jobs at eight surfaces, and the reason is mechanical:
  * **`composeCard` does not fit text.** Both lines are a fixed font size, centred,
  * with no measuring and no wrap — so a line that outgrows 1200px is clipped at
  * both ends, silently, in a picture nothing in CI looks at. The enumerated

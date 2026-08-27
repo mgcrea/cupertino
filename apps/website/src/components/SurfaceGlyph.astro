@@ -97,6 +97,17 @@ const { id, size = 18, class: className } = Astro.props;
     )
   }
   {
+    id === "maps" && (
+      <>
+        {/* A folded paper map with a pin — the generic object, not Apple's
+            artwork. Three panels from the two fold lines, on the same grid and
+            stroke weight as the rest of the set. */}
+        <path d="M2.5 5.5 7 3.75l6 2.25 4.5-1.75v10.25L13 16.25 7 14 2.5 15.75Z" />
+        <path d="M7 3.75V14M13 6v10.25" />
+      </>
+    )
+  }
+  {
     id === "safari" && (
       <>
         {/* A compass rose in a ring — the idea Safari's icon is built on, drawn

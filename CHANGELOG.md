@@ -16,6 +16,49 @@ summary.
 
 ### Added
 
+- **Maps is the eighth surface, and the first that cannot send an Apple Event.**
+  `@mgcrea/mcp-apple-maps` reads the places saved on this Mac — favourites, collections (Guides)
+  and recents — with real coordinates and addresses, through `apple_maps_list_favorites`,
+  `apple_maps_list_collections`, `apple_maps_list_collection_places`, `apple_maps_list_recents`,
+  `apple_maps_search_places`, `apple_maps_get_place` and `apple_maps_diagnostics`. Configuration is
+  `APPLE_MAPS_STORE`, `APPLE_MAPS_INDEX_MODE`, `APPLE_MAPS_MAX_RESULTS` and
+  `APPLE_MAPS_EXPOSE_PROMPTS`.
+
+  Maps ships no scripting dictionary, so `usesAppleEvents` is FALSE for the first time in
+  `surfaces.json` — which means adding this surface did **not** widen the Apple Events consent
+  string the app asks for. It also means there is no second lane: without Full Disk Access this
+  server returns an error rather than an empty list, because an empty list of favourites reads
+  exactly like a person who has saved none.
+
+  Read-only, and for a firmer reason than Safari's. The store is mirrored to iCloud by
+  `NSPersistentCloudKitContainer`: a write is an edit to one replica of a synchronising object
+  graph, underneath a running app that is also editing it, with `NSCK*` bookkeeping tables a
+  third-party writer would not maintain. `APPLE_MAPS_ALLOW_WRITES` is accepted and ignored, and
+  `tools.test.ts` asserts the tool list is identical with it on and off.
+
+  Columns are resolved by COVERAGE rather than by name, which no other surface has needed:
+  `ZHISTORYITEM` carries both `ZLATITUDE` (1 row of 33) and `ZLATITUDE1` (19 of 33), and taking the
+  first recognised name would report that Maps holds almost no coordinates.
+
+- **`pnpm probe:maps`, and two spikes recording how this surface was nearly lost.**
+  `scripts/probe-maps.mjs` reports the entity shapes, resolves the id bridge by running the join
+  rather than reading column names, and detects the date epoch. `scripts/spike-maps-store.mjs`
+  answers "is there a store behind the grant at all", and refuses to report a negative unless it can
+  first open four stores that shipped surfaces read daily — Maps was declared "no file lane" three
+  times by processes that never checked they could see anything. `scripts/spike-maps-ax.mjs` is the
+  record of the Accessibility lane that was measured and rejected: readable, but ~14 s per read with
+  no coordinates and no stable identifier, against 0 ms and both from the file lane.
+
+### Fixed
+
+- **`looksLikeDateColumn` never matched a single Core Data column.** Its token boundary was `_`,
+  written for snake_case schemas like Calendar's `start_date`; Core Data has no underscores, so
+  `ZCREATETIME` and `ZLASTVISITEDDATE` silently returned false in every Notes, Contacts and Maps
+  store. A date detector that quietly finds nothing is exactly what `docs/surfaces.md` means by
+  "dates are the richest source of silent errors". The new rule matches on SUFFIX rather than
+  substring, because substring matching recreates the `calENDar_id` trap in a new alphabet —
+  "update" contains "date", so `ZUPDATECOUNT` and `ZVALIDATED` would have read as timestamps.
+
 - **Wire a single project folder, instead of every session on the Mac.** Settings ▸ Clients has a
   **Project folders** section: choose a folder, and Cupertino's servers are wired for that folder
   alone. Until now the app only offered `claude mcp add --scope user`, which is right for someone

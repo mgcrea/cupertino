@@ -225,6 +225,51 @@ struct Surface: Identifiable, Hashable {
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_SAFARI_"
     ),
+    Surface(
+      id: "maps",
+      displayName: "Maps",
+      // The FIRST surface with usesAppleEvents FALSE. Maps ships no scripting
+      // dictionary at all: there is no .sdef in /System/Applications/Maps.app,
+      // checked directly rather than inferred from NSAppleScriptEnabled. So this
+      // is the first entry that does not widen the Apple Events consent string,
+      // and the first server in the bundle that can never send an Apple Event.
+      //
+      // Its file lane is MANDATORY for the same reason Messages' is: there is no
+      // second lane to degrade to. Without Full Disk Access there is no slower
+      // Maps server, there is no Maps server.
+      //
+      // storePath names a file with NO EXTENSION, which is why this surface was
+      // declared 'no file lane' three separate times before it was found. A sweep
+      // for *.db / *.sqlite* misses it entirely. It also sits in Data/Maps/, the
+      // one directory of Maps' container that Full Disk Access gates, so a listing
+      // taken without the grant omits the directory and the omission reads as
+      // absence of data. And group.com.apple.Maps is a decoy: it exists, it is
+      // EPERM rather than empty, and it holds three files that are not the store.
+      //
+      // The version in the name will move. packages/maps/src/client/locate.ts
+      // falls back to scanning for a MapsSync_* sibling rather than reporting a
+      // rename as 'Maps has never been used'. A glob is not used, for the reason
+      // the Reminders entry gives: resolveStore only expands one in a directory
+      // component.
+      //
+      // supportsWrites is FALSE, and unlike Safari's it is not merely unprobed.
+      // The store is mirrored to iCloud by NSPersistentCloudKitContainer, so a
+      // write is not a write to a file. It is an edit to one replica of a
+      // synchronising object graph, underneath a running app that is also editing
+      // it, with NSCK* bookkeeping tables a third-party writer would not maintain.
+      // That needs its own probe before it needs a flag.
+      //
+      // Columns are resolved BY COVERAGE rather than by name, which no other
+      // surface has needed. ZHISTORYITEM carries both ZLATITUDE (1 row of 33) and
+      // ZLATITUDE1 (19 of 33); taking the first recognised name would report that
+      // Maps holds almost no coordinates.
+      bundleID: "com.apple.Maps",
+      usesAppleEvents: false,
+      supportsWrites: false,
+      storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
+      storePermission: .fullDiskAccess,
+      envPrefix: "APPLE_MAPS_"
+    ),
   ]
   // </generated:surfaces>
 

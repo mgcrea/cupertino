@@ -31,8 +31,11 @@ Safari (READS only, and the only one — live tabs, which the file lane cannot s
 Photos, Shortcuts, Music, TV, Finder, Preview, QuickTime Player, Terminal, Script Editor,
 Xcode, System Settings.
 
-**Not scriptable** — file lane or nothing: Freeform, Journal, Books, Podcasts, Maps, News, Home,
+**Not scriptable** — file lane or nothing: Freeform, Journal, Books, Podcasts, **Maps**, News, Home,
 Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dictionary.
+
+Maps is in that list and now ships anyway: `packages/maps` is the first surface with **no Apple
+Events lane at all**. Being non-scriptable turned out not to be the obstacle — see below.
 
 ## State of play
 
@@ -44,6 +47,7 @@ Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dict
 | Messages  | **file lane mandatory** — no read API exists | implemented |
 | Calendar  | **file lane mandatory** — 3.4 s range query  | implemented |
 | Safari    | two lanes see disjoint things                | implemented |
+| Maps      | **file lane only** — no `.sdef` exists       | implemented |
 | Contacts  | file-lane reads, 0 ms; store is plural       | implemented |
 
 Every probed surface now has a package. **Safari is the only read-only one**, and that is recorded
@@ -81,10 +85,32 @@ Worth it only for a concrete workflow.
 **Deliberately not recommended.** Music, TV, Finder, Preview and QuickTime are trivially scriptable
 and low value. Terminal, Script Editor and System Settings are scriptable and dangerous: they hand a
 caller arbitrary execution using a permission granted for reading mail, which is precisely what the
-closed table in `Surfaces.swift` exists to prevent. The non-scriptable set (Freeform, Journal, Books,
-Podcasts, Home, Weather, Passwords, Maps, News) is where the grant is the _only_ way in — the most
-differentiated value and the highest maintenance risk, since there is no fallback lane and no write
-path. `group.com.apple.Journal` and a 33 MB `group.com.apple.freeform` both exist if revisited.
+closed table in `Surfaces.swift` exists to prevent. The rest of the non-scriptable set (Freeform,
+Journal, Books, Podcasts, Home, Weather, Passwords, News) is where the grant is the _only_ way in —
+the most differentiated value and the highest maintenance risk, since there is no fallback lane.
+`group.com.apple.Journal` and a 33 MB `group.com.apple.freeform` both exist if revisited.
+
+**Maps came out of that set and shipped**, and how it nearly did not is the transferable part.
+
+It was declared "no file lane" **three times** before the store was found, by a process that held no
+Full Disk Access and never checked. `find` over `group.com.apple.Maps` returned only the directory
+and was read as empty when it was `EPERM`. A sweep for `*.db` / `*.sqlite*` missed the store because
+**it has no file extension** — `MapsSync_0.0.1`. A full container listing missed it because
+`Data/Maps/` was the one gated directory, and its omission read as absence.
+
+That is this document's own rule — "'Absent' and 'EPERM' are different findings" — broken three
+times in a row by the project that wrote it down. The fix is procedural rather than a note:
+[`scripts/spike-maps-store.mjs`](../scripts/spike-maps-store.mjs) tests four stores that shipped
+surfaces read daily and **refuses to report a negative** unless it can open them, and
+`probe-maps.mjs` exits 3 rather than printing a result it cannot stand behind. Any future probe of a
+gated store should start the same way.
+
+The Accessibility lane was measured and rejected on the way, which is worth keeping because it is the
+first real datum on that lane's cost: Maps' sidebar IS readable through System Events, but a full
+read needs ~14 s (33.6 ms per Apple Event round trip x ~206 elements x two properties; bulk fetch is
+unavailable in both JXA and AppleScript, and scoping does not help because the sidebar IS 206 of the
+window's 213 elements). It also yields no coordinates and no stable identifier. The file lane answers
+the same questions in 0 ms with both. See [maps.md](maps.md).
 
 ## What a new surface costs
 

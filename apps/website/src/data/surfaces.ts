@@ -17,7 +17,7 @@
 export interface Surface {
   /** Anchor id and display key. */
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "messages" | "safari";
+  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "messages" | "safari" | "maps";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -180,6 +180,24 @@ export const SURFACES: readonly Surface[] = [
       "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — saves attachments, and sends, behind the write gate.",
     withoutGrant:
       "Nothing at all. Every read through Messages' own scripting interface fails, so this is the one surface with no second lane to degrade to.",
+  },
+  {
+    id: "maps",
+    name: "Maps",
+    pkg: "@mgcrea/mcp-apple-maps",
+    read: [
+      "apple_maps_list_favorites",
+      "apple_maps_list_collections",
+      "apple_maps_list_collection_places",
+      "apple_maps_list_recents",
+      "apple_maps_search_places",
+      "apple_maps_get_place",
+      "apple_maps_diagnostics",
+    ],
+    write: [],
+    pitch:
+      "The places you saved: favourites, Guides and recents, with real coordinates and addresses. Read-only.",
+    withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {
     id: "safari",

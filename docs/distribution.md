@@ -390,7 +390,7 @@ once the file lane landed.
 **The measurements retired it, and it should stop being claimed.** It held for Notes (97 ms) and
 holds for Reminders. It never held for Messages, which has no read path at all. And it does not hold
 for Mail or Calendar: a 74-second search and a 3.4-second range query are not a trial, they are a
-broken product that happens to return the right answer. A promise three of seven surfaces cannot
+broken product that happens to return the right answer. A promise three of eight surfaces cannot
 keep is worse than no promise.
 
 What replaces it is narrower and true: **with writes off, a surface needs no Automation grant at

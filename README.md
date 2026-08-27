@@ -41,6 +41,7 @@ off cannot see that they exist.
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 7 tools, chats/search/decoded text + gated send   |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 7 tools, favourites/Guides/recents, read-only     |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.
@@ -142,15 +143,16 @@ Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
 
 **What works without Full Disk Access:**
 
-| Surface   | Without the grant                                                                                                                                                                                                                                                                                               |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                                                                                                                |
-| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                                                                                                                   |
-| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                                                                                                                          |
-| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                                                                                                              |
-| Contacts  | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top.                                                                                              |
-| Messages  | **nothing at all.** No Apple Events read path exists — Messages answers "Application isn't running" even while running — so there is no second lane and no degraded mode. A send can still be attempted, but with no store to pick the target from or reconcile against, it usually cannot be addressed at all. |
-| Safari    | **live tabs, and only those.** The one surface whose lanes are not fallbacks for each other: Apple Events sees what is open now, the file lane sees everything else. History, bookmarks and the Reading List all need the grant.                                                                                |
+| Surface   | Without the grant                                                                                                                                                                                                                                                                                                               |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                                                                                                                                |
+| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                                                                                                                                   |
+| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                                                                                                                                          |
+| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                                                                                                                              |
+| Contacts  | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top.                                                                                                              |
+| Messages  | **nothing at all.** No Apple Events read path exists — Messages answers "Application isn't running" even while running — so there is no second lane and no degraded mode. A send can still be attempted, but with no store to pick the target from or reconcile against, it usually cannot be addressed at all.                 |
+| Safari    | **live tabs, and only those.** The one surface whose lanes are not fallbacks for each other: Apple Events sees what is open now, the file lane sees everything else. History, bookmarks and the Reading List all need the grant.                                                                                                |
+| Maps      | **nothing at all.** The only surface with no second lane by construction: Maps ships no scripting dictionary, so there is no Apple Events fallback to degrade to. Without the grant this server returns an error rather than an empty list, because an empty list of favourites reads exactly like a person who has saved none. |
 
 Tools that need the index don't disappear when it's missing — the tool list is a pure function of
 `allowWrites` and nothing else, because MCP clients cache it. They return a structured `degraded`
@@ -260,8 +262,27 @@ Safari developer-menu toggle which is not a TCC grant and whose own state cannot
 Shipping it would mean reporting a healthy surface whose most powerful capability silently fails.
 See [docs/safari.md](docs/safari.md).
 
+### Maps
+
+Favourites, collections (Guides) and recents, from a Core Data store under Full Disk Access —
+with real coordinates and addresses, which is what makes it worth having.
+
+It reads **what is saved on this Mac**. It does not search Apple's map of the world, geocode an
+address, or give directions; the guide says so, because answering those from general knowledge is
+the most likely way for this surface to be wrong.
+
+Read-only, and for a stronger reason than Safari's. The store is mirrored to iCloud by
+`NSPersistentCloudKitContainer`, so a write is not a write to a file — it is an edit to one replica
+of a synchronising object graph, underneath a running app that is also editing it. That needs its own
+probe before it needs a flag.
+
+It was also declared impossible three times before it was found: the store has no file extension,
+it sits in the one directory of Maps' container that Full Disk Access gates, and
+`group.com.apple.Maps` is a decoy that is `EPERM` rather than empty. See
+[docs/maps.md](docs/maps.md).
+
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
-`apple_contacts_` / `apple_messages_` / `apple_safari_`.
+`apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_`.
 
 ## Prompts and resources
 
@@ -292,7 +313,7 @@ refused, it is **not registered**. Full design notes, and what was deliberately 
 
 Environment only — these servers hold no secret of their own, so there is no config file. Prefix
 is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_CONTACTS_`,
-`APPLE_MESSAGES_` or `APPLE_SAFARI_`.
+`APPLE_MESSAGES_`, `APPLE_SAFARI_` or `APPLE_MAPS_`.
 
 | Variable                 | Default       | What                                                           |
 | ------------------------ | ------------- | -------------------------------------------------------------- |
@@ -375,6 +396,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/messages.md](docs/messages.md)                           | Apple Messages: measurements, decoder, send   |
 | [docs/calendar.md](docs/calendar.md)                           | Apple Calendar phase-0 measurements           |
 | [docs/safari.md](docs/safari.md)                               | Safari phase-0 measurements                   |
+| [docs/maps.md](docs/maps.md)                                   | Maps phase-0 measurements                     |
 | [docs/envelope-index.md](docs/envelope-index.md)               | Mail's observed `Envelope Index` schema       |
 | [docs/prompts-and-resources.md](docs/prompts-and-resources.md) | what the servers expose beyond tools          |
 | [docs/verify.md](docs/verify.md)                               | checking the Mail server against a real index |
@@ -441,10 +463,11 @@ pnpm probe:messages  # chat.db — no Apple Events read lane exists, so this one
                      #   --send-target=<handle> also checks the send lane's targeting, without sending
 pnpm probe:calendar  # settles whether Calendar has a file lane at all
 pnpm probe:safari    # History.db, and the Reading List hiding inside Bookmarks.plist
+pnpm probe:maps      # MapsSync, the store with no file extension behind the grant
 pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Full Disk Access
 ```
 
-Every probed surface now has a package. **Safari is read-only** — it registers no mutating tool, and that is a recorded decision rather than an omission: opening a URL or adding to the Reading List navigates a real, visible browser and was never probed. See [docs/safari.md](docs/safari.md). Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface now has a package. **Safari and Maps are read-only** — neither registers a mutating tool, and in both cases that is a recorded decision rather than an omission. Opening a URL or adding to Safari's Reading List navigates a real, visible browser and was never probed; writing to Maps means editing one replica of a CloudKit-mirrored object graph underneath a running app. See [docs/safari.md](docs/safari.md) and [docs/maps.md](docs/maps.md) — Maps' is the firmer of the two, because its store is a CloudKit-mirrored object graph rather than a file. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

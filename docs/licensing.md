@@ -348,7 +348,7 @@ has to be loud, and a loud cap mid-conversation demos worse than a clean refusal
 
 ### Price
 
-**$14.99 / €14.99, once, for all seven surfaces.** One purchase covers every 1.x release; 2.0 is a
+**$14.99 / €14.99, once, for all eight surfaces.** One purchase covers every 1.x release; 2.0 is a
 separate purchase. Nothing lapses and nothing renews.
 
 There is no price ladder any more. There was one, it is retired, and the record of it is below —
