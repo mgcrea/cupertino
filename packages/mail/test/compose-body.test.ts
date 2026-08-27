@@ -26,6 +26,16 @@ type MailBehaviour = {
   sendDisabled?: boolean;
   /** Send is clicked, and the window is still there afterwards. */
   sendLeavesWindowOpen?: boolean;
+  /**
+   * The Mac cannot reach a composer at all, in one of the two ways that look
+   * identical from inside one: System Events refuses to be addressed, or it can
+   * be addressed and its UI reads back as nothing.
+   */
+  blind?: "systemEvents" | "accessibility";
+  /** What AXIsProcessTrusted claims — consulted only when Mail has no windows. */
+  axTrusted?: boolean;
+  /** Mail refuses to close the composer this script opened. */
+  closeFails?: boolean;
 };
 
 const paragraphs = (text: string) => text.split("\n").filter((line) => line.trim());
@@ -47,6 +57,9 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     quoted = "",
     sendDisabled = false,
     sendLeavesWindowOpen = false,
+    blind,
+    axTrusted = true,
+    closeFails = false,
   } = behaviour;
 
   const state = {
@@ -63,6 +76,11 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     clipboard: "something the user copied earlier" as string | null,
     clipboardDuringPaste: null as string | null,
     frontmostDuringPaste: null as string | null,
+    // Did a composer get put on screen at all? The pre-flight's whole job is to
+    // keep this at 0 when the grants are missing.
+    composersOpened: 0,
+    closes: 0,
+    closedSaving: null as string | null,
   };
 
   const webArea: any = {
@@ -97,6 +115,9 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
   const proc = {
     get windows() {
       const list = () => {
+        // Accessibility denied does not come back empty, it comes back as a
+        // refusal — `prop()` is what used to turn that into `[]`.
+        if (blind === "accessibility") throw new Error("-25211 AXError cannot complete");
         if (!state.windowExists && ++state.polls >= windowAfterPolls) state.windowExists = true;
         return state.windowExists && !state.windowClosed
           ? [composerWindow, mainWindow]
@@ -138,6 +159,12 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
 
   const systemEvents = {
     processes: {
+      // Addressing System Events at all: a separate grant from Accessibility,
+      // and the first thing the pre-flight asks.
+      name: () => {
+        if (blind === "systemEvents") throw new Error("Error: -1743 errAEEventNotPermitted");
+        return ["Mail", "Finder"];
+      },
       byName: (name: string) =>
         name === "Mail"
           ? proc
@@ -174,8 +201,20 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
   const account = { id: () => "UUID", mailboxes: () => [mailbox] };
   const mail = {
     accounts: () => [account],
-    reply: () => composer,
-    forward: () => composer,
+    reply: () => {
+      state.composersOpened++;
+      return composer;
+    },
+    forward: () => {
+      state.composersOpened++;
+      return composer;
+    },
+    close: (_draft: unknown, opts: { saving: string }) => {
+      if (closeFails) throw new Error("Mail can't close that");
+      state.closes++;
+      state.closedSaving = opts.saving;
+      state.windowClosed = true;
+    },
     ToRecipient: (spec: { address: string }) => spec,
   };
 
@@ -185,6 +224,7 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
   const dollar: any = nsString.bind(null);
   dollar.NSRunningApplication = { runningApplicationsWithBundleIdentifier: () => ({ count: 1 }) };
   dollar.NSThread = { sleepForTimeInterval: () => undefined };
+  dollar.AXIsProcessTrusted = () => axTrusted;
   dollar.NSPasteboardTypeString = "public.utf8-plain-text";
   dollar.NSPasteboard = {
     generalPasteboard: {
@@ -240,7 +280,9 @@ describe("reply body", () => {
     const { envelope } = runScript(REPLY, { pasteDoesNothing: true });
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe("DRAFT_BODY_NOT_SET");
-    expect(envelope.error.message).toMatch(/EMPTY/);
+    // The guarantee, not the wording: whatever is on screen, the caller must
+    // not go on to tell the user their reply is ready.
+    expect(envelope.error.message).toMatch(/MUST NOT be described to the user as ready/);
   });
 
   it("retries a paste that landed nowhere", () => {
@@ -258,7 +300,11 @@ describe("reply body", () => {
     const { envelope } = runScript(REPLY, { windowAfterPolls: Infinity });
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe("COMPOSER_NOT_FOUND");
-    expect(envelope.error.message).toMatch(/Accessibility/);
+    // NOT blamed on Accessibility. The pre-flight read Mail's other windows
+    // moments earlier, so the grants are provably live and saying otherwise
+    // sends the user to a System Settings pane that is already correct.
+    expect(envelope.error.message).toMatch(/this is not a permission/);
+    expect(envelope.error.message).toMatch(/Inbox/);
   });
 
   it("reports how much of a long body it actually confirmed", () => {
@@ -357,5 +403,63 @@ describe("forward", () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.data.bodyVerified).toBe(null);
     expect(state.pastes).toBe(0);
+  });
+});
+
+/**
+ * The pre-flight, which is about what is left on screen rather than what is
+ * returned.
+ *
+ * The failure this tool was best known for was not the error — it was the empty
+ * reply window sitting in Mail afterwards, one per attempt, each of which the
+ * user had to close by hand. The grants that fail can all be read before
+ * anything is opened, so none of those windows ever needed to exist.
+ */
+describe("opening nothing it cannot fill", () => {
+  it("refuses before a composer exists when System Events cannot be addressed", () => {
+    const { envelope, state } = runScript(REPLY, { blind: "systemEvents" });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("COMPOSER_NOT_FOUND");
+    expect(state.composersOpened).toBe(0);
+  });
+
+  it("refuses before a composer exists when the UI cannot be read", () => {
+    const { envelope, state } = runScript(REPLY, { blind: "accessibility" });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.message).toMatch(/Accessibility/);
+    expect(state.composersOpened).toBe(0);
+  });
+
+  // Mail closed down to the menu bar has no windows, and that reads exactly
+  // like being blind to it. Refusing on an empty list alone would block a reply
+  // on a Mac where the whole mechanism works.
+  it("proceeds on an empty window list when the process is trusted", () => {
+    const { envelope, state } = runScript(REPLY, { axTrusted: true });
+    expect(envelope.ok).toBe(true);
+    expect(state.composersOpened).toBe(1);
+  });
+
+  it("takes back the composer it opened when the body never landed", () => {
+    const { envelope, state } = runScript(REPLY, { pasteDoesNothing: true });
+    expect(envelope.ok).toBe(false);
+    expect(state.closes).toBe(1);
+    expect(state.closedSaving).toBe("no");
+    expect(envelope.error.message).toMatch(/retry is safe/);
+  });
+
+  // The one case where the window must survive: something went in that could
+  // not be read back, and closing it would destroy a reply with no undo.
+  it("leaves the composer alone once something has landed in it", () => {
+    const { envelope, state } = runScript(REPLY, { pasteGarbles: true });
+    expect(envelope.ok).toBe(false);
+    expect(state.closes).toBe(0);
+    expect(envelope.error.message).toMatch(/left it open|left open/);
+  });
+
+  it("admits it when the composer cannot be closed either", () => {
+    const { envelope, state } = runScript(REPLY, { pasteDoesNothing: true, closeFails: true });
+    expect(envelope.ok).toBe(false);
+    expect(state.closes).toBe(0);
+    expect(envelope.error.message).toMatch(/close it in Mail/i);
   });
 });

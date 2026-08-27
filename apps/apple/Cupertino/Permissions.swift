@@ -254,9 +254,21 @@ enum Permissions {
   /// synchronous IPC, so it is safe to call while painting a row. The freeze
   /// documented over `StatusModel.refreshAutomation` does not apply.
   ///
-  /// The identity being asked about is **this app**, which is the point:
-  /// `scripts/spike-app-tcc` measured that everything the app spawns inherits
-  /// its responsible process, so this one answer covers every server.
+  /// The identity being asked about is **this app**, and — unlike Full Disk
+  /// Access and Automation — that is NOT the same as asking about the servers.
+  ///
+  /// The earlier claim here was that `scripts/spike-app-tcc` had measured every
+  /// child inheriting the app's identity, so this one answer covered every
+  /// server. It is retracted. That spike measured Full Disk Access and Apple
+  /// Events; Accessibility was never in the experiment, and it does not behave
+  /// the same way.
+  ///
+  /// MEASURED, macOS 26.6: with this row green, an `osascript` grandchild of
+  /// this process answered `AXIsProcessTrusted` false and could not name a
+  /// single Mail window — so `apple_mail_reply_to_message` failed on a Mac
+  /// whose Accessibility row said everything was fine. A green row here means
+  /// *the app* is trusted and nothing more; `apple_mail_diagnostics` reports
+  /// `composerUiRead`, which is what the composer actually depends on.
   static func accessibility() -> AccessibilityStatus {
     AXIsProcessTrusted() ? .granted : .denied
   }

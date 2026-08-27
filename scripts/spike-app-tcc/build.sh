@@ -34,6 +34,7 @@ run)
 reset)
   tccutil reset SystemPolicyAllFiles "$bundle_id" || true
   tccutil reset AppleEvents "$bundle_id" || true
+  tccutil reset Accessibility "$bundle_id" || true
   echo "TCC grants for $bundle_id revoked."
   exit 0
   ;;
@@ -102,6 +103,9 @@ Next, by hand — Full Disk Access never prompts, it has to be granted:
   1. Open Full Disk Access:
        open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
   2. Drag "Cupertino Spike.app" from $build into the list, and switch it on.
+  2b. Same again in Accessibility, which is a separate grant and the one the
+      Mail composer needs:
+       open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
   3. Make sure Mail (and Notes) are running — the Apple Events lane skips
      apps that are not, exactly as the real client does.
   4. $0 run
@@ -115,5 +119,15 @@ Read the result as two independent answers:
 
 If the file lane says rc=3 while half1 says YES, children do NOT inherit and
 the app-hosted design is wrong — fall back to keeping launcher.c as a helper.
+
+The accessibility lane answers a DIFFERENT question and must be read on its
+own. Grant Accessibility to the spike, relaunch it, and compare:
+
+  trusted: granted + uiRead: granted   the grant reaches a grandchild
+  trusted: denied  + uiRead: denied    it does not — and the composer design
+                                       needs a route that does not depend on it
+
+The two columns disagreeing is itself the finding: `trusted` is a claim about an
+identity and `uiRead` is the thing the composer actually does.
 
 TXT

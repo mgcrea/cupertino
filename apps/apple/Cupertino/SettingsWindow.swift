@@ -810,7 +810,11 @@ enum StatusStyle {
 
   static func accessibilityHint(_ status: AccessibilityStatus) -> String {
     switch status {
-    case .granted: "Cupertino can read and fill Mail's compose window."
+    // Deliberately about this app and not about the servers. The two are not
+    // the same question for Accessibility — a granted app has been measured
+    // alongside servers that still could not read a composer — and the old
+    // wording promised the second while only ever checking the first.
+    case .granted: "Granted to Cupertino. If replies still fail, quit and reopen it."
     // Not "denied": `AXIsProcessTrusted` cannot tell a refusal from a question
     // never asked, so the wording has to cover both without claiming either.
     case .denied: "Not granted. Replies and forwards will fail until it is."

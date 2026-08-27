@@ -92,7 +92,14 @@ export const buildDiagnostics = async (
       // the other two and denied without affecting anything else in this report.
       accessibility: composer.accessibility,
       automationSystemEvents: composer.systemEvents,
-      ...(composer.accessibility === "granted" && composer.systemEvents === "granted"
+      // The one line here that is a measurement rather than a claim: whether
+      // Mail's windows could actually be named. `accessibility` above answers
+      // for an identity, and the two have been seen to disagree — the app's own
+      // process reporting trusted while the server it spawned reports the
+      // opposite — so when they conflict, this is the one to believe.
+      composerUiRead: composer.uiRead,
+      ...(composer.windows ? { composerWindowsSeen: composer.windows } : {}),
+      ...(composer.uiRead === "granted" && composer.systemEvents === "granted"
         ? {}
         : {
             composerNote:
@@ -105,7 +112,10 @@ export const buildDiagnostics = async (
               "grandchild that inherits its identity. Accessibility is in System Settings > " +
               "Privacy & Security > Accessibility; Automation is under Automation. If the app " +
               "is already listed, toggle it off and on — the grant goes stale when the bundle " +
-              "is reinstalled.",
+              "is reinstalled. Then quit Cupertino and open it again: the servers are children " +
+              "of the running app, and a child started before the grant does not see it — which " +
+              "is what `accessibility: denied` beside a green Accessibility row in Cupertino's " +
+              "own Settings means.",
           }),
       fullDiskAccess: located.readable
         ? "granted"

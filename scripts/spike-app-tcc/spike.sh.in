@@ -56,6 +56,49 @@ JXA
 ae_rc=$?
 echo "apple events lane rc=$ae_rc"
 
+# --- Lane 2b: Accessibility, the grant the first run of this spike never asked about ---
+#
+# The original spike measured Full Disk Access and Apple Events, found both
+# inherited, and the codebase generalised that to "everything the app spawns
+# inherits its identity". Accessibility was never in the experiment. It is the
+# grant a Mail composer needs, and on this Mac it behaves differently: the app's
+# own process reports AXIsProcessTrusted true while an osascript grandchild of
+# it reports false, which is what this lane exists to pin down.
+#
+# TWO answers, deliberately, because they can disagree:
+#   trusted  — what the flag claims about this process's identity
+#   uiRead   — whether another app's windows can actually be named
+# The second is the one that decides whether a reply works.
+echo
+echo "--- accessibility lane: /usr/bin/osascript -l JavaScript (grandchild)"
+/usr/bin/osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit');
+ObjC.import('ApplicationServices');
+
+var trusted = 'error';
+try { trusted = $.AXIsProcessTrusted() ? 'granted' : 'denied'; } catch (e) { trusted = 'throw ' + e; }
+
+var SE = Application('System Events');
+var systemEvents = 'error', uiRead = 'error', windows = null;
+try { SE.processes.name(); systemEvents = 'granted'; }
+catch (e) { systemEvents = 'denied: ' + (e.message || e); }
+
+// Finder rather than Mail: it is always running, so an empty answer here means
+// blind rather than "nothing open".
+try {
+  windows = SE.processes.byName('Finder').windows().map(function (w) {
+    try { return w.name(); } catch (e) { return null; }
+  });
+  uiRead = 'granted (' + windows.length + ' Finder windows)';
+} catch (e) {
+  uiRead = 'denied: ' + (e.message || e);
+}
+
+JSON.stringify({ trusted: trusted, systemEvents: systemEvents, uiRead: uiRead }, null, 2);
+JXA
+ax_rc=$?
+echo "accessibility lane rc=$ax_rc"
+
 # --- Lane 3: the REAL code path, not a toy probe ---
 # scripts/probe-envelope-index.mjs is the phase-0 spike that produced
 # docs/envelope-index.md. Its output is redacted by design (DDL, counts,
@@ -71,6 +114,6 @@ else
 fi
 
 echo
-echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc"
+echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc accessibility_rc=$ax_rc"
 [ "$file_rc" -eq 0 ] || exit 3
 exit 0

@@ -8,10 +8,25 @@ Answers step 1 of the app-hosted plan, and replaces step 0 of the order of work 
 escape: the app is its own responsible process and so is everything beneath it. This spike is the
 cheapest way to find out whether that is true before any of it is built.
 
-**Verdict: it does.** Full Disk Access and Automation both land on the app bundle and are both
-inherited by grandchildren, the grant survives re-signing in place, and it does not leak to
-processes outside the app — nor to a copy of the same app at another path. `responsibility_spawnattrs_setdisclaim` is not needed under the app-hosted
-design. Details below.
+**Verdict: it does — for the two services that were tested.** Full Disk Access and Automation both
+land on the app bundle and are both inherited by grandchildren, the grant survives re-signing in
+place, and it does not leak to processes outside the app — nor to a copy of the same app at another
+path. `responsibility_spawnattrs_setdisclaim` is not needed under the app-hosted design. Details
+below.
+
+> **Scope, added 2026-08-27.** This spike measured **Full Disk Access and Apple Events**. It did not
+> measure **Accessibility**, and the codebase went on to generalise its verdict to every TCC service
+> — `Permissions.accessibility()` carried a comment saying this file had proved the app's answer
+> covered every server. It had not.
+>
+> The generalisation is now known to be wrong. On this Mac, with Accessibility granted to
+> `/Applications/Cupertino.app` and the app's own `AXIsProcessTrusted()` returning true, an
+> `osascript` grandchild of it returned false and could not name a single Mail window — while an
+> `osascript` at the same depth under a *different* responsible app read them fine. Every
+> `apple_mail_reply_to_message` therefore failed on a Mac whose Accessibility row was green.
+>
+> The accessibility lane in `spike.sh.in` was added to settle it. Run it before trusting any
+> statement in this file about services other than the two named above.
 
 ```sh
 ./build.sh          # compile + sign the throwaway bundle

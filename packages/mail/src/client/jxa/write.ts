@@ -64,9 +64,37 @@ function run() {
     else systemEvents = "error";
   }
 
+  // The functional read, which outranks both flags above.
+  //
+  // MEASURED, macOS 26.6: Cupertino.app's own process answers AXIsProcessTrusted
+  // true while an osascript grandchild of it answers false, so the flag
+  // alone cannot say whether a composer is reachable -- it is a claim about an
+  // identity, and this is the thing itself. Naming a window of Mail's needs
+  // exactly the grants a composer needs, and opens nothing.
+  var uiRead = "unknown";
+  var windows = null;
+  try {
+    var proc = Application("System Events").processes.byName("Mail");
+    windows = proc.windows().map(function (w) {
+      try { return w.name(); } catch (e) { return null; }
+    });
+    // No windows is not evidence: Mail closed down to the menu bar reads the
+    // same as Mail we are blind to.
+    uiRead = windows.length ? "granted" : "inconclusive";
+  } catch (e) {
+    uiRead = "denied";
+    windows = null;
+  }
+
   return JSON.stringify({
     ok: true,
-    data: { accessibility: accessibility, systemEvents: systemEvents, detail: detail },
+    data: {
+      accessibility: accessibility,
+      systemEvents: systemEvents,
+      uiRead: uiRead,
+      windows: windows,
+      detail: detail,
+    },
   });
 }
 `;
@@ -603,6 +631,15 @@ export const REPLY_OR_FORWARD = script(
     return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
   }
 
+  // Asked BEFORE anything is opened, and that ordering is the fix for the
+  // failure this tool was best known for. The two grants below fail in exactly
+  // the state where a composer is already on screen, so the old shape left an
+  // empty reply window behind on every attempt and told the user to close it.
+  // Nothing about the check needs the window to exist.
+  var SE = Application("System Events");
+  var reach = composerReach(SE);
+  if (!reach.ok) return err("COMPOSER_NOT_FOUND", composerGrantMessage(p.mode, reach));
+
   // The window is opened even when sending immediately: it is where the body
   // has to be typed, and sending from it sends what was verified rather than
   // whatever the disconnected scripting object thinks it holds.
@@ -616,21 +653,23 @@ export const REPLY_OR_FORWARD = script(
   var subject = String(prop(function () { return draft.subject(); }, ""));
   if (!subject) return err("COMPOSER_NOT_FOUND", "Mail did not return a composer for the " + p.mode + ".");
 
-  var SE = Application("System Events");
   var proc = SE.processes.byName("Mail");
   var win = composerWindow(proc, subject, 8000);
   if (!win) {
+    // The pre-flight passed and this still failed, so the grants are live and
+    // the window is the problem. Nothing has been typed yet, so the composer we
+    // opened is ours to take back.
+    var closedUnreadable = discardComposer(M, draft);
     return err(
       "COMPOSER_NOT_FOUND",
       "Mail was asked to open a " + p.mode + " window for \\"" + subject + "\\" and no such window " +
-      "was readable within 8s. Nothing was written. If a compose window IS on screen, this is a " +
-      "permission: reaching it needs BOTH Accessibility and Automation to System Events (a " +
-      "different grant from Automation to Mail, which is why every other tool still works), and " +
-      "the two fail identically here. Run apple_mail_diagnostics — it reports them separately and " +
-      "will say which. Both belong to /Applications/Cupertino.app, NOT to your terminal or to " +
-      "node: the app is the process macOS holds responsible and every server inherits its " +
-      "identity. If it is already listed, toggle it off and on — the grant goes stale when the " +
-      "bundle is reinstalled."
+      "was readable within 8s, although Mail's other windows read fine — so this is not a " +
+      "permission. Nothing was written. Mail may still have been opening it. The windows visible " +
+      "at the time were: " + JSON.stringify(reach.windows) + ". " +
+      (closedUnreadable
+        ? "The composer was closed again without saving, so a retry is safe."
+        : "The composer could NOT be closed from here — look for an empty " + p.mode +
+          " window in Mail and close it, or a retry leaves a second one behind.")
     );
   }
 
@@ -645,10 +684,14 @@ export const REPLY_OR_FORWARD = script(
 
   var bodyArea = findBodyArea(win, 0);
   if (!bodyArea) {
+    var closedNoBody = discardComposer(M, draft);
     return err(
       "COMPOSER_NOT_FOUND",
       "The " + p.mode + " window for \\"" + subject + "\\" is open, but its body cannot be reached " +
-      "through the accessibility interface, which is the only way into it. Nothing was written."
+      "through the accessibility interface, which is the only way into it. Nothing was written. " +
+      (closedNoBody
+        ? "The window was closed again without saving."
+        : "The window could NOT be closed from here and is still on screen.")
     );
   }
 
@@ -694,12 +737,25 @@ export const REPLY_OR_FORWARD = script(
 
     if (!bodyVerified) {
       restore();
+      // Take the window back only when it is provably still empty. A paste that
+      // landed and could not be READ is a different thing from one that never
+      // landed, and closing that one would destroy the reply with no way to get
+      // it back -- so it is left on screen for the user to judge.
+      var landed = composerBodySize(bodyArea) !== sizeBefore;
+      var closedUnverified = landed ? false : discardComposer(M, draft);
       return err(
         "DRAFT_BODY_NOT_SET",
-        "The " + p.mode + " window for \\"" + subject + "\\" is open and correctly addressed, but the " +
-        "body did not go in: reading the composer back does not show the text that was sent. The " +
-        "draft is EMPTY or wrong and MUST NOT be described to the user as ready. Close it in Mail " +
-        "before retrying, or the retry leaves a second draft behind."
+        "The " + p.mode + " window for \\"" + subject + "\\" was opened and correctly addressed, but the " +
+        "body did not go in: reading the composer back does not show the text that was sent. It " +
+        "MUST NOT be described to the user as ready. " +
+        (closedUnverified
+          ? "Nothing had landed in it, so it was closed again without saving and a retry is safe."
+          : landed
+            ? "SOMETHING DID land in it that could not be read back, so it was left open rather " +
+              "than discarded — look at it in Mail before retrying, because a retry would paste " +
+              "the reply in twice."
+            : "It could NOT be closed from here — close it in Mail before retrying, or the retry " +
+              "leaves a second draft behind.")
       );
     }
   }

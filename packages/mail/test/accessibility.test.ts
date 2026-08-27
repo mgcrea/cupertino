@@ -65,7 +65,40 @@ describe("composerAccess()", () => {
     await expect(client.composerAccess()).resolves.toEqual({
       accessibility: "unknown",
       systemEvents: "unknown",
+      uiRead: "unknown",
+      windows: null,
     });
+  });
+
+  /**
+   * The flag and the measurement, kept apart.
+   *
+   * MEASURED on macOS 26.6: Cupertino.app's own process answers
+   * `AXIsProcessTrusted` true while an `osascript` grandchild of it answers
+   * false — the app shows a green Accessibility row in its own Settings and
+   * every reply still fails. So the probe reports what it could actually read
+   * as well as what it was told, and `uiRead` is the one to believe.
+   */
+  it("reports what it could actually read, not only what the flag claims", async () => {
+    const disagreeing = clientWith(
+      vi.fn(async () => ({
+        accessibility: "denied",
+        systemEvents: "granted",
+        uiRead: "granted",
+        windows: ["Re: original", "Inbox"],
+      })) as OsascriptRunner["run"],
+    );
+    await expect(disagreeing.composerAccess()).resolves.toMatchObject({
+      accessibility: "denied",
+      uiRead: "granted",
+    });
+  });
+
+  // Mail closed down to the menu bar has no windows to name, and that is not
+  // evidence of a missing grant. Reporting it as denied would send someone to
+  // fix a permission that is already correct.
+  it("calls an empty window list inconclusive rather than denied", () => {
+    expect(COMPOSER_ACCESS).toContain("inconclusive");
   });
 
   it("asks the current process, without requiring Mail", () => {

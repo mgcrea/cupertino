@@ -25,6 +25,10 @@
  */
 export const PRELUDE = `
 ObjC.import("AppKit");
+// For AXIsProcessTrusted, read by composerReach. AppKit does not
+// reliably pull it in, and an unbridged symbol would throw rather than
+// answer.
+ObjC.import("ApplicationServices");
 
 function isMailRunning() {
   var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.apple.mail");
@@ -154,6 +158,104 @@ function collectText(el, depth, acc, budget) {
  */
 function composerBodySize(body) {
   return prop(function () { return body.entireContents().length; }, -1);
+}
+
+/**
+ * Can this process actually read Mail's UI, right now?
+ *
+ * Asked BEFORE a composer is opened, because the alternative is what shipped:
+ * M.reply opens a window, the accessibility read fails, and the user is left
+ * with an empty reply window on screen and an error telling them to close it by
+ * hand. Every retry left another one. Nothing about that failure needed the
+ * window to exist first -- the grants it depends on can be read in one event.
+ *
+ * Ground truth here is the functional read, not AXIsProcessTrusted. The two
+ * disagree: MEASURED on macOS 26.6, Cupertino.app's own process reports trusted
+ * while an osascript grandchild of it reports the opposite, so a gate that
+ * believed the flag alone would refuse replies on a Mac where the mechanism
+ * works. A window list that comes back named is proof regardless of what the
+ * flag says; the flag only breaks the tie when Mail has no windows at all.
+ *
+ * Returns { ok, reason, windows }. The reason separates the two grants that fail
+ * identically once inside a composer: "systemEvents" when System Events cannot
+ * be addressed at all, "accessibility" when it can but its UI is unreadable.
+ */
+function composerReach(SE) {
+  try {
+    SE.processes.name();
+  } catch (e) {
+    return { ok: false, reason: "systemEvents", windows: null };
+  }
+
+  var names;
+  try {
+    var proc = SE.processes.byName("Mail");
+    names = proc.windows().map(function (w) {
+      try { return w.name(); } catch (e2) { return null; }
+    });
+  } catch (e) {
+    return { ok: false, reason: "accessibility", windows: null };
+  }
+
+  if (names.length) return { ok: true, reason: null, windows: names };
+
+  // Mail with no windows at all is legitimate -- everything closed down to the
+  // menu bar -- so an empty list is not evidence of anything on its own, and
+  // refusing on it would break a reply that would have worked.
+  var trusted = false;
+  try { trusted = $.AXIsProcessTrusted(); } catch (e) { trusted = false; }
+  return trusted
+    ? { ok: true, reason: null, windows: names }
+    : { ok: false, reason: "accessibility", windows: names };
+}
+
+/**
+ * The sentence to say when a composer cannot be reached.
+ *
+ * Shared by the pre-flight and by the post-open failure so the two cannot drift
+ * apart, and because the advice is identical: the reason a window is unreadable
+ * is never anything the caller did.
+ */
+function composerGrantMessage(mode, reach) {
+  var head =
+    reach.reason === "systemEvents"
+      ? "Cupertino cannot address System Events at all, which is the only route into a Mail " +
+        "composer, so the " + mode + " was not started and nothing was written."
+      : "Cupertino cannot read Mail's windows, which is the only route into a " + mode + " " +
+        "composer, so it was not started and nothing was written.";
+  return (
+    head +
+    " Reaching a composer needs BOTH Accessibility and Automation to System Events -- the latter " +
+    "a different grant from Automation to Mail, which is why every other tool still works. Both " +
+    "belong to /Applications/Cupertino.app, NOT to your terminal and NOT to node: the app is the " +
+    "process macOS holds responsible and every server inherits its identity. Accessibility is in " +
+    "System Settings > Privacy & Security > Accessibility; Automation is under Automation. If the " +
+    "app is already listed, toggle it off and on -- the grant goes stale when the bundle is " +
+    "reinstalled. Then QUIT CUPERTINO AND OPEN IT AGAIN: the servers are children of the running " +
+    "app, and a child started before the grant does not see it. Run apple_mail_diagnostics to " +
+    "check, which reports the two grants separately and names the windows it can see."
+  );
+}
+
+/**
+ * Close a composer this script opened, when nothing of the user's is in it.
+ *
+ * Only ever called on a window put on screen moments earlier and provably not
+ * written to. Without it every failed attempt leaves an empty reply window
+ * behind, and the errors below had to end by asking the user to clean up after
+ * the tool -- for a window that only exists because the tool opened it.
+ *
+ * It goes through Mail's own scripting interface, which is working in every
+ * state that reaches here: what fails on this path is reading the window, not
+ * owning it.
+ */
+function discardComposer(M, draft) {
+  try {
+    M.close(draft, { saving: "no" });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 /**

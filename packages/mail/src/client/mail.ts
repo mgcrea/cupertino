@@ -178,11 +178,25 @@ export class AppleMailClient {
   async composerAccess(): Promise<{
     accessibility: "granted" | "denied" | "unknown";
     systemEvents: "granted" | "denied" | "notDetermined" | "error" | "unknown";
+    /**
+     * Whether Mail's UI could actually be read, which is the only one of these
+     * three that is evidence rather than a claim. The flag above answers for an
+     * identity and has been caught disagreeing with what the same process can
+     * do; `inconclusive` is Mail with no windows open, where nothing can be
+     * concluded either way.
+     */
+    uiRead: "granted" | "denied" | "inconclusive" | "unknown";
+    windows: (string | null)[] | null;
   }> {
     try {
       return await this.runner.run(COMPOSER_ACCESS);
     } catch {
-      return { accessibility: "unknown", systemEvents: "unknown" };
+      return {
+        accessibility: "unknown",
+        systemEvents: "unknown",
+        uiRead: "unknown",
+        windows: null,
+      };
     }
   }
 
