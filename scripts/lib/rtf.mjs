@@ -57,9 +57,9 @@
  *
  * `\*` marks an ignorable destination explicitly and is handled separately —
  * this list is for the ones that are NOT marked, because a reader is expected to
- * know them. `NeXTGraphic` is the RTFD-specific one: it wraps the filename of an
- * embedded attachment, which belongs in `list_attachments` and not in the middle
- * of a sentence.
+ * know them. `NeXTGraphic` is NOT in this list even though it is a destination:
+ * an RTFD attachment is not merely metadata to drop, it is one CHARACTER in the
+ * text, so it is handled on its own below.
  */
 const DESTINATIONS = new Set([
   "fonttbl",
@@ -79,7 +79,6 @@ const DESTINATIONS = new Set([
   "datastore",
   "generator",
   "xmlnstbl",
-  "NeXTGraphic",
 ]);
 
 /** Control words that stand for a literal character. */
@@ -153,6 +152,9 @@ export const rtfToText = (input) => {
 
   // How many more characters to swallow after a `\uN`. See trap 1.
   let skip = 0;
+  // Set to 1 by an RTFD attachment cell, to swallow its placeholder byte. See
+  // the `NeXTGraphic` branch.
+  let dropPlaceholder = 0;
 
   const flush = () => {
     if (!bytes.length) return;
@@ -234,6 +236,20 @@ export const rtfToText = (input) => {
           codepage = param ?? 1252;
           continue;
         }
+        if (word === "NeXTGraphic") {
+          // An RTFD attachment, which arrives as
+          //     {{\NeXTGraphic name.jpg \width... }<placeholder>}
+          // Cocoa represents the whole construct as ONE character, U+FFFC OBJECT
+          // REPLACEMENT CHARACTER. The byte after the inner group is that
+          // placeholder written in the document's codepage — 0xAC, "¬", in
+          // cp1252 — so a reader that skips the destination and then takes the
+          // next literal emits a stray "¬" of exactly the right length. That is
+          // why the probe's length check could not see this and its hash could.
+          emit("\uFFFC");
+          state.ignore = true;
+          dropPlaceholder = 1;
+          continue;
+        }
         if (DESTINATIONS.has(word)) {
           flush();
           state.ignore = true;
@@ -280,6 +296,10 @@ export const rtfToText = (input) => {
     if (ch === "\n" || ch === "\r") continue;
     if (skip > 0) {
       skip -= 1;
+      continue;
+    }
+    if (dropPlaceholder > 0 && !state.ignore) {
+      dropPlaceholder -= 1;
       continue;
     }
     if (!state.ignore) bytes.push(ch.charCodeAt(0) & 0xff);

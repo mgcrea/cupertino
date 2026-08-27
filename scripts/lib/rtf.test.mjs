@@ -134,12 +134,20 @@ describe("the three traps", () => {
     assert.equal(rtfToPlainText(doc("{\\fonttbl{\\f0 Helvetica;}}{\\colortbl;}kept")), "kept");
   });
 
-  it("keeps an attachment filename out of the text", () => {
-    // RTFD embeds a file by reference. The name belongs in list_attachments.
+  it("renders an RTFD attachment as U+FFFC, as Cocoa does", () => {
+    // The filename belongs in list_attachments, but the attachment itself IS a
+    // character. Measured against NSAttributedString on a real note: "DEF-" plus
+    // an image decodes to 5 characters ending in U+FFFC.
     assert.equal(
-      rtfToPlainText(doc("before {{\\NeXTGraphic photo.png \\width200}}after")),
-      "before after",
+      rtfToPlainText(doc("before {{\\NeXTGraphic photo.png \\width200}\u00ac}after")),
+      "before \uFFFCafter",
     );
+  });
+
+  it("swallows the attachment placeholder byte rather than printing it", () => {
+    // 0xAC is "¬" in cp1252. Emitting it gives text of the RIGHT LENGTH and the
+    // wrong content, which is the failure mode a length assertion cannot catch.
+    assert.ok(!rtfToPlainText(doc("{{\\NeXTGraphic p.jpg}\u00ac}")).includes("¬"));
   });
 });
 
