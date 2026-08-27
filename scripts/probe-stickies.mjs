@@ -251,32 +251,95 @@ if (store.dirListable) {
 
 // ─── Q4 + Q5: the state plist ────────────────────────────────────────────────
 
-const KNOWN_COLOURS = [
-  // Filled in from real notes by question 4. Each is the `StickyColor` RGB a
-  // stock swatch produces; the probe reports any colour it cannot name.
-  { name: "yellow", rgb: [0.996, 0.957, 0.612] },
-  { name: "blue", rgb: [0.639, 0.855, 0.988] },
-  { name: "green", rgb: [0.706, 0.933, 0.639] },
-  { name: "pink", rgb: [0.996, 0.753, 0.859] },
-  { name: "purple", rgb: [0.855, 0.784, 0.98] },
-  { name: "gray", rgb: [0.882, 0.882, 0.882] },
+/**
+ * The stock palette, read from Stickies.app rather than guessed.
+ *
+ * `.SavedStickiesState` stores four colours per note as RGBA floats and never a
+ * name, so a name has to be recovered by matching. The first version of this
+ * probe carried six guessed values and a 0.12 nearest-neighbour tolerance, which
+ * is how a wrong table hides: "blue" was off by 0.11 and matched anyway, and a
+ * SEVENTH colour nobody had guessed would have been silently labelled as its
+ * nearest neighbour.
+ *
+ * The real table is in the app's own asset catalogue:
+ *
+ *     xcrun assetutil --info /System/Applications/Stickies.app/Contents/Resources/Assets.car
+ *
+ * It defines FOUR families — `Stickies<N>Color`, `StickiesSpine<N>Color`,
+ * `StickiesHighlight<N>Color`, `StickiesControl<N>Color` — over SEVEN names, and
+ * those are exactly the four colour keys each state entry carries. Matching
+ * `StickyColor` against the first family names a note's colour outright.
+ *
+ * Every component is a whole number of 255ths, so comparison is EXACT and needs
+ * no tolerance: round to the nearest 255th and compare integers. An unrecognised
+ * colour is then genuinely unrecognised rather than rounded into a name.
+ *
+ * Confirmed against real notes on macOS 26.6: yellow and blue matched to the
+ * digit, and `StickiesSpineYellowColor` matched the SpineColor of a third.
+ *
+ * The SERVER must carry this table as a constant — `assetutil` is an Xcode tool
+ * and is not on a user's Mac. The probe is where it gets checked; see
+ * `verifyPalette`.
+ */
+const STICKY_COLOURS = [
+  { name: "yellow", rgb255: [254, 244, 156] },
+  { name: "blue", rgb255: [173, 244, 255] },
+  { name: "green", rgb255: [178, 255, 161] },
+  { name: "pink", rgb255: [255, 199, 199] },
+  { name: "purple", rgb255: [182, 202, 255] },
+  { name: "gray", rgb255: [238, 238, 238] },
+  { name: "white", rgb255: [255, 255, 255] },
 ];
+
+const to255 = (v) => (typeof v === "number" ? Math.round(v * 255) : null);
 
 const nameColour = (c) => {
   if (!c) return null;
-  const rgb = [c.Red, c.Green, c.Blue];
-  if (rgb.some((v) => typeof v !== "number")) return null;
-  let best = null;
-  for (const k of KNOWN_COLOURS) {
-    const d = Math.hypot(...k.rgb.map((v, i) => v - rgb[i]));
-    if (!best || d < best.d) best = { name: k.name, d };
-  }
-  // Loose enough to survive a swatch being retuned between releases, tight
-  // enough that a custom colour is reported as custom rather than mislabelled.
-  return best && best.d < 0.12 ? best.name : null;
+  const rgb = [to255(c.Red), to255(c.Green), to255(c.Blue)];
+  if (rgb.some((v) => v === null)) return null;
+  return STICKY_COLOURS.find((k) => k.rgb255.every((v, i) => v === rgb[i]))?.name ?? null;
 };
 
+/**
+ * Re-read the palette from Stickies.app and compare it to the table above.
+ *
+ * A macOS release that retunes a swatch turns every colour name this server
+ * reports into a quiet lie. This is the check that catches it, and it runs on a
+ * developer machine where `assetutil` exists. It is not part of the server.
+ */
+const verifyPalette = () =>
+  safe(
+    () => {
+      const raw = execFileSync(
+        "/usr/bin/xcrun",
+        ["--sdk", "macosx", "assetutil", "--info", join(APP_PATH, "Contents/Resources/Assets.car")],
+        { encoding: "utf8", timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+      );
+      const named = new Map();
+      for (const entry of JSON.parse(raw)) {
+        const parts = /^Stickies([A-Z][a-z]+)Color$/.exec(String(entry?.Name ?? ""));
+        if (!parts || !Array.isArray(entry["Color components"])) continue;
+        named.set(parts[1].toLowerCase(), entry["Color components"].slice(0, 3).map(to255));
+      }
+      if (!named.size) return { ok: false, reason: "no Stickies*Color assets found" };
+      const drift = [];
+      for (const [name, rgb] of named) {
+        const known = STICKY_COLOURS.find((k) => k.name === name);
+        if (!known) drift.push({ name, rgb, why: "the app has a colour the table does not" });
+        else if (!known.rgb255.every((v, i) => v === rgb[i]))
+          drift.push({ name, rgb, was: known.rgb255, why: "the value changed" });
+      }
+      for (const k of STICKY_COLOURS)
+        if (!named.has(k.name))
+          drift.push({ name: k.name, why: "the table has a colour the app does not" });
+      return { ok: true, appColours: named.size, drift };
+    },
+    (err) => ({ ok: false, reason: String(err?.message ?? err).slice(0, 200) }),
+  );
+
 const round3 = (v) => (typeof v === "number" ? Math.round(v * 1000) / 1000 : null);
+
+const palette = verifyPalette();
 
 let state = { ok: false, reason: "not attempted" };
 if (store.state.exists) {
@@ -483,6 +546,7 @@ const doc = {
   at: new Date().toISOString(),
   findings: {
     store,
+    palette,
     packages,
     state: { ok: state.ok, reason: state.reason ?? null },
     stateEntries,
@@ -534,7 +598,11 @@ if (packages.length < 5)
     `only ${packages.length} note(s) on this Mac — questions 4 and 6 need a populated Stickies to mean anything`,
   );
 if (stateEntries.some((e) => !e.colour))
-  doc.notes.push("at least one colour could not be named — KNOWN_COLOURS needs the measured RGB");
+  doc.notes.push("at least one colour is not a stock swatch — reported by RGB rather than by name");
+if (palette.ok && palette.drift.length)
+  doc.notes.push(
+    "the stock palette has MOVED since STICKY_COLOURS was written — colour names would be wrong",
+  );
 
 const exitCode = decode.disagreed.length ? 4 : 0;
 
@@ -577,6 +645,15 @@ if (args.json) {
     );
   }
   L.push(`  keys seen             ${join5.stateKeys.join(", ") || "-"}`);
+  L.push(
+    `  palette vs the app    ${
+      palette.ok
+        ? palette.drift.length === 0
+          ? `${palette.appColours} colours, table matches exactly`
+          : `DRIFT on ${palette.drift.length}: ${palette.drift.map((d) => `${d.name} — ${d.why}`).join("; ")}`
+        : `not checked — ${palette.reason}`
+    }`,
+  );
   L.push("");
   L.push("THE JOIN — state plist vs directory (the id-bridge question)");
   L.push(`  packages on disk      ${join5.packages}`);
