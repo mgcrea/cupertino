@@ -620,8 +620,25 @@ export const maxNumericAsText = (db, table, column) => aggNumericAsText(db, tabl
  */
 export const looksLikeDateColumn = (name, type) => {
   if (/CHAR|CLOB|TEXT|BLOB/i.test(String(type ?? ""))) return false;
+  const n = String(name ?? "");
+
+  /**
+   * CORE DATA HAS NO UNDERSCORES, so the snake_case rule below silently misses
+   * every date column in a Core Data store — `ZCREATIONDATE`, `ZLASTVISITEDDATE`
+   * — and Notes, Contacts and Maps are all Core Data. A date detector that
+   * quietly finds nothing is precisely the failure `docs/surfaces.md` means by
+   * "dates are the richest source of silent errors", so it is worth a second
+   * rule rather than a wider first one.
+   *
+   * SUFFIX, not substring. Substring matching in CamelCase re-creates the exact
+   * trap the token boundary exists to prevent, in a new alphabet: "update"
+   * contains "date", so `ZUPDATECOUNT` would read as a timestamp, and so would
+   * `ZVALIDATED` and `ZMANDATE`. Core Data attributes conventionally END in
+   * Date or Time, which those do not.
+   */
+  if (!n.includes("_") && /(DATE|TIME|TIMESTAMP)$/i.test(n)) return true;
+
   return (
-    /(^|_)(date|time|stamp)(_|$)/i.test(name) ||
-    /(^|_)(creat|modif|due|completion|visit)/i.test(name)
+    /(^|_)(date|time|stamp)(_|$)/i.test(n) || /(^|_)(creat|modif|due|completion|visit)/i.test(n)
   );
 };

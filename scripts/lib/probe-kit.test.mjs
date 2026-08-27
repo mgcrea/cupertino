@@ -146,6 +146,18 @@ describe("looksLikeDateColumn", () => {
     ["calendar_id", "INTEGER", false],
     ["self_attendee_id", "INTEGER", false],
     ["start_tz", "TEXT", false],
+    // Core Data: no underscores anywhere, so the snake_case rule alone finds
+    // NOTHING in a Notes, Contacts or Maps store.
+    ["ZCREATIONDATE", "TIMESTAMP", true],
+    ["ZLASTVISITEDDATE", "TIMESTAMP", true],
+    ["ZSTARTTIME", "REAL", true],
+    // The CamelCase version of the calENDar_id trap: "update" and "validated"
+    // both CONTAIN "date". Suffix matching is what keeps them out.
+    ["ZUPDATECOUNT", "INTEGER", false],
+    ["ZVALIDATED", "INTEGER", false],
+    ["ZMANDATEID", "INTEGER", false],
+    // Still a string, still not a date, now in Core Data spelling.
+    ["ZSTARTTIMEZONE", "VARCHAR", false],
     ["modified_properties", "BLOB", false],
     ["summary", "VARCHAR", false],
   ];
