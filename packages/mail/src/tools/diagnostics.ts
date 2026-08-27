@@ -107,9 +107,13 @@ export const buildDiagnostics = async (
               "above: Automation to System Events (a different grant from Automation to Mail) " +
               "and Accessibility. Until both are granted, apple_mail_reply_to_message and " +
               "apple_mail_forward_message fail with COMPOSER_NOT_FOUND while every other tool " +
-              "works. Grant them to /Applications/Cupertino.app — not to your terminal and not " +
-              "to node: the app is the process macOS holds responsible, and every server is a " +
-              "grandchild that inherits its identity. Accessibility is in System Settings > " +
+              "works. Grant them to the Cupertino bundle that is RUNNING — not to your terminal " +
+              "and not to node. Automation and Full Disk Access are inherited by the servers " +
+              "from it; Accessibility has been measured NOT to be, so a green row is necessary " +
+              "and not sufficient, and `composerUiRead` above is the only line that settles it. " +
+              "A development build at another path does not stand in for the installed one even " +
+              "though they share a bundle identifier — measured. Accessibility is in System " +
+              "Settings > " +
               "Privacy & Security > Accessibility; Automation is under Automation. If the app " +
               "is already listed, toggle it off and on — the grant goes stale when the bundle " +
               "is reinstalled. Then quit Cupertino and open it again: the servers are children " +
