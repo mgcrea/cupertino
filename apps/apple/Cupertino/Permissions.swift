@@ -77,14 +77,44 @@ enum Permissions {
   /// — and only `open`/`access` are denied. A stat-based check would report
   /// success and prove nothing. Same distinction `packages/core/src/fs.ts`
   /// encodes as exists-vs-readable, and the one the TCC spike measured.
+  /// TCC's own database: present on every Mac, and readable under exactly one
+  /// condition.
+  ///
+  /// `access(2)` only asks whether it *could* be opened. Nothing here reads a
+  /// byte of it, and nothing needs to — the question is the permission, not the
+  /// contents.
+  private static let fullDiskAccessOracle = "Library/Application Support/com.apple.TCC/TCC.db"
+
+  /// Is Full Disk Access granted?
+  ///
+  /// **Not "can any surface store be read".** That was the previous test and it
+  /// failed in the one direction that matters: it reported `.granted` while
+  /// every protected store on the Mac was unreadable.
+  ///
+  /// The loop returned on the first store that opened, and
+  /// `Library/Application Support/AddressBook` opens without this grant — it is
+  /// gated by the Contacts TCC service, which is a different permission. So
+  /// Contacts alone answered the question on behalf of Mail, Messages, Safari,
+  /// Notes, Reminders and Calendar, and answered it wrongly.
+  ///
+  /// MEASURED, with the grant absent: Mail, Notes, Reminders, Calendar,
+  /// Messages and Safari all denied, AddressBook readable. The Settings row
+  /// showed a green tick in the same second that `apple_mail_diagnostics`
+  /// reported `fullDiskAccess: denied` and every mail lane fell back to Apple
+  /// Events. A permission row that lies is worse than no row: it sends someone
+  /// looking for the fault everywhere except where it is.
+  ///
+  /// `storeMissing` still means what it did — there is nothing on this Mac worth
+  /// reading, so readability would say nothing either way — and it is decided
+  /// before the grant is consulted, because that question is about the machine
+  /// rather than about permission.
   static func diskAccess() -> DiskAccessStatus {
-    var sawAStore = false
-    for surface in Surface.all {
-      guard let path = resolveStore(surface) else { continue }
-      sawAStore = true
-      if access(path, R_OK) == 0 { return .granted }
-    }
-    return sawAStore ? .denied : .storeMissing
+    let sawAStore = Surface.all.contains { resolveStore($0) != nil }
+    guard sawAStore else { return .storeMissing }
+
+    let oracle = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(fullDiskAccessOracle).path
+    return access(oracle, R_OK) == 0 ? .granted : .denied
   }
 
   /// Resolve a surface's store, expanding the one glob Mail needs.
