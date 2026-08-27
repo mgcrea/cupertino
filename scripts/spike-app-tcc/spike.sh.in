@@ -60,10 +60,12 @@ echo "apple events lane rc=$ae_rc"
 #
 # The original spike measured Full Disk Access and Apple Events, found both
 # inherited, and the codebase generalised that to "everything the app spawns
-# inherits its identity". Accessibility was never in the experiment. It is the
-# grant a Mail composer needs, and on this Mac it behaves differently: the app's
-# own process reports AXIsProcessTrusted true while an osascript grandchild of
-# it reports false, which is what this lane exists to pin down.
+# inherits its identity". Accessibility was never in the experiment, and it is
+# the grant a Mail composer needs. It does inherit — but a day was lost to a
+# machine where the app reported AXIsProcessTrusted true and its grandchild
+# reported false, because the identifier held four separate Accessibility
+# entries at once (README: "One identifier, four grants"). This lane exists so
+# that state is visible instead of inferred.
 #
 # TWO answers, deliberately, because they can disagree:
 #   trusted  — what the flag claims about this process's identity

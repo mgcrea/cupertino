@@ -8,25 +8,21 @@ Answers step 1 of the app-hosted plan, and replaces step 0 of the order of work 
 escape: the app is its own responsible process and so is everything beneath it. This spike is the
 cheapest way to find out whether that is true before any of it is built.
 
-**Verdict: it does — for the two services that were tested.** Full Disk Access and Automation both
+**Verdict: it does.** Full Disk Access and Automation both
 land on the app bundle and are both inherited by grandchildren, the grant survives re-signing in
 place, and it does not leak to processes outside the app — nor to a copy of the same app at another
 path. `responsibility_spawnattrs_setdisclaim` is not needed under the app-hosted design. Details
 below.
 
 > **Scope, added 2026-08-27.** This spike measured **Full Disk Access and Apple Events**. It did not
-> measure **Accessibility**, and the codebase went on to generalise its verdict to every TCC service
-> — `Permissions.accessibility()` carried a comment saying this file had proved the app's answer
-> covered every server. It had not.
+> measure **Accessibility**, and the codebase generalised its verdict to every TCC service anyway —
+> `Permissions.accessibility()` carried a comment saying this file had proved the app's answer
+> covered every server. It had not. An accessibility lane now exists in `spike.sh.in` to close that
+> gap.
 >
-> The generalisation is now known to be wrong. On this Mac, with Accessibility granted to
-> `/Applications/Cupertino.app` and the app's own `AXIsProcessTrusted()` returning true, an
-> `osascript` grandchild of it returned false and could not name a single Mail window — while an
-> `osascript` at the same depth under a _different_ responsible app read them fine. Every
-> `apple_mail_reply_to_message` therefore failed on a Mac whose Accessibility row was green.
->
-> The accessibility lane in `spike.sh.in` was added to settle it. Run it before trusting any
-> statement in this file about services other than the two named above.
+> **Accessibility does inherit too** — the conclusion was right and the evidence for it was simply
+> missing. What cost a day was something else, recorded below because nothing else in the repo would
+> have caught it. See [One identifier, four grants](#one-identifier-four-grants).
 
 ```sh
 ./build.sh          # compile + sign the throwaway bundle
@@ -200,6 +196,55 @@ What is real, and worth reconciling, is that two functions both called "the
 schema fingerprint" disagree. `apple_mail_diagnostics` prints one and
 `docs/envelope-index.md` records the other, so anyone comparing them hits the
 same confusion. One of the two should adopt the other's ordering.
+
+## One identifier, four grants
+
+MEASURED, macOS 26.6, 2026-08-27. Symptom: `apple_mail_reply_to_message` failing with
+`COMPOSER_NOT_FOUND` on a Mac where Cupertino's own Settings showed a **green** Accessibility row.
+
+Everything the design depends on was working:
+
+```
+$ sudo launchctl procinfo 33193          # the node mail server
+program path      = /opt/homebrew/Cellar/node@24/24.18.0/bin/node
+responsible pid   = 31353
+responsible path  = /Applications/Cupertino.app/Contents/MacOS/Cupertino
+```
+
+Attribution is correct — the server is the app's responsibility, exactly as this spike found for the
+other two services. The chain shape is not the problem either: `zsh → node → osascript` under a
+different responsible app that holds Accessibility reads Finder's windows fine, so a `node` in the
+middle breaks nothing.
+
+Yet the app's own `AXIsProcessTrusted()` returned **true** while an `osascript` grandchild of it
+returned **false** and could not name a single Mail window. What resolved it:
+
+```
+$ tccutil reset Accessibility io.mgcrea.cupertino
+Successfully reset Accessibility approval status for io.mgcrea.cupertino
+Successfully reset Accessibility approval status for io.mgcrea.cupertino
+Successfully reset Accessibility approval status for io.mgcrea.cupertino
+Successfully reset Accessibility approval status for io.mgcrea.cupertino
+```
+
+**Four entries, one identifier.** `/Applications/Cupertino.app`, the `.build` debug bundle and
+earlier reinstalls had each left their own Accessibility row, all displayed as a single "Cupertino"
+in the pane. The app's check matched one of them and the checks made on its behalf matched another.
+Granting again only ever added a fifth.
+
+One grant from the running bundle afterwards, and `composerUiRead` went to `granted` with nothing
+restarted.
+
+Three consequences, all now in the code:
+
+1. **A green Accessibility row is necessary and not sufficient.** `Permissions.accessibility()` says
+   so, and no longer promises the composer.
+2. **Measure, do not ask.** `apple_mail_diagnostics` reports `composerUiRead` — whether Mail's
+   windows could actually be named — beside the flag. That is what showed `windows()` _throwing_
+   rather than returning empty, which is what separated "blind" from "nothing open".
+3. **The cure is `tccutil reset`, never another grant.** Advice ending in "grant it to
+   Cupertino.app" is incomplete on any machine that has run the app from two paths — which is every
+   development machine.
 
 ## Unexplained, and deliberately not chased
 

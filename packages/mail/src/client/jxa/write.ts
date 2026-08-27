@@ -66,10 +66,13 @@ function run() {
 
   // The functional read, which outranks both flags above.
   //
-  // MEASURED, macOS 26.6: Cupertino.app's own process answers AXIsProcessTrusted
-  // true while an osascript grandchild of it answers false, so the flag
-  // alone cannot say whether a composer is reachable -- it is a claim about an
-  // identity, and this is the thing itself. Naming a window of Mail's needs
+  // MEASURED, macOS 26.6: Cupertino.app's own process answered
+  // AXIsProcessTrusted true while an osascript grandchild of it answered false,
+  // because the same bundle identifier held four separate Accessibility entries
+  // -- one per path and signature it had been granted at -- and the two checks
+  // matched different ones. The flag alone therefore cannot say whether a
+  // composer is reachable: it is a claim about an identity that may be
+  // ambiguous, and this is the thing itself. Naming a window of Mail's needs
   // exactly the grants a composer needs, and opens nothing.
   var uiRead = "unknown";
   var windows = null;

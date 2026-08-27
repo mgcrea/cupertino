@@ -254,21 +254,26 @@ enum Permissions {
   /// synchronous IPC, so it is safe to call while painting a row. The freeze
   /// documented over `StatusModel.refreshAutomation` does not apply.
   ///
-  /// The identity being asked about is **this app**, and — unlike Full Disk
-  /// Access and Automation — that is NOT the same as asking about the servers.
+  /// The identity being asked about is **this app**, and the servers do inherit
+  /// it: `scripts/spike-app-tcc` measured that for Full Disk Access and Apple
+  /// Events, and `launchctl procinfo` confirms it for the servers directly —
+  /// the responsible pid of a `node` server is this process.
   ///
-  /// The earlier claim here was that `scripts/spike-app-tcc` had measured every
-  /// child inheriting the app's identity, so this one answer covered every
-  /// server. It is retracted. That spike measured Full Disk Access and Apple
-  /// Events; Accessibility was never in the experiment, and it does not behave
-  /// the same way.
+  /// What that does NOT buy is certainty, because the identity itself can be
+  /// ambiguous. MEASURED, macOS 26.6: with this row green, an `osascript`
+  /// grandchild answered `AXIsProcessTrusted` false and could not name a single
+  /// Mail window, so `apple_mail_reply_to_message` failed on a Mac whose
+  /// Accessibility row said everything was fine. The cause was that
+  /// **one bundle identifier can hold several Accessibility entries at once**,
+  /// one per path and signature it has been granted at — an installed copy, a
+  /// debug build, each earlier reinstall. `tccutil reset Accessibility
+  /// io.mgcrea.cupertino` reported clearing FOUR. This check matched one of
+  /// them; the servers' checks matched another.
   ///
-  /// MEASURED, macOS 26.6: with this row green, an `osascript` grandchild of
-  /// this process answered `AXIsProcessTrusted` false and could not name a
-  /// single Mail window — so `apple_mail_reply_to_message` failed on a Mac
-  /// whose Accessibility row said everything was fine. A green row here means
-  /// *the app* is trusted and nothing more; `apple_mail_diagnostics` reports
-  /// `composerUiRead`, which is what the composer actually depends on.
+  /// So a green row is necessary and not sufficient, and the thing to fix is
+  /// never "grant it again" — it is to clear the identifier and grant once from
+  /// the bundle that is running. `apple_mail_diagnostics` reports
+  /// `composerUiRead`, which measures the composer instead of asking about it.
   static func accessibility() -> AccessibilityStatus {
     AXIsProcessTrusted() ? .granted : .denied
   }

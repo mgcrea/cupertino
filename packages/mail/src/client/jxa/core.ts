@@ -169,12 +169,23 @@ function composerBodySize(body) {
  * hand. Every retry left another one. Nothing about that failure needed the
  * window to exist first -- the grants it depends on can be read in one event.
  *
- * Ground truth here is the functional read, not AXIsProcessTrusted. The two
- * disagree: MEASURED on macOS 26.6, Cupertino.app's own process reports trusted
- * while an osascript grandchild of it reports the opposite, so a gate that
- * believed the flag alone would refuse replies on a Mac where the mechanism
- * works. A window list that comes back named is proof regardless of what the
- * flag says; the flag only breaks the tie when Mail has no windows at all.
+ * Ground truth here is the functional read, not AXIsProcessTrusted. The two do
+ * disagree. MEASURED, macOS 26.6: Cupertino.app's own process reported trusted
+ * while an osascript grandchild of it reported the opposite and could not name
+ * a single Mail window -- a green Accessibility row in System Settings beside a
+ * reply that failed every time.
+ *
+ * The cause was not attribution, which was correct throughout (launchctl put
+ * the responsible pid of the node server at the app). It was that ONE BUNDLE
+ * IDENTIFIER CAN HOLD SEVERAL ACCESSIBILITY ENTRIES AT ONCE, one per path and
+ * signature it has been granted at -- an installed copy, a debug build, each
+ * earlier reinstall. tccutil reported resetting four of them for
+ * io.mgcrea.cupertino. The app's own check matched one and the requests made on
+ * its behalf were resolved against another.
+ *
+ * So the flag is a claim about an identity that may be ambiguous, and this is
+ * the thing itself. A window list that comes back named is proof regardless of
+ * what the flag says; the flag only breaks the tie when Mail has no windows.
  *
  * Returns { ok, reason, windows }. The reason separates the two grants that fail
  * identically once inside a composer: "systemEvents" when System Events cannot

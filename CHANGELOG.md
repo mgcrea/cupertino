@@ -68,7 +68,20 @@ summary.
   possibilities hidden, and it sent at least one investigation to re-grant a permission that was
   already in place. Diagnostics now reports the two separately, `-1743` (refused) is distinguished
   from `-1744` (never asked), and the reply and forward tools pre-flight the check rather than
-  opening a window they cannot reach.
+  opening a window they cannot reach. A failed reply no longer leaves an empty composer on screen
+  for someone to close by hand — every attempt used to add another — and one that opens and cannot
+  be filled is closed again, unless something landed in it that could not be read back, which is
+  left alone because discarding that would destroy the text with no undo.
+- **A green Accessibility row in Settings while every reply failed.** Diagnostics asked
+  `AXIsProcessTrusted`, which answers for an identity, and an identity turned out to be ambiguous:
+  `tccutil reset Accessibility io.mgcrea.cupertino` reported clearing **four** separate entries on
+  one machine — an installed copy, a development build and earlier reinstalls each leaving their
+  own row, all shown as a single "Cupertino" in the pane. The app's check matched one and the
+  checks made on its behalf matched another, so granting it again only ever added a fifth.
+  Attribution was never at fault; `launchctl procinfo` puts the responsible pid of each server at
+  the app, as designed. Diagnostics now reports `composerUiRead` — whether Mail's windows could
+  actually be named — beside the flag, and that is the line to believe when the two disagree. The
+  cure is to clear the identifier and grant once, from the bundle that is running.
 - **The website's surface tool lists and captions had drifted from the shipped counts.**
 
 ### Internal

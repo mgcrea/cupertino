@@ -181,9 +181,10 @@ export class AppleMailClient {
     /**
      * Whether Mail's UI could actually be read, which is the only one of these
      * three that is evidence rather than a claim. The flag above answers for an
-     * identity and has been caught disagreeing with what the same process can
-     * do; `inconclusive` is Mail with no windows open, where nothing can be
-     * concluded either way.
+     * identity, and an identity can be ambiguous: one bundle id was measured
+     * holding four Accessibility entries at once, with the app's own check and
+     * its servers' checks matching different ones. `inconclusive` is Mail with
+     * no windows open, where nothing can be concluded either way.
      */
     uiRead: "granted" | "denied" | "inconclusive" | "unknown";
     windows: (string | null)[] | null;

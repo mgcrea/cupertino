@@ -73,11 +73,13 @@ describe("composerAccess()", () => {
   /**
    * The flag and the measurement, kept apart.
    *
-   * MEASURED on macOS 26.6: Cupertino.app's own process answers
-   * `AXIsProcessTrusted` true while an `osascript` grandchild of it answers
-   * false — the app shows a green Accessibility row in its own Settings and
-   * every reply still fails. So the probe reports what it could actually read
-   * as well as what it was told, and `uiRead` is the one to believe.
+   * MEASURED on macOS 26.6: Cupertino.app's own process answered
+   * `AXIsProcessTrusted` true while an `osascript` grandchild of it answered
+   * false — a green Accessibility row in the app's own Settings beside a reply
+   * that failed every time. The identifier held four separate Accessibility
+   * entries, one per path and signature it had been granted at, and the two
+   * checks matched different ones. So the probe reports what it could actually
+   * read as well as what it was told, and `uiRead` is the one to believe.
    */
   it("reports what it could actually read, not only what the flag claims", async () => {
     const disagreeing = clientWith(

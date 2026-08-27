@@ -108,12 +108,16 @@ export const buildDiagnostics = async (
               "and Accessibility. Until both are granted, apple_mail_reply_to_message and " +
               "apple_mail_forward_message fail with COMPOSER_NOT_FOUND while every other tool " +
               "works. Grant them to the Cupertino bundle that is RUNNING — not to your terminal " +
-              "and not to node. Automation and Full Disk Access are inherited by the servers " +
-              "from it; Accessibility has been measured NOT to be, so a green row is necessary " +
-              "and not sufficient, and `composerUiRead` above is the only line that settles it. " +
-              "A development build at another path does not stand in for the installed one even " +
-              "though they share a bundle identifier — measured. Accessibility is in System " +
-              "Settings > " +
+              "and not to node: the app is the process macOS holds responsible, and the servers " +
+              "do inherit its identity. If Cupertino's own Settings shows a GREEN Accessibility " +
+              "row while `composerUiRead` above says denied, believe this line and not the row: " +
+              "one bundle identifier can hold several Accessibility entries at once, one per " +
+              "path and signature it has been granted at (an installed copy, a development " +
+              "build, each earlier reinstall), and the two checks can match different ones. The " +
+              "cure is to clear them all and grant once, from the bundle that is running: " +
+              "`tccutil reset Accessibility io.mgcrea.cupertino`, then Ask… in Cupertino's " +
+              "Settings — it reported resetting FOUR entries the first time this was hit. " +
+              "Accessibility is in System Settings > " +
               "Privacy & Security > Accessibility; Automation is under Automation. If the app " +
               "is already listed, toggle it off and on — the grant goes stale when the bundle " +
               "is reinstalled. Then quit Cupertino and open it again: the servers are children " +

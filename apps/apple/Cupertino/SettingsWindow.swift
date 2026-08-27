@@ -810,11 +810,12 @@ enum StatusStyle {
 
   static func accessibilityHint(_ status: AccessibilityStatus) -> String {
     switch status {
-    // Deliberately about this app and not about the servers. The two are not
-    // the same question for Accessibility — a granted app has been measured
-    // alongside servers that still could not read a composer — and the old
-    // wording promised the second while only ever checking the first.
-    case .granted: "Granted to Cupertino. If replies still fail, quit and reopen it."
+    // Deliberately narrower than it was. This checks the app; the composer is
+    // what the user cares about, and a green row has been measured beside a
+    // composer the servers could not reach — several stale entries under one
+    // bundle identifier, each check matching a different one. Promising the
+    // composer here is what made that failure so hard to place.
+    case .granted: "Granted to Cupertino. Replies also need it to reach the servers — check diagnostics."
     // Not "denied": `AXIsProcessTrusted` cannot tell a refusal from a question
     // never asked, so the wording has to cover both without claiming either.
     case .denied: "Not granted. Replies and forwards will fail until it is."
