@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.3.0`,
-`notes-v1.3.0`, `reminders-v1.3.0`, `core-v1.3.0` for the npm packages, and `app-v1.3.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.3.1`,
+`notes-v1.3.1`, `reminders-v1.3.1`, `core-v1.3.1` for the npm packages, and `app-v1.3.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.3.1] - 2026-08-27
 
 ### Added
 
@@ -40,6 +40,45 @@ summary.
   per-folder, and a global setting would be right for whichever kind of repo someone has more of
   and quietly wrong for the rest. The last choice is remembered, which is the part a preference
   would have bought.
+
+### Fixed
+
+- **Settings reported Full Disk Access as granted while every protected store was unreadable.**
+  `Permissions.diskAccess()` walked the surface stores and returned `granted` on the first one it
+  could open — and `Library/Application Support/AddressBook` opens without the grant, because it is
+  gated by the Contacts TCC service, a different permission. So Contacts answered the question on
+  behalf of Mail, Messages, Safari, Notes, Reminders and Calendar, and answered it wrongly. Measured
+  with the grant absent: those six all denied, AddressBook readable, a green tick in Settings in the
+  same second that `apple_mail_diagnostics` reported `fullDiskAccess: denied` and every mail lane
+  fell back to Apple Events. The probe is now TCC's own database, which is present on every Mac and
+  readable under exactly one condition. A permission row that lies is worse than no row: it sends
+  someone looking for the fault everywhere except where it is.
+- **The Settings item and its ⌘, were missing from the app menu.** Not because inserting them
+  failed — the insertion succeeded at launch, with no error logged — but because SwiftUI installs
+  its own `NSApp.mainMenu` after the delegate returns, and builds another whenever the activation
+  policy flips, each replacement discarding what came before. Re-asserting the item on
+  `didBecomeActive` and after every policy change did not help either: the rebuild lands after those
+  hooks, so the race cannot be won by inserting more often. The item is now declared as a SwiftUI
+  command, which makes it part of what gets rebuilt.
+- **A composer failure could not say which permission was missing.** Filling a Mail reply goes
+  through System Events, which sits behind two grants — Accessibility, and Automation to System
+  Events, a separate grant from Automation to Mail. `prop()` swallows the exception either way, so
+  both arrive as the same "no composer window" error, indistinguishable from Mail never having
+  opened one. The old message named Accessibility outright; it was a guess with the other
+  possibilities hidden, and it sent at least one investigation to re-grant a permission that was
+  already in place. Diagnostics now reports the two separately, `-1743` (refused) is distinguished
+  from `-1744` (never asked), and the reply and forward tools pre-flight the check rather than
+  opening a window they cannot reach.
+- **The website's surface tool lists and captions had drifted from the shipped counts.**
+
+### Internal
+
+- A Stickies probe and a hand-written RTF-to-text reader under `scripts/`, exploring a surface that
+  does not ship yet: RTFD attachments render as U+FFFC rather than being dropped, and the colour
+  palette is read from the app's own asset catalogue instead of being guessed at.
+- `pnpm version:sync` and `pnpm version:check`, so the eleven copies of the version can be
+  propagated and gated without going through `make`.
+- The calendar availability fixture no longer hangs past 10s in CI.
 
 ## [1.3.0] - 2026-08-26
 
@@ -364,7 +403,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.0...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.1...HEAD
+[1.3.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.0...app-v1.3.1
 [1.3.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...app-v1.3.0
 [1.2.2]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...app-v1.2.2
 [1.2.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...app-v1.2.1

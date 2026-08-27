@@ -22,7 +22,7 @@ below.
 > The generalisation is now known to be wrong. On this Mac, with Accessibility granted to
 > `/Applications/Cupertino.app` and the app's own `AXIsProcessTrusted()` returning true, an
 > `osascript` grandchild of it returned false and could not name a single Mail window — while an
-> `osascript` at the same depth under a *different* responsible app read them fine. Every
+> `osascript` at the same depth under a _different_ responsible app read them fine. Every
 > `apple_mail_reply_to_message` therefore failed on a Mac whose Accessibility row was green.
 >
 > The accessibility lane in `spike.sh.in` was added to settle it. Run it before trusting any
