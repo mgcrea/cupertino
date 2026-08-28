@@ -578,12 +578,37 @@ export const writeFixture = ({ root, pkg, file, ddlRows, macos, fingerprint, too
   }
   const dest = join(root, "packages", pkg, "test", "fixtures", file);
   mkdirSync(dirname(dest), { recursive: true });
+  /**
+   * TRIGGERS ARE DROPPED, and a fixture that keeps them is unusable.
+   *
+   * Core Data maintains derived columns with triggers that call its own private
+   * SQLite functions — Maps has eight, each ending in
+   * `NSCoreDataDATriggerUpdatedAffectedObjectValue(...)`, which keeps
+   * `ZCOLLECTION.ZPLACESCOUNT` in step with the `Z_6PLACES` join table. Those
+   * functions exist only inside Core Data. Replayed into a plain
+   * `node:sqlite`, every INSERT into the triggered table dies with "no such
+   * function", so capturing them turned 18 previously-green tests red at once
+   * and none of the failures named the real cause.
+   *
+   * A fixture exists to replay SHAPE. Dropping triggers loses nothing a test
+   * can legitimately exercise, because the behaviour they implement is Core
+   * Data's, not the store's. The fingerprint above still counts every object,
+   * so what was dropped stays visible.
+   */
+  const replayable = ddlRows.filter((r) => r.type !== "trigger");
+  const dropped = ddlRows.length - replayable.length;
   const sql = [
     `-- Captured from a real store by ${tool} --write.`,
     `-- macOS ${macos}, fingerprint ${fingerprint}, ${ddlRows.length} objects.`,
     "-- Schema only. No data.",
+    ...(dropped
+      ? [
+          `-- ${dropped} Core Data trigger(s) omitted: they call private functions`,
+          "-- (NSCoreDataDATriggerUpdatedAffectedObjectValue) that plain SQLite has not got.",
+        ]
+      : []),
     "",
-    ...ddlRows.map((r) => `${r.sql};`),
+    ...replayable.map((r) => `${r.sql};`),
   ].join("\n");
   writeFileSync(dest, `${sql}\n`);
   console.log(`\nwrote ${dest.replace(`${root}/`, "")}`);
