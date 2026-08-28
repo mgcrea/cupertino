@@ -230,6 +230,226 @@ const idBridge = ["ZFAVORITEITEM", "ZCOLLECTIONITEM", "ZHISTORYITEM", "ZREVIEWED
   })
   .filter(Boolean);
 
+/**
+ * Q7, THE ONE THIS PROBE DID NOT ASK THE FIRST TIME.
+ *
+ * `ZCOLLECTION` holds 10 guides and `ZCOLLECTIONITEM` holds 29 rows, and
+ * `packages/maps` cannot say which item is in which guide. Four column names
+ * were guessed from Core Data convention — ZCOLLECTION, ZCOLLECTION1,
+ * ZPARENTCOLLECTION, ZOWNINGCOLLECTION — and the real store has NONE of them,
+ * so `apple_maps_list_collection_places` returns nothing for every guide.
+ *
+ * Guessing a fifth name has the expected value of the first four. So this
+ * section answers the question the way the idBridge section above answers its
+ * own: BY RUNNING THE JOIN. Every plausible mechanism is executed and scored
+ * against an oracle the store hands us for free — `ZCOLLECTION.ZPLACESCOUNT`,
+ * Maps' own count of the places in each guide. A mechanism that reproduces
+ * those ten numbers exactly is not a guess that fits; it is the mechanism.
+ *
+ * The oracle also has a discrepancy worth resolving: the counts sum to 18 while
+ * ZCOLLECTIONITEM holds 29 rows. Whatever wins must account for the other 11 —
+ * as orphans of deleted guides, or as evidence ZPLACESCOUNT is stale.
+ *
+ * Four mechanisms, because Core Data has four ways to say this:
+ *   1. a scalar FK on ZCOLLECTIONITEM, named after the RELATIONSHIP;
+ *   2. a Z_<ordinal><RELATIONSHIP> join table, for a many-to-many;
+ *   3. an ordered to-many, which leaves a Z_FOK_* column behind;
+ *   4. indirection — membership riding ZMIXINMAPITEM rather than the item.
+ *
+ * PRIVACY: counts, column names and row ids only. A collection's Z_PK is a
+ * local integer, not a title. Nothing here reads a name, an address or a
+ * coordinate, which is the same contract as the rest of this file.
+ */
+
+const COUNT_COLUMN = "ZPLACESCOUNT";
+
+/** Maps' own tally per collection: Z_PK -> places. The oracle. */
+const declaredCounts = (() => {
+  if (!columnsOf("ZCOLLECTION").some((c) => c.name === COUNT_COLUMN)) return null;
+  const rows = attempt(
+    () => db.prepare(`SELECT Z_PK pk, "${COUNT_COLUMN}" n FROM "ZCOLLECTION"`).all(),
+    [],
+  );
+  return new Map(rows.map((r) => [Number(r.pk), Number(r.n ?? 0)]));
+})();
+
+/**
+ * Score tallies a candidate produced against the oracle.
+ *
+ * `exact` is the finding that matters. `rowsReached` breaks ties between
+ * candidates that are merely joinable — an integer column can join ZCOLLECTION
+ * by coincidence when its values happen to be small, and several will.
+ */
+const scoreTallies = (tallies) => {
+  const rowsReached = [...tallies.values()].reduce((a, b) => a + b, 0);
+  if (!declaredCounts)
+    return {
+      scored: false,
+      rowsReached,
+      reason: `ZCOLLECTION has no ${COUNT_COLUMN} to score against`,
+    };
+  let matched = 0;
+  const perCollection = [];
+  for (const [pk, declared] of declaredCounts) {
+    const joined = tallies.get(pk) ?? 0;
+    if (joined === declared) matched += 1;
+    perCollection.push({ collection: pk, declared, joined });
+  }
+  const unknownKeys = [...tallies.keys()].filter((pk) => !declaredCounts.has(pk));
+  return {
+    scored: true,
+    collections: declaredCounts.size,
+    matched,
+    exact: matched === declaredCounts.size && unknownKeys.length === 0,
+    rowsReached,
+    // Values that join nothing in ZCOLLECTION. A real FK has none; a coincidental
+    // one usually does.
+    unknownKeys: unknownKeys.length,
+    perCollection,
+  };
+};
+
+const integerColumnsOf = (table) =>
+  columnsOf(table)
+    .filter((c) => /INT/i.test(c.type ?? ""))
+    .map((c) => c.name)
+    .filter((n) => !["Z_PK", "Z_ENT", "Z_OPT"].includes(n));
+
+// ── 1. a scalar FK on ZCOLLECTIONITEM ────────────────────────────────────────
+// Every integer column is tried, not the ones whose names look right. The whole
+// reason this section exists is that the name-shaped ones were absent.
+const scalarCandidates = integerColumnsOf("ZCOLLECTIONITEM")
+  .map((column) => {
+    const tallies = new Map(
+      attempt(
+        () =>
+          db
+            .prepare(
+              `SELECT CAST(t."${column}" AS TEXT) pk, COUNT(*) n FROM "ZCOLLECTIONITEM" t
+                 WHERE t."${column}" IS NOT NULL GROUP BY t."${column}"`,
+            )
+            .all(),
+        [],
+      ).map((r) => [Number(r.pk), Number(r.n)]),
+    );
+    if (tallies.size === 0) return null;
+    return { kind: "column", column, ...scoreTallies(tallies) };
+  })
+  .filter(Boolean)
+  .toSorted((a, b) => Number(b.exact) - Number(a.exact) || b.matched - a.matched);
+
+// ── 2. a Z_<ordinal><RELATIONSHIP> join table ────────────────────────────────
+// NOT ENUMERATED BY THIS PROBE BEFORE TODAY, which is the likeliest reason the
+// key was never found: a many-to-many leaves no column on either entity.
+const RESERVED = new Set(["Z_METADATA", "Z_MODELCACHE", "Z_PRIMARYKEY"]);
+const joinTables = attempt(
+  () =>
+    db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table'
+           AND substr(name, 1, 2) = 'Z_' ORDER BY name`,
+      )
+      .all(),
+  [],
+)
+  .map((r) => r.name)
+  .filter((n) => !RESERVED.has(n));
+
+const joinTableCandidates = joinTables.map((table) => {
+  const columns = columnsOf(table).map((c) => ({ name: c.name, type: c.type }));
+  const ints = columns.filter((c) => /INT/i.test(c.type ?? "")).map((c) => c.name);
+  const pairs = [];
+  // Both orientations, because the column names do not say which side is which.
+  for (const collectionColumn of ints) {
+    for (const itemColumn of ints) {
+      if (collectionColumn === itemColumn) continue;
+      const tallies = new Map(
+        attempt(
+          () =>
+            db
+              .prepare(
+                `SELECT CAST(j."${collectionColumn}" AS TEXT) pk, COUNT(*) n FROM "${table}" j
+                   JOIN "ZCOLLECTIONITEM" t ON t.Z_PK = j."${itemColumn}"
+                 GROUP BY j."${collectionColumn}"`,
+              )
+              .all(),
+          [],
+        ).map((r) => [Number(r.pk), Number(r.n)]),
+      );
+      if (tallies.size === 0) continue;
+      pairs.push({
+        kind: "joinTable",
+        table,
+        collectionColumn,
+        itemColumn,
+        ...scoreTallies(tallies),
+      });
+    }
+  }
+  return { table, rows: countOf(table), columns, pairs };
+});
+
+// ── 3. the ordered-to-many marker ────────────────────────────────────────────
+// Core Data adds Z_FOK_<relationship> for an ordered to-many. It names the
+// relationship even when the key itself lives somewhere else.
+const orderedMarkers = columnsOf("ZCOLLECTIONITEM")
+  .map((c) => c.name)
+  .filter((n) => /^Z_FOK_/i.test(n));
+
+// ── 4. indirection through ZMIXINMAPITEM ─────────────────────────────────────
+const viaMapItem = integerColumnsOf("ZMIXINMAPITEM")
+  .map((column) => {
+    const tallies = new Map(
+      attempt(
+        () =>
+          db
+            .prepare(
+              `SELECT CAST(m."${column}" AS TEXT) pk, COUNT(*) n FROM "ZMIXINMAPITEM" m
+                 JOIN "ZCOLLECTIONITEM" t ON t.ZMAPITEM = m.Z_PK
+                 WHERE m."${column}" IS NOT NULL GROUP BY m."${column}"`,
+            )
+            .all(),
+        [],
+      ).map((r) => [Number(r.pk), Number(r.n)]),
+    );
+    if (tallies.size === 0) return null;
+    return { kind: "viaMapItem", column, ...scoreTallies(tallies) };
+  })
+  .filter(Boolean)
+  .toSorted((a, b) => Number(b.exact) - Number(a.exact) || b.matched - a.matched);
+
+/**
+ * Z_PRIMARYKEY maps each entity to the ordinal that names its join tables, so
+ * `Z_5ITEMS` can be read back as a relationship rather than left as a string.
+ */
+const entityOrdinals = attempt(
+  () => db.prepare(`SELECT Z_NAME name, Z_ENT ent FROM "Z_PRIMARYKEY" ORDER BY Z_ENT`).all(),
+  [],
+).map((r) => ({ entity: r.name, ent: Number(r.ent) }));
+
+const allCandidates = [
+  ...scalarCandidates,
+  ...joinTableCandidates.flatMap((t) => t.pairs),
+  ...viaMapItem,
+];
+const winner =
+  allCandidates.find((c) => c.exact) ??
+  allCandidates.toSorted(
+    (a, b) => (b.matched ?? 0) - (a.matched ?? 0) || b.rowsReached - a.rowsReached,
+  )[0] ??
+  null;
+
+const collectionMembership = {
+  itemRows: countOf("ZCOLLECTIONITEM"),
+  declaredTotal: declaredCounts ? [...declaredCounts.values()].reduce((a, b) => a + b, 0) : null,
+  scalarCandidates,
+  joinTables: joinTableCandidates,
+  orderedMarkers,
+  viaMapItem,
+  entityOrdinals,
+  winner,
+};
+
 // Q4: the 2001 anchor, tested on the busiest date column available.
 const dateProbe = (() => {
   for (const e of entities) {
@@ -297,6 +517,7 @@ const doc = {
     schema: { fingerprint, objectCount },
     entities,
     idBridge,
+    collectionMembership,
     dateProbe,
     timings,
   },
@@ -318,6 +539,14 @@ doc.verdict.names = withNames.length
 doc.verdict.blobs = withBlobs.length
   ? `blob columns in ${withBlobs.map((e) => `${e.entity}(${e.blobColumns.map((b) => b.name).join(",")})`).join(", ")} — decoder work`
   : "no blob columns: the data is in ordinary columns";
+doc.verdict.membership = winner
+  ? `${winner.exact ? "RESOLVED" : "UNCONFIRMED"} — ${
+      winner.kind === "joinTable"
+        ? `${winner.table}(${winner.collectionColumn} -> collection, ${winner.itemColumn} -> item)`
+        : `${winner.kind === "viaMapItem" ? "ZMIXINMAPITEM" : "ZCOLLECTIONITEM"}.${winner.column}`
+    }, ${winner.matched}/${winner.collections ?? "?"} collections match ZPLACESCOUNT`
+  : "NOT FOUND — no column, join table or indirection reproduces ZPLACESCOUNT";
+
 doc.verdict.walBlind = doc.findings.store.walBlind
   ? `WAL (${wal.sizeBytes} B) EXCEEDS the store (${store.sizeBytes} B) — an immutable read misses recent changes`
   : "wal is smaller than the store";
@@ -363,6 +592,41 @@ if (args.json) {
       b.joins
         ? `  ${b.table.padEnd(18)} ${b.linked}/${b.rows} rows reach a MixinMapItem`
         : `  ${b.table.padEnd(18)} NO ZMAPITEM column — cannot join`,
+    );
+  }
+  L.push("");
+  L.push("COLLECTION MEMBERSHIP — scored against ZPLACESCOUNT, not against names");
+  L.push(
+    `  ${collectionMembership.itemRows} item rows; ZPLACESCOUNT sums to ${
+      collectionMembership.declaredTotal ?? "?"
+    }`,
+  );
+  const showCandidate = (c) => {
+    const label =
+      c.kind === "joinTable"
+        ? `${c.table}(${c.collectionColumn}->coll, ${c.itemColumn}->item)`
+        : `${c.kind === "viaMapItem" ? "ZMIXINMAPITEM" : "ZCOLLECTIONITEM"}.${c.column}`;
+    L.push(
+      `      ${label.padEnd(46)} ${c.matched ?? "-"}/${c.collections ?? "-"} match  ` +
+        `${c.rowsReached} rows  ${c.unknownKeys ?? "-"} unknown keys${c.exact ? "   <-- EXACT" : ""}`,
+    );
+  };
+  L.push(`    scalar columns on ZCOLLECTIONITEM (${scalarCandidates.length} joinable)`);
+  for (const c of scalarCandidates) showCandidate(c);
+  L.push(`    Z_ join tables (${joinTableCandidates.length})`);
+  for (const t of joinTableCandidates) {
+    L.push(`      ${t.table} — ${t.rows} rows, cols ${t.columns.map((c) => c.name).join(", ")}`);
+    for (const pair of t.pairs) showCandidate(pair);
+  }
+  if (orderedMarkers.length) L.push(`    ordered markers: ${orderedMarkers.join(", ")}`);
+  if (viaMapItem.length) {
+    L.push(`    via ZMIXINMAPITEM (${viaMapItem.length} joinable)`);
+    for (const c of viaMapItem) showCandidate(c);
+  }
+  if (winner?.exact) {
+    L.push("    per-collection tally for the winner (Z_PK: declared/joined)");
+    L.push(
+      `      ${winner.perCollection.map((r) => `${r.collection}: ${r.declared}/${r.joined}`).join(", ")}`,
     );
   }
   L.push("");

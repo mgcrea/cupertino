@@ -5,6 +5,7 @@ import { renderInstant, type Epoch } from "./dates.js";
 import { MapsStoreUnavailableError } from "./errors.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { encodeCollectionRef, encodePlaceRef, type PlaceKind } from "./ref.js";
+import type { EntityKey } from "./store.js";
 import { openStore, type CollectionRow, type MapsStore, type PlaceRow } from "./store.js";
 
 /**
@@ -38,8 +39,11 @@ export type RenderedPlace = {
    * Apple's place identifier. Stable for the same place across devices, and
    * shared between a favourite and a collection entry for the same place — so
    * it is reported, and never used as the ref. See `ref.ts`.
+   *
+   * A STRING: it is a 64-bit integer that does not fit in a JS number. A real
+   * store returned `-2679868148951248105`.
    */
-  muid: number | null;
+  muid: string | null;
   created: string | null;
   modified: string | null;
   /**
@@ -135,7 +139,7 @@ export class AppleMapsClient {
 
   #render(kind: PlaceKind, row: PlaceRow, epoch: Epoch): RenderedPlace {
     return {
-      ref: encodePlaceRef(kind, row.id),
+      ref: encodePlaceRef(kind, row.uuid ? { uuid: row.uuid } : { rowId: row.id }),
       kind,
       name: row.customName ?? row.name,
       placeName: row.name,
@@ -151,7 +155,7 @@ export class AppleMapsClient {
 
   #renderCollection(row: CollectionRow, epoch: Epoch): RenderedCollection {
     return {
-      ref: encodeCollectionRef(row.id),
+      ref: encodeCollectionRef(row.uuid ? { uuid: row.uuid } : { rowId: row.id }),
       title: row.title,
       placesCount: row.placesCount,
       created: renderInstant(row.createdRaw, epoch),
@@ -172,10 +176,21 @@ export class AppleMapsClient {
     };
   }
 
-  place(kind: PlaceKind, id: number): RenderedPlace | null {
+  place(kind: PlaceKind, key: EntityKey): RenderedPlace | null {
     const store = this.store();
-    const row = store.place(kind, id);
+    const row = store.place(kind, key);
     return row ? this.#render(kind, row, store.caps.epoch) : null;
+  }
+
+  /**
+   * A collection ref to the row id its items point at, or null when the ref
+   * addresses nothing in this store.
+   *
+   * Collection membership is a Core Data foreign key and always holds `Z_PK`,
+   * so a uuid ref has to be translated before it can filter items.
+   */
+  collectionRowId(key: EntityKey): number | null {
+    return this.store().collectionRowId(key);
   }
 
   collections(opts: { limit: number }): {
@@ -189,7 +204,7 @@ export class AppleMapsClient {
     return {
       collections: rows.map((r) => this.#renderCollection(r, store.caps.epoch)),
       truncated,
-      itemsEnumerable: store.caps.collectionFk !== null,
+      itemsEnumerable: store.caps.membership !== null,
     };
   }
 
@@ -248,6 +263,7 @@ export class AppleMapsClient {
             tableCount: store.caps.tables.length,
             epoch: store.caps.epoch,
             collectionFk: store.caps.collectionFk,
+            collectionMembership: store.caps.membership,
             entities: {
               favorites: summariseEntity(store.caps.favorites),
               collections: summariseEntity(store.caps.collections),

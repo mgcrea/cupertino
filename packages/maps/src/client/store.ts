@@ -20,13 +20,13 @@ import { resolveEpoch, type Epoch } from "./dates.js";
  * MEASURED by `pnpm probe:maps` on macOS 26.6 — 146 schema objects, fingerprint
  * `2bbc03143125`, Core Data, `ZCREATETIME` on apple-seconds:
  *
- *     ZFAVORITEITEM     23 rows   ZCOLLECTION      10 rows
- *     ZCOLLECTIONITEM   29 rows   ZHISTORYITEM     33 rows
- *     ZMIXINMAPITEM     68 rows   ZREVIEWEDPLACE   24 rows
+ *     ZFAVORITEITEM     24 rows   ZCOLLECTION      10 rows
+ *     ZCOLLECTIONITEM   30 rows   ZHISTORYITEM     34 rows
+ *     ZMIXINMAPITEM     71 rows   ZREVIEWEDPLACE   24 rows
  *
  * and the id bridge, verified by running the join rather than by reading column
  * names: `ZMIXINMAPITEM`'s inverse relationships partition exactly —
- * 29 collection items + 20 favourites + 19 history rows = 68 = every row.
+ * 30 collection items + 21 favourites + 20 history rows = 71 = every row.
  *
  * NOT measured: this file has never been run against the real store by its
  * author, who has no Full Disk Access. Everything below is written against a
@@ -44,14 +44,47 @@ import { resolveEpoch, type Epoch } from "./dates.js";
  * open time. That is a real query per candidate, run once, on tables of tens of
  * rows.
  *
- * ## The collection membership key is DISCOVERED, and may not exist
+ * ## Collection membership is a JOIN TABLE, and it is VALIDATED not guessed
  *
- * The probe found no `ZCOLLECTION` column on `ZCOLLECTIONITEM`, so how an item
- * belongs to a collection is genuinely unknown — Core Data names a foreign key
- * after the RELATIONSHIP, and it may also be a many-to-many `Z_*` join table.
- * Rather than guess, the candidates are tried in order and, when none is found,
- * collections are listed WITHOUT their items and every caller is told so. A
- * collection with an unexplained empty item list is the failure this avoids.
+ * MEASURED: membership is `Z_6PLACES(Z_6COLLECTIONS, Z_7PLACES)`, a Core Data
+ * many-to-many. `Z_PRIMARYKEY` decodes ordinal 6 as Collection and 7 as
+ * CollectionItem, so the relationship is `Collection.places`.
+ *
+ * Four column names were guessed here before it was found — ZCOLLECTION,
+ * ZCOLLECTION1, ZPARENTCOLLECTION, ZOWNINGCOLLECTION — and the store has none
+ * of them, so every guide listed empty. A many-to-many leaves NO COLUMN on
+ * either entity, so no list of column names could have contained the answer.
+ * The near-miss is what makes this worth stating: `ZCOLLECTIONITEM.ZMAPITEM`
+ * joins `ZCOLLECTION` for 3 of 10 collections, and a resolver picking the
+ * best-covered joinable column would have chosen it and been confidently wrong.
+ *
+ * So membership is resolved BY RUNNING THE JOIN and scoring it against an
+ * oracle the store hands over for free: `ZCOLLECTION.ZPLACESCOUNT`, Maps' own
+ * count per guide. A candidate is accepted only when it reproduces all ten
+ * numbers exactly with no key pointing at a missing collection. That survives
+ * Apple renaming the relationship, which a hard-coded `Z_6PLACES` would not.
+ *
+ * The oracle is not independent evidence, and it is stronger for it. Core Data
+ * maintains `ZPLACESCOUNT` with a trigger that reads:
+ *
+ *     UPDATE ZCOLLECTION SET ZPLACESCOUNT =
+ *       (SELECT IFNULL(COUNT(Z_6COLLECTIONS), 0)
+ *          FROM Z_6PLACES WHERE Z_6COLLECTIONS = NEW.Z_PK)
+ *
+ * so Apple's own schema states the relationship this resolver re-derives. The
+ * count match is therefore guaranteed for the true mechanism rather than lucky,
+ * and coincidental for anything else. The triggers are visible only in the
+ * captured fixture — `pnpm probe:maps --write` omits them from the replay
+ * because they call Core Data's private SQLite functions, which is recorded in
+ * `writeFixture`.
+ *
+ * Because it is many-to-many, one place can sit in several guides, and the
+ * membership query uses `IN (SELECT ...)` rather than a JOIN so a place in two
+ * guides is not returned twice from one of them.
+ *
+ * MEASURED: 30 item rows, 18 of them in a guide. The other 12 belong to no
+ * collection at all; all 30 link to a `ZMIXINMAPITEM`, so they are intact
+ * places rather than broken rows.
  *
  * `SchemaDriftError` fires for exactly one condition — none of the three
  * place-bearing tables exists — because without them there is no surface.
@@ -78,15 +111,36 @@ const CREATED_CANDIDATES = ["ZCREATETIME"] as const;
 const MODIFIED_CANDIDATES = ["ZMODIFICATIONTIME"] as const;
 const COLLECTION_TITLE_CANDIDATES = ["ZTITLE", "ZNAME", "ZCUSTOMNAME"] as const;
 
-/** How an item says which collection it is in. Unknown; see the header. */
-const COLLECTION_FK_CANDIDATES = [
-  "ZCOLLECTION",
-  "ZCOLLECTION1",
-  "ZPARENTCOLLECTION",
-  "ZOWNINGCOLLECTION",
-] as const;
+/**
+ * The stable per-entry identifier, if this store has one.
+ *
+ * FOUND BY WATCHING MAPS WRITE, not by reading the schema: every row Maps
+ * created during `pnpm probe:maps-write` carried `ZIDENTIFIER`, a 16-byte blob
+ * — a UUID. It is not in the read probe's report because that probe only looked
+ * for columns it already had candidates for, which is a good argument for
+ * diffing a live write even when the read surface already works.
+ *
+ * `ZORIGINALIDENTIFIER` is deliberately NOT a candidate. It exists on
+ * `ZCOLLECTIONITEM` and is populated on 3 rows of 30 — it records where an entry
+ * was copied FROM, so it is neither complete nor unique to the entry.
+ */
+const IDENTIFIER_CANDIDATES = ["ZIDENTIFIER"] as const;
+
+/**
+ * Maps' own count of the places in a guide, and the oracle every membership
+ * candidate is scored against. See the header.
+ */
+const COLLECTION_COUNT_COLUMN = "ZPLACESCOUNT";
+
+/** Core Data's own tables, which are never a relationship. */
+const RESERVED_JOIN_TABLES = new Set(["Z_METADATA", "Z_MODELCACHE", "Z_PRIMARYKEY"]);
 
 export type FieldMap = {
+  /**
+   * The column holding a stable UUID, or null when this store has none good
+   * enough to address rows by. See `resolveIdentifier`.
+   */
+  identifier: string | null;
   name: string | null;
   customName: string | null;
   latitude: string | null;
@@ -106,6 +160,19 @@ export type EntityFacts = {
   fields: FieldMap;
 };
 
+/**
+ * How an item says which collection it is in, once proved against the oracle.
+ *
+ * Two shapes because Core Data has two: a scalar foreign key named after the
+ * relationship, and a `Z_<ordinal><RELATIONSHIP>` join table for a
+ * many-to-many. THIS store uses the second. Both are carried because the
+ * resolver proves whichever is there rather than assuming, and a store that
+ * changes shape should degrade rather than read the wrong column.
+ */
+export type CollectionMembership =
+  | { kind: "column"; column: string }
+  | { kind: "joinTable"; table: string; collectionColumn: string; itemColumn: string };
+
 export type StoreCapabilities = {
   fingerprint: string;
   tables: string[];
@@ -114,19 +181,48 @@ export type StoreCapabilities = {
   collectionItems: EntityFacts;
   history: EntityFacts;
   mapItems: EntityFacts;
-  /** Resolved membership key on ZCOLLECTIONITEM, or null when none was found. */
+  /**
+   * The proved membership mechanism, or null when nothing reproduced
+   * `ZPLACESCOUNT` and collections must therefore list without their places.
+   */
+  membership: CollectionMembership | null;
+  /**
+   * The membership mechanism as one short string, for diagnostics.
+   *
+   * Kept because `apple_maps_diagnostics` reported `collectionFk` before this
+   * was understood, and a field that silently changes meaning is worse than one
+   * that widens: it now names a join table as well as a column.
+   */
   collectionFk: string | null;
   epoch: Epoch;
 };
 
 export type PlaceRow = {
   id: number;
+  /**
+   * The stable identifier, when the store has one. Null means refs on this
+   * entity fall back to the row id and are only good for the session.
+   */
+  uuid: string | null;
   name: string | null;
   customName: string | null;
   latitude: number | null;
   longitude: number | null;
   address: string | null;
-  muid: number | null;
+  /**
+   * Apple's place id, carried as a STRING.
+   *
+   * MEASURED on a real store: `-2679868148951248105`. It is a 64-bit integer and
+   * `node:sqlite` THROWS on one past `Number.MAX_SAFE_INTEGER` rather than
+   * truncating, so reading it as a number failed the whole listing with
+   * "Value is too large to be represented as a JavaScript number" — one column
+   * taking down every favourite. `docs/surfaces.md` states the rule this broke:
+   * read such columns as BigInt or `CAST(... AS TEXT)`.
+   *
+   * The fixture used a small id, so the offline suite passed. Only the real
+   * store has ids of this size.
+   */
+  muid: string | null;
   createdRaw: number | null;
   modifiedRaw: number | null;
   /**
@@ -143,13 +239,40 @@ export type PlaceRow = {
 
 export type CollectionRow = {
   id: number;
+  uuid: string | null;
   title: string | null;
   placesCount: number | null;
   createdRaw: number | null;
   modifiedRaw: number | null;
 };
 
+/**
+ * How a caller addresses one row.
+ *
+ * Two shapes rather than one because the store decides which is available, not
+ * the caller: a store whose `ZIDENTIFIER` is complete gets durable refs, one
+ * without falls back to row ids. Making the difference explicit in the type
+ * means a resolver cannot quietly treat a row id as a uuid when the store
+ * changed underneath it.
+ */
+export type EntityKey = { uuid: string } | { rowId: number };
+
 const isRealTable = (name: string): boolean => !name.startsWith("sqlite_");
+
+/**
+ * `HEX()` of a 16-byte blob to a canonical UUID.
+ *
+ * Returns null on anything that is not exactly 32 hex characters. Core Data
+ * stores a UUID attribute as 16 raw bytes, so a different length means the
+ * column is not what this code thinks it is — and a malformed ref that still
+ * looks ref-shaped would be resolved against the wrong row rather than rejected.
+ */
+const toUuid = (hex: unknown): string | null => {
+  if (hex === null || hex === undefined) return null;
+  const h = String(hex).toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(h)) return null;
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
 
 /** A `NULL AS alias` column reads back as null; every other value is coerced. */
 const num = (v: unknown): number | null =>
@@ -179,6 +302,8 @@ const resolveField = (
   for (const name of present) {
     let count = 0;
     try {
+      // COUNT() is always small. The VALUES are not — see PlaceRow.muid — so
+      // nothing here ever selects the column itself.
       count = Number(
         (
           db.prepare(`SELECT COUNT("${name}") AS c FROM "${table}"`).get() as {
@@ -192,6 +317,44 @@ const resolveField = (
     if (!best || count > best.count) best = { name, count };
   }
   return best && best.count > 0 ? best.name : (present[0] ?? null);
+};
+
+/**
+ * The identifier column, but ONLY if it can actually carry every ref.
+ *
+ * Coverage is not enough here, and this is the difference between a fix and a
+ * trap. A column populated on the rows Maps has written lately and null on the
+ * ones that predate it would work perfectly for every place the user saves from
+ * now on and fail silently for the places they already had — the failure mode
+ * hardest to notice and worst to hit, since the older entries are the ones a
+ * person is most likely to ask about.
+ *
+ * So the bar is TOTAL: set on every row, and distinct across every row. Anything
+ * less returns null and the store falls back to `Z_PK`, which is worse but
+ * uniformly worse. Measured on a real store: 24/24 favourites, 30/30 collection
+ * items, 10/10 collections, 33/33 recents, all distinct.
+ */
+const resolveIdentifier = (
+  db: DatabaseSync,
+  table: string,
+  columns: Set<string>,
+  rows: number,
+): string | null => {
+  const present = IDENTIFIER_CANDIDATES.filter((c) => columns.has(c));
+  if (present.length === 0 || rows === 0) return null;
+  for (const name of present) {
+    try {
+      const r = db
+        .prepare(
+          `SELECT COUNT("${name}") AS nset, COUNT(DISTINCT "${name}") AS ndistinct FROM "${table}"`,
+        )
+        .get() as { nset: number | bigint; ndistinct: number | bigint };
+      if (Number(r.nset) === rows && Number(r.ndistinct) === rows) return name;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 };
 
 const countRows = (db: DatabaseSync, table: string): number => {
@@ -218,6 +381,7 @@ const describeEntity = (
       rows: 0,
       columns: new Set(),
       fields: {
+        identifier: null,
         name: null,
         customName: null,
         latitude: null,
@@ -240,6 +404,7 @@ const describeEntity = (
     rows,
     columns,
     fields: {
+      identifier: resolveIdentifier(db, table, columns, rows),
       name: pick(nameCandidates),
       // Always named directly: it is the user's own label and must never be
       // confused with the place's name, even when it wins on coverage.
@@ -253,6 +418,137 @@ const describeEntity = (
       modified: pick(MODIFIED_CANDIDATES),
     },
   };
+};
+
+/**
+ * Maps' own places-per-guide, keyed by collection row id.
+ *
+ * Null when the store has no `ZPLACESCOUNT`, which changes what the resolver
+ * below is allowed to accept — see `resolveMembership`.
+ */
+const declaredCounts = (db: DatabaseSync, collections: EntityFacts): Map<number, number> | null => {
+  if (!collections.present || !collections.columns.has(COLLECTION_COUNT_COLUMN)) return null;
+  try {
+    const rows = db
+      .prepare(`SELECT "Z_PK" AS pk, "${COLLECTION_COUNT_COLUMN}" AS n FROM "${collections.table}"`)
+      .all() as { pk: number | bigint; n: number | bigint | null }[];
+    return new Map(rows.map((r) => [Number(r.pk), Number(r.n ?? 0)]));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Group a candidate's keys and count the items under each.
+ *
+ * Keys are read as TEXT because `ZMUID` is an INTEGER column holding 64-bit
+ * place ids, and `node:sqlite` THROWS on those rather than truncating — reading
+ * raw would drop the candidate into a catch instead of rejecting it on the
+ * evidence. See `PlaceRow.muid`.
+ */
+const tally = (db: DatabaseSync, sql: string): Map<number, number> => {
+  try {
+    const rows = db.prepare(sql).all() as { pk: string | null; n: number | bigint }[];
+    return new Map(
+      rows.filter((r) => r.pk !== null).map((r) => [Number(r.pk), Number(r.n)] as const),
+    );
+  } catch {
+    return new Map();
+  }
+};
+
+/**
+ * Does this candidate reproduce Maps' own counts, exactly, for every guide?
+ *
+ * Exactness is the whole test. `ZCOLLECTIONITEM.ZMAPITEM` matches 3 of 10
+ * collections by coincidence, so "mostly right" is precisely the answer that
+ * must be rejected. A key pointing at no collection at all (`unknown`) is
+ * disqualifying for the same reason.
+ */
+const reproducesCounts = (declared: Map<number, number>, tallies: Map<number, number>): boolean => {
+  for (const pk of tallies.keys()) if (!declared.has(pk)) return false;
+  for (const [pk, n] of declared) if ((tallies.get(pk) ?? 0) !== n) return false;
+  return true;
+};
+
+/**
+ * Find how an item belongs to a collection, by running each candidate join.
+ *
+ * Scalar columns are tried before join tables only so the cheaper query runs
+ * first; the verdict does not depend on order, because a candidate is accepted
+ * only when it reproduces every count. When several would qualify the first is
+ * taken, and that ambiguity cannot arise on a store whose counts are distinct.
+ *
+ * WITHOUT the oracle the bar changes rather than disappearing: a single join
+ * table whose every key resolves on both sides is accepted, and anything
+ * ambiguous is refused. That is weaker evidence, and it is the reason the
+ * result is reported to callers rather than assumed.
+ */
+const resolveMembership = (
+  db: DatabaseSync,
+  collectionItems: EntityFacts,
+  collections: EntityFacts,
+  tables: string[],
+): CollectionMembership | null => {
+  if (!collectionItems.present || !collections.present) return null;
+  const declared = declaredCounts(db, collections);
+
+  if (declared) {
+    for (const column of collectionItems.columns) {
+      if (["Z_PK", "Z_ENT", "Z_OPT"].includes(column)) continue;
+      const tallies = tally(
+        db,
+        `SELECT CAST(t."${column}" AS TEXT) AS pk, COUNT(*) AS n FROM "${collectionItems.table}" t
+           WHERE t."${column}" IS NOT NULL GROUP BY t."${column}"`,
+      );
+      if (tallies.size > 0 && reproducesCounts(declared, tallies))
+        return { kind: "column", column };
+    }
+  }
+
+  const joinTables = tables.filter((t) => t.startsWith("Z_") && !RESERVED_JOIN_TABLES.has(t));
+  const accepted: CollectionMembership[] = [];
+  for (const table of joinTables) {
+    const columns = columnsOf(db, table);
+    // Both orientations: the column names do not say which side is which, and
+    // reading `Z_6COLLECTIONS` as the collection side is an inference, not a
+    // fact. On the real store the wrong orientation scores 3 of 10.
+    for (const collectionColumn of columns) {
+      for (const itemColumn of columns) {
+        if (collectionColumn === itemColumn) continue;
+        const tallies = tally(
+          db,
+          `SELECT CAST(j."${collectionColumn}" AS TEXT) AS pk, COUNT(*) AS n FROM "${table}" j
+             JOIN "${collectionItems.table}" t ON t."Z_PK" = j."${itemColumn}"
+           GROUP BY j."${collectionColumn}"`,
+        );
+        if (tallies.size === 0) continue;
+        if (declared) {
+          if (reproducesCounts(declared, tallies))
+            return { kind: "joinTable", table, collectionColumn, itemColumn };
+          continue;
+        }
+        // No oracle: demand that every key on both sides resolves to a real row.
+        const orphaned = tally(
+          db,
+          `SELECT CAST(j."${collectionColumn}" AS TEXT) AS pk, COUNT(*) AS n FROM "${table}" j
+             LEFT JOIN "${collections.table}" c ON c."Z_PK" = j."${collectionColumn}"
+           WHERE c."Z_PK" IS NULL GROUP BY j."${collectionColumn}"`,
+        );
+        if (orphaned.size === 0)
+          accepted.push({ kind: "joinTable", table, collectionColumn, itemColumn });
+      }
+    }
+  }
+  // Exactly one unambiguous reading, or nothing. Two candidates mean the
+  // evidence does not distinguish them, and picking one would be a guess.
+  return accepted.length === 1 ? (accepted[0] ?? null) : null;
+};
+
+/** The mechanism as one short string, for diagnostics. */
+const describeMembership = (m: CollectionMembership | null): string | null => {
+  if (!m) return null;
+  return m.kind === "column" ? m.column : `${m.table}(${m.collectionColumn}, ${m.itemColumn})`;
 };
 
 export const introspect = (db: DatabaseSync, now: number = Date.now()): StoreCapabilities => {
@@ -279,7 +575,7 @@ export const introspect = (db: DatabaseSync, now: number = Date.now()): StoreCap
   const collections = describeEntity(db, COLLECTIONS_TABLE, tables, COLLECTION_TITLE_CANDIDATES);
   const mapItems = describeEntity(db, MAP_ITEMS_TABLE, tables);
 
-  const collectionFk = COLLECTION_FK_CANDIDATES.find((c) => collectionItems.columns.has(c)) ?? null;
+  const membership = resolveMembership(db, collectionItems, collections, tables);
 
   // The epoch comes from whichever place table has the most rows and a created
   // column — one measurement for the whole store, since every entity is written
@@ -308,7 +604,8 @@ export const introspect = (db: DatabaseSync, now: number = Date.now()): StoreCap
     collectionItems,
     history,
     mapItems,
-    collectionFk,
+    membership,
+    collectionFk: describeMembership(membership),
     epoch: resolveEpoch(maxCreated, now),
   };
 };
@@ -342,16 +639,29 @@ export class MapsStore {
     return column ? `${table}."${column}" AS ${alias}` : `NULL AS ${alias}`;
   }
 
+  /**
+   * The same, for a column whose value may not fit in a JS double.
+   *
+   * SQLite holds 64-bit integers; a JS number holds 53 bits of them, and
+   * `node:sqlite` refuses rather than silently losing precision. Casting in SQL
+   * keeps the exact value and moves the decision about what to do with it out
+   * of the driver.
+   */
+  #colText(column: string | null, alias: string, table = "t"): string {
+    return column ? `CAST(${table}."${column}" AS TEXT) AS ${alias}` : `NULL AS ${alias}`;
+  }
+
   #placeSelect(e: EntityFacts): string {
     const f = e.fields;
     return [
       `t."Z_PK" AS id`,
+      f.identifier ? `HEX(t."${f.identifier}") AS uuid` : `NULL AS uuid`,
       this.#col(f.name, "name"),
       this.#col(f.customName, "customName"),
       this.#col(f.latitude, "latitude"),
       this.#col(f.longitude, "longitude"),
       this.#col(f.address, "address"),
-      this.#col(f.muid, "muid"),
+      this.#colText(f.muid, "muid"),
       this.#col(f.created, "createdRaw"),
       this.#col(f.modified, "modifiedRaw"),
       f.mapItem ? `t."${f.mapItem}" AS mapItem` : `NULL AS mapItem`,
@@ -361,12 +671,18 @@ export class MapsStore {
   #toPlace(r: Record<string, unknown>): PlaceRow {
     return {
       id: Number(r.id),
+      uuid: toUuid(r.uuid),
       name: str(r.name),
       customName: str(r.customName),
       latitude: num(r.latitude),
       longitude: num(r.longitude),
       address: str(r.address),
-      muid: num(r.muid),
+      // MEASURED on a real store: 12 of 20 linked favourites carry ZMUID = 0.
+      // Zero is a sentinel for "no Apple place id", not an id, and reporting it
+      // as one invites a caller to treat two unrelated places as the same
+      // place. Only 8 of the 20 have a real id, and all 8 are 19 digits.
+      muid:
+        r.muid === null || r.muid === undefined || String(r.muid) === "0" ? null : String(r.muid),
       createdRaw: num(r.createdRaw),
       modifiedRaw: num(r.modifiedRaw),
       linked: r.mapItem !== null && r.mapItem !== undefined,
@@ -391,8 +707,23 @@ export class MapsStore {
     const params: (string | number)[] = [];
 
     if (opts.collectionId !== undefined) {
-      if (!this.caps.collectionFk) return { rows: [], truncated: false };
-      where.push(`t."${this.caps.collectionFk}" = ?`);
+      const m = this.caps.membership;
+      // Nothing reproduced ZPLACESCOUNT, so which places are in this guide is
+      // genuinely unknown. Empty is the honest answer and callers are told why.
+      if (!m) return { rows: [], truncated: false };
+      if (m.kind === "column") {
+        where.push(`t."${m.column}" = ?`);
+      } else {
+        // IN, not JOIN, because the question is set membership: is this item
+        // in this guide. A JOIN also multiplies the row by the number of
+        // matching join rows, which is 1 today only because Core Data gives the
+        // table a compound primary key — a property of the schema rather than
+        // of the query. IN does not depend on it.
+        where.push(
+          `t."Z_PK" IN (SELECT j."${m.itemColumn}" FROM "${m.table}" j ` +
+            `WHERE j."${m.collectionColumn}" = ?)`,
+        );
+      }
       params.push(opts.collectionId);
     }
 
@@ -431,13 +762,56 @@ export class MapsStore {
     };
   }
 
-  /** One place by entity and row id. */
-  place(kind: "favorite" | "collection-item" | "history", id: number): PlaceRow | null {
+  /**
+   * The WHERE clause and parameter for one key, or null when the key cannot be
+   * honoured against this entity.
+   *
+   * A uuid key against a store with no resolved identifier column returns null
+   * rather than falling back to the row id. The two number spaces are unrelated,
+   * so a fallback would resolve to a real but WRONG place — the one outcome
+   * worse than not finding it.
+   *
+   * `HEX()` on both sides rather than `X'..'` literal: it keeps the comparison
+   * in one form, and these tables are tens of rows, so the lost index is free.
+   */
+  #keyClause(e: EntityFacts, key: EntityKey): { sql: string; param: string | number } | null {
+    if ("uuid" in key) {
+      if (!e.fields.identifier) return null;
+      return {
+        sql: `HEX(t."${e.fields.identifier}") = ?`,
+        param: key.uuid.replaceAll("-", "").toUpperCase(),
+      };
+    }
+    return { sql: `t."Z_PK" = ?`, param: key.rowId };
+  }
+
+  /** One place by entity and key. */
+  place(kind: "favorite" | "collection-item" | "history", key: EntityKey): PlaceRow | null {
     const e = this.#entityFor(kind);
     if (!e.present) return null;
-    const sql = `SELECT ${this.#placeSelect(e)} FROM "${e.table}" t WHERE t."Z_PK" = ? LIMIT 1`;
-    const r = this.db.prepare(sql).get(id) as Record<string, unknown> | undefined;
+    const clause = this.#keyClause(e, key);
+    if (!clause) return null;
+    const sql = `SELECT ${this.#placeSelect(e)} FROM "${e.table}" t WHERE ${clause.sql} LIMIT 1`;
+    const r = this.db.prepare(sql).get(clause.param) as Record<string, unknown> | undefined;
     return r ? this.#toPlace(r) : null;
+  }
+
+  /**
+   * A collection key to the row id its items point at.
+   *
+   * Collection membership is a Core Data foreign key, so it holds `Z_PK` values
+   * whatever the ref carries. A uuid ref has to be translated before it can
+   * filter items, and this is the one place that happens.
+   */
+  collectionRowId(key: EntityKey): number | null {
+    if (!("uuid" in key)) return key.rowId;
+    const e = this.caps.collections;
+    const clause = this.#keyClause(e, key);
+    if (!e.present || !clause) return null;
+    const r = this.db
+      .prepare(`SELECT t."Z_PK" AS id FROM "${e.table}" t WHERE ${clause.sql} LIMIT 1`)
+      .get(clause.param) as { id: number | bigint } | undefined;
+    return r ? Number(r.id) : null;
   }
 
   collections(opts: { limit: number }): { rows: CollectionRow[]; truncated: boolean } {
@@ -447,7 +821,9 @@ export class MapsStore {
     const hasCount = e.columns.has("ZPLACESCOUNT");
     const order = e.fields.modified ? `t."${e.fields.modified}" DESC` : `t."Z_PK" DESC`;
     const sql =
-      `SELECT t."Z_PK" AS id, ${this.#col(e.fields.name, "title")}, ` +
+      `SELECT t."Z_PK" AS id, ` +
+      `${e.fields.identifier ? `HEX(t."${e.fields.identifier}") AS uuid` : `NULL AS uuid`}, ` +
+      `${this.#col(e.fields.name, "title")}, ` +
       `${hasCount ? `t."ZPLACESCOUNT" AS placesCount` : `NULL AS placesCount`}, ` +
       `${this.#col(e.fields.created, "createdRaw")}, ` +
       `${this.#col(e.fields.modified, "modifiedRaw")} ` +
@@ -456,6 +832,7 @@ export class MapsStore {
     return {
       rows: raw.slice(0, limit).map((r) => ({
         id: Number(r.id),
+        uuid: toUuid(r.uuid),
         title: r.title === null || r.title === undefined ? null : String(r.title),
         placesCount: r.placesCount === null ? null : Number(r.placesCount),
         createdRaw: r.createdRaw === null ? null : Number(r.createdRaw),

@@ -32,6 +32,7 @@
     "probe:safari": "node scripts/probe-safari.mjs",
     "probe:stickies": "node scripts/probe-stickies.mjs",
     "probe:maps": "node scripts/probe-maps.mjs",
+    "probe:maps-write": "node scripts/probe-maps-write.mjs",
     "version:sync": "node scripts/generate-version.mjs",
     "version:check": "node scripts/generate-version.mjs --check"
   },

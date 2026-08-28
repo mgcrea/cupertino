@@ -102,10 +102,10 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ ref, limit }) =>
       wrapResult(async () => {
-        const id = decodeCollectionRef(ref);
+        const collectionId = client.collectionRowId(decodeCollectionRef(ref));
         const result = client.places("collection-item", {
           limit: limit ?? client.config.maxResults,
-          collectionId: id,
+          collectionId: collectionId ?? undefined,
         });
         const collections = client.collections({ limit: 1_000 });
         if (!collections.itemsEnumerable) {
@@ -140,10 +140,22 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     async ({ limit }) =>
       wrapResult(async () => {
         const result = client.places("history", { limit: limit ?? client.config.maxResults });
+        const named = result.places.filter((p) => p.name).length;
         return ok(
           compact({
             recents: result.places,
             count: result.places.length,
+            // MEASURED: 1 of 33 rows carried a name. A recent's place name
+            // lives in the linked map item's undecoded blob, not in a column,
+            // so most rows have coordinates and no label. Saying so stops a
+            // caller reporting "33 unnamed places" as if the data were damaged.
+            namesUnavailable:
+              result.places.length > 0 && named * 4 < result.places.length
+                ? `Only ${named} of ${result.places.length} entries carry a name. Maps keeps a ` +
+                  `recent's place name in an encoded record this server does not decode, so most ` +
+                  `rows have coordinates and dates but no label. This is the store's shape, not ` +
+                  `missing data.`
+                : undefined,
             truncated: result.truncated
               ? `More entries exist beyond limit=${limit ?? client.config.maxResults}.`
               : undefined,
@@ -192,13 +204,17 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ ref }) =>
       wrapResult(async () => {
-        const { kind, id } = decodePlaceRef(ref);
-        const place = client.place(kind, id);
+        const { kind, key } = decodePlaceRef(ref);
+        const place = client.place(kind, key);
         if (!place) {
           return fail(
-            `No place for that ref. It may have been removed in Maps, or iCloud may have ` +
-              `re-synced the store and renumbered the rows since the listing ran. Re-run the ` +
-              `listing for a current ref.`,
+            "uuid" in key
+              ? `No place for that ref. It was removed in Maps, or it belongs to a different ` +
+                  `store than the one being read.`
+              : `No place for that ref. It may have been removed in Maps, or iCloud may have ` +
+                  `re-synced the store and renumbered the rows since the listing ran — this ref ` +
+                  `carries a row id, which only this store's current numbering can resolve. ` +
+                  `Re-run the listing for a current ref.`,
           );
         }
         return ok({ place });

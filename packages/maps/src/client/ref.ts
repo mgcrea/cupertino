@@ -1,9 +1,11 @@
 import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
 
+import type { EntityKey } from "./store.js";
+
 /**
  * Refs for places and collections.
  *
- * ## Why the ref carries the row id and not `ZMUID`
+ * ## Why the ref is not `ZMUID`
  *
  * `ZMUID` is Apple's own place identifier and looks like the better key — it is
  * the same number for the same restaurant across every device. It is not used,
@@ -16,18 +18,33 @@ import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
  *     AND filed in a collection carries one `ZMUID` across both, so a ref built
  *     on it could not say which of the two a caller meant.
  *
- * The row id addresses the entry, which is what every tool here returns. The
+ * The keys below address the ENTRY, which is what every tool here returns. The
  * kind is carried in the prefix so a favourite ref and a collection-item ref
  * can never be confused for one another.
  *
- * ## The cost, stated rather than hidden
+ * ## What the ref carries: a uuid when the store has one, a row id when it does not
  *
- * Core Data reuses `Z_PK` values after a delete, and this store is mirrored
- * from CloudKit, so a re-sync can renumber rows underneath a conversation.
- * `packages/messages` rejected rowids for exactly this reason. The difference
- * here is that there is no alternative that addresses an entry, so instead of
- * pretending the problem away every resolver re-reads the row and the tools say
- * plainly that a ref is only good for the current session.
+ * `ZIDENTIFIER` — a 16-byte Core Data UUID — is set on every favourite,
+ * collection, collection item and recent on a real store, and is distinct on
+ * every one. It addresses the ENTRY, survives a delete elsewhere in the table,
+ * and survives an iCloud re-sync renumbering rows. It is the ref whenever
+ * `store.ts` can confirm total coverage.
+ *
+ * It was found by watching Maps write, not by reading the schema — see
+ * `docs/maps.md`. The read probe never reported it, because a probe can only
+ * report columns it thought to look for.
+ *
+ * When a store has no usable identifier the ref falls back to the Core Data row
+ * id, and then the old caveat applies in full: `Z_PK` is reused after a delete
+ * and renumbered by a re-sync, so such a ref is only good for the session.
+ * `packages/messages` rejected row ids outright for that reason; here they are
+ * the degraded mode rather than the design.
+ *
+ * The two are told apart BY SHAPE — a uuid is 32 hex characters, a row id is
+ * decimal — and the resolver refuses to try a uuid against a store with no
+ * identifier column rather than reinterpreting it as a number. Silently
+ * resolving one key space in the other would find a real but wrong place, which
+ * is worse than finding nothing.
  *
  * ## Why `p1:` and `pc1:`
  *
@@ -55,8 +72,20 @@ const CODE_KIND: Record<string, PlaceKind> = {
   h: "history",
 };
 
-const PLACE_PATTERN = /^p1:([fch]):(\d+)$/;
-const COLLECTION_PATTERN = /^pc1:(\d+)$/;
+const PLACE_PATTERN = /^p1:([fch]):([0-9a-f]{32}|\d+)$/;
+const COLLECTION_PATTERN = /^pc1:([0-9a-f]{32}|\d+)$/;
+
+/** 32 hex characters is a uuid; anything else that matched the pattern is a row id. */
+const toKey = (raw: string): EntityKey =>
+  /^[0-9a-f]{32}$/.test(raw)
+    ? {
+        uuid: `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}`,
+      }
+    : { rowId: Number(raw) };
+
+/** A uuid goes into the ref undashed, so the ref stays one opaque token. */
+const fromKey = (key: EntityKey): string =>
+  "uuid" in key ? key.uuid.replaceAll("-", "").toLowerCase() : String(key.rowId);
 
 const otherSurface = (raw: string): string => {
   if (raw.startsWith("c1:")) return " That one is a Calendar event ref.";
@@ -85,20 +114,21 @@ export class InvalidMapsRefError extends AppleAutomationError {
   }
 }
 
-export const encodePlaceRef = (kind: PlaceKind, id: number): string =>
-  `${PLACE_REF_VERSION}:${KIND_CODE[kind]}:${id}`;
+export const encodePlaceRef = (kind: PlaceKind, key: EntityKey): string =>
+  `${PLACE_REF_VERSION}:${KIND_CODE[kind]}:${fromKey(key)}`;
 
-export const encodeCollectionRef = (id: number): string => `${COLLECTION_REF_VERSION}:${id}`;
+export const encodeCollectionRef = (key: EntityKey): string =>
+  `${COLLECTION_REF_VERSION}:${fromKey(key)}`;
 
-export const decodePlaceRef = (raw: string): { kind: PlaceKind; id: number } => {
+export const decodePlaceRef = (raw: string): { kind: PlaceKind; key: EntityKey } => {
   const m = PLACE_PATTERN.exec(raw.trim());
   const kind = m?.[1] ? CODE_KIND[m[1]] : undefined;
   if (!m?.[2] || !kind) throw new InvalidMapsRefError(raw, "place");
-  return { kind, id: Number(m[2]) };
+  return { kind, key: toKey(m[2]) };
 };
 
-export const decodeCollectionRef = (raw: string): number => {
+export const decodeCollectionRef = (raw: string): EntityKey => {
   const m = COLLECTION_PATTERN.exec(raw.trim());
   if (!m?.[1]) throw new InvalidMapsRefError(raw, "collection");
-  return Number(m[1]);
+  return toKey(m[1]);
 };

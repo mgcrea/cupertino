@@ -47,7 +47,7 @@ been read.
 | ---------------- | ---- | ------------------------ |
 | `FavoriteItem`   | 23   | saved places             |
 | `Collection`     | 10   | Guides                   |
-| `CollectionItem` | 29   | places filed in a Guide  |
+| `CollectionItem` | 30   | places filed in a Guide  |
 | `HistoryItem`    | 33   | Recents                  |
 | `MixinMapItem`   | 68   | the shared place records |
 | `ReviewedPlace`  | 24   | ratings the user left    |
@@ -75,7 +75,7 @@ plain columns do not carry, and not needed for v1.
 
 `MixinMapItem`'s inverse relationships partition exactly:
 
-    ZCOLLECTIONPLACEITEM 29 + ZFAVORITEITEM 20 + ZHISTORYPLACEITEM 19 = 68 = every row
+    ZCOLLECTIONPLACEITEM 30 + ZFAVORITEITEM 21 + ZHISTORYPLACEITEM 20 = 71 = every row
 
 Every favourite, collection entry and recent reaches its place through `ZMAPITEM`.
 The probe runs the join rather than reading column names, because **Core Data names a
@@ -94,11 +94,27 @@ almost certainly the unconfigured Home / Work / School slots Maps creates whethe
 anyone fills them in. They are returned with `linked: false` rather than filtered, because
 silently dropping rows makes the count disagree with the app and reads as a deletion.
 
-**Collection membership is not exposed.** No `ZCOLLECTION` column was found on
-`ZCOLLECTIONITEM`, and it may be a differently-named relationship or a `Z_*` join table.
-The server discovers the key among candidates and, when none is found, lists collections
-**without** their places and says so — an unexplained empty Guide is the failure that
-avoids.
+**Collection membership is a join table, and it is proved rather than named.** It is
+`Z_6PLACES(Z_6COLLECTIONS, Z_7PLACES)` — a Core Data many-to-many, with `Z_PRIMARYKEY`
+decoding ordinal 6 as `Collection` and 7 as `CollectionItem`, so the relationship is
+`Collection.places`. A many-to-many leaves **no column on either entity**, which is why
+four guessed names (`ZCOLLECTION`, `ZCOLLECTION1`, `ZPARENTCOLLECTION`,
+`ZOWNINGCOLLECTION`) all missed it and every Guide listed empty.
+
+The server re-derives it at open time by **running each candidate join and scoring it
+against `ZPLACESCOUNT`**, Maps' own count per Guide, accepting only a candidate that
+reproduces all ten numbers exactly. That oracle is not independent, and is stronger for
+it: Core Data maintains `ZPLACESCOUNT` with a trigger that counts
+`Z_6PLACES.Z_6COLLECTIONS`, so Apple's schema states the relationship outright. The match
+is guaranteed for the true mechanism and coincidental for anything else. Name-matching would not merely have failed here, it
+would have been confidently wrong: `ZCOLLECTIONITEM.ZMAPITEM` joins `ZCOLLECTION` for 3 of
+10 collections purely because both are small integers. When nothing reproduces the counts,
+collections list **without** their places and say so — an unexplained empty Guide is the
+failure that avoids.
+
+Membership being many-to-many, one place can sit in several Guides, so the query asks
+`IN (SELECT ...)` rather than joining. **30 item rows, 18 of them in a Guide**: the other
+12 belong to no collection at all, and all 30 still reach a place through `ZMAPITEM`.
 
 **The epoch is `apple-seconds`, and the wrong reading is plausible.** The same
 `ZCREATETIME` value read as unix seconds lands in **1995**. The probe prints both
@@ -116,18 +132,130 @@ rather than assuming it, withholding dates when it cannot.
 For comparison, the Accessibility lane this replaced needed **~14 s** for scraped text
 with no coordinates and no identifiers — see [surfaces.md](surfaces.md).
 
+## Writes — measured, and the SQL lane is closed
+
+Probe: `pnpm probe:maps-write` ([scripts/probe-maps-write.mjs](../scripts/probe-maps-write.mjs)),
+macOS 26.6. It snapshots the store, waits for a place to be saved BY HAND in Maps, and
+diffs. The question was never "is the file writable" — it is, `W_OK` on the store, both
+sidecars and the directory. The question is what a write has to maintain, and the answer
+is that saving a place moved **eight tables and bumped ten `Z_MAX` counters**.
+
+| What moved                              | Rows | What it is                                                      |
+| --------------------------------------- | ---- | --------------------------------------------------------------- |
+| `ZFAVORITEITEM`                         | +1   | the favourite, **21 columns set**                               |
+| `ZCOLLECTIONITEM`                       | +1   | the list entry, **19 columns set**                              |
+| `ZMIXINMAPITEM`                         | +2   | one place record each, `ZMAPITEMSTORAGE` a **~1.2 KB protobuf** |
+| `ATRANSACTION`                          | +7   | Core Data persistent history                                    |
+| `ACHANGE`                               | +9   | per-row change journal, with `ZTRANSACTIONID`                   |
+| `ANSCKRECORDMETADATA`                   | +4   | the CloudKit mirror registry                                    |
+| `ANSCKRECORDMETADATAENCODEDRECORDASSET` | +4   | **encoded `CKRecord`s, ~3 KB each**                             |
+| `ANSCKEVENT`                            | +6   | the sync operation log                                          |
+
+Two places were saved across the measurement — one into a List, one into Favourites — so
+the table is the cost of both. The per-place shape is the same either way: one entry row,
+one `MixinMapItem`, two mirror rows carrying an encoded `CKRecord`, and a burst of history.
+
+Three of those are individually disqualifying for a hand-written `INSERT`:
+
+**`ZMAPITEMSTORAGE` cannot be synthesised.** It is the GEO place record, and this repo has
+never decoded it — see the read findings above. A place row without it carries the
+denormalised columns and nothing Maps itself recognises as a place.
+
+**The encoded `CKRecord` cannot be synthesised either.** `ZBINARYDATA` is a serialised
+CloudKit record including server-assigned system fields — change tags, zone identity. It is
+not a format to reverse-engineer; it is a format whose correct values only CloudKit knows.
+
+**Persistent history is how the exporter decides what to upload.** `ACHANGE` and
+`ATRANSACTION` are `NSPersistentHistoryTracking`, and `ANSCKRECORDMETADATA` carries
+`ZLASTEXPORTEDTRANSACTIONNUMBER` straight into it. A row inserted without a history entry
+is not merely unsynced — it is invisible to the mechanism whose job is noticing it.
+
+Two further findings close the door:
+
+**Some bookkeeping is created and destroyed inside the window.**
+`NSCKHistoryAnalyzerState` bumped `Z_MAX` 60 → 68 while its table stayed at **0 rows**. A
+writer cannot imitate a protocol whose intermediate states it can only see the wake of.
+
+**There is no quiet moment.** `mapssyncd` holds the store open _with Maps quit_. Every
+other file-lane surface can at least assume nobody is mid-transaction; this one cannot.
+
+So: writing SQL into `MapsSync_0.0.1` is not a hard version of what Notes and Calendar do.
+It is a different act — editing one replica of a synchronising graph while its owner is
+running — and `packages/maps` will not do it.
+
+### The diff found a stable identifier, which the read surface needs
+
+Every row Maps created carried **`ZIDENTIFIER`, a 16-byte blob** — a UUID — and
+`ZCOLLECTIONITEM` carried `ZORIGINALIDENTIFIER` as well. Neither appears in the read
+probe's column report, because that probe only looked for columns it already had
+candidates for.
+
+This matters more than the write verdict. `packages/maps` addresses rows by `Z_PK` and
+documents its refs as session-scoped, because a Core Data row id is reused after a delete
+and renumbered by a re-sync — recorded below as having no alternative. `ZIDENTIFIER` is an
+alternative, IF it is populated and distinct on rows that predate the observation. A ref
+that works for newly-saved places and silently fails for everything the user already had
+is the worst available outcome, so question 7 of the write probe measures coverage and
+distinctness rather than presence.
+
+The full insert also shows `ZFAVORITEITEM` carrying `ZSOURCE`, `ZTYPE`, `ZVERSION`,
+`ZHIDDEN`, `ZPOSITIONINDEX`, `ZMAPITEMCATEGORY` and `ZSHORTCUTIDENTIFIER` — none of them
+read today. `ZHIDDEN` is worth a look in particular, since a favourite the app hides is one
+the surface may currently be listing.
+
+`HistoryItem` moved 33 → 121 `Z_MAX` between the read probe and this one, on ordinary use.
+Recents churn; favourites and collections do not.
+
+### The intents lane — checked, and closed
+
+Maps ships no `.sdef`, no `Metadata.appintents` and no `INIntentsSupported`. It does ship
+`IntentsLocalizable.loctable`, whose 218 keys include **`Add Places to List`**,
+**`Remove Places From List`**, `The places to add to a list.`, `Add note place` and the
+parking verbs.
+
+That would have been the right shape for this repo: an intent runs INSIDE Maps, so Maps
+allocates the primary key, writes the history rows and registers the CloudKit record — the
+same property that makes an Apple Event safe on the other six surfaces, reached by a
+different mechanism.
+
+**The actions are not registered on macOS.** Checked by hand in Shortcuts: no add-a-place
+action appears in the Maps set. The loctable proves the intents exist in Apple's code and
+nothing more — Maps here is a Catalyst app carrying the iOS resource bundle wholesale, so
+iOS-only strings ship regardless. Reading it as a capability would have been this project's
+signature mistake in a new costume, which is why the probe printed an instruction rather
+than a verdict.
+
+Worth recording for the next macOS release: if those actions ever appear in Shortcuts, the
+write half becomes tractable overnight, and it would be about **Lists** — no intent adds a
+favourite either.
+
+### So Maps has no write lane
+
+| Lane               | Verdict         | Why                                                                                           |
+| ------------------ | --------------- | --------------------------------------------------------------------------------------------- |
+| Apple Events       | absent          | no scripting dictionary, checked directly                                                     |
+| App Intents        | absent on macOS | strings ship, actions are not registered                                                      |
+| SQL into the store | refused         | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads     |
+| Accessibility      | not pursued     | a new TCC service for one surface, ~31 ms per element, and no stable identity in scraped text |
+
+`supportsWrites: false` in `surfaces.json` now rests on measurement rather than caution, and
+`APPLE_MAPS_ALLOW_WRITES` stays accepted-and-ignored so a config that sets it does not look
+broken.
+
 ## Still open
 
-- **The schema fixture is HAND-WRITTEN**, not captured. `packages/maps/test/fixtures/maps-store.sql`
-  carries only the columns the probe reported, so it is certainly missing others.
-  Capture the real one with `pnpm probe:maps --write` on a granted machine.
+- **The captured fixture is schema-only, so coverage still is not testable offline.**
+  `packages/maps/test/fixtures/maps-store.sql` is the real schema (146 objects, fingerprint
+  `2bbc03143125`) but holds no rows, and the resolvers that matter here — column choice by
+  coverage, identifier adoption by totality, membership by scoring the join — all decide on
+  DATA. The offline suite seeds its own, so it proves the rules, not that they pick what a
+  real store would.
 - **`ZMUID` stability is untested.** It looks like Apple's cross-device place id and is
   reported, but it is populated 20/23 and identifies a _place_ rather than an _entry_, so
-  refs use the row id instead. See `packages/maps/src/client/ref.ts`.
-- **Writes are unmeasured and not merely unprobed.** The store is mirrored to iCloud by
-  `NSPersistentCloudKitContainer`. A write is an edit to one replica of a synchronising
-  object graph, underneath a running app that is also editing it, with `NSCK*` bookkeeping
-  tables a third-party writer would not maintain. That needs its own probe.
-- **Refs are session-scoped.** They address a Core Data row id, which is reused after a
-  delete and renumbered by a re-sync. There is no alternative that addresses an _entry_,
-  so the tools say so rather than pretending otherwise.
+  refs use `ZIDENTIFIER` instead. See `packages/maps/src/client/ref.ts`.
+- **Writes are closed on macOS 26.6, not closed forever.** All four lanes were measured or
+  observed. The one that could flip is App Intents: re-run `pnpm probe:maps-write` after a
+  macOS release and re-check Shortcuts.
+- **Refs are session-scoped only when a store has no `ZIDENTIFIER`.** Resolved: refs now
+  carry the Core Data UUID when it is set and distinct on every row, and fall back to the
+  row id otherwise. The fallback keeps the old caveat in full.

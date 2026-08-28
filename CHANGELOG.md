@@ -12,6 +12,83 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Maps can list the places in a Guide.** Collection membership turned out to be
+  `Z_6PLACES(Z_6COLLECTIONS, Z_7PLACES)`, a Core Data MANY-TO-MANY join table —
+  `Z_PRIMARYKEY` decodes ordinal 6 as `Collection` and 7 as `CollectionItem`. Because a
+  many-to-many leaves no column on either entity, the four names guessed from Core Data
+  convention (`ZCOLLECTION`, `ZCOLLECTION1`, `ZPARENTCOLLECTION`, `ZOWNINGCOLLECTION`)
+  could not have contained the answer, and `apple_maps_list_collection_places` returned
+  nothing for every one of the 10 Guides.
+
+  The key is now DISCOVERED BY RUNNING THE JOIN and scored against `ZPLACESCOUNT`, Maps'
+  own count per Guide, accepting only a candidate that reproduces all ten numbers exactly.
+  That bar is the point: `ZCOLLECTIONITEM.ZMAPITEM` joins `ZCOLLECTION` for 3 of 10
+  collections purely because map-item and collection row ids are both small integers, so a
+  resolver picking the best-covered joinable column — the rule this file already uses for
+  coordinates — would have filed places under the wrong Guides and looked like it worked.
+  Scoring also survives Apple renaming the relationship, which a hard-coded `Z_6PLACES`
+  would not.
+
+  Membership being many-to-many, one place can sit in several Guides, so the query asks
+  `IN (SELECT ...)` rather than joining. 30 item rows, 18 of them in a Guide; the other 12
+  belong to no collection at all.
+
+  Apple's own schema says so, which is the confirmation: Core Data maintains
+  `ZPLACESCOUNT` with a trigger that counts `Z_6PLACES.Z_6COLLECTIONS`. The oracle is
+  therefore DERIVED from the mechanism, so an exact match is guaranteed for the real
+  relationship and coincidental for everything else.
+
+  `scripts/probe-maps.mjs` never asked the question — it enumerated columns but not `Z_*`
+  tables, so the join table was invisible to it. It now scores every mechanism against
+  `ZPLACESCOUNT` and prints the winner. The offline fixture was the second reason this
+  survived: it was HAND-WRITTEN and declared a `ZCOLLECTION` column the real store does not
+  have, so the suite proved membership worked against a column that never existed — the
+  same shape as the `ZMUID` overflow below, a comfortable fixture passing while the real
+  store failed. It is now captured by `pnpm probe:maps --write`, and recapturing it turned
+  24 green tests red — every one of them a test that had been proving something about a
+  schema Apple does not ship.
+
+- **Captured fixtures no longer carry Core Data's triggers.** `writeFixture` omits them.
+  Maps' store has eight that maintain derived columns by calling
+  `NSCoreDataDATriggerUpdatedAffectedObjectValue`, a private function that exists only
+  inside Core Data, so replaying them into `node:sqlite` made every INSERT into a
+  triggered table fail with "no such function" — 18 tests at once, none of whose messages
+  named the cause. A fixture replays SHAPE; the behaviour those triggers implement is Core
+  Data's, not the store's. The header records how many were dropped, and the fingerprint
+  still counts every object.
+
+- **Maps refs are now stable across an iCloud re-sync.** `ZIDENTIFIER`, a Core Data UUID, is
+  set and distinct on every favourite, collection, collection item and recent on a real
+  store, so refs carry it instead of the Core Data row id and survive the renumbering a
+  re-sync causes. A store without it falls back to row ids and keeps the old
+  session-scoped caveat. The column is adopted only when it is populated AND distinct on
+  every row — a partially populated one would give durable refs for newly saved places and
+  fail silently for everything already there.
+
+  It was found by DIFFING THE STORE WHILE MAPS SAVED A PLACE, not by reading the schema.
+  `pnpm probe:maps` never reported it, because a probe can only report columns somebody
+  thought to look for.
+
+### Changed
+
+- **Maps stays read-only, and now on measurement rather than caution.**
+  `pnpm probe:maps-write` ([scripts/probe-maps-write.mjs](scripts/probe-maps-write.mjs))
+  snapshots the store, waits for a place to be saved by hand, and diffs. Saving one place
+  moves eight tables and bumps ten `Z_MAX` counters, including a ~1.2 KB GEO protobuf and
+  two ~3 KB encoded `CKRecord`s that cannot be synthesised, plus the
+  `NSPersistentHistoryTracking` rows the CloudKit exporter reads to decide what to upload.
+  `mapssyncd` holds the store open even with Maps quit, so there is no quiet moment either.
+
+  The App Intents lane was checked too: Maps ships strings for `Add Places to List` and
+  `Remove Places From List`, but the actions are not registered in Shortcuts on macOS 26.6 —
+  Maps is a Catalyst app carrying the iOS resource bundle, so the strings ship regardless.
+  All four lanes are recorded in [docs/maps.md](docs/maps.md) with what would have to change
+  for the answer to flip.
+
 ## [1.3.1] - 2026-08-27
 
 ### Added
@@ -35,6 +112,14 @@ summary.
   graph, underneath a running app that is also editing it, with `NSCK*` bookkeeping tables a
   third-party writer would not maintain. `APPLE_MAPS_ALLOW_WRITES` is accepted and ignored, and
   `tools.test.ts` asserts the tool list is identical with it on and off.
+
+  Two bugs were caught only by running against a real store, and both are the kind a comfortable
+  fixture cannot reach. `ZMUID` is a 64-bit Apple place id — a real one reads
+  `-2679868148951248105` — and `node:sqlite` THROWS past `Number.MAX_SAFE_INTEGER` rather than
+  truncating, so reading it as a number failed the entire favourites listing rather than that one
+  field; it is now `CAST(... AS TEXT)`, which is the rule `docs/surfaces.md` already stated. And 12
+  of 20 linked favourites carry `ZMUID = 0`, a sentinel rather than an id, now reported as null so
+  two unrelated places cannot be taken for the same place.
 
   Columns are resolved by COVERAGE rather than by name, which no other surface has needed:
   `ZHISTORYITEM` carries both `ZLATITUDE` (1 row of 33) and `ZLATITUDE1` (19 of 33), and taking the

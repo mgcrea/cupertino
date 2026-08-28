@@ -11,7 +11,10 @@ import {
 describe("place refs", () => {
   it("round-trips every kind", () => {
     for (const kind of ["favorite", "collection-item", "history"] as const) {
-      expect(decodePlaceRef(encodePlaceRef(kind, 42))).toEqual({ kind, id: 42 });
+      expect(decodePlaceRef(encodePlaceRef(kind, { rowId: 42 }))).toEqual({
+        kind,
+        key: { rowId: 42 },
+      });
     }
   });
 
@@ -22,11 +25,13 @@ describe("place refs", () => {
    * of the two a caller meant.
    */
   it("keeps the kinds apart", () => {
-    expect(encodePlaceRef("favorite", 1)).not.toBe(encodePlaceRef("history", 1));
+    expect(encodePlaceRef("favorite", { rowId: 1 })).not.toBe(
+      encodePlaceRef("history", { rowId: 1 }),
+    );
   });
 
   it("forgives whitespace around a pasted ref, and nothing inside it", () => {
-    expect(decodePlaceRef("  p1:f:7\n")).toEqual({ kind: "favorite", id: 7 });
+    expect(decodePlaceRef("  p1:f:7\n")).toEqual({ kind: "favorite", key: { rowId: 7 } });
     expect(() => decodePlaceRef("p1: f:7")).toThrow(InvalidMapsRefError);
   });
 
@@ -65,12 +70,51 @@ describe("place refs", () => {
 
 describe("collection refs", () => {
   it("round-trips", () => {
-    expect(decodeCollectionRef(encodeCollectionRef(9))).toBe(9);
+    expect(decodeCollectionRef(encodeCollectionRef({ rowId: 9 }))).toEqual({ rowId: 9 });
   });
 
-  it("rejects anything that is not a number", () => {
+  it("rejects anything that is neither a number nor a uuid", () => {
     for (const bad of ["pc1:", "pc1:abc", "pc1:1.5", "3"]) {
       expect(() => decodeCollectionRef(bad)).toThrow(InvalidMapsRefError);
+    }
+  });
+});
+
+/*
+ * The uuid half. `ZIDENTIFIER` is set and distinct on every row of a real store,
+ * so these are the refs the surface actually hands out; the row-id refs above
+ * are the degraded mode for a store without it.
+ */
+describe("uuid refs", () => {
+  const UUID = "1f2e3d4c-aaaa-bbbb-cccc-000000000001";
+
+  it("round-trips a uuid through every kind", () => {
+    for (const kind of ["favorite", "collection-item", "history"] as const) {
+      expect(decodePlaceRef(encodePlaceRef(kind, { uuid: UUID }))).toEqual({
+        kind,
+        key: { uuid: UUID },
+      });
+    }
+    expect(decodeCollectionRef(encodeCollectionRef({ uuid: UUID }))).toEqual({ uuid: UUID });
+  });
+
+  it("carries the uuid undashed, so a ref stays one opaque token", () => {
+    expect(encodePlaceRef("favorite", { uuid: UUID })).toBe(
+      "p1:f:1f2e3d4caaaabbbbcccc000000000001",
+    );
+    expect(encodePlaceRef("favorite", { uuid: UUID })).not.toContain("-");
+  });
+
+  /*
+   * The two key spaces are unrelated numbers, so telling them apart by shape is
+   * what stops a uuid ref resolving to a real but WRONG row. 32 hex characters
+   * is a uuid; decimal is a row id; nothing in between decodes at all.
+   */
+  it("never confuses a row id for a uuid, in either direction", () => {
+    expect(decodePlaceRef("p1:f:42").key).toEqual({ rowId: 42 });
+    expect(decodePlaceRef(`p1:f:${"a".repeat(32)}`).key).toHaveProperty("uuid");
+    for (const bad of [`p1:f:${"a".repeat(31)}`, `p1:f:${"a".repeat(33)}`, "p1:f:ABCDEF"]) {
+      expect(() => decodePlaceRef(bad)).toThrow(InvalidMapsRefError);
     }
   });
 });

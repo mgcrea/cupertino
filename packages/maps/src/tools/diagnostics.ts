@@ -71,10 +71,13 @@ export const buildDiagnostics = async (
         "and no coordinate. Almost certainly the unconfigured Home / Work / School slots. " +
         "They are returned with `linked: false` rather than dropped, because silently " +
         "omitting rows reads as a deletion.",
-      "How a collection item belongs to a collection is UNKNOWN — no ZCOLLECTION column was " +
-        "found on ZCOLLECTIONITEM, and Core Data names a foreign key after the relationship " +
-        "rather than the entity. `collectionFk` above shows what was resolved; when it is " +
-        "null, collections list without their items and every result says so.",
+      "Collection membership is a many-to-many join table, Z_6PLACES(Z_6COLLECTIONS, " +
+        "Z_7PLACES) on the probed machine, NOT a column on ZCOLLECTIONITEM — which is why " +
+        "four guessed column names all missed it. It is re-proved at open time by " +
+        "reproducing ZPLACESCOUNT exactly, never by matching a name, because " +
+        "ZCOLLECTIONITEM.ZMAPITEM joins 3 of 10 collections by coincidence. When nothing " +
+        "reproduces those counts, `collectionMembership` is null, collections list " +
+        "without their places and every result says so.",
       "Refs address a local row id. Core Data reuses those after a delete and this store is " +
         "mirrored from CloudKit, so a re-sync can renumber rows. A ref is good for the " +
         "current session and should not be stored.",
