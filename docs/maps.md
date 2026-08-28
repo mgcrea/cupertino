@@ -229,18 +229,72 @@ Worth recording for the next macOS release: if those actions ever appear in Shor
 write half becomes tractable overnight, and it would be about **Lists** — no intent adds a
 favourite either.
 
-### So Maps has no write lane
+### Where each lane stands
 
-| Lane               | Verdict         | Why                                                                                           |
-| ------------------ | --------------- | --------------------------------------------------------------------------------------------- |
-| Apple Events       | absent          | no scripting dictionary, checked directly                                                     |
-| App Intents        | absent on macOS | strings ship, actions are not registered                                                      |
-| SQL into the store | refused         | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads     |
-| Accessibility      | not pursued     | a new TCC service for one surface, ~31 ms per element, and no stable identity in scraped text |
+| Lane               | Verdict                                 | Why                                                                                       |
+| ------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Apple Events       | absent                                  | no scripting dictionary, checked directly                                                 |
+| App Intents        | absent on macOS                         | strings ship, actions are not registered                                                  |
+| SQL into the store | refused                                 | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads |
+| Accessibility      | **candidate, blocked on an app defect** | the controls exist and are named — see below                                              |
 
-`supportsWrites: false` in `surfaces.json` now rests on measurement rather than caution, and
-`APPLE_MAPS_ALLOW_WRITES` stays accepted-and-ignored so a config that sets it does not look
-broken.
+`supportsWrites: false` in `surfaces.json` stays true FOR NOW, and `APPLE_MAPS_ALLOW_WRITES`
+stays accepted-and-ignored so a config that sets it does not look broken. But the fourth row
+is no longer a closed door.
+
+### The Accessibility lane exists, and "not pursued" was wrong
+
+This section previously dismissed AX in one line. That was an assertion, and the record on
+Maps is that assertions about Maps have been wrong every time.
+[scripts/spike-maps-ax-write.mjs](../scripts/spike-maps-ax-write.mjs) measured it instead.
+With a place card open, on macOS 26.6:
+
+    AXButton  "Favorite"   actions = AXPress/AXScrollToVisible/AXCancel/AXShowMenu
+    AXButton  "Add"        actions = AXPress/...
+    AXButton  "Pin"        actions = AXPress/...
+
+    461 elements · 236 pressable · 219 of them NAMED · 17 anonymous
+
+**The controls are there, and they are addressable by name rather than by position.** That
+last number decides whether such a lane could ever be reliable: a verb built on element
+position breaks on every layout change and every macOS release, and this tree does not
+require one.
+
+Two flaws in the spike had to be fixed before it could say that, and each produced a
+confident zero:
+
+- **It walked `windows[0]`.** A place card's overflow control opens a POPOVER, and AppKit
+  models a popover as its own `AXWindow`.
+- **It filtered by ROLE.** Maps is a Catalyst app, and Catalyst reports tappable controls as
+  `AXGenericElement`, `AXStaticText` and `AXImage` at least as often as `AXButton` — the
+  role histogram is 92 static texts and 52 generic elements against 49 buttons. The role
+  filter saw 15 pressable elements where there are 236, and the add control it missed is an
+  `AXImage`. Ask what has `AXPress`, never what calls itself a button.
+
+**What a write would look like**, and it is coherent:
+
+1. **File lane** names the place — `ZIDENTIFIER` for identity, `ZLATITUDE`/`ZLONGITUDE` for
+   where it is. Already shipped.
+2. **URL scheme** brings up its card: `maps://?ll=<lat>,<lon>`. Not an Apple Event, needs no
+   grant, and is how the measurement above was set up without clicking anything.
+3. **Accessibility** presses `Favorite` or `Add`.
+
+Maps performs the write, so the protobuf, the `CKRecord` and the history rows are its problem
+and it gets them right. That is why this lane is worth more than the SQL one.
+
+**What blocks it is not Maps.** Accessibility does not work from inside Cupertino.app:
+[scripts/spike-app-tcc/README.md](../scripts/spike-app-tcc/README.md) records the app's own
+`AXIsProcessTrusted()` returning true while an `osascript` grandchild is denied and cannot
+name a single window, though a grandchild under a different responsible app reads them fine.
+That same defect is why `apple_mail_reply_to_message` fails on Macs whose Accessibility row
+is green. **One fix unblocks both.**
+
+The remaining costs are real: a new TCC service for a surface that needs none today, Maps
+having to be running, and UI the user watches move.
+
+The menu bar, separately, is a genuine no — 122 items across all seven menus, zero write
+verbs. macOS keeps contextual menu items present-and-disabled, so that does not depend on
+anything being selected.
 
 ## Still open
 
@@ -253,9 +307,10 @@ broken.
 - **`ZMUID` stability is untested.** It looks like Apple's cross-device place id and is
   reported, but it is populated 20/23 and identifies a _place_ rather than an _entry_, so
   refs use `ZIDENTIFIER` instead. See `packages/maps/src/client/ref.ts`.
-- **Writes are closed on macOS 26.6, not closed forever.** All four lanes were measured or
-  observed. The one that could flip is App Intents: re-run `pnpm probe:maps-write` after a
-  macOS release and re-check Shortcuts.
+- **Writes are blocked on an app defect, not on Maps.** The Accessibility lane has named,
+  pressable `Favorite` and `Add` controls; what stops it is that AX does not work from
+  inside Cupertino.app. Fixing that is a prerequisite for a Maps write half AND for
+  `apple_mail_reply_to_message`, and it is not a Maps task.
 - **Refs are session-scoped only when a store has no `ZIDENTIFIER`.** Resolved: refs now
   carry the Core Data UUID when it is set and distinct on every row, and fall back to the
   row id otherwise. The fallback keeps the old caveat in full.
