@@ -31,7 +31,8 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "the user gave them. Needs Full Disk Access — Maps is not scriptable, so without the " +
         "grant this returns an error rather than an empty list. Some entries have no linked " +
         "place (`linked: false`); those are the unconfigured Home/Work/School slots, not " +
-        "broken rows.",
+        "broken rows. This is everything SAVED: Maps' own Pinned panel applies display rules " +
+        "that are not in the store and can show fewer.",
       inputSchema: { limit: limitArg },
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
@@ -45,9 +46,29 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
             count: result.places.length,
             unlinked: unlinked
               ? `${unlinked} entr${unlinked === 1 ? "y has" : "ies have"} no linked place — ` +
-                `these are Maps' unconfigured Home/Work/School slots, returned rather than ` +
-                `hidden so the count matches what the app shows.`
+                `these are Maps' unconfigured Home/Work/School slots. They are returned rather ` +
+                `than dropped, because silently omitting rows reads as a deletion.`
               : undefined,
+            /**
+             * MEASURED, and the reason the note above no longer claims this count
+             * matches the app: on a real store Maps' Pinned panel showed 17 while
+             * this tool returned 24. Three extras were the unlinked slots; four
+             * were ordinary favourites with names, addresses and coordinates, one
+             * an exact duplicate of a shown entry.
+             *
+             * No column in ZFAVORITEITEM separates them — ZHIDDEN, ZSOURCE, ZTYPE
+             * and ZVERSION were all cross-tabulated and none yields a group of
+             * four. `ZVERSION = 2` has exactly 17 rows and is a COINCIDENCE OF
+             * TOTALS: 16 of them are linked while all 17 shown entries are. So
+             * Maps applies display rules this server cannot see — de-duplication
+             * is the visible one — and no filter written here could reproduce
+             * them. Saying so beats guessing, and beats the old note, which
+             * asserted the opposite of what was measured. See docs/maps.md.
+             */
+            mayExceedApp:
+              "Maps' own Pinned panel can show FEWER places than this. It applies display " +
+              "rules — de-duplication at least — that are not recorded in the store, so this " +
+              "is everything saved, not everything shown.",
             truncated: result.truncated
               ? `More favourites exist beyond limit=${limit ?? client.config.maxResults}.`
               : undefined,
@@ -76,6 +97,13 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
           compact({
             collections: result.collections,
             count: result.collections.length,
+            // The guides do not account for every saved place, and silence
+            // about that reads as "there are no others".
+            unfiled:
+              result.unfiled && result.unfiled > 0
+                ? `${result.unfiled} saved place(s) are in no collection. ` +
+                  `List them with apple_maps_list_unfiled_places.`
+                : undefined,
             // The honest version of a capability this server may not have.
             itemsUnavailable: result.itemsEnumerable
               ? undefined
@@ -115,6 +143,45 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
               "through apple_maps_list_collections.",
           );
         }
+        return ok(
+          compact({
+            places: result.places,
+            count: result.places.length,
+            truncated: result.truncated
+              ? `More places exist beyond limit=${limit ?? client.config.maxResults}.`
+              : undefined,
+          }),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "apple_maps_list_unfiled_places",
+    {
+      description:
+        "List saved places that are in no collection. Maps files a saved place into a Guide " +
+        "through a join table, and a place can exist with no row there — 12 of 30 on the probed " +
+        "machine, 7 of which appear nowhere else in the store: not as a favourite, not in " +
+        "another Guide, not in recents. Those are reachable through no other tool. Needs Full " +
+        "Disk Access. Returns nothing when collection membership could not be resolved, which " +
+        "apple_maps_diagnostics reports.",
+      inputSchema: { limit: limitArg },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    },
+    async ({ limit }) =>
+      wrapResult(async () => {
+        const collections = client.collections({ limit: 1 });
+        if (!collections.itemsEnumerable) {
+          return fail(
+            "This store does not expose which collection an item belongs to, so places in no " +
+              "collection cannot be told apart from places in one. " +
+              "apple_maps_list_collections still works.",
+          );
+        }
+        const result = client.places("collection-item", {
+          limit: limit ?? client.config.maxResults,
+          unfiled: true,
+        });
         return ok(
           compact({
             places: result.places,

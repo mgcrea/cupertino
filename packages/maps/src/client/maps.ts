@@ -165,7 +165,12 @@ export class AppleMapsClient {
 
   places(
     kind: PlaceKind,
-    opts: { limit: number; collectionId?: number | undefined; query?: string | undefined },
+    opts: {
+      limit: number;
+      collectionId?: number | undefined;
+      query?: string | undefined;
+      unfiled?: boolean | undefined;
+    },
   ): { places: RenderedPlace[]; truncated: boolean; datesAvailable: boolean } {
     const store = this.store();
     const { rows, truncated } = store.places(kind, opts);
@@ -198,6 +203,15 @@ export class AppleMapsClient {
     truncated: boolean;
     /** Null when the membership key was not found — see `store.ts`. */
     itemsEnumerable: boolean;
+    /**
+     * Saved places filed in no collection, or null when unanswerable.
+     *
+     * Reported beside the collections because the counts otherwise do not add
+     * up and nothing says so: the guides account for 18 places while the store
+     * holds 30, and a caller comparing the two has no way to learn where the
+     * rest went.
+     */
+    unfiled: number | null;
   } {
     const store = this.store();
     const { rows, truncated } = store.collections(opts);
@@ -205,6 +219,7 @@ export class AppleMapsClient {
       collections: rows.map((r) => this.#renderCollection(r, store.caps.epoch)),
       truncated,
       itemsEnumerable: store.caps.membership !== null,
+      unfiled: store.unfiledCount(),
     };
   }
 

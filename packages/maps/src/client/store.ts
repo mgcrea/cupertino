@@ -695,10 +695,59 @@ export class MapsStore {
     return this.caps.history;
   }
 
+  /**
+   * Items belonging to no collection at all, or null when unanswerable.
+   *
+   * MEASURED: 30 collection items, 18 filed in a guide, 12 in none — and Core
+   * Data has deleted nothing (`Z_PRIMARYKEY.Z_MAX` equals the live count for
+   * both `Collection` and `CollectionItem`), so these are not the debris of
+   * removed guides. 7 of the 12 appear nowhere else in the store: not as a
+   * favourite, not in another guide, not in recents. They are places the user
+   * saved that no other tool can reach.
+   *
+   * `NOT IN` needs the null guard. A subquery yielding a single NULL makes
+   * `NOT IN` false for EVERY row, so the filter would silently return nothing
+   * and read as "you have no unfiled places" — the failure this whole surface
+   * keeps having to design against.
+   */
+  #unfiledClause(): string | null {
+    const m = this.caps.membership;
+    if (!m) return null;
+    if (m.kind === "column") return `t."${m.column}" IS NULL`;
+    return (
+      `t."Z_PK" NOT IN (SELECT j."${m.itemColumn}" FROM "${m.table}" j ` +
+      `WHERE j."${m.itemColumn}" IS NOT NULL)`
+    );
+  }
+
+  /** How many collection items are filed in no collection; null when unknown. */
+  unfiledCount(): number | null {
+    const e = this.caps.collectionItems;
+    const clause = this.#unfiledClause();
+    if (!e.present || !clause) return null;
+    try {
+      return Number(
+        (
+          this.db.prepare(`SELECT COUNT(*) AS c FROM "${e.table}" t WHERE ${clause}`).get() as {
+            c: number | bigint;
+          }
+        ).c,
+      );
+    } catch {
+      return null;
+    }
+  }
+
   /** One entity's places, newest first when a date is available. */
   places(
     kind: "favorite" | "collection-item" | "history",
-    opts: { limit: number; collectionId?: number | undefined; query?: string | undefined },
+    opts: {
+      limit: number;
+      collectionId?: number | undefined;
+      query?: string | undefined;
+      /** Only items filed in NO collection. See `#unfiledClause`. */
+      unfiled?: boolean | undefined;
+    },
   ): { rows: PlaceRow[]; truncated: boolean } {
     const e = this.#entityFor(kind);
     if (!e.present || e.rows === 0) return { rows: [], truncated: false };
@@ -725,6 +774,14 @@ export class MapsStore {
         );
       }
       params.push(opts.collectionId);
+    }
+
+    if (opts.unfiled) {
+      const clause = this.#unfiledClause();
+      // Membership is unresolved, so "in no collection" is not a question this
+      // store can answer either. Empty, and the caller is told why.
+      if (!clause) return { rows: [], truncated: false };
+      where.push(clause);
     }
 
     if (opts.query) {

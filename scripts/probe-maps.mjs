@@ -498,6 +498,145 @@ const timings = [
 
 const localCache = fileFacts(LOCAL_CACHE);
 
+/**
+ * WHAT ARE THE UNFILED COLLECTION ITEMS?
+ *
+ * The membership section above resolves the mechanism and then leaves a loose
+ * end: `ZPLACESCOUNT` sums to 18 while `ZCOLLECTIONITEM` holds 30 rows. It
+ * offers two readings — orphans of deleted guides, or a stale oracle — and
+ * settles neither, so twelve rows of somebody's real data sit unexplained.
+ *
+ * There is a THIRD reading it does not consider, and it is the one that matters
+ * most if true. Maps' sidebar has four sections — `Pinned`, `Saved Places`,
+ * `Guides`, `Recently Added` — measured through Accessibility in
+ * `scripts/spike-maps-ax-write.mjs`. If Pinned and Recently Added are UI
+ * groupings with no `ZCOLLECTION` row behind them, their members are exactly
+ * this: collection items belonging to no guide.
+ *
+ * The difference is not academic. Remnants of a deleted guide are debris and can
+ * be ignored. Pinned places are places the user SAVED, and a surface that files
+ * every collection item under a guide would be silently hiding them — the
+ * failure `docs/maps.md` already names, where dropping rows makes the count
+ * disagree with the app and reads as a deletion.
+ *
+ * `ZTYPE` and `ZORIGIN` are what separate the readings. A KIND of item clusters
+ * on a distinct value; debris looks like everything else. Creation dates say the
+ * same thing from another angle: debris is old and clustered, a live section is
+ * not.
+ *
+ * PRIVACY: counts and small enum codes only. `ZTYPE` and `ZORIGIN` are Core Data
+ * integers, never a name, an address or a coordinate.
+ */
+const unfiled = (() => {
+  if (!winner || winner.kind !== "joinTable") {
+    return { tested: false, reason: "membership is not a join table on this store" };
+  }
+  const filedSql = `SELECT DISTINCT "${winner.itemColumn}" AS pk FROM "${winner.table}"`;
+  const cols = new Set(columnsOf("ZCOLLECTIONITEM").map((c) => c.name));
+  const facet = (name) =>
+    cols.has(name)
+      ? attempt(
+          () =>
+            db
+              .prepare(
+                `SELECT "${name}" AS v, COUNT(*) AS n,
+                      SUM(CASE WHEN Z_PK IN (${filedSql}) THEN 1 ELSE 0 END) AS filed
+                 FROM "ZCOLLECTIONITEM" GROUP BY "${name}" ORDER BY n DESC`,
+              )
+              .all(),
+          [],
+        )
+      : null;
+  const total = attempt(
+    () => Number(db.prepare(`SELECT COUNT(*) AS c FROM "ZCOLLECTIONITEM"`).get().c),
+    0,
+  );
+  const filedCount = attempt(
+    () =>
+      Number(
+        db.prepare(`SELECT COUNT(*) AS c FROM "ZCOLLECTIONITEM" WHERE Z_PK IN (${filedSql})`).get()
+          .c,
+      ),
+    0,
+  );
+  return {
+    tested: true,
+    total,
+    filed: filedCount,
+    unfiled: total - filedCount,
+    byType: facet("ZTYPE"),
+    byOrigin: facet("ZORIGIN"),
+    // A linked place means the row still points at something real, which debris
+    // from a deleted guide need not.
+    unfiledLinked: attempt(
+      () =>
+        Number(
+          db
+            .prepare(
+              `SELECT COUNT(*) AS c FROM "ZCOLLECTIONITEM"
+              WHERE Z_PK NOT IN (${filedSql}) AND "ZMAPITEM" IS NOT NULL`,
+            )
+            .get().c,
+        ),
+      null,
+    ),
+  };
+})();
+
+/**
+ * WHY DOES MAPS SHOW FEWER FAVOURITES THAN THE STORE HOLDS?
+ *
+ * MEASURED: Maps' Pinned panel listed 17 while `ZFAVORITEITEM` holds 24 and
+ * `apple_maps_list_favorites` returned all 24. Matching the tool output against
+ * a screenshot of the panel, the seven extras are three unlinked rows — the
+ * unconfigured Home/Work/School slots — and FOUR ordinary favourites with names,
+ * addresses and coordinates, one of them an exact duplicate of a shown entry.
+ *
+ * Listing rows the app hides is the mirror of dropping rows it shows, and only
+ * the second was ever guarded against here.
+ *
+ * `ZHIDDEN` was the obvious answer and IS WRONG: it is 1 on exactly the three
+ * unlinked rows and 0 on all twenty-one others. It explains the rows the surface
+ * already handles and none of the four that matter.
+ *
+ * That is three column guesses in a row on this store — `ZCOLLECTION` for
+ * membership, `ZTYPE`/`ZORIGIN` for unfiled items, `ZHIDDEN` here — so this stops
+ * guessing and cross-tabulates EVERY low-cardinality integer column at once.
+ * A column that excludes exactly four favourites will show a group of four.
+ * If none does, the distinction is not in this table and the next place to look
+ * is `ZMIXINMAPITEM` or a section membership the schema keeps elsewhere.
+ *
+ * PRIVACY: counts and small enum values only, never a place.
+ */
+const favoriteVisibility = (() => {
+  const table = "ZFAVORITEITEM";
+  const cols = columnsOf(table)
+    .map((c) => c.name)
+    .filter((n) => /^Z(HIDDEN|SOURCE|TYPE|VERSION|POSITIONINDEX)$/.test(n));
+  if (!cols.length) return { tested: false, reason: "no candidate columns on ZFAVORITEITEM" };
+  const facets = {};
+  for (const name of cols) {
+    const rows = attempt(
+      () =>
+        db
+          .prepare(
+            `SELECT "${name}" AS v, COUNT(*) AS n,
+                    SUM(CASE WHEN "ZMAPITEM" IS NOT NULL THEN 1 ELSE 0 END) AS linked
+               FROM "${table}" GROUP BY "${name}" ORDER BY n DESC, v`,
+          )
+          .all(),
+      [],
+    );
+    // A column with a value per row says nothing about grouping; skip the noise.
+    if (rows.length > 0 && rows.length < 8) facets[name] = rows;
+  }
+  const total = attempt(
+    () => Number(db.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get().c),
+    0,
+  );
+  return { tested: true, total, facets };
+})();
+
 const doc = {
   tool: "scripts/probe-maps.mjs",
   macos: macosVersion(),
@@ -518,6 +657,8 @@ const doc = {
     entities,
     idBridge,
     collectionMembership,
+    unfiledItems: unfiled,
+    favoriteVisibility,
     dateProbe,
     timings,
   },
@@ -546,6 +687,16 @@ doc.verdict.membership = winner
         : `${winner.kind === "viaMapItem" ? "ZMIXINMAPITEM" : "ZCOLLECTIONITEM"}.${winner.column}`
     }, ${winner.matched}/${winner.collections ?? "?"} collections match ZPLACESCOUNT`
   : "NOT FOUND — no column, join table or indirection reproduces ZPLACESCOUNT";
+
+doc.verdict.unfiledItems = unfiled.tested
+  ? `${unfiled.unfiled} of ${unfiled.total} collection items belong to NO guide` +
+    (unfiled.unfiledLinked !== null
+      ? `, ${unfiled.unfiledLinked} of them still linked to a place`
+      : "") +
+    ". See the UNFILED section: an all-unfiled ZTYPE is more likely a kind of ITEM " +
+    "(a dropped pin) than a kind of container, and unfiled rows sharing a value with " +
+    "filed ones are separated by nothing in this schema."
+  : `not tested — ${unfiled.reason}`;
 
 doc.verdict.walBlind = doc.findings.store.walBlind
   ? `WAL (${wal.sizeBytes} B) EXCEEDS the store (${store.sizeBytes} B) — an immutable read misses recent changes`
@@ -629,6 +780,58 @@ if (args.json) {
       `      ${winner.perCollection.map((r) => `${r.collection}: ${r.declared}/${r.joined}`).join(", ")}`,
     );
   }
+  if (unfiled.tested) {
+    L.push("");
+    L.push("UNFILED COLLECTION ITEMS — a kind, or debris?");
+    L.push(
+      `  ${unfiled.filed} of ${unfiled.total} filed in a guide, ${unfiled.unfiled} in none` +
+        (unfiled.unfiledLinked === null
+          ? ""
+          : `, ${unfiled.unfiledLinked} of those still linked to a place`),
+    );
+    for (const [label, rows] of [
+      ["ZTYPE", unfiled.byType],
+      ["ZORIGIN", unfiled.byOrigin],
+    ]) {
+      if (!rows) {
+        L.push(`    ${label.padEnd(8)} column not present`);
+        continue;
+      }
+      for (const r of rows) {
+        const un = Number(r.n) - Number(r.filed);
+        L.push(
+          `    ${label.padEnd(8)} = ${String(r.v).padEnd(6)} ${String(r.n).padStart(3)} rows  ` +
+            `${String(r.filed).padStart(3)} filed  ${String(un).padStart(3)} unfiled`,
+        );
+      }
+    }
+    L.push("  READ THIS CAREFULLY — the obvious reading is wrong on the probed store.");
+    L.push("  An all-unfiled value looks like a container kind (Pinned, Recently Added) and");
+    L.push("  usually is not: on this Mac ZTYPE=3 held exactly the 2 rows that also carry");
+    L.push("  ZDROPPEDPINCOORDINATE, so ZTYPE says what an item IS, not where it lives.");
+    L.push("  Cross-check any all-unfiled value against the other columns before naming it.");
+    L.push("  Unfiled rows sharing a value with filed ones are the real question: nothing in");
+    L.push("  the schema separates them, so they are debris, or a membership kept somewhere");
+    L.push("  this probe has not looked.");
+  }
+
+  if (favoriteVisibility.tested) {
+    L.push("");
+    L.push("FAVOURITE VISIBILITY — the store holds more than Maps shows");
+    L.push(`  ${favoriteVisibility.total} rows; Maps' Pinned panel showed 17 on the probed Mac.`);
+    for (const [name, rows] of Object.entries(favoriteVisibility.facets)) {
+      for (const r of rows) {
+        L.push(
+          `    ${name.padEnd(16)} = ${String(r.v).padEnd(6)} ${String(r.n).padStart(3)} rows  ` +
+            `${String(r.linked).padStart(3)} linked`,
+        );
+      }
+    }
+    L.push("  ZHIDDEN was the obvious answer and is WRONG — it marks only the 3 unlinked");
+    L.push("  slots. Look for a group of FOUR: that is the set Maps hides and this surface");
+    L.push("  still lists. No group of four means the distinction is not in this table.");
+  }
+
   L.push("");
   L.push("DATES");
   L.push(

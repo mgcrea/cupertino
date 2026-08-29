@@ -31,6 +31,7 @@ const EXPECTED = [
   "apple_maps_list_collections",
   "apple_maps_list_favorites",
   "apple_maps_list_recents",
+  "apple_maps_list_unfiled_places",
   "apple_maps_search_places",
 ];
 

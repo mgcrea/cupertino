@@ -582,6 +582,91 @@ describe("collections", () => {
     expect(store.places("collection-item", { limit: 10, collectionId: 1 }).rows).toEqual([]);
   });
 
+  /*
+   * Places filed in NO guide.
+   *
+   * MEASURED: 30 collection items, 18 in a guide, 12 in none — and Core Data
+   * has deleted nothing, so they are not leftovers from removed guides. 7 of
+   * the 12 exist nowhere else in the store, which is what made them worth a
+   * tool: no other query in this package can reach them.
+   */
+  const withOrphans = (): DatabaseSync => {
+    const db = withJoinTable();
+    const item = db.prepare(
+      `INSERT INTO ZCOLLECTIONITEM (Z_PK, Z_ENT, Z_OPT, ZMAPITEM, ZMAPITEMNAME) VALUES (?, 7, 1, ?, ?)`,
+    );
+    item.run(4, 23, "Filed nowhere");
+    item.run(5, 24, "Also filed nowhere");
+    return db;
+  };
+
+  it("lists only the places that are in no collection", () => {
+    const store = open(withOrphans());
+    expect(store.unfiledCount()).toBe(2);
+    // Sorted: these rows carry no timestamps, so the store's ORDER BY has
+    // nothing to sort on and the order is not part of the contract here.
+    expect(
+      store
+        .places("collection-item", { limit: 10, unfiled: true })
+        .rows.map((r) => r.name)
+        .toSorted(),
+    ).toEqual(["Also filed nowhere", "Filed nowhere"]);
+    // The guides are unaffected by the new filter.
+    expect(store.places("collection-item", { limit: 10, collectionId: 1 }).rows).toHaveLength(2);
+  });
+
+  /*
+   * THE NULL TRAP, and the reason `#unfiledClause` guards the subquery.
+   *
+   * `x NOT IN (SELECT y ...)` is false for EVERY row as soon as one y is NULL,
+   * because SQL cannot prove x differs from an unknown. Without the guard this
+   * filter would return an empty list and read as "you have no unfiled places"
+   * — a wrong answer that looks like a correct one, which is the failure this
+   * surface keeps having to design against.
+   */
+  it("still finds unfiled places when the join table holds a NULL", () => {
+    const db = withOrphans();
+    db.prepare(`INSERT INTO Z_6PLACES (Z_6COLLECTIONS, Z_7PLACES) VALUES (?, NULL)`).run(2);
+    const store = open(db);
+    expect(store.unfiledCount()).toBe(2);
+    expect(store.places("collection-item", { limit: 10, unfiled: true }).rows).toHaveLength(2);
+  });
+
+  it("reads unfiled as a null membership column when membership is a column", () => {
+    const db = build(`${withoutTable(FIXTURE, "Z_6PLACES")}
+      ALTER TABLE ZCOLLECTIONITEM ADD COLUMN ZPARENT INTEGER;`);
+    db.prepare(
+      `INSERT INTO ZCOLLECTION (Z_PK, Z_ENT, Z_OPT, ZPLACESCOUNT, ZTITLE) VALUES (1, 6, 1, 1, 'A')`,
+    ).run();
+    const item = db.prepare(
+      `INSERT INTO ZCOLLECTIONITEM (Z_PK, Z_ENT, Z_OPT, ZMAPITEM, ZMAPITEMNAME, ZPARENT)
+       VALUES (?, 7, 1, ?, ?, ?)`,
+    );
+    item.run(1, 20, "In the guide", 1);
+    item.run(2, 21, "Filed nowhere", null);
+    const store = open(db);
+    expect(store.caps.membership).toEqual({ kind: "column", column: "ZPARENT" });
+    expect(
+      store.places("collection-item", { limit: 10, unfiled: true }).rows.map((r) => r.name),
+    ).toEqual(["Filed nowhere"]);
+  });
+
+  /* Unanswerable is not the same as none, and must not read as none. */
+  it("returns nothing and no count when membership is unresolved", () => {
+    const db = build(withoutTable(FIXTURE, "Z_6PLACES"));
+    db.prepare(
+      `INSERT INTO ZCOLLECTION (Z_PK, Z_ENT, Z_OPT, ZPLACESCOUNT, ZTITLE) VALUES (1, 6, 1, 1, 'A')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO ZCOLLECTIONITEM (Z_PK, Z_ENT, Z_OPT, ZMAPITEM, ZMAPITEMNAME)
+       VALUES (1, 7, 1, 20, 'Somewhere')`,
+    ).run();
+    const store = open(db);
+    expect(store.caps.membership).toBeNull();
+    expect(store.unfiledCount()).toBeNull();
+    expect(store.places("collection-item", { limit: 10, unfiled: true }).rows).toEqual([]);
+  });
+
   /* A place filed in two guides is returned by each of them, exactly once. */
   it("returns a place in two guides once from each", () => {
     const db = withJoinTable();

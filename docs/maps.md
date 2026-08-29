@@ -116,6 +116,21 @@ Membership being many-to-many, one place can sit in several Guides, so the query
 `IN (SELECT ...)` rather than joining. **30 item rows, 18 of them in a Guide**: the other
 12 belong to no collection at all, and all 30 still reach a place through `ZMAPITEM`.
 
+**Those 12 are saved places, not debris, and `apple_maps_list_unfiled_places` returns them.**
+The obvious theory — leftovers from deleted Guides — is disproved by the store itself:
+`Z_PRIMARYKEY.Z_MAX` equals the live row count for both `Collection` (10) and
+`CollectionItem` (30), so Core Data has never deleted one of either. Checked against the
+rest of the store, **7 of the 12 appear nowhere else**: not as a favourite, not in another
+Guide, not in recents. Before this tool existed they were reachable only by guessing a
+term for `apple_maps_search_places`, and `apple_maps_list_collections` reported 18 places
+across the Guides with nothing to say about the other 12. It now carries an `unfiled`
+count for exactly that reason.
+
+The filter is `Z_PK NOT IN (SELECT <item column> ... WHERE <item column> IS NOT NULL)`, and
+the guard is load-bearing: `NOT IN` is false for **every** row as soon as the subquery
+yields one NULL, so without it the tool would report no unfiled places at all — a wrong
+answer shaped exactly like a right one.
+
 **The epoch is `apple-seconds`, and the wrong reading is plausible.** The same
 `ZCREATETIME` value read as unix seconds lands in **1995**. The probe prints both
 readings side by side for that reason, and the server detects the epoch from the store
@@ -232,11 +247,11 @@ favourite either.
 ### Where each lane stands
 
 | Lane               | Verdict                                 | Why                                                                                       |
-| ------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Apple Events       | absent                                  | no scripting dictionary, checked directly                                                 |
-| App Intents        | absent on macOS                         | strings ship, actions are not registered                                                  |
-| SQL into the store | refused                                 | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads |
-| Accessibility      | **candidate, blocked on an app defect** | the controls exist and are named — see below                                              |
+| ------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Apple Events       | absent                                   | no scripting dictionary, checked directly                                                 |
+| App Intents        | absent on macOS                          | strings ship, actions are not registered                                                  |
+| SQL into the store | refused                                   | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads |
+| Accessibility      | **candidate, blocked on an app defect**  | the controls exist and are named — see below                                              |
 
 `supportsWrites: false` in `surfaces.json` stays true FOR NOW, and `APPLE_MAPS_ALLOW_WRITES`
 stays accepted-and-ignored so a config that sets it does not look broken. But the fourth row
@@ -295,6 +310,89 @@ having to be running, and UI the user watches move.
 The menu bar, separately, is a genuine no — 122 items across all seven menus, zero write
 verbs. macOS keeps contextual menu items present-and-disabled, so that does not depend on
 anything being selected.
+
+## `list_favorites` lists more than Maps does
+
+MEASURED on macOS 26.6: Maps' **Pinned** panel showed **17** places while `ZFAVORITEITEM`
+holds **24** and `apple_maps_list_favorites` returned all 24. Matching the tool output against
+a screenshot of the panel, entry by entry, the seven extras are:
+
+- **3 unlinked rows** — the unconfigured Home/Work/School slots, already known.
+- **4 ordinary favourites** with names, addresses and coordinates, which Maps does not show.
+  One of them is an exact duplicate of an entry that IS shown.
+
+**The tool's stated reason for returning the unlinked rows is wrong.** It says they are
+"returned rather than hidden so the count matches what the app shows". They make the count
+disagree with the app by seven. That note has to go whatever the fix turns out to be.
+
+This is the mirror of the failure this document already warned about. Dropping rows the app
+shows reads as a deletion; **listing rows the app hides invents places the user cannot see**,
+and only the first was guarded against.
+
+**No column in `ZFAVORITEITEM` separates them.** `ZHIDDEN`, `ZSOURCE`, `ZTYPE` and `ZVERSION`
+were all cross-tabulated by `pnpm probe:maps`:
+
+| Column     | Groups (rows / linked)      |
+| ---------- | --------------------------- |
+| `ZHIDDEN`  | 0 → 21/21, 1 → 3/0          |
+| `ZSOURCE`  | 0 → 22/20, 2 → 1/0, 3 → 1/1 |
+| `ZTYPE`    | 1 → 16/16, 2 → 5/4, 3 → 3/1 |
+| `ZVERSION` | 2 → 17/16, 0 → 7/5          |
+
+`ZHIDDEN` marks exactly the three unlinked slots and nothing else — it is a cleaner test for
+the unconfigured Home/Work/School rows than `ZMAPITEM IS NULL`, but it does not explain the
+four.
+
+**`ZVERSION = 2` has exactly 17 rows and is a trap.** It matches the panel count and is not the
+panel: 16 of those 17 are linked, while all 17 shown entries are. A number that agrees for the
+wrong reason, the same shape as `ZTYPE = 3` below.
+
+So Maps applies **display rules that are not in the store**. De-duplication is the visible one —
+one of the four is an exact duplicate of a shown entry, same name, address and coordinates.
+
+**The fix is honesty, not a filter.** Four column guesses failed on this store —
+`ZCOLLECTION` for membership, `ZTYPE`/`ZORIGIN` for unfiled items, `ZHIDDEN` here, and nearly
+`ZVERSION` — and a filter built on the fifth guess would drop real favourites. So
+`apple_maps_list_favorites` now says what it is: everything SAVED, with a note that Maps' own
+panel can show fewer. The old note asserting the count matches the app is gone.
+
+Sidebar vocabulary worth recording, since it does not match the schema: **Pinned** is
+`ZFAVORITEITEM` — the first entry carries a house icon and is Home. **Guides** is
+`ZCOLLECTION`. **Saved Places** and **Recently Added** are separate sections whose backing is
+not yet identified, and one of them is the best remaining candidate for the eight unexplained
+collection items below.
+
+## The twelve unfiled collection items
+
+`ZPLACESCOUNT` sums to 18 while `ZCOLLECTIONITEM` holds 30 rows, so twelve saved places belong
+to no guide. `pnpm probe:maps` now cross-tabulates them, and the answer is worth recording
+mostly because the obvious reading is wrong.
+
+| Column    | Value | Rows | Filed | Unfiled |
+| --------- | ----- | ---- | ----- | ------- |
+| `ZTYPE`   | 0     | 26   | 18    | **8**   |
+| `ZTYPE`   | 3     | 2    | 0     | 2       |
+| `ZTYPE`   | 2     | 1    | 0     | 1       |
+| `ZTYPE`   | 1     | 1    | 0     | 1       |
+| `ZORIGIN` | 0     | 30   | 18    | 12      |
+
+**`ZORIGIN` carries no signal** — one value across every row.
+
+**`ZTYPE` says what an item IS, not where it lives.** Types 1, 2 and 3 are all-unfiled, which
+looks exactly like a container kind — Pinned, Recently Added — and is not. `ZTYPE = 3` holds
+precisely the 2 rows that also carry `ZDROPPEDPINCOORDINATE`, so these are dropped pins and
+other place kinds, which are simply never filed in a guide. Reading an all-unfiled value as a
+container would have been a coincidence dressed as a finding.
+
+**Eight rows remain unexplained.** They sit at `ZTYPE = 0` beside all 18 filed items and no
+column in this schema separates them. Either they are debris from deleted guides, or Maps
+keeps that membership somewhere the probe has not looked. They are reachable today only
+through `search_places`; no tool lists them.
+
+Settling it needs evidence from outside the schema. **Pinned is ruled out** — it showed 17
+places and maps to `ZFAVORITEITEM`, not to collection items. The remaining candidates are the
+**Saved Places** and **Recently Added** sidebar sections; if either holds eight, these are
+places the surface cannot list rather than debris.
 
 ## Still open
 

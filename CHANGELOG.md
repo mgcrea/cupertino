@@ -16,6 +16,23 @@ summary.
 
 ### Added
 
+- **`apple_maps_list_unfiled_places` reaches the saved places that are in no Guide.**
+  Resolving collection membership exposed a gap it could not close: 30 collection items,
+  18 filed in a Guide, 12 in none — and no tool could list the 12.
+  `apple_maps_list_collections` reported the 18 and said nothing about the rest, so the
+  counts simply did not add up.
+
+  They are not debris. `Z_PRIMARYKEY.Z_MAX` equals the live count for both `Collection`
+  (10) and `CollectionItem` (30), so Core Data has never deleted either — the leftovers
+  theory is disproved by the store. Correlated against the rest of it, **7 of the 12 exist
+  nowhere else**: not a favourite, not in another Guide, not in recents. Those were
+  reachable only by guessing a search term. `apple_maps_list_collections` now also carries
+  an `unfiled` count so the shortfall is visible rather than silent.
+
+  The filter guards its subquery — `NOT IN` is false for EVERY row once the subquery
+  yields a single NULL, so an unguarded version reports "no unfiled places" whatever the
+  store holds. A test inserts a NULL join row and fails without the guard.
+
 - **Maps can list the places in a Guide.** Collection membership turned out to be
   `Z_6PLACES(Z_6COLLECTIONS, Z_7PLACES)`, a Core Data MANY-TO-MANY join table —
   `Z_PRIMARYKEY` decodes ordinal 6 as `Collection` and 7 as `CollectionItem`. Because a
