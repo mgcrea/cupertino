@@ -41,7 +41,7 @@ off cannot see that they exist.
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 7 tools, chats/search/decoded text + gated send   |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 7 tools, favourites/Guides/recents, read-only     |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 8 tools, favourites/Guides/recents, read-only     |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.

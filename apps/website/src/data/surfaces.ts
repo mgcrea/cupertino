@@ -189,6 +189,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_maps_list_favorites",
       "apple_maps_list_collections",
       "apple_maps_list_collection_places",
+      "apple_maps_list_unfiled_places",
       "apple_maps_list_recents",
       "apple_maps_search_places",
       "apple_maps_get_place",
@@ -196,7 +197,7 @@ export const SURFACES: readonly Surface[] = [
     ],
     write: [],
     pitch:
-      "The places you saved: favourites, Guides and recents, with real coordinates and addresses. Read-only.",
+      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Read-only.",
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {

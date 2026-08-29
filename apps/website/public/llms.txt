@@ -46,7 +46,7 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
   `do JavaScript` tool: the latter needs a developer-menu toggle that is not a TCC grant and whose
   state cannot be read, so shipping it would mean reporting a healthy surface whose most powerful
   capability silently fails.
-- Maps — 7 tools, all read-only. Favourites, Guides and recents with coordinates. `@mgcrea/mcp-apple-maps`
+- Maps — 8 tools, all read-only. Favourites, Guides, recents and places filed in no Guide, with coordinates. `@mgcrea/mcp-apple-maps`
 
 ## Price
 
