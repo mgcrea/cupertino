@@ -246,12 +246,12 @@ favourite either.
 
 ### Where each lane stands
 
-| Lane               | Verdict                                 | Why                                                                                       |
-| ------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Apple Events       | absent                                   | no scripting dictionary, checked directly                                                 |
-| App Intents        | absent on macOS                          | strings ship, actions are not registered                                                  |
+| Lane               | Verdict                                   | Why                                                                                       |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Apple Events       | absent                                    | no scripting dictionary, checked directly                                                 |
+| App Intents        | absent on macOS                           | strings ship, actions are not registered                                                  |
 | SQL into the store | refused                                   | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads |
-| Accessibility      | **candidate, blocked on an app defect**  | the controls exist and are named — see below                                              |
+| Accessibility      | **open — controls exist, grant inherits** | named, pressable `Favorite` and `Add`; see below                                          |
 
 `supportsWrites: false` in `surfaces.json` stays true FOR NOW, and `APPLE_MAPS_ALLOW_WRITES`
 stays accepted-and-ignored so a config that sets it does not look broken. But the fourth row
@@ -297,15 +297,37 @@ confident zero:
 Maps performs the write, so the protobuf, the `CKRecord` and the history rows are its problem
 and it gets them right. That is why this lane is worth more than the SQL one.
 
-**What blocks it is not Maps.** Accessibility does not work from inside Cupertino.app:
-[scripts/spike-app-tcc/README.md](../scripts/spike-app-tcc/README.md) records the app's own
-`AXIsProcessTrusted()` returning true while an `osascript` grandchild is denied and cannot
-name a single window, though a grandchild under a different responsible app reads them fine.
-That same defect is why `apple_mail_reply_to_message` fails on Macs whose Accessibility row
-is green. **One fix unblocks both.**
+**The gate I first named here does not exist.** An earlier draft of this section said
+Accessibility does not work from inside Cupertino.app, quoting the header of
+[scripts/spike-maps-ax.mjs](../scripts/spike-maps-ax.mjs). That header is stale. The scope
+note in [scripts/spike-app-tcc/README.md](../scripts/spike-app-tcc/README.md) settles it:
 
-The remaining costs are real: a new TCC service for a surface that needs none today, Maps
-having to be running, and UI the user watches move.
+> **Accessibility does inherit too** — the conclusion was right and the evidence for it was
+> simply missing.
+
+What cost a day was not architecture but **four duplicate TCC rows under one bundle
+identifier** — the installed copy, the debug build and earlier reinstalls each leaving their
+own Accessibility entry, with the app's check matching one and the checks made on its behalf
+matching another. The cure is `tccutil reset Accessibility io.mgcrea.cupertino` and one
+grant from the running bundle, never another grant on top.
+
+Measured from inside the installed app on macOS 26.6, via `apple_mail_diagnostics`:
+
+    accessibility           granted
+    automationSystemEvents  granted
+
+Those are the two grants a Maps UI read needs. Automation to _Maps_ is not among them —
+System Events does the reading, so only Automation to System Events matters.
+
+The remaining costs are real, and they are the honest objections to this lane: a new TCC
+service for a surface that needs none today, Maps having to be running, UI the user watches
+move, and a tree that Apple can reshape in any release. What is NOT an objection any more is
+that the lane cannot reach the app at all.
+
+**Still unmeasured:** whether an `osascript` grandchild of Cupertino.app can name _Maps'_
+windows specifically. The grants are right and `composerUiRead` for Mail came back
+`inconclusive` only because no composer was open, so nothing suggests it fails — but the
+rule this repo keeps relearning is measure, do not ask.
 
 The menu bar, separately, is a genuine no — 122 items across all seven menus, zero write
 verbs. macOS keeps contextual menu items present-and-disabled, so that does not depend on
@@ -405,10 +427,10 @@ places the surface cannot list rather than debris.
 - **`ZMUID` stability is untested.** It looks like Apple's cross-device place id and is
   reported, but it is populated 20/23 and identifies a _place_ rather than an _entry_, so
   refs use `ZIDENTIFIER` instead. See `packages/maps/src/client/ref.ts`.
-- **Writes are blocked on an app defect, not on Maps.** The Accessibility lane has named,
-  pressable `Favorite` and `Add` controls; what stops it is that AX does not work from
-  inside Cupertino.app. Fixing that is a prerequisite for a Maps write half AND for
-  `apple_mail_reply_to_message`, and it is not a Maps task.
+- **A write half is now plausible and unbuilt.** The Accessibility lane has named, pressable
+  `Favorite` and `Add` controls, and the grants inherit into the app's servers. What is
+  missing is a measurement that an `osascript` grandchild of Cupertino.app can name Maps'
+  windows, and then the verbs themselves.
 - **Refs are session-scoped only when a store has no `ZIDENTIFIER`.** Resolved: refs now
   carry the Core Data UUID when it is set and distinct on every row, and fall back to the
   row id otherwise. The fallback keeps the old caveat in full.

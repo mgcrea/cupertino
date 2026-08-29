@@ -112,6 +112,12 @@ unavailable in both JXA and AppleScript, and scoping does not help because the s
 window's 213 elements). It also yields no coordinates and no stable identifier. The file lane answers
 the same questions in 0 ms with both. See [maps.md](maps.md).
 
+Rejected as a READ lane, not as a lane. Maps has no scripting dictionary and no App Intents
+registered on macOS, so Accessibility is the only way a write could ever reach it — and with a place
+card open it exposes named, pressable `Favorite` and `Add` controls. A write is a handful of round
+trips rather than a walk of the tree, so the ~14 s that disqualifies it for reading does not apply.
+That lane is open and unbuilt; [maps.md](maps.md) carries the measurement and the costs.
+
 ## What a new surface costs
 
 Budget ~2k LOC for a surface with both lanes: `packages/notes` is 20 files / 2,131 LOC,

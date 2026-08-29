@@ -20,30 +20,36 @@
 // exactly as it does when a person clicks. The objections to AX are real but
 // they are different objections.
 //
-// ── THE GATE, WHICH THIS FILE CANNOT OPEN ────────────────────────────────────
+// ── THE GRANT, WHICH DOES INHERIT ───────────────────────────────────────────
 //
-// Accessibility DOES NOT WORK from inside Cupertino.app today.
-// `scripts/spike-app-tcc/README.md` records it: the app's own
-// `AXIsProcessTrusted()` returns true while an `osascript` grandchild of it
-// returns false and cannot name a single window, though a grandchild under a
-// different responsible app reads them fine. That is the live defect behind
-// `apple_mail_reply_to_message` failing on Macs whose Accessibility row is green.
+// An earlier version of this header said Accessibility does not work from inside
+// Cupertino.app, on the strength of the header of `scripts/spike-maps-ax.mjs`.
+// That is stale, and repeating it here nearly cost a second day. The scope note
+// in `scripts/spike-app-tcc/README.md` is the current answer:
 //
-// So a terminal run of this file — where the TERMINAL holds the grant — says
-// NOTHING about whether a hosted server could do any of it. What it can answer,
-// cheaply, is whether there is anything to win at all. If Maps exposes no
-// actionable add-a-place control, fixing the app defect buys Maps nothing and
-// the lane is closed on evidence. If it does, the defect becomes worth fixing on
-// its own merits, since it also unblocks Mail.
+//     "Accessibility does inherit too — the conclusion was right and the
+//      evidence for it was simply missing."
 //
-// Measure the cheap thing first. That is the only reason this runs before the
-// bug is fixed.
+// What actually cost a day was FOUR DUPLICATE TCC ROWS under one bundle
+// identifier — the installed copy, the debug build and earlier reinstalls each
+// leaving their own Accessibility entry, with the app's own check matching one
+// and the checks made on its behalf matching another. The cure is
+// `tccutil reset Accessibility io.mgcrea.cupertino` and ONE grant from the
+// running bundle, never another grant on top of the pile.
+//
+// Measured from inside the installed app: `accessibility: granted`,
+// `automationSystemEvents: granted`. Those are the two a UI read needs —
+// Automation to Maps is NOT among them, because System Events does the reading.
+//
+// A terminal run of this file still proves nothing about the hosted case, since
+// the grant being exercised is the TERMINAL's. What it answers is the cheaper
+// question that comes first: is there anything to press at all.
 //
 // ── WHAT THIS ANSWERS ────────────────────────────────────────────────────────
 //
 //   0. IS THIS PROCESS TRUSTED, and is it reading a real Maps window? Reported
-//      with the caveat above attached, so a green run cannot be mistaken for an
-//      answer about the hosted case.
+//      with the caveat above attached: this is the TERMINAL's grant, so a green
+//      run here is not an answer about the hosted case.
 //   1. DOES THE MENU BAR CARRY A WRITE VERB? Asked FIRST and separately, because
 //      a menu item is the most stable actionable element an app has — it has a
 //      name, a path and an AXPress, and it does not reshape when a window

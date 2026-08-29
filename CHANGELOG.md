@@ -102,10 +102,10 @@ summary.
 
   The Accessibility lane is a different story and is NOT closed: with a place card open,
   Maps exposes named, pressable `Favorite` and `Add` controls, and 219 of its 236 pressable
-  elements carry names, so they are addressable by name rather than by position. What blocks
-  it is not Maps — Accessibility does not work from inside Cupertino.app, the same defect
-  behind `apple_mail_reply_to_message` failing on a green Accessibility row. One fix would
-  unblock both. See [scripts/spike-maps-ax-write.mjs](scripts/spike-maps-ax-write.mjs).
+  elements carry names, so they are addressable by name rather than by position. The grants
+  inherit into the app's servers — `accessibility` and `automationSystemEvents` both read
+  `granted` from inside the installed bundle — so the lane is open rather than blocked. It is
+  simply unbuilt. See [scripts/spike-maps-ax-write.mjs](scripts/spike-maps-ax-write.mjs).
 
   The App Intents lane was checked too: Maps ships strings for `Add Places to List` and
   `Remove Places From List`, but the actions are not registered in Shortcuts on macOS 26.6 —

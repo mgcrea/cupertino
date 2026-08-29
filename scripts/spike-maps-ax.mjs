@@ -11,26 +11,33 @@
 // So the capability exists. This spike exists to find out what it is WORTH,
 // before `packages/maps` is written against it. It ships nothing.
 //
-// ── QUESTION 0, WHICH GATES EVERY OTHER ONE ─────────────────────────────────
+// ── QUESTION 0, ANSWERED SINCE — AND THIS HEADER WAS WRONG ──────────────────
 //
-// Does the Accessibility lane work FROM INSIDE Cupertino.app at all?
+// This section used to say the Accessibility lane does not work from inside
+// Cupertino.app, and to gate everything below on that. It was written before the
+// cause was found, was never corrected, and was later quoted as current fact by
+// `docs/maps.md` and by `scripts/spike-maps-ax-write.mjs` — a stale comment that
+// travelled, which is the expensive kind.
 //
-// `scripts/spike-app-tcc/README.md` carries a scope note that says it does not:
-// with Accessibility granted to the app and the app's own `AXIsProcessTrusted()`
-// returning true, an `osascript` GRANDCHILD returned false and could not name a
-// single window — while an `osascript` at the same depth under a different
-// responsible app read them fine. That is the live defect behind
-// `apple_mail_reply_to_message` failing on Macs whose Accessibility row is green.
+// The answer, from the scope note in `scripts/spike-app-tcc/README.md`:
 //
-// It matters here more than it does for Mail, because Mail's AX use is one verb
-// on a composer window and Maps' would be the ENTIRE SURFACE. A Maps server built
-// on this lane inherits a known-broken foundation, and inherits it wholesale.
+//     "Accessibility does inherit too — the conclusion was right and the
+//      evidence for it was simply missing."
 //
-// THIS SPIKE RUN FROM A TERMINAL CANNOT ANSWER QUESTION 0. A terminal has its own
-// Accessibility grant, so everything below will look fine and mean nothing about
-// what a hosted server sees. Question 0 is answered by running this file through
-// `scripts/spike-app-tcc`, as a grandchild of a signed bundle. The report says so
-// rather than letting a green run be mistaken for an answer.
+// The day that was lost went to FOUR DUPLICATE TCC ROWS under one bundle
+// identifier: `/Applications/Cupertino.app`, the `.build` debug bundle and
+// earlier reinstalls had each left an Accessibility entry, all shown as a single
+// "Cupertino" in the pane, and the app's `AXIsProcessTrusted()` matched one while
+// the checks made on its behalf matched another. Granting again only added a
+// fifth. The cure is `tccutil reset Accessibility io.mgcrea.cupertino`, then one
+// grant from the bundle that is running.
+//
+// So the lane is NOT structurally broken, and `apple_mail_reply_to_message` is
+// not evidence that it is. What remains true is narrower and still worth saying:
+// a run of this file FROM A TERMINAL exercises the terminal's own grant and says
+// nothing about what a hosted server sees. Measure the hosted case in the hosted
+// case — `apple_mail_diagnostics` reports `composerUiRead` for exactly that
+// reason.
 //
 // ── THE REST, worth measuring only if question 0 comes back yes ──────────────
 //
