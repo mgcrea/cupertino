@@ -200,6 +200,28 @@ Notes on `Z_PK`, Calendar on `CalendarItem.UUID` (198/198). Messages **cannot** 
 identifier at all, so a `send` can never be reconciled against a read. Safari joins on the URL itself,
 which resolves only about half of open tabs.
 
+**A candidate list of column NAMES cannot find a many-to-many.** Maps' collection membership was
+hunted with four plausible column names — `ZCOLLECTION`, `ZCOLLECTION1`, `ZPARENTCOLLECTION`,
+`ZOWNINGCOLLECTION` — and a fifth guess would have been worth as much as the first four, because
+Core Data stores a many-to-many in a `Z_<ordinal><RELATIONSHIP>` JOIN TABLE and leaves no column on
+either entity. No list of column names could have contained the answer. It is
+`Z_6PLACES(Z_6COLLECTIONS, Z_7PLACES)`. So enumerate MECHANISMS, not names — a scalar FK named after
+the relationship, a join table, an ordered to-many with its `Z_FOK_*` column, indirection through a
+third entity — run each, and score it against something the store already knows.
+
+**Score a resolved relationship against an oracle the app maintains.** `ZCOLLECTION.ZPLACESCOUNT` is
+Maps' own tally per guide, so a mechanism reproducing all ten numbers exactly is not a guess that
+fits. Better than that: the store's Core Data triggers turned out to maintain `ZPLACESCOUNT` by
+counting `Z_6PLACES.Z_6COLLECTIONS`, so the oracle is derived from the mechanism rather than
+independent of it — which makes an exact match guaranteed for the true relationship and coincidental
+for any other. Look for the trigger that maintains a counter; it documents the relationship.
+
+**A hand-written fixture can invent a column and keep the suite green while the feature is broken.**
+Maps' first fixture declared a `ZCOLLECTION` column on `ZCOLLECTIONITEM` that the real store has
+never had, so every test passed for as long as collection listing was broken against real data.
+Capture fixtures with the probe's `--write`; a fixture that agrees with your hypothesis rather than
+with the store tests the hypothesis against itself.
+
 ## Still open across all surfaces
 
 - **No history schema fixture captured for Safari.** `packages/safari/src/client/store.ts` is
