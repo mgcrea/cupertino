@@ -49,7 +49,10 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.contacts === undefined ? {} : { contacts: opts.contacts }),
   });
 
-  registerTools(server, client, { allowWrites: config.allowWrites });
+  registerTools(server, client, {
+    allowWrites: config.allowWrites,
+    allowCodes: config.allowCodes,
+  });
   /*
    * One flag, both primitives — see `exposePrompts` in core's config. A prompt
    * embeds its surface guide, so registering prompts without the resources

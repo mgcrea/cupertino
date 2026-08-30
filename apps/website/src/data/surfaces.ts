@@ -25,6 +25,16 @@ export interface Surface {
   read: readonly string[];
   /** Registered only when `*_ALLOW_WRITES` is true. */
   write: readonly string[];
+  /**
+   * Reads registered only when their OWN flag is set — not `allowWrites`.
+   *
+   * A third column rather than a line in `read`, because `read` means "always
+   * registered" and that is the site's claim about it. A tool that appears only
+   * under `APPLE_MESSAGES_ALLOW_CODES` is not always registered, and listing it
+   * as though it were would be exactly the kind of unhonoured claim the header
+   * above warns about.
+   */
+  gated?: readonly { name: string; env: string; why: string }[];
   /** The one-line reason this surface exists. */
   pitch: string;
   /** What it can still do with no Full Disk Access at all. */
@@ -176,6 +186,20 @@ export const SURFACES: readonly Surface[] = [
     // with Full Disk Access alone. There is no edit, delete, mark-as-read or
     // reaction verb to expose. See docs/messages.md.
     write: ["apple_messages_send_message", "apple_messages_save_attachment"],
+    // A read, and still not in `read`. It is gated on its own flag because this
+    // server already holds the conversation history and a sibling holds Mail —
+    // between them the password-reset channel — so adding live authentication
+    // codes is a change of tier rather than one more query. Off by default, and
+    // orthogonal to the write gate in both directions. See docs/passwords.md
+    // for why the Passwords app itself is unreachable and this is what ships
+    // instead.
+    gated: [
+      {
+        name: "apple_messages_find_codes",
+        env: "APPLE_MESSAGES_ALLOW_CODES",
+        why: "Extracts one-time 2FA codes from recent messages. Off unless you turn it on.",
+      },
+    ],
     pitch:
       "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — saves attachments, and sends, behind the write gate.",
     withoutGrant:
@@ -233,4 +257,4 @@ export const SURFACES: readonly Surface[] = [
   },
 ] as const;
 
-export const toolCount = (s: Surface) => s.read.length + s.write.length;
+export const toolCount = (s: Surface) => s.read.length + s.write.length + (s.gated?.length ?? 0);

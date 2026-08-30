@@ -4,6 +4,7 @@ import type { AppleMessagesClient } from "../client/messages.js";
 import { registerActionTools } from "./actions.js";
 import { registerAttachmentTools } from "./attachments.js";
 import { registerChatTools } from "./chats.js";
+import { registerCodeTools } from "./codes.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
 
@@ -23,6 +24,11 @@ export type ToolContext = {
    * survives it intact.
    */
   allowWrites: boolean;
+  /**
+   * Gates `find_codes` alone, and is independent of `allowWrites` on purpose —
+   * see `config.ts` for why a read got a switch of its own.
+   */
+  allowCodes: boolean;
 };
 
 /**
@@ -32,9 +38,17 @@ export type ToolContext = {
  * surface the flag carries a permission claim as well as a safety one: with it
  * off no Apple Event is ever sent, so no Automation grant is ever requested.
  * What is needed either way is Full Disk Access, absolutely — see `diagnostics`.
+ * One further read, `find_codes`, only when `allowCodes` is on.
  *
- * The registered set does NOT vary with whether the store is readable. That is a
- * runtime condition, and MCP clients cache the tool list.
+ * The registered set is a pure function of STATIC CONFIGURATION, never of
+ * runtime state. In particular it does NOT vary with whether the store is
+ * readable: MCP clients cache the tool list, so a set that shrank when a grant
+ * was missing would stay shrunk after the grant arrived.
+ *
+ * That invariant used to read "a pure function of `allowWrites` and nothing
+ * else". `allowCodes` widened the input without weakening the guarantee, which
+ * was always about runtime conditions rather than about there being exactly one
+ * flag. `test/tools.test.ts` asserts each arm separately.
  */
 export const registerTools = (
   server: McpServer,
@@ -44,6 +58,7 @@ export const registerTools = (
   registerDiagnosticsTools(server, client);
   registerChatTools(server, client);
   registerMessageTools(server, client);
+  if (ctx.allowCodes) registerCodeTools(server, client);
   if (!ctx.allowWrites) return;
   registerActionTools(server, client);
   registerAttachmentTools(server, client);

@@ -68,6 +68,9 @@ That is a capability downgrade reported through `diagnostics`, never a throw.
 
 Read: `diagnostics`, `list_chats`, `list_messages`, `search_messages`, `get_message`.
 
+Opt-in read: `find_codes`, behind `APPLE_MESSAGES_ALLOW_CODES` — see [Configuration](#configuration).
+Off by default, and not covered by the write gate.
+
 Write: `send_message`, and that is the whole dictionary. `sdef` lists three commands — `send`,
 `login` and `logout` — and the other two would sign the user out of iMessage on every device they
 own. There is no edit, delete, mark-as-read or reaction verb to expose, so **everything this server
@@ -110,7 +113,22 @@ records exactly what that leaves open; the safe way to measure it is a message t
 | `APPLE_MESSAGES_DEFAULT_RANGE_DAYS` | `30`    | Window when only a start is given.      |
 | `APPLE_MESSAGES_MAX_RESULTS`        | `50`    | Default page size.                      |
 | `APPLE_MESSAGES_ALLOW_WRITES`       | off     | Register `send_message` at all.         |
+| `APPLE_MESSAGES_ALLOW_CODES`        | off     | Register `find_codes` at all.           |
 | `APPLE_MESSAGES_SEND_RECONCILE_MS`  | `5000`  | How long to wait for the sent row.      |
+
+`APPLE_MESSAGES_ALLOW_CODES` gates `find_codes`, which extracts one-time 2FA codes from recently
+received messages. It is a **read**, and it is deliberately not folded into `ALLOW_WRITES`: reaching
+a read through the write gate would mean granting the right to send a message in order to get it.
+
+It is gated at all because of what it combines with. This server already holds the conversation
+history and `@mgcrea/mcp-apple-mail` holds the inbox — between them, the password-_reset_ channel.
+Adding live authentication codes completes an account-takeover primitive out of parts that were each
+individually reasonable, so it defaults off and the two gates are independent in both directions.
+
+Codes are matched by signal rather than by a `\d{4,8}` regex, and every result carries a
+`confidence` and a `matched` saying how it was found; anything below `high` should be checked
+against the message body before use. See `src/client/codes.ts`, and `docs/passwords.md` in the
+repo for why the Passwords app itself is unreachable and this is what ships in its place.
 
 ## Notes that will bite you
 

@@ -44,6 +44,12 @@ const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />
               <span class="font-mono text-fg-dim">{s.read.length}</span> always registered
               <span class="text-rule-2">·</span>
               <span class="font-mono text-fg-dim">{s.write.length}</span> write-gated
+              {s.gated && s.gated.length > 0 && (
+                <Fragment>
+                  <span class="text-rule-2">·</span>
+                  <span class="font-mono text-fg-dim">{s.gated.length}</span> opt-in
+                </Fragment>
+              )}
             </div>
             <code class="font-mono text-[11.5px] break-all text-fg-muted">{s.pkg}</code>
           </div>

@@ -60,6 +60,22 @@ const ConfigSchema = BaseConfigSchema.extend({
    * immediate check and no polling, which is what the test suite uses.
    */
   sendReconcileMs: z.number().int().min(0).max(60_000).default(5_000),
+  /**
+   * Gates `find_codes`, and deliberately NOT folded into `allowWrites`.
+   *
+   * Two reasons, and the second is the real one. It is a read, so putting it
+   * behind a write gate would mean granting the right to send a message in
+   * order to get a read tool — the two are unrelated and bundling them makes
+   * both switches mean less.
+   *
+   * And it is a read of a different tier. This server already holds the
+   * conversation history; a sibling holds Mail. Between them that is the
+   * password-RESET channel, and adding live authentication codes to the same
+   * process completes an account-takeover primitive out of parts that were each
+   * individually reasonable. That is a real change in what a leaked transcript
+   * costs, so it gets a switch of its own and defaults off.
+   */
+  allowCodes: z.boolean().default(false),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -75,6 +91,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     attachmentDir: trimmed(env.APPLE_MESSAGES_ATTACHMENT_DIR),
     defaultRangeDays: parseIntOpt(env.APPLE_MESSAGES_DEFAULT_RANGE_DAYS),
     sendReconcileMs: parseIntOpt(env.APPLE_MESSAGES_SEND_RECONCILE_MS),
+    allowCodes: parseBool(env.APPLE_MESSAGES_ALLOW_CODES),
     osascriptPath: trimmed(env.APPLE_MESSAGES_OSASCRIPT_PATH),
     osascriptTimeoutMs: parseIntOpt(env.APPLE_MESSAGES_OSASCRIPT_TIMEOUT_MS),
     maxResults: parseIntOpt(env.APPLE_MESSAGES_MAX_RESULTS),

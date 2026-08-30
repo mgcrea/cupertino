@@ -89,6 +89,60 @@ describe("tool registration", () => {
     expect(await toolNames(await connect())).not.toContain("apple_messages_send_message");
   });
 
+  /**
+   * `find_codes` is gated on its own flag, and these three assertions are the
+   * whole reason it is not folded into `allowWrites`.
+   *
+   * It is a READ of live authentication codes. Reaching it through the write
+   * gate would mean granting the right to send a message in order to get it,
+   * and — the part that actually matters — this server already holds the
+   * conversation history while a sibling holds Mail. That is the password-reset
+   * channel; adding live codes to it completes an account-takeover primitive
+   * out of individually reasonable parts. So: off by default, orthogonal to
+   * writes, and absent rather than refused when off.
+   */
+  it("adds only find_codes when APPLE_MESSAGES_ALLOW_CODES is set", async () => {
+    const off = await toolNames(await connect());
+    const on = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_CODES: "1" }));
+    expect(on.filter((n) => !off.includes(n))).toEqual(["apple_messages_find_codes"]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  it("hides find_codes completely when the flag is off", async () => {
+    expect(await toolNames(await connect())).not.toContain("apple_messages_find_codes");
+  });
+
+  /**
+   * The two gates are independent in both directions. Turning writes on must
+   * not smuggle in the codes tool, and turning codes on must not smuggle in the
+   * ability to send.
+   */
+  it("keeps the two gates orthogonal", async () => {
+    const writes = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1" }));
+    expect(writes).not.toContain("apple_messages_find_codes");
+
+    const codes = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_CODES: "1" }));
+    expect(codes).not.toContain("apple_messages_send_message");
+    expect(codes).not.toContain("apple_messages_save_attachment");
+
+    const both = await toolNames(
+      await connect({ APPLE_MESSAGES_ALLOW_WRITES: "1", APPLE_MESSAGES_ALLOW_CODES: "1" }),
+    );
+    expect(both).toContain("apple_messages_find_codes");
+    expect(both).toContain("apple_messages_send_message");
+  });
+
+  /**
+   * `find_codes` reads; it must never be marked destructive, and it must not
+   * displace the send tool as the only destructive one.
+   */
+  it("registers find_codes as a read-only tool", async () => {
+    const { tools } = await (await connect({ APPLE_MESSAGES_ALLOW_CODES: "1" })).listTools();
+    const codes = tools.find((t) => t.name === "apple_messages_find_codes");
+    expect(codes?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.filter((t) => t.annotations?.destructiveHint)).toEqual([]);
+  });
+
   /** MCP clients cache the tool list, so it must not vary with a runtime condition. */
   it("registers the same tools when the store cannot be found", async () => {
     expect(
