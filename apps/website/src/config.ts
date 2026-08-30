@@ -38,8 +38,26 @@ export const X_HANDLE = "@mgcrea";
  * Small counts are spelled out; a digit mid-sentence reads as a spec sheet.
  * Exported because headings need it too: the Surfaces heading used to open with
  * a literal "Four", which is exactly the drift this file exists to prevent.
+ *
+ * It ran out at "seven" the day Maps shipped, and the fallback is
+ * `String(length)` — so the social card read "8 Apple apps", the exact spec-sheet
+ * digit the rule above exists to prevent, in a picture nothing in CI looks at.
+ * Padded past the current count on purpose: a list that ends at today's number
+ * fails silently again on the next surface.
  */
-export const SPELLED = ["no", "one", "two", "three", "four", "five", "six", "seven"];
+export const SPELLED = [
+  "no",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+];
 
 /** "Mail, Notes, Reminders and Calendar" — however many there turn out to be. */
 const surfaceList = SURFACES.map((s) => s.name)
