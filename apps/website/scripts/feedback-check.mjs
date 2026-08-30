@@ -34,8 +34,8 @@
  * is safe in CI and says which assertion broke rather than "the page is wrong".
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { PARAM } from "@mgcrea/feedback-contract";
 
@@ -71,7 +71,16 @@ if (csp && !csp.includes(FEEDBACK_API)) {
 
 // The form posts these names; the Worker's zod schema reads them. `PARAM` covers
 // the URL side, and the body uses the long names, so both are asserted.
-const bodyFields = ["kind", "subject", "body", "email", "appVersion", "osVersion", "hardware", "language"];
+const bodyFields = [
+  "kind",
+  "subject",
+  "body",
+  "email",
+  "appVersion",
+  "osVersion",
+  "hardware",
+  "language",
+];
 for (const name of bodyFields) {
   if (!html.includes(`name="${name}"`)) failures.push(`form is missing the "${name}" field`);
 }
