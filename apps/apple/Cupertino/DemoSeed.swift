@@ -474,12 +474,19 @@ enum DemoSeed {
   /// the remaining height — and a wide window suits the marketing site's
   /// full-bleed sections better than a squarer one.
   ///
-  /// It has to be forced at all because `HostedWindow` sets a frame autosave
-  /// name, and AppKit restores the saved frame from `UserDefaults`. So without
-  /// this the capture is whatever size the developer last dragged the window
-  /// to. `-ApplePersistenceIgnoreState` does not cover it: that suppresses
-  /// state restoration, and an autosaved frame is a separate mechanism.
-  nonisolated private static let contentSize = NSSize(width: 1120, height: 540)
+  /// It has to be forced at all because SwiftUI's own fitting size for this
+  /// window is 780x492 — its declared minimum — which is neither the shape the
+  /// plates are composed for nor enough room for the seeded content.
+  ///
+  /// It also has to be passed to `HostedWindow` as its `contentSize`, not merely
+  /// applied by `pin()`. `pin()` runs on `didBecomeKey`, after `OpeningResizeGuard`
+  /// has already pinned the window to whatever it opened at, so it loses — the
+  /// comment above `settingsContentSize` records the same dead end. This window
+  /// used to appear to work anyway, and for a bad reason: the autosave leak
+  /// `HostedWindow` now documents meant a previous capture had written 1120x572
+  /// into the real preferences, and the next capture restored it. Closing the
+  /// leak is what exposed the missing `contentSize` here.
+  nonisolated static let contentSize = NSSize(width: 1120, height: 540)
 
   /// The Settings window's size, and it is the size that window is *created*
   /// at — not one applied to it afterwards.

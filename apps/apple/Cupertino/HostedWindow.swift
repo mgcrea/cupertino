@@ -101,13 +101,30 @@ final class HostedWindow {
       // frame and writes one. This is the key AppKit stores it under, and the
       // question it answers is the only one that matters here: has anybody ever
       // sized this window themselves?
-      let remembered =
-        UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
+      let remembered = !DemoSeed.isEnabled
+        && UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
       // SwiftUI's own fitting size, read before the autosave overwrites it. It
       // is the fallback for a remembered frame that turns out to be unusable,
       // and for a window naming no `contentSize` it is the only one there is.
       let natural = created.frame
-      created.setFrameAutosaveName(autosaveName)
+      // Never named under screenshot mode, and this is a one-way street that the
+      // `|| DemoSeed.isEnabled` below only half paved. That branch stops a
+      // capture INHERITING the developer's window size; naming the autosave here
+      // let the capture WRITE ITS OWN back out, under the very same key the real
+      // window reads — so every `make screenshots` quietly resized the
+      // developer's Settings window to the capture's pinned size and left it
+      // that way.
+      //
+      // MEASURED on the machine this was found on: `NSWindow Frame
+      // settings-panes` held 1000x772 and `NSWindow Frame main` 1120x572 —
+      // `DemoSeed.settingsContentSize` and `DemoSeed.contentSize` plus a
+      // titlebar, exactly. The visible symptom is a Settings window 200pt TALLER
+      // than the main window it opens in front of, which is the opposite of what
+      // `contentSize` is for.
+      //
+      // A capture has nothing to remember anyway: it opens one window, shoots it
+      // and exits.
+      if !DemoSeed.isEnabled { created.setFrameAutosaveName(autosaveName) }
       // A remembered frame wins — but only if the content can live in it.
       // AppKit restores whatever was last written under that key, including a
       // frame no layout can satisfy, and a SwiftUI `NavigationSplitView` handed

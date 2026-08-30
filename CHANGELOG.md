@@ -53,6 +53,23 @@ summary.
   Capabilities with a single card saying what is off; Capabilities in particular no longer spawns
   the server, which is the one thing a switched-off surface must not do.
 
+- **Screenshot runs no longer resize the developer's own windows.** `HostedWindow` named a frame
+  autosave even under screenshot mode, so every `make screenshots` wrote the capture's pinned size
+  back into `UserDefaults` under the key the real window reads. Found as a Settings window
+  remembered at 1000x772 against a main window at 1120x572 — `DemoSeed`'s two pinned sizes plus a
+  titlebar, exactly — which is a Settings window 200pt taller than the one it opens in front of.
+
+  Closing that leak exposed what it had been hiding: the main window passed no `contentSize` at
+  all, and its captures had been relying on the leaked frame to come out at 1120x540 rather than
+  SwiftUI's 780x492 fitting size. It now pins its own, the way the Settings window already did.
+
+  Both windows also set `tabbingMode = .disallowed`. Neither is a document, and on a Mac set to
+  "Prefer tabs when opening documents: Always" macOS was free to absorb Settings as a tab of the
+  main window.
+
+- The Settings window opens a little smaller, at 720x520, so the main window's sidebar stays visible
+  behind it.
+
 - The two Settings App Store plates were re-aimed. `settings` now photographs the Clients pane,
   which nothing showed before; `writes` is the main window on a surface with writes off, where the
   capabilities card reports seven tools against Mail's twenty. The write gate used to be pictured

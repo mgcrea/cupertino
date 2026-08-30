@@ -69,7 +69,7 @@ enum SettingsWindowController {
     // number rather than a resize later on: `HostedWindow` pins the frame the
     // window was created with against SwiftUI's own layout pass, and anything
     // set after `show()` loses to that pass. See `DemoSeed.settingsContentSize`.
-    contentSize: DemoSeed.isEnabled ? DemoSeed.settingsContentSize : NSSize(width: 760, height: 560),
+    contentSize: DemoSeed.isEnabled ? DemoSeed.settingsContentSize : NSSize(width: 720, height: 520),
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
@@ -146,7 +146,10 @@ struct SettingsView: View {
     // Wider than the 580 the tabs needed, because the sidebar is new width that
     // the content does not get to use. The minimum is what keeps the widest row
     // in Permissions — an app icon, a name, a status and a control — on one line.
-    .frame(minWidth: 720, idealWidth: 760, minHeight: 480, idealHeight: 540)
+    // 720 wide against the main window's 1120 leaves ~200pt of it showing on
+    // each side, which is its sidebar — so Settings opens in front of the main
+    // window rather than over the whole of it.
+    .frame(minWidth: 680, idealWidth: 720, minHeight: 440, idealHeight: 520)
     .onAppear { model.refresh() }
     // Readiness is signalled by `PermissionsPane`, not here.
     //

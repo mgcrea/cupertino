@@ -25,6 +25,10 @@ enum MainWindowController {
 
   private static let hosted = HostedWindow(
     title: "Cupertino", autosaveName: autosaveName,
+    // Only under screenshot mode. The shipping window has no forced size on
+    // purpose — it opens at SwiftUI's fitting size and then remembers whatever
+    // the user drags it to.
+    contentSize: DemoSeed.isEnabled ? DemoSeed.contentSize : nil,
     content: { MainView(model: StatusModel.shared) })
 
   static func show() { hosted.show() }
