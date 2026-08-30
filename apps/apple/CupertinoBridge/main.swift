@@ -141,7 +141,9 @@ func launchApp() {
     open.arguments = ["-g", app.path, "--args", BridgeProtocol.backgroundFlag]
   } else {
     warn("not running from inside Cupertino.app; falling back to the bundle identifier")
-    open.arguments = ["-g", "-b", "io.mgcrea.cupertino", "--args", BridgeProtocol.backgroundFlag]
+    open.arguments = [
+      "-g", "-b", BridgeProtocol.appIdentifier, "--args", BridgeProtocol.backgroundFlag,
+    ]
   }
   do { try open.run(); open.waitUntilExit() } catch {
     warn("could not launch Cupertino: \(error.localizedDescription)")
@@ -163,7 +165,7 @@ if socketFD == nil {
 guard let sock = socketFD else {
   die("""
     could not reach Cupertino at \(path).
-    Tried to launch \(containingApp()?.path ?? "io.mgcrea.cupertino").
+    Tried to launch \(containingApp()?.path ?? BridgeProtocol.appIdentifier).
     Open Cupertino once by hand, then retry.
     """)
 }

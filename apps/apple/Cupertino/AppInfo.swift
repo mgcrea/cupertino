@@ -17,14 +17,32 @@ enum AppInfo {
     return "\(short) (\(build))"
   }
 
+  /// Marks a locally built copy wherever the version is shown.
+  ///
+  /// A Debug build and the installed one look identical in the menu bar, and
+  /// telling them apart otherwise means reading `ps` — which is exactly the
+  /// detour that made a stale server look like a caching problem for half an
+  /// hour. It is `#if DEBUG` for the same reason `BridgeProtocol.appIdentifier`
+  /// is: the two must agree about which build this is.
+  #if DEBUG
+    static let developmentSuffix = "-dev"
+  #else
+    static let developmentSuffix = ""
+  #endif
+
   /// The marketing version alone, for the places that show it in passing rather
   /// than as an About line: the menu bar popover and the sidebar footer.
   ///
   /// No build number, because neither surface is where someone goes to file a
   /// bug — Settings carries the full string, the commit and the copy button.
+  ///
+  /// The suffix lands AFTER the demo-mode return on purpose. Demo mode is what
+  /// `appshot` runs to take App Store screenshots, and a "-dev" in the menu bar
+  /// of a store screenshot would ship.
   static var shortVersion: String {
     if DemoSeed.isEnabled { return DemoSeed.version }
-    return Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    return short + developmentSuffix
   }
 
   /// The commit this bundle was built from, or nil for a build that had no git

@@ -11,14 +11,34 @@ enum BridgeProtocol {
   /// does not know rather than guessing.
   static let version = "cupertino/1"
 
-  /// `~/Library/Application Support/io.mgcrea.cupertino/cupertino.sock`
+  /// `~/Library/Application Support/<appIdentifier>/cupertino.sock`
   ///
   /// A `sockaddr_un` path is capped at 104 bytes, and a long home directory can
   /// genuinely exhaust that, so callers must check `isAddressable` rather than
   /// assume.
+  /// The app's bundle identifier, which also names its support directory.
+  ///
+  /// A DEBUG build carries a DIFFERENT one so it can hold its own Full Disk
+  /// Access grant. TCC keys a grant on the identifier PLUS the code
+  /// requirement, and these two builds are signed differently — the shipped app
+  /// with "Developer ID Application", a local build with "Apple Development".
+  /// Sharing one identifier made them collide in a single Full Disk Access
+  /// entry: the list showed one "Cupertino" row holding whichever requirement
+  /// was stored first, and the other build was denied no matter how it was
+  /// launched, with nothing in the UI to say why.
+  ///
+  /// It also separates the socket, so a Debug build and the installed app do
+  /// not fight over one path — which matters because the installed app is a
+  /// login item and comes back on its own.
+  #if DEBUG
+    static let appIdentifier = "io.mgcrea.cupertino.debug"
+  #else
+    static let appIdentifier = "io.mgcrea.cupertino"
+  #endif
+
   static var socketPath: String {
     let base = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/io.mgcrea.cupertino")
+      .appendingPathComponent("Library/Application Support/\(appIdentifier)")
     return base.appendingPathComponent("cupertino.sock").path
   }
 

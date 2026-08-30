@@ -63,7 +63,11 @@ GIT_COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff 
 APP     ?= apps/apple/.build/Build/Products/$(CONFIG)/Cupertino.app
 INSTALLED := /Applications/Cupertino.app
 BRIDGE  := $(APP)/Contents/Helpers/cupertino-bridge
-SUPPORT := $(HOME)/Library/Application Support/io.mgcrea.cupertino
+# A Debug build carries its own bundle identifier so it can hold its own Full
+# Disk Access grant — see BridgeProtocol.appIdentifier. Its socket and dev.json
+# live beside it, so this must follow CONFIG.
+BUNDLE_ID := io.mgcrea.cupertino$(if $(filter Debug,$(CONFIG)),.debug,)
+SUPPORT := $(HOME)/Library/Application Support/$(BUNDLE_ID)
 
 .DEFAULT_GOAL := help
 
