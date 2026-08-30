@@ -45,6 +45,29 @@ final class HostedWindow {
     self.content = { AnyView(content()) }
   }
 
+  /// The floor under which a restored frame is corrupt rather than merely
+  /// small. `contentMinSize` is the real answer wherever AppKit has one — an
+  /// `NSHostingController` propagates the content's `minWidth`/`minHeight` into
+  /// it — but it is zero for content that declares no minimum, and zero accepts
+  /// the 1x32 frame this exists to reject. Small enough that no window anyone
+  /// dragged by hand lands under it.
+  private static let degenerateContentSize = NSSize(width: 200, height: 150)
+
+  /// Whether `window` is currently sized to hold its own content.
+  ///
+  /// The tolerance is for the equality case, which is the common one and must
+  /// not trip: AppKit clamps a drag at `contentMinSize`, autosaves exactly that,
+  /// and restores it back. Rejecting a frame the user themselves resized to the
+  /// minimum would trade this crash for a window that forgets its size.
+  fileprivate static func canHoldContent(_ window: NSWindow) -> Bool {
+    let content = window.contentRect(forFrameRect: window.frame).size
+    let minimum = window.contentMinSize
+    let required = NSSize(
+      width: max(minimum.width, degenerateContentSize.width),
+      height: max(minimum.height, degenerateContentSize.height))
+    return content.width >= required.width - 1 && content.height >= required.height - 1
+  }
+
   func show() {
     if window == nil {
       let hosting = NSHostingController(rootView: content())
@@ -68,7 +91,29 @@ final class HostedWindow {
       // sized this window themselves?
       let remembered =
         UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
+      // SwiftUI's own fitting size, read before the autosave overwrites it. It
+      // is the fallback for a remembered frame that turns out to be unusable,
+      // and for a window naming no `contentSize` it is the only one there is.
+      let natural = created.frame
       created.setFrameAutosaveName(autosaveName)
+      // A remembered frame wins — but only if the content can live in it.
+      // AppKit restores whatever was last written under that key, including a
+      // frame no layout can satisfy, and a SwiftUI `NavigationSplitView` handed
+      // one of those does not merely look wrong: it fails to converge. The
+      // split item's edge insets and the hosting view's safe-area insets
+      // invalidate each other, and past 193 constraint passes in one display
+      // cycle AppKit throws an exception nobody catches. Seen for real with a
+      // saved frame of 1x32 — the app died 1.4s into launch, before a window
+      // had ever been on screen.
+      //
+      // Self-perpetuating, which is what earns a guard here rather than another
+      // one-time reset of the key: `OpeningResizeGuard` below pins the window at
+      // whatever it opened with, and the autosave writes that straight back out.
+      // One bad frame poisons every launch that follows it.
+      let unusable = remembered && !Self.canHoldContent(created)
+      if unusable {
+        created.setFrame(natural, display: false)
+      }
       // After the autosave name, never before. Naming it resizes the window —
       // to a remembered frame when there is one, and to SwiftUI's own idea of
       // the content's width when there is not, which for a grouped `Form` is
@@ -79,10 +124,17 @@ final class HostedWindow {
       // capture must not inherit whatever size they last dragged this window
       // to. Outside screenshot mode a remembered frame still wins, which is the
       // whole point of autosaving one.
-      if !remembered || DemoSeed.isEnabled, let contentSize {
+      if !remembered || unusable || DemoSeed.isEnabled, let contentSize {
         created.setContentSize(contentSize)
       }
       created.center()
+      // Overwrite the frame that was just rejected. Autosave writes on a user
+      // resize, and nothing done here is one, so without this the bad value sits
+      // in prefs forever — rediscovered and discarded on every single launch,
+      // and taking the window's remembered position down with it.
+      if unusable {
+        created.saveFrame(usingName: autosaveName)
+      }
       window = created
 
       // SwiftUI sizes a `NavigationSplitView` window to its own idea of the
@@ -139,7 +191,11 @@ final class HostedWindow {
 private final class OpeningResizeGuard {
   private var token: NSObjectProtocol?
 
-  init(window: NSWindow, intended: NSRect) {
+  init?(window: NSWindow, intended: NSRect) {
+    // Refusing here is what stops a bad frame becoming permanent: this observer
+    // is what would hold the window at it long enough for the autosave to write
+    // it back out. Nothing to see off is better than a size nothing can satisfy.
+    guard HostedWindow.canHoldContent(window) else { return nil }
     token = NotificationCenter.default.addObserver(
       forName: NSWindow.didResizeNotification, object: window, queue: .main
     ) { _ in
