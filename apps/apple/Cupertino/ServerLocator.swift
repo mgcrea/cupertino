@@ -98,9 +98,17 @@ enum ServerLocator {
   /// Deliberately minimal, matching what `packages/core/src/osascript.ts` does
   /// when it spawns osascript with `PATH` only: a server inherits nothing it was
   /// not given on purpose.
-  static func environment(for surface: Surface, allowWrites: Bool) -> [String: String] {
+  /// - Parameter gates: env SUFFIXES of the extra gates that are on, from
+  ///   `SurfaceSettings.enabledGates`. Empty for every surface but Messages
+  ///   today. Passing the enabled set rather than reading `UserDefaults` here
+  ///   keeps this function pure, which is what lets `SurfaceCatalog` ask it for
+  ///   a hypothetical configuration when it builds its capability cache.
+  static func environment(for surface: Surface, allowWrites: Bool, gates: [String] = [])
+    -> [String: String]
+  {
     var env = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()]
     if allowWrites { env["\(surface.envPrefix)ALLOW_WRITES"] = "1" }
+    for suffix in gates { env["\(surface.envPrefix)\(suffix)"] = "1" }
     return env
   }
 }

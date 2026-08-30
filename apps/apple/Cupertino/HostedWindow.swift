@@ -147,23 +147,6 @@ final class HostedWindow {
       // this, a window the user had resized came back the wrong size anyway.
       resizeGuard = OpeningResizeGuard(window: created, intended: created.frame)
     }
-    // An accessory app does not come forward on its own, so the window would
-    // otherwise open behind whatever the user was looking at.
-    //
-    // `activate()`, not `activate(ignoringOtherApps:)`, which is deprecated: the
-    // modern call cooperates with the window server instead of demanding the
-    // foreground, and is the one that still works when the request comes from a
-    // menu bar extra whose own panel is key at that moment.
-    //
-    // Except under `appshot capture`, which launches with `open -g` on purpose
-    // and activates for the moment of each shot. An app calling this at launch
-    // is then fighting the driver for the foreground, and the symptom is one
-    // shot in a run dying with "would not come to the front", on no particular
-    // screen, passing on the next attempt. Ordering our *own* windows front is
-    // still fine — that is order within the app, not which app is active.
-    if !DemoSeed.isEnabled {
-      NSApp.activate()
-    }
     // `makeKeyAndOrderFront` does not restore a miniaturized window: it orders
     // the Dock tile front and leaves the window in the Dock, so "Open Cupertino"
     // on a window somebody had minimised looked like a button that did nothing.
@@ -173,6 +156,31 @@ final class HostedWindow {
       window?.deminiaturize(nil)
     }
     window?.makeKeyAndOrderFront(nil)
+    // Then the app itself, every time and not only on the first open. An
+    // accessory app does not come forward on its own, and ordering a window
+    // front is order *within* an app — it says nothing about which app the user
+    // is looking at, so without this the window stays behind whatever was there.
+    //
+    // `activate(ignoringOtherApps:)`, not the cooperative `activate()`. The
+    // cooperative call asks the frontmost app to yield the foreground and is
+    // refused when nobody yields, which is every time the request arrives from
+    // a menu bar extra: the user is in some other app, and that app was never
+    // asked. It is why "Open Cupertino" on a window that was already open
+    // looked like it did nothing — the first open only appeared to work because
+    // `DockPresence.update()` fires the forceful call on the .accessory →
+    // .regular transition, and every open after that early-returns straight
+    // past it with the policy already .regular.
+    //
+    // Except under `appshot capture`, which launches with `open -g` on purpose
+    // and activates for the moment of each shot. An app calling this at launch
+    // is then fighting the driver for the foreground, and the symptom is one
+    // shot in a run dying with "would not come to the front", on no particular
+    // screen, passing on the next attempt. Ordering our *own* windows front,
+    // above, is still fine — that is order within the app, not which app is
+    // active.
+    if !DemoSeed.isEnabled {
+      NSApp.activate(ignoringOtherApps: true)
+    }
     DockPresence.update()
   }
 }

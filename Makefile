@@ -563,10 +563,12 @@ SHOT_SCREENS := surface prompt activity connections settings writes
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
 SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.maps NO
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \
              $(SHOT_WRITES) \
+             $(SHOT_ENABLED) \
              -AppleLocale en_US -AppleLanguages '(en)' \
              -AppleHighlightColor '0.698039 0.843137 1.000000 Blue' \
              -AppleShowScrollBars WhenScrolling

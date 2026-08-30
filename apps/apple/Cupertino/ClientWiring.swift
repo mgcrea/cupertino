@@ -57,6 +57,19 @@ enum ClientWiring {
   ///   `{json}`   the entry `configure` writes, on one line, plus its name
   struct Recipe: Hashable {
     let template: String
+    /// The line that undoes `template`, or nil where the client has no removal
+    /// verb at all.
+    ///
+    /// VS Code is the nil: `code --help` offers `--add-mcp` and nothing that
+    /// takes it back. The row explains rather than emitting a command that does
+    /// not exist, which is the same refusal `probe: nil` already makes for a
+    /// config this app cannot read.
+    let removeTemplate: String?
+
+    init(template: String, removeTemplate: String? = nil) {
+      self.template = template
+      self.removeTemplate = removeTemplate
+    }
   }
 
   /// A file we read and never write, to say something true about a client we
@@ -190,7 +203,11 @@ enum ClientWiring {
       // bundle on this Mac, backed by this user's Full Disk Access grant — it
       // is personal machine configuration, not a dependency of anyone's project.
       wiring: .command(
-        recipe: Recipe(template: "claude mcp add --scope user {key} -- {bridge} --server={id}"),
+        recipe: Recipe(
+          template: "claude mcp add --scope user {key} -- {bridge} --server={id}",
+          // `--scope user` again, and for the same reason: without it the
+          // removal is attempted against whatever directory the shell is in.
+          removeTemplate: "claude mcp remove --scope user {key}"),
         // The one probe worth having. `--scope user` writes the top-level
         // `mcpServers`, which is strict JSON we already know how to read.
         // Project scope lives under `projects["<dir>"].mcpServers` and is
@@ -227,7 +244,12 @@ enum ClientWiring {
       // entry from a missing one, so it would let the app claim "configured"
       // from a substring match.
       wiring: .command(
-        recipe: Recipe(template: "codex mcp add {key} -- {bridge} --server={id}"), probe: nil)),
+        recipe: Recipe(
+          template: "codex mcp add {key} -- {bridge} --server={id}",
+          // Documented upstream alongside `codex mcp add`. UNVERIFIED here —
+          // `codex` is not installed on the machine this was written on, so
+          // unlike the Claude Code line above nobody has watched this one run.
+          removeTemplate: "codex mcp remove {key}"), probe: nil)),
   ]
 
   // MARK: - What we write
@@ -269,7 +291,22 @@ enum ClientWiring {
   static func legacyServerKey(for surface: Surface) -> String { "apple-\(surface.id)" }
 
   private static var entries: [String: [String: Any]] {
-    Dictionary(uniqueKeysWithValues: Surface.all.map { (serverKey(for: $0), entry(for: $0)) })
+    Dictionary(
+      uniqueKeysWithValues: SurfaceSettings.enabledSurfaces.map {
+        (serverKey(for: $0), entry(for: $0))
+      })
+  }
+
+  /// The keys to take out: for every surface switched off, the current key AND
+  /// the one it replaced. An `apple-maps` left by an install predating the
+  /// rename is exactly as stale as a `cupertino-maps`.
+  private static var disabledKeys: Set<String> {
+    var keys: Set<String> = []
+    for surface in Surface.all where !SurfaceSettings.isEnabled(surface) {
+      keys.insert(serverKey(for: surface))
+      keys.insert(legacyServerKey(for: surface))
+    }
+    return keys
   }
 
   private static var legacyKeys: [String: String] {
@@ -278,7 +315,14 @@ enum ClientWiring {
   }
 
   private static var expected: [(key: String, label: String)] {
-    Surface.all.map { (key: serverKey(for: $0), label: $0.displayName) }
+    SurfaceSettings.enabledSurfaces.map { (key: serverKey(for: $0), label: $0.displayName) }
+  }
+
+  /// The complement of `expected`: what an audit should find and report rather
+  /// than quietly accept.
+  private static var unexpected: [(key: String, label: String)] {
+    Surface.all.filter { !SurfaceSettings.isEnabled($0) }
+      .map { (key: serverKey(for: $0), label: $0.displayName) }
   }
 
   // MARK: - Commands
@@ -309,7 +353,7 @@ enum ClientWiring {
 
   /// One line per surface, ready to paste.
   static func commands(for recipe: Recipe) -> String {
-    Surface.all.map { surface in
+    SurfaceSettings.enabledSurfaces.map { surface in
       recipe.template
         .replacingOccurrences(of: "{key}", with: serverKey(for: surface))
         .replacingOccurrences(of: "{id}", with: surface.id)
@@ -325,6 +369,41 @@ enum ClientWiring {
     return commands(for: recipe)
   }
 
+  /// One line per surface that has been switched off, or nil when there is
+  /// nothing to remove or no verb to remove it with.
+  ///
+  /// Its own copy action rather than appended to `commands`, and that is not a
+  /// layout preference. `localCommands` chains with `&&`, and `claude mcp
+  /// remove` on a name that is not present exits non-zero — so a removal spliced
+  /// into that chain would abort every add after it, silently. Deletion is also
+  /// the half somebody should read before pasting.
+  static func removalCommands(for recipe: Recipe) -> String? {
+    guard let template = recipe.removeTemplate else { return nil }
+    let disabled = Surface.all.filter { !SurfaceSettings.isEnabled($0) }
+    guard !disabled.isEmpty else { return nil }
+    return disabled.map { surface in
+      template
+        .replacingOccurrences(of: "{key}", with: serverKey(for: surface))
+        .replacingOccurrences(of: "{id}", with: surface.id)
+        .replacingOccurrences(of: "{bridge}", with: shellQuoted(bridgePath))
+    }
+    .joined(separator: "\n")
+  }
+
+  static func removalCommands(for client: Client) -> String? {
+    guard case .command(let recipe, _) = client.wiring else { return nil }
+    return removalCommands(for: recipe)
+  }
+
+  /// Whether this client holds keys for switched-off surfaces that the app can
+  /// neither remove nor name a command for — VS Code, and only VS Code.
+  static func needsManualRemoval(_ client: Client) -> Bool {
+    guard case .command(let recipe, _) = client.wiring, recipe.removeTemplate == nil else {
+      return false
+    }
+    return Surface.all.contains { !SurfaceSettings.isEnabled($0) }
+  }
+
   // MARK: - Status
 
   enum Status: Equatable {
@@ -336,6 +415,10 @@ enum ClientWiring {
     /// Wired for some surfaces and not others — what an existing config looks
     /// like the day a new surface ships.
     case incomplete([String])
+    /// Still wired for a surface that has since been switched off. Not a fault:
+    /// nothing is broken, it just costs tool definitions the user asked to stop
+    /// paying for. The same Update button clears it.
+    case extra([String])
     case unreadable(String)
     /// Installed, and we have no way to tell — a command client whose config
     /// is TOML or JSONC. Never gates the button; it only declines to claim a
@@ -349,6 +432,7 @@ enum ClientWiring {
     case .notConfigured: return .notConfigured
     case .stale(let found): return .stale(found)
     case .incomplete(let missing): return .incomplete(missing)
+    case .extra(let leftover): return .extra(leftover)
     }
   }
 
@@ -357,7 +441,8 @@ enum ClientWiring {
     let servers = root[rootKey] as? [String: Any] ?? [:]
     return status(
       from: ClientWiringMerge.audit(
-        servers: servers, expectedCommand: bridgePath, expected: expected))
+        servers: servers, expectedCommand: bridgePath, expected: expected,
+        unexpected: unexpected))
   }
 
   static func status(of client: Client) -> Status {
@@ -397,12 +482,20 @@ enum ClientWiring {
     }
   }
 
-  /// Merge our servers in, leaving everything else untouched.
+  /// Merge our servers in, prune the ones for surfaces that are switched off,
+  /// and leave everything else untouched.
   ///
   /// Three properties this has to hold, because the file belongs to someone
-  /// else: every unrelated key survives, the previous contents are recoverable,
-  /// and a crash mid-write cannot leave a truncated config. `make wiring-check`
-  /// asserts all three.
+  /// else: everything that is not ours survives, the previous contents are
+  /// recoverable, and a crash mid-write cannot leave a truncated config. `make
+  /// wiring-check` asserts all three.
+  ///
+  /// The first used to be true by construction — nothing was ever removed. It is
+  /// now held by `ClientWiringMerge.isOurs`, which is a weaker guarantee and
+  /// worth saying out loud. One accepted consequence: an entry pointing at a
+  /// DIFFERENT copy of Cupertino, a beta in `~/Downloads` say, counts as ours
+  /// and will be removed. That was already the established reading, and
+  /// `wiring-check` has asserted it since before this could delete anything.
   @discardableResult
   static func configure(_ client: Client) throws -> URL? {
     guard case .json(let path, let rootKey) = client.wiring else {
@@ -414,7 +507,7 @@ enum ClientWiring {
       root = try ClientWiringMerge.readJSON(path)
     }
     let merged = ClientWiringMerge.merged(
-      into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys)
+      into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
     let backup = try ClientWiringMerge.write(merged, to: path, backupSuffix: "cupertino-backup")
 
     hostLog("cupertino", .info, "configured \(client.displayName) at \(path.path)")
@@ -502,7 +595,8 @@ enum ClientWiring {
       root = try ClientWiringMerge.readJSON(path)
     }
     let merged = ClientWiringMerge.merged(
-      into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys)
+      into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys,
+      remove: disabledKeys)
     let backup = try ClientWiringMerge.write(merged, to: path, backupSuffix: "cupertino-backup")
     hostLog("cupertino", .info, "configured folder \(folder.path)")
     return backup
@@ -517,7 +611,7 @@ enum ClientWiring {
   /// project puts in the command instead of in prose.
   static func localCommands(for folder: URL) -> String {
     let cd = "cd \(shellQuoted(folder.path))"
-    let adds = Surface.all.map { surface in
+    let adds = SurfaceSettings.enabledSurfaces.map { surface in
       "claude mcp add --scope local \(serverKey(for: surface)) -- "
         + "\(shellQuoted(bridgePath)) --server=\(surface.id)"
     }
@@ -544,7 +638,8 @@ enum ClientWiring {
       else { return .notConfigured }
       return status(
         from: ClientWiringMerge.audit(
-          servers: servers, expectedCommand: bridgePath, expected: expected))
+          servers: servers, expectedCommand: bridgePath, expected: expected,
+          unexpected: unexpected))
     }
   }
 

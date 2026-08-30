@@ -57,7 +57,8 @@ enum ClientWiringMerge {
     into root: [String: Any],
     rootKey: String,
     entries: [String: [String: Any]],
-    legacy: [String: String]
+    legacy: [String: String],
+    remove: Set<String>
   ) -> [String: Any] {
     var root = root
     var servers = root[rootKey] as? [String: Any] ?? [:]
@@ -66,6 +67,18 @@ enum ClientWiringMerge {
       if let previous = legacy[key], isOurs(servers[previous]) {
         servers.removeValue(forKey: previous)
       }
+    }
+    // Removal is gated twice: never a key we have just written, and never one
+    // that is not ours. The second is the same rule the legacy migration above
+    // follows, for the same reason — a third-party server that happens to be
+    // called `cupertino-safari` is somebody else's entry and this has no
+    // business deleting it.
+    //
+    // Note what `isOurs` does NOT check: the current bundle path. An entry left
+    // by a copy of the app that has since moved is still ours to clean up, and
+    // that is deliberate — it is also the entry most worth cleaning up.
+    for key in remove where entries[key] == nil && isOurs(servers[key]) {
+      servers.removeValue(forKey: key)
     }
     root[rootKey] = servers
     return root
@@ -86,6 +99,10 @@ enum ClientWiringMerge {
     /// Wired for some surfaces and not others — what an existing config looks
     /// like the day a new surface ships.
     case incomplete([String])
+    /// Wired for a surface that has since been switched off. Ours, still in the
+    /// file, and still costing tool definitions in every session that reads it —
+    /// which is the exact cost switching a surface off is meant to remove.
+    case extra([String])
   }
 
   /// `expected` is the server key paired with the human label to name in
@@ -93,7 +110,8 @@ enum ClientWiringMerge {
   static func audit(
     servers: [String: Any],
     expectedCommand: String,
-    expected: [(key: String, label: String)]
+    expected: [(key: String, label: String)],
+    unexpected: [(key: String, label: String)]
   ) -> Audit {
     var missing: [String] = []
     for (key, label) in expected {
@@ -105,12 +123,25 @@ enum ClientWiringMerge {
         return .stale((entry["command"] as? String) ?? "unknown")
       }
     }
+    // Handed in rather than derived by scanning for `isOurs` keys absent from
+    // `expected`. That scan would flag `cupertino-<a surface this build has
+    // never heard of>` — written by a NEWER copy of the app — as junk, which is
+    // reporting an entry as stale because the reader is out of date.
+    //
+    // Only `isOurs` entries count, so a third-party squatter never puts a client
+    // into a state whose Update button would have nothing to do.
+    let stale = unexpected.filter { isOurs(servers[$0.key]) }.map(\.label)
     // A partially wired config used to report `.configured`, because any one
     // matching entry was enough. That made every new surface invisible to
     // everyone who had already configured the client — a green check beside a
     // config that would never gain the new server.
-    if missing.count == expected.count { return .notConfigured }
-    return missing.isEmpty ? .configured : .incomplete(missing)
+    if missing.count == expected.count && stale.isEmpty { return .notConfigured }
+    // Missing wins over extra when both are true. A missing server breaks a tool
+    // call; an extra one only costs an assistant definitions it will never use.
+    // The same Update button fixes both in one write, so the row loses nothing
+    // by naming the worse fault.
+    if !missing.isEmpty { return .incomplete(missing) }
+    return stale.isEmpty ? .configured : .extra(stale)
   }
 
   // MARK: - Writing

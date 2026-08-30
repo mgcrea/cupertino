@@ -66,6 +66,8 @@ struct WiringCheck {
     backupAndNoLitter()
     localScopeIsReadCorrectly()
     projectFileIsJustAnotherMerge()
+    disabledSurfacesArePruned()
+    extraIsReportedAndActionable()
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 { exit(1) }
@@ -83,7 +85,7 @@ struct WiringCheck {
       "globalShortcut": "",
     ]
     let out = ClientWiringMerge.merged(
-      into: root, rootKey: "mcpServers", entries: entries(), legacy: legacy)
+      into: root, rootKey: "mcpServers", entries: entries(), legacy: legacy, remove: [])
 
     check("top-level `theme` kept", out["theme"] as? String == "dark")
     check("top-level `$schema` kept", out["$schema"] as? String != nil)
@@ -101,7 +103,7 @@ struct WiringCheck {
     print("rootKey is honoured")
     let out = ClientWiringMerge.merged(
       into: ["servers": ["someone-else": ["command": "npx"]]],
-      rootKey: "servers", entries: entries(), legacy: legacy)
+      rootKey: "servers", entries: entries(), legacy: legacy, remove: [])
 
     check("merged under `servers`", (out["servers"] as? [String: Any])?["cupertino-mail"] != nil)
     check("no stray `mcpServers` key", out["mcpServers"] == nil)
@@ -121,7 +123,7 @@ struct WiringCheck {
     let theirs: [String: Any] = ["command": "npx", "args": ["-y", "apple-notes-mcp"]]
     let out = ClientWiringMerge.merged(
       into: ["mcpServers": ["apple-mail": ours, "apple-notes": theirs]],
-      rootKey: "mcpServers", entries: entries(), legacy: legacy)
+      rootKey: "mcpServers", entries: entries(), legacy: legacy, remove: [])
     let servers = out["mcpServers"] as? [String: Any] ?? [:]
 
     check("ours removed even from an old path", servers["apple-mail"] == nil)
@@ -145,7 +147,7 @@ struct WiringCheck {
       servers[key] = entry
     }
     let audit = ClientWiringMerge.audit(
-      servers: servers, expectedCommand: bridge, expected: expected)
+      servers: servers, expectedCommand: bridge, expected: expected, unexpected: [])
     if case .stale(let found) = audit {
       check("reports the path it found", found.hasPrefix("/Users/x/Downloads"))
     } else {
@@ -156,7 +158,7 @@ struct WiringCheck {
     for (key, entry) in entries() { current[key] = entry }
     check(
       "matching command is .configured",
-      ClientWiringMerge.audit(servers: current, expectedCommand: bridge, expected: expected)
+      ClientWiringMerge.audit(servers: current, expectedCommand: bridge, expected: expected, unexpected: [])
         == .configured)
   }
 
@@ -168,17 +170,126 @@ struct WiringCheck {
     for (key, entry) in entries() where key != "cupertino-calendar" { three[key] = entry }
     check(
       "three of four names the missing one",
-      ClientWiringMerge.audit(servers: three, expectedCommand: bridge, expected: expected)
+      ClientWiringMerge.audit(servers: three, expectedCommand: bridge, expected: expected, unexpected: [])
         == .incomplete(["Calendar"]))
     check(
       "none is .notConfigured, not .incomplete",
-      ClientWiringMerge.audit(servers: [:], expectedCommand: bridge, expected: expected)
+      ClientWiringMerge.audit(servers: [:], expectedCommand: bridge, expected: expected, unexpected: [])
         == .notConfigured)
     check(
       "someone else's servers alone is still .notConfigured",
       ClientWiringMerge.audit(
-        servers: ["someone-else": ["command": "npx"]], expectedCommand: bridge, expected: expected)
+        servers: ["someone-else": ["command": "npx"]], expectedCommand: bridge, expected: expected, unexpected: [])
         == .notConfigured)
+  }
+
+  // MARK: - 5b. A surface switched off is pruned, and only when it is ours
+
+  static func disabledSurfacesArePruned() {
+    print("disabled surfaces are pruned")
+    let off = "cupertino-maps"
+    var keep = entries()
+    keep.removeValue(forKey: off)
+
+    // Ours, but written by a copy of the app that has since moved. Still ours.
+    let elsewhere: [String: Any] = [
+      "command": "/Users/x/Downloads/Cupertino.app" + ClientWiringMerge.bridgeSuffix,
+      "args": ["--server=maps"],
+    ]
+    let theirs: [String: Any] = ["command": "npx", "args": ["-y", "cupertino-maps"]]
+
+    var root: [String: Any] = ["mcpServers": [off: elsewhere, "someone-else": theirs]]
+    root["theme"] = "dark"
+    var out = ClientWiringMerge.merged(
+      into: root, rootKey: "mcpServers", entries: keep, legacy: legacy, remove: [off, "apple-maps"])
+    var servers = out["mcpServers"] as? [String: Any] ?? [:]
+    check("ours is removed even from an old path", servers[off] == nil)
+    check("someone else's survives the removal", servers["someone-else"] != nil)
+    check("unrelated root keys survive the removal", out["theme"] as? String == "dark")
+    check("the other seven are still written", servers.count == keep.count + 1)
+
+    // A third-party entry under OUR key is not ours to delete.
+    out = ClientWiringMerge.merged(
+      into: ["mcpServers": [off: theirs]], rootKey: "mcpServers", entries: keep, legacy: legacy,
+      remove: [off])
+    check(
+      "a third-party server under our key survives",
+      (out["mcpServers"] as? [String: Any])?[off] != nil)
+
+    // The pre-rename key of a disabled surface is just as stale.
+    out = ClientWiringMerge.merged(
+      into: ["mcpServers": ["apple-maps": elsewhere]], rootKey: "mcpServers", entries: keep,
+      legacy: legacy, remove: [off, "apple-maps"])
+    check(
+      "our legacy key is removed too",
+      (out["mcpServers"] as? [String: Any])?["apple-maps"] == nil)
+    out = ClientWiringMerge.merged(
+      into: ["mcpServers": ["apple-maps": theirs]], rootKey: "mcpServers", entries: keep,
+      legacy: legacy, remove: [off, "apple-maps"])
+    check(
+      "a third-party legacy key survives",
+      (out["mcpServers"] as? [String: Any])?["apple-maps"] != nil)
+
+    // Belt and braces: a key in both `entries` and `remove` is written.
+    out = ClientWiringMerge.merged(
+      into: [:], rootKey: "mcpServers", entries: entries(), legacy: legacy, remove: [off])
+    check(
+      "a key in both entries and remove is written, not deleted",
+      (out["mcpServers"] as? [String: Any])?[off] != nil)
+
+    // Removing what is not there must not invent it.
+    out = ClientWiringMerge.merged(
+      into: [:], rootKey: "mcpServers", entries: keep, legacy: legacy, remove: [off])
+    servers = out["mcpServers"] as? [String: Any] ?? [:]
+    check("removing an absent key is a no-op", servers[off] == nil && servers.count == keep.count)
+  }
+
+  // MARK: - 5c. A leftover entry is reported, so the row stays actionable
+
+  static func extraIsReportedAndActionable() {
+    print("extra vs incomplete vs configured")
+    let off = "cupertino-maps"
+    let expectedWithoutMaps = expected.filter { $0.key != off }
+    let unexpectedMaps = [(key: off, label: "Maps")]
+
+    var withMaps: [String: Any] = [:]
+    for (key, entry) in entries() { withMaps[key] = entry }
+    check(
+      "a key for a switched-off surface is .extra",
+      ClientWiringMerge.audit(
+        servers: withMaps, expectedCommand: bridge, expected: expectedWithoutMaps,
+        unexpected: unexpectedMaps) == .extra(["Maps"]))
+
+    var withoutMaps = withMaps
+    withoutMaps.removeValue(forKey: off)
+    check(
+      "once pruned it is .configured",
+      ClientWiringMerge.audit(
+        servers: withoutMaps, expectedCommand: bridge, expected: expectedWithoutMaps,
+        unexpected: unexpectedMaps) == .configured)
+
+    var missingOne = withMaps
+    missingOne.removeValue(forKey: "cupertino-calendar")
+    check(
+      "missing wins over extra",
+      ClientWiringMerge.audit(
+        servers: missingOne, expectedCommand: bridge, expected: expectedWithoutMaps,
+        unexpected: unexpectedMaps) == .incomplete(["Calendar"]))
+
+    check(
+      "a third-party server under our key is not .extra",
+      ClientWiringMerge.audit(
+        servers: withoutMaps.merging([off: ["command": "npx"]]) { a, _ in a },
+        expectedCommand: bridge, expected: expectedWithoutMaps, unexpected: unexpectedMaps)
+        == .configured)
+
+    // Every surface off, and the config still holds ours: the row must still
+    // have something to do, rather than reading as never configured.
+    check(
+      "all surfaces off with our keys present is .extra, not .notConfigured",
+      ClientWiringMerge.audit(
+        servers: withMaps, expectedCommand: bridge, expected: [],
+        unexpected: expected) != .notConfigured)
   }
 
   // MARK: - 6. A config we cannot parse is left alone
@@ -227,7 +338,7 @@ struct WiringCheck {
       return check("fixture reads back", false)
     }
     let merged = ClientWiringMerge.merged(
-      into: root, rootKey: "mcpServers", entries: entries(), legacy: legacy)
+      into: root, rootKey: "mcpServers", entries: entries(), legacy: legacy, remove: [])
     let backup = try? ClientWiringMerge.write(merged, to: config, backupSuffix: "cupertino-backup")
 
     check("a backup was made", backup != nil)
@@ -287,7 +398,7 @@ struct WiringCheck {
 
     // The audit still has to work on what comes back.
     let audit = ClientWiringMerge.audit(
-      servers: mine ?? [:], expectedCommand: "/A/bridge", expected: expected)
+      servers: mine ?? [:], expectedCommand: "/A/bridge", expected: expected, unexpected: [])
     if case .incomplete(let missing) = audit {
       check("audits the folder's servers, not the user-scope ones", missing.count == surfaces.count - 1)
     } else {
@@ -316,7 +427,7 @@ struct WiringCheck {
 
     let root = try! ClientWiringMerge.readJSON(config)
     let merged = ClientWiringMerge.merged(
-      into: root, rootKey: "mcpServers", entries: entries("/A/bridge"), legacy: legacy)
+      into: root, rootKey: "mcpServers", entries: entries("/A/bridge"), legacy: legacy, remove: [])
     _ = try! ClientWiringMerge.write(merged, to: config, backupSuffix: "cupertino-backup")
 
     let after = try! ClientWiringMerge.readJSON(config)

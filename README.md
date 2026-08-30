@@ -370,7 +370,7 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 | Section              | What it answers                                                                                                            |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Full Disk Access     | granted or not, with the button that opens the right Settings pane                                                         |
-| One pane per surface | Automation status per app, the consent prompt, and the writes toggle                                                       |
+| One pane per surface | whether the surface is on at all, Automation status per app, the consent prompt, and the writes toggle                     |
 | Connections          | which client is talking to which server right now, and how many tools it has called                                        |
 | MCP clients          | one-click wiring for Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for Claude Code, VS Code and Codex |
 | Activity…            | opens a window listing every tool call, live                                                                               |
@@ -381,6 +381,21 @@ under an app you can see rather than inside whichever editor spawned them.
 
 Writes are off per surface until you turn them on, and the toggle decides whether the mutating
 tools are registered at all — an assistant with writes off cannot see that they exist.
+
+Surfaces themselves can be switched off, from the switch in a surface's own pane or by
+right-clicking its row in the sidebar. A surface that is off is not served at all: its server key
+is left out of the clients Cupertino configures and pruned from the ones it has already written,
+its running servers are stopped, and the bridge refuses the connection if an older config still
+asks for it. That is the lever for the tool definitions you never use — eight servers wired
+everywhere is a cost every session pays. Clients configured before the change keep the entry until
+you press Update in **Settings › Clients**, which names the ones that still hold it. Claude Code
+and Codex get a copyable removal command; Visual Studio Code has no command that removes a server,
+so that one has to be edited by hand.
+
+Everything that is true of one surface lives in that surface's pane: whether it is on, its
+Automation grant, its writes toggle, its store, and what its server actually exposes. Settings
+keeps only what has no surface — Full Disk Access, Accessibility and System Events — plus client
+wiring and the licence.
 
 ## Why a single app
 

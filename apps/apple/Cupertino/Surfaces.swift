@@ -47,6 +47,28 @@ struct Surface: Identifiable, Hashable {
   /// Prefix for the server's environment variables, e.g. `APPLE_MAIL_`.
   /// See `packages/<id>/.env.example` for the full set.
   let envPrefix: String
+  /// Extra opt-in switches beyond the write gate. Usually empty.
+  ///
+  /// A gate is for a tool that is not a write — so `supportsWrites` is the
+  /// wrong flag for it — but that still should not be on by default. Messages'
+  /// `allowCodes` is the first: reading one-time authentication codes is a
+  /// read, and gating it behind `allowWrites` would mean granting the right to
+  /// send a message in order to get it.
+  ///
+  /// Declared in `surfaces.json` rather than written here, because a flag
+  /// hardcoded in Swift is the ten-hand-edited-copies problem this manifest
+  /// exists to end, and it always starts with exactly one.
+  let gates: [Gate]
+
+  /// One extra switch: a `UserDefaults` key, an env var, and its UI label.
+  struct Gate: Identifiable, Hashable {
+    /// lowerCamelCase. Becomes the `UserDefaults` key `gate.<surface>.<id>`.
+    let id: String
+    /// Appended to `envPrefix` to build the variable the server reads.
+    let envSuffix: String
+    let label: String
+    let description: String
+  }
 
   enum StorePermission: Hashable {
     /// The indivisible whole-disk grant. Never prompts; must be given by hand.
@@ -68,7 +90,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Mail/V*/MailData/Envelope Index",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_MAIL_"
+      envPrefix: "APPLE_MAIL_",
+      gates: []
     ),
     Surface(
       id: "notes",
@@ -78,7 +101,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_NOTES_"
+      envPrefix: "APPLE_NOTES_",
+      gates: []
     ),
     Surface(
       id: "reminders",
@@ -95,7 +119,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.reminders",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_REMINDERS_"
+      envPrefix: "APPLE_REMINDERS_",
+      gates: []
     ),
     Surface(
       id: "calendar",
@@ -115,7 +140,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_CALENDAR_"
+      envPrefix: "APPLE_CALENDAR_",
+      gates: []
     ),
     Surface(
       id: "contacts",
@@ -142,7 +168,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Application Support/AddressBook",
       storePermission: .contacts,
-      envPrefix: "APPLE_CONTACTS_"
+      envPrefix: "APPLE_CONTACTS_",
+      gates: []
     ),
     Surface(
       id: "messages",
@@ -179,12 +206,28 @@ struct Surface: Identifiable, Hashable {
       // other surface degrades to a slower server without it; this one has
       // no second lane and simply does not exist. docs/distribution.md
       // retired "try before you grant" partly because of this surface.
+      //
+      // The `gates` entry below is the first extra gate on any surface, and
+      // it gates a READ. `find_codes` extracts one-time 2FA codes, and it is
+      // deliberately not behind allowWrites: that flag means "may change
+      // something", and reaching a read through it would mean granting the
+      // right to send a message in order to get one. The reason it is gated
+      // at all is that this server already holds the conversation history
+      // and the Mail server holds the inbox — between them, the
+      // password-RESET channel. Adding live authentication codes to that
+      // completes an account-takeover primitive out of parts that were each
+      // individually reasonable, so it defaults off and is turned on by
+      // hand. See docs/passwords.md for why the Passwords app itself is
+      // unreachable and this is what ships in its place.
       bundleID: "com.apple.MobileSMS",
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Messages/chat.db",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_MESSAGES_"
+      envPrefix: "APPLE_MESSAGES_",
+      gates: [
+        Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets apple_messages_find_codes extract 2FA codes from recent messages. Off by default."),
+      ]
     ),
     Surface(
       id: "safari",
@@ -223,7 +266,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: false,
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_SAFARI_"
+      envPrefix: "APPLE_SAFARI_",
+      gates: []
     ),
     Surface(
       id: "maps",
@@ -275,7 +319,8 @@ struct Surface: Identifiable, Hashable {
       supportsWrites: true,
       storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
       storePermission: .fullDiskAccess,
-      envPrefix: "APPLE_MAPS_"
+      envPrefix: "APPLE_MAPS_",
+      gates: []
     ),
   ]
   // </generated:surfaces>

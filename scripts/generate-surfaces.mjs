@@ -76,6 +76,32 @@ const validate = (surfaces) => {
       problems.push(`${at}: envPrefix must be APPLE_<ID>_ — the servers derive it that way`);
     }
     if (!Array.isArray(s.notes)) problems.push(`${at}: notes must be an array of strings`);
+    // `gates` is optional. A surface with an extra opt-in read declares it here
+    // so the toggle, the env var and the capability cache key all come from one
+    // place — hardcoding one flag in Swift is the ten-copies problem this
+    // manifest exists to end, and it starts with exactly one.
+    if (s.gates !== undefined) {
+      if (!Array.isArray(s.gates)) {
+        problems.push(`${at}: gates must be an array`);
+      } else {
+        for (const [j, g] of s.gates.entries()) {
+          const gat = `${at}.gates[${j}]`;
+          if (!/^[a-z][a-zA-Z0-9]*$/.test(g?.id ?? "")) {
+            problems.push(`${gat}: id must be lowerCamelCase — it becomes a UserDefaults key`);
+          }
+          if (!/^[A-Z][A-Z0-9_]*$/.test(g?.envSuffix ?? "")) {
+            problems.push(`${gat}: envSuffix must be SCREAMING_SNAKE_CASE`);
+          }
+          if (g?.envSuffix === "ALLOW_WRITES") {
+            problems.push(`${gat}: ALLOW_WRITES is the write gate, not an extra gate`);
+          }
+          for (const key of ["label", "description"]) {
+            if (typeof g?.[key] !== "string" || !g[key])
+              problems.push(`${gat}: ${key} is required`);
+          }
+        }
+      }
+    }
   }
   if (problems.length) {
     console.error("surfaces.json is invalid:\n" + problems.map((p) => `  - ${p}`).join("\n"));
@@ -129,9 +155,14 @@ const target = (path, next, opts = {}) =>
 
 const swiftString = (v) => JSON.stringify(v);
 
+const swiftGate = (g) =>
+  `        Surface.Gate(id: ${swiftString(g.id)}, envSuffix: ${swiftString(g.envSuffix)}, ` +
+  `label: ${swiftString(g.label)}, description: ${swiftString(g.description)}),`;
+
 const swiftSurface = (s) => {
   const lines = [];
   for (const note of s.notes) lines.push(note ? `      // ${note}` : "      //");
+  const gates = s.gates ?? [];
   return [
     `    Surface(`,
     `      id: ${swiftString(s.id)},`,
@@ -142,7 +173,10 @@ const swiftSurface = (s) => {
     `      supportsWrites: ${s.supportsWrites},`,
     `      storePath: ${s.storePath === null ? "nil" : swiftString(s.storePath)},`,
     `      storePermission: .${s.storePermission === "contacts" ? "contacts" : "fullDiskAccess"},`,
-    `      envPrefix: ${swiftString(s.envPrefix)}`,
+    `      envPrefix: ${swiftString(s.envPrefix)},`,
+    ...(gates.length === 0
+      ? [`      gates: []`]
+      : [`      gates: [`, ...gates.map(swiftGate), `      ]`]),
     `    ),`,
   ].join("\n");
 };
@@ -189,11 +223,28 @@ target("Makefile", (src) => {
   const toggles = surfaces
     .filter((s) => s.supportsWrites)
     .map((s, i) => `-allowWrites.${s.id} ${i === 0 ? "YES" : "NO"}`);
+  // Every surface on except one, so the captures show what a switched-off
+  // surface actually looks like rather than only ever the happy row.
+  //
+  // Pinned by NAME rather than by position, and the name is load-bearing. Maps
+  // must stay on: it is the only surface with `usesAppleEvents: false`, and the
+  // settings plate's caption sells exactly that row. Safari is the one surface
+  // that appears in no other fixture — not the log lines, not the sessions — so
+  // switching it off contradicts nothing else on screen, which is the rule the
+  // whole demo seed is built on: a fact the screen shows must be fixed, never
+  // merely plausible.
+  const SHOT_OFF = "safari";
+  if (!surfaces.some((s) => s.id === SHOT_OFF)) {
+    throw new Error(`SHOT_ENABLED pins '${SHOT_OFF}' off, and no such surface is in surfaces.json`);
+  }
+  const enabled = surfaces.map(
+    (s) => `-surfaceEnabled.${s.id} ${s.id === SHOT_OFF ? "NO" : "YES"}`,
+  );
   return region(
     out,
     `# <generated:surfaces-shot> ${BANNER}\n`,
     `# </generated:surfaces-shot>`,
-    `SHOT_WRITES  := ${toggles.join(" ")}\n`,
+    `SHOT_WRITES  := ${toggles.join(" ")}\nSHOT_ENABLED := ${enabled.join(" ")}\n`,
     "Makefile SHOT_ARGS",
   );
 });

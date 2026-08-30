@@ -79,12 +79,29 @@ enum SurfaceCatalog {
   /// — the one input that does is `allowWrites`, which is in the key.
   @MainActor private static var cache: [String: Capabilities] = [:]
 
-  @MainActor static func cached(_ surface: Surface, allowWrites: Bool) -> Capabilities? {
-    cache["\(surface.id)/\(allowWrites)"]
+  /// The cache key: surface, write setting, and every extra gate.
+  ///
+  /// `gates` is in here for exactly the reason `allowWrites` is, and leaving it
+  /// out is a silent bug rather than a slow one. This pane spawns the real
+  /// server to show what it registers, so a key that ignored a gate would keep
+  /// answering with the pre-toggle tool list — the pane would go on insisting
+  /// `find_codes` does not exist after the user had just switched it on, which
+  /// is precisely the "demonstrated, not claimed" property this type exists to
+  /// provide. Sorted so two identical sets cannot produce two keys.
+  private static func key(_ surface: Surface, _ allowWrites: Bool, _ gates: [String]) -> String {
+    "\(surface.id)/\(allowWrites)/\(gates.sorted().joined(separator: "+"))"
   }
 
-  static func read(_ surface: Surface, allowWrites: Bool) async throws -> Capabilities {
-    if let hit = await cached(surface, allowWrites: allowWrites) { return hit }
+  @MainActor static func cached(_ surface: Surface, allowWrites: Bool, gates: [String] = [])
+    -> Capabilities?
+  {
+    cache[key(surface, allowWrites, gates)]
+  }
+
+  static func read(_ surface: Surface, allowWrites: Bool, gates: [String] = []) async throws
+    -> Capabilities
+  {
+    if let hit = await cached(surface, allowWrites: allowWrites, gates: gates) { return hit }
 
     let binaries: ServerBinaries
     do {
@@ -96,9 +113,9 @@ enum SurfaceCatalog {
     return try await withCheckedThrowingContinuation { continuation in
       onDedicatedThread("catalog-\(surface.id)") {
         do {
-          let caps = try probe(surface, binaries, allowWrites: allowWrites)
-          let key = "\(surface.id)/\(allowWrites)"
-          Task { @MainActor in cache[key] = caps }
+          let caps = try probe(surface, binaries, allowWrites: allowWrites, gates: gates)
+          let cacheKey = key(surface, allowWrites, gates)
+          Task { @MainActor in cache[cacheKey] = caps }
           continuation.resume(returning: caps)
         } catch {
           continuation.resume(throwing: error)
@@ -110,12 +127,13 @@ enum SurfaceCatalog {
   // ─── the probe ─────────────────────────────────────────────────────────────
 
   private static func probe(
-    _ surface: Surface, _ binaries: ServerBinaries, allowWrites: Bool
+    _ surface: Surface, _ binaries: ServerBinaries, allowWrites: Bool, gates: [String]
   ) throws -> Capabilities {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
-    process.environment = ServerLocator.environment(for: surface, allowWrites: allowWrites)
+    process.environment = ServerLocator.environment(
+      for: surface, allowWrites: allowWrites, gates: gates)
 
     let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
     process.standardInput = toChild

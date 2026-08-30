@@ -279,50 +279,24 @@ struct GeneralPane: View {
   }
 }
 
+/// The grants that have no surface.
+///
+/// Automation and the write toggles used to be here too, as one row per app
+/// each. They moved to `SurfaceDetail` — the main window already has one pane
+/// per surface, and that pane's own doc comment records these facts having once
+/// been "scattered between the popover, the Permissions tab and the log filter"
+/// with nothing answering "is Mail working" in one place. Keeping a second copy
+/// in Settings was that scattering, still going.
+///
+/// What is left is the line the split is on: **a grant that cannot be expressed
+/// per app.** Full Disk Access says so in its own row comment below — it is
+/// indivisible. Accessibility and System Events have exactly one consumer, the
+/// Mail composer, but are equally app-wide: granting them "for Mail" is not a
+/// thing macOS offers, and a per-app row would imply it was.
 struct PermissionsPane: View {
   let model: StatusModel
 
-  /// The id the `writes` screenshot stage scrolls to. Only demo mode reads it;
-  /// in the shipping app the pane opens at the top like any other.
-  private static let writesAnchor = "permissions.writes"
-
-  var body: some View {
-    ScrollViewReader { proxy in
-      form
-        // Parking the scroll position happens BEFORE readiness is signalled, so
-        // the shutter cannot fire on the top of the pane and file it as the
-        // write gate. That ordering is the whole guard: appshot waits for the
-        // ready file, and a scroll racing it would produce a correct-looking
-        // capture of the wrong part of a real screen — the failure that is
-        // hardest to see by eye.
-        .task {
-          if DemoSeed.stageAnchor == .writes {
-            // Retried, because `.task` runs before the form's rows have
-            // registered their ids with the ScrollViewReader and `scrollTo` on
-            // an id it does not know yet is a SILENT no-op. The first attempt
-            // measured exactly that: `writes` came out byte-identical to
-            // `settings`, and only appshot's duplicate check said so.
-            //
-            // A hop rather than one padded sleep, and bounded rather than
-            // `while true`: if the anchor never resolves this stops after ~0.5s
-            // and the capture is a duplicate again, which the gate refuses. A
-            // loop would hang until appshot's ready timeout instead, naming the
-            // wrong culprit.
-            //
-            // No animation anywhere: an animated scroll is motion the frame
-            // poll would have to outlast, and nobody is watching this one.
-            for _ in 0..<10 {
-              proxy.scrollTo(Self.writesAnchor, anchor: .bottom)
-              try? await Task.sleep(for: .milliseconds(50))
-            }
-          }
-          // Always last. The shutter waits on this file, so signalling before
-          // the scroll settles would photograph the top of the form and file it
-          // as the write gate.
-          DemoSeed.signalReady(from: .settings)
-        }
-    }
-  }
+  var body: some View { form }
 
   private var form: some View {
     Form {
@@ -341,52 +315,6 @@ struct PermissionsPane: View {
         }
       }
 
-      // Automation and writes were one row per surface carrying both, which
-      // needed a paragraph above the table to explain that the two are
-      // unrelated. Two sections say it without the paragraph: they are
-      // different questions about the same apps, and each row now has one
-      // control at its trailing edge like every other row in this window.
-      Section {
-        ForEach(Surface.all) { surface in
-          LabeledContent {
-            if surface.usesAppleEvents {
-              switch model.automation[surface.id] {
-              case .notDetermined:
-                Button(StatusStyle.actionLabel(.notDetermined) ?? "") {
-                  model.requestAutomation(surface)
-                }
-              case .denied:
-                // A denial cannot be re-prompted; it has to change in Settings.
-                Button(StatusStyle.actionLabel(.denied) ?? "") {
-                  Permissions.openAutomationSettings()
-                }
-              case .appNotRunning:
-                // Used to land in `default:` and paint a bare moon with nothing
-                // to click — a dead end on the one surface that sits in this
-                // state permanently, since Contacts is the Apple app nobody
-                // leaves open. The button opens it and then asks.
-                Button(StatusStyle.actionLabel(.appNotRunning) ?? "") {
-                  model.requestAutomation(surface)
-                }
-              default:
-                Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-                  .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
-              }
-            } else {
-              Image(systemName: StatusStyle.automationIcon(surface, nil))
-                .foregroundStyle(StatusStyle.automationTint(surface, nil))
-            }
-          } label: {
-            SurfaceLabel(
-              surface: surface,
-              caption: StatusStyle.automationCaption(surface, model.automation[surface.id]))
-          }
-        }
-      } header: {
-        Text("Automation")
-      } footer: {
-        Text("Automation lets Cupertino drive each app through Apple Events.")
-      }
 
       // Its own section because these two are not per-surface and not
       // interchangeable with the rows above. They gate ONE thing — filling a
@@ -438,24 +366,6 @@ struct PermissionsPane: View {
             + "as a reply that will not send.")
       }
 
-      Section {
-        // Only the surfaces that HAVE a write tool. A toggle for a server that
-        // registers none would gate nothing while implying otherwise, which is
-        // the opposite of what this section is for.
-        ForEach(Surface.all.filter(\.supportsWrites)) { surface in
-          WritesToggle(surface: surface, style: .row)
-        }
-      } header: {
-        Text("Writes")
-      } footer: {
-        // The anchor rides the footer rather than the header, because the
-        // capture wants the whole section in frame and `anchor: .bottom`
-        // resolves against whichever view carries the id.
-        Text(
-          "Writes decide what an assistant can see at all — the write tools, and the prompts that end in one, are not registered when this is off, so it is not merely a permission to refuse later."
-        )
-        .id(Self.writesAnchor)
-      }
     }
     .formStyle(.grouped)
   }
@@ -499,6 +409,15 @@ struct ClientsPane: View {
   }
 
   var body: some View {
+    // Readiness is signalled from here rather than from `SettingsView`, and the
+    // pane it comes from has to be the pane the stage opens: the shutter waits
+    // on this file, so a signal from the window would let a capture fire before
+    // the rows below have drawn. `settings` is the only Settings stage left, and
+    // it opens this pane.
+    form.task { DemoSeed.signalReady(from: .settings) }
+  }
+
+  private var form: some View {
     Form {
       Section {
         if visible.isEmpty {
@@ -515,7 +434,7 @@ struct ClientsPane: View {
       } footer: {
         VStack(alignment: .leading, spacing: 6) {
           Text(
-            "Cupertino writes its own bridge path into each client's config. Re-run these after moving the app, or after a new surface ships."
+            "Cupertino writes its own bridge path into each client's config. Re-run these after moving the app, after a new surface ships, or after you turn one off."
           )
           // The `code` command is installed separately from VS Code itself, and
           // the row is gated on the app rather than on the CLI: a false negative
@@ -524,6 +443,15 @@ struct ClientsPane: View {
           Text(
             "Clients with a command keep their config in a format this app will not rewrite. Paste the command into a terminal — for Visual Studio Code that needs its \"code\" shell command installed."
           )
+          // Only VS Code reaches this, and only once something is switched off.
+          // It is the one client with an add verb and no removal verb, so there
+          // is no command to offer — naming the file to edit beats a button that
+          // would paste something that does not exist.
+          if visible.contains(where: ClientWiring.needsManualRemoval) {
+            Text(
+              "Visual Studio Code has no command that removes a server, so a surface you turn off has to be taken out by hand — run \"MCP: List Servers\" in VS Code, or edit its mcp.json. That file is JSONC, which is why this app will not rewrite it."
+            )
+          }
           if let error = model.lastError {
             Text(error).foregroundStyle(.red)
           }
@@ -561,9 +489,14 @@ private struct ProjectFoldersSection: View {
 
   @AppStorage("wiring.projectScope") private var scopeRaw = ClientWiring.ProjectScope.local
     .rawValue
-  @State private var folders: [URL] = ClientWiring.rememberedFolders
+  @State private var folders: [URL] = ProjectFoldersSection.remembered
   @State private var copied: URL?
   @State private var error: String?
+
+  /// Demo mode answers from a table, like every other fact these captures show.
+  static var remembered: [URL] {
+    DemoSeed.isEnabled ? DemoSeed.wiredFolders : ClientWiring.rememberedFolders
+  }
 
   private var scope: ClientWiring.ProjectScope {
     ClientWiring.ProjectScope(rawValue: scopeRaw) ?? .local
@@ -598,7 +531,7 @@ private struct ProjectFoldersSection: View {
           wire: { wire(folder) },
           forget: {
             ClientWiring.forget(folder)
-            folders = ClientWiring.rememberedFolders
+            folders = ProjectFoldersSection.remembered
           })
       }
     } header: {
@@ -625,7 +558,7 @@ private struct ProjectFoldersSection: View {
     panel.message = "Choose the project folder to wire Cupertino into."
     guard panel.runModal() == .OK, let folder = panel.url else { return }
     ClientWiring.remember(folder)
-    folders = ClientWiring.rememberedFolders
+    folders = ProjectFoldersSection.remembered
     wire(folder)
   }
 
@@ -638,7 +571,7 @@ private struct ProjectFoldersSection: View {
       do { try ClientWiring.configureProject(folder) } catch {
         self.error = error.localizedDescription
       }
-      folders = ClientWiring.rememberedFolders
+      folders = ProjectFoldersSection.remembered
     case .local:
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(ClientWiring.localCommands(for: folder), forType: .string)
@@ -708,6 +641,20 @@ private struct ClientRow: View {
   let status: ClientWiring.Status
   let configure: () -> Void
   @State private var copied = false
+  @State private var removed = false
+
+  /// Shared by the two copy buttons so their two-second resets cannot drift.
+  private func copy(_ text: String, into flag: Binding<Bool>) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    flag.wrappedValue = true
+    // Confirmation, not a permanent state: the button has to invite a second
+    // copy after the app has moved and the paths changed.
+    Task {
+      try? await Task.sleep(for: .seconds(2))
+      flag.wrappedValue = false
+    }
+  }
 
   var body: some View {
     LabeledContent {
@@ -732,6 +679,7 @@ private struct ClientRow: View {
   private var caption: String? {
     switch status {
     case .incomplete(let missing): "missing \(missing.joined(separator: ", "))"
+    case .extra(let leftover): "still wired for \(leftover.joined(separator: ", "))"
     case .unreadable(let why): why
     default: nil
     }
@@ -746,16 +694,17 @@ private struct ClientRow: View {
       // in Claude Code's case — strict JSON that holds API credentials and that
       // running sessions write to concurrently. See `ClientWiring.Wiring`.
       case .command:
-        Button(copied ? "Copied" : "Copy command") {
-          guard let commands = ClientWiring.commands(for: client) else { return }
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(commands, forType: .string)
-          copied = true
-          // Confirmation, not a permanent state: the button has to invite a
-          // second copy after the app has moved and the paths changed.
-          Task {
-            try? await Task.sleep(for: .seconds(2))
-            copied = false
+        HStack {
+          // Its own button, never appended to the adds. `localCommands` chains
+          // with `&&` and `claude mcp remove` exits non-zero on a name that is
+          // not there, so a removal spliced into that chain would abort every
+          // add after it. Deletion is also the half worth reading first.
+          if let removals = ClientWiring.removalCommands(for: client) {
+            Button(removed ? "Copied" : "Copy removal") { copy(removals, into: $removed) }
+          }
+          Button(copied ? "Copied" : "Copy command") {
+            guard let commands = ClientWiring.commands(for: client) else { return }
+            copy(commands, into: $copied)
           }
         }
 
@@ -767,8 +716,12 @@ private struct ClientRow: View {
           // Points at a previous build — the common case after moving the app.
           Button("Update") { configure() }
         case .incomplete:
-          // Wired before a surface existed. Configure writes all of
-          // Surface.all, so the same button finishes the job.
+          // Wired before a surface existed. Configure writes every surface that
+          // is switched on, so the same button finishes the job.
+          Button("Update") { configure() }
+        case .extra:
+          // Still holds a server for a surface that has since been switched off.
+          // The same write that adds the missing ones prunes these.
           Button("Update") { configure() }
         default:
           Button("Configure") { configure() }

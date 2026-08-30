@@ -37,6 +37,15 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// the first thing that does would quietly turn a view model into a registry.
   private let trialPIDs = OSAllocatedUnfairLock<Set<Int32>>(initialState: [])
 
+  /// Every live server, by pid, so `stopSessions(for:)` can find one surface's.
+  ///
+  /// The second exception to "the host keeps no state", and it exists for the
+  /// same reason `trialPIDs` does: a preference changed in the UI has to reach
+  /// connections that were admitted before it changed. Deliberately not a reach
+  /// into `Sessions` — that type is observation for the Activity window, and the
+  /// comment above says why the host must not start reading from it.
+  private let serverPIDs = OSAllocatedUnfairLock<[Int32: String]>(initialState: [:])
+
   /// Why the socket never came up, if it did not. Kept rather than only logged:
   /// a host that failed to listen is the one state where nothing will ever
   /// work, and stderr is invisible to someone who launched the app from Finder.
@@ -390,6 +399,31 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
 
+    // The backstop for a config entry we could not remove. Command clients keep
+    // their config in files this app refuses to write — see `ClientWiring.Wiring`
+    // — so a surface switched off in the app can still be spawned by Claude
+    // Code, VS Code or Codex until the user runs the removal line. This is where
+    // that ends.
+    //
+    // Before the licence gate, and deliberately. Enablement is a fact about the
+    // user's own configuration rather than about payment, and offering to sell a
+    // licence for a surface somebody has just switched off sends them to the
+    // wrong screen. It also keeps the trial out of it: the path below logs the
+    // remaining window and `run` files the pid into `trialPIDs`, and burning
+    // either on a connection that is about to be refused would be wrong.
+    //
+    // `Surface.named` above is deliberately NOT filtered to the enabled set.
+    // Narrowing it would collapse "switched off" into "unknown server", which is
+    // a different sentence, logged against a different surface id — namely none.
+    guard SurfaceSettings.isEnabled(surface) else {
+      hostLog(surface.id, .error, "refused: \(surface.id) is off")
+      reply(
+        client,
+        "err \(surface.displayName) is switched off in Cupertino — turn it back on "
+          + "in the app, or remove this server from your client's configuration")
+      return
+    }
+
     // The licence gate, and the only one in the app.
     //
     // Here rather than a few lines further down because this is the last point
@@ -469,15 +503,39 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
+  /// Stop every server running for one surface, when it is switched off.
+  ///
+  /// Without this, "off" is not off until every editor is restarted: an MCP host
+  /// opens one stdio connection when it launches and keeps it for the life of
+  /// that editor, so refusing new connections alone would leave the tools the
+  /// user has just switched off sitting in a session that outlives the decision.
+  ///
+  /// SIGTERM, and by exactly the reasoning `endTrialSessions` gives: the child
+  /// exits on its own, `run`'s pumps see EOF, the session leaves the Activity
+  /// window and the exit is logged by the same path as any other.
+  func stopSessions(for surface: Surface) {
+    let pids = serverPIDs.withLock { live in
+      live.filter { $0.value == surface.id }.map(\.key)
+    }
+    for pid in pids {
+      hostLog(surface.id, .info, "switched off — stopping server (pid \(pid))")
+      kill(pid, SIGTERM)
+    }
+  }
+
   private func run(surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool) {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
+    let gates = SurfaceSettings.enabledGates(surface)
     process.environment = ServerLocator.environment(
-      for: surface, allowWrites: SurfaceSettings.allowWrites(surface))
+      for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates)
 
     let writes = SurfaceSettings.allowWrites(surface)
     hostLog(surface.id, .info, "allowWrites=\(writes)")
+    if !surface.gates.isEmpty {
+      hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
+    }
 
     let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
     process.standardInput = toChild
@@ -504,6 +562,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let session = UUID()
     let pid = process.processIdentifier
     if onTrial { trialPIDs.withLock { $0.insert(pid) } }
+    serverPIDs.withLock { $0[pid] = surface.id }
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
     }
@@ -556,6 +615,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // the kernel eventually, and a stale one left here is a signal sent to
     // whatever inherits the number.
     if onTrial { trialPIDs.withLock { $0.remove(pid) } }
+    serverPIDs.withLock { $0[pid] = nil }
     Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
     hostLog(surface.id, .info, "server exited (\(process.terminationStatus))")
   }
@@ -680,4 +740,68 @@ enum SurfaceSettings {
   static func allowWrites(_ surface: Surface) -> Bool {
     UserDefaults.standard.bool(forKey: "allowWrites.\(surface.id)")
   }
+
+  static func gateKey(_ surface: Surface, _ gate: Surface.Gate) -> String {
+    "gate.\(surface.id).\(gate.id)"
+  }
+
+  /// Whether one extra gate is on.
+  ///
+  /// Written the way `allowWrites` is and NOT the way `isEnabled` is: absence
+  /// means OFF. That is the safe default here and the opposite of the surface
+  /// toggle, where absence has to mean enabled so a newly shipped surface turns
+  /// itself on. A gate exists precisely because the thing behind it should not
+  /// arrive switched on, so a surface that gains one in a later version must
+  /// read it as off on every existing Mac.
+  static func isGateOn(_ surface: Surface, _ gate: Surface.Gate) -> Bool {
+    UserDefaults.standard.bool(forKey: gateKey(surface, gate))
+  }
+
+  /// The env suffixes of every gate currently on, for `ServerLocator`.
+  static func enabledGates(_ surface: Surface) -> [String] {
+    surface.gates.filter { isGateOn(surface, $0) }.map(\.envSuffix)
+  }
+
+  static func enabledKey(_ surface: Surface) -> String { "surfaceEnabled.\(surface.id)" }
+
+  /// Whether this surface is served at all.
+  ///
+  /// **Absence means enabled**, which is the whole reason this is not written
+  /// the way `allowWrites` above is. `bool(forKey:)` alone returns false for a
+  /// missing key, so copying that one line would ship every surface off for
+  /// every existing install, and the first Update click would then strip all
+  /// eight keys out of somebody's `claude_desktop_config.json`. It is also what
+  /// keeps the NEXT surface on: a surface that ships in a later version has no
+  /// key on an existing Mac, reads enabled, and lands in `entries` and
+  /// `expected` exactly as adding a surface does today.
+  ///
+  /// The two-step is not redundant either, and `as? Bool` is the trap.
+  /// MEASURED, with `-surfaceEnabled.safari NO` on the command line:
+  ///
+  ///     object=Optional(NO)  type=NSTaggedPointerString  as? Bool=nil  bool(forKey:)=false
+  ///
+  /// `NSArgumentDomain` stores launch arguments as STRINGS, so
+  /// `object(forKey:) as? Bool ?? true` reads a surface pinned off by the
+  /// screenshot pipeline as *enabled* — and the golden would silently
+  /// photograph the wrong thing. `object(forKey:)` answers only "is this set
+  /// anywhere in the search list", and `bool(forKey:)` does the coercion.
+  ///
+  /// `UserDefaults.register(defaults:)` was the other candidate and is worse:
+  /// it has to run before any read, and this is read from `serve`, which can
+  /// answer a handshake very early in launch.
+  static func isEnabled(_ surface: Surface) -> Bool {
+    let key = enabledKey(surface)
+    guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+    return UserDefaults.standard.bool(forKey: key)
+  }
+
+  /// The surfaces this Mac actually serves.
+  ///
+  /// Deliberately here rather than as `Surface.enabled`. `Surface.all` is a
+  /// closed compile-time table and this is one user's preference; the two
+  /// sitting side by side in one type is an autocomplete trap in exactly the
+  /// file — `ServerHost.serve` — where picking the wrong one turns a refusal
+  /// into a hole. Making every call site type `SurfaceSettings` is the
+  /// distinction.
+  static var enabledSurfaces: [Surface] { Surface.all.filter(isEnabled) }
 }

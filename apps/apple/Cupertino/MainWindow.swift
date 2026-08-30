@@ -28,6 +28,19 @@ enum MainWindowController {
     content: { MainView(model: StatusModel.shared) })
 
   static func show() { hosted.show() }
+
+  /// Open onto a particular pane, including on a window that is already up.
+  ///
+  /// The default is written *before* the window is shown, exactly as
+  /// `SettingsWindowController.show(_:)` does it: `MainView` reads its
+  /// selection through `@AppStorage`, which observes the write. This is what
+  /// the popover's "N more…" link needs — it promises the Connections list, and
+  /// with the window already open on the log it used to bring that window
+  /// forward still showing the log.
+  static func show(_ pane: MainView.Pane) {
+    UserDefaults.standard.set(pane.rawValue, forKey: MainView.Pane.defaultsKey)
+    hosted.show()
+  }
 }
 
 /// The entry point for callers that are not already on the main actor.
@@ -39,13 +52,15 @@ enum MainWindowOpener {
 
 struct MainView: View {
   let model: StatusModel
-  /// Optional because that is the shape `List(selection:)` drives for a single
-  /// selection. A non-optional binding compiles, and then the sidebar highlight
-  /// moves while the detail pane stays where it was — selection updating in
-  /// AppKit but never reaching this state.
-  /// The staged driver reaches a screen by relaunching onto it rather than by
-  /// clicking through to it, so the initial selection *is* the navigation.
-  @State private var pane: Pane? = DemoSeed.isEnabled ? DemoSeed.stage.pane : .log
+  /// Where the sidebar selection lives.
+  ///
+  /// `@AppStorage`, not `@State`, and the reason is the one already written on
+  /// `SettingsView.pane`: a `@State` copy seeded once at init is exactly how a
+  /// deep link into an *already-open* window stops working. Settings was
+  /// bridged this way from the start; this window was not, and the cost was the
+  /// popover's "N more…" link opening the window on whatever pane it was last
+  /// left on instead of on Connections.
+  @AppStorage(Pane.defaultsKey) private var selection = Pane.log.rawValue
   @State private var surface: String = MainView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
@@ -62,6 +77,31 @@ struct MainView: View {
     case surface(String)
     case log
     case connections
+  }
+
+  /// Optional because that is the shape `List(selection:)` drives for a single
+  /// selection. A non-optional binding compiles, and then the sidebar highlight
+  /// moves while the detail pane stays where it was — selection updating in
+  /// AppKit but never reaching this state.
+  ///
+  /// Bridged here rather than mirrored into `@State` so there is one source of
+  /// truth, which is what lets `MainWindowController.show(_:)` reach a window
+  /// that is already open.
+  private var pane: Binding<Pane?> {
+    Binding(
+      get: { current },
+      set: { selection = ($0 ?? .log).rawValue })
+  }
+
+  /// The staged driver reaches a screen by relaunching onto it rather than by
+  /// clicking through to it, so under `appshot capture` the initial selection
+  /// *is* the navigation — and it must come from the stage, never from the
+  /// stored value. A remembered pane is the developer's, and a capture must not
+  /// inherit whichever screen they happened to leave this window on.
+  /// `HostedWindow` overrides a remembered *frame* for the same reason.
+  private var current: Pane {
+    if DemoSeed.isEnabled { return DemoSeed.stage.pane }
+    return Pane(rawValue: selection) ?? .log
   }
 
   private var entries: [LogStore.Entry] {
@@ -93,26 +133,16 @@ struct MainView: View {
   /// bar this window used to have is gone: hand-rolled chrome next to system
   /// chrome is the one arrangement that always looks wrong.
   private var sidebar: some View {
-    List(selection: $pane) {
+    List(selection: pane) {
       Section("Surfaces") {
+        // Every surface, including the ones switched off. Hiding them would make
+        // this window lie about which apps Cupertino knows, and would leave the
+        // detail pane — where you turn one back on — unreachable from here.
+        // Moving them to their own section is worse in a smaller way: the row
+        // would jump out from under the cursor that just switched it off.
         ForEach(Surface.all) { surface in
-          // The app's own icon leads the row, so the sidebar reads as a list of
-          // the four apps rather than of four abstractions — and the automation
-          // status moves to the trailing edge instead of being displaced by it.
-          // Both facts fit; one was standing in for the other.
-          Label {
-            HStack(spacing: 6) {
-              Text(surface.displayName)
-              Spacer(minLength: 4)
-              Image(systemName: StatusStyle.icon(model.automation[surface.id]))
-                .font(.caption)
-                .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
-                .help(StatusStyle.caption(model.automation[surface.id]))
-            }
-          } icon: {
-            SurfaceIconView(surface: surface)
-          }
-          .tag(Pane.surface(surface.id))
+          SurfaceSidebarRow(surface: surface, model: model)
+            .tag(Pane.surface(surface.id))
         }
       }
       Section("Activity") {
@@ -124,6 +154,13 @@ struct MainView: View {
     .safeAreaInset(edge: .bottom) { sidebarStatus }
   }
 
+/// One sidebar row, owning its own `@AppStorage` so it redraws when the switch
+/// moves.
+///
+/// A view rather than a branch inside the `ForEach`: `SurfaceSettings.isEnabled`
+/// is a plain `UserDefaults` read and does not publish, so a row that consulted
+/// it directly would keep its old appearance until something else invalidated
+/// the list. `WritesToggle` makes the same move for the same reason.
   /// The two facts that are true of the whole app rather than of one surface.
   /// Full Disk Access belongs here and nowhere else — `DiskAccessStatus` is
   /// deliberately app-wide, and a copy of it per surface would imply a
@@ -169,7 +206,7 @@ struct MainView: View {
         // others that are always present, and a permanent zero is a row that
         // only ever says nothing is happening.
         if clientCount > 0 {
-          Button { pane = .connections } label: {
+          Button { selection = Pane.connections.rawValue } label: {
             Text(clientCount == 1 ? "1 client" : "\(clientCount) clients")
               .font(.caption)
               .foregroundStyle(.tertiary)
@@ -195,7 +232,23 @@ struct MainView: View {
       }
     }
     .padding(.horizontal, 12)
+    .padding(.top, 8)
     .padding(.bottom, 10)
+    // Opaque, and not for looks. `safeAreaInset` reserves the space but does
+    // not fill it, so once the sidebar has more rows than fit, the list scrolls
+    // *under* a transparent footer and the licence and disk-access lines are
+    // drawn through by whatever row is passing behind them. Six rows against a
+    // 460pt minimum do not scroll today, which is why this has never been seen
+    // here — it is one added surface, or one shorter window, away. `.bar` is
+    // the material AppKit uses for exactly this strip, so it occludes without
+    // inventing a colour the sidebar does not already have.
+    //
+    // (That "six rows" was written when there were four surfaces. There are
+    // eight, so the list is ten rows and two headers against a 460pt minimum
+    // less this strip — the margin is about four rows, not the comfortable one
+    // implied above. Switching a surface off does not shrink it: the row stays,
+    // dimmed.)
+    .background(.bar)
   }
 
   @ViewBuilder
@@ -239,7 +292,7 @@ struct MainView: View {
 
   @ViewBuilder
   private var detail: some View {
-    switch pane ?? .log {
+    switch current {
     case .surface(let id):
       if let surface = Surface.named(id) {
         SurfaceDetail(surface: surface, model: model)
@@ -428,6 +481,88 @@ struct MainView: View {
   }
 }
 
+
+private struct SurfaceSidebarRow: View {
+  let surface: Surface
+  let model: StatusModel
+  @AppStorage private var enabled: Bool
+
+  init(surface: Surface, model: StatusModel) {
+    self.surface = surface
+    self.model = model
+    _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
+  }
+
+  var body: some View {
+    // The app's own icon leads the row, so the sidebar reads as a list of the
+    // apps rather than of abstractions — and the automation status moves to the
+    // trailing edge instead of being displaced by it. Both facts fit; one was
+    // standing in for the other.
+    Label {
+      HStack(spacing: 6) {
+        Text(surface.displayName)
+          .foregroundStyle(enabled ? .primary : .tertiary)
+        Spacer(minLength: 4)
+        // The glyph goes rather than greys. A TCC grant reported against a
+        // server that will never start is a true fact about the wrong subject,
+        // which is the same reason `StatusStyle.automationIcon` draws
+        // `minus.circle` for a surface that never scripts its app.
+        if enabled {
+          Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+            .font(.caption)
+            .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
+            .help(StatusStyle.caption(model.automation[surface.id]))
+        }
+      }
+    } icon: {
+      SurfaceIconView(surface: surface)
+        .saturation(enabled ? 1 : 0)
+        .opacity(enabled ? 1 : 0.55)
+    }
+    .help(enabled ? "" : "Off")
+    // The batch path. Switching four surfaces off from the detail pane is four
+    // navigations; from here it is four right-clicks without leaving the list,
+    // which is the one thing a Settings list of all eight would have bought.
+    .contextMenu {
+      Button(enabled ? "Turn Off" : "Turn On") {
+        enabled.toggle()
+        if !enabled { ServerHost.shared.stopSessions(for: surface) }
+        model.refresh()
+      }
+    }
+  }
+}
+
+
+/// `RawRepresentable` so the selection can live in `@AppStorage`. See
+/// `MainView.pane` for why it has to.
+extension MainView.Pane: RawRepresentable {
+  static let defaultsKey = "mainPane"
+
+  init?(rawValue: String) {
+    switch rawValue {
+    case "log": self = .log
+    case "connections": self = .connections
+    default:
+      // Only `surface:` carries a payload, and an id that is no longer in
+      // `Surface.all` still parses — `MainView.detail` already re-resolves it
+      // and draws "Unknown surface", which is a better answer than silently
+      // landing somewhere else.
+      guard rawValue.hasPrefix("surface:") else { return nil }
+      let id = String(rawValue.dropFirst("surface:".count))
+      guard !id.isEmpty else { return nil }
+      self = .surface(id)
+    }
+  }
+
+  var rawValue: String {
+    switch self {
+    case .surface(let id): "surface:\(id)"
+    case .log: "log"
+    case .connections: "connections"
+    }
+  }
+}
 
 /// Asked once, and as a card rather than a dialog.
 ///

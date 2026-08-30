@@ -259,7 +259,10 @@ final class StatusModel {
   private func refreshAutomation() {
     // Strings rather than `Surface` values, so what crosses to the detached
     // task is unambiguously Sendable no matter what Surface grows later.
-    let targets = Surface.all.filter(\.usesAppleEvents).map { ($0.id, $0.bundleID) }
+    // Enabled only. Asking TCC about a surface that will never start spends a
+    // blocking IPC on a question with no consumer.
+    let targets = SurfaceSettings.enabledSurfaces.filter(\.usesAppleEvents)
+      .map { ($0.id, $0.bundleID) }
     // System Events goes through the same door and must ride the same detached
     // task. It is not a Surface, so it cannot come from the list above — but it
     // is the identical blocking IPC, and running it on the main thread would
@@ -386,7 +389,20 @@ struct StatusMenu: View {
         }
       }
 
-      ForEach(Surface.all) { surface in
+      // Enabled only, and this is the feature's most visible payoff. The comment
+      // above records that the explanations moved to Settings "when a fourth
+      // surface made this taller than the thing it is supposed to be a summary
+      // of"; there are eight now. It also removes up to eight live "Allow…"
+      // buttons that would fire a real TCC consent dialog for a server that
+      // cannot start.
+      if SurfaceSettings.enabledSurfaces.isEmpty {
+        // A bare gap between the disk-access row and the divider otherwise. The
+        // vocabulary is the one this file already uses for a resting state.
+        Text("No surfaces are on.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      ForEach(SurfaceSettings.enabledSurfaces) { surface in
         HStack {
           Label {
             Text(surface.displayName)
@@ -615,6 +631,119 @@ struct WritesToggle: View {
 }
 
 
+/// One extra opt-in switch, for a tool the write gate is the wrong flag for.
+///
+/// Same one-key-two-views shape as `WritesToggle` above, and the same reason:
+/// the key lives in `surfaces.json`, so the toggle, the environment variable
+/// the server reads and the capability cache key cannot disagree.
+///
+/// Renders nothing for a surface with no gates, which is every surface but
+/// Messages today. The description comes from the manifest rather than from
+/// here because a switch that turns on a read of authentication codes needs to
+/// say so at the point of decision, not in a doc comment.
+struct GateToggle: View {
+  private let surface: Surface
+  private let gate: Surface.Gate
+  @AppStorage private var isOn: Bool
+
+  init(surface: Surface, gate: Surface.Gate) {
+    self.surface = surface
+    self.gate = gate
+    _isOn = AppStorage(wrappedValue: false, SurfaceSettings.gateKey(surface, gate))
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Toggle(gate.label, isOn: $isOn)
+        .toggleStyle(.checkbox)
+        .font(.caption)
+      Text(gate.description)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.leading, 20)
+    }
+    .padding(.leading, 20)
+  }
+}
+
+/// Whether Cupertino serves this surface at all.
+///
+/// Two homes, one key, exactly as `WritesToggle` above: the Settings row is the
+/// batch job — first-run pruning is eight decisions at once, which is a list
+/// rather than eight navigations — and the detail-pane switch is the in-context
+/// one, taken where the evidence for it is already on screen. `SurfaceDetail`'s
+/// own doc comment is the argument for the second: those facts were once
+/// "scattered between the popover, the Permissions tab and the log filter", and
+/// a per-surface preference reachable only from a second window rebuilds exactly
+/// that.
+///
+/// `@AppStorage` and never a cached copy, for the reason `WritesToggle` records
+/// — but the stakes are higher here. A stale copy of `allowWrites` reverted a
+/// checkbox; a stale copy of this one silently re-enables a surface AND writes
+/// its key back into somebody's client config on the next Update.
+///
+/// `wrappedValue: true` agrees with `SurfaceSettings.isEnabled`'s absence-means-
+/// enabled by construction. Do not change one without the other; the app and the
+/// relay would then disagree about which surfaces exist.
+struct SurfaceSwitch: View {
+  enum Style {
+    /// Under the surface it belongs to, in the main window's detail pane.
+    case inline
+    /// A Settings row, where the surface has to name itself.
+    case row
+  }
+
+  private let surface: Surface
+  private let style: Style
+  private let model: StatusModel
+  @AppStorage private var enabled: Bool
+
+  init(surface: Surface, style: Style = .inline, model: StatusModel) {
+    self.surface = surface
+    self.style = style
+    self.model = model
+    _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
+  }
+
+  var body: some View {
+    control
+      .onChange(of: enabled) { _, isOn in
+        // Off means off now, not at the next editor restart. An MCP host opens
+        // one stdio connection when it launches and keeps it for the life of
+        // that editor, so refusing new connections alone would leave the tools
+        // somebody has just switched off sitting in a session that outlives the
+        // decision.
+        if !isOn { ServerHost.shared.stopSessions(for: surface) }
+        // `model.clients` is only recomputed in `refresh()`, which fires on the
+        // Settings window's `onAppear`. Without this, flipping a switch here and
+        // walking to the Clients pane — same window, no reappearance — shows a
+        // verdict computed before the change, for the rest of the session.
+        model.refresh()
+      }
+  }
+
+  @ViewBuilder private var control: some View {
+    switch style {
+    case .inline:
+      Toggle("Enabled", isOn: $enabled)
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .labelsHidden()
+    case .row:
+      Toggle(isOn: $enabled) {
+        SurfaceLabel(
+          surface: surface,
+          caption: enabled ? nil : "off — not served, and not written to clients")
+      }
+      .help(
+        "Turn this off to stop serving \(surface.displayName). Clients you have already "
+          + "configured keep the entry until you update them.")
+    }
+  }
+}
+
+
 /// What is talking to Cupertino right now.
 ///
 /// The popover could previously say a great deal about permissions and nothing
@@ -691,7 +820,14 @@ struct ConnectionsSection: View {
     .font(.caption)
   }
 
+  /// Onto Connections specifically, not merely "open the window".
+  ///
+  /// This link says "N more…" under a list of connections, so the window it
+  /// opens has to be showing them. It used to call `show()`, which brought the
+  /// window forward on whatever pane it was last left on — and since the main
+  /// window opens on the log by default, the common case was a link promising
+  /// the connection list and delivering the log.
   private func openActivity() {
-    MainWindowController.show()
+    MainWindowController.show(.connections)
   }
 }

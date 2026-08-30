@@ -18,6 +18,16 @@ struct SurfaceDetail: View {
   let model: StatusModel
 
   @State private var store: StoreStatus = .checking
+  /// Its own copy of the key `SurfaceSwitch` writes, so this pane re-lays out
+  /// the moment the switch moves. Same reason `CapabilitiesCard` keeps one for
+  /// the write flag.
+  @AppStorage private var enabled: Bool
+
+  init(surface: Surface, model: StatusModel) {
+    self.surface = surface
+    self.model = model
+    _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
+  }
 
   enum StoreStatus {
     case checking
@@ -30,10 +40,19 @@ struct SurfaceDetail: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
         heading
-        accessSection
-        storeSection
-        CapabilitiesCard(surface: surface)
-        activity
+        if enabled {
+          accessSection
+          storeSection
+          CapabilitiesCard(surface: surface)
+          activity
+        } else {
+          offSection
+          // Kept, and live. A fact about this Mac rather than about the server —
+          // it costs a `stat` and an `access(2)`, and it is the only card that
+          // answers "would this work if I turned it back on", which may well be
+          // the question that follows.
+          storeSection
+        }
       }
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,7 +73,58 @@ struct SurfaceDetail: View {
           .foregroundStyle(.secondary)
           .textSelection(.enabled)
       }
+      Spacer()
+      // In the heading rather than inside Access, because it gates every card
+      // below it — including Access itself. A control that can remove the card
+      // it sits in belongs above that card.
+      SurfaceSwitch(surface: surface, style: .inline, model: model)
     }
+  }
+
+  /// What is true of a surface that is switched off, and nothing that is not.
+  ///
+  /// Access and Capabilities are deliberately absent rather than disabled.
+  /// Access would offer an automation button that fires a real TCC consent
+  /// dialog for a server that can never start — the exact dead end two buttons
+  /// were already removed for (see `accessSection`) — and `CapabilitiesCard`
+  /// spawns the real server with an 8s deadline, which would be the app visibly
+  /// starting the thing it has just been told not to. The absence IS the
+  /// demonstration, the same way a shorter tool list demonstrates writes-off.
+  private var offSection: some View {
+    Card("Off") {
+      Text(
+        "Cupertino is not serving \(surface.displayName). A client asking for it is refused at "
+          + "the bridge, so no server starts and nothing from this surface reaches your assistant."
+      )
+      .font(.callout)
+      .fixedSize(horizontal: false, vertical: true)
+
+      if leftoverClients > 0 {
+        Divider()
+        HStack {
+          Text(
+            "\(leftoverClients) client\(leftoverClients == 1 ? "" : "s") still list this server."
+          )
+          .font(.callout)
+          Spacer()
+          Button("Update clients…") { SettingsOpener.show(.clients) }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+        }
+      }
+    }
+  }
+
+  /// Configured clients whose config still holds this surface's key.
+  ///
+  /// Read off the statuses the Clients pane already computes, so the two cannot
+  /// disagree about whether there is anything left to do.
+  private var leftoverClients: Int {
+    model.clients.values.filter { status in
+      if case .extra(let leftover) = status { return leftover.contains(surface.displayName) }
+      return false
+    }
+    .count
   }
 
   private var accessSection: some View {
@@ -96,6 +166,16 @@ struct SurfaceDetail: View {
         // the licence, and this toggle behaves identically either way.
         WritesToggle(surface: surface)
           .padding(.leading, 0)
+      }
+
+      // Separate from the write gate above, and deliberately below it so the
+      // two read as two decisions rather than one. A gate is not a write, and
+      // neither implies the other.
+      if !surface.gates.isEmpty {
+        Divider()
+        ForEach(surface.gates) { gate in
+          GateToggle(surface: surface, gate: gate)
+        }
       }
     }
   }
@@ -206,6 +286,13 @@ struct CapabilitiesCard: View {
   @AppStorage private var allowWrites: Bool
   @State private var state: LoadState = .loading
   @State private var expanded = false
+  /// The gates currently on, re-read whenever any default changes.
+  ///
+  /// Not `@AppStorage`: there can be any number of gates and their keys are
+  /// only known at runtime, so there is no fixed property to bind. Watching
+  /// `didChangeNotification` covers all of them at once and costs nothing —
+  /// `GateToggle` writes the key, this recomputes, and `.task(id:)` re-probes.
+  @State private var gates: [String] = []
 
   init(surface: Surface) {
     self.surface = surface
@@ -237,9 +324,16 @@ struct CapabilitiesCard: View {
         if expanded { detail(caps) }
       }
     }
-    // Keyed on the flag as well as the surface, so flipping writes re-probes
-    // instead of showing a list the server no longer serves.
-    .task(id: "\(surface.id)/\(allowWrites)") { await load() }
+    // Keyed on every flag as well as the surface, so flipping any of them
+    // re-probes instead of showing a list the server no longer serves.
+    .task(id: "\(surface.id)/\(allowWrites)/\(gates.sorted().joined(separator: "+"))") {
+      await load()
+    }
+    .onAppear { gates = SurfaceSettings.enabledGates(surface) }
+    .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+      let now = SurfaceSettings.enabledGates(surface)
+      if now != gates { gates = now }
+    }
   }
 
   private func summary(_ caps: SurfaceCatalog.Capabilities) -> some View {
@@ -301,13 +395,13 @@ struct CapabilitiesCard: View {
     // Straight from the cache when it is there, without passing through
     // `.loading` — otherwise every return to a pane someone has already visited
     // flashes "Asking the server…" at a list that never left memory.
-    if let hit = SurfaceCatalog.cached(surface, allowWrites: allowWrites) {
+    if let hit = SurfaceCatalog.cached(surface, allowWrites: allowWrites, gates: gates) {
       state = .loaded(hit)
       return
     }
     state = .loading
     do {
-      let caps = try await SurfaceCatalog.read(surface, allowWrites: allowWrites)
+      let caps = try await SurfaceCatalog.read(surface, allowWrites: allowWrites, gates: gates)
       state = .loaded(caps)
     } catch {
       state = .failed(error.localizedDescription)

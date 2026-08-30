@@ -12,6 +12,53 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Surfaces can be switched off, in Settings › Surfaces.** A surface that is off is not served at
+  all: it is left out of the server keys Cupertino writes into a client's config, pruned from the
+  configs it has already written, and refused at the bridge if an older config still asks for it.
+
+  The cost this removes is the one `ProjectScope` already measured — eight servers wired into every
+  client means every session carries tool definitions for surfaces nobody uses. Turning one off is
+  how you stop paying for the ones you do not want, without giving up the ones you do.
+
+  Switching a surface off also stops its running servers with `SIGTERM`. An MCP host opens one
+  stdio connection when the editor launches and keeps it for the life of that editor, so refusing
+  new connections alone would have left the tools sitting in a session that outlived the decision.
+
+  Clients configured before the change keep the entry until you press Update, and the Clients pane
+  now says which ones still hold it. Claude Code and Codex get a copyable removal command; Visual
+  Studio Code has no command that removes a server, so that row explains the manual edit instead.
+
+  Absence means enabled, so nothing changes for an existing install and a surface added in a later
+  version still arrives switched on.
+
+### Changed
+
+- **Every per-surface control now lives in the main window, and Settings keeps only what has no
+  surface.** Automation and the write toggles left the Permissions pane for the surface detail
+  pane, which already carried both. Permissions is now Full Disk Access, Accessibility and System
+  Events — the three grants that cannot be expressed per app.
+
+  The main window has had one pane per surface for a while, and that pane's own note records these
+  facts having once been "scattered between the popover, the Permissions tab and the log filter"
+  with nothing answering "is Mail working" in one place. A second copy in Settings was that
+  scattering, still going.
+
+- The sidebar dims a switched-off surface rather than hiding it, and drops its automation glyph — a
+  TCC grant reported against a server that will never start is a true fact about the wrong subject.
+  Right-clicking a row turns it off without leaving the list. The detail pane replaces Access and
+  Capabilities with a single card saying what is off; Capabilities in particular no longer spawns
+  the server, which is the one thing a switched-off surface must not do.
+
+- The two Settings App Store plates were re-aimed. `settings` now photographs the Clients pane,
+  which nothing showed before; `writes` is the main window on a surface with writes off, where the
+  capabilities card reports seven tools against Mail's twenty. The write gate used to be pictured
+  as a row of toggles, which showed the control — this shows the consequence, and the numbers come
+  off the real server rather than a fixture.
+
 ## [1.4.0] - 2026-08-30
 
 ### Added

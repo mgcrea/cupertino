@@ -161,7 +161,28 @@
         "Full Disk Access is MANDATORY here rather than an upgrade. Every",
         "other surface degrades to a slower server without it; this one has",
         "no second lane and simply does not exist. docs/distribution.md",
-        "retired \"try before you grant\" partly because of this surface."
+        "retired \"try before you grant\" partly because of this surface.",
+        "",
+        "The `gates` entry below is the first extra gate on any surface, and",
+        "it gates a READ. `find_codes` extracts one-time 2FA codes, and it is",
+        "deliberately not behind allowWrites: that flag means \"may change",
+        "something\", and reaching a read through it would mean granting the",
+        "right to send a message in order to get one. The reason it is gated",
+        "at all is that this server already holds the conversation history",
+        "and the Mail server holds the inbox — between them, the",
+        "password-RESET channel. Adding live authentication codes to that",
+        "completes an account-takeover primitive out of parts that were each",
+        "individually reasonable, so it defaults off and is turned on by",
+        "hand. See docs/passwords.md for why the Passwords app itself is",
+        "unreachable and this is what ships in its place."
+      ],
+      "gates": [
+        {
+          "id": "allowCodes",
+          "envSuffix": "ALLOW_CODES",
+          "label": "Read one-time codes",
+          "description": "Lets apple_messages_find_codes extract 2FA codes from recent messages. Off by default."
+        }
       ]
     },
     {

@@ -175,7 +175,7 @@ struct LicensePane: View {
         }
         .buttonStyle(.glassProminent)
         .controlSize(.small)
-        Text("Full function, every surface, no key — enough to see it working against your own \(surfaceList.lowercased()).")
+        Text("Full function, every surface, no key — enough to see it working against your own \(trialSubject).")
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -188,7 +188,7 @@ struct LicensePane: View {
   /// has just failed to start a server.
   private var explanation: some View {
     VStack(alignment: .leading, spacing: 3) {
-      row("Cupertino will not start the MCP servers, so \(surfaceList) are unavailable to your assistant.")
+      row(unavailableLine)
       row("Everything else works: permissions stay granted, your settings are untouched, and no data has moved.")
       row("The write controls are a safety feature, not a paid one. They behave the same either way.")
       row("A key takes effect at once. Nothing needs restarting — the next time your assistant connects, the servers start.")
@@ -198,11 +198,35 @@ struct LicensePane: View {
     .padding(.top, 4)
   }
 
+  /// What the trial is tried against. Falls back when every surface is off,
+  /// which is reachable now that switching one off is a thing somebody can do.
+  private var trialSubject: String {
+    let names = SurfaceSettings.enabledSurfaces
+    return names.isEmpty ? "data" : surfaceList.lowercased()
+  }
+
+  /// Number agreement, and the empty case, in the one sentence that names them.
+  ///
+  /// "so Mail are unavailable" was always latent — one surface would have done
+  /// it — and switching surfaces off makes both that and the empty list
+  /// reachable without shipping a new table.
+  private var unavailableLine: String {
+    let count = SurfaceSettings.enabledSurfaces.count
+    if count == 0 {
+      return "Cupertino will not start the MCP servers, so no surface is available to your assistant."
+    }
+    let verb = count == 1 ? "is" : "are"
+    return "Cupertino will not start the MCP servers, so \(surfaceList) \(verb) unavailable to your assistant."
+  }
+
   /// "Mail, Notes, Reminders and Calendar", read off the closed table rather
   /// than typed out. The sentence above is a promise about what stopped, and
   /// the fifth surface is the moment a hardcoded list would start lying.
   private var surfaceList: String {
-    let names = Surface.all.map(\.displayName)
+    // The surfaces that are ON. The sentence above is a promise about what
+    // stops, and naming Maps to somebody who has switched Maps off is simply
+    // false — the same reason the list is read off the table rather than typed.
+    let names = SurfaceSettings.enabledSurfaces.map(\.displayName)
     guard names.count > 1, let last = names.last else { return names.first ?? "" }
     return names.dropLast().joined(separator: ", ") + " and " + last
   }
