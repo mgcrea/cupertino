@@ -331,3 +331,27 @@ export const PRICING = {
    */
   refundDays: 30,
 } as const;
+
+/** This project's slug in the shared feedback contract. Must match `APP_SLUGS`. */
+export const APP_SLUG = "cupertino";
+
+export const SUPPORT_EMAIL = "support@mgcrea.io";
+export const SUPPORT_EMAIL_HREF = `mailto:${SUPPORT_EMAIL}`;
+
+/**
+ * The feedback Worker's origin.
+ *
+ * **Adding this to `connect-src` in the Astro config is not optional** — the
+ * browser refuses the POST at runtime and the form silently does nothing, with no
+ * build error. `pnpm feedback:check` asserts it survives into the emitted policy.
+ *
+ * Cupertino is the one project here with no App Store listing, so the usual
+ * argument for the form — keeping a privacy nutrition label at "Data Not
+ * Collected" — does not apply. It earns its place for a different reason: a
+ * useful bug report about this project quotes a subject line, a chat or a contact,
+ * and the tracker is public and permanent.
+ */
+export const FEEDBACK_API = "https://feedback.mgcrea.io";
+
+/** The feedback form on this site. */
+export const FEEDBACK_URL = "/feedback/";

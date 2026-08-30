@@ -12,7 +12,9 @@ export default defineConfig({
         "default-src 'self'",
         "img-src 'self' data:",
         "font-src 'self' data:",
-        "connect-src 'self'",
+        // The feedback Worker. Without this the browser refuses the POST from
+        // /feedback at runtime and the form silently does nothing — no build error.
+        "connect-src 'self' https://feedback.mgcrea.io",
         "base-uri 'self'",
         "form-action 'self'",
         "object-src 'none'",

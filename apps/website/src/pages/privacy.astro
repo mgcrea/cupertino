@@ -1,0 +1,116 @@
+---
+/**
+ * The privacy page.
+ *
+ * This site had none, which was the wrong gap to leave open: Cupertino hands an
+ * agent your mail, your messages and your contacts. Every other app in the
+ * portfolio publishes a policy while holding far less.
+ *
+ * The honest story here is not "we collect nothing" — that is true and it is not
+ * the interesting part. It is that **Cupertino makes no network calls of its own,
+ * and hands your data to whatever agent you connected it to**, which may be a
+ * cloud model. Anyone deciding whether to install this needs that sentence more
+ * than they need a list of what we do not do.
+ */
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import { APP_NAME, REPO_URL, SITE_URL } from "../config";
+
+const updated = "30 August 2026";
+---
+
+<Layout
+  title={`Privacy — ${APP_NAME}`}
+  description={`How ${APP_NAME} handles your mail, messages, contacts and calendar: it makes no network calls of its own, and hands data only to the agent you connected.`}
+>
+  <Nav />
+  <main class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+    <div class="mono text-accent">sec · privacy</div>
+    <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
+      Privacy
+    </h1>
+    <p class="mono mt-3 text-fg-muted">Last updated {updated}</p>
+
+    <div
+      class="mt-12 text-[16px] leading-[1.7] text-fg-dim
+             [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:font-display [&_h2]:text-[22px] [&_h2]:font-semibold [&_h2]:tracking-[-0.01em] [&_h2]:text-fg
+             [&_p]:mt-4
+             [&_ul]:mt-4 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5 [&_ul]:marker:text-fg-muted
+             [&_strong]:font-medium [&_strong]:text-fg
+             [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:text-fg
+             [&_a:not([class])]:text-fg [&_a:not([class])]:underline [&_a:not([class])]:decoration-rule-2 [&_a:not([class])]:underline-offset-4"
+    >
+      <h2>The short version</h2>
+      <p>
+        {APP_NAME} runs entirely on your Mac. It has no account, no telemetry, and
+        <strong>no server of ours to talk to</strong> — there is nothing in it that makes a network
+        request. We never see your mail, your messages, your contacts, your calendar, your notes,
+        your reminders, your browsing history or your places.
+      </p>
+
+      <h2>The part that actually matters</h2>
+      <p>
+        The interesting question is not what we collect. It is <strong>where your data goes once
+        {APP_NAME} reads it</strong>, and the answer is: to whichever agent you connected.
+      </p>
+      <p>
+        {APP_NAME} is an MCP server. It reads from the Apple apps on your Mac and hands the results
+        to the MCP client you configured — Claude Desktop, Claude Code, or anything else that speaks
+        the protocol. <strong>If that client is a cloud service, then the mail, messages and
+        contacts it asked for are sent to that service</strong>, under that company's privacy policy
+        and not ours. {APP_NAME} does not do the sending, but it is what makes the data available to
+        be sent, and pretending otherwise would be the most misleading thing this page could do.
+      </p>
+      <p>
+        Install this deliberately. It is exactly as private as the agent you point it at.
+      </p>
+
+      <h2>What it can reach</h2>
+      <p>
+        Only what macOS has granted, and macOS asks you per app. {APP_NAME} reads through the same
+        permission system anything else on your Mac uses — Automation and Full Disk Access — and a
+        surface it has not been granted returns an error rather than data.
+      </p>
+      <ul>
+        <li><strong>Read</strong> across Mail, Messages, Contacts, Calendar, Notes, Reminders, Safari and Maps.</li>
+        <li>
+          <strong>Writes are off by default, per surface.</strong> The toggle decides whether the
+          mutating tools are registered at all, so an agent with writes off cannot see they exist —
+          it is not a refusal it could argue with.
+        </li>
+      </ul>
+
+      <h2>What it stores</h2>
+      <p>
+        Nothing of yours. {APP_NAME} keeps no copy of anything it reads: it queries at the moment a
+        tool is called and passes the result on. There is no index, no cache of message bodies, and
+        no database of your contacts.
+      </p>
+
+      <h2>Checking rather than trusting</h2>
+      <p>
+        A privacy policy is a promise. This one is checkable, because
+        <a href={REPO_URL} rel="noopener noreferrer">the source is public</a>. If you want to
+        confirm the claim at the top of this page, search the tree for outbound HTTP — there is
+        none, which is a thing you can verify in a minute rather than take our word for.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions about any of this belong on
+        <a href={`${REPO_URL}/issues`} rel="noopener noreferrer">the issue tracker</a>, where the
+        answer is visible to the next person asking. For anything you would rather not post
+        publicly, email <a href="mailto:support@mgcrea.io">support@mgcrea.io</a>.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        If this policy changes materially, the change lands in the repository's history like
+        everything else, and the date at the top of this page moves. The canonical copy lives at
+        <a href={`${SITE_URL}/privacy`}>{SITE_URL}/privacy</a>.
+      </p>
+    </div>
+  </main>
+  <Footer />
+</Layout>

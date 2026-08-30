@@ -1,0 +1,322 @@
+---
+/**
+ * The feedback form.
+ *
+ * ## Why this page exists rather than a form inside the app
+ *
+ * Cupertino's App Store privacy label says "Data Not Collected", and it stays
+ * true only while the app itself transmits nothing. An in-app form that POSTs
+ * user-typed text would make the app collect *User Content* and, when an address
+ * is given, *Contact Info*, on every submission, forever. So the app does not
+ * send feedback — it opens this URL, and the website does the sending.
+ *
+ * ## The rule that makes that honest
+ *
+ * The diagnostics arrive as query parameters and are rendered as **visible,
+ * editable, deletable inputs**. They must never become hidden fields. "You can
+ * see everything it sends, in the address bar, before you press anything" is the
+ * property that makes this design better than an in-app form rather than merely
+ * equivalent to it — and a hidden input throws that away while looking tidier.
+ *
+ * Field names come from `@mgcrea/feedback-contract`, which the Worker validates
+ * with. Nine sites and one Worker ship from ten repos on independent schedules;
+ * a parameter name that drifts fails silently, with the row landing and one
+ * column empty for months.
+ */
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import { LIMIT } from "@mgcrea/feedback-contract";
+import { APP_SLUG, FEEDBACK_API, ISSUES_URL, SUPPORT_EMAIL, SUPPORT_EMAIL_HREF } from "../config";
+
+const field =
+  "w-full rounded-lg border border-rule-2 bg-bg-2 px-3 py-2 text-fg " +
+  "placeholder:text-fg-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+const label = "block text-sm font-medium text-fg mb-1.5";
+---
+
+<Layout
+  title="Feedback — Cupertino"
+  description="Report a bug or suggest an improvement to Cupertino. No account needed."
+>
+  <Nav />
+  <main class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+    <div class="mono text-accent">sec · feedback</div>
+    <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
+      Feedback
+    </h1>
+    <div class="mt-8 text-[16px] leading-[1.7] text-fg-dim [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:font-display [&_h2]:text-[22px] [&_h2]:font-semibold [&_h2]:text-fg [&_p]:mt-4 [&_strong]:font-medium [&_strong]:text-fg [&_a:not([class])]:text-fg [&_a:not([class])]:underline [&_a:not([class])]:decoration-rule-2 [&_a:not([class])]:underline-offset-4">
+  <p>
+    Found a bug, or want Cupertino to do something it doesn't? Both are worth writing in about.
+    No account is needed and an email address is optional — leave it blank and the report is
+    anonymous.
+  </p>
+  <p>
+    <strong>Use this rather than the tracker when the details are yours.</strong> A useful Cupertino
+    bug report often quotes a subject line, a chat, an account name or a contact — the tracker is
+    public and permanent, and this is not.
+  </p>
+
+  <form id="feedback-form" novalidate class="mt-8 space-y-6">
+    <div>
+      <span class={label}>What is this about?</span>
+      <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Kind of feedback">
+        {
+          [
+            ["bug", "Something is broken"],
+            ["idea", "An idea"],
+            ["question", "A question"],
+          ].map(([value, text]) => (
+            <label class="cursor-pointer">
+              <input type="radio" name="kind" value={value} class="peer sr-only" />
+              <span class="block rounded-full border border-rule-2 px-4 py-1.5 text-sm text-fg-dim transition peer-checked:border-accent peer-checked:bg-accent/10 peer-checked:text-fg peer-focus-visible:ring-1 peer-focus-visible:ring-accent">
+                {text}
+              </span>
+            </label>
+          ))
+        }
+      </div>
+    </div>
+
+    <div>
+      <label class={label} for="subject">Subject</label>
+      <input
+        class={field}
+        id="subject"
+        name="subject"
+        type="text"
+        required
+        maxlength={LIMIT.subject}
+        placeholder="A one-line summary"
+      />
+    </div>
+
+    <div>
+      <label class={label} for="body">Details</label>
+      <textarea
+        class={field}
+        id="body"
+        name="body"
+        rows="8"
+        required
+        maxlength={LIMIT.body}
+        placeholder="What you did, what you expected, and what happened instead."></textarea>
+    </div>
+
+    <div>
+      <label class={label} for="email">Your email <span class="text-gray-500">(optional)</span></label>
+      <input
+        class={field}
+        id="email"
+        name="email"
+        type="email"
+        maxlength={LIMIT.email}
+        placeholder="Only so we can reply"
+      />
+      <span class="mt-1.5 block text-xs text-fg-muted">
+        Used to answer you and nothing else. Leave it blank to stay anonymous.
+      </span>
+    </div>
+
+    {/*
+      Visible, editable, deletable — see the header comment. The `readonly`
+      attribute would be a quiet betrayal of the same promise, so there isn't one.
+    */}
+    <fieldset class="rounded-lg border border-rule bg-bg-2/60 p-4">
+      <legend class="px-1 text-sm font-medium text-fg">What gets sent with this</legend>
+      <span class="mb-4 block text-xs text-fg-muted">
+        Cupertino filled these in so you don't have to. Edit or clear anything you'd rather not
+        send — the report goes through either way.
+      </span>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-xs text-fg-muted" for="appVersion">App version</label>
+          <input class={`${field} text-sm`} id="appVersion" name="appVersion" type="text" maxlength="64" />
+        </div>
+        <div>
+          <label class="mb-1 block text-xs text-fg-muted" for="osVersion">macOS version</label>
+          <input class={`${field} text-sm`} id="osVersion" name="osVersion" type="text" maxlength="64" />
+        </div>
+        <div>
+          <label class="mb-1 block text-xs text-fg-muted" for="hardware">Mac model</label>
+          <input class={`${field} text-sm`} id="hardware" name="hardware" type="text" maxlength="64" />
+        </div>
+        <div>
+          <label class="mb-1 block text-xs text-fg-muted" for="language">Language</label>
+          <input class={`${field} text-sm`} id="language" name="language" type="text" maxlength="16" />
+        </div>
+      </div>
+      <button
+        type="button"
+        id="clear-diagnostics"
+        class="mt-3 text-xs text-fg underline underline-offset-2 hover:text-accent"
+      >
+        Clear all four
+      </button>
+      <span class="mt-3 block text-xs text-fg-muted">
+        That is the whole list. No username, no file or database names, no identifier — two
+        reports from the same Mac cannot be linked to each other.
+      </span>
+    </fieldset>
+
+    {/*
+      Honeypot. Hidden from people, left in the DOM for bots. A filled one gets a
+      200 and is dropped by the Worker, so a bot cannot tell it apart from success
+      and learn to leave the field alone. `aria-hidden` and `tabindex` keep it away
+      from screen readers and the tab order; `sr-only` alone would not, because
+      that is a class designed to *expose* content to assistive technology.
+    */}
+    <div class="hidden" aria-hidden="true">
+      <label for="website">Website</label>
+      <input id="website" name="website" type="text" tabindex="-1" autocomplete="off" />
+    </div>
+
+    <div class="flex flex-wrap items-center gap-4">
+      <button
+        type="submit"
+        id="submit"
+        class="rounded-full bg-accent px-[22px] py-[14px] text-[15px] font-medium text-accent-ink transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Send feedback
+      </button>
+      <span id="status" role="status" aria-live="polite" class="text-sm text-fg-dim"></span>
+    </div>
+  </form>
+
+  <h2>Prefer a public issue?</h2>
+  <p>
+    For anything that is not about your own data — a protocol question, a tool that behaves oddly on
+    an empty mailbox, a feature request — <a href={ISSUES_URL} rel="noopener noreferrer">the issue
+    tracker</a> is the better place, and remains the primary channel for this project. It is public,
+    so the answer helps whoever asks next.
+  </p>
+  <p>
+    You can also email <a href={SUPPORT_EMAIL_HREF}>{SUPPORT_EMAIL}</a>.
+  </p>
+    </div>
+  </main>
+  <Footer />
+</Layout>
+
+<script>
+  import { CONTRACT_VERSION, LIMIT, parseFeedbackParams } from "@mgcrea/feedback-contract";
+  import { FEEDBACK_API, APP_SLUG } from "../config";
+
+  const form = document.getElementById("feedback-form") as HTMLFormElement | null;
+  const status = document.getElementById("status");
+  const submit = document.getElementById("submit") as HTMLButtonElement | null;
+  if (!form || !status || !submit) throw new Error("feedback form markup missing");
+
+  const input = (name: string) => form.elements.namedItem(name) as HTMLInputElement | null;
+  const say = (text: string, tone: "error" | "ok" | "busy" = "busy") => {
+    status.textContent = text;
+    status.className =
+      "text-sm " +
+      { error: "text-red-400", ok: "text-green-400", busy: "text-fg-dim" }[tone];
+  };
+
+  // Prefill. `parseFeedbackParams` cannot throw: a missing parameter, an unknown
+  // `kind`, or a `v` from a future app all render the form with a blank field
+  // rather than an error page. Someone arriving here has a bug to report, and a
+  // validation screen between them and the textarea converts a report into a bounce.
+  const prefill = parseFeedbackParams(new URLSearchParams(window.location.search));
+
+  for (const [name, value] of [
+    ["appVersion", prefill.appVersion],
+    ["osVersion", prefill.osVersion],
+    ["hardware", prefill.hardware],
+    ["language", prefill.language],
+    ["subject", prefill.subject],
+  ] as const) {
+    if (value) { const el = input(name); if (el) el.value = value; }
+  }
+
+  const kind = form.querySelector<HTMLInputElement>(`input[name="kind"][value="${prefill.kind}"]`);
+  if (kind) kind.checked = true;
+
+  document.getElementById("clear-diagnostics")?.addEventListener("click", () => {
+    for (const name of ["appVersion", "osVersion", "hardware", "language"]) {
+      const el = input(name);
+      if (el) el.value = "";
+    }
+    say("Cleared. Those four fields will be sent empty.", "ok");
+  });
+
+  // A stale build is worth knowing about, but never worth blocking on — the app
+  // that sent this person is already installed and cannot be fixed from here.
+  if (prefill.unknownContractVersion) {
+    console.warn(
+      `[${APP_SLUG}] app sent contract v${prefill.unknownContractVersion}, this page speaks ` +
+        `v${CONTRACT_VERSION}. Submitting as v${CONTRACT_VERSION}; this site needs a redeploy.`,
+    );
+  }
+
+  let sending = false;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (sending) return;
+
+    const value = (name: string) => input(name)?.value.trim() ?? "";
+    if (!value("subject")) return say("A subject, however short, please.", "error");
+    if (!value("body")) return say("Tell us what happened before sending.", "error");
+    if (value("body").length > LIMIT.body) return say("That is longer than we can store.", "error");
+
+    sending = true;
+    submit.disabled = true;
+    say("Sending…");
+
+    try {
+      // Two ordered requests, on purpose: the ticket is a short-lived signature
+      // that makes the cheapest attack (find endpoint, POST in a loop) cost a
+      // round trip and a clock. It is not authentication and is not treated as any.
+      const ticketResponse = await fetch(`${FEEDBACK_API}/ticket`);
+      if (!ticketResponse.ok) throw new Error(`ticket ${ticketResponse.status}`);
+      const { ticket } = (await ticketResponse.json()) as { ticket: string };
+
+      const response = await fetch(`${FEEDBACK_API}/submit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          v: CONTRACT_VERSION,
+          app: APP_SLUG,
+          kind: (form.querySelector<HTMLInputElement>('input[name="kind"]:checked')?.value) ?? "bug",
+          subject: value("subject"),
+          body: value("body"),
+          email: value("email") || undefined,
+          appVersion: value("appVersion") || undefined,
+          osVersion: value("osVersion") || undefined,
+          hardware: value("hardware") || undefined,
+          language: value("language") || undefined,
+          // 'app' only when the app actually filled the diagnostics in. A person
+          // who opened this page cold and typed their own macOS version is 'web'.
+          source: prefill.fromApp ? "app" : "web",
+          ticket,
+          website: value("website"),
+        }),
+      });
+
+      if (response.status === 429) {
+        say("That is a lot of reports at once. Give it ten seconds and try again.", "error");
+      } else if (!response.ok) {
+        throw new Error(`submit ${response.status}`);
+      } else {
+        form.hidden = true;
+        say("Thank you — that landed. We read everything and reply within a few working days.", "ok");
+        return;
+      }
+    } catch (error) {
+      console.error(error);
+      // The failure that matters is the one where they lose what they wrote, so
+      // the text stays on screen and the fallback is a channel that cannot fail
+      // the same way.
+      say(
+        "That did not send — your text is still here. Please copy it into an email to support@mgcrea.io.",
+        "error",
+      );
+    } finally {
+      sending = false;
+      submit.disabled = false;
+    }
+  });
+</script>
