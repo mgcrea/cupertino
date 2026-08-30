@@ -752,7 +752,14 @@ enum StatusStyle {
   }
 
   static func automationCaption(_ surface: Surface, _ status: AutomationStatus?) -> String {
-    surface.usesAppleEvents ? caption(status) : "not needed — this surface reads only"
+    guard !surface.usesAppleEvents else { return caption(status) }
+    // Reading "reads only" off usesAppleEvents held for every surface until Maps,
+    // which writes SQL into its Core Data store and still sends no Apple Event.
+    // The grant is equally not needed either way — only the reason differs, and
+    // the read-only half of it is now false for exactly one surface.
+    return surface.supportsWrites
+      ? "not needed — this surface never scripts the app"
+      : "not needed — this surface reads only"
   }
 
   /// What the button on an automation row should say, or nil when the row has

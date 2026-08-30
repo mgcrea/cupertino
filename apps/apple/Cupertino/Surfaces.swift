@@ -252,18 +252,24 @@ struct Surface: Identifiable, Hashable {
       // the Reminders entry gives: resolveStore only expands one in a directory
       // component.
       //
-      // supportsWrites is FALSE, and unlike Safari's it is not merely unprobed.
-      // The store is mirrored to iCloud by NSPersistentCloudKitContainer, so a
-      // write is not a write to a file. It is an edit to one replica of a
-      // synchronising object graph, underneath a running app that is also editing
-      // it, with NSCK* bookkeeping tables a third-party writer would not maintain.
-      // That needs its own probe before it needs a flag.
+      // supportsWrites is TRUE, and the FALSE that stood here was wrong three
+      // times. The reasoning was that the store is mirrored to iCloud by
+      // NSPersistentCloudKitContainer, so a write is not a write to a file but an
+      // edit to one replica of a synchronising object graph, underneath a running
+      // app that is also editing it. That measured what Maps DOES; a write only
+      // has to do what Maps REQUIRES, which is three tables rather than eight.
       //
       // Columns are resolved BY COVERAGE rather than by name, which no other
       // surface has needed. ZHISTORYITEM carries both ZLATITUDE (1 row of 33) and
       // ZLATITUDE1 (19 of 33); taking the first recognised name would report that
       // Maps holds almost no coordinates.
-      // Writes are SQL into the Core Data store, because Maps has no scripting dictionary and registers no App Intents on macOS. The place record cannot be synthesised, so it is never fabricated: the place is opened through the maps:// URL scheme, Maps mints the record into Recents, and it is copied. That leaves a Recents entry, which the tools disclose. The store is CloudKit-mirrored, so a write reaches every device on the account.
+      //
+      // Writes are SQL into the store, because Maps has no scripting dictionary
+      // and registers no App Intents on macOS. The place record cannot be
+      // synthesised, so it is never fabricated: the place is opened through the
+      // maps:// URL scheme, Maps mints the record into Recents, and it is copied.
+      // That leaves a Recents entry, which the tools disclose. The store is
+      // CloudKit-mirrored, so a write reaches every device on the account.
       bundleID: "com.apple.Maps",
       usesAppleEvents: false,
       supportsWrites: true,
