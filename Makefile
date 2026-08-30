@@ -558,7 +558,7 @@ SHOT_SCREENS := surface prompt activity connections settings
 # inside a backslash continuation — putting the generated region in the middle of
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
-SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.maps NO
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \

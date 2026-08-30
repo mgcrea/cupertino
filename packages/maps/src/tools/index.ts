@@ -3,16 +3,19 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleMapsClient } from "../client/maps.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerPlaceTools } from "./places.js";
+import { registerWriteTools } from "./writes.js";
 
 export type ToolContext = {
   /**
-   * Accepted and deliberately unused.
+   * Gates the two mutating tools, which are NOT registered when it is false —
+   * so a host that has not opted in is never told they exist.
    *
-   * v1 registers no mutating tool, so there is nothing for the flag to gate.
-   * The shape is kept so this surface matches the others and so a write path
-   * has an obvious place to hang itself. `tools.test.ts` asserts the tool list
-   * is IDENTICAL with writes on and off, which is what stops one being added
-   * here without that decision being taken deliberately.
+   * This surface writes SQL directly into Maps' Core Data store, because Maps
+   * has no scripting dictionary and no App Intents to write through. The store
+   * is mirrored to iCloud, so a write here reaches every device on the account.
+   * `docs/maps.md` carries the measurements; `client/write.ts` carries the rule
+   * that makes it safe — never fabricate a place record, only copy one Maps
+   * wrote itself.
    */
   allowWrites: boolean;
 };
@@ -29,8 +32,10 @@ export type ToolContext = {
 export const registerTools = (
   server: McpServer,
   client: AppleMapsClient,
-  _ctx: ToolContext,
+  ctx: ToolContext,
 ): void => {
   registerDiagnosticsTools(server, client);
   registerPlaceTools(server, client);
+  if (!ctx.allowWrites) return;
+  registerWriteTools(server, client);
 };

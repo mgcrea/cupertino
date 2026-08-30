@@ -212,7 +212,7 @@
       "npmName": "@mgcrea/mcp-apple-maps",
       "bundleId": "com.apple.Maps",
       "usesAppleEvents": false,
-      "supportsWrites": false,
+      "supportsWrites": true,
       "storePath": "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
       "storePermission": "full-disk-access",
       "envPrefix": "APPLE_MAPS_",
@@ -251,7 +251,8 @@
         "Columns are resolved BY COVERAGE rather than by name, which no other",
         "surface has needed. ZHISTORYITEM carries both ZLATITUDE (1 row of 33) and",
         "ZLATITUDE1 (19 of 33); taking the first recognised name would report that",
-        "Maps holds almost no coordinates."
+        "Maps holds almost no coordinates.",
+        "Writes are SQL into the Core Data store, because Maps has no scripting dictionary and registers no App Intents on macOS. The place record cannot be synthesised, so it is never fabricated: the place is opened through the maps:// URL scheme, Maps mints the record into Recents, and it is copied. That leaves a Recents entry, which the tools disclose. The store is CloudKit-mirrored, so a write reaches every device on the account."
       ]
     }
   ]

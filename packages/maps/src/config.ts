@@ -11,16 +11,13 @@ import { z } from "zod";
  * Configuration is environment-only — this server holds no secret at all. Its
  * access is the macOS permission the user granted, which is the whole point.
  *
- * What is deliberately ABSENT: anything gating writes. `allowWrites` is
- * inherited from `BaseConfigSchema` and ignored, because v1 registers no
- * mutating tool.
- *
- * That is not the usual "not probed yet". The store is mirrored to iCloud by
- * `NSPersistentCloudKitContainer`, so a write is not a write to a file — it is
- * an edit to one replica of a synchronising graph, underneath an app that is
- * also editing it, with `NSCK*` bookkeeping tables that a third-party writer
- * would not maintain. `docs/maps.md` records this as unmeasured and unsafe to
- * assume, and a write path needs its own probe before it needs a flag.
+ * `allowWrites` gates two mutating tools, and gates them harder than elsewhere.
+ * Maps has no scripting dictionary and no registered App Intents, so a write is
+ * SQL straight into a Core Data store that `NSPersistentCloudKitContainer`
+ * mirrors — which means it reaches every device on the account, not just this
+ * Mac. That was measured, along with the rule that keeps it safe: never
+ * fabricate a place record, only ever copy one Maps wrote itself. See
+ * `docs/maps.md` and `client/write.ts`.
  */
 const ConfigSchema = BaseConfigSchema.extend({
   /** Explicit store path. Bypasses discovery — for tests and forensic copies. */

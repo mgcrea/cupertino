@@ -7,6 +7,7 @@ import { locateStore, type LocateResult } from "./locate.js";
 import { encodeCollectionRef, encodePlaceRef, type PlaceKind } from "./ref.js";
 import type { EntityKey } from "./store.js";
 import { openStore, type CollectionRow, type MapsStore, type PlaceRow } from "./store.js";
+import { MapsWriter, type OpenUrl } from "./write.js";
 
 /**
  * The client.
@@ -108,6 +109,25 @@ export class AppleMapsClient {
       ...(this.#home ? { home: this.#home } : {}),
     });
     return this.#located;
+  }
+
+  /**
+   * A writer bound to the located store, or an error explaining why not.
+   *
+   * Writes go through their own read-write connection rather than the shared
+   * read-only one: `store()` opens with `query_only` and an `immutable` fallback
+   * precisely so a read can never mutate by accident, and widening it would
+   * throw that guarantee away for every read on the surface.
+   */
+  writer(openUrl?: OpenUrl): MapsWriter {
+    const located = this.located();
+    if (!located.readable || !located.storePath) {
+      throw new MapsStoreUnavailableError(located.reason ?? "Maps' store could not be opened.");
+    }
+    return new MapsWriter({
+      storePath: located.storePath,
+      ...(openUrl ? { openUrl } : {}),
+    });
   }
 
   /** Open the store, once, lazily. Every read goes through here. */

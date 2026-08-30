@@ -41,14 +41,28 @@ describe("maps tools", () => {
   });
 
   /*
-   * The guard that makes "read-only" a decision rather than an omission.
-   * `packages/safari` carries the same assertion for the same reason: a
-   * mutating tool cannot appear here without this test being changed, and
-   * changing it is the moment somebody has to justify writing into a store that
-   * iCloud is concurrently syncing.
+   * This assertion used to demand an IDENTICAL list with writes enabled — the
+   * guard that made "read-only" a decision rather than an omission. It has been
+   * changed, and the justification it was there to force is on the record:
+   * `docs/maps.md` measures the whole lane, and the rule that keeps it safe is
+   * that a place record is NEVER fabricated, only copied from one Maps wrote
+   * itself. The blast radius is the reason it took that much proving — this
+   * store is mirrored, so a bad row reaches every device on the account.
+   *
+   * The guard is not gone, only narrowed: the read tools must still be exactly
+   * the same set with writes on, so a write flag can never disturb them.
    */
-  it("registers an IDENTICAL list with writes enabled", async () => {
-    expect(await toolNames(await connect({ APPLE_MAPS_ALLOW_WRITES: "1" }))).toEqual(EXPECTED);
+  const WRITE_TOOLS = ["apple_maps_add_favorite", "apple_maps_remove_favorite"];
+
+  it("adds exactly the write tools when writes are enabled", async () => {
+    expect(await toolNames(await connect({ APPLE_MAPS_ALLOW_WRITES: "1" }))).toEqual(
+      [...EXPECTED, ...WRITE_TOOLS].toSorted(),
+    );
+  });
+
+  it("registers no mutating tool by default", async () => {
+    const names = await toolNames(await connect());
+    for (const tool of WRITE_TOOLS) expect(names).not.toContain(tool);
   });
 
   /*
