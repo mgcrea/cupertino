@@ -73,6 +73,7 @@
 //
 //   node scripts/spike-safari-page-text.mjs
 //   node scripts/spike-safari-page-text.mjs --no-sample --max-nodes=500
+//   node scripts/spike-safari-page-text.mjs --url=https://example.com/   # lane C only
 
 import { isRunning, macosVersion, maskUrl, osascript, parseArgs, safe } from "./lib/probe-kit.mjs";
 
@@ -81,6 +82,11 @@ const SAMPLE = !args.has("--no-sample");
 // A cap, because an uncapped walk of a large page is how this spike hangs
 // instead of reporting. Hitting the cap IS a result: it means the tree is
 // bigger than a bounded read can finish.
+// Lane C's fallback. Reading the front tab's URL asks SAFARI directly, which
+// needs an Automation grant lanes A and B do not — so a shell that can run the
+// other two can still be unable to name the page. Supplying it by hand keeps
+// the lane runnable instead of silently blank.
+const URL_ARG = args.valueOf("url", "");
 const MAX_NODES = Number(args.valueOf("max-nodes", 1500));
 const BUDGET_MS = Number(args.valueOf("budget-ms", 20_000));
 
@@ -278,17 +284,39 @@ const find = safe(
 
 let aggregate = null;
 let laneAChars = null;
+// Three outcomes, not two. The first version collapsed "no web area exists" into
+// "no aggregate attribute" and printed a verdict about the COST of a tree walk
+// for a tree that is not there — advice about the wrong question, stated
+// confidently. Measured on macOS 26.6: Safari reaches `webAreaMissing`.
+let laneA = "unmeasured";
 
 if (!find.ok) {
   line("result", `failed at ${find.stage}`);
   line("error", find.error);
   if (find.stage === "process" || find.stage === "osascript") {
+    laneA = "denied";
     console.log(
       "\n  This is the grant, not the design. Needs Accessibility AND Automation to\n" +
         "  System Events. If Accessibility looks granted but this still fails, check for\n" +
         "  duplicate TCC rows: `tccutil reset Accessibility io.mgcrea.cupertino`, then\n" +
         "  grant ONCE from the running bundle. See commit ad79b4a.",
     );
+  } else if (find.stage === "webArea") {
+    // The grants worked and the window was found; the page simply is not in
+    // this tree. That is a STRUCTURAL answer, not a slow one, and it is the
+    // opposite conclusion from the Maps lane — there the tree was reachable and
+    // expensive, here there is no tree to price.
+    laneA = "webAreaMissing";
+    console.log(
+      "\n  System Events reached the window and the page is NOT in it. Safari renders web\n" +
+        "  content in a separate process and does not expose it down this path, so the\n" +
+        "  Maps ~14 s walk cost never applies — there is nothing to walk. Note this does\n" +
+        "  NOT transfer from packages/mail, whose composer web area IS reachable because\n" +
+        "  that WebKit view is in-process.\n\n" +
+        "  Run scripts/spike-safari-ax-census.mjs to see what the window DOES expose.",
+    );
+  } else {
+    laneA = "windowMissing";
   }
 } else {
   line("web area found in", `${find.findMs} ms`);
@@ -306,6 +334,7 @@ if (!find.ok) {
 
   console.log();
   if (aggregate) {
+    laneA = "aggregate";
     laneAChars = aggregate.length;
     line("AGGREGATE FOUND", `${aggregate.name} (${aggregate.length} chars)`);
     console.log(
@@ -313,6 +342,7 @@ if (!find.ok) {
         "  read tool on this lane is worth a follow-up plan.",
     );
   } else {
+    laneA = "walk";
     line("AGGREGATE FOUND", "no");
     console.log("\n  No single attribute carries the page. Measuring the walk instead…\n");
     const walk = safe(
@@ -373,8 +403,14 @@ if (js.ok) {
   line("code", js.code ?? "none reported");
   line("error", js.error);
   console.log(
-    "\n  This is the failure a shipped `do JavaScript` tool would show a user, with no\n" +
-      "  way for diagnostics to have predicted it.",
+    "\n  Read that message before repeating the received rationale. The docs argue this\n" +
+      "  verb must not ship because it would 'silently fail' — but the refusal is loud,\n" +
+      "  carries a code, and NAMES the toggle and the pane it lives in. A tool could pass\n" +
+      "  it straight through and the user would know exactly what to do.\n\n" +
+      "  What survives is the other half: the toggle's STATE is still unreadable, so\n" +
+      "  diagnostics cannot say in advance whether the verb will work — only afterwards,\n" +
+      "  by attempting it. That is a weaker objection than 'fails silently', and it is\n" +
+      "  the one to argue from.",
   );
 }
 
@@ -388,12 +424,32 @@ const front = safe(
   }),
 );
 
-if (!front.ok) {
-  line("front tab", `unreadable: ${front.error}`);
+// `front.ok` is not enough: a run without an Automation grant for Safari came
+// back ok with no `url` at all, and maskUrl rendered that as "<0 chars, no
+// scheme>" — a measurement-shaped line for a lane that never ran. Validate the
+// value, not just the envelope.
+const frontUrl = /^https?:\/\//.test(URL_ARG)
+  ? URL_ARG
+  : typeof front.url === "string" && /^https?:\/\//.test(front.url)
+    ? front.url
+    : null;
+
+if (!front.ok || !frontUrl) {
+  line("front tab", "unreadable");
+  line(
+    "reason",
+    front.error ??
+      "Safari returned no usable URL. This lane asks Safari directly, so it needs an " +
+        "Automation grant for com.apple.Safari — which lanes A and B do not.",
+  );
+  console.log(
+    "\n  Lane C did NOT run. Pass --url=<url> to measure a fetch against a page whose\n" +
+      "  address you already have, rather than leaving this blank.",
+  );
 } else {
-  line("front tab", maskUrl(front.url));
+  line("front tab", maskUrl(frontUrl));
   try {
-    const res = await fetch(front.url, { redirect: "follow" });
+    const res = await fetch(frontUrl, { redirect: "follow" });
     const body = await res.text();
     const text = body
       .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -425,13 +481,33 @@ if (!front.ok) {
 }
 
 head("Verdict");
-console.log(
-  aggregate
-    ? `  Lane A found an aggregate attribute (${aggregate.name}). Page text is affordable.\n` +
-        `  Next: a follow-up plan for a read tool, plus the permission-model bookkeeping —\n` +
-        `  surfaces.json has no Accessibility lane and docs/surfaces.md already records the\n` +
-        `  Settings pane owing two states it does not model. This would make three.`
-    : `  No aggregate attribute, so page text costs a tree walk. Record the numbers above\n` +
-        `  in docs/safari.md next to the Maps ~14 s figure and leave the surface as it is.`,
-);
+const VERDICTS = {
+  aggregate:
+    `  Lane A found an aggregate attribute (${aggregate?.name}). Page text is affordable.\n` +
+    `  Next: a follow-up plan for a read tool, plus the permission-model bookkeeping —\n` +
+    `  surfaces.json has no Accessibility lane and docs/surfaces.md already records the\n` +
+    `  Settings pane owing two states it does not model. This would make three.`,
+  walk:
+    `  A web area exists but no attribute carries the page, so text costs a tree walk.\n` +
+    `  Record the numbers above in docs/safari.md next to the Maps ~14 s figure and\n` +
+    `  leave the surface as it is.`,
+  // The measured outcome on macOS 26.6, and the one the first version of this
+  // file could not express — it printed the `walk` verdict, pricing a tree that
+  // does not exist.
+  webAreaMissing:
+    `  The Accessibility lane is not slow here, it is ABSENT. System Events reaches the\n` +
+    `  window and the page is not in it, so there is no cost to measure and no follow-up\n` +
+    `  plan to write. This is a stronger reason to leave the surface alone than the Maps\n` +
+    `  ~14 s figure was: that was a price, this is a closed door.\n\n` +
+    `  It also does not generalise from packages/mail. That composer's AXWebArea is\n` +
+    `  reachable because the WebKit view is in-process; Safari's page is not.`,
+  denied:
+    `  Nothing was measured — the grants were refused, so this says nothing about the\n` +
+    `  lane. Fix the grant and re-run before drawing any conclusion.`,
+  windowMissing:
+    `  Nothing was measured — no Safari window was visible to System Events. Open one\n` +
+    `  and re-run.`,
+  unmeasured: `  Lane A did not run.`,
+};
+console.log(VERDICTS[laneA] ?? VERDICTS.unmeasured);
 console.log("\nNothing was written. No tool, type, or permission changed.");

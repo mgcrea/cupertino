@@ -8,10 +8,14 @@ export const SAFARI_GUIDE = `# Safari — how to drive this server
 ## Read-only, and deliberately so
 
 This server cannot open a URL, add to the Reading List, or change anything at
-all. It also ships no \`do JavaScript\` verb: that would need a Safari
-developer-menu toggle which is not a TCC grant and whose state cannot be read
-reliably, so shipping it would mean reporting a healthy surface whose most
-powerful capability silently fails. If asked to open or change something, say
+all. It also ships no \`do JavaScript\` verb, so **there is no way to read a
+page's content** — not its HTML, not its text. That verb needs a Safari
+developer-menu toggle which is not a TCC grant and whose state cannot be read,
+so diagnostics could never say in advance whether it would work. Accessibility
+is not a way around it: Safari exposes no AXWebArea for page content at all.
+If asked for what a page says, fetch its URL yourself and say that is what you
+did — a fetch is not the tab, and loses anything behind a login or rendered
+client-side. If asked to open or change something, say
 plainly that it cannot.
 
 ## Two lanes that are not fallbacks for each other

@@ -219,10 +219,12 @@ export const SURFACES: readonly Surface[] = [
     ],
     // Empty on purpose, and the only empty column here. Opening a URL or adding
     // to the Reading List navigates a real, visible browser, and no write on
-    // this surface was ever probed. There is also no `do JavaScript` tool: that
-    // verb needs a developer-menu toggle which is not a TCC grant and whose own
-    // state cannot be read, so shipping it would mean reporting a healthy
-    // surface whose most powerful capability silently fails. See docs/safari.md.
+    // this surface was ever probed. There is also no `do JavaScript` tool, so
+    // nothing reads page content: that verb needs a developer-menu toggle which
+    // is not a TCC grant and whose own state cannot be read, so diagnostics
+    // could never say in advance whether it would work. Nor is there a second
+    // route — Safari exposes no AXWebArea for its page content, measured on
+    // macOS 26.6. See docs/safari.md.
     write: [],
     pitch:
       "History, live tabs and the Reading List. The one surface whose two lanes see different things rather than the same thing at different speeds.",

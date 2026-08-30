@@ -165,11 +165,16 @@ This is the finding with consequences outside this document.
 
 The third is a Safari developer-menu toggle, not a TCC grant, and `apps/apple/Cupertino/Permissions.swift`
 has no concept of it. If Safari ships, diagnostics will otherwise report a healthy surface whose most
-powerful verb silently fails.
+powerful verb cannot be predicted to work.
 
-Worse, the toggle's own state is hard to read: `defaults read com.apple.Safari
+> **Corrected below.** This paragraph originally said that verb "silently fails", and the sentence
+> after it says the probe deliberately never attempts it. Both are superseded: it was attempted on
+> 2026-08-30 and the refusal is loud and specific — see
+> [The `do JavaScript` refusal is loud](#the-do-javascript-refusal-is-loud-and-the-received-rationale-overstated-it).
+
+The toggle's own state is hard to read: `defaults read com.apple.Safari
 AllowJavaScriptFromAppleEvents` is itself TCC-protected and returned nothing here, so the probe
-reports **unknown** rather than guessing. It deliberately does not attempt `do JavaScript` to find
+reports **unknown** rather than guessing. It deliberately did not attempt `do JavaScript` to find
 out — a failed attempt is user-visible, and a probe should not be the thing that teaches someone
 their browser can be scripted.
 
@@ -198,28 +203,65 @@ needing "Allow JavaScript from Apple Events", not shipping that verb removes the
 `test/jxa.test.ts` asserts no script contains `doJavaScript`, so this cannot erode quietly. The
 finding below stands for whenever that verb is wanted; it is no longer a blocker.
 
-## Page text is unbuilt, and the measurement that would decide it
+## Page text is unreachable, and it is an absence rather than a price
 
-The surface cannot read a word of any page, which is the most common thing to expect of it. The
-route that would not need the third permission is Accessibility: `AXWebArea` through System Events,
-needing Accessibility plus Automation to **System Events** — not to Safari — which is the routing
-`ad79b4a` established for Maps, and which `packages/mail` already relies on to read attributes
-inside a WebKit `AXWebArea` (`findBodyArea` in `src/client/jxa/core.ts`).
+The surface cannot read a word of any page, which is the most common thing to expect of it. Measured
+2026-08-30 on macOS 26.6 by `scripts/spike-safari-page-text.mjs` and
+`scripts/spike-safari-ax-census.mjs`, against a real Safari with 2 windows and 64 tabs.
 
-That precedent makes it worth measuring rather than assuming, but the repo has rejected an
-Accessibility **read** lane once already: ~206 elements at 33.6 ms a round trip is the ~14 s that
-`docs/surfaces.md` records for Maps, with no bulk fetch in either JXA or AppleScript. A page's tree
-is bigger than a sidebar's.
+**The Accessibility lane does not reach the page at all.** Not slowly — at all. System Events sees
+the window and enumerates its chrome, and that is the whole tree:
 
-Everything turns on one unmeasured fact: **does an `AXWebArea` expose an aggregate text
-attribute?** If it does, page text is one round trip and worth building. If it does not, it is a
-walk of the whole tree — the case already rejected.
+| Under Safari's front window |                     |
+| --------------------------- | ------------------- |
+| `AXButton`                  | 3                   |
+| `AXStaticText`              | 2                   |
+| `AXGroup`                   | 2                   |
+| `AXTextField`               | 1 (the address bar) |
+| `AXImage`                   | 1                   |
+| `AXToolbar`                 | 1                   |
+| **`AXWebArea`**             | **0**               |
+| max depth                   | 3                   |
 
-`scripts/spike-safari-page-text.mjs` answers it, enumerating the web area's attributes rather than
-guessing their names, and measures two comparisons alongside: what `do JavaScript` actually fails
-with, and how much less a plain network fetch of the same URL recovers. It reads only, prints
-lengths rather than page text, and must be run by hand from a granted context. **Nothing ships from
-this until those numbers exist.**
+Ten elements, bottoming out at depth 3 — so the depth-12 bound in the hunting spike was never the
+limitation. Safari renders web content in a separate process and does not expose it down this path.
+
+This changes the shape of the argument, not just its answer. `docs/surfaces.md` rejected the
+Accessibility read lane for Maps on **cost** — ~206 elements at 33.6 ms a round trip, ~14 s, no bulk
+fetch. Here there is nothing to price. A cost can be engineered around; an absence cannot, so this
+is the stronger reason to leave the surface alone, and it should not be filed under the Maps
+finding.
+
+**It does not generalise from Mail, and that was the assumption worth killing.** `packages/mail`
+really does read attributes inside a WebKit `AXWebArea` (`findBodyArea` in
+`src/client/jxa/core.ts`), which is what made this look promising. That composer is an _in-process_
+WebKit view. Safari's page is not, and the precedent transfers no further than the process boundary.
+
+**Still open, deliberately unattempted:** VoiceOver reads web pages, so the content is in the
+accessibility API — just not through this door. WebKit builds that tree lazily for clients it treats
+as assistive, which some tools trigger by setting `AXManualAccessibility` or
+`AXEnhancedUserInterface` on the application element. That is undocumented and app-specific, which
+is the same class of unmodellable dependency as the toggle below — so it was not tried.
+
+### The `do JavaScript` refusal is loud, and the received rationale overstated it
+
+This document, `jxa/tabs.ts` and `surfaces.json` all argue the verb must not ship because it would
+report a healthy surface whose best capability **silently fails**. Attempted once, it does not fail
+silently. It returns error **code 8**:
+
+> You must enable 'Allow JavaScript from Apple Events' in the Developer section of Safari Settings
+> to use 'do JavaScript'.
+
+That names the toggle, the pane and the fix. A tool passing it straight through would leave a user
+knowing exactly what to do.
+
+**What survives is the narrower half**, and it is the half worth arguing from: the toggle's own
+state is still unreadable, so `apple_safari_diagnostics` cannot say in advance whether the verb will
+work — only afterwards, by attempting it and reporting what came back. That is a real objection to
+promising the capability in a tool list. It is not "fails silently", and the difference matters if
+the verb is ever reconsidered: the cost is one honest diagnostics row, not a broken promise.
+
+The decision does not change on this evidence. The recorded reason for it does.
 
 **The Reading List walker now runs for real.** Not against a real `Bookmarks.plist` — that still
 needs the grant — but against a synthetic binary plist checked in at

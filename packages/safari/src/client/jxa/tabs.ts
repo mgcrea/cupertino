@@ -28,10 +28,22 @@
  * Safari developer-menu toggle which is not a TCC grant, whose own state is
  * unreadable (`defaults read com.apple.Safari AllowJavaScriptFromAppleEvents`
  * is itself TCC-protected and returned nothing on the probed machine), and
- * which `apps/apple/Cupertino/Permissions.swift` has no concept of. Shipping a
- * verb that needs an unmodelled permission means diagnostics reports a healthy
- * surface whose most powerful capability silently fails. Not shipping it is
- * what keeps the app's two-state permission model honest for Safari.
+ * which `apps/apple/Cupertino/Permissions.swift` has no concept of. Not
+ * shipping it is what keeps the app's two-state permission model honest here.
+ *
+ * This comment used to add "whose most powerful capability silently fails",
+ * which was an assumption and is now measured wrong. Attempted once on macOS
+ * 26.6 the verb returns error **8**, naming the toggle and the pane it lives
+ * in — a loud, actionable refusal. What actually holds is narrower: the
+ * toggle's STATE is unreadable, so diagnostics can never say in advance whether
+ * the verb would work, only afterwards by trying it. That is still a reason not
+ * to advertise the capability in a tool list; it is not the reason previously
+ * written down. See docs/safari.md.
+ *
+ * There is also no second route. Accessibility reaches Safari's window and
+ * stops at the chrome — no `AXWebArea`, no page content, ten elements deep 3.
+ * Mail's composer web area is reachable because that WebKit view is
+ * in-process; Safari's page is not.
  *
  * No writes. Opening a URL or adding to the Reading List navigates a real,
  * visible browser, and docs/safari.md records that no write was ever probed.

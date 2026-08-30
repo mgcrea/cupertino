@@ -43,9 +43,10 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
   than the same thing at different speeds: Apple Events sees what is open right now, the file lane
   sees everything except that. `list_tabs` is the only tool in the bundle that works with no Full
   Disk Access at all — it needs an Automation grant instead. There is no write tool and no
-  `do JavaScript` tool: the latter needs a developer-menu toggle that is not a TCC grant and whose
-  state cannot be read, so shipping it would mean reporting a healthy surface whose most powerful
-  capability silently fails.
+  `do JavaScript` tool, so nothing reads page content: the latter needs a developer-menu toggle that
+  is not a TCC grant and whose state cannot be read, so diagnostics could never say in advance
+  whether it would work. There is no second route either — Safari exposes no AXWebArea for its page
+  content, so the Accessibility lane that reaches Mail's composer does not reach a web page.
 - Maps — 10 tools, 2 behind the write gate. Favourites, Guides, recents and places filed in no Guide, with coordinates; saves and removes favourites. `@mgcrea/mcp-apple-maps`
 
 ## Price

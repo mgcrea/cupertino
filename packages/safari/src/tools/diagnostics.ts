@@ -81,10 +81,13 @@ export const buildDiagnostics = async (
       "History timestamps are placed on an epoch DETECTED from the store rather than an " +
         "assumed one, because an earlier probe run misread this column by 31 years. When " +
         "detection fails, every date reads null rather than being guessed.",
-      "This server ships no `do JavaScript` verb. That would need 'Allow JavaScript from " +
-        "Apple Events', a Safari developer-menu toggle that is not a TCC grant and whose " +
-        "own state cannot be read reliably. Shipping it would mean reporting a healthy " +
-        "surface whose most powerful capability silently fails.",
+      "This server ships no `do JavaScript` verb, so it cannot read page content. That " +
+        "would need 'Allow JavaScript from Apple Events', a Safari developer-menu toggle " +
+        "that is not a TCC grant and whose own state cannot be read. The refusal itself is " +
+        "loud — error 8, naming the toggle — but because the state is unreadable this " +
+        "report could never tell you in advance whether the verb would work, only after " +
+        "trying it. Accessibility is not an alternative: Safari exposes no AXWebArea for " +
+        "its page content at all (measured, macOS 26.6), so there is no second route.",
       "This server cannot open URLs, add to the Reading List, or change anything at all. " +
         "Those are Apple Events that navigate a real, visible browser, and none of them " +
         "was ever probed.",
