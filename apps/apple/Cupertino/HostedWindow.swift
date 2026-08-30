@@ -84,6 +84,18 @@ final class HostedWindow {
       created.title = title
       created.styleMask = [.titled, .closable, .miniaturizable, .resizable]
       created.isReleasedWhenClosed = false
+      // Neither of this app's two windows is a document, and macOS tabs any two
+      // same-class titled, resizable windows when the user has set Desktop &
+      // Dock → "Prefer tabs when opening documents" to Always. `.automatic` is
+      // the NSWindow default, so without this the Settings window is absorbed as
+      // a TAB of the main window on those Macs — with one titlebar, one tab
+      // strip, and ⌘, appearing to do nothing because the pane it opened is
+      // behind the tab you were already looking at.
+      //
+      // Set here rather than per window because it is true of both: this app has
+      // exactly one main window and one Settings window, and neither has a
+      // second instance to be tabbed WITH in the first place.
+      created.tabbingMode = .disallowed
 
       // Read before `setFrameAutosaveName`, which both restores a remembered
       // frame and writes one. This is the key AppKit stores it under, and the
