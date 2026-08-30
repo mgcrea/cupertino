@@ -16,6 +16,21 @@ summary.
 
 ### Added
 
+- **Maps can write, and does it without an Apple Event.** `apple_maps_add_favorite` and
+  `apple_maps_remove_favorite` ship behind `APPLE_MAPS_ALLOW_WRITES`, making Maps the first
+  surface here whose writes send no Apple Event at all — `usesAppleEvents` stays false.
+
+  Maps has no scripting dictionary and no App Intents registered on macOS, so the write is
+  SQL into its Core Data store. The one thing that cannot be synthesised is the GEO place
+  record, so it is never synthesised: the place is opened through the `maps://` URL scheme,
+  Maps mints the record into Recents, and it is copied. The insert needs three tables — not
+  the eight the app touches — and Core Data mirrors it to iCloud by itself, confirmed on a
+  second device.
+
+  Two costs the tools state rather than hide: adding a place the store does not know leaves
+  an entry in the user's Recents, and because the store is CloudKit-mirrored the write
+  reaches every device on the account. There is no local-only insert here.
+
 - **`apple_maps_list_unfiled_places` reaches the saved places that are in no Guide.**
   Resolving collection membership exposed a gap it could not close: 30 collection items,
   18 filed in a Guide, 12 in none — and no tool could list the 12.

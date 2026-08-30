@@ -246,16 +246,156 @@ favourite either.
 
 ### Where each lane stands
 
-| Lane               | Verdict                                   | Why                                                                                       |
-| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Apple Events       | absent                                    | no scripting dictionary, checked directly                                                 |
-| App Intents        | absent on macOS                           | strings ship, actions are not registered                                                  |
-| SQL into the store | refused                                   | measured above — unsynthesisable protobuf and `CKRecord`, plus history the exporter reads |
-| Accessibility      | **open — controls exist, grant inherits** | named, pressable `Favorite` and `Add`; see below                                          |
+| Lane               | Verdict                                   | Why                                                                |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------ |
+| Apple Events       | absent                                    | no scripting dictionary, checked directly                          |
+| App Intents        | absent on macOS                           | strings ship, actions are not registered                           |
+| SQL into the store | **works, for any place**                  | Maps mints the record via a URL scheme; the insert is three tables |
+| Accessibility      | **open — controls exist, grant inherits** | named, pressable `Favorite` and `Add`; see below                   |
 
 `supportsWrites: false` in `surfaces.json` stays true FOR NOW, and `APPLE_MAPS_ALLOW_WRITES`
 stays accepted-and-ignored so a config that sets it does not look broken. But the fourth row
 is no longer a closed door.
+
+### SQL into the store works, and the earlier verdict was wrong
+
+This document said the SQL lane was "refused", on the strength of
+`pnpm probe:maps-write --diff`. That diff showed eight tables moving when Maps
+saved a place, and it was read as eight tables a writer must maintain. **It shows
+what Maps DOES, not what Maps REQUIRES**, and those are different claims. Treating
+one as the other closed a lane that was open.
+
+[scripts/spike-maps-sql-write.mjs](../scripts/spike-maps-sql-write.mjs) settled it
+in two stages. Stage one inserts on a COPY and verifies; stage two (`--apply`)
+backs the store up, writes for real, and prints a one-command undo. On macOS 26.6
+the row was accepted: it appears in Maps' Pinned panel after a relaunch, with its
+name and address intact.
+
+**What it takes, and what it does not:**
+
+| Piece                                  | Needed?                                       |
+| -------------------------------------- | --------------------------------------------- |
+| `ZFAVORITEITEM` row, 19 columns set    | yes — all ordinary values plus a 16-byte UUID |
+| `ZMIXINMAPITEM` with `ZMAPITEMSTORAGE` | yes, and it must be **copied**                |
+| `Z_PRIMARYKEY.Z_MAX` bumps             | yes, or the next Core Data insert collides    |
+| `ACHANGE` / `ATRANSACTION` history     | **no**, to be displayed                       |
+| `ANSCK*` mirror metadata               | **no** — Core Data writes it when it exports  |
+
+**The protobuf is a wall, and the way past it is to make Maps write it.**
+`ZMAPITEMSTORAGE` is a ~1.7 KB GEO record this repo cannot generate. But it does not
+have to: **opening a place puts it in Recents, with a full record attached.** That was
+proved by accident — `Eiffel Tower` appears in the probed Mac's Recents because
+`maps://?q=Eiffel+Tower` was used to stage an Accessibility measurement, and Maps
+recorded it.
+
+So the sequence for an ARBITRARY place is:
+
+1. `open maps://?q=<name>&ll=<lat>,<lon>` — a URL scheme. Not an Apple Event, not
+   Accessibility, and no grant beyond the one this surface already holds.
+2. Maps resolves it and writes a `ZHISTORYITEM` with a `ZMIXINMAPITEM` carrying the
+   GEO record it generated.
+3. Copy that `ZMAPITEMSTORAGE` into a new `ZFAVORITEITEM`.
+
+The blob is still never synthesised — it is minted by Maps, which is the only thing
+that can mint one correctly. The cost is a visible side effect: the place lands in the
+user's Recents whether or not the favourite is wanted, and any tool built on this has
+to say so rather than surprise somebody.
+
+21 of 35 recents on the probed store carry a `ZMAPITEM`, so not every recent gets a
+record — places do, searches and directions do not. A seeding step must WAIT for a
+usable record and fail if none appears, rather than assume one.
+
+**Omitting the history rows is a deliberate safety property, and also a defect.**
+Without `ACHANGE`/`ATRANSACTION` the CloudKit exporter never learns the object
+exists, so the row stays on this Mac — which is what made the experiment safe to
+run. It also means the favourite **does not reach the user's other devices**, and
+its fate under a future full re-sync is unknown: an object with no mirror metadata
+could be exported, or could be treated as absent from the cloud and deleted. A
+favourite that silently vanishes later is worse than no feature, so history rows
+are not optional for anything shipped — they are simply not proved yet.
+
+### The write lane, proven end to end, on Full Disk Access alone
+
+MEASURED on macOS 26.6. An arbitrary place — one not previously in the store — became a
+working favourite in four steps, and Maps displays it with its address and working
+directions:
+
+1. `open maps://?q=<name>` puts the place on screen. LaunchServices, not Automation:
+   **no TCC grant beyond the Full Disk Access this surface already needs.**
+2. Maps resolves it and writes a `ZHISTORYITEM` whose `ZMIXINMAPITEM` carries a GEO
+   record **Maps minted itself** — 4237 bytes for `Musée d'Orsay`, against 1669 for a
+   plain street address, so the record scales with what Apple knows about the place.
+3. `INSERT` a `ZFAVORITEITEM` and a `ZMIXINMAPITEM`, copying that record, and bump
+   `Z_PRIMARYKEY.Z_MAX` for both entities.
+4. Relaunch Maps. The favourite is in Pinned, shows its address, and Directions work.
+5. **It reaches the account's other devices.** Confirmed on an iPhone: a place that was
+   in no table an hour earlier, written by SQL on a Mac, arrived through iCloud with no
+   history rows and no mirror metadata written by hand.
+
+**The record is self-contained.** `ZMAPITEMADDRESS` was inserted as NULL and Maps
+rendered the address anyway, so the flat columns on `ZFAVORITEITEM` are a display cache
+and the blob is the source of truth. That is worth knowing in both directions: a writer
+need not populate them, and a READER that only reads them — which is what
+`packages/maps` does today — is reading the cache and will show `address: null` for a
+row Maps displays fully.
+
+**No `ACHANGE`, no `ATRANSACTION`, no `ANSCK*` — and that includes for SYNC.** The diff
+that once closed this lane showed eight tables moving. Three of them are all that is
+required, and the object still reaches iCloud: Core Data reconciles unregistered objects
+on the app's next save rather than relying on history it was handed. Reading "what Maps
+does" as "what Maps requires" is what closed this lane in the first place, and the same
+mistake was nearly repeated in the opposite direction by assuming the bookkeeping was
+load-bearing.
+
+**Primary keys are never reused, and the undo respects that.** After removing row 25 the
+next insert took 26 while the count read 25 — `Z_MAX` is deliberately not rolled back,
+because a decremented counter hands the next Core Data insert a duplicate key.
+
+#### What shipping it took, beyond the insert
+
+`apple_maps_add_favorite` and `apple_maps_remove_favorite` ship behind
+`APPLE_MAPS_ALLOW_WRITES`. Four things were wrong on the way, none of which the
+offline suite could catch, and each is now pinned by a test:
+
+**The seed URL must carry NO coordinate.** `maps://?q=<name>` makes Maps file the
+place in Recents with a record attached. `maps://?q=<name>&ll=<lat>,<lon>` does
+not — it was carried over from an Accessibility measurement where that form opened
+a place CARD, and a card is not a Recents entry. With the coordinate present Maps
+wrote nothing and the poll ran to its timeout every time, which looked exactly
+like a hang and cost three wrong theories.
+
+**`Z_PRIMARYKEY.Z_MAX` cannot be trusted alone.** It is not always current, so the
+next key is `max(Z_MAX, MAX(Z_PK)) + 1`. Trusting the counter collides with a row
+that already exists.
+
+**De-duplication must compare LIKE WITH LIKE.** The caller's coordinate and
+Apple's for the same place differ by a building's width — measured at 6.9e-5 for
+Sagrada Família, seven times a one-metre tolerance. So a caller repeating its own
+request did not match the row its first call created, and a duplicate appeared.
+Matching now happens twice: on the caller's coordinate plus the NAME before
+seeding, and on Maps' resolved coordinate afterwards. The first keeps a repeat
+call from launching Maps and dirtying Recents; the second is what makes it
+correct.
+
+**A resolved place must be checked against the coordinate asked for.** A name is
+ambiguous, and a favourite for the wrong place syncs to every device. When Maps
+answers more than ~250 m away the write is refused rather than guessed.
+
+Every one of those was found against the real store while 74 offline tests passed.
+The pattern is the same each time and worth naming: **a fake that agrees with the
+code tests the fake.** The stand-in for Maps echoed the caller's coordinate back,
+so the comparison bug was invisible; the fixture was in `DELETE` journal mode while
+the real store is `WAL`; the fake inserted rows without bumping the counter. The
+tests are now unfaithful in fewer ways, and the ones that remain are labelled.
+
+#### What is still not built
+
+- **Guides.** Adding a place to a collection needs one `Z_6PLACES` join row, which
+  is small work now that membership is resolved.
+- **`list_favorites` reports `address: null`** for rows whose address lives only in
+  the place record. The flat columns are a display cache, which the write work
+  proved by inserting NULL and watching Maps render the address anyway. A
+  pre-existing read defect, exposed rather than caused.
 
 ### The Accessibility lane exists, and "not pursued" was wrong
 
@@ -288,11 +428,60 @@ confident zero:
 
 **What a write would look like**, and it is coherent:
 
-1. **File lane** names the place — `ZIDENTIFIER` for identity, `ZLATITUDE`/`ZLONGITUDE` for
-   where it is. Already shipped.
-2. **URL scheme** brings up its card: `maps://?ll=<lat>,<lon>`. Not an Apple Event, needs no
-   grant, and is how the measurement above was set up without clicking anything.
-3. **Accessibility** presses `Favorite` or `Add`.
+1. **File lane** names the place — `ZIDENTIFIER` for identity, `ZMAPITEMNAME` and
+   `ZLATITUDE`/`ZLONGITUDE` for the query. Already shipped.
+2. **URL scheme** brings up its card: `maps://?q=<name>&ll=<lat>,<lon>`. Not an Apple Event,
+   needs no grant, and is how these measurements were staged without clicking anything.
+3. **Accessibility** presses the control whose `AXIdentifier` is `FavoriteButton` or
+   `AddButton`.
+
+**Step 2 was wrong in an earlier draft, which said `maps://?ll=<lat>,<lon>`.** Measured on
+macOS 26.6:
+
+| URL                               | Elements | Place card?                                    |
+| --------------------------------- | -------- | ---------------------------------------------- |
+| `maps://?ll=<lat>,<lon>`          | 446      | **no** — centres the map, no controls          |
+| `maps://?q=<lat>,<lon>`           | 389      | **no**                                         |
+| `maps://?q=<name>`                | 456–461  | yes, but a name can resolve to the wrong place |
+| `maps://?q=<name>&ll=<lat>,<lon>` | 303      | **yes**, and the coordinate disambiguates      |
+
+A coordinate positions the map; a NAME selects a place. Since the file lane's strongest
+identifier is a coordinate, only the combined form is usable — the query names the place and
+the coordinate stops the search resolving somewhere else.
+
+**Addressing is solved, and not by the English title.** Both controls carry a developer-set,
+unlocalised `AXIdentifier`: `FavoriteButton` and `AddButton`. A verb that matched on the title
+`"Favorite"` would break on the first non-English Mac; one that matches the identifier does
+not.
+
+### There is no favourite-state bit in the Accessibility tree
+
+This is the finding that constrains the whole write half, and it is the bad one of the four
+outcomes that were possible.
+
+`Favorite` is a toggle in the UI, so pressing it on a place that is ALREADY a favourite would
+remove it — and a tool called `add_to_favorites` that pressed blind would silently delete
+saved places on exactly the input a caller is most likely to retry with.
+
+So the control's state has to be readable first. It is not. Dumped for three cards — one place
+that is not a favourite, and two that are, one of them a bakery whose name can only resolve to
+the saved instance — every attribute is identical:
+
+    AXIdentifier   FavoriteButton      AXValue      null
+    AXDescription  Favorite            AXSelected   false
+    AXEnabled      true                AXHelp       null
+
+Same eight matched controls in all three cases. Maps conveys favourite status visually and
+tells Accessibility nothing about it.
+
+**So state must come from the file lane**, which is why the combined URL matters twice: the
+coordinate both disambiguates the card AND is what `ZFAVORITEITEM` is looked up by before
+deciding whether to press at all. The surface already answers that in 0 ms.
+
+**Still unmeasured: whether `Favorite` really is a toggle.** Nothing has been pressed. That
+needs one controlled write — press on a place that is not a favourite, confirm through the file
+lane that `ZFAVORITEITEM` gained a row, press again, confirm it went away. Until then the
+toggle is an assumption, and it is the assumption the design is built to survive.
 
 Maps performs the write, so the protobuf, the `CKRecord` and the history rows are its problem
 and it gets them right. That is why this lane is worth more than the SQL one.

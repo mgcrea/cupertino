@@ -195,9 +195,14 @@ export const SURFACES: readonly Surface[] = [
       "apple_maps_get_place",
       "apple_maps_diagnostics",
     ],
-    write: [],
+    // Writes are SQL into a CloudKit-mirrored Core Data store, because Maps has
+    // no scripting dictionary and no App Intents registered on macOS. The place
+    // record is never fabricated — Maps is asked to mint one through the maps://
+    // URL scheme and it is copied — which is why this took four measured lanes
+    // to arrive at. See docs/maps.md.
+    write: ["apple_maps_add_favorite", "apple_maps_remove_favorite"],
     pitch:
-      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Read-only.",
+      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Saves and removes favourites behind the write gate.",
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {

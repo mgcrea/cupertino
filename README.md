@@ -41,7 +41,7 @@ off cannot see that they exist.
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 7 tools, chats/search/decoded text + gated send   |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 8 tools, favourites/Guides/recents, read-only     |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents, gated writes |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
 
 Each surface is its own server and its own npm package, so a host loads only the tools it wants.
@@ -467,7 +467,7 @@ pnpm probe:maps      # MapsSync, the store with no file extension behind the gra
 pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Full Disk Access
 ```
 
-Every probed surface now has a package. **Safari and Maps are read-only** — neither registers a mutating tool, and in both cases that is a recorded decision rather than an omission. Opening a URL or adding to Safari's Reading List navigates a real, visible browser and was never probed; writing to Maps means editing one replica of a CloudKit-mirrored object graph underneath a running app. See [docs/safari.md](docs/safari.md) and [docs/maps.md](docs/maps.md) — Maps' is the firmer of the two, because its store is a CloudKit-mirrored object graph rather than a file. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface now has a package. **Safari is the only read-only one** — it registers no mutating tool, and that is a recorded decision rather than an omission: opening a URL or adding to Safari's Reading List navigates a real, visible browser and was never probed. See [docs/safari.md](docs/safari.md). **Maps writes without an Apple Event at all**, which nothing else here does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).
