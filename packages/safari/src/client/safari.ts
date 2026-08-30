@@ -15,6 +15,7 @@ import {
 import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
 import { locateStore, type LocateResult } from "./locate.js";
+import { urlVariants, type MatchKind } from "./match.js";
 import { encodeBookmarkRef, encodeHistoryRef } from "./ref.js";
 import { openStore, type HistoryRow, type RangeQuery, type SafariStore } from "./store.js";
 
@@ -49,7 +50,7 @@ export type RenderedPage = {
 export type RenderedTab = {
   url: string | null;
   title: string | null;
-  /** Which window, 1-based, in Safari's own ordering. */
+  /** Which window, 1-based, in the order `windows()` returned them. */
   window: number;
   /**
    * The tab's POSITION, not an identifier. It changes the moment a tab is
@@ -57,21 +58,41 @@ export type RenderedTab = {
    * addressing a tab later.
    */
   index: number | null;
+  /**
+   * Selected in ITS OWN window — so a person with three windows open has three
+   * active tabs, and this alone cannot answer "the tab I am looking at".
+   *
+   * That question is `frontmost`, and the difference is not pedantic: a caller
+   * that reads the first `active` tab as the current one describes a page in
+   * some other window with complete confidence.
+   */
   active: boolean;
+  /**
+   * Selected, in the front window, and therefore the ONE tab a person means by
+   * "my current tab". At most one tab in a response carries it.
+   *
+   * False on every tab is a real state, not a bug: it means the front window's
+   * position could not be read (`windowOrderUnknown`), or Safari has no windows
+   * at all. Note it does not require Safari to be the frontmost APPLICATION —
+   * `appFrontmost` on the result answers that separately, because "the front
+   * tab of a background browser" is still a meaningful thing to ask for.
+   */
+  frontmost: boolean;
   /**
    * The matching history entry, when the URL resolves to one.
    *
-   * MEASURED, macOS 26.6, 76 open tabs: 19 matched exactly, 23 more only after
-   * the query string came off, and **34 did not match at all** — 55.3%
-   * resolved. A miss is NORMAL, not an error: redirects, session parameters and
-   * pages never committed to history all produce a tab whose URL is simply not
+   * MEASURED, macOS 26.6, 76 open tabs, BEFORE the variant ladder: 19 matched
+   * exactly, 23 more only after the query string came off, and **34 did not
+   * match at all**. A miss is NORMAL, not an error: session parameters and
+   * pages never committed to history both produce a tab whose URL is simply not
    * there. Null means "not found", never "no history".
    *
-   * Note what those numbers say about the `?`-stripping fallback below: it more
-   * than DOUBLES the match rate, from 19 to 42. It is the larger half of this
-   * feature working, not a tidy-up.
+   * `historyMatch` says which rung of the ladder answered, and a caller should
+   * treat the rungs differently — see `MatchKind`.
    */
   history: RenderedPage | null;
+  /** How faithfully `history` was matched. Null exactly when `history` is. */
+  historyMatch: MatchKind | null;
 };
 
 export type RenderedBookmark = {
@@ -100,12 +121,16 @@ type BookmarkEntry = {
 
 type TabsPayload = {
   windows: number;
+  appFrontmost: boolean | null;
+  windowOrderUnknown: boolean;
   tabs: {
     window: number;
+    windowIndex: number | null;
     index: number | null;
     url: string | null;
     title: string | null;
     active: boolean;
+    frontmost: boolean;
   }[];
 };
 
@@ -231,45 +256,71 @@ export class AppleSafariClient {
    * history gets `history: null`, and a machine with no Full Disk Access gets
    * `history: null` on every tab rather than an error. Losing the store must
    * not take the lane that does not depend on it.
+   *
+   * The join is ONE query for the whole tab set. Every tab expands into its
+   * variant ladder (see `match.ts`), every candidate goes into a single `IN`,
+   * and each tab then walks its own ladder against that result to find the most
+   * faithful rung that answered. The alternative — a lookup per tab per rung —
+   * is a few hundred prepared statements to answer a question SQLite can answer
+   * once.
    */
   async tabs(opts: { enrich: boolean }): Promise<{
     windows: number;
+    appFrontmost: boolean | null;
+    windowOrderUnknown: boolean;
     tabs: RenderedTab[];
     enriched: boolean;
   }> {
     const payload = await this.#osascript.run<TabsPayload>(LIVE_TABS, {});
 
-    let lookup: ((url: string) => RenderedPage | null) | null = null;
-    if (opts.enrich) {
+    // Built once for the whole set, so a tab's ladder is walked twice — once to
+    // collect candidates, once to resolve — rather than hitting the store.
+    const ladders = new Map<string, ReturnType<typeof urlVariants>>();
+    for (const t of payload.tabs) {
+      if (t.url && !ladders.has(t.url)) ladders.set(t.url, urlVariants(t.url));
+    }
+
+    let resolve: ((url: string) => { page: RenderedPage; kind: MatchKind } | null) | null = null;
+    if (opts.enrich && ladders.size > 0) {
       try {
         const store = this.store();
-        lookup = (url) => {
-          const hit = store.get(url);
-          if (hit) return this.#render(hit, store.caps.epoch);
-          // The measured second chance: 5 of 28 tabs matched only after the
-          // query string came off. Session and tracking parameters are why.
-          const q = url.indexOf("?");
-          if (q <= 0) return null;
-          const bare = store.get(url.slice(0, q));
-          return bare ? this.#render(bare, store.caps.epoch) : null;
+        const candidates = [...ladders.values()].flatMap((ladder) => ladder.map((v) => v.url));
+        const rows = store.getMany(candidates);
+        resolve = (url) => {
+          for (const variant of ladders.get(url) ?? []) {
+            const hit = rows.get(variant.url);
+            // First hit wins, and the ladder is ordered most-faithful-first, so
+            // an exact match is never lost to a looser one that also resolved.
+            if (hit) return { page: this.#render(hit, store.caps.epoch), kind: variant.kind };
+          }
+          return null;
         };
       } catch {
         // No store. Tabs still work; they simply arrive unenriched.
-        lookup = null;
+        resolve = null;
       }
     }
 
     return {
       windows: payload.windows,
-      enriched: lookup !== null,
-      tabs: payload.tabs.map((t) => ({
-        url: t.url,
-        title: t.title,
-        window: t.window,
-        index: t.index,
-        active: t.active,
-        history: lookup && t.url ? lookup(t.url) : null,
-      })),
+      appFrontmost: payload.appFrontmost,
+      windowOrderUnknown: payload.windowOrderUnknown,
+      // An empty Safari has no tabs to enrich, and calling that "unenriched"
+      // would report a permission problem that does not exist.
+      enriched: opts.enrich && (resolve !== null || ladders.size === 0),
+      tabs: payload.tabs.map((t) => {
+        const match = resolve && t.url ? resolve(t.url) : null;
+        return {
+          url: t.url,
+          title: t.title,
+          window: t.window,
+          index: t.index,
+          active: t.active,
+          frontmost: t.frontmost,
+          history: match?.page ?? null,
+          historyMatch: match?.kind ?? null,
+        };
+      }),
     };
   }
 

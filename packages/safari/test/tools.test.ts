@@ -1,4 +1,7 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
@@ -19,16 +22,38 @@ import { createServer } from "../src/server.js";
  */
 const TABS_PAYLOAD = {
   windows: 2,
+  appFrontmost: true,
+  windowOrderUnknown: false,
   tabs: [
-    { window: 1, index: 1, url: "https://example.com/", title: "Example Domain", active: true },
     {
       window: 1,
+      windowIndex: 1,
+      index: 1,
+      url: "https://example.com/",
+      title: "Example Domain",
+      active: true,
+      frontmost: true,
+    },
+    {
+      window: 1,
+      windowIndex: 1,
       index: 2,
       url: "https://news.example.org/a?utm_source=x",
       title: "News",
       active: false,
+      frontmost: false,
     },
-    { window: 2, index: 1, url: "https://unvisited.example/", title: "New", active: true },
+    // The case that motivated `frontmost`: selected in ITS window, and not the
+    // tab anybody is looking at. Two `active` tabs is the normal state.
+    {
+      window: 2,
+      windowIndex: 2,
+      index: 1,
+      url: "https://unvisited.example/",
+      title: "New",
+      active: true,
+      frontmost: false,
+    },
   ],
 };
 
@@ -205,6 +230,19 @@ describe("live tabs", () => {
     expect(r.text).toContain("Full Disk Access");
   });
 
+  /**
+   * `enrich: false` is a CHOICE, not a permission failure. Telling that caller
+   * history is unreadable and to go grant Full Disk Access sends them after a
+   * problem they do not have.
+   */
+  it("does not blame Full Disk Access when the caller declined enrichment", async () => {
+    const c = await connect();
+    const r = await call(c, "apple_safari_list_tabs", { enrich: false });
+    expect(r.isError).toBe(false);
+    expect(r.text).not.toContain("enrichmentUnavailable");
+    expect(r.text).not.toContain("Full Disk Access");
+  });
+
   it("can be disabled entirely, and says so instead of erroring obscurely", async () => {
     const c = await connect({ APPLE_SAFARI_LIVE_TABS: "false" });
     const r = await call(c, "apple_safari_list_tabs");
@@ -217,6 +255,140 @@ describe("live tabs", () => {
     const r = await call(c, "apple_safari_list_tabs");
     expect(r.isError).toBe(true);
     expect(r.text).not.toContain('"tabs":[]');
+  });
+
+  /**
+   * The whole point of `frontmost`. The fixture has two `active` tabs because
+   * that is what two open windows produce, and a caller asking "what am I
+   * looking at" must get one answer rather than the first of two.
+   */
+  it("marks exactly one tab frontmost even though two are active", async () => {
+    const c = await connect();
+    const body = (await call(c, "apple_safari_list_tabs")).json() as {
+      tabs: { url: string; active: boolean; frontmost: boolean }[];
+      appFrontmost: boolean;
+    };
+    expect(body.tabs.filter((t) => t.active)).toHaveLength(2);
+    const front = body.tabs.filter((t) => t.frontmost);
+    expect(front).toHaveLength(1);
+    expect(front[0]?.url).toBe("https://example.com/");
+    expect(body.appFrontmost).toBe(true);
+  });
+
+  it("narrows to the one front tab", async () => {
+    const c = await connect();
+    const body = (await call(c, "apple_safari_list_tabs", { only: "frontmost" })).json() as {
+      tabs: { url: string }[];
+      count: number;
+    };
+    expect(body.count).toBe(1);
+    expect(body.tabs[0]?.url).toBe("https://example.com/");
+  });
+
+  it("narrows to the selected tab of every window", async () => {
+    const c = await connect();
+    const body = (await call(c, "apple_safari_list_tabs", { only: "active" })).json() as {
+      tabs: { url: string }[];
+    };
+    expect(body.tabs.map((t) => t.url)).toEqual([
+      "https://example.com/",
+      "https://unvisited.example/",
+    ]);
+  });
+
+  /**
+   * With no readable window order there is no front window, so `only:
+   * "frontmost"` returns nothing — which looks exactly like "Safari has no tabs
+   * open" unless the result says otherwise.
+   */
+  /**
+   * The join, end to end and against the REAL schema, because every other test
+   * on this surface runs with no store at all.
+   *
+   * The fixture below is built so each rung of the ladder is represented: one
+   * tab matches exactly, one matches only after a cosmetic difference is
+   * normalised away, and one is not in history at all. That last one is the
+   * case the tool description exists to protect — it must come back as a miss
+   * rather than being forced onto a near-neighbour.
+   */
+  describe("enriched from a real store", () => {
+    const withStore = async (tabs: unknown) => {
+      const dir = mkdtempSync(join(tmpdir(), "safari-store-"));
+      const path = join(dir, "History.db");
+      const db = new DatabaseSync(path);
+      db.exec(
+        readFileSync(
+          join(dirname(fileURLToPath(import.meta.url)), "fixtures", "safari-history.sql"),
+          "utf8",
+        ),
+      );
+      db.exec(
+        `INSERT INTO history_items
+           (url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+         VALUES ('https://example.com/', 3, X'', 0, 0),
+                ('https://news.example.org/a', 5, X'', 0, 0)`,
+      );
+      db.close();
+      return connect(
+        { APPLE_SAFARI_STORE: path, APPLE_SAFARI_INDEX_MODE: "ro" },
+        fakeOsascript({ tabs }),
+      );
+    };
+
+    it("matches each tab at the strongest rung that answers, and reports which", async () => {
+      const c = await withStore(TABS_PAYLOAD);
+      const body = (await call(c, "apple_safari_list_tabs")).json() as {
+        tabs: {
+          url: string;
+          history: { visitCount: number } | null;
+          historyMatch: string | null;
+        }[];
+        historyMatched: string;
+        historyMatchKinds: Record<string, number>;
+      };
+
+      const byUrl = new Map(body.tabs.map((t) => [t.url, t]));
+      // Byte-identical to a stored row.
+      expect(byUrl.get("https://example.com/")?.historyMatch).toBe("exact");
+      expect(byUrl.get("https://example.com/")?.history?.visitCount).toBe(3);
+
+      // Stored as `.../a`; the tab carries a tracking parameter. This is the
+      // match the old exact-then-strip-query lookup would have called
+      // query-stripped, and the ladder can now call what it is.
+      expect(byUrl.get("https://news.example.org/a?utm_source=x")?.historyMatch).toBe("normalized");
+      expect(byUrl.get("https://news.example.org/a?utm_source=x")?.history?.visitCount).toBe(5);
+
+      // Not in history. Must stay a miss.
+      expect(byUrl.get("https://unvisited.example/")?.history).toBeNull();
+      expect(byUrl.get("https://unvisited.example/")?.historyMatch).toBeNull();
+
+      expect(body.historyMatched).toBe("2/3");
+      expect(body.historyMatchKinds).toEqual({ exact: 1, normalized: 1 });
+    });
+
+    it("does not claim a page was never visited when the store simply lacks the URL", async () => {
+      const c = await withStore(TABS_PAYLOAD);
+      const r = await call(c, "apple_safari_list_tabs");
+      // With a store present, the "no history at all" explanation must be gone —
+      // it would misattribute a genuine miss to a missing permission.
+      expect(r.text).not.toContain("enrichmentUnavailable");
+    });
+  });
+
+  it("says so when window order is unreadable, rather than returning a bare empty list", async () => {
+    const c = await connect(
+      {},
+      fakeOsascript({
+        tabs: {
+          ...TABS_PAYLOAD,
+          windowOrderUnknown: true,
+          tabs: TABS_PAYLOAD.tabs.map((t) => ({ ...t, frontmost: false })),
+        },
+      }),
+    );
+    const r = await call(c, "apple_safari_list_tabs", { only: "frontmost" });
+    expect(r.text).toContain("frontmostUnavailable");
+    expect((r.json() as { count: number }).count).toBe(0);
   });
 });
 
@@ -291,7 +463,7 @@ describe("diagnostics", () => {
 
   it("carries the tab-match caveat", async () => {
     const c = await connect();
-    expect((await call(c, "apple_safari_diagnostics")).text).toContain("55%");
+    expect((await call(c, "apple_safari_diagnostics")).text).toContain("about half");
   });
 
   it("says it ships no do JavaScript verb", async () => {

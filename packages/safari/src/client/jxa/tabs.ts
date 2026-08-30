@@ -54,6 +54,20 @@
  * tab. It is reported because it is the only handle Safari offers, and the tool
  * description says it is positional rather than an identifier — this surface's
  * real identity is the URL, which is also the only join key back to history.
+ *
+ * ## Two different senses of "current", and why both are reported
+ *
+ * `active` is per-WINDOW: every window has a selected tab, so a person with
+ * three windows open has three active tabs. That is the honest answer to "what
+ * is selected", and the wrong answer to "what am I looking at" — which is what
+ * a caller actually means. The single front tab needs the window's front-to-back
+ * position too, so this script reads it.
+ *
+ * `windowIndex` is read from the window rather than inferred from the array
+ * position, because whether `windows()` returns front-to-back order is NOT
+ * measured on this surface. Both are emitted and the client decides; when
+ * `index()` throws, `windowOrderUnknown` says so rather than letting the array
+ * position pass for a measurement.
  */
 export const LIVE_TABS = `
 function run(argv) {
@@ -66,13 +80,28 @@ function run(argv) {
     return JSON.stringify({ ok: false, error: { code: "NO_ACCESS", message: String(e.message || e) } });
   }
 
+  // Safari's own Standard Suite property, so this costs no System Events and no
+  // second Automation grant. Null rather than false when unreadable: "Safari is
+  // not in front" and "we could not tell" are different answers.
+  var appFrontmost = null;
+  try { appFrontmost = Boolean(S.frontmost()); } catch (e) {}
+
   var out = [];
+  var windowOrderUnknown = false;
+
   for (var i = 0; i < wins.length; i++) {
     var tabs = [];
     try { tabs = wins[i].tabs(); } catch (e) { tabs = []; }
 
     var currentIndex = null;
     try { currentIndex = wins[i].currentTab().index(); } catch (e) {}
+
+    var windowIndex = null;
+    try { windowIndex = wins[i].index(); } catch (e) {}
+    if (windowIndex === null) {
+      windowOrderUnknown = true;
+      windowIndex = i + 1;
+    }
 
     for (var j = 0; j < tabs.length; j++) {
       var url = null, name = null, index = null;
@@ -82,16 +111,27 @@ function run(argv) {
       try { name = String(tabs[j].name()); } catch (e) {}
       try { index = tabs[j].index(); } catch (e) { index = j + 1; }
       if (url === null && name === null) continue;
+      var active = currentIndex !== null && index === currentIndex;
       out.push({
         window: i + 1,
+        windowIndex: windowIndex,
         index: index,
         url: url,
         title: name,
-        active: currentIndex !== null && index === currentIndex
+        active: active,
+        frontmost: active && windowIndex === 1
       });
     }
   }
 
-  return JSON.stringify({ ok: true, data: { windows: wins.length, tabs: out } });
+  return JSON.stringify({
+    ok: true,
+    data: {
+      windows: wins.length,
+      appFrontmost: appFrontmost,
+      windowOrderUnknown: windowOrderUnknown,
+      tabs: out
+    }
+  });
 }
 `;
