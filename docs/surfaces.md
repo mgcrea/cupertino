@@ -2,7 +2,8 @@
 
 The per-surface findings live in [notes.md](notes.md), [reminders.md](reminders.md),
 [messages.md](messages.md), [calendar.md](calendar.md), [safari.md](safari.md),
-[contacts.md](contacts.md) and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
+[contacts.md](contacts.md), [maps.md](maps.md), [home.md](home.md), [passwords.md](passwords.md)
+and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
 be reached at all, what a new surface costs to add, and the rules the phase-0 probes have taught that
 now generalise across surfaces.
 
@@ -31,8 +32,8 @@ Safari (READS only, and the only one — live tabs, which the file lane cannot s
 Photos, Shortcuts, Music, TV, Finder, Preview, QuickTime Player, Terminal, Script Editor,
 Xcode, System Settings.
 
-**Not scriptable** — file lane or nothing: Freeform, Journal, Books, Podcasts, **Maps**, News, Home,
-Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dictionary.
+**Not scriptable** — file lane or nothing: Freeform, Journal, Books, Podcasts, **Maps**, News,
+**Home**, Weather, **Passwords**, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dictionary.
 
 Maps is in that list and now ships anyway: `packages/maps` is the first surface with **no Apple
 Events lane at all**, and it both reads AND writes. Being non-scriptable turned out not to be the
@@ -89,9 +90,30 @@ Worth it only for a concrete workflow.
 and low value. Terminal, Script Editor and System Settings are scriptable and dangerous: they hand a
 caller arbitrary execution using a permission granted for reading mail, which is precisely what the
 closed table in `Surfaces.swift` exists to prevent. The rest of the non-scriptable set (Freeform,
-Journal, Books, Podcasts, Home, Weather, Passwords, News) is where the grant is the _only_ way in —
+Journal, Books, Podcasts, Weather, News) is where the grant is the _only_ way in —
 the most differentiated value and the highest maintenance risk, since there is no fallback lane.
 `group.com.apple.Journal` and a 33 MB `group.com.apple.freeform` both exist if revisited.
+
+**Passwords has left that set too, and did not survive its probe** — see [passwords.md](passwords.md).
+It was listed above as "the grant is the only way in", and that was wrong: there is no grant that
+opens it. All four lanes are closed, three of them by things no Developer-ID build can change.
+`Passwords.app` holds the Apple-private `com.apple.password-manager` keychain access group, and
+`AuthenticationServices` is a **provider** API — `ASOneTimeCodeCredentialIdentity`'s header says to
+use it to _save_ entries. It lets you be a password manager; it never lets you read Apple's. The
+file lane is the interesting one: `keychain-2.db` **opens read-only with no Full Disk Access at
+all**, and is still unreadable — `srvr` and `acct` are SHA-1 digests and the payload is ciphertext.
+The store is readable and the data is not, which is the inverse of the Maps trap. What ships instead
+is `apple_messages_find_codes`, because SMS is where 2FA codes actually arrive.
+
+**Home has left that set for a probe of its own** — see [home.md](home.md). Two of its four lanes are
+already closed and worth recording here so they are not re-opened: `HomeKit.framework` is
+`API_UNAVAILABLE(macos)` and exists on macOS only as a private framework, and its entitlement carries
+no `DEVELOPER_ID` distribution type at all, so no Developer-ID build of this app can hold it whatever
+lane it links; Home.app ships no `.sdef`. What is left is a file lane at `~/Library/HomeKit`, held
+open by `homed` and Full-Disk-Access gated, plus `/usr/bin/shortcuts` for control. That last pairing
+is new: **`shortcuts list` works with no Full Disk Access while the store does not**, so this would be
+the first surface whose read and control lanes sit behind different grants. `scripts/probe-home.mjs`
+is written and must be hand-run; nothing is decided until it has been.
 
 **Maps came out of that set and shipped**, and how it nearly did not is the transferable part.
 
@@ -168,6 +190,70 @@ answer: Notes measured `whose` 6.9× slower on a text `contains`; Calendar measu
 higher-variance on a date range (4.5–7.3 s against a steady 3.4–3.9 s). Reminders asked whether the
 answer generalised from text to booleans. It appears to generalise everywhere. Measure it per
 surface anyway — but expect this result.
+
+**High entropy does not distinguish encrypted from compressed.** Both sit at 7.9–8.0 bits per byte:
+measured, gzipped prose scores 7.983 and real AES-CTR ciphertext 7.980. Only a recognised container
+header and a successful inflate separate them, so any "is this sealed" test must decompress first and
+re-score the inflated bytes. Skipping that step does not produce an uncertain answer, it produces a
+confident wrong one — and on a surface where the question is the go/no-go, that kills a legible store
+by arithmetic. See `scripts/lib/blob-stats.mjs`, which is tested for exactly this.
+
+**A statistic's threshold belongs at a distance from the null hypothesis, not at a constant.** The
+first version of that file called a blob encrypted if its longest printable run was ≤ 6. Over 200
+ciphertext samples per size the median run is 6 at 512 B, 8 at 4 KB and 10 at 32 KB — so the constant
+reads a large ciphertext blob as legible. Entropy fails the same way from the other side: 256 random
+bytes score 7.28, not 8, so a 7.8 threshold calls real ciphertext "unknown" at every small size. Both
+statistics are length-dependent; the threshold has to be too.
+
+**A filename can be the data.** Every probe here assumes paths are safe to print, and on seven
+surfaces they were: Apple names the files. `~/Library/HomeKit` does not — it holds files named after
+accessory MAC addresses, and a MAC identifies one physical device and is geolocatable through public
+wifi databases. A directory listing of that surface is a partial inventory of a house before any
+store is opened. So redaction has to cover the sweep, not just the rows, and the redaction gate has
+to run over the finished document rather than at each call site: `scripts/probe-home.mjs` only found
+this because `assertRedacted` refused to print a report that a careful author had already reviewed.
+
+**A schema mirror outscores the thing it mirrors.** `NSPersistentCloudKitContainer` keeps its mirror
+beside the real store and names it after the same entities with a `CK` infix, so every name-based
+metric ties or favours the mirror while it holds a fraction of the rows. `scripts/probe-home.mjs`
+picked `core-cloudkit.sqlite` over `core.sqlite` on 131 vocabulary hits against 127 — outranking
+4,970 rows against 136,390 — and then reported the accessory-to-service hop as unresolvable, because
+the mirror has no service table. Rank candidates by rows in tables that carry a ROLE, and exclude the
+sync bookkeeping (`ANSCK*`, `ACHANGE`, `ATRANSACTION*`) from role assignment: otherwise a CloudKit
+_record zone_ scores a perfect join against a HomeKit _zone_.
+
+**Test for the signal with an allowlist, never for the noise with a denylist.** The "does this store
+hold live state" test reads the store twice and reports which tables moved, and it was wrong twice in
+a row for the same reason. First it counted every table that moved and announced live state on the
+strength of `ACHANGE` and `ATRANSACTION` — CloudKit change tracking, which grows on an idle Mac
+(+6 rows between two probe runs minutes apart). Then it excluded those by name and announced live
+state on `ZRESIDENTSYNCMETADATA`, which is HomeKit's own resident sync token table and no more a fact
+about the home. There is always another sync table, so the denylist can never be finished. The
+question was never "which tables should not count" but "did a table holding one of the domain's
+OBJECTS move" — and a role classifier already answered that. Same shape as scoring an id bridge:
+state what would count as evidence BEFORE looking at what moved.
+
+**Check whether the entitlement is claimable by a Developer-ID build before probing the store.**
+One `codesign -d --entitlements - --xml` closes Passwords in a second: `Passwords.app` holds the
+Apple-private `com.apple.password-manager` keychain access group, which no Developer-ID build can
+claim, so nothing behind it is reachable at any grant. That check was run last and should have been
+run first — the same lesson HomeKit taught through its missing `DEVELOPER_ID` distribution type, and
+it generalises to every remaining candidate. Ask what the app is entitled to before asking what its
+store contains.
+
+**"Readable" and "legible" are different findings — the inverse of the EPERM trap.** The rule below
+says absent and EPERM must not be conflated. Passwords is the other direction: `keychain-2.db` is
+mode 0600, not TCC-protected, and opens read-only in a process holding no grant at all — while that
+same process is denied Safari, Messages and Mail. It is still unreadable, because `srvr` and `acct`
+are SHA-1 digests and the payload is ciphertext. A store that opens is not a store you can read, and
+a probe that reports "opened" without reporting legibility invites a wrong "just grant Full Disk
+Access". Measure the process's own blindness first, then say which of the two you actually proved.
+
+**A control lane and a read lane can sit behind different grants — measure each.** Every surface so
+far has had one gate for the whole server. `shortcuts list` succeeds with no Full Disk Access while
+`~/Library/HomeKit` refuses, which would make an ungranted Home server write-only: the exact inverse
+of Safari, where an ungranted server is a different product rather than a slower one. Do not infer a
+lane's permission from the surface's.
 
 **The Apple Events cost is per round trip, not per item.** Calendar's per-property bulk fetch costs
 ~2 s whichever property it is, even one returning 23 non-null values out of 742. A server reading
