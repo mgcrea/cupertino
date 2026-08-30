@@ -330,3 +330,77 @@ describe("get", () => {
     expect(build().get("https://example.com")).toBeNull();
   });
 });
+
+/**
+ * The batched lookup behind the tab join.
+ *
+ * It exists because the join asks about every candidate spelling of every open
+ * tab at once — measured at 28-76 tabs, which the variant ladder turns into a
+ * few hundred URLs. The contract it must hold is that batching changes only the
+ * number of round trips, never an answer: a row fetched here must be identical
+ * to the one `get()` returns, including every `#col()` degradation.
+ */
+describe("getMany", () => {
+  it("returns the same row `get` would, for each URL asked", () => {
+    const store = build();
+    const found = store.getMany(["https://example.com/", "https://orphan.example.net/"]);
+    expect(found.size).toBe(2);
+    expect(found.get("https://example.com/")).toEqual(store.get("https://example.com/"));
+    expect(found.get("https://orphan.example.net/")).toEqual(
+      store.get("https://orphan.example.net/"),
+    );
+  });
+
+  /**
+   * A miss is an ABSENT key, never a null value. The caller walks a ladder and
+   * asks about spellings it fully expects not to exist, so misses are the
+   * common case rather than the error case.
+   */
+  it("omits URLs that are not there rather than returning nulls", () => {
+    const found = build().getMany(["https://example.com/", "https://nowhere.example/"]);
+    expect(found.has("https://example.com/")).toBe(true);
+    expect(found.has("https://nowhere.example/")).toBe(false);
+    expect(found.size).toBe(1);
+  });
+
+  it("answers nothing for an empty ask, without touching the database", () => {
+    expect(build().getMany([]).size).toBe(0);
+  });
+
+  it("tolerates duplicate URLs in the ask", () => {
+    // Two tabs on the same page produce the same ladder twice.
+    const found = build().getMany(["https://example.com/", "https://example.com/"]);
+    expect(found.size).toBe(1);
+  });
+
+  /**
+   * Past `SQLITE_MAX_VARIABLE_NUMBER` the query is chunked. A person with a lot
+   * of tabs open is exactly who reaches this, so the seam is exercised rather
+   * than assumed: 900 candidates spans three chunks and must still find the one
+   * real row among them.
+   */
+  it("chunks a large ask and still finds every hit", () => {
+    const noise = Array.from({ length: 900 }, (_, i) => `https://noise.example/${i}`);
+    const found = build().getMany([...noise, "https://example.com/"]);
+    expect(found.size).toBe(1);
+    expect(found.get("https://example.com/")?.visitCount).toBe(3);
+  });
+
+  /**
+   * The whole point of routing every read through `#toRow`: a store whose
+   * visits table is missing degrades the same way here as it does in `get`,
+   * rather than the batched path growing its own idea of what a null means.
+   */
+  it("degrades exactly like `get` when the visits leg is gone", () => {
+    const store = build(
+      `CREATE TABLE history_items (id INTEGER PRIMARY KEY, url TEXT NOT NULL, visit_count INTEGER);`,
+      false,
+    );
+    store.db.exec(`INSERT INTO history_items (url, visit_count) VALUES ('https://a.example/', 7)`);
+    const row = store.getMany(["https://a.example/"]).get("https://a.example/");
+    expect(row).toEqual(store.get("https://a.example/"));
+    expect(row?.visitCount).toBe(7);
+    expect(row?.lastVisitedRaw).toBeNull();
+    expect(row?.title).toBeNull();
+  });
+});

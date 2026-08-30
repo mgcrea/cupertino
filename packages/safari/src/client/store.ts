@@ -220,6 +220,27 @@ export class SafariStore {
     return this.caps.hasVisits && this.caps.itemFk !== null;
   }
 
+  /**
+   * One result row into a `HistoryRow`.
+   *
+   * Every read goes through here, so the `#col()` guards above have exactly one
+   * place downstream that decides what a `NULL AS alias` means. Note the
+   * asymmetry that is deliberate: `null` stays `null` rather than becoming `0`
+   * or `false`, because "this store has no such column" and "zero visits" are
+   * different facts and only one of them is about the person browsing.
+   */
+  #toRow(r: Record<string, unknown>): HistoryRow {
+    return {
+      url: String(r.url),
+      title: r.title === null || r.title === undefined ? null : String(r.title),
+      visitCount: r.visitCount === null ? null : Number(r.visitCount),
+      lastVisitedRaw: r.lastVisitedRaw === null ? null : Number(r.lastVisitedRaw),
+      firstVisitedRaw: r.firstVisitedRaw === null ? null : Number(r.firstVisitedRaw),
+      loadSuccessful: r.loadSuccessful === null ? null : Boolean(Number(r.loadSuccessful)),
+      viaRedirect: r.viaRedirect === null ? null : Boolean(Number(r.viaRedirect)),
+    };
+  }
+
   #selectList(): string {
     const i = this.caps.itemColumns;
     const v = this.caps.visitColumns;
@@ -315,15 +336,7 @@ export class SafariStore {
     const truncated = raw.length > limit;
 
     return {
-      rows: raw.slice(0, limit).map((r) => ({
-        url: String(r.url),
-        title: r.title === null || r.title === undefined ? null : String(r.title),
-        visitCount: r.visitCount === null ? null : Number(r.visitCount),
-        lastVisitedRaw: r.lastVisitedRaw === null ? null : Number(r.lastVisitedRaw),
-        firstVisitedRaw: r.firstVisitedRaw === null ? null : Number(r.firstVisitedRaw),
-        loadSuccessful: r.loadSuccessful === null ? null : Boolean(Number(r.loadSuccessful)),
-        viaRedirect: r.viaRedirect === null ? null : Boolean(Number(r.viaRedirect)),
-      })),
+      rows: raw.slice(0, limit).map((r) => this.#toRow(r)),
       rangeApplied: canRange && Boolean(q.from ?? q.to),
       truncated,
     };
@@ -339,16 +352,47 @@ export class SafariStore {
         : "") +
       `WHERE i."url" = ? GROUP BY i."${this.caps.itemPk}" LIMIT 1`;
     const r = this.db.prepare(sql).get(url) as Record<string, unknown> | undefined;
-    if (!r) return null;
-    return {
-      url: String(r.url),
-      title: r.title === null || r.title === undefined ? null : String(r.title),
-      visitCount: r.visitCount === null ? null : Number(r.visitCount),
-      lastVisitedRaw: r.lastVisitedRaw === null ? null : Number(r.lastVisitedRaw),
-      firstVisitedRaw: r.firstVisitedRaw === null ? null : Number(r.firstVisitedRaw),
-      loadSuccessful: r.loadSuccessful === null ? null : Boolean(Number(r.loadSuccessful)),
-      viaRedirect: r.viaRedirect === null ? null : Boolean(Number(r.viaRedirect)),
-    };
+    return r ? this.#toRow(r) : null;
+  }
+
+  /**
+   * Many items by exact URL, in one query.
+   *
+   * Exists for the tab join, which asks about every candidate spelling of every
+   * open tab at once — measured at 28-76 tabs, and the variant ladder makes
+   * that a few hundred URLs. As individual `get()` calls that is a few hundred
+   * prepared statements; as one `IN` it is a single indexed lookup, because
+   * `history_items.url` is `TEXT NOT NULL UNIQUE`.
+   *
+   * Chunked because SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is a real
+   * ceiling and a person with a lot of tabs open is exactly who would hit it.
+   * The map is keyed by the URL as ASKED, so a caller that walked a ladder can
+   * find out which rung answered.
+   */
+  getMany(urls: string[]): Map<string, HistoryRow> {
+    const found = new Map<string, HistoryRow>();
+    if (urls.length === 0) return found;
+
+    const visits = this.hasVisitLeg;
+    const unique = [...new Set(urls)];
+    const CHUNK = 400;
+
+    for (let start = 0; start < unique.length; start += CHUNK) {
+      const chunk = unique.slice(start, start + CHUNK);
+      const sql =
+        `SELECT ${this.#selectList()} FROM "${ITEMS_TABLE}" i ` +
+        (visits
+          ? `LEFT JOIN "${VISITS_TABLE}" v ON v."${this.caps.itemFk}" = i."${this.caps.itemPk}" `
+          : "") +
+        `WHERE i."url" IN (${chunk.map(() => "?").join(", ")}) ` +
+        `GROUP BY i."${this.caps.itemPk}"`;
+
+      for (const r of this.db.prepare(sql).all(...chunk) as Record<string, unknown>[]) {
+        found.set(String(r.url), this.#toRow(r));
+      }
+    }
+
+    return found;
   }
 
   close(): void {
