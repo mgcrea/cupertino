@@ -42,14 +42,22 @@ that is the common failure on this surface.
 
 ## A null \`history\` on a tab means NOT FOUND
 
-Measured: only about half of open tabs match a history row. Safari offers no
-shared identifier between the lanes; the URL is the only join key and it is
-trivially lossy. So a tab with no history match has **not** necessarily never
-been visited, and must never be reported that way.
+Measured across three real runs: 60.7%, 55.3% and **8.3%**. The rate is a
+property of the tab set, not of the surface, so no central figure describes it.
+Safari offers no shared identifier between the lanes; the URL is the only join
+key and it is trivially lossy. A tab with no history match has **not**
+necessarily never been visited, and must never be reported that way.
+
+The dominant cause is single-page apps: a page reached by pushState commits no
+history row, so the URL is genuinely absent however it is spelled. The second is
+that the variant ladder only strips cruft OFF a tab's URL, so it cannot reach a
+stored row carrying MORE query string than the tab shows.
 
 Each match reports HOW it was made, and the rungs are not equally strong:
 
-- \`exact\` — byte-identical. The row is about this page.
+- \`exact\` — byte-identical. Usually the row is about this page, but not always:
+  a reused address like \`localhost:4321\` matches exactly and can be a different
+  site entirely. If the tab's own title disagrees, trust the tab.
 - \`normalized\` — differed by a fragment, trailing slash, scheme, \`www.\` or a
   tracking parameter. Same page.
 - \`query-stripped\` — matched only with the whole query gone. The row is about

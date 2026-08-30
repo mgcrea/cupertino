@@ -35,7 +35,11 @@
  *
  * Ordered by strength, and the caller is expected to treat them differently:
  *
- *   exact          — byte-identical. The row is about this page, full stop.
+ *   exact          — byte-identical. USUALLY the row is about this page, but a
+ *                    reused address defeats it: `http://localhost:4321/` is
+ *                    whatever dev server ran last, and one measured run matched
+ *                    a tab titled "Bastion" to a row titled "Skirdv". When the
+ *                    tab's own title disagrees, the tab is right.
  *   normalized     — differed only in a fragment, a trailing slash, a scheme,
  *                    a `www.`, or a tracking parameter. Same page.
  *   query-stripped — matched only with the whole query string removed. The row

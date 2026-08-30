@@ -61,12 +61,11 @@ whatever launched it, exactly as the rest of the file lane does.
 
 ## Only 55.3% of open tabs resolve to a history row
 
-> **Superseded in part.** The rate below measures the original lookup — exact match, then the same
-> URL with its query string removed. `packages/safari/src/client/match.ts` replaced that with a
-> variant ladder (fragment, trailing slash, scheme, `www.`, tracking parameters, then the old
-> query-strip as the last rung). The ladder can only match strictly more, but by how much is **not
-> re-measured**, so the copy in the tools now says "about half" and every match reports which rung
-> answered. Re-measure with `apple_safari_list_tabs` on a granted Mac and compare `historyMatched`.
+> **Superseded. The rate is not "about half" — it is unbounded below.** A third run, measured
+> 2026-08-30 on macOS 26.6 against the shipped 1.4.0 build with the variant ladder in place, matched
+> **5 of 60 open tabs — 8.3%**, all of them exact. The ladder's extra rungs fired **zero** times.
+> See "Why the match rate collapsed" below; the table in this section is the first run and is kept
+> because the two together are the finding.
 
 Safari offers no opaque id shared between the lanes. **The only join key is the URL itself**, which
 makes the join trivially available and trivially lossy:
@@ -88,8 +87,55 @@ from 19 to 42 out of 76 — it more than doubles it. The first run, over 28 tabs
 is the measurement that justifies the second round trip.
 
 Both runs agree on the shape and disagree on the rate: 60.7% over 28 tabs, 55.3% over 76. Neither is
-"the" number, which is the useful finding — a tool description should say "about half" and treat any
-particular figure as a sample.
+"the" number, which is the useful finding — a tool description should treat any particular figure as
+a sample.
+
+## Why the match rate collapsed to 8.3%
+
+The third run is not a worse sample of the same distribution. It is a different failure, and it says
+the join was built facing the wrong way.
+
+| Of 61 open tabs, 1 window |       |
+| ------------------------- | ----- |
+| Exact URL match           | 5     |
+| Normalized (any rung)     | **0** |
+| Query-stripped            | **0** |
+| Unmatched                 | 56    |
+
+**The ladder is one-directional, and reality points the other way.** Every rung in `match.ts` takes
+cruft OFF the tab's URL and looks for a bare row in history. The measured tab set is the inverse: the
+tab holds the CANONICAL url and history holds the cruft. Open tab
+`https://eu.qidi3d.com/products/plus5`; history has that path three times and never bare —
+`?variant=45906184536147`, `?variant=45906184503379`, and a 300-character `?cs_link_idx=…utm_source=…`
+campaign URL. Nothing the ladder can generate from the tab reaches any of them, because the ladder
+can only remove and this gap requires adding.
+
+That also explains why the first two runs looked healthy: their tabs were the ones carrying session
+and tracking parameters, which is exactly the direction the `?`-strip fallback was built for. It was
+never a general normaliser, and 55.3% was measuring how often the cruft happened to sit on the side
+it could reach.
+
+**Single-page apps are the second cause, and no URL rewriting fixes them.** A tab open on
+`https://github.com/mgcrea/mcp-cupertino` does not match, and a full-history search shows why: the
+only row for that repo is `/blob/main/docs/notes.md`. The repo root was reached by pushState, which
+committed no history row. The page was genuinely visited and genuinely is not in the store.
+
+**A fix has to normalise BOTH sides.** Comparing a canonical form of the tab URL against a canonical
+form of the stored URL — or an indexed prefix probe on `scheme://host/path`, bounded so `/plus5`
+cannot match `/plus5-pro` — is the shape that reaches these rows. It is unbuilt. The ladder as
+shipped is correct and simply cannot see them, which is why it reported five honest matches and
+invented nothing.
+
+## An exact URL match is not proof the row is about that page
+
+Also from the third run, and worth more than the rate: one tab was `http://localhost:4321/`, titled
+"Bastion — one MCP server, running once, for every client". It matched **exactly**, to a history row
+titled "Skirdv — Trouvez votre moniteur de ski indépendant".
+
+Both are true. `localhost:4321` is whatever dev server ran last, so a URL that is a perfect join key
+by construction is here a nearly meaningless one. Any local address, and any URL a person reaches
+through more than one site, carries this. A caller must not present a matched title or visit count as
+describing the page on screen when the tab's own title disagrees with it.
 
 ## What the file lane buys
 

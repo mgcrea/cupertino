@@ -256,9 +256,10 @@ ever probed.
 Automation grant instead, and Safari has to be running. Ask for the tab marked `frontmost` to get
 the one the user is looking at: `active` means selected in its own window, so two open windows
 produce two active tabs. A tab's `history` field being null means **not found in history**, never
-"never visited": only about half of open tabs match a history row, because session parameters and
-pages never committed to history both produce a URL that is simply not there. Each match reports
-`historyMatch`, and a `query-stripped` one is about the path rather than that exact page.
+"never visited": the match rate is a property of the tab set rather than of the surface, measured at
+60.7%, 55.3% and 8.3% on three real runs. Single-page apps are the main reason — a page reached by
+pushState commits no history row at all. Each match reports `historyMatch`, and even an `exact` one
+can be a different site when the address is reused, as any `localhost` URL is.
 
 **There is no `do JavaScript` tool.** That verb needs "Allow JavaScript from Apple Events", a
 Safari developer-menu toggle which is not a TCC grant and whose own state cannot be read reliably.

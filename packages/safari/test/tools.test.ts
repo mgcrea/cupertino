@@ -463,7 +463,13 @@ describe("diagnostics", () => {
 
   it("carries the tab-match caveat", async () => {
     const c = await connect();
-    expect((await call(c, "apple_safari_diagnostics")).text).toContain("about half");
+    const text = (await call(c, "apple_safari_diagnostics")).text;
+    // The durable claims, not a phrasing: a miss is NOT FOUND, and the rate is
+    // reported as a spread because three real runs gave 60.7%, 55.3% and 8.3%.
+    // Pinning one central figure here is what let "about half" survive a run
+    // that disproved it.
+    expect(text).toContain("NOT FOUND");
+    expect(text).toContain("8.3%");
   });
 
   it("says it ships no do JavaScript verb", async () => {

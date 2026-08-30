@@ -29,11 +29,14 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
         "selected in its own window, so a person with three windows open has three active tabs " +
         "and only one frontmost one. " +
         "Each tab optionally carries its matching history entry. A null `history` means the URL " +
-        "was not found in history, NOT that the page was never visited: only about half of open " +
-        "tabs match a history row, because session parameters and pages never committed to " +
-        "history both produce a URL that is simply not there. `historyMatch` says how the match " +
-        'was made — treat "query-stripped" as being about the path rather than about this exact ' +
-        "page, since its visit count may cover other views of the same URL.",
+        "was not found in history, NOT that the page was never visited. The match rate varies " +
+        "enormously with the tab set — measured at 61%, 55% and 8% on three real runs — so treat " +
+        "a miss as the normal case and never infer anything from one. Single-page apps are the " +
+        "main reason: a page reached by pushState commits no history row at all. " +
+        '`historyMatch` says how the match was made; treat "query-stripped" as being about the ' +
+        "path rather than this exact page. Even an exact match can be about a different site " +
+        "when the URL is reused — a localhost address is the common case — so if the tab's own " +
+        "title disagrees with the matched title, trust the tab.",
       inputSchema: {
         enrich: z
           .boolean()
