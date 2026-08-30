@@ -148,10 +148,18 @@ struct SettingsView: View {
     // in Permissions — an app icon, a name, a status and a control — on one line.
     .frame(minWidth: 720, idealWidth: 760, minHeight: 480, idealHeight: 540)
     .onAppear { model.refresh() }
-    // The `settings` stage photographs this window, so this is the one that
-    // gets to say the screen is ready. MainView's own signal is inert on that
-    // stage — see `DemoSeed.ReadySource`.
-    .task { DemoSeed.signalReady(from: .settings) }
+    // Readiness is signalled by `PermissionsPane`, not here.
+    //
+    // It used to be this `.task`, which was correct until the `writes` stage
+    // needed the pane SCROLLED before the shutter fired. Two tasks racing would
+    // let this one win and report a screen still sitting at the top, filed as
+    // the write gate — a real screen, correctly sized, showing the wrong part.
+    // Signalling from the pane that does the scrolling makes the order an
+    // ordering rather than a race.
+    //
+    // The cost is that a future stage opening a different pane would hang
+    // instead of capturing. That is the right failure: appshot says "the app
+    // never signalled ready" and names the stage.
   }
 
   private func row(_ pane: SettingsPane) -> some View {
@@ -274,7 +282,49 @@ struct GeneralPane: View {
 struct PermissionsPane: View {
   let model: StatusModel
 
+  /// The id the `writes` screenshot stage scrolls to. Only demo mode reads it;
+  /// in the shipping app the pane opens at the top like any other.
+  private static let writesAnchor = "permissions.writes"
+
   var body: some View {
+    ScrollViewReader { proxy in
+      form
+        // Parking the scroll position happens BEFORE readiness is signalled, so
+        // the shutter cannot fire on the top of the pane and file it as the
+        // write gate. That ordering is the whole guard: appshot waits for the
+        // ready file, and a scroll racing it would produce a correct-looking
+        // capture of the wrong part of a real screen — the failure that is
+        // hardest to see by eye.
+        .task {
+          if DemoSeed.stageAnchor == .writes {
+            // Retried, because `.task` runs before the form's rows have
+            // registered their ids with the ScrollViewReader and `scrollTo` on
+            // an id it does not know yet is a SILENT no-op. The first attempt
+            // measured exactly that: `writes` came out byte-identical to
+            // `settings`, and only appshot's duplicate check said so.
+            //
+            // A hop rather than one padded sleep, and bounded rather than
+            // `while true`: if the anchor never resolves this stops after ~0.5s
+            // and the capture is a duplicate again, which the gate refuses. A
+            // loop would hang until appshot's ready timeout instead, naming the
+            // wrong culprit.
+            //
+            // No animation anywhere: an animated scroll is motion the frame
+            // poll would have to outlast, and nobody is watching this one.
+            for _ in 0..<10 {
+              proxy.scrollTo(Self.writesAnchor, anchor: .bottom)
+              try? await Task.sleep(for: .milliseconds(50))
+            }
+          }
+          // Always last. The shutter waits on this file, so signalling before
+          // the scroll settles would photograph the top of the form and file it
+          // as the write gate.
+          DemoSeed.signalReady(from: .settings)
+        }
+    }
+  }
+
+  private var form: some View {
     Form {
       Section {
         LabeledContent {
@@ -398,9 +448,13 @@ struct PermissionsPane: View {
       } header: {
         Text("Writes")
       } footer: {
+        // The anchor rides the footer rather than the header, because the
+        // capture wants the whole section in frame and `anchor: .bottom`
+        // resolves against whichever view carries the id.
         Text(
           "Writes decide what an assistant can see at all — the write tools, and the prompts that end in one, are not registered when this is off, so it is not merely a permission to refuse later."
         )
+        .id(Self.writesAnchor)
       }
     }
     .formStyle(.grouped)

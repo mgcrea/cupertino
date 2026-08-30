@@ -51,20 +51,42 @@ enum DemoSeed {
     case activity
     case connections
     case settings
+    case writes
 
     /// Which window the shutter is aimed at.
     ///
-    /// `settings` is the only stage that is not the main window, and it is the
-    /// one most likely to fail *silently*: appshot photographs the largest
-    /// ordinary window, so leaving the main window on screen captures that
-    /// instead — at exactly the right size, showing a real screen, with nothing
-    /// in the run saying a word. `openStagedWindow()` below is what stops it —
-    /// the main window is simply never opened on this stage — and `ReadySource`
-    /// is what stops the shutter firing before the Settings window is up.
+    /// `settings` and `writes` are the stages that are not the main window, and
+    /// they are the ones most likely to fail *silently*: appshot photographs the
+    /// largest ordinary window, so leaving the main window on screen captures
+    /// that instead — at exactly the right size, showing a real screen, with
+    /// nothing in the run saying a word. `openStagedWindow()` below is what
+    /// stops it — the main window is simply never opened on these stages — and
+    /// `ReadySource` is what stops the shutter firing before the Settings window
+    /// is up.
     var subject: Subject {
       switch self {
-      case .settings: .settings(.permissions)
+      case .settings, .writes: .settings(.permissions)
       case .surface, .prompt, .activity, .connections: .main
+      }
+    }
+
+    /// Where the Permissions pane is parked before the shutter fires.
+    ///
+    /// Permissions is one long `Form` — Full Disk Access, Automation, the Mail
+    /// composer's two grants, then Writes — and it outgrew a single capture the
+    /// moment Maps became the eighth surface and the composer section landed.
+    /// `settings` photographs the top of it; `writes` scrolls to the bottom, so
+    /// the write gate has a picture again.
+    ///
+    /// This scrolls the REAL pane rather than rendering a trimmed copy of it.
+    /// A demo-only variant showing the Writes section alone would photograph a
+    /// screen the product does not have, which is the thing a marketing image
+    /// must never do — and it would go on looking right after the real pane
+    /// changed underneath it.
+    var settingsAnchor: SettingsAnchor {
+      switch self {
+      case .writes: .writes
+      case .settings, .surface, .prompt, .activity, .connections: .top
       }
     }
 
@@ -73,10 +95,16 @@ enum DemoSeed {
       case settings(SettingsPane)
     }
 
+    /// A named position in the Permissions form, resolved to a view `id` there.
+    enum SettingsAnchor {
+      case top
+      case writes
+    }
+
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings: .settings
+      case .settings, .writes: .settings
       case .surface, .prompt, .activity, .connections: .main
       }
     }
@@ -94,10 +122,10 @@ enum DemoSeed {
       case .surface: .surface("mail")
       case .prompt, .activity: .log
       case .connections: .connections
-      // Never seen: `openStagedWindow()` never builds `MainView` on this
-      // stage at all, so this value exists only because the switch must be
+      // Never seen: `openStagedWindow()` never builds `MainView` on these
+      // stages at all, so this value exists only because the switch must be
       // exhaustive.
-      case .settings: .log
+      case .settings, .writes: .log
       }
     }
 
@@ -110,7 +138,7 @@ enum DemoSeed {
     var logLines: [(String, LogStore.Level, String)] {
       switch self {
       case .prompt: DemoSeed.heroTurnLogLines
-      case .surface, .activity, .connections, .settings: DemoSeed.logLines
+      case .surface, .activity, .connections, .settings, .writes: DemoSeed.logLines
       }
     }
   }
@@ -385,7 +413,7 @@ enum DemoSeed {
   /// churn the golden gate into noise — and the images would claim a version
   /// before the store listing showing them had caught up.
   /// Bump this deliberately, when new marketing images are wanted.
-  nonisolated static let version = "1.3.0"
+  nonisolated static let version = "1.4.0"
 
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted
@@ -512,6 +540,14 @@ enum DemoSeed {
   /// Called from `MainView` once its body has run with the model populated. If
   /// the signal never arrives appshot fails the run rather than reverting to
   /// the guess, which is the entire point of using it.
+  /// Where the Permissions form should be parked, or `.top` outside demo mode.
+  ///
+  /// Guarded on `isEnabled` so the shipping app never consults `stage`, which
+  /// `fatalError`s on an argument it cannot parse.
+  nonisolated static var stageAnchor: Stage.SettingsAnchor {
+    isEnabled ? stage.settingsAnchor : .top
+  }
+
   nonisolated static func signalReady(from source: ReadySource) {
     guard isEnabled, stage.readySource == source,
       let path = UserDefaults.standard.string(forKey: Key.readyFile)

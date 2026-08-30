@@ -1,15 +1,14 @@
 {
   "//": "Captions, theme and order for `appshot compose`. Text, so marketing copy changes without touching code or re-capturing. See the `screenshots-*` targets in the root Makefile.",
-
   "//output": "The Mac App Store's 16:10 canvas. Cupertino does not ship on the App Store — docs/distribution.md settles that — but this is still the right size: it is the one shape the compositor accepts, it is what a README, a Product Hunt gallery and an OG card all want, and it means the framed set is upload-ready if that decision is ever revisited. DemoSeed pins the window to 1120x700, the same 1.6:1, so the capture fills the width without letterboxing.",
-  "output": { "width": 2880, "height": 1800 },
-
+  "output": {
+    "width": 2880,
+    "height": 1800
+  },
   "//appearances": "Dark only, on purpose. apps/website/src/styles/global.css: \"Dark is the base, not an override... there is no light theme to be faithful to and none is invented here.\" Capturing light too would double the run and commit three goldens that nothing renders and nobody reviews. Adding \"light\" here and to the Makefile's APPEARANCES is the whole change if the site ever grows one.",
   "appearances": ["dark"],
-
   "//fontFamily": "SF Pro Display is NOT part of a stock macOS install — it ships in Apple's SF font pack. `make screenshots-doctor` refuses to compose if it does not resolve, which is the only way to catch a silent substitution.",
   "fontFamily": "'SF Pro Display', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif",
-
   "layout": {
     "margin": 180,
     "textTop": 150,
@@ -21,10 +20,13 @@
     "textGap": 30,
     "screenshotGap": 90,
     "cornerRadius": 26,
-    "shadow": { "blur": 52, "opacity": 0.34, "dy": 26 },
+    "shadow": {
+      "blur": 52,
+      "opacity": 0.34,
+      "dy": 26
+    },
     "maxTitleLines": 2
   },
-
   "//themes": "\"Horizon\": the mark's own composition rather than a quotation of its colours. Cupertino is a low sun over two hills, so the warmth is a floor under the window and the ink is above the title, where the type needs it. Still not a second palette — apps/website/src/styles/global.css is the one that exists, and a store image in colours the site does not use reads as a different product.",
   "//angle": "270 = bottom-up. Degrees CLOCKWISE, y-DOWN, and appshot means it literally: offset 0 lands where the axis starts, so at 270 that is the bottom edge. The old JS compositor fed the angle through an SVG gradientTransform in objectBoundingBox units and then skewed it by the canvas aspect ratio, which is why the 145 that used to be here rendered at about 135. Do not port an angle from that era without re-rendering it.",
   "//floor": "The warm floor and the window's drop shadow (layout.shadow: blur 52, opacity 0.34) occupy the same band, so #8A4A2E is chosen to sit under the shadow rather than compete with it. Lifting it toward the accent's own #F2895C is what makes the shadow read as dirt. The 0.24 stop is what keeps it a floor instead of a wash.",
@@ -33,17 +35,28 @@
       "background": {
         "angle": 270,
         "stops": [
-          { "offset": 0, "color": "#8A4A2E" },
-          { "offset": 0.24, "color": "#2A1C1C" },
-          { "offset": 0.6, "color": "#121319" },
-          { "offset": 1, "color": "#0B0C0F" }
+          {
+            "offset": 0,
+            "color": "#8A4A2E"
+          },
+          {
+            "offset": 0.24,
+            "color": "#2A1C1C"
+          },
+          {
+            "offset": 0.6,
+            "color": "#121319"
+          },
+          {
+            "offset": 1,
+            "color": "#0B0C0F"
+          }
         ]
       },
       "title": "#F4F2EF",
       "subtitle": "#9B9A96"
     }
   },
-
   "//screens": "Order here IS the order of the framed set — it stamps the 01-, 02- prefix. The capture filenames stay unnumbered, so reordering never renames an image. `id` matches <id>~dark.png in source/, and it is also the -ScreenshotStage value DemoSeed.Stage parses.",
   "//website": "The basename `appshot compose website` writes into apps/website/src/assets/shots/. All five are on the site. `prompt` and `activity` are the same Log pane and they earn separate slots only because their fixtures differ — one question's trace, then the general log with a refusal in it. Caption them so that difference is the point; captioned loosely they read as the same picture twice.",
   "screens": [
@@ -59,7 +72,7 @@
       "id": "prompt",
       "website": "prompt",
       "title": "Ask in plain English.",
-      "subtitle": "\u201cWhat did I promise Marie last week, and is any of it on my calendar?\u201d"
+      "subtitle": "“What did I promise Marie last week, and is any of it on my calendar?”"
     },
     {
       "id": "activity",
@@ -74,9 +87,16 @@
       "subtitle": "See exactly what is connected, and what it has asked for."
     },
     {
-      "//": "The only screen that is not the main window. DemoSeed.stageSettings orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. The Permissions pane rather than General: the write gate is the claim that needs a picture, and this is where a reader sees it is off per surface rather than a global switch.",
+      "//": "Not the main window. DemoSeed orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. This is the TOP of the Permissions form; `writes` is the same form scrolled to its last section. It became two screens when the pane outgrew one capture: Maps made an eighth Automation row and the Mail composer section landed, which pushed the write toggles under the fold and left this shot captioned for something no longer in it.",
       "id": "settings",
       "website": "settings",
+      "title": "One grant, asked for per app.",
+      "subtitle": "Full Disk Access once, then Automation one app at a time — and the surfaces that never script an app say so."
+    },
+    {
+      "//": "The same Permissions form as `settings`, scrolled to its last section by DemoSeed.Stage.writes. It scrolls the real pane rather than rendering a trimmed copy: a demo-only view showing Writes alone would photograph a screen the product does not have, and would keep looking right after the real pane changed. The scroll is ordered before the readiness signal, so the shutter cannot fire on the top of the form and file it as the write gate.",
+      "id": "writes",
+      "website": "writes",
       "title": "Writes are off until you say so.",
       "subtitle": "One toggle per surface — and with it off, the mutating tools are never registered at all."
     }
