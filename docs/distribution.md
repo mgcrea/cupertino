@@ -241,6 +241,27 @@ site builds from a shallow clone with no tags. So the `release-app` job checks t
 and refuses to build when `app-v$X` points at a commit whose root version is not `$X`. Cutting a
 release is: bump the root version, `make version`, write the CHANGELOG section, commit, tag.
 
+**Push the tags one at a time, or dispatch them by hand.** GitHub creates no workflow runs at all
+when more than three tags arrive in a single push, and it reports nothing — `git push` succeeds,
+ten tags appear on the remote, and the Actions tab stays empty. Nothing in this repository can
+detect that; it looks exactly like a release that has not started yet. The 1.3.1 round hit it and
+the evidence is still in the run history: `core-v1.3.1` is a `push` event and the other eight are
+`workflow_dispatch`, because they had to be re-triggered by hand. 1.4.0 hit it again with all ten.
+
+Either push each tag separately, or push them together and then dispatch each one:
+
+```sh
+for t in core calendar contacts mail maps messages notes reminders safari app; do
+  gh workflow run ci.yml --ref "$t-v$VERSION"
+done
+```
+
+`workflow_dispatch` against a tag ref is not a workaround with different behaviour: `github.ref` is
+`refs/tags/<tag>` either way, so every `startsWith(github.ref, 'refs/tags/')` guard in the release
+jobs holds and the same jobs run. Dispatch `core` first and let it finish — the surface packages
+depend on `@mgcrea/mcp-apple-core@^$VERSION`, and publishing them first leaves a window where that
+dependency does not resolve.
+
 `DemoSeed.swift`'s `version` is deliberately not generated. It is the number the marketing images
 show, and tying it to the release would churn the golden-image gate on every tag and claim a version
 before the store listing showing it had caught up. Bump it when new images are wanted.
@@ -456,3 +477,31 @@ to "what did I just give Full Disk Access to".
   did not exist well after it did, which is how it collected a redundant `0.0.0-bootstrap` published
   _after_ its 1.3.0. When checking whether a fresh publish landed, ask
   `/-/package/<name>/dist-tags` or HEAD the tarball URL; do not trust `npm view`.
+
+  **Fourth, and the one that cost the most: `pnpm publish` reports an OTP challenge as a 404.**
+  Bootstrapping `-maps` for 1.4.0 failed with
+  `404 Not Found - PUT https://registry.npmjs.org/@mgcrea%2fmcp-apple-maps`, which reads as a
+  permissions or naming problem and is neither. npm answers the `PUT` with **401 `EOTP`, "this
+  operation requires a one-time password"**; pnpm's `withOtpHandling` swallows it and surfaces the
+  _preceding_ `GET 404` — the existence check, which correctly 404s for a package that does not
+  exist yet. The two failures are indistinguishable from pnpm's output, and the 404 is the more
+  plausible-looking of them, so it sends you to the token settings for a token that was never
+  the problem.
+
+  `npm profile get` does not settle it either: it reported `two-factor auth: auth-only`, which
+  sounds like writes are exempt. They are not — a granular token that is not marked as bypassing
+  2FA still gets challenged on publish. **To see the real error, publish with `npm`, not `pnpm`:**
+
+  ```sh
+  cd packages/<slug> && pnpm pack --pack-destination /tmp   # pnpm packs, for workspace: substitution
+  npm publish /tmp/<tarball>.tgz --tag bootstrap --access public --loglevel verbose
+  ```
+
+  Packing with pnpm and publishing the tarball with npm is the combination that works: `npm publish`
+  on the directory would ship the literal `workspace:^` string, and `pnpm publish` hides the OTP
+  prompt. It also touches no file in the tree, so there is no bootstrap version left to restore.
+
+  **The first version published becomes `latest` whatever `--tag` says.** `--tag bootstrap` does not
+  prevent it — npm points `latest` at the only version there is, so `npm i` serves the stub until the
+  real release lands. It cannot be undone (`latest` can be moved, never deleted), so the bootstrap
+  and the release that supersedes it belong in the same sitting.
