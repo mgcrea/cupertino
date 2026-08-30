@@ -45,8 +45,9 @@ last Tuesday" are different answers and the user will act on them differently.
 
 Two things not to say:
 - If a tab has no matching history row, that means **not found**, not never
-  visited. Only about 55% of open tabs match one; the URL is the only join key
-  and it is lossy.
+  visited. Only about half of open tabs match one; the URL is the only join key
+  and it is lossy. Check \`historyMatch\`: a "query-stripped" match is about the
+  path, so its visit count may cover other views of the same URL.
 - If a date comes back null, say the date is unknown. Do not present it as old.
 
 If one lane returns nothing at all, check \`cupertino://safari/diagnostics\`

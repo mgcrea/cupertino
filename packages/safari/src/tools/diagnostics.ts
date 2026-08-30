@@ -71,10 +71,12 @@ export const buildDiagnostics = async (
       },
     },
     caveats: [
-      "Only about 55% of open tabs match a history row (measured: 19 exact plus 23 after " +
-        "stripping the query string, out of 76). A null `history` on a tab means NOT " +
-        "FOUND, never 'never visited'. Safari offers no shared identifier between the " +
-        "lanes — the URL is the only join key, and it is trivially lossy.",
+      "Only about half of open tabs match a history row. A null `history` on a tab means " +
+        "NOT FOUND, never 'never visited'. Safari offers no shared identifier between the " +
+        "lanes — the URL is the only join key, and it is trivially lossy. Each tab reports " +
+        "`historyMatch`; a 'query-stripped' match is about the path rather than the exact " +
+        "page. The 55.3% figure in docs/safari.md predates the variant ladder and is not " +
+        "yet re-measured against it.",
       "History timestamps are placed on an epoch DETECTED from the store rather than an " +
         "assumed one, because an earlier probe run misread this column by 31 years. When " +
         "detection fails, every date reads null rather than being guessed.",

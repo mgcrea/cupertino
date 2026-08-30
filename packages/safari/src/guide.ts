@@ -42,11 +42,19 @@ that is the common failure on this surface.
 
 ## A null \`history\` on a tab means NOT FOUND
 
-Measured: only about 55% of open tabs match a history row — 19 exact plus 23
-after stripping the query string, out of 76. Safari offers no shared identifier
-between the lanes; the URL is the only join key and it is trivially lossy. So a
-tab with no history match has **not** necessarily never been visited, and must
-never be reported that way.
+Measured: only about half of open tabs match a history row. Safari offers no
+shared identifier between the lanes; the URL is the only join key and it is
+trivially lossy. So a tab with no history match has **not** necessarily never
+been visited, and must never be reported that way.
+
+Each match reports HOW it was made, and the rungs are not equally strong:
+
+- \`exact\` — byte-identical. The row is about this page.
+- \`normalized\` — differed by a fragment, trailing slash, scheme, \`www.\` or a
+  tracking parameter. Same page.
+- \`query-stripped\` — matched only with the whole query gone. The row is about
+  the PATH, so its visit count may cover other views of the same URL. Say so
+  rather than attributing the count to this exact page.
 
 History timestamps sit on an epoch detected from the store rather than an
 assumed one, because an earlier probe misread that column by 31 years. When

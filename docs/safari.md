@@ -61,6 +61,13 @@ whatever launched it, exactly as the rest of the file lane does.
 
 ## Only 55.3% of open tabs resolve to a history row
 
+> **Superseded in part.** The rate below measures the original lookup — exact match, then the same
+> URL with its query string removed. `packages/safari/src/client/match.ts` replaced that with a
+> variant ladder (fragment, trailing slash, scheme, `www.`, tracking parameters, then the old
+> query-strip as the last rung). The ladder can only match strictly more, but by how much is **not
+> re-measured**, so the copy in the tools now says "about half" and every match reports which rung
+> answered. Re-measure with `apple_safari_list_tabs` on a granted Mac and compare `historyMatched`.
+
 Safari offers no opaque id shared between the lanes. **The only join key is the URL itself**, which
 makes the join trivially available and trivially lossy:
 
@@ -122,7 +129,7 @@ their browser can be scripted.
 
 ## Built
 
-`packages/safari` ships this surface: six read tools, no write tool, 115 tests. Three decisions
+`packages/safari` ships this surface: six read tools, no write tool, 151 tests. Three decisions
 came out of building it that this document did not anticipate.
 
 **The epoch is detected at runtime, not hardcoded.** The obvious response to the `visit_time` bug
@@ -144,6 +151,29 @@ fields, not an exception.
 needing "Allow JavaScript from Apple Events", not shipping that verb removes the problem entirely.
 `test/jxa.test.ts` asserts no script contains `doJavaScript`, so this cannot erode quietly. The
 finding below stands for whenever that verb is wanted; it is no longer a blocker.
+
+## Page text is unbuilt, and the measurement that would decide it
+
+The surface cannot read a word of any page, which is the most common thing to expect of it. The
+route that would not need the third permission is Accessibility: `AXWebArea` through System Events,
+needing Accessibility plus Automation to **System Events** — not to Safari — which is the routing
+`ad79b4a` established for Maps, and which `packages/mail` already relies on to read attributes
+inside a WebKit `AXWebArea` (`findBodyArea` in `src/client/jxa/core.ts`).
+
+That precedent makes it worth measuring rather than assuming, but the repo has rejected an
+Accessibility **read** lane once already: ~206 elements at 33.6 ms a round trip is the ~14 s that
+`docs/surfaces.md` records for Maps, with no bulk fetch in either JXA or AppleScript. A page's tree
+is bigger than a sidebar's.
+
+Everything turns on one unmeasured fact: **does an `AXWebArea` expose an aggregate text
+attribute?** If it does, page text is one round trip and worth building. If it does not, it is a
+walk of the whole tree — the case already rejected.
+
+`scripts/spike-safari-page-text.mjs` answers it, enumerating the web area's attributes rather than
+guessing their names, and measures two comparisons alongside: what `do JavaScript` actually fails
+with, and how much less a plain network fetch of the same URL recovers. It reads only, prints
+lengths rather than page text, and must be run by hand from a granted context. **Nothing ships from
+this until those numbers exist.**
 
 **The Reading List walker now runs for real.** Not against a real `Bookmarks.plist` — that still
 needs the grant — but against a synthetic binary plist checked in at

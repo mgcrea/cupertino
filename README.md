@@ -253,10 +253,12 @@ List is an Apple Event that navigates a real, visible browser, and no write on t
 ever probed.
 
 `list_tabs` is the only tool in the whole bundle that works without Full Disk Access — it needs an
-Automation grant instead, and Safari has to be running. A tab's `history` field being null means
-**not found in history**, never "never visited": only about 55% of open tabs match a history row,
-because redirects, session parameters and pages never committed to history all produce a URL that
-is simply not there.
+Automation grant instead, and Safari has to be running. Ask for the tab marked `frontmost` to get
+the one the user is looking at: `active` means selected in its own window, so two open windows
+produce two active tabs. A tab's `history` field being null means **not found in history**, never
+"never visited": only about half of open tabs match a history row, because session parameters and
+pages never committed to history both produce a URL that is simply not there. Each match reports
+`historyMatch`, and a `query-stripped` one is about the path rather than that exact page.
 
 **There is no `do JavaScript` tool.** That verb needs "Allow JavaScript from Apple Events", a
 Safari developer-menu toggle which is not a TCC grant and whose own state cannot be read reliably.
