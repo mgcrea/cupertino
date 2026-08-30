@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.3.1`,
-`notes-v1.3.1`, `reminders-v1.3.1`, `core-v1.3.1` for the npm packages, and `app-v1.3.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.4.0`,
+`notes-v1.4.0`, `reminders-v1.4.0`, `core-v1.4.0` for the npm packages, and `app-v1.4.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.4.0] - 2026-08-30
 
 ### Added
 
@@ -122,7 +122,7 @@ summary.
   is the mistake, and it was made three times before it was caught.
 
   The App Intents lane was checked too and stays closed: Maps ships strings for `Add Places
-  to List` and `Remove Places From List`, but the actions are not registered in Shortcuts on
+to List` and `Remove Places From List`, but the actions are not registered in Shortcuts on
   macOS 26.6 — Maps is a Catalyst app carrying the iOS resource bundle, so the strings ship
   regardless. The Accessibility lane is open and simply unbuilt: with a place card open Maps
   exposes named, pressable `Favorite` and `Add` controls, 219 of its 236 pressable elements
@@ -594,7 +594,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.1...HEAD
+[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.4.0...HEAD
+[1.4.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.1...app-v1.4.0
 [1.3.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.0...app-v1.3.1
 [1.3.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...app-v1.3.0
 [1.2.2]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...app-v1.2.2
