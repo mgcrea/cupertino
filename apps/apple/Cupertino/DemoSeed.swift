@@ -65,8 +65,8 @@ enum DemoSeed {
     /// is up.
     var subject: Subject {
       switch self {
-      case .settings, .writes: .settings(.permissions)
-      case .surface, .prompt, .activity, .connections: .main
+      case .settings: .settings(.clients)
+      case .surface, .writes, .prompt, .activity, .connections: .main
       }
     }
 
@@ -85,8 +85,11 @@ enum DemoSeed {
     /// changed underneath it.
     var settingsAnchor: SettingsAnchor {
       switch self {
-      case .writes: .writes
-      case .settings, .surface, .prompt, .activity, .connections: .top
+      // Nothing scrolls any more: the Writes section left Settings for the
+      // surface detail pane, and `settings` photographs Clients from its top.
+      // Kept rather than deleted because the next long pane will want it, and
+      // the retry loop it drove is the non-obvious part.
+      case .settings, .writes, .surface, .prompt, .activity, .connections: .top
       }
     }
 
@@ -104,8 +107,8 @@ enum DemoSeed {
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings, .writes: .settings
-      case .surface, .prompt, .activity, .connections: .main
+      case .settings: .settings
+      case .surface, .writes, .prompt, .activity, .connections: .main
       }
     }
 
@@ -120,12 +123,18 @@ enum DemoSeed {
     var pane: MainView.Pane {
       switch self {
       case .surface: .surface("mail")
+      // Notes rather than Mail, and that pairing is the plate. `surface` shows
+      // Mail with writes ON and its full tool list; this shows the same window,
+      // same layout, with writes OFF and a visibly shorter one. The write gate
+      // used to be photographed as a row of toggles in Settings, which pictured
+      // the control; this pictures the consequence, which is the claim the
+      // caption actually makes.
+      case .writes: .surface("notes")
       case .prompt, .activity: .log
       case .connections: .connections
-      // Never seen: `openStagedWindow()` never builds `MainView` on these
-      // stages at all, so this value exists only because the switch must be
-      // exhaustive.
-      case .settings, .writes: .log
+      // Never seen: `openStagedWindow()` never builds `MainView` on this stage
+      // at all, so this value exists only because the switch must be exhaustive.
+      case .settings: .log
       }
     }
 
@@ -421,6 +430,18 @@ enum DemoSeed {
 
   /// The store row in `SurfaceDetail`, which otherwise prints an absolute path
   /// under the developer's real home directory into a public image.
+  /// The project folders the Clients pane lists.
+  ///
+  /// Fixed for the same reason `storePath` is fixed: `ClientWiring.rememberedFolders`
+  /// is read from the capturing Mac's defaults, so the honest version of that
+  /// section puts whoever built this image's real working directories — client
+  /// names included — into the App Store and the marketing site. `/Users/you`
+  /// is the same stand-in the store paths use.
+  nonisolated static let wiredFolders: [URL] = [
+    URL(fileURLWithPath: "/Users/you/Projects/acme-api"),
+    URL(fileURLWithPath: "/Users/you/Projects/weekly-report"),
+  ]
+
   nonisolated static func storePath(for surface: Surface) -> String? {
     guard let relative = surface.storePath else { return nil }
     return "/Users/you/" + relative.replacingOccurrences(of: "V*", with: "V10")
@@ -487,13 +508,19 @@ enum DemoSeed {
   ///
   /// Taller than the main window on purpose, and sized to the content rather
   /// than to a round number — the same rule `contentSize` above is chosen by.
-  /// Permissions is the longest pane: Full Disk Access, then Automation and
-  /// then Writes, one row per surface each, and the write gate is the whole
-  /// reason this screen is captioned the way it is. 880 fitted all of it and
-  /// left an empty third below, which photographs as a product nobody uses;
-  /// 740 ends just under the footer sentence. Shortening it further starts
-  /// cropping the write toggles, under a caption promising one per surface.
-  nonisolated static let settingsContentSize = NSSize(width: 1000, height: 740)
+  ///
+  /// Retuned when the `settings` stage moved from Permissions to Clients. The
+  /// old 740 was measured against the Permissions form back when it carried
+  /// Automation and Writes; both moved to the surface detail pane, which left
+  /// Permissions at three rows and two thirds of the window empty — the "product
+  /// nobody uses" this number exists to avoid, in the other direction.
+  ///
+  /// Clients is now the longest pane: seven client rows, three footer
+  /// paragraphs, then Project folders with its scope picker and one row per
+  /// remembered folder. 840 ends just under the section's own footer; 780 cropped it, and 740
+  /// cropped a folder row. The fixture has two folders on purpose, so the
+  /// section reads as a list rather than as a single example.
+  nonisolated static let settingsContentSize = NSSize(width: 1000, height: 840)
 
   @MainActor private static func pin(_ window: NSWindow) {
     // Sheets and panels are windows too, and forcing a main-window size onto a

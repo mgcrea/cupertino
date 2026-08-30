@@ -61,11 +61,11 @@
   "//website": "The basename `appshot compose website` writes into apps/website/src/assets/shots/. All five are on the site. `prompt` and `activity` are the same Log pane and they earn separate slots only because their fixtures differ — one question's trace, then the general log with a refusal in it. Caption them so that difference is the point; captioned loosely they read as the same picture twice.",
   "screens": [
     {
-      "//": "The title used to open with a literal \"Four\", which Contacts invalidated the day it shipped — the same drift apps/website/src/config.ts exists to prevent, in the one file that cannot compute a count. It no longer states one. The subtitle still names the surfaces because a caption that will not say which apps is not worth the plate; it is the line to revisit when Messages lands.",
+      "//": "The title used to open with a literal \"Four\", which Contacts invalidated the day it shipped — the same drift apps/website/src/config.ts exists to prevent, in the one file that cannot compute a count. It no longer states one. The subtitle still names the surfaces because a caption that will not say which apps is not worth the plate; Messages, Safari and Maps then landed without it being revisited, and it named five surfaces out of eight until the sidebar grew a dimmed row and somebody looked again.",
       "id": "surface",
       "website": "surface",
       "title": "Your Apple apps. One permission.",
-      "subtitle": "Mail, Notes, Reminders, Calendar and Contacts, brokered by a single signed app."
+      "subtitle": "Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and Maps, brokered by a single signed app. Switch off the ones you do not use."
     },
     {
       "//": "Captioned with the prompt itself, which is why `prompt` is its own stage rather than a second crop of `activity`: DemoSeed.heroTurnLogLines seeds this pane with that one question's trace and nothing else. The subtitle is HERO_TURN.prompt in apps/website/src/data/examples.ts, verbatim — that file is the authority, the site checks its own half at build time, and nothing yet checks this copy of it.",
@@ -87,18 +87,18 @@
       "subtitle": "See exactly what is connected, and what it has asked for."
     },
     {
-      "//": "Not the main window. DemoSeed orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. This is the TOP of the Permissions form; `writes` is the same form scrolled to its last section. It became two screens when the pane outgrew one capture: Maps made an eighth Automation row and the Mail composer section landed, which pushed the write toggles under the fold and left this shot captioned for something no longer in it.",
+      "//": "Not the main window. DemoSeed orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. This is the CLIENTS pane. It used to be the Permissions form, and `writes` used to be that same form scrolled to its Writes section; both the automation rows and the write toggles moved to the surface detail pane in the main window, which left Permissions at three rows and nothing to scroll to. The stage ids did not follow — renaming them would touch SHOT_SCREENS, three golden filenames, two appstore prefixes and an Astro import, and mixing that with a UI change makes the golden diff unreadable.",
       "id": "settings",
       "website": "settings",
-      "title": "One grant, asked for per app.",
-      "subtitle": "Full Disk Access once, then Automation one app at a time — and the surfaces that never script an app say so."
+      "title": "Wired into your editor, not inside it.",
+      "subtitle": "One click for the clients Cupertino can configure, one line to paste for the ones it will not rewrite — and a command to take a surface back out."
     },
     {
-      "//": "The same Permissions form as `settings`, scrolled to its last section by DemoSeed.Stage.writes. It scrolls the real pane rather than rendering a trimmed copy: a demo-only view showing Writes alone would photograph a screen the product does not have, and would keep looking right after the real pane changed. The scroll is ordered before the readiness signal, so the shutter cannot fire on the top of the form and file it as the write gate.",
+      "//": "Deliberately the same window and layout as `surface`, and the pair is the point: `surface` is Mail with writes ON and its full tool list, this is Notes with writes OFF and a visibly shorter one. The write gate used to be photographed as a row of toggles in Settings, which pictured the control; this pictures the consequence, which is what the caption claims. The numbers are read off the real server by CapabilitiesCard rather than seeded, so if writes-off ever stopped shrinking the list this plate would say so.",
       "id": "writes",
       "website": "writes",
       "title": "Writes are off until you say so.",
-      "subtitle": "One toggle per surface — and with it off, the mutating tools are never registered at all."
+      "subtitle": "With the toggle off, the mutating tools are never registered — seven tools here against Mail's twenty. An assistant is not refused; it is never told they exist."
     }
   ]
 }

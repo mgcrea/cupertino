@@ -79,16 +79,16 @@ const shots = [
   {
     image: settingsShot,
     id: "settings",
-    title: "Asked for per app",
-    body: "Full Disk Access once, then Automation one app at a time — and a surface that never scripts its app says so rather than showing a grant it will not use. Maps is the one that does: it writes, and it sends no Apple Event to do it.",
-    alt: "Cupertino's Permissions settings: Full Disk Access granted, automation allowed for Mail, Notes, Reminders, Calendar, Contacts, Messages and Safari, and Maps marked as never scripting the app.",
+    title: "Wired into your editor, not inside it",
+    body: "Claude Desktop, Cursor, LM Studio and Windsurf are configured with one click. Claude Code, VS Code and Codex keep their config in formats this app will not rewrite — JSONC, TOML, and a file holding API credentials that running sessions write to — so those get a line to paste instead. Turn a surface off and the same rows offer the command that takes it back out.",
+    alt: "Cupertino's Clients settings: Claude Desktop, Cursor, LM Studio and Windsurf with Reveal buttons, and Claude Code, Visual Studio Code and Codex CLI with copyable commands, above a Project folders section.",
   },
   {
     image: writesShot,
     id: "writes",
     title: "Writes are a separate switch",
-    body: "The same pane, scrolled to its last section. With one off, that surface's mutating tools are never registered — so an agent is not refused, it is never told they exist. Safari has no toggle here at all, because it registers no write tool to gate.",
-    alt: "Cupertino's Permissions settings scrolled to the Writes section: a toggle per surface, on for Mail and off for Notes, Reminders, Calendar, Contacts, Messages and Maps.",
+    body: "The same window as above, on a surface with writes off. Notes reports seven tools where Mail reports twenty: the mutating tools, and the prompts that end in one, are not registered at all. An agent is not refused — it is never told they exist.",
+    alt: "Cupertino's Notes pane with Allow writes unchecked, its capabilities card reading seven tools, one prompt and three resources, and Safari dimmed in the sidebar as a switched-off surface.",
   },
 ] as const;
 ---
