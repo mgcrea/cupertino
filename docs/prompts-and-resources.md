@@ -68,6 +68,7 @@ list", "read the thread before you answer it", or "check what exists before you 
 | Contacts  | `who_is`                | — (surface registers no mutating tool) |
 | Messages  | `catch_up`              | `send`                                 |
 | Safari    | `what_was_i_reading`    | — (read-only by construction)          |
+| Maps      | `where_was_that_place`  | — (no write prompt yet)                |
 
 All are namespaced like the tools: `apple_mail_triage`, not `triage`.
 

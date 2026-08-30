@@ -35,20 +35,23 @@ Xcode, System Settings.
 Weather, Passwords, Stickies, Font Book, Image Capture, Photo Booth, Clock, Dictionary.
 
 Maps is in that list and now ships anyway: `packages/maps` is the first surface with **no Apple
-Events lane at all**. Being non-scriptable turned out not to be the obstacle — see below.
+Events lane at all**, and it both reads AND writes. Being non-scriptable turned out not to be the
+obstacle — see below. It is worth knowing what that implies for the rest of the list: an app with
+no `.sdef` is not automatically read-only, and "not scriptable" is a statement about Apple Events
+rather than about capability.
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status      |
-| --------- | -------------------------------------------- | ----------- |
-| Mail      | file lane required — 74 s search             | implemented |
-| Notes     | Apple Events usable below ~5k notes          | implemented |
-| Reminders | dictionary complete for the core model       | implemented |
-| Messages  | **file lane mandatory** — no read API exists | implemented |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented |
-| Safari    | two lanes see disjoint things                | implemented |
-| Maps      | **file lane only** — no `.sdef` exists       | implemented |
-| Contacts  | file-lane reads, 0 ms; store is plural       | implemented |
+| Surface   | Lane verdict                                 | Status                                         |
+| --------- | -------------------------------------------- | ---------------------------------------------- |
+| Mail      | file lane required — 74 s search             | implemented                                    |
+| Notes     | Apple Events usable below ~5k notes          | implemented                                    |
+| Reminders | dictionary complete for the core model       | implemented                                    |
+| Messages  | **file lane mandatory** — no read API exists | implemented                                    |
+| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented                                    |
+| Safari    | two lanes see disjoint things                | implemented                                    |
+| Maps      | **file lane only** — no `.sdef` exists       | implemented, and writes without an Apple Event |
+| Contacts  | file-lane reads, 0 ms; store is plural       | implemented                                    |
 
 Every probed surface now has a package. **Safari is the only read-only one**, and that is recorded
 as a decision rather than left as an omission: `surfaces.json` carries the reasoning, and its

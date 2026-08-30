@@ -210,8 +210,9 @@ back: `unknown` is common and not an error, and `ambiguous` means two contacts s
 no name is returned rather than a guess.
 
 **There is no delete tool.** Contacts' scripting dictionary has no delete command of any kind, and
-writes go through Apple Events on every surface here because the store is read-only by policy. See
-[docs/contacts.md](docs/contacts.md).
+this surface's writes go through Apple Events because its store is read-only by policy. That was
+true of every surface until Maps, which has no scripting dictionary to go through and writes SQL
+instead. See [docs/contacts.md](docs/contacts.md).
 
 ### Messages
 
@@ -264,17 +265,33 @@ See [docs/safari.md](docs/safari.md).
 
 ### Maps
 
+| Always available                                                 | Write-gated                      |
+| ---------------------------------------------------------------- | -------------------------------- |
+| `list_favorites` `list_collections` `list_collection_places`     | `add_favorite` `remove_favorite` |
+| `list_unfiled_places` `list_recents` `search_places` `get_place` |                                  |
+| `diagnostics`                                                    |                                  |
+
 Favourites, collections (Guides) and recents, from a Core Data store under Full Disk Access —
 with real coordinates and addresses, which is what makes it worth having.
+
+`list_unfiled_places` returns the saved places filed in **no** Guide. Maps shows them only in a
+union view, and 7 of the 12 on the probed Mac appeared nowhere else in the store — not as a
+favourite, not in another Guide, not in recents.
 
 It reads **what is saved on this Mac**. It does not search Apple's map of the world, geocode an
 address, or give directions; the guide says so, because answering those from general knowledge is
 the most likely way for this surface to be wrong.
 
-Read-only, and for a stronger reason than Safari's. The store is mirrored to iCloud by
-`NSPersistentCloudKitContainer`, so a write is not a write to a file — it is an edit to one replica
-of a synchronising object graph, underneath a running app that is also editing it. That needs its own
-probe before it needs a flag.
+**It writes, and it is the only surface here that does so without an Apple Event.** Maps ships no
+scripting dictionary and registers no App Intents on macOS, so `add_favorite` and `remove_favorite`
+go into the Core Data store directly — which means `usesAppleEvents` stays false even with the write
+gate open, and adding this surface still widens no Automation consent.
+
+The part that cannot be faked is the GEO place record, so it never is: the place is opened through
+the `maps://` URL scheme, **Maps mints the record itself**, and it is copied. Two consequences the
+tools state rather than hide — saving a place the store does not already know leaves an entry in
+Recents, and because the store is mirrored by `NSPersistentCloudKitContainer` the write reaches every
+device on the account. There is no local-only insert here.
 
 It was also declared impossible three times before it was found: the store has no file extension,
 it sits in the one directory of Maps' container that Full Disk Access gates, and

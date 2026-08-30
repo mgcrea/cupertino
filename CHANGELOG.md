@@ -107,26 +107,37 @@ summary.
 
 ### Changed
 
-- **Maps stays read-only, and now on measurement rather than caution.**
+- **The read-only verdict was retracted, and the measurement that produced it kept.**
   `pnpm probe:maps-write` ([scripts/probe-maps-write.mjs](scripts/probe-maps-write.mjs))
   snapshots the store, waits for a place to be saved by hand, and diffs. Saving one place
   moves eight tables and bumps ten `Z_MAX` counters, including a ~1.2 KB GEO protobuf and
-  two ~3 KB encoded `CKRecord`s that cannot be synthesised, plus the
-  `NSPersistentHistoryTracking` rows the CloudKit exporter reads to decide what to upload.
-  `mapssyncd` holds the store open even with Maps quit, so there is no quiet moment either.
+  two ~3 KB encoded `CKRecord`s, plus the `NSPersistentHistoryTracking` rows the CloudKit
+  exporter reads to decide what to upload. `mapssyncd` holds the store open even with Maps
+  quit, so there is no quiet moment either.
 
-  The Accessibility lane is a different story and is NOT closed: with a place card open,
-  Maps exposes named, pressable `Favorite` and `Add` controls, and 219 of its 236 pressable
-  elements carry names, so they are addressable by name rather than by position. The grants
-  inherit into the app's servers — `accessibility` and `automationSystemEvents` both read
-  `granted` from inside the installed bundle — so the lane is open rather than blocked. It is
-  simply unbuilt. See [scripts/spike-maps-ax-write.mjs](scripts/spike-maps-ax-write.mjs).
+  That measurement is what closed the lane, and closing it was the wrong inference: it
+  recorded **what Maps does**, and a write only has to do **what Maps requires**. Three of
+  those eight tables are all it takes, once the GEO record is minted by Maps itself through
+  the `maps://` URL scheme rather than synthesised. Reading the first number as the second
+  is the mistake, and it was made three times before it was caught.
 
-  The App Intents lane was checked too: Maps ships strings for `Add Places to List` and
-  `Remove Places From List`, but the actions are not registered in Shortcuts on macOS 26.6 —
-  Maps is a Catalyst app carrying the iOS resource bundle, so the strings ship regardless.
-  All four lanes are recorded in [docs/maps.md](docs/maps.md) with what would have to change
-  for the answer to flip.
+  The App Intents lane was checked too and stays closed: Maps ships strings for `Add Places
+  to List` and `Remove Places From List`, but the actions are not registered in Shortcuts on
+  macOS 26.6 — Maps is a Catalyst app carrying the iOS resource bundle, so the strings ship
+  regardless. The Accessibility lane is open and simply unbuilt: with a place card open Maps
+  exposes named, pressable `Favorite` and `Add` controls, 219 of its 236 pressable elements
+  carry names, and the grants inherit into the app's servers. All four lanes are recorded in
+  [docs/maps.md](docs/maps.md) with what would have to change for each answer to flip.
+
+### Fixed
+
+- **The social card said "8 Apple apps".** `SPELLED` in
+  [apps/website/src/config.ts](apps/website/src/config.ts) ran out at "seven" the day Maps
+  shipped, and its fallback is `String(length)` — so the one heading rendered into
+  `og-image.png` used the exact spec-sheet digit that array exists to prevent. Nothing in CI
+  reads a picture, so it was invisible to every gate. The list is padded past the current
+  count on purpose: one that ends at today's number fails silently again on the ninth
+  surface.
 
 ## [1.3.1] - 2026-08-27
 
