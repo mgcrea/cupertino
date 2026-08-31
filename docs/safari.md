@@ -339,6 +339,41 @@ Also: the appex bundle identifier must be prefixed by the app's, so Debug
 (`io.mgcrea.cupertino.debug`) and Release get different extension identifiers — and Safari keys
 enablement state to that identifier. The two builds hold separate extension state.
 
+### Replacing the app under a running Safari can crash Safari
+
+Observed on macOS 26.6, Safari 26.6, reinstalling `/Applications/Cupertino.app` while Safari was
+open with the extension enabled. Safari aborted, and the backtrace is unambiguous about the
+mechanism:
+
+```
+_extensionDiscoveryHasNewResults           the bundle at a known path changed
+  _extensionWasAdded -> insertRowsAtIndexes
+    tableView:viewForTableColumn:row:      drawing the new row
+      isEnabledInAnyNamedProfile
+        extensionDataForExtension:
+          _disableAndBlockExtension:       decides to block it, mid-draw
+            removeExtension:
+              _extensionWasRemoved -> removeRowsAtIndexes    re-entrant mutation
+                                                             -> NSTableView raises -> abort
+```
+
+Safari starts inserting a row for the newly-discovered extension and, while asking its own delegate
+to draw that row, decides the extension must be blocked — which removes it, which mutates the same
+table inside the insert. That is a re-entrancy bug in `ExtensionsPreferences`; nothing an extension
+does in its own code reaches it, and the app's signature was valid and notarized throughout.
+
+**The reason to record it is Sparkle.** The updater replaces the whole app bundle in place, which is
+exactly the trigger. A user running Safari with the extension enabled when Cupertino updates itself
+is in the same position as this measurement — with their extension blocked, and possibly their
+browser gone. `Sessions.swift` already postpones a relaunch while an MCP client is connected; it
+knows nothing about Safari.
+
+Unmeasured, and worth knowing before this ships: whether the block persists across a Safari restart
+(i.e. whether the user must re-enable the extension by hand), whether Sparkle's replacement is
+gentler than a `ditto` over the top, and whether staging the update and swapping on quit avoids it.
+Installing while Safari is closed is the obvious workaround for development and says nothing about
+what users will do.
+
 ### What is not yet measured
 
 **Whether the app can PULL from the extension on demand** (`SFSafariApplication.dispatchMessage`),

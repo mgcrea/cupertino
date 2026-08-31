@@ -93,6 +93,26 @@ app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 		-configuration $(CONFIG) -derivedDataPath apps/apple/.build \
 		CUPERTINO_GIT_COMMIT=$(GIT_COMMIT) $(VERSION_ARGS) $(XCARGS) build \
 		| { grep -E 'error:|BUILD (SUCCEEDED|FAILED)' || true; }
+	@# A Debug build ships no Safari extension, and that is the honest state
+	@# rather than a shortcut. Safari refuses to list an extension whose container
+	@# app is not notarized AND stapled — measured, silently, in docs/safari.md —
+	@# so a Debug appex can never be enabled or exercised. What it CAN do is
+	@# register itself: LaunchServices picks it up, and a second "Cupertino"
+	@# appears in Safari's Extensions pane beside the installed one with nothing
+	@# to say which is live. Three of them turned up during development.
+	@#
+	@# Renaming it was tried first and cannot work here: Safari shows
+	@# manifest.json's `name`, one file shared by both configurations, and a build
+	@# phase cannot rewrite it because the Resources phase already produces that
+	@# path ("Multiple commands produce"). Scoping ENABLE_USER_SCRIPT_SANDBOXING
+	@# off to get around that would trade a project-wide hardening for a string.
+	@#
+	@# Extension work therefore goes through `make build-release`, which is what
+	@# Safari requires of it anyway.
+	@if [ "$(CONFIG)" = "Debug" ]; then \
+		rm -rf "$(APP)/Contents/PlugIns/CupertinoSafariExtension.appex"; \
+		rmdir "$(APP)/Contents/PlugIns" 2>/dev/null || true; \
+	fi
 
 run: app dev-config ## Build, then (re)launch the menu bar app
 	@pkill -f 'Cupertino.app/Contents/MacOS/Cupertino' 2>/dev/null || true
@@ -514,24 +534,12 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 	@# plain PNGs, and .appiconset is the one format appshot emits them in.
 	@$(MAKE) --no-print-directory extension-icons
 
-EXT_ICONS := apps/apple/CupertinoSafariExtension/Resources/images
-EXT_ICON_SIZES := 48 96 128 256 512
-
 extension-icons: ## Render the Safari extension's PNGs from design/cupertino-mark.svg
-	@tmp=$$(mktemp -d); \
-	appshot icon build --from $(ICON_MARK) \
-		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
-		--out "$$tmp/AppIcon.appiconset" >/dev/null; \
-	for n in $(EXT_ICON_SIZES); do \
-		sips -z $$n $$n "$$tmp/AppIcon.appiconset/icon_512x512@2x.png" \
-			--out $(EXT_ICONS)/icon-$$n.png >/dev/null; \
-	done; \
-	rm -rf "$$tmp"
-	@echo "  rendered $(words $(EXT_ICON_SIZES)) extension icon(s) into $(EXT_ICONS)"
-	@# The website renders its favicon, touch icon and OG card from the same two
-	@# files. It reads design/ directly, so nothing is copied — but the PNGs it
-	@# derives are committed, and only this command's output makes them stale.
-	@echo "  next: pnpm --filter @mgcrea/cupertino-website icons"
+	@# Rasterises design/cupertino-icon.svg, which already carries the corner
+	@# clip. An .appiconset does not: the mark bleeds past the plate by design and
+	@# macOS masks an app icon for free, but these PNGs are drawn in browser
+	@# chrome that masks nothing, so the hills spilled out of the corners.
+	@node scripts/generate-extension-icons.mjs
 
 # ── App screenshots ───────────────────────────────────────────────────────────
 #
