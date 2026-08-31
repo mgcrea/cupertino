@@ -488,19 +488,55 @@ hard; a separate decision.
 
 **`search_web`**, which is `open_url` with the search engine's URL.
 
-### Unverified, and this is the one place this package guesses
+### Measured
 
-Every other lane here was measured before it shipped. These scripts were not: they were written on a
-machine with no Automation grant, so the JXA is reasoned from the dictionary rather than observed.
-`osacompile` proves they parse; nothing yet proves they do what they say.
+Written before it was measured — reasoned from the dictionary on a machine with no Automation grant,
+which is the reverse of how every other lane here landed — and then measured by
+`scripts/probe-safari-write.mjs` on macOS 26.6, Safari 26.6, against a live browser with 1 window and
+22 tabs.
 
-The specific uncertainty is the new-tab idiom — `Safari.Tab({url}).push()` into a window's tab list.
-The script falls back to `open location` when it throws and REPORTS which route it took, so the first
-real run says so out loud instead of leaving it to be inferred, and the tool discloses that the
-fallback placed the page wherever Safari chose. `scripts/probe-safari-write.mjs --open` is the
-instrument. Q0 and Q1 of that probe have been run on macOS 26.6: Apple Events reach Safari, and the
-dictionary still carries `add reading list item` with both optional parameters and a writable
-`tab.URL`.
+**The uncertain idiom works, and no fallback fired.**
+
+| Verb                    | Route         | Cost   |
+| ----------------------- | ------------- | ------ |
+| `open_url`, new tab     | `tab-push`    | 166 ms |
+| `open_url`, current tab | `current-tab` | 108 ms |
+| `add reading list item` | —             | 148 ms |
+
+`Safari.Tab({url}).push()` into a window's tab list is what actually places the tab, so
+`open location` stays a fallback that has never been needed. The dictionary still carries
+`add reading list item` with both optional parameters, and `tab.URL` is still writable.
+
+**The freshly opened tab came back titled "Untitled".** That is the `loadNote` disclosure showing up
+in the first measurement taken of it: the read-back happens immediately, the page has not loaded, and
+a caller that treated `tab.title` as the page's title would report a wrong one. The current-tab
+navigation, going to a URL already loaded in another tab, came back titled correctly — so this is not
+reliably visible and must not be inferred from one run either way.
+
+### Safari accepts a `javascript:` URL through the navigation verb
+
+**Measured, and it is the finding that justifies the allowlist.** Asked to push a tab whose URL is
+`javascript:void(document.title)`, Safari took it — no refusal, no error, no toggle involved.
+
+So the boundary really is the allowlist and nothing else. "Allow JavaScript from Apple Events" gates
+`do JavaScript`; it does not gate a tab whose URL happens to be a script. Any Safari automation that
+accepts an arbitrary URL string offers script execution in the page whether its author intended to or
+not, and this one would have, which is why the check is duplicated across the TypeScript and the JXA
+and why `test/writes.test.ts` asserts a refused URL dispatches nothing at all.
+
+### The Reading List lag is still unmeasured, and the first attempt to measure it was wrong
+
+The probe polls `Bookmarks.plist` for the item it just added. Run from an unprivileged process every
+poll returns `EPERM`, the loop times out, and the first version of it printed "NOT visible after 30 s
+— which is the lag `verified: null` exists for": a permission failure rendered as a measurement of
+Safari's write behaviour, in the exact shape this document warns about everywhere else. It now checks
+whether it can read the file at all first — `grep` exits 1 for "no match" and 2 for "cannot read",
+and only the second says anything about the instrument — and reports the lag as unmeasurable rather
+than as absent.
+
+The add itself succeeded in 148 ms. What remains unknown is how long Safari takes to write it down,
+which needs a re-run from a process holding Full Disk Access. If it turns out to be instant, the tool
+can promise more than it currently does.
 
 ## Still open
 
