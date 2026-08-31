@@ -80,9 +80,12 @@ bars, dark menu bars and the highlighted state instead of us shipping three rend
 `cupertino-menubar-active.svg` is the same glyph plus a halo, shown while a client is connected.
 
 It is variant **F3** ("setting sun") from the menu bar canvas, kept at that canvas's own 36-unit
-grid drawn at 18pt — so 2 units = 1pt, and the coordinates in the file are the ones in the design,
-unscaled. Keeping the grid is what makes a change in the canvas transcribable rather than
-re-derived.
+grid drawn at 18pt — so 2 units = 1pt. Keeping the grid is what makes a change in the canvas
+transcribable rather than re-derived, and it is the same grid Bastion's glyph uses, so the two are
+comparable without conversion.
+
+The coordinates are **no longer F3's own**. Three numbers were resized against Bastion's glyph — see
+"The family" — and everything else in this section is unchanged.
 
 Two shapes, two weights: the disc is solid, the horizon is a 1.8-unit stroke. The disc is what you
 see first and the horizon is what tells you it is a horizon — matched weights read as tramlines
@@ -97,72 +100,123 @@ residue bridges the disc to the horizon. The glyph comes out as one connected sh
 
 The file uses a `<clipPath>` instead, which cuts hard. Its path is the horizon offset 3 units
 straight up. That is a vertical offset rather than a true normal offset, which is only legitimate
-because the curve is shallow: its steepest slope is `dy/dx = -0.2`, so the normal offset there is
-2.94 where the vertical one is 3.00 — 0.03pt, which never reaches a pixel.
+because the curve is shallow: its steepest slope is `dy/dx = -0.19`, so the normal offset there is
+2.95 where the vertical one is 3.00 — 0.03pt, which never reaches a pixel.
+
+The clip is also **extended flat past the horizon's ends**. The horizon no longer spans the canvas,
+but the cut has to be continuous everywhere the disc and its halo reach, and the curve is level at
+both ends so the extension is a straight line at that height.
 
 ### Measurements
 
-Geometric, on the 36-unit grid, against `tray.full` — the SF Symbol the menu bar icon replaced:
+Geometric on the 36-unit grid, against `tray.full` — the SF Symbol the menu bar icon replaced.
+`ink %` is the rendered alpha as a fraction of the whole 18×18
+tile — the number that actually says which of two glyphs looks heavier in a bar:
 
-|                    | ink              | canvas     | strokes |
-| ------------------ | ---------------- | ---------- | ------- |
-| `tray.full` @ 18pt | 21.00 × 16.00 pt | 25 × 18 pt | —       |
-| this glyph         | 16.90 × 8.25 pt  | 18 × 18 pt | 0.90 pt |
-| connected state    | 16.90 × 10.25 pt | 18 × 18 pt | 0.90 pt |
+|                    | ink             | ink % | ink mass cy | strokes |
+| ------------------ | --------------- | ----- | ----------- | ------- |
+| `tray.full` @ 18pt | 21.00 × 16.00pt | —     | —           | —       |
+| this glyph         | 15.50 × 9.50pt  | 22.9  | 21.09       | 0.90pt  |
+| connected state    | 15.50 × 11.50pt | 29.3  | 19.78       | 0.90pt  |
+| Bastion, idle      | 11.50 × 9.10pt  | 22.4  | 21.09       | —       |
+| Bastion, active    | 15.75 × 12.40pt | 29.7  | 19.77       | 0.80pt  |
 
-F3 is wide and short where E2c, the variant it replaced, was nearly square (16.10 × 14.15 pt). That
-is the shape of a horizon and it is deliberate, not a shrunk glyph. Horizontally the ink is the same
-width and dead centred: the horizon's round caps reach 1.1 and 34.9, midpoint exactly 18.
-Vertically, see "Sitting it down" — the disc crowns at 10.8 and the caps bottom out at 27.3.
+Wide and short is still the shape of a horizon and still deliberate — but it is no longer _only_
+that. The ink now sits within half a point of Bastion's in both states, which is the whole intent.
+Horizontally it is dead centred: the horizon's round caps reach 2.6 and 33.4, midpoint exactly 18.
+Vertically the disc crowns at 11.54 and the caps bottom out at 30.54.
 
-Two numbers are worth keeping in view:
+Three numbers are worth keeping in view:
 
-- **1.05pt of sky** between the disc's cut (y22.2 at the centre) and the top of the horizon's stroke
-  (y24.3). That gap is the glyph. Lose it and the sun welds to the horizon and the mark is a blob.
-- **0.55pt of gutter** at left and right, down from E2c's 0.95pt. The horizon runs the full 32-unit
-  live area and its caps spill 0.9 past each end. Nothing clips at 1x, but there is no room left to
-  widen it.
+- **1.05pt of sky** between the disc's cut (y25.59 at the centre) and the top of the horizon's
+  stroke (y27.69). That gap is the glyph. Lose it and the sun welds to the horizon and the mark is a
+  blob. It is **structural, not tuned**: the clip rides 3 units above the horizon and the horizon's
+  stroke is 1.8, so the gap is 3 − 0.9 whatever size the sun is. Resize freely; leave those two.
+- **1.30pt of gutter** at left and right, up from 0.55pt. The horizon used to run the full live area
+  with its caps spilling to 1.1 and 34.9 and no room left; it now has room on both sides.
+- **11.5 units of headroom** above the disc, which is what lets the halo be generous.
+
+### The family
+
+These are two apps by one author and their glyphs sit in the same menu bar, so they are measured
+against each other rather than admired separately. Against Bastion's fort this glyph used to be a
+third lighter and much wider — 34.0 × 16.8 units at 16.8% ink, against 23.0 × 18.2 at 22.4% —
+because its width was all horizon: a thin rule running nearly edge to edge past a small sun. Side by
+side they did not read as one family; they read as a block and a line.
+
+Three numbers changed, and nothing else did:
+
+|              | before                       | after                          |
+| ------------ | ---------------------------- | ------------------------------ |
+| horizon span | x2..x34 (32 units), rise 1.6 | **x3.5..x32.5 (29), rise 1.4** |
+| sun          | r8.2                         | **r10.2**                      |
+| halo         | r11.4                        | **r13.4**                      |
+
+The halo moved only to hold its 2.4-unit gap against the bigger sun; see below. Both stroke weights
+are untouched, and so is every invariant above.
 
 ### The connected state
 
-The halo is `r11.4`, stroke 1.6, inside the same clip as the disc — so the ring sets behind the same
+The halo is `r13.4`, stroke 1.6, inside the same clip as the disc — so the ring sets behind the same
 horizon and both terminate on one line.
 
 Its 2.4-unit gap was swept, not chosen. Counting connected components at 18pt/2x: at a 2.0-unit gap
 the disc's antialiased edge still meets the ring's diagonally and the two fuse; at 2.2 they
 separate. 2.4 sits one step clear of that boundary rather than balanced on it.
 
+`r13.4` is derived, not chosen: `10.2 + 2.4 + 0.8`. The sun has grown twice while this glyph was
+matched to Bastion's mass, and both times the ring followed it out. Re-derive it that way if the sun
+changes again rather than nudging it — the gap and the stroke are the numbers being kept.
+
+The sun's **sink is proportional to its radius** — it sits `0.378r` above the cut — so growing it
+cannot quietly turn a setting sun into a rising one. Keep that ratio on any resize.
+
 That the ring can be this generous is the point of moving to F3. E2c put its sun at `cy9.5` with 3.7
 units of headroom, which forced a 1.1-unit stroke across a 1.65-unit gap — and measured, **that ring
-never actually separated from its sun at 2x**, whatever its file claimed. F3 puts the sun mid-canvas
-with 10.8 units above it.
+never actually separated from its sun at 2x**, whatever its file claimed. F3 leaves 11.5 units above
+the disc.
 
-The ring is also what makes this state ride higher than the idle one: it adds 4 units above the disc
-and nothing below, because its lower half is clipped away by the horizon. There is no symmetric halo
-to be had for a sun that sets behind something, which is what the next section is about.
+The ring is also what makes this state ride higher than the idle one: it adds 4.0 units above the
+disc and nothing below, because its lower half is clipped away by the horizon. There is no symmetric
+halo to be had for a sun that sets behind something, which is what the next section is about.
 
 ### Sitting it down
 
-Both files draw the glyph **1 unit (0.5pt) below F3's own coordinates.** Change it in both or not at
-all.
+Both files seat the glyph so its **ink mass** — not its bounding box — lands where Bastion's does.
+Change it in both or not at all.
 
-At F3's coordinates the idle bounding box is exactly centred and the glyph still reads high: the
-disc is a solid mass in the upper half against a 0.9pt line below it, so the eye centres on the disc
-rather than on the box. The connected state was worse and measurably so — the halo's one-sided
-4 units left it 2.5pt clear of the top against 4.5pt clear of the bottom.
+|                        | this glyph | Bastion |
+| ---------------------- | ---------- | ------- |
+| idle, ink mass cy      | 21.09      | 21.09   |
+| connected, ink mass cy | 19.78      | 19.77   |
 
-One offset has to serve both, because the disc and the horizon are identical in the two files by
-design — drift there reads as the mark twitching when a client connects rather than as a state
-changing. So this cannot centre both states, and the choice is where to put the error:
+Mass rather than box, for the reason it was always mass here: the disc is a solid shape in the upper
+half against a 0.9pt line below it, so the eye follows the disc and a box-centred glyph reads high.
+The old file made that judgement by eye and expressed it as "1 unit below F3's coordinates"; this
+one makes the same judgement against a measured target, and replaces it.
 
-| shift       | idle          | connected      |
-| ----------- | ------------- | -------------- |
-| 0 units     | centred       | 2.0pt high     |
-| **+1 unit** | **0.5pt low** | **0.5pt high** |
-| +1.5 units  | 0.75pt low    | centred        |
+One seat has to serve both states, because the disc and the horizon are identical in the two files
+by design — drift there reads as the mark twitching when a client connects rather than as a state
+changing. The halo's 4.0 units are one-sided, so the two states cannot both be centred; matching
+Bastion state-for-state is what resolves that, since Bastion's wall is one-sided in the same
+direction and by nearly the same amount.
 
-+1 splits it evenly, and it moves the idle glyph's mass down, which is the direction optical
-centring wanted anyway.
+**A caveat worth reading before anybody moves this again.** Measured off a real menu bar screenshot
+— thresholding the rendered pixels and taking each status item's ink mass — macOS's own glyphs sit
+on a line this one used to be almost exactly on, and Bastion sits about 0.8pt below it:
+
+|                                | ink mass, px from the top of the bar |
+| ------------------------------ | ------------------------------------ |
+| macOS status items (28 glyphs) | 32.4 mean, 29.5–35.3 spread          |
+| this glyph, before any of this | 33.3                                 |
+| this glyph, now                | 35.1                                 |
+| Bastion                        | 34.6 connected / 35.7 idle           |
+
+So matching Bastion moved this glyph _off_ the platform's line rather than onto it. That was a
+deliberate call — two marks by one author aligning with each other reads better than either aligning
+with the wifi glyph — but it is the wrong half of the pair to have moved on the platform's terms. If
+it is ever revisited, the cheaper fix is to raise **Bastion** 1.5 units and bring this one back up
+by the same amount; the geometry above does not change either way.
 
 ### Component counts
 

@@ -4,45 +4,54 @@
        same horizon. Everything else is byte-identical to cupertino-menubar.svg,
        deliberately — the two are swapped in place in the menu bar, so any drift
        in the disc or the horizon would read as the icon twitching rather than
-       as a state changing. That includes the 1-unit downward offset both files
-       carry: read the note in cupertino-menubar.svg before changing it here,
-       because it is a compromise between these two glyphs and moving one alone
-       is what it exists to prevent. The halo is inside the same clip as the
-       disc, so both terminate on one line and the ring sets with the sun.
+       as a state changing. That includes the seat both files share: read the
+       note in cupertino-menubar.svg before changing it here, because it is
+       measured against Bastion's glyph and moving one file alone is what it
+       exists to prevent. The halo is inside the same clip as the disc, so both
+       terminate on one line and the ring sets with the sun.
 
-       The halo geometry is measured, not chosen. Sweeping the gap at 18pt/2x
-       and counting connected components: at 2.0 units the disc's antialiased
-       edge still meets the ring's diagonally and the two fuse into one shape;
-       at 2.2 they separate. This sits at 2.4 — one step clear of that
-       boundary rather than balanced on it — with a 1.6-unit stroke, giving
-       r11.4 and an outer edge that stops 3.4pt short of the canvas top.
+       The gap is measured, not chosen. Sweeping it at 18pt/2x and counting
+       connected components: at 2.0 units the disc's antialiased edge still
+       meets the ring's diagonally and the two fuse into one shape; at 2.2 they
+       separate. This sits at 2.4 — one step clear of that boundary rather than
+       balanced on it — with a 1.6-unit stroke.
 
-       That headroom is the point of the new geometry. The E2c glyph this
-       replaced had a sun at cy9.5 with only 3.7 units above it, so its ring was
-       forced to 1.1 units of stroke across a 1.65-unit gap — and measured, that
-       ring never actually separated from its sun at 2x either, whatever the
-       file said. F3 puts the sun mid-canvas with room above it.
+       THE RADIUS IS DERIVED FROM THAT, not picked: 10.2 + 2.4 + 0.8 = 13.4.
+       The sun has now grown twice while this glyph was matched to Bastion's
+       mass, and both times the ring simply followed it out. Re-derive it the
+       same way if the sun changes again rather than nudging it — the gap and
+       the stroke are the numbers being kept.
+
+       That the ring can be this generous is the point of F3. E2c put its sun at
+       cy9.5 with 3.7 units of headroom, which forced a 1.1-unit stroke across a
+       1.65-unit gap — and measured, that ring never actually separated from its
+       sun at 2x, whatever its file claimed. This leaves 11.5 units above the
+       disc.
 
        The ring is what makes this state ride higher than the idle one: it adds
-       4 units above the disc and nothing below, since its lower half is clipped
-       away by the horizon. That is inherent to a sun setting behind something —
-       there is no symmetric halo to be had — and it is why the shared offset is
-       a compromise rather than a centring.
+       4.0 units above the disc and nothing below, since its lower half is
+       clipped away by the horizon. That is inherent to a sun setting behind
+       something — there is no symmetric halo to be had — and it is why the two
+       states are seated by ink mass rather than by bounding box. Bastion's wall
+       is one-sided in the same direction and by nearly the same amount, which
+       is what lets one seat serve both apps.
 
-       At 1x the gap is 1.2 units = 0.6px and still does not resolve; the sun
-       reads as ringed-and-fatter rather than as two shapes. That is acceptable
+       At 1x the gap does not resolve; the sun reads as ringed-and-fatter rather
+       than as two shapes, and a component count says the glyph is one. Bastion's
+       wall does exactly the same thing at that size. That is acceptable
        degradation, not a bug to chase — retina is the design target, and 1x
        still changes visibly, which is what the state needs to do.
 
        Re-measure with a component count after any edit, never by eye. -->
   <defs>
     <clipPath id="sky">
-      <path d="M2 -2 L34 -2 L34 23.4 C26 21.8 10 21.8 2 23.4 Z"/>
+      <path d="M-2 -2 L38 -2 L38 26.64 L32.5 26.64 C25.25 25.24 10.75 25.24 3.5 26.64 L-2 26.64 Z" />
     </clipPath>
   </defs>
   <g clip-path="url(#sky)">
-    <circle cx="18" cy="19" r="8.2" fill="#000"/>
-    <circle cx="18" cy="19" r="11.4" fill="none" stroke="#000" stroke-width="1.6"/>
+    <circle cx="18" cy="21.74" r="10.2" fill="#000" />
+    <circle cx="18" cy="21.74" r="13.4" fill="none" stroke="#000" stroke-width="1.6" />
   </g>
-  <path d="M2 26.4 C10 24.8 26 24.8 34 26.4" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M3.5 29.64 C10.75 28.24 25.25 28.24 32.5 29.64" fill="none" stroke="#000"
+    stroke-width="1.8" stroke-linecap="round" />
 </svg>

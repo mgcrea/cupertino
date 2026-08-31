@@ -1,25 +1,89 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="18" height="18">
   <title>Cupertino — menu bar template</title>
-  <!-- The mark reduced to three shapes: a filled sun over the back ridge and
-       the front hill. Pure black plus alpha — AppKit tints a template image
-       itself. Design canvas variant E2c, "big sun, thin wave".
+  <!-- The mark reduced to two shapes: a disc setting behind a horizon. Pure
+       black plus alpha — AppKit tints a template image itself. Design canvas
+       variant F3, "setting sun", resized and reseated to sit in a menu bar
+       beside Bastion's; see "The family" below.
 
-       The three shapes are deliberately three different weights: one heavy
-       (the sun), one light (the stroked back ridge), one solid (the filled
-       front hill). Matched weights read as tramlines rather than as a scene
-       receding, which is what the earlier equal-ridge pairs did.
+       Coordinates are the canvas's own 36-unit grid at 18pt, so 2 units = 1pt.
 
-       The front hill is a filled region closed along the bottom edge, not a
-       second stroke: the fill keeps its own silhouette however the thin ridge
-       above it antialiases. At 18pt the two waves still merge into one shape at
-       1x and separate into three at 2x — that is the baseline the ridge-pair
-       glyph this replaced also measured, not a regression. Check it by counting
-       connected components in the rendered slots, not by eye.
+       The cut is a clipPath, NOT the mask the canvas draws it with. Transcribed
+       literally, the canvas's mask (a 6-wide black stroke along the horizon)
+       renders with about 25% residual alpha all along the cut, and that residue
+       bridges the disc to the horizon: the glyph comes out as one connected
+       shape instead of two. A clipPath cuts hard and leaves the clear sky the
+       design asks for. Do not "simplify" this back to a mask.
 
-       Coordinates are the canvas's own 36-unit grid at 18pt, so 2 units = 1pt. -->
-  <g fill="none" stroke="#000" stroke-linecap="round">
-    <circle cx="18" cy="9.5" r="5.8" fill="#000" stroke="none"/>
-    <path d="M3 23 C7.5 18 12.5 18 17 22 C21.5 26 27 25 33 19.5" stroke-width="2.2"/>
-    <path d="M2 32 L2 28 C7 23 13 23 18 27.5 C23 32 28.5 30.5 34 25.5 L34 32 Z" fill="#000" stroke="none"/>
-  </g>
+       The clip is the horizon offset 3 units straight up. That is a vertical
+       offset, not a true normal offset, which is legitimate only because the
+       curve is shallow: its steepest slope is dy/dx = -0.19, so the normal
+       offset there is 2.95 where the vertical one is 3.00. The 0.05-unit error
+       is 0.03pt and never reaches a pixel at any size this is drawn at. It is
+       also why the clip may be extended flat past the horizon's ends — the
+       horizon does not span the canvas, but the cut still has to be continuous
+       everywhere the disc and its halo reach.
+
+       Sky between the two shapes: the disc is cut at y25.59 at the centre, the
+       horizon's stroke reaches up to y27.69, so 2.1 units = 1.05pt separate
+       them. That gap is the whole glyph — lose it and the sun welds to the
+       horizon and the mark reads as a blob. It is structural rather than
+       tuned: the clip rides 3 units above the horizon and the horizon's stroke
+       is 1.8, so the gap is 3 - 0.9 whatever size the sun is. Resize freely;
+       just do not touch those two numbers.
+
+       THE FAMILY. These are two apps by one author and their menu bar glyphs
+       sit in the same bar, so they are measured against each other rather than
+       admired separately. This glyph was once a third lighter than Bastion's
+       fort and much wider — 34.0 x 16.8 units at 16.8% ink, against 23.0 x 18.2
+       at 22.4% — because its width was all horizon: a thin rule running nearly
+       edge to edge past a small sun. Side by side they read as a block and a
+       line rather than as one family.
+
+       It is now matched on ink, which is the number that decides which of two
+       glyphs looks heavier in a bar:
+
+                        ink              ink %   ink mass cy
+         this, idle     15.50 x 9.50pt   22.9    21.09
+         Bastion, idle  11.50 x 9.10pt   22.4    21.09
+         this, active   15.50 x 11.50pt  29.3    19.78
+         Bastion, act.  15.75 x 12.40pt  29.7    19.77
+
+       Three numbers carry that, and nothing else changed:
+
+         horizon   x2..x34 (32 units), rise 1.6  ->  x3.5..x32.5 (29), rise 1.4
+         sun       r8.2                          ->  r10.2
+         halo      r11.4                         ->  r13.4
+
+       The halo is derived, not chosen — see the active file. Both stroke
+       weights are untouched, and so is every invariant above.
+
+       SITTING IT DOWN. The glyph is placed so its *ink mass* — not its bounding
+       box — lands where Bastion's does, to 0.01 units idle and 0.01 active.
+       Centring by box is wrong here for the reason it was always wrong here:
+       the disc is a solid mass and the horizon is a 0.9pt line, so the eye
+       follows the disc. This is the same judgement the old 1-unit offset was
+       making, now made against a measured target instead of by eye.
+
+       The sun's sink is proportional to its radius (it sits 0.378r above the
+       cut), so growing the sun cannot quietly turn a setting one into a rising
+       one. Keep that ratio if it is ever resized again.
+
+       Worth knowing before anybody moves it: measured off a real menu bar
+       screenshot, macOS's own status items put their ink mass around y32.3 in
+       screen pixels, and this pair now sits at y35.5 — aligned with each other
+       to a quarter of a pixel, but about 1.5pt below the platform's line.
+       That was a deliberate call, and the fix if it is ever revisited is to
+       raise BOTH apps by the same amount rather than to move one.
+
+       Re-measure with a connected-component count on a real render after any
+       edit, never by eye: at 1x the failure is the disc touching the horizon,
+       and it is invisible at the size you will be looking at it. -->
+  <defs>
+    <clipPath id="sky">
+      <path d="M-2 -2 L38 -2 L38 26.64 L32.5 26.64 C25.25 25.24 10.75 25.24 3.5 26.64 L-2 26.64 Z" />
+    </clipPath>
+  </defs>
+  <circle cx="18" cy="21.74" r="10.2" fill="#000" clip-path="url(#sky)" />
+  <path d="M3.5 29.64 C10.75 28.24 25.25 28.24 32.5 29.64" fill="none" stroke="#000"
+    stroke-width="1.8" stroke-linecap="round" />
 </svg>
