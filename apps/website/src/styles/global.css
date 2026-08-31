@@ -33,6 +33,13 @@
   --color-sky-top: #ffd08a;
 
   /* Status, hue-matched to the palette in logo/colors.css and lifted for ink. */
+  /* One value per status, doing two jobs. Bastion splits each into a fill and
+     an ink — `--color-ok: #3e9e63` with `--color-ok-ink: #8fd9a9` — because
+     these three are ink values, so `bg-ok` on MenuBar's dot paints a fill in a
+     colour chosen for text. Not adopted here: it would mean rewiring a dozen
+     `!text-ok` call sites and dimming a dot that currently reads correctly,
+     which is more risk than the tidiness buys. Worth knowing the two palettes
+     disagree here, and that bastion's is the more capable of them. */
   --color-ok: #8fd9a9;
   --color-warn: #ffd08a;
   --color-danger: #e4805c;
