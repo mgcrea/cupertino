@@ -255,7 +255,7 @@ export const SURFACES: readonly Surface[] = [
     pitch:
       "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says.",
     withoutGrant:
-      "Live tabs, and only those — the one thing in the whole bundle that works with no Full Disk Access at all. It needs an Automation grant instead.",
+      "Live tabs and page contents — the only things in the whole bundle that work with no Full Disk Access at all. Tabs need an Automation grant; page contents need the extension, allowed per website.",
   },
 ] as const;
 
