@@ -1,25 +1,56 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="18" height="18">
   <title>Cupertino — menu bar template</title>
-  <!-- The mark reduced to three shapes: a filled sun over the back ridge and
-       the front hill. Pure black plus alpha — AppKit tints a template image
-       itself. Design canvas variant E2c, "big sun, thin wave".
+  <!-- The mark reduced to two shapes: a disc setting behind a horizon. Pure
+       black plus alpha — AppKit tints a template image itself. Design canvas
+       variant F3, "setting sun".
 
-       The three shapes are deliberately three different weights: one heavy
-       (the sun), one light (the stroked back ridge), one solid (the filled
-       front hill). Matched weights read as tramlines rather than as a scene
-       receding, which is what the earlier equal-ridge pairs did.
+       Coordinates are the canvas's own 36-unit grid at 18pt, so 2 units = 1pt
+       and the numbers here are the canvas's, unscaled — except that the whole
+       glyph sits 1 unit lower than F3 draws it. See "Sitting it down" below;
+       that offset is shared with the connected state and must stay shared.
 
-       The front hill is a filled region closed along the bottom edge, not a
-       second stroke: the fill keeps its own silhouette however the thin ridge
-       above it antialiases. At 18pt the two waves still merge into one shape at
-       1x and separate into three at 2x — that is the baseline the ridge-pair
-       glyph this replaced also measured, not a regression. Check it by counting
-       connected components in the rendered slots, not by eye.
+       The cut is a clipPath, NOT the mask the canvas draws it with. Transcribed
+       literally, the canvas's mask (a 6-wide black stroke along the horizon)
+       renders with about 25% residual alpha all along the cut, and that residue
+       bridges the disc to the horizon: the glyph comes out as one connected
+       shape instead of two. A clipPath cuts hard and leaves the 1.05pt of clear
+       sky the design asks for. Do not "simplify" this back to a mask.
 
-       Coordinates are the canvas's own 36-unit grid at 18pt, so 2 units = 1pt. -->
-  <g fill="none" stroke="#000" stroke-linecap="round">
-    <circle cx="18" cy="9.5" r="5.8" fill="#000" stroke="none"/>
-    <path d="M3 23 C7.5 18 12.5 18 17 22 C21.5 26 27 25 33 19.5" stroke-width="2.2"/>
-    <path d="M2 32 L2 28 C7 23 13 23 18 27.5 C23 32 28.5 30.5 34 25.5 L34 32 Z" fill="#000" stroke="none"/>
-  </g>
+       The clip is the horizon offset 3 units straight up. That is a vertical
+       offset, not a true normal offset, which is legitimate only because the
+       curve is shallow: its steepest slope is dy/dx = -0.2, so the normal
+       offset there is 2.94 where the vertical one is 3.00. The 0.06-unit error
+       is 0.03pt and never reaches a pixel at any size this is drawn at.
+
+       Sky between the two shapes: the disc is cut at y22.2 at the centre, the
+       horizon's stroke reaches up to y24.3, so 2.1 units = 1.05pt separate
+       them. That gap is the whole glyph — lose it and the sun welds to the
+       horizon and the mark reads as a blob.
+
+       SITTING IT DOWN. Drawn at F3's own coordinates the glyph's bounding box
+       is exactly centred, and it still reads high: the disc is a solid mass in
+       the upper half and the horizon is a 0.9pt line, so the eye centres on the
+       disc rather than on the box. The connected state is worse and measurably
+       so — its halo adds 4 units above the disc and nothing below, because the
+       bottom of the ring is clipped by the horizon, which left it 2.5pt clear
+       of the top against 4.5pt clear of the bottom.
+
+       Both states are therefore drawn 1 unit (0.5pt) below F3's coordinates.
+       This cannot centre both: the disc and the horizon have to be identical in
+       the two files or the mark visibly jumps when a client connects, so one
+       shared offset serves two different bounding boxes. 1 unit is the
+       symmetric compromise — idle ends up 0.5pt low, connected 0.5pt high,
+       where 0 units left connected 2pt high and 1.5 units puts idle that far
+       low. Change it in both files or not at all.
+
+       Re-measure with a connected-component count on a real render after any
+       edit, never by eye: at 1x the failure is the disc touching the horizon,
+       and it is invisible at the size you will be looking at it. -->
+  <defs>
+    <clipPath id="sky">
+      <path d="M2 -2 L34 -2 L34 23.4 C26 21.8 10 21.8 2 23.4 Z"/>
+    </clipPath>
+  </defs>
+  <circle cx="18" cy="19" r="8.2" fill="#000" clip-path="url(#sky)"/>
+  <path d="M2 26.4 C10 24.8 26 24.8 34 26.4" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
 </svg>

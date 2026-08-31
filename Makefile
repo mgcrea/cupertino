@@ -507,6 +507,7 @@ HASH        := \#
 ICON_SKY     = $(HASH)FFD08A,$(HASH)F2895C
 ICON_RADIUS := 230
 ICON_MENUBAR := design/cupertino-menubar.svg
+ICON_MENUBAR_ACTIVE := design/cupertino-menubar-active.svg
 
 surfaces: ## Regenerate every copy of the surface list from surfaces.json
 	@node scripts/generate-surfaces.mjs
@@ -542,9 +543,14 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 	@node scripts/generate-lockup.mjs
 	@appshot icon check --out apps/apple/Cupertino/Cupertino.icon
 	@# The menu bar glyph is authored, not composed — but the imageset needs the
-	@# file *inside* it, so design/ stays the one copy anyone edits.
+	@# file *inside* it, so design/ stays the one copy anyone edits. Both states
+	@# are copied: the connected glyph is the idle one plus a halo, and it was
+	@# hand-copied for a while after it was added, which is exactly how the two
+	@# drift into a mark that twitches when a client connects.
 	@cp $(ICON_MENUBAR) apps/apple/Cupertino/Assets.xcassets/MenuBarIcon.imageset/
+	@cp $(ICON_MENUBAR_ACTIVE) apps/apple/Cupertino/Assets.xcassets/MenuBarIconActive.imageset/
 	@echo "  copied $(notdir $(ICON_MENUBAR)) into MenuBarIcon.imageset"
+	@echo "  copied $(notdir $(ICON_MENUBAR_ACTIVE)) into MenuBarIconActive.imageset"
 	@# The Safari extension shows an icon in Safari's Extensions pane, in the
 	@# toolbar and in every per-site permission prompt — so it is the mark a user
 	@# is asked to trust with a page's contents, and it must be the app's rather

@@ -1,28 +1,48 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="18" height="18">
   <title>Cupertino — menu bar template, a client is connected</title>
-  <!-- The idle mark plus one shape: a thin halo around the sun. Everything else
-       is byte-identical to cupertino-menubar.svg, deliberately — the two are
-       swapped in place in the menu bar, so any drift in the waves would read as
-       the icon twitching rather than as a state changing.
+  <!-- The idle mark plus one shape: a halo around the sun, setting behind the
+       same horizon. Everything else is byte-identical to cupertino-menubar.svg,
+       deliberately — the two are swapped in place in the menu bar, so any drift
+       in the disc or the horizon would read as the icon twitching rather than
+       as a state changing. That includes the 1-unit downward offset both files
+       carry: read the note in cupertino-menubar.svg before changing it here,
+       because it is a compromise between these two glyphs and moving one alone
+       is what it exists to prevent. The halo is inside the same clip as the
+       disc, so both terminate on one line and the ring sets with the sun.
 
-       The halo geometry is measured, not chosen. The sun is r5.8 at cy9.5, so
-       there are only 3.7 units of headroom before the canvas edge, and a ring
-       needs a readable gap plus its own stroke inside that. At r8.0/sw1.1 the
-       inner edge sits 1.65 units clear of the sun and the outer edge stops 0.95
-       units short of the top: the widest ring that still separates.
+       The halo geometry is measured, not chosen. Sweeping the gap at 18pt/2x
+       and counting connected components: at 2.0 units the disc's antialiased
+       edge still meets the ring's diagonally and the two fuse into one shape;
+       at 2.2 they separate. This sits at 2.4 — one step clear of that
+       boundary rather than balanced on it — with a 1.6-unit stroke, giving
+       r11.4 and an outer edge that stops 3.4pt short of the canvas top.
 
-       What that buys, per rendering both and diffing them: at 2x the halo is a
-       distinct third shape with a real gap. At 1x it is not — the gap falls
-       below a pixel and the sun reads as fatter rather than ringed. That is
-       acceptable degradation and not a bug to chase: going wider clips the top
-       edge, going thinner stops reading at all. Retina is the design target and
-       1x still changes visibly, which is what the state needs to do.
+       That headroom is the point of the new geometry. The E2c glyph this
+       replaced had a sun at cy9.5 with only 3.7 units above it, so its ring was
+       forced to 1.1 units of stroke across a 1.65-unit gap — and measured, that
+       ring never actually separated from its sun at 2x either, whatever the
+       file said. F3 puts the sun mid-canvas with room above it.
+
+       The ring is what makes this state ride higher than the idle one: it adds
+       4 units above the disc and nothing below, since its lower half is clipped
+       away by the horizon. That is inherent to a sun setting behind something —
+       there is no symmetric halo to be had — and it is why the shared offset is
+       a compromise rather than a centring.
+
+       At 1x the gap is 1.2 units = 0.6px and still does not resolve; the sun
+       reads as ringed-and-fatter rather than as two shapes. That is acceptable
+       degradation, not a bug to chase — retina is the design target, and 1x
+       still changes visibly, which is what the state needs to do.
 
        Re-measure with a component count after any edit, never by eye. -->
-  <g fill="none" stroke="#000" stroke-linecap="round">
-    <circle cx="18" cy="9.5" r="5.8" fill="#000" stroke="none"/>
-    <circle cx="18" cy="9.5" r="8.0" stroke-width="1.1"/>
-    <path d="M3 23 C7.5 18 12.5 18 17 22 C21.5 26 27 25 33 19.5" stroke-width="2.2"/>
-    <path d="M2 32 L2 28 C7 23 13 23 18 27.5 C23 32 28.5 30.5 34 25.5 L34 32 Z" fill="#000" stroke="none"/>
+  <defs>
+    <clipPath id="sky">
+      <path d="M2 -2 L34 -2 L34 23.4 C26 21.8 10 21.8 2 23.4 Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#sky)">
+    <circle cx="18" cy="19" r="8.2" fill="#000"/>
+    <circle cx="18" cy="19" r="11.4" fill="none" stroke="#000" stroke-width="1.6"/>
   </g>
+  <path d="M2 26.4 C10 24.8 26 24.8 34 26.4" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/>
 </svg>
