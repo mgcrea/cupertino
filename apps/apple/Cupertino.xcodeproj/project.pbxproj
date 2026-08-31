@@ -7,12 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		09D8E5883045B30900C66A5A /* CupertinoSafariExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 09D8E5703045B30900C66A5A /* CupertinoSafariExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0BCE00013100000000000001 /* CupertinoBridge in Embed Helper */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* CupertinoBridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0BCE00013100000000000010 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; };
 		0BCE00013100000000000011 /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		09D8E5863045B30900C66A5A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09145EBD3035FC8A00D90D97 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 09D8E56F3045B30900C66A5A;
+			remoteInfo = CupertinoSafariExtension;
+		};
 		0BCE00013100000000000003 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 09145EBD3035FC8A00D90D97 /* Project object */;
@@ -31,6 +39,17 @@
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 1;
+		};
+		09D8E5893045B30900C66A5A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				09D8E5883045B30900C66A5A /* CupertinoSafariExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0BCE00013100000000000002 /* Embed Helper */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -57,10 +76,21 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0BCE00013100000000000013 /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = Vendor/Sparkle.framework; sourceTree = SOURCE_ROOT; };
 		091399AC3035FE8D00800564 /* CupertinoBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; name = CupertinoBridge; path = "cupertino-bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
 		09145EC53035FC8A00D90D97 /* Cupertino.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cupertino.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		09D8E5703045B30900C66A5A /* CupertinoSafariExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CupertinoSafariExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BCE00013100000000000013 /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = Vendor/Sparkle.framework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		09D8E58C3045B30900C66A5A /* Exceptions for "CupertinoSafariExtension" folder in "CupertinoSafariExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 09D8E56F3045B30900C66A5A /* CupertinoSafariExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		091399AD3035FE8D00800564 /* CupertinoBridge */ = {
@@ -71,6 +101,18 @@
 		09145EC73035FC8A00D90D97 /* Cupertino */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Cupertino;
+			sourceTree = "<group>";
+		};
+		09D8E5713045B30900C66A5A /* CupertinoSafariExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				09D8E58C3045B30900C66A5A /* Exceptions for "CupertinoSafariExtension" folder in "CupertinoSafariExtension" target */,
+			);
+			explicitFolders = (
+				Resources/_locales,
+				Resources/images,
+			);
+			path = CupertinoSafariExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -91,6 +133,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		09D8E56D3045B30900C66A5A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -99,7 +148,9 @@
 			children = (
 				09145EC73035FC8A00D90D97 /* Cupertino */,
 				091399AD3035FE8D00800564 /* CupertinoBridge */,
+				09D8E5713045B30900C66A5A /* CupertinoSafariExtension */,
 				09145EC63035FC8A00D90D97 /* Products */,
+				09D8E52B3045B2C700C66A5A /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -108,8 +159,17 @@
 			children = (
 				09145EC53035FC8A00D90D97 /* Cupertino.app */,
 				091399AC3035FE8D00800564 /* CupertinoBridge */,
+				09D8E5703045B30900C66A5A /* CupertinoSafariExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		09D8E52B3045B2C700C66A5A /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				0BCE00013100000000000013 /* Sparkle.framework */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -146,11 +206,13 @@
 				09145EC33035FC8A00D90D97 /* Resources */,
 				0BCE00013100000000000012 /* Embed Frameworks */,
 				0BCE00013100000000000002 /* Embed Helper */,
+				09D8E5893045B30900C66A5A /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				0BCE00013100000000000004 /* PBXTargetDependency */,
+				09D8E5873045B30900C66A5A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				09145EC73035FC8A00D90D97 /* Cupertino */,
@@ -161,6 +223,28 @@
 			productName = Cupertino;
 			productReference = 09145EC53035FC8A00D90D97 /* Cupertino.app */;
 			productType = "com.apple.product-type.application";
+		};
+		09D8E56F3045B30900C66A5A /* CupertinoSafariExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 09D8E58D3045B30900C66A5A /* Build configuration list for PBXNativeTarget "CupertinoSafariExtension" */;
+			buildPhases = (
+				09D8E56C3045B30900C66A5A /* Sources */,
+				09D8E56D3045B30900C66A5A /* Frameworks */,
+				09D8E56E3045B30900C66A5A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				09D8E5713045B30900C66A5A /* CupertinoSafariExtension */,
+			);
+			name = CupertinoSafariExtension;
+			packageProductDependencies = (
+			);
+			productName = CupertinoSafariExtension;
+			productReference = 09D8E5703045B30900C66A5A /* CupertinoSafariExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -176,6 +260,9 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					09145EC43035FC8A00D90D97 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					09D8E56F3045B30900C66A5A = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -196,12 +283,20 @@
 			targets = (
 				09145EC43035FC8A00D90D97 /* Cupertino */,
 				091399AB3035FE8D00800564 /* CupertinoBridge */,
+				09D8E56F3045B30900C66A5A /* CupertinoSafariExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		09145EC33035FC8A00D90D97 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		09D8E56E3045B30900C66A5A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -225,9 +320,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		09D8E56C3045B30900C66A5A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		09D8E5873045B30900C66A5A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 09D8E56F3045B30900C66A5A /* CupertinoSafariExtension */;
+			targetProxy = 09D8E5863045B30900C66A5A /* PBXContainerItemProxy */;
+		};
 		0BCE00013100000000000004 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 091399AB3035FE8D00800564 /* CupertinoBridge */;
@@ -391,17 +498,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Cupertino;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Cupertino.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				CUPERTINO_GIT_COMMIT = "";
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 75QE9PRT3V;
-				CODE_SIGN_ENTITLEMENTS = Cupertino.entitlements;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
 				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar, Contacts, Messages and Safari on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
@@ -427,17 +534,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Cupertino;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Cupertino.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				CUPERTINO_GIT_COMMIT = "";
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 75QE9PRT3V;
-				CODE_SIGN_ENTITLEMENTS = Cupertino.entitlements;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
 				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/Vendor";
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar, Contacts, Messages and Safari on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
@@ -452,6 +559,74 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		09D8E58A3045B30900C66A5A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 75QE9PRT3V;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CupertinoSafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Cupertino;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.mgcrea.cupertino.debug.SafariExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		09D8E58B3045B30900C66A5A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 75QE9PRT3V;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CupertinoSafariExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Cupertino;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.mgcrea.cupertino.SafariExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -484,6 +659,15 @@
 			buildConfigurations = (
 				09145ED13035FC8A00D90D97 /* Debug */,
 				09145ED23035FC8A00D90D97 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		09D8E58D3045B30900C66A5A /* Build configuration list for PBXNativeTarget "CupertinoSafariExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				09D8E58A3045B30900C66A5A /* Debug */,
+				09D8E58B3045B30900C66A5A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

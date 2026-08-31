@@ -276,6 +276,12 @@ node: ## Download and lipo the embedded node runtime
 
 RELEASE_APP := apps/apple/.build/Build/Products/Release/Cupertino.app
 RELEASE_SPARKLE := $(RELEASE_APP)/Contents/Frameworks/Sparkle.framework
+# Signed at the .appex, never at its inner Mach-O — the same rule as the
+# framework above. `bundle` builds with CODE_SIGNING_ALLOWED=NO, so Xcode's
+# CodeSignOnCopy never fires in the release path and this line is the only thing
+# that signs it. Without it the appex ships unsigned, `codesign --verify --deep`
+# fails, and notarization refuses the archive.
+RELEASE_EXTENSION := $(RELEASE_APP)/Contents/PlugIns/CupertinoSafariExtension.appex
 TEAM_ID     := 75QE9PRT3V
 
 # `sign` below is what gives the Release bundle its Developer ID signature, so
@@ -330,6 +336,8 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		--entitlements apps/apple/node.entitlements "$(RELEASE_APP)/Contents/Resources/node"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
+	codesign --force --options runtime --timestamp --sign "$$id" \
+		--entitlements apps/apple/SafariExtension.entitlements "$(RELEASE_EXTENSION)"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
 	@codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1 | sed 's/^/  /'

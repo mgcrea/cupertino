@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  One key, and the asymmetry with Cupertino.entitlements is the point.
+
+	  An app extension MUST be sandboxed; the app hosting it must NOT be, because
+	  docs/distribution.md records that the sandbox denies the store lanes
+	  outright whatever Full Disk Access was granted. Apple's own template
+	  sandboxes both — measured, and overriding the app half still notarizes.
+
+	  Nothing else belongs here. Xcode's Safari Extension target adds
+	  ENABLE_USER_SELECTED_FILES by default, which grants a file-picker
+	  entitlement this extension never uses; it is removed in the pbxproj.
+	  `safari-web-extension-converter` additionally grants the CONTAINING app
+	  com.apple.security.network.client, which would ship a network entitlement
+	  under a claim scripts/audit-network.sh gates but cannot see, because that
+	  script inspects Mach-O symbols rather than entitlements.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>
