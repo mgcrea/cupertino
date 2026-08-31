@@ -104,11 +104,16 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
     "apple_safari_add_reading_list_item",
     {
       description:
-        "Save a URL to Safari's Reading List. This is the one write on this surface that " +
-        "changes nothing on screen: no tab opens and no page loads. Sends an Apple Event, so it " +
-        "needs an Automation grant; it LAUNCHES Safari if it is not running. Omit `title` and " +
-        "`previewText` unless you have better ones than the page's own — Safari fills both in " +
-        "itself, and passing a blank replaces a real title with nothing. NOT idempotent: asking " +
+        "Save a URL to Safari's Reading List. Nothing appears on screen: no tab opens and " +
+        "nothing comes to the front. It is NOT inert on the network though — Safari fetches the " +
+        "page in the background to build the entry, so this makes a request to that host from " +
+        "the user's browser. Sends an Apple Event, so it " +
+        "needs an Automation grant; it LAUNCHES Safari if it is not running. `title` and " +
+        "`previewText` are BEST-EFFORT and usually ignored: Safari fetches the page itself and " +
+        "overwrites both with what it finds there (measured — a custom title survived only on a " +
+        "URL that does not resolve). Pass them for a page Safari cannot reach; expect the page's " +
+        "own title everywhere else, and never report back the title you sent as the one saved. " +
+        "NOT idempotent: asking " +
         "twice adds the item twice, and there is no verb to remove one. `verified` is true only " +
         "when the item was found by re-reading Bookmarks.plist afterwards; null means it could " +
         "not be confirmed — usually because Safari has not written that file yet, which is " +
@@ -120,14 +125,19 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
           .string()
           .min(1)
           .optional()
-          .describe("Title to save it under. Omit to let Safari use the page's own."),
+          .describe(
+            "Title to save it under. Overridden by the page's own title whenever Safari can " +
+              "fetch the page, which is nearly always — so this only takes effect for a URL " +
+              "that does not resolve.",
+          ),
         previewText: z
           .string()
           .min(1)
           .optional()
           .describe(
             "The blurb shown under the title, usually the first sentences of the article. " +
-              "Omit to let Safari extract it.",
+              "Safari extracts its own from the fetched page; assume this is overridden on the " +
+              "same terms as `title`.",
           ),
       },
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },

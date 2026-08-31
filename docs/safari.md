@@ -524,6 +524,25 @@ accepts an arbitrary URL string offers script execution in the page whether its 
 not, and this one would have, which is why the check is duplicated across the TypeScript and the JXA
 and why `test/writes.test.ts` asserts a refused URL dispatches nothing at all.
 
+### `with title` and `and preview text` are nearly decorative
+
+**Measured, after the shipped tool was found advertising something it does not deliver.** The probe
+added an item with `withTitle: "Cupertino probe"`; reading the Reading List back gave the entry the
+title **"Example Domain"** — the page's own — along with preview text the probe never supplied.
+
+The obvious diagnosis, a JXA parameter name that does not map, is wrong. Sending the same custom
+title with a URL that cannot resolve (`https://example.invalid/…`, a reserved TLD per RFC 2606) kept
+it: the entry came back titled `TITLE-PARAM-SURVIVED` with a null preview. So `withTitle` really does
+reach `with title`, and **Safari overwrites it from the page it fetched**. The parameter takes effect
+only where Safari cannot reach the page, which is the case nobody has.
+
+**And that is how we know this verb hits the network.** `add reading list item` was described here
+and in the tool itself as changing nothing — "no tab opens and no page loads". The first half is
+true. The second was false and is now corrected in both: Safari fetches the URL in the background,
+from the user's browser, to build the entry. Adding a URL to somebody's Reading List is a network
+action taken on their behalf, and a caller deciding whether to save a link should know that the link
+gets contacted.
+
 ### The Reading List lag is still unmeasured, and the first attempt to measure it was wrong
 
 The probe polls `Bookmarks.plist` for the item it just added. Run from an unprivileged process every
@@ -534,9 +553,15 @@ whether it can read the file at all first — `grep` exits 1 for "no match" and 
 and only the second says anything about the instrument — and reports the lag as unmeasurable rather
 than as absent.
 
-The add itself succeeded in 148 ms. What remains unknown is how long Safari takes to write it down,
-which needs a re-run from a process holding Full Disk Access. If it turns out to be instant, the tool
-can promise more than it currently does.
+The add itself succeeded in 148 ms. What remains unknown is the LOWER bound — how quickly Safari
+writes it down — which needs a re-run from a process holding Full Disk Access.
+
+An upper bound now exists, from a different instrument. Both probe items were read back through
+`apple_safari_list_reading_list`, which walks `Bookmarks.plist` from the bridge process that does
+hold the grant, and both were present: the second within seconds of its add. So the file is written
+promptly rather than at some later checkpoint, and `verified: true` should be the common case. The
+three-state design stands regardless — the cost of being wrong in one direction is a duplicate
+nothing can remove.
 
 ## Still open
 

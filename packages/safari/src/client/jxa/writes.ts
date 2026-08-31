@@ -65,11 +65,12 @@
  * ## Two routes, because only one of them is certain
  *
  * `Safari.Tab({url}).push()` into a window's tab list is the idiom that gives a
- * new tab without disturbing the current one. It needs a window to push into,
- * and it is the part of this file least verified against a real Safari. So when
- * there is no window, or when the push throws, the script falls back to
- * `open location` — a Standard Suite verb that always works and is simply less
- * precise about where the page lands. `route` says which happened.
+ * new tab without disturbing the current one, and it is measured working —
+ * 166 ms against a live Safari with one window and 22 tabs. It needs a window
+ * to push into, which is the case the measurement did not cover, so when there
+ * is none, or when the push throws, the script falls back to `open location` —
+ * a Standard Suite verb that always works and is simply less precise about
+ * where the page lands. `route` says which happened.
  */
 export const OPEN_URL = `
 function run(argv) {
@@ -157,12 +158,26 @@ function run(argv) {
  * Add an item to the Reading List.
  *
  * The one write on this surface that changes nothing on screen: no tab opens,
- * no page loads, nothing moves. That is what made it the first one to build.
+ * nothing moves, nothing comes to the front. That is what made it the first one
+ * to build.
+ *
+ * It is NOT inert on the network, and the difference is worth stating because
+ * the phrase "no page loads" stood here until it was measured false. Safari
+ * fetches the URL — that is where the title and preview text below come from —
+ * so this verb makes a request to whatever host the caller names, from the
+ * user's browser, with the user's cookies. Adding a URL to somebody's Reading
+ * List is a network action taken on their behalf.
  *
  * `with title` and `and preview text` are optional in the dictionary, and are
- * omitted rather than passed empty when the caller gives nothing — Safari fills
- * both in itself from the page, and passing "" would replace a real title with
- * a blank one. Whether it fetches the page to do that is not measured here.
+ * omitted rather than passed empty when the caller gives nothing.
+ *
+ * MEASURED, and it makes both parameters nearly decorative: Safari FETCHES the
+ * page and overwrites what it was given. A custom title sent with a reachable
+ * URL was replaced by the page's own; the same title sent with a URL that does
+ * not resolve survived, alongside a null preview. So the parameter mapping is
+ * correct — `withTitle` really does reach `with title` — and Safari simply
+ * outranks it. The tool descriptions say so rather than promising the caller a
+ * title they will not get back.
  */
 export const ADD_READING_LIST_ITEM = `
 function run(argv) {
