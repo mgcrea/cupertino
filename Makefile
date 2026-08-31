@@ -506,6 +506,28 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 	@# file *inside* it, so design/ stays the one copy anyone edits.
 	@cp $(ICON_MENUBAR) apps/apple/Cupertino/Assets.xcassets/MenuBarIcon.imageset/
 	@echo "  copied $(notdir $(ICON_MENUBAR)) into MenuBarIcon.imageset"
+	@# The Safari extension shows an icon in Safari's Extensions pane, in the
+	@# toolbar and in every per-site permission prompt — so it is the mark a user
+	@# is asked to trust with a page's contents, and it must be the app's rather
+	@# than Xcode's placeholder. Rendered from the same mark and the same plate
+	@# as the icon above, never copied from a derived file: web extensions want
+	@# plain PNGs, and .appiconset is the one format appshot emits them in.
+	@$(MAKE) --no-print-directory extension-icons
+
+EXT_ICONS := apps/apple/CupertinoSafariExtension/Resources/images
+EXT_ICON_SIZES := 48 96 128 256 512
+
+extension-icons: ## Render the Safari extension's PNGs from design/cupertino-mark.svg
+	@tmp=$$(mktemp -d); \
+	appshot icon build --from $(ICON_MARK) \
+		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
+		--out "$$tmp/AppIcon.appiconset" >/dev/null; \
+	for n in $(EXT_ICON_SIZES); do \
+		sips -z $$n $$n "$$tmp/AppIcon.appiconset/icon_512x512@2x.png" \
+			--out $(EXT_ICONS)/icon-$$n.png >/dev/null; \
+	done; \
+	rm -rf "$$tmp"
+	@echo "  rendered $(words $(EXT_ICON_SIZES)) extension icon(s) into $(EXT_ICONS)"
 	@# The website renders its favicon, touch icon and OG card from the same two
 	@# files. It reads design/ directly, so nothing is copied — but the PNGs it
 	@# derives are committed, and only this command's output makes them stale.

@@ -109,7 +109,6 @@
 				09D8E58C3045B30900C66A5A /* Exceptions for "CupertinoSafariExtension" folder in "CupertinoSafariExtension" target */,
 			);
 			explicitFolders = (
-				Resources/_locales,
 				Resources/images,
 			);
 			path = CupertinoSafariExtension;
@@ -575,7 +574,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CupertinoSafariExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Cupertino;
+				INFOPLIST_KEY_CFBundleDisplayName = "Cupertino (dev)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
