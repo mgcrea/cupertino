@@ -1,0 +1,138 @@
+---
+import SectionHeader from "./SectionHeader.astro";
+
+/**
+ * Reading a page, and the permission that makes it defensible.
+ *
+ * This section exists because the capability is unremarkable and the way it is
+ * obtained is not. Anything can read a web page; what matters is what you had
+ * to hand over to get it. macOS offers exactly one built-in route — Safari's
+ * "Allow JavaScript from Apple Events" — and it is a skeleton key: one switch,
+ * no scope, and afterwards ANY process that can send Apple Events runs script
+ * in ANY tab, including whatever is logged in. That is the same shape as
+ * granting Full Disk Access to a terminal, which is the argument this whole
+ * site is built on, so it is worth making twice.
+ *
+ * The honest caveat is stated as prominently as the capability, following the
+ * body-search section: a capture is a snapshot from page load, not a live read.
+ * Saying so is more persuasive than implying otherwise, and it is what the tool
+ * itself reports on every call.
+ *
+ * No competitor is named and no timing is quoted. The lanes below are
+ * approaches rather than products, which stays true with nobody maintaining it
+ * — see the claims discipline in this workspace's CLAUDE.md.
+ */
+
+/**
+ * What each lane sees and what it costs, which is the whole section in a table.
+ *
+ * `tone` is written out rather than interpolated: Tailwind generates utilities
+ * by scanning source text, so a computed class name lands in the HTML with no
+ * rule in the CSS and nothing warns. BodySearch.astro carries the same note
+ * after it cost a build to notice.
+ */
+const TONE = {
+  danger: "!text-danger",
+  ok: "!text-ok",
+  dim: "text-fg-dim",
+} as const;
+
+const ROUTES = [
+  {
+    route: "Allow JavaScript from Apple Events",
+    scope: "every site, every tab",
+    revoke: "one hidden switch",
+    tone: "danger",
+    note: "Safari's built-in route, and a skeleton key. Any process that can send Apple Events can then run script in any tab. Its state cannot even be read, so nothing can tell you whether it is on.",
+  },
+  {
+    route: "Accessibility",
+    scope: "nothing",
+    revoke: "—",
+    tone: "dim",
+    note: "Not a route at all. Safari renders pages out of process and exposes no web area, so the lane that reaches other apps' windows reaches no part of a web page.",
+  },
+  {
+    route: "A Safari extension",
+    scope: "the sites you allow",
+    revoke: "per site, in Safari",
+    tone: "ok",
+    note: "What Cupertino does. Safari asks per website and you answer per website — the permission is visible in the browser you already trust, and revoking it is one click in the same place.",
+  },
+] as const;
+
+/** The three lanes, which need three different permissions and fail independently. */
+const LANES = [
+  { name: "History and bookmarks", needs: "Full Disk Access", sees: "everything about the past" },
+  { name: "Open tabs", needs: "an Automation grant", sees: "what is open right now, and nothing it says" },
+  { name: "Page contents", needs: "the extension, per site", sees: "what a page actually says" },
+] as const;
+---
+
+<section id="safari" class="wrap scroll-mt-20 py-[96px]">
+  <SectionHeader eyebrow="Safari" heading="Read the page,<br />without the skeleton key.">
+    Safari's own way to let a program read a page is a single switch that grants every program
+    access to every tab, and whose state cannot be read back. Cupertino ships a Safari extension
+    instead: you allow it one website at a time, in Safari, and take it back the same way.
+  </SectionHeader>
+
+  <div class="overflow-x-auto">
+    <table class="reveal w-full min-w-[560px] border-collapse text-left">
+      <thead>
+        <tr class="border-b border-rule">
+          {
+            ["Route", "What it can read", "Taking it back"].map((h) => (
+              <th class="mono pb-3 font-normal">{h}</th>
+            ))
+          }
+        </tr>
+      </thead>
+      <tbody>
+        {
+          ROUTES.map((r) => (
+            <tr class="border-b border-rule align-top last:border-b-0">
+              <td class="py-4 pr-6">
+                <div class="text-[14px] text-fg">{r.route}</div>
+                <div class="mt-1 text-[13px] leading-[1.6] text-fg-muted">{r.note}</div>
+              </td>
+              <td class={`py-4 pr-6 font-mono text-[13px] ${TONE[r.tone]}`}>{r.scope}</td>
+              <td class="py-4 font-mono text-[13px] text-fg-dim">{r.revoke}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="mt-14 mb-5 text-[15px] font-medium text-fg">Three lanes, three permissions</h3>
+
+  <div class="reveal grid grid-cols-1 gap-4 sm:grid-cols-3">
+    {
+      LANES.map((l) => (
+        <div class="rounded-[16px] border border-rule bg-bg-2 p-6">
+          <div class="text-[14px] text-fg">{l.name}</div>
+          <div class="mono mt-2 text-accent">{l.needs}</div>
+          <p class="mt-3 mb-0 text-[13px] leading-[1.65] text-fg-muted">{l.sees}</p>
+        </div>
+      ))
+    }
+  </div>
+
+  <p class="mt-5 mb-0 text-[13.5px] leading-[1.7] text-fg-muted">
+    They see almost disjoint things and fail independently, so one of them being unavailable is
+    normal rather than broken. An ungranted Safari server is not a slower one — it is a smaller one.
+  </p>
+
+  {/* The caveat, given the same weight as the capability. A capture is a
+      snapshot, and the tool says so on every call rather than in a footnote. */}
+  <div class="reveal mt-10 rounded-[16px] border border-rule bg-bg-3 p-6 sm:p-8">
+    <h3 class="mt-0 mb-3 text-[15px] font-medium text-fg">It is a snapshot, and it says so</h3>
+    <p class="m-0 max-w-[62ch] text-[13.5px] leading-[1.7] text-fg-muted">
+      The extension captures a page when it loads; nothing reaches into Safari to fetch a fresh
+      copy. So a result is what that page looked like then, and every one carries the time it was
+      taken and how long ago that was. Read something captured twenty minutes ago and it tells you
+      it is twenty minutes old, rather than letting an assistant describe a page you have already
+      left as the one on your screen.
+    </p>
+  </div>
+</section>
