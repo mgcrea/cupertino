@@ -476,15 +476,19 @@ struct StatusMenu: View {
       // at 320pt, and Refresh was the one to lose: `onAppear` already refreshes
       // every time the menu opens, and `requestAutomation` writes its own result
       // back, so there is no state it could reach that those two do not.
+      //
+      // The gap goes after "Open Cupertino", not before "Quit". What opens
+      // something sits left, what leaves sits right, and Settings belongs with
+      // the second — it is a window you go to, not a thing this panel does.
       HStack {
         Button("Open Cupertino") { MainWindowController.show() }
           .buttonStyle(.glass)
+        Spacer()
         // ⌘, as well, matching the app menu item. The main menu already
         // answers that chord app-wide, popover or no popover; declaring it here
         // is what puts the shortcut where somebody looking for it would look.
         Button("Settings…") { SettingsOpener.show() }
           .keyboardShortcut(",", modifiers: .command)
-        Spacer()
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
       .controlSize(.small)
