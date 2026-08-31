@@ -6,6 +6,16 @@ import Observation
 /// This is the GUI rendering of what `apple_mail_diagnostics` reports on the
 /// tool side, and it deliberately reuses that vocabulary — lane names, error
 /// text — rather than inventing a second one.
+///
+/// What it records, and the limit of the claim: Cupertino sees the JSON-RPC
+/// frames crossing the socket — which surface, which method, which tool, and
+/// the arguments it was called with. Prose is blanked unless a surface asks for
+/// it, and results are recorded only for a surface that opts in; `CallCapture`
+/// is where both are enforced rather than intended.
+///
+/// Payloads live here and only here. Nothing writes them to disk — this store
+/// is a ring buffer in memory, cleared on quit, and `hostCall` keeps them off
+/// the stderr mirror every other line goes through.
 @MainActor
 @Observable
 final class LogStore {
@@ -16,24 +26,80 @@ final class LogStore {
   }
 
   struct Entry: Identifiable {
-    let id = UUID()
+    /// A `var` so `hostCall` can mint the id on the calling thread and hand it
+    /// here, rather than waiting on this actor to learn what it became.
+    var id = UUID()
     let at: Date
     let surface: String
     let level: Level
     let text: String
+    /// What a `tools/call` was called with, already redacted and capped by
+    /// `CallCapture`. Nil when the surface records names only, or when there
+    /// were no arguments.
+    var arguments: String?
+    /// What came back, for a surface that opted into results. Attached later
+    /// than the rest of the row: the reply arrives on the other pump thread,
+    /// after the entry it belongs to already exists.
+    var result: String?
+    /// Whether the reply was an error frame or an `isError` result. Only
+    /// meaningful once a result has been attached.
+    var failed = false
+
+    /// Roughly what this row costs, for the byte budget below.
+    var weight: Int { text.utf8.count + (arguments?.utf8.count ?? 0) + (result?.utf8.count ?? 0) }
   }
 
   /// Bounded: this runs for as long as the machine is up, and an unbounded log
   /// is a memory leak with a nice name.
   private let limit = 1000
+
+  /// And bounded again, in bytes.
+  ///
+  /// The entry count stopped being a bound once rows could carry payloads: a
+  /// thousand rows of a tool name is a few tens of kilobytes, a thousand rows
+  /// of two capped payloads is eight megabytes pinned for as long as the app is
+  /// up. Whichever limit is reached first trims.
+  private let byteLimit = 2 * 1024 * 1024
+  private var weight = 0
+
   private(set) var entries: [Entry] = []
 
   func append(surface: String, level: Level, _ text: String) {
-    entries.append(Entry(at: Date(), surface: surface, level: level, text: text))
-    if entries.count > limit { entries.removeFirst(entries.count - limit) }
+    add(Entry(at: Date(), surface: surface, level: level, text: text))
   }
 
-  func clear() { entries.removeAll() }
+  /// Record a call under an id its reply will be attached to later.
+  ///
+  /// Separate from `append` because the arguments must not reach stderr — see
+  /// `hostCall`, which is the only thing that should call this.
+  func appendCall(surface: String, text: String, arguments: String?, id: UUID) {
+    add(Entry(id: id, at: Date(), surface: surface, level: .call, text: text, arguments: arguments))
+  }
+
+  /// Attach a reply to the call it answers.
+  ///
+  /// A miss is ordinary rather than an error: the row may have been trimmed out
+  /// of the ring buffer while the server was still working on it.
+  func attachResult(_ id: UUID, _ result: String?, failed: Bool) {
+    guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+    weight -= entries[index].weight
+    entries[index].result = result
+    entries[index].failed = failed
+    weight += entries[index].weight
+  }
+
+  private func add(_ entry: Entry) {
+    entries.append(entry)
+    weight += entry.weight
+    while entries.count > limit || (weight > byteLimit && entries.count > 1) {
+      weight -= entries.removeFirst().weight
+    }
+  }
+
+  func clear() {
+    entries.removeAll()
+    weight = 0
+  }
 
   /// Seed one entry at a fixed instant, for `DemoSeed` only.
   ///
@@ -72,4 +138,49 @@ func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
     offset += written
   }
   Task { @MainActor in LogStore.shared.append(surface: surface, level: level, text) }
+}
+
+/// Post a call line, with its arguments kept out of the stderr mirror.
+///
+/// The mirror is why this is not `hostLog(surface, .call, ...)` with a longer
+/// string. `hostLog` writes every line it is given to stderr, and for an app
+/// started by LaunchServices that lands outside Cupertino's own directory and
+/// outlives the process — so routing a payload through it would quietly persist
+/// the one thing this feature promises to keep in memory. Only the tool name
+/// goes to stderr here; the arguments go to the store and nowhere else.
+///
+/// Returns the entry id so the reply can be attached to the right row. Minted
+/// on the calling thread rather than inside the hop, so the pump can hold on to
+/// it without waiting for the main actor.
+@discardableResult
+func hostCall(_ surface: String, _ text: String, arguments: String?) -> UUID {
+  let id = UUID()
+  let bytes = Array("[\(surface)] call: \(text)\n".utf8)
+  var offset = 0
+  while offset < bytes.count {
+    let written = bytes.withUnsafeBufferPointer {
+      write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
+    }
+    if written <= 0 {
+      if errno == EINTR { continue }
+      break
+    }
+    offset += written
+  }
+  // Pinned to one priority, and the same one `Sessions` uses. The main actor's
+  // executor only guarantees FIFO *within* a priority, so a hop left to inherit
+  // could overtake the one before it — and a result attaching to a row that has
+  // not been appended yet is silently dropped.
+  Task(priority: .userInitiated) { @MainActor in
+    LogStore.shared.appendCall(surface: surface, text: text, arguments: arguments, id: id)
+  }
+  return id
+}
+
+/// Attach a reply from any thread.
+func hostCallResult(_ id: UUID, _ result: String?, failed: Bool) {
+  guard result != nil || failed else { return }
+  Task(priority: .userInitiated) { @MainActor in
+    LogStore.shared.attachResult(id, result, failed: failed)
+  }
 }

@@ -14,10 +14,11 @@ import SectionHeader from "./SectionHeader.astro";
  * dressed as a window — that one diagrams a turn the app never renders, and
  * chrome there would promise a pane that does not exist.
  *
- * THE ROWS DELIBERATELY CARRY NO ARGUMENTS. That is not a drawing decision, it
- * is what the app records — tool names only, never arguments, message contents
- * or results. A mock showing a subject line here would advertise a feature the
- * app does not have and would not want.
+ * THE ROWS DELIBERATELY CARRY NO MESSAGE CONTENTS. That is not a drawing
+ * decision. The app records tool names and the arguments each was called with,
+ * but blanks the prose inside them unless a surface is set to include it — so a
+ * mock showing a real subject line or message body would advertise a default
+ * the app does not have. Names only here is the conservative rendering.
  */
 const rows = [
   { t: "09:41:02", client: "Claude Desktop", tool: "apple_mail_search_messages", kind: "read" },
@@ -65,7 +66,7 @@ const rows = [
     </div>
 
     <div class="mono border-t border-rule-2 bg-chrome-2 px-3.5 py-2.5">
-      tool names only · no arguments, no contents, no results
+      tool names and arguments · contents and results are opt-in, per surface
     </div>
   </div>
 

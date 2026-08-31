@@ -375,7 +375,10 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 | MCP clients          | one-click wiring for Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for Claude Code, VS Code and Codex |
 | Activity…            | opens a window listing every tool call, live                                                                               |
 
-The **Activity** window records tool _names_ only — never arguments, message contents or results.
+The **Activity** window records tool names and the arguments each was called with. Message
+contents — a mail body, a message, a note's text — are blanked unless you turn them on for that
+surface, and results are recorded only for a surface that asks. Nothing is written to disk: the
+log is a bounded ring in memory, cleared when Cupertino quits.
 It is the answer to "what did the assistant just do with my mail?", and the reason the servers run
 under an app you can see rather than inside whichever editor spawned them.
 

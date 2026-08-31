@@ -585,8 +585,14 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     // Server -> client. Half-close only: `serve` owns the socket and closes it
     // exactly once, in its `defer`.
+    //
+    // Observed too now, for a surface that records results. `observe` was
+    // already an optional parameter and simply unused on this call; what is new
+    // is that two threads now feed one observer, which is what the lock inside
+    // it is for.
     pump(
       from: fromChild.fileHandleForReading.fileDescriptor, to: client, group: group,
+      observe: { observer.answered($0) },
       onFinish: { shutdown(client, SHUT_WR) })
 
     // stderr is log output by construction: packages/core/src/cli.ts keeps
@@ -739,6 +745,51 @@ func closeOnExec(_ fd: Int32) {
 enum SurfaceSettings {
   static func allowWrites(_ surface: Surface) -> Bool {
     UserDefaults.standard.bool(forKey: "allowWrites.\(surface.id)")
+  }
+
+  static func captureKey(_ surface: Surface) -> String { "captureMode.\(surface.id)" }
+  static func contentKey(_ surface: Surface) -> String { "captureContent.\(surface.id)" }
+
+  /// How much of a call this surface records.
+  ///
+  /// Absence means "follow the app-wide default", which is itself absent-means
+  /// `CallCapture.defaultMode`. Read as a STRING rather than through a coercion
+  /// — see the note on `isEnabled` below: `NSArgumentDomain` stores launch
+  /// arguments as strings, so a mode pinned by the screenshot pipeline with
+  /// `-captureMode.mail off` reads back correctly here and would not through
+  /// `object(forKey:) as? SomeEnum`.
+  static func captureMode(_ surface: Surface) -> CallCapture.Mode {
+    if let raw = UserDefaults.standard.string(forKey: captureKey(surface)),
+      let mode = CallCapture.Mode(rawValue: raw)
+    {
+      return mode
+    }
+    return appCaptureMode
+  }
+
+  /// The app-wide default, for every surface that has not been told otherwise.
+  static var appCaptureMode: CallCapture.Mode {
+    guard let raw = UserDefaults.standard.string(forKey: appCaptureKey),
+      let mode = CallCapture.Mode(rawValue: raw)
+    else { return CallCapture.defaultMode }
+    return mode
+  }
+
+  static let appCaptureKey = "captureMode"
+  static let appContentKey = "captureContent"
+
+  /// Whether this surface records prose as well as structure.
+  ///
+  /// Written the way `allowWrites` is and NOT the way `isEnabled` is: absence
+  /// means OFF. The body of a mail, the text of a message and the content of a
+  /// note all arrive as arguments here, so a surface that gains content
+  /// recording must gain it because somebody asked, never because a key was
+  /// missing.
+  static func capturesContent(_ surface: Surface) -> Bool {
+    if UserDefaults.standard.object(forKey: contentKey(surface)) != nil {
+      return UserDefaults.standard.bool(forKey: contentKey(surface))
+    }
+    return UserDefaults.standard.bool(forKey: appContentKey)
   }
 
   static func gateKey(_ surface: Surface, _ gate: Surface.Gate) -> String {

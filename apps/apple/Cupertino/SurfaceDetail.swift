@@ -249,6 +249,9 @@ struct SurfaceDetail: View {
         }
         .font(.system(.caption, design: .monospaced))
       }
+
+      Divider()
+      CaptureControls(surface: surface)
     }
   }
 
@@ -431,5 +434,60 @@ struct Card<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 10))
     }
+  }
+}
+
+
+/// What this surface records, for this surface alone.
+///
+/// Per surface rather than global for the same reason the write gate is: the
+/// surfaces differ in how much of their traffic is private. Recording the
+/// arguments of `list_events` is nearly free; recording the arguments of
+/// `send_message` is recording the message. One switch for all eight would have
+/// to be set for the most sensitive of them, which in practice means set to
+/// nothing.
+///
+/// A change applies to the NEXT connection, not the current one. `RequestObserver`
+/// resolves both settings once when a connection opens — a `UserDefaults` read
+/// per line on a pump thread is a cost with no payoff — and the write gate has
+/// the same behaviour for the same reason.
+private struct CaptureControls: View {
+  private let surface: Surface
+  /// Empty means "follow the app-wide default", which is what absence means in
+  /// `SurfaceSettings.captureMode`. A `Picker` needs a concrete tag, so the
+  /// absence is spelled rather than optional here.
+  @AppStorage private var mode: String
+  @AppStorage private var content: Bool
+
+  init(surface: Surface) {
+    self.surface = surface
+    _mode = AppStorage(wrappedValue: "", SurfaceSettings.captureKey(surface))
+    _content = AppStorage(
+      wrappedValue: SurfaceSettings.capturesContent(surface), SurfaceSettings.contentKey(surface))
+  }
+
+  var body: some View {
+    Picker("Record", selection: $mode) {
+      Text("Default (\(SurfaceSettings.appCaptureMode.label))").tag("")
+      ForEach(CallCapture.Mode.allCases, id: \.self) { mode in
+        Text(mode.label).tag(mode.rawValue)
+      }
+    }
+    .font(.callout)
+
+    Toggle(isOn: $content) {
+      Text("Include message contents")
+      Text(
+        resolved >= .arguments
+          ? "Off: the body, text and subject of what passes through \(surface.displayName) are "
+            + "blanked, and the structure around them is kept."
+          : "Nothing is recorded beyond names, so there is no content to include.")
+    }
+    .font(.callout)
+    .disabled(resolved < .arguments)
+  }
+
+  private var resolved: CallCapture.Mode {
+    CallCapture.Mode(rawValue: mode) ?? SurfaceSettings.appCaptureMode
   }
 }

@@ -433,18 +433,7 @@ struct MainView: View {
 
 
   private func row(_ entry: LogStore.Entry) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text(Self.clock.string(from: entry.at))
-        .foregroundStyle(.tertiary)
-      Text(entry.surface)
-        .foregroundStyle(.secondary)
-        .frame(width: 68, alignment: .leading)
-      Text(entry.text)
-        .foregroundStyle(tint(entry.level))
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .font(.system(.caption, design: .monospaced))
+    LogRow(entry: entry, tint: tint(entry.level), clock: Self.clock)
   }
 
   private func tint(_ level: LogStore.Level) -> Color {
@@ -456,7 +445,14 @@ struct MainView: View {
   }
 
   private func line(_ entry: LogStore.Entry) -> String {
-    "\(Self.clock.string(from: entry.at))  \(entry.surface)  \(entry.level.rawValue)  \(entry.text)"
+    var out =
+      "\(Self.clock.string(from: entry.at))  \(entry.surface)  \(entry.level.rawValue)  "
+      + "\(entry.text)"
+    // Copy has to carry what the row shows, or the button quietly lies about
+    // what was on screen.
+    if let arguments = entry.arguments { out += "\n    args   \(arguments)" }
+    if let result = entry.result { out += "\n    result \(result)" }
+    return out
   }
 
   private static let clock: DateFormatter = {
@@ -467,14 +463,18 @@ struct MainView: View {
 
   private var footer: some View {
     HStack {
-      // Load-bearing, not decoration. RequestObserver records the method and the
-      // name of whatever was reached for — a tool, a prompt, a resource URI —
-      // and stops there; keeping this sentence true is a constraint on anything
-      // added to it later. It named tools only until prompts and resources
-      // shipped, at which point the sentence had to grow or stop being true.
-      Text("Tool, prompt and resource names only — never arguments, message contents or results.")
+      // Load-bearing, not decoration. Keeping this sentence true is a
+      // constraint on anything added to the feed — including the payloads,
+      // which is why it says where they stop rather than dropping the claim now
+      // that there are some. It named tools only until prompts and resources
+      // shipped; it gained the second sentence when arguments did.
+      Text(
+        "Tool, prompt and resource names, and the arguments each was called with. Message "
+          + "contents and results are per-surface and off unless you turn them on. Nothing here "
+          + "is written to disk.")
         .font(.caption)
         .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       Spacer()
       Toggle("Follow", isOn: $following)
         .toggleStyle(.checkbox)
@@ -621,5 +621,72 @@ struct UpdateConsentCard: View {
     UpdateController.shared.setAutomatic(automatic)
     UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
     answered = true
+  }
+}
+
+
+/// One line of the log, with whatever payload it carries.
+///
+/// A view of its own rather than a function on the pane, because it needs
+/// `@State` for the expansion and a `some View` helper cannot hold any. Modelled
+/// on the connections list's rows, and on Bastion's `FeedRow`, which solves the
+/// same problem one repo over.
+private struct LogRow: View {
+  let entry: LogStore.Entry
+  let tint: Color
+  let clock: DateFormatter
+
+  @State private var expanded = false
+
+  /// How much of a payload shows before the row is opened.
+  private static let preview = 160
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text(clock.string(from: entry.at))
+          .foregroundStyle(.tertiary)
+        Text(entry.surface)
+          .foregroundStyle(.secondary)
+          .frame(width: 68, alignment: .leading)
+        Text(entry.text)
+          .foregroundStyle(tint)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        if entry.failed {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .font(.caption2)
+            .foregroundStyle(.red)
+        }
+      }
+      if let arguments = entry.arguments {
+        payload("args", arguments, tint: .secondary)
+      }
+      if let result = entry.result {
+        payload("result", result, tint: entry.failed ? .red : .secondary)
+      }
+      if longest > Self.preview {
+        Button(expanded ? "Show less" : "Show all \(longest) characters") { expanded.toggle() }
+          .buttonStyle(.link)
+          .font(.caption2)
+          .padding(.leading, 84)
+      }
+    }
+    .font(.system(.caption, design: .monospaced))
+  }
+
+  private var longest: Int { max(entry.arguments?.count ?? 0, entry.result?.count ?? 0) }
+
+  private func payload(_ label: String, _ text: String, tint: Color) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(label)
+        .foregroundStyle(.tertiary)
+        .frame(width: 76, alignment: .trailing)
+      Text(expanded ? text : String(text.prefix(Self.preview)))
+        .foregroundStyle(tint)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .font(.system(.caption2, design: .monospaced))
   }
 }

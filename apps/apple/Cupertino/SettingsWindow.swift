@@ -205,6 +205,8 @@ struct GeneralPane: View {
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
   @State private var copied = false
+  @AppStorage(SurfaceSettings.appCaptureKey) private var capture = CallCapture.defaultMode.rawValue
+  @AppStorage(SurfaceSettings.appContentKey) private var content = false
 
   var body: some View {
     Form {
@@ -232,6 +234,29 @@ struct GeneralPane: View {
           Text(AppInfo.identityLine)
         }
         .textSelection(.enabled)
+      }
+
+      Section {
+        Picker("Record", selection: $capture) {
+          ForEach(CallCapture.Mode.allCases, id: \.self) { mode in
+            Text(mode.label).tag(mode.rawValue)
+          }
+        }
+        Text(
+          "What every surface records unless it says otherwise. The Activity log keeps this in "
+            + "memory and never writes it to disk.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+
+        Toggle(isOn: $content) {
+          Text("Include message contents")
+          Text(
+            "Off. A mail body, a message and a note's text arrive as arguments here, so they are "
+              + "blanked by default and what is left is the structure — which tool, which "
+              + "mailbox, which recipient. Turn this on to record the prose too.")
+        }
+      } header: {
+        Text("Activity")
       }
 
       UpdatesSection()

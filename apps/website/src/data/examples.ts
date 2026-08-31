@@ -116,7 +116,7 @@ export const surfaceName = (id: Surface["id"]): string =>
  * There is no answer in the picture, and there must not be one. What comes back
  * is the model's work, not Cupertino's; a mocked-up reply would be advertising
  * someone else's output as this product's. The same discipline as the Activity
- * rows, which carry tool names and never arguments or results.
+ * rows, which carry tool names and their arguments, never message contents.
  */
 export interface HeroCall {
   surface: Surface["id"];

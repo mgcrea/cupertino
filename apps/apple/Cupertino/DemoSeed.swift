@@ -273,11 +273,17 @@ enum DemoSeed {
 
   /// The activity log, in the app's own vocabulary.
   ///
-  /// **No arguments appear here, and none may be added.** The footer under this
-  /// list says "Tool, prompt and resource names only — never arguments, message
-  /// contents or results", `RequestObserver` is written to hold that true, and a
-  /// fixture showing a subject line would put a promise in the marketing image
-  /// that the product deliberately does not make.
+  /// **No message contents appear here, and none may be added.** The app now
+  /// records arguments by default, so a fixture MAY carry them — but the prose
+  /// inside them is blanked unless a surface is set to include it, and a
+  /// fixture showing a real subject line or message body would put a promise in
+  /// the marketing image that the product deliberately does not make by
+  /// default.
+  ///
+  /// These rows carry names only, which is the conservative rendering: it is
+  /// what a surface set to "names only" shows, and it undersells rather than
+  /// over-promises. Adding arguments here means regenerating the goldens, which
+  /// is a separate job from changing what the app records.
   ///
   /// Long enough to fill the pane, because a log with a dozen lines and six
   /// hundred points of empty below it photographs as a product nobody uses. All
