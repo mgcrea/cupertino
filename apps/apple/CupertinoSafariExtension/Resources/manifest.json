@@ -1,33 +1,38 @@
 {
-    "manifest_version": 3,
-    "default_locale": "en",
+  "manifest_version": 3,
+  "name": "Cupertino",
+  "version": "1.0",
+  "description": "Lets Cupertino read the page you are looking at, on the websites you allow.",
 
-    "name": "__MSG_extension_name__",
-    "description": "__MSG_extension_description__",
-    "version": "1.0",
+  "background": { "service_worker": "background.js" },
 
-    "icons": {
-        "48": "images/icon-48.png",
-        "96": "images/icon-96.png",
-        "128": "images/icon-128.png",
-        "256": "images/icon-256.png",
-        "512": "images/icon-512.png"
-    },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
 
-    "background": {
-        "scripts": [ "background.js" ],
-        "type": "module"
-    },
+  "action": {
+    "default_title": "Cupertino",
+    "default_icon": {
+      "48": "images/icon-48.png",
+      "96": "images/icon-96.png",
+      "128": "images/icon-128.png",
+      "256": "images/icon-256.png",
+      "512": "images/icon-512.png"
+    }
+  },
 
-    "content_scripts": [{
-        "js": [ "content.js" ],
-        "matches": [ "*://example.com/*" ]
-    }],
+  "icons": {
+    "48": "images/icon-48.png",
+    "96": "images/icon-96.png",
+    "128": "images/icon-128.png",
+    "256": "images/icon-256.png",
+    "512": "images/icon-512.png"
+  },
 
-    "action": {
-        "default_popup": "popup.html",
-        "default_icon": "images/toolbar-icon.svg"
-    },
-
-    "permissions": [ ]
+  "permissions": ["nativeMessaging"]
 }

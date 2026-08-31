@@ -232,6 +232,9 @@ servers: server-deps ## Bundle the MCP servers self-contained (no node_modules a
 	@# The smoke test runs in `bundle`, against the artifact that actually ships.
 	@scripts/verify-servers.sh $(STAGED) --static-only
 
+verify-extension: ## Assert the built artifact's Safari extension is shippable
+	@scripts/verify-extension.sh "$(or $(APP_PATH),$(RELEASE_APP))"
+
 verify-servers: ## Assert a built artifact's servers resolve and start
 	@scripts/verify-servers.sh $(or $(APP_PATH),$(RELEASE_APP))
 
@@ -304,6 +307,7 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 	@# and the runtime they will actually be spawned under sit side by side.
 	@scripts/verify-servers.sh "$(RELEASE_APP)"
 	@$(MAKE) --no-print-directory sign
+	@scripts/verify-extension.sh "$(RELEASE_APP)"
 
 # Inner-out, and never in the other order: signing the bundle first and then
 # touching anything inside it invalidates the outer signature.
