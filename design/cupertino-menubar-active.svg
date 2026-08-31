@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="18" height="18">
   <title>Cupertino — menu bar template, a client is connected</title>
   <!-- The idle mark plus one shape: a halo around the sun, setting behind the
-       same horizon. Everything else is byte-identical to cupertino-menubar.svg,
+       same hill. Everything else is identical to cupertino-menubar.svg,
        deliberately — the two are swapped in place in the menu bar, so any drift
-       in the disc or the horizon would read as the icon twitching rather than
-       as a state changing. That includes the seat both files share: read the
-       note in cupertino-menubar.svg before changing it here, because it is
-       measured against Bastion's glyph and moving one file alone is what it
-       exists to prevent. The halo is inside the same clip as the disc, so both
-       terminate on one line and the ring sets with the sun.
+       in the disc, the hill or the clip would read as the icon twitching rather
+       than as a state changing. Read that file before changing anything here:
+       the hill's proportions come from the app icon, the clip is a true normal
+       offset for a reason, and the seat is measured against Bastion's glyph.
+       The halo is inside the same clip as the disc, so both terminate on one
+       line and the ring sets with the sun.
 
        The gap is measured, not chosen. Sweeping it at 18pt/2x and counting
        connected components: at 2.0 units the disc's antialiased edge still
@@ -17,20 +17,19 @@
        balanced on it — with a 1.6-unit stroke.
 
        THE RADIUS IS DERIVED FROM THAT, not picked: 10.2 + 2.4 + 0.8 = 13.4.
-       The sun has now grown twice while this glyph was matched to Bastion's
-       mass, and both times the ring simply followed it out. Re-derive it the
-       same way if the sun changes again rather than nudging it — the gap and
-       the stroke are the numbers being kept.
+       The sun has grown while this glyph was matched to Bastion's mass, and the
+       ring simply followed it out. Re-derive it the same way if the sun changes
+       again rather than nudging it — the gap and the stroke are what is kept.
 
        That the ring can be this generous is the point of F3. E2c put its sun at
        cy9.5 with 3.7 units of headroom, which forced a 1.1-unit stroke across a
        1.65-unit gap — and measured, that ring never actually separated from its
-       sun at 2x, whatever its file claimed. This leaves 11.5 units above the
+       sun at 2x, whatever its file claimed. This leaves 11.7 units above the
        disc.
 
        The ring is what makes this state ride higher than the idle one: it adds
        4.0 units above the disc and nothing below, since its lower half is
-       clipped away by the horizon. That is inherent to a sun setting behind
+       clipped away by the hill. That is inherent to a sun setting behind
        something — there is no symmetric halo to be had — and it is why the two
        states are seated by ink mass rather than by bounding box. Bastion's wall
        is one-sided in the same direction and by nearly the same amount, which
@@ -45,13 +44,14 @@
        Re-measure with a component count after any edit, never by eye. -->
   <defs>
     <clipPath id="sky">
-      <path d="M-2 -2 L38 -2 L38 26.64 L32.5 26.64 C25.25 25.24 10.75 25.24 3.5 26.64 L-2 26.64 Z" />
+      <path d="M-4 -4 L40 -4 L40 25.9 L31.22 25.9 C27.47 27.66 23.73 27.69 19.49 25.86
+               C13.81 23.4 7.99 23.4 2.31 25.86 L-4 25.86 Z" />
     </clipPath>
   </defs>
   <g clip-path="url(#sky)">
-    <circle cx="18" cy="21.74" r="10.2" fill="#000" />
-    <circle cx="18" cy="21.74" r="13.4" fill="none" stroke="#000" stroke-width="1.6" />
+    <circle cx="18" cy="21.86" r="10.2" fill="#000" />
+    <circle cx="18" cy="21.86" r="13.4" fill="none" stroke="#000" stroke-width="1.6" />
   </g>
-  <path d="M3.5 29.64 C10.75 28.24 25.25 28.24 32.5 29.64" fill="none" stroke="#000"
+  <path d="M3.5 28.61 Q10.9 25.41 18.3 28.61 T32.5 28.61" fill="none" stroke="#000"
     stroke-width="1.8" stroke-linecap="round" />
 </svg>
