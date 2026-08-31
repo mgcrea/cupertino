@@ -19,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
+    // Before the first line is logged. Listening is not writing: with the
+    // Activity pane untouched `AuditLog` opens no file.
+    AuditLog.install()
+
     let location = InstallLocation.current
     hostLog(
       "cupertino", .info,

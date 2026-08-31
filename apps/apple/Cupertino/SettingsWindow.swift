@@ -11,6 +11,7 @@ import SwiftUI
 /// been sitting behind Xcode for an hour.
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
+  case audit
   case permissions
   case clients
   case licence
@@ -20,7 +21,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   static let defaultsKey = "settingsPane"
 
   /// How the app behaves…
-  static let configuration: [SettingsPane] = [.general, .permissions, .clients]
+  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .clients]
 
   /// …and what was bought, which is a different question and the only reason
   /// the sidebar is in two groups rather than one list of four. Somebody opens
@@ -31,6 +32,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .general: "General"
+    case .audit: "Activity"
     case .permissions: "Permissions"
     case .clients: "Clients"
     case .licence: "Licence"
@@ -40,6 +42,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .general: "gearshape"
+    case .audit: "list.bullet.rectangle"
     case .permissions: "lock.shield"
     case .clients: "puzzlepiece.extension"
     case .licence: "key"
@@ -189,6 +192,7 @@ struct SettingsView: View {
   private func content(for pane: SettingsPane) -> some View {
     switch pane {
     case .general: GeneralPane(model: model)
+    case .audit: AuditPane()
     case .permissions: PermissionsPane(model: model)
     case .clients: ClientsPane(model: model)
     case .licence: LicensePane()
@@ -205,8 +209,6 @@ struct GeneralPane: View {
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
   @State private var copied = false
-  @AppStorage(SurfaceSettings.appCaptureKey) private var capture = CallCapture.defaultMode.rawValue
-  @AppStorage(SurfaceSettings.appContentKey) private var content = false
 
   var body: some View {
     Form {
@@ -236,28 +238,6 @@ struct GeneralPane: View {
         .textSelection(.enabled)
       }
 
-      Section {
-        Picker("Record", selection: $capture) {
-          ForEach(CallCapture.Mode.allCases, id: \.self) { mode in
-            Text(mode.label).tag(mode.rawValue)
-          }
-        }
-        Text(
-          "What every surface records unless it says otherwise. The Activity log keeps this in "
-            + "memory and never writes it to disk.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-
-        Toggle(isOn: $content) {
-          Text("Include message contents")
-          Text(
-            "Off. A mail body, a message and a note's text arrive as arguments here, so they are "
-              + "blanked by default and what is left is the structure — which tool, which "
-              + "mailbox, which recipient. Turn this on to record the prose too.")
-        }
-      } header: {
-        Text("Activity")
-      }
 
       UpdatesSection()
 
@@ -1013,4 +993,242 @@ struct UpdatesSection: View {
     guard let last = updates.lastCheck else { return "Not checked yet" }
     return "Last checked \(last.formatted(.relative(presentation: .named)))"
   }
+}
+
+/// Everything about what Cupertino records.
+///
+/// A pane of its own because these settings had outgrown a `Section` in
+/// General: what the live log keeps, whether any of it survives a quit, and —
+/// once it does — how long it is kept, whether it carries the text of your
+/// mail, and how it leaves the machine.
+///
+/// The per-surface override stays on the surface, beside its write gate. This
+/// pane is the default; a surface is the exception to it.
+private struct AuditPane: View {
+  @AppStorage(SurfaceSettings.appCaptureKey) private var capture = CallCapture.defaultMode.rawValue
+  @AppStorage(SurfaceSettings.appContentKey) private var content = false
+  @AppStorage(AuditLog.enabledKey) private var keepFile = false
+  @AppStorage(AuditLog.payloadsKey) private var filePayloads = false
+  @AppStorage(AuditLog.contentKey) private var fileContent = false
+  @AppStorage(AuditLog.maxDaysKey) private var maxDays = AuditLog.defaultMaxDays
+  @AppStorage(AuditLog.maxMegabytesKey) private var maxMegabytes = AuditLog.defaultMaxMegabytes
+
+  @State private var summary: AuditLog.Summary?
+  @State private var note: String?
+  @State private var fingerprint = AuditSigning.currentFingerprint()
+  @State private var copied = false
+
+  var body: some View {
+    Form {
+      Section {
+        Picker("Record", selection: $capture) {
+          ForEach(CallCapture.Mode.allCases, id: \.self) { mode in
+            Text(mode.label).tag(mode.rawValue)
+          }
+        }
+        Text(
+          "What every surface records unless it says otherwise. The Activity window keeps this in "
+            + "memory.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+
+        Toggle(isOn: $content) {
+          Text("Include message contents")
+          Text(
+            "Off. A mail body, a message and a note's text arrive as arguments here, so they are "
+              + "blanked by default and what is left is the structure — which tool, which "
+              + "mailbox, which recipient.")
+        }
+      } header: {
+        Text("What is recorded")
+      }
+
+      Section {
+        Toggle("Keep an audit log on disk", isOn: $keepFile)
+        Text(
+          keepFile
+            ? "Records survive a quit, in \(AuditLog.directory.path), readable only by you."
+            : "Off. The Activity window is a ring in memory and nothing outlives the app.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+
+        Toggle("Include arguments and results in the file", isOn: $filePayloads)
+          .disabled(!keepFile)
+
+        // The third act, and the only toggle in this app with a warning on it.
+        // Getting somebody's mail onto disk should take three deliberate
+        // switches, not one — and the last of them should say what it does.
+        Toggle(isOn: $fileContent) {
+          Text("…including message contents")
+          Text(
+            fileContent
+              ? "⚠ Mail bodies, message text and note contents are written to a file on disk, "
+                + "unencrypted. FileVault is what protects it at rest."
+              : "Off. Even with contents shown in the window above, the file keeps only the "
+                + "structure. Turning this on is a separate decision from showing them on screen.")
+        }
+        .disabled(!keepFile || !filePayloads || !content)
+
+        LabeledContent("Keep for") {
+          Stepper("\(maxDays) days", value: $maxDays, in: 1...365)
+        }
+        LabeledContent("At most") {
+          Stepper("\(maxMegabytes) MB", value: $maxMegabytes, in: 5...5000, step: 5)
+        }
+        Text(
+          "Whichever runs out first. The log is written in segments and a whole segment is "
+            + "dropped at a time — a chain cannot lose a record from the middle and still verify.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      } header: {
+        Text("On disk")
+      }
+
+      Section {
+        HStack {
+          Button("Verify") { verify() }
+          Button("Export…") { export() }
+          Button("Delete the log") { erase() }
+            .disabled((summary?.records ?? 0) == 0)
+          Spacer()
+        }
+        if let summary {
+          Text(
+            summary.report.isIntact
+              ? "\(summary.records) records across \(summary.segments) "
+                + "segment\(summary.segments == 1 ? "" : "s"), \(bytes(summary.bytes)). "
+                + "The chain verifies."
+              : "\(summary.records) records, and the chain does NOT verify: "
+                + describe(summary.report.failures))
+            .font(.caption)
+            .foregroundStyle(summary.report.isIntact ? Color.secondary : .red)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if let note {
+          Text(note).font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Text(
+          "Each record carries a hash of the one before it, so an edited field, a deleted record "
+            + "or a truncated file can be detected. That is the whole claim: it catches tampering "
+            + "by something that does not know it is a chain. It is not proof against anyone who "
+            + "can write the file, because they can recompute it.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      } header: {
+        Text("The chain")
+      }
+
+      Section {
+        if let fingerprint {
+          LabeledContent {
+            Button {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString((try? AuditSigning.publicKey()) ?? "", forType: .string)
+              copied = true
+            } label: {
+              Image(systemName: copied ? "checkmark" : "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .help("Copy the full public key")
+            .task(id: copied) {
+              guard copied else { return }
+              try? await Task.sleep(for: .seconds(2))
+              copied = false
+            }
+          } label: {
+            Text(fingerprint).font(.system(.body, design: .monospaced))
+            Text("This Mac's export key")
+          }
+        } else {
+          Text("No key yet — one is made the first time you sign an export.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Text(
+          "Signing an export proves it came from this Mac and has not been altered since. It "
+            + "does not prove the log was not curated before it was signed — you control this "
+            + "machine. And it only means anything to someone who already has the key above, "
+            + "sent to them some other way: a key that travels only inside the export proves "
+            + "nothing, because a forger would include their own.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          "A new Mac makes a new key. Exports already signed keep verifying against the old one.")
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      } header: {
+        Text("Signing")
+      }
+    }
+    .formStyle(.grouped)
+    .onAppear { summary = AuditLog.verifyAll() }
+  }
+
+  private func verify() {
+    summary = AuditLog.verifyAll()
+    note = nil
+  }
+
+  private func export() {
+    let panel = NSSavePanel()
+    panel.title = "Export the audit log"
+    panel.nameFieldStringValue = "cupertino-audit-\(Self.stamp.string(from: Date()))"
+    panel.canCreateDirectories = true
+    panel.prompt = "Export"
+
+    let sign = NSButton(checkboxWithTitle: "Sign this export", target: nil, action: nil)
+    sign.state = AuditSigning.hasKey ? .on : .off
+    sign.toolTip = "Proves the export came from this Mac and was not altered afterwards."
+    // An accessory view with no frame lays out at zero height and the checkbox
+    // is simply not there — the panel opens looking as though the option does
+    // not exist.
+    sign.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+    let holder = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 34))
+    holder.addSubview(sign)
+    panel.accessoryView = holder
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      let written = try AuditLog.shared.export(to: url, sign: sign.state == .on)
+      summary = written
+      fingerprint = AuditSigning.currentFingerprint()
+      note =
+        "Exported \(written.records) records to \(url.lastPathComponent)"
+        + (sign.state == .on ? ", signed." : ", unsigned.")
+    } catch {
+      note = "Could not export: \(error.localizedDescription)"
+    }
+  }
+
+  private func erase() {
+    AuditLog.shared.clear()
+    summary = AuditLog.verifyAll()
+    note = "The log on disk is gone."
+  }
+
+  private func bytes(_ count: Int) -> String {
+    count < 1024 * 1024
+      ? "\(count / 1024) KB" : String(format: "%.1f MB", Double(count) / 1024 / 1024)
+  }
+
+  /// Say what broke, not just that something did — a verifier that reports
+  /// "invalid" and stops is a verifier nobody can act on.
+  private func describe(_ failures: [AuditChain.Failure]) -> String {
+    guard let first = failures.first else { return "no detail" }
+    let rest = failures.count > 1 ? " (and \(failures.count - 1) more)" : ""
+    switch first {
+    case .unreadable(let line): return "line \(line) is not a record\(rest)"
+    case .unknownVersion(let line, let version):
+      return "line \(line) is format \(version), which this build cannot check\(rest)"
+    case .brokenHash(let seq): return "record \(seq) was edited\(rest)"
+    case .brokenLink(let seq): return "a record before \(seq) was removed\(rest)"
+    case .outOfOrder(let seq): return "record \(seq) is out of sequence\(rest)"
+    }
+  }
+
+  private static let stamp: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter
+  }()
 }

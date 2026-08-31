@@ -5,9 +5,15 @@ import Foundation
 /// `UserDefaults`, not the Keychain. The key is not a secret: it is issued to
 /// the user, rendered in the menu bar, emailed to them in plain text and
 /// re-sendable on demand. Encrypting at rest something displayed in the UI would
-/// be ceremony, and it would make this the app's first `SecItem` code for no
-/// security gained. `SurfaceSettings.allowWrites` already reads `UserDefaults`
+/// be ceremony. `SurfaceSettings.allowWrites` already reads `UserDefaults`
 /// synchronously from the connection thread; this needs exactly that and no more.
+///
+/// This used to add "and it would make this the app's first `SecItem` code for
+/// no security gained". `KeyStore` is that code now — the audit log's export
+/// signing key genuinely cannot be re-issued or retyped, which is the property
+/// a licence key has and a private key does not. The argument above is still
+/// the right one for THIS value; it was never a rule about the whole app, and
+/// the sentence is corrected here rather than left to read like one.
 ///
 /// Nothing is cached. Ed25519 verification is microseconds, and re-checking on
 /// every read means entering a key takes effect immediately with no

@@ -86,11 +86,21 @@ final class LogStore {
     entries[index].result = result
     entries[index].failed = failed
     weight += entries[index].weight
+    Self.onResult?(entries[index])
   }
 
   private func add(_ entry: Entry) {
     entries.append(entry)
     weight += entry.weight
+    // The durable copy, if anything is keeping one. Here rather than at the
+    // call sites: this is the one place every row passes through, and it is on
+    // the main actor, so whatever is listening inherits this store's ordering
+    // rather than establishing its own — a hash chain built out of order fails
+    // verification for no reason anyone can reproduce.
+    //
+    // A hook rather than a direct call to `AuditLog`, so this file keeps a
+    // dependency closure small enough for the standalone check targets.
+    Self.onCall?(entry)
     while entries.count > limit || (weight > byteLimit && entries.count > 1) {
       weight -= entries.removeFirst().weight
     }
@@ -101,6 +111,13 @@ final class LogStore {
     weight = 0
   }
 
+  /// Installed by whatever wants a durable copy — `AuditLog`, at launch.
+  ///
+  /// Nil until something asks, which is also the default state of the feature:
+  /// with the Activity pane untouched nothing is listening and no file opens.
+  static var onCall: ((Entry) -> Void)?
+  static var onResult: ((Entry) -> Void)?
+
   /// Seed one entry at a fixed instant, for `DemoSeed` only.
   ///
   /// Separate from `append` rather than an optional `at:` parameter on it: the
@@ -109,6 +126,28 @@ final class LogStore {
   /// line is stamped when it happens.
   func appendDemo(at: Date, surface: String, level: Level, _ text: String) {
     entries.append(Entry(at: at, surface: surface, level: level, text: text))
+  }
+}
+
+/// Where Cupertino keeps everything that is not a socket.
+///
+/// `BridgeProtocol` already owns the identity and the directory — it has to,
+/// because the bridge computes the socket path without linking any of this —
+/// so this is a `URL` view of the same string rather than a second opinion
+/// about where the app's state lives. Ported from Bastion, which needed it
+/// first because it had files to write; Cupertino has had only a socket until
+/// now.
+///
+/// The mode is 0700: the audit log below it holds what tools were called with.
+enum AppSupport {
+  static var directory: URL { URL(fileURLWithPath: BridgeProtocol.socketDirectory) }
+
+  @discardableResult
+  static func ensureDirectory() -> URL {
+    let url = directory
+    try? FileManager.default.createDirectory(
+      at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    return url
   }
 }
 
