@@ -49,7 +49,14 @@ const links = [
       }
     </div>
 
-    <nav class="hidden items-center gap-[30px] md:flex">
+    {/* `lg`, not `md`. At 768 there is room for the lockup, the version pill and
+        two buttons, but not for five links as well — the Buy button was pushed
+        off the right edge, which is the worst kind of breakage because nothing
+        looks wrong until you go looking for the button. 1024 is where the links
+        and the buttons both fit, and it is also where GitHub appears, so the
+        whole right-hand cluster arrives at once. Found on bastion, which wraps
+        rather than overflows and so showed it sooner. */}
+    <nav class="hidden items-center gap-[30px] lg:flex">
       {
         links.map((l) => (
           <a href={l.href} class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi">
