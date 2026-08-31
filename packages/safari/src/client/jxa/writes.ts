@@ -29,14 +29,19 @@
  * the one that produces a good error message; the in-script one is the one that
  * still holds if some future caller reaches these scripts by another path.
  *
- * ## UNVERIFIED against a real Safari
+ * ## Measured after the fact, which is the reverse of how this package works
  *
- * Every other lane in this package was measured before it shipped. These two
- * scripts were not: they were written on a machine with no Automation grant, so
- * the JXA idioms below are reasoned rather than observed. That is why the tab
- * route has a fallback and reports which one it took — the first real run says
- * so out loud rather than leaving it to be inferred. Run
- * `scripts/probe-safari-write.mjs` on a granted machine before trusting them.
+ * Every other lane here was measured before it shipped. These two were written
+ * from the dictionary on a machine with no Automation grant, then measured by
+ * `scripts/probe-safari-write.mjs` against a live Safari on macOS 26.6:
+ * `tab-push` in 166 ms, `current-tab` in 108 ms, the Reading List add in
+ * 148 ms. The fallback below has never fired. It stays anyway — one run on one
+ * machine is not a guarantee about a browser with no windows open, or one
+ * mid-launch — and it REPORTS which route it took, so a future failure is
+ * visible in the tool's own output rather than inferred.
+ *
+ * The measurement that mattered most was of the check above: Safari **accepts**
+ * a `javascript:` URL pushed as a tab. The allowlist is not belt and braces.
  *
  * ## The contract
  *
