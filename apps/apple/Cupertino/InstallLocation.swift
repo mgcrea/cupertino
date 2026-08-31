@@ -41,6 +41,19 @@ enum InstallLocation {
     return false
   }
 
+  /// Whether the bundle is somewhere Safari will look for its extension.
+  ///
+  /// Deliberately separate from `isStable`, which today tests the same case and
+  /// answers a different question: one is about a path staying valid in someone
+  /// else's config file, the other about whether Safari will enumerate an appex
+  /// at all — it ignores a container that is translocated or outside an
+  /// Applications folder. Collapsing them would assert the two must always
+  /// agree, which is not something either measurement establishes.
+  var isInApplications: Bool {
+    if case .applications = self { return true }
+    return false
+  }
+
   var url: URL {
     switch self {
     case .applications(let u), .translocated(let u), .elsewhere(let u): return u
