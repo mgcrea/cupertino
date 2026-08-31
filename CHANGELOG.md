@@ -16,6 +16,34 @@ summary.
 
 ### Added
 
+- **The Activity log can be kept, not just watched.** Settings ▸ Activity turns on a durable log:
+  append-only files under Application Support, readable only by you, with retention by age and by
+  size. Off by default, and with it off nothing about the app changes — the log stays a ring in
+  memory that is cleared when Cupertino quits.
+
+  **Message contents take three separate switches to reach disk.** One to record them at all, one
+  to keep a log, and one more to let contents into the file, with a warning on the last. A mail
+  body, a message and a note's text all arrive as tool arguments, so "record arguments" and "write
+  my mail to a file" are two different decisions and are asked as two different questions.
+
+  **Each record carries a hash of the one before it**, so an edited field, a removed record or a
+  truncated file can be detected — and the pane says exactly that much. It catches tampering by
+  something that does not know it is a chain. It is not proof against anyone who can write the
+  file, because they can recompute it, and claiming otherwise would be the kind of security
+  sentence nobody can check. Retention drops whole files at a time for the same reason: a chain
+  cannot lose a record from the middle and still verify.
+
+- **The log can be exported, and signed if you want it.** Export writes the log alongside a
+  manifest naming each file, its record count and its digest. The count is the part that matters:
+  a chain cannot detect its own truncation, because cutting off the end leaves a shorter chain
+  that still verifies.
+
+  Signing is optional and off unless asked for. It proves an export came from this Mac and was not
+  altered afterwards; it does not prove the log was not curated before it was signed, and it means
+  nothing to someone who has not been given the key some other way — so the pane shows a
+  fingerprint to send them once. A new Mac makes a new key, and exports already signed keep
+  verifying against the old one.
+
 - **Safari can open a page and save one for later.** `apple_safari_open_url` opens a URL in a new
   tab or in the tab the user is looking at, and `apple_safari_add_reading_list_item` saves one to
   the Reading List. Both are Apple Events behind `APPLE_SAFARI_ALLOW_WRITES`, so Safari is the

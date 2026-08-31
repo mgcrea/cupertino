@@ -80,9 +80,18 @@ safe; the AppleScript servers have them always on, which is not.
 reading the whole archive, and it is enforced in exactly one place so no query path escapes it. No
 alternative surveyed has a read-side control.
 
-**There is something to look at.** The Activity window records every tool call, by name, live —
-the answer to "what did the assistant just do with my mail?". Servers spawned inside an editor are
-unobservable by construction.
+**There is something to look at.** The Activity window records every tool call live — the name,
+and the arguments it was called with — which is the answer to "what did the assistant just do with
+my mail?". Message contents are blanked unless a surface is set to include them, so the default
+answers the question without keeping the mail. Servers spawned inside an editor are unobservable by
+construction.
+
+**And something to keep, if you want it.** Settings › Activity turns on a durable log: append-only
+segments on disk, each record carrying a hash of the one before it, with retention and export. The
+chain detects an edited, removed or truncated record — it is not proof against anyone who can write
+the file, and the app says so rather than implying otherwise. Getting message contents into that
+file takes three separate switches. No alternative surveyed keeps a record that outlives the
+process at all.
 
 **The result says how much to trust it.** `indexAgeSeconds` and the WAL-blind warning ride along
 with search results, and a missing lane returns a structured `degraded` result naming what is

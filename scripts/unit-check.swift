@@ -370,6 +370,52 @@ struct UnitCheck {
       "and fails from genesis",
       AuditChain.verify(lines: second).failures.contains(.brokenLink(seq: 1)))
 
+    print("\nAudit chain: the export manifest")
+
+    // These bytes are what a signature is taken over, so a change to them is a
+    // change to what "signed" means. The export path is otherwise reachable
+    // only through a save panel, which no check can click.
+    let described = [
+      AuditChain.SegmentEntry(name: "audit-0001.jsonl", records: 5, sha256: "aa"),
+      AuditChain.SegmentEntry(name: "audit-0002.jsonl", records: 3, sha256: "bb"),
+    ]
+    let card = AuditChain.manifest(
+      app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
+      records: 8, segments: described, head: "c17b", intact: true)
+
+    check("the manifest parses as JSON", (try? JSONSerialization.jsonObject(with: Data(card.utf8))) != nil)
+    let decoded =
+      (try? JSONSerialization.jsonObject(with: Data(card.utf8))) as? [String: Any] ?? [:]
+    check("it names the format", decoded["format"] as? String == "cupertino-audit")
+    check("and the version", decoded["version"] as? Int == AuditChain.version)
+    // The count is the only thing that makes a truncated export visible, since
+    // a shortened chain still verifies.
+    check("it carries the record count", decoded["records"] as? Int == 8)
+    check("and the chain head", decoded["head"] as? String == "c17b")
+    check("and every segment", (decoded["segments"] as? [Any])?.count == 2)
+    check("with each segment's digest", card.contains("\"sha256\":\"aa\""))
+    // Pinned to the exact instant, not just the shape: a formatter that
+    // followed the machine's calendar or zone would write a manifest that
+    // verifies where it was made and nowhere else, and a loose check would
+    // never notice.
+    check("the timestamp is that instant in UTC", card.contains("2025-08-24T01:46:40.000Z"))
+
+    // Deterministic for fixed inputs, or a signature could not be checked twice.
+    let again = AuditChain.manifest(
+      app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
+      records: 8, segments: described, head: "c17b", intact: true)
+    check("building it twice gives the same bytes", again == card)
+    check(
+      "and a different head gives different bytes",
+      AuditChain.manifest(
+        app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
+        records: 8, segments: described, head: "dead", intact: true) != card)
+    check(
+      "a failed verification is recorded rather than hidden",
+      AuditChain.manifest(
+        app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
+        records: 8, segments: described, head: "c17b", intact: false).contains("\"intact\":false"))
+
     print("\nAudit chain: the canonical form")
 
     // The hash is taken over bytes a verifier must be able to rebuild. These

@@ -1170,34 +1170,10 @@ private struct AuditPane: View {
   }
 
   private func export() {
-    let panel = NSSavePanel()
-    panel.title = "Export the audit log"
-    panel.nameFieldStringValue = "cupertino-audit-\(Self.stamp.string(from: Date()))"
-    panel.canCreateDirectories = true
-    panel.prompt = "Export"
-
-    let sign = NSButton(checkboxWithTitle: "Sign this export", target: nil, action: nil)
-    sign.state = AuditSigning.hasKey ? .on : .off
-    sign.toolTip = "Proves the export came from this Mac and was not altered afterwards."
-    // An accessory view with no frame lays out at zero height and the checkbox
-    // is simply not there — the panel opens looking as though the option does
-    // not exist.
-    sign.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-    let holder = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 34))
-    holder.addSubview(sign)
-    panel.accessoryView = holder
-
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    do {
-      let written = try AuditLog.shared.export(to: url, sign: sign.state == .on)
-      summary = written
-      fingerprint = AuditSigning.currentFingerprint()
-      note =
-        "Exported \(written.records) records to \(url.lastPathComponent)"
-        + (sign.state == .on ? ", signed." : ", unsigned.")
-    } catch {
-      note = "Could not export: \(error.localizedDescription)"
-    }
+    guard let outcome = AuditExport.run() else { return }
+    note = outcome.note
+    if let written = outcome.summary { summary = written }
+    fingerprint = AuditSigning.currentFingerprint()
   }
 
   private func erase() {
@@ -1226,9 +1202,4 @@ private struct AuditPane: View {
     }
   }
 
-  private static let stamp: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-  }()
 }

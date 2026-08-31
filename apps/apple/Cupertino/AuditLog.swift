@@ -357,7 +357,7 @@ final class AuditLog {
       attributes: [.posixPermissions: 0o700])
 
     var head = AuditChain.genesis
-    var described: [String] = []
+    var described: [AuditChain.SegmentEntry] = []
     var summary = Summary()
 
     for url in Self.segments() {
@@ -366,9 +366,9 @@ final class AuditLog {
       try? FileManager.default.removeItem(at: folder.appendingPathComponent(url.lastPathComponent))
       try FileManager.default.copyItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
       described.append(
-        "{\"name\":\(AuditChain.quote(url.lastPathComponent)),"
-          + "\"records\":\(report.records),"
-          + "\"sha256\":\(AuditChain.quote(AuditChain.digest(text)))}")
+        AuditChain.SegmentEntry(
+          name: url.lastPathComponent, records: report.records,
+          sha256: AuditChain.digest(text)))
       head = report.head
       summary.segments += 1
       summary.records += report.records
@@ -378,12 +378,9 @@ final class AuditLog {
     summary.report.records = summary.records
     summary.report.head = head
 
-    // Hand-built for the same reason `AuditChain.canonical` is: these bytes are
-    // signed, so what is in them and in what order has to be written down here
-    // rather than inherited from whatever an encoder happened to do.
-    let manifest = """
-      {"format":"cupertino-audit","version":\(AuditChain.version),      "app":\(AuditChain.quote("Cupertino \(AppInfo.version)")),      "exportedAt":\(AuditChain.quote(AuditChain.clock.string(from: Date()))),      "records":\(summary.records),"segments":[\(described.joined(separator: ","))],      "head":\(AuditChain.quote(head)),"intact":\(summary.report.isIntact)}
-      """
+    let manifest = AuditChain.manifest(
+      app: "Cupertino \(AppInfo.version)", exportedAt: Date(), records: summary.records,
+      segments: described, head: head, intact: summary.report.isIntact)
     let bytes = Data(manifest.utf8)
     try bytes.write(to: folder.appendingPathComponent("manifest.json"))
 

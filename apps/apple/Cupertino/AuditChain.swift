@@ -54,6 +54,10 @@ enum AuditChain {
   /// format" instead of silently hashing a record it half-understood.
   static let version = 1
 
+  /// Names the app that wrote it, so a Bastion export cannot be verified as a
+  /// Cupertino one by a tool that reads only the version.
+  static let format = "cupertino-audit"
+
   /// What a record before the first one hashes to.
   ///
   /// A constant rather than an empty string so a file that begins with a
@@ -167,6 +171,43 @@ enum AuditChain {
     let sealed = record.hash.isEmpty ? seal(record) : record
     let body = canonical(sealed)
     return String(body.dropLast()) + ",\"hash\":\(quote(sealed.hash))}"
+  }
+
+  // MARK: - The export manifest
+
+  /// One segment, as the manifest describes it.
+  struct SegmentEntry {
+    var name: String
+    var records: Int
+    var sha256: String
+  }
+
+  /// The bytes an export is described by — and, when asked, signed over.
+  ///
+  /// Hand-built for the same reason `canonical` is: these bytes are signed, so
+  /// what is in them and in what order has to be written down in one place
+  /// rather than inherited from whatever an encoder happened to do that
+  /// release. Here rather than on the writer so `make unit` can hold it still —
+  /// a change to what gets signed is invisible until somebody else's verifier
+  /// disagrees.
+  ///
+  /// `records` is load-bearing and easy to mistake for decoration: a chain
+  /// cannot detect its own truncation, because lopping off the tail leaves a
+  /// shorter, perfectly valid chain. The count is what makes a short export
+  /// visible.
+  static func manifest(
+    app: String, exportedAt: Date, records: Int, segments: [SegmentEntry], head: String,
+    intact: Bool
+  ) -> String {
+    let described = segments.map {
+      "{\"name\":\(quote($0.name)),\"records\":\($0.records),\"sha256\":\(quote($0.sha256))}"
+    }
+    return "{\"format\":\(quote(format)),\"version\":\(version),"
+      + "\"app\":\(quote(app)),"
+      + "\"exportedAt\":\(quote(clock.string(from: exportedAt))),"
+      + "\"records\":\(records),"
+      + "\"segments\":[\(described.joined(separator: ","))],"
+      + "\"head\":\(quote(head)),\"intact\":\(intact)}"
   }
 
   // MARK: - Verifying

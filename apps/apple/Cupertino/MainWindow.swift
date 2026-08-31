@@ -68,6 +68,7 @@ struct MainView: View {
   @State private var surface: String = MainView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
+  @State private var exported: String?
 
   static let allSurfaces = "all"
 
@@ -343,6 +344,12 @@ struct MainView: View {
         NSPasteboard.general.setString(entries.map(line).joined(separator: "\n"), forType: .string)
       }
       Button("Clear") { LogStore.shared.clear() }
+      // The same panel the Activity settings pane opens, via the one copy of
+      // it — not a route to that pane, which would be a button labelled
+      // "Export…" that produced a settings window.
+      Button("Export…") { exported = AuditExport.run()?.note }
+        .disabled(!AuditLog.isEnabled)
+        .help(AuditLog.isEnabled ? "Save the audit log and its manifest." : AuditExport.unavailable)
     }
     .controlSize(.small)
     .padding(.horizontal, 14)
@@ -497,6 +504,14 @@ struct MainView: View {
         // way this footer must not fail.
         .lineLimit(3)
       Spacer()
+      if let exported {
+        Text(exported)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(exported)
+      }
       Toggle("Follow", isOn: $following)
         .toggleStyle(.checkbox)
         .font(.caption)

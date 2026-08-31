@@ -66,7 +66,7 @@ const rows = [
     </div>
 
     <div class="mono border-t border-rule-2 bg-chrome-2 px-3.5 py-2.5">
-      tool names and arguments · contents and results are opt-in, per surface
+      tool names and arguments · contents, results and a kept log are opt-in
     </div>
   </div>
 
@@ -75,5 +75,12 @@ const rows = [
     now, and how many tools it has called. None of it is sent anywhere. The one connection Cupertino
     can make is the update check, it is off until you turn it on, and it carries no identifier —
     which CI checks against the built binary rather than the source.
+  </p>
+
+  <p class="reveal mt-4 text-[14px] leading-[1.65] text-fg-muted">
+    By default none of it outlives the app. Turn on the audit log and it is kept on disk instead —
+    append-only, each record hashed against the one before it, so an edited or missing line shows.
+    That catches tampering by something that does not know it is a chain; it is not proof against
+    anyone who can write the file, and the app says so in those words rather than implying more.
   </p>
 </section>
