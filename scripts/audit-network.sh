@@ -203,10 +203,24 @@ if [ "$saw_sparkle" -eq 1 ]; then
   # asserts the set is EXACTLY the two expected: automation, which the comment
   # in Cupertino.entitlements measures the need for, and get-task-allow, which
   # only a Debug build carries. Anything else is a claim nobody made.
-  granted=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null \
-    | plutil -convert json -o - - 2>/dev/null \
-    | python3 -c 'import json,sys; print(",".join(sorted(json.load(sys.stdin))))' 2>/dev/null)
+  #
+  # Skipped, loudly, on an unsigned bundle. CI builds with
+  # CODE_SIGNING_ALLOWED=NO and `codesign -d` answers "code object is not signed
+  # at all" on stderr with a ZERO exit status — so a naive read comes back empty
+  # and looks exactly like a bundle whose entitlements could not be parsed. This
+  # check said FAIL for that, which would have turned an unsigned CI build into a
+  # security-audit failure. "Not checked" is the honest answer, and saying it out
+  # loud is what stops the gap being mistaken for a pass.
+  if ! codesign -dv "$APP" >/dev/null 2>&1; then
+    printf '  --    %-46s unsigned build, not checked\n' "entitlements"
+    granted="__unsigned__"
+  else
+    granted=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null \
+      | plutil -convert json -o - - 2>/dev/null \
+      | python3 -c 'import json,sys; print(",".join(sorted(json.load(sys.stdin))))' 2>/dev/null)
+  fi
   case "$granted" in
+    "__unsigned__") ;;
     "com.apple.security.automation.apple-events"|\
     "com.apple.security.automation.apple-events,com.apple.security.get-task-allow")
       printf '  ok    %-46s %s\n' "entitlements" "only what is measured" ;;
