@@ -7,7 +7,7 @@
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
+    "url": "git+https://github.com/mgcrea/cupertino.git",
     "directory": "apps/api"
   },
   "type": "module",

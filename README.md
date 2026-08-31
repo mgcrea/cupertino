@@ -76,8 +76,8 @@ notarized binary, instead of one per host. See [docs/licensing.md](docs/licensin
 Or run them from source:
 
 ```bash
-git clone https://github.com/mgcrea/mcp-cupertino.git
-cd mcp-cupertino
+git clone https://github.com/mgcrea/cupertino.git
+cd cupertino
 pnpm install
 pnpm build
 ```
@@ -517,7 +517,7 @@ a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA
 [docs/distribution.md](docs/distribution.md).
 <!-- </generated:version> -->
 
-> The repo is `mcp-cupertino`; the npm packages stay `@mgcrea/mcp-apple-*`, because that is what
+> The repo is `cupertino`; the npm packages stay `@mgcrea/mcp-apple-*`, because that is what
 > people search npm for. Neither name is load-bearing. The bundle identifier `io.mgcrea.cupertino`
 > is the string that actually matters, because changing it would invalidate every user's Full Disk
 > Access grant.

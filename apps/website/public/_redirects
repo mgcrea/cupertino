@@ -8,9 +8,9 @@
 #
 # 302, not 301: the destination is expected to move (a different host, a mirror),
 # and a cached permanent redirect would outlive the decision.
-/download  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip  302
-/checksum  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/Cupertino.zip.sha256  302
-/releases  https://github.com/mgcrea/mcp-cupertino/releases  302
+/download  https://github.com/mgcrea/cupertino/releases/latest/download/Cupertino.zip  302
+/checksum  https://github.com/mgcrea/cupertino/releases/latest/download/Cupertino.zip.sha256  302
+/releases  https://github.com/mgcrea/cupertino/releases  302
 
 # The buy link, kept here for the same reason /download is: the Stripe checkout
 # URL is exactly the kind of destination that moves, and a vanity path means it
@@ -27,4 +27,4 @@
 # 302 because the destination is expected to move, and this URL in particular is
 # baked into every binary ever shipped, which is exactly why it must be one we
 # can repoint without asking anyone to update first.
-/appcast.xml  https://github.com/mgcrea/mcp-cupertino/releases/latest/download/appcast.xml  302
+/appcast.xml  https://github.com/mgcrea/cupertino/releases/latest/download/appcast.xml  302

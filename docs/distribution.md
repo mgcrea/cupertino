@@ -64,7 +64,7 @@ write tools against Mail and against Reminders are not the same risk.
 | ----------------- | ----------------------------------------------------------- |
 | App display name  | Cupertino                                                   |
 | Bundle identifier | `io.mgcrea.cupertino`, Magenta Creations (`75QE9PRT3V`)     |
-| Repo              | `mcp-cupertino`, a monorepo absorbing this one              |
+| Repo              | `cupertino`, a monorepo absorbing this one                  |
 | npm packages      | unchanged — `@mgcrea/mcp-apple-mail`, `-notes`, `-messages` |
 | Transport         | stdio, unchanged                                            |
 
@@ -75,7 +75,7 @@ and "Apple MCP" sitting there would undercut the README's first line.
 ## Repo layout
 
 ```text
-mcp-cupertino/
+cupertino/
   packages/core/        @mgcrea/mcp-apple-core
   packages/mail/        @mgcrea/mcp-apple-mail   ← this repo, history preserved
   packages/notes/

@@ -14,12 +14,12 @@
     "safari"
   ],
   "homepage": "https://cupertino.mgcrea.io",
-  "bugs": "https://github.com/mgcrea/mcp-cupertino/issues",
+  "bugs": "https://github.com/mgcrea/cupertino/issues",
   "license": "MIT",
   "author": "Olivier Louvignes <olivier@mgcrea.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mgcrea/mcp-cupertino.git",
+    "url": "git+https://github.com/mgcrea/cupertino.git",
     "directory": "packages/safari"
   },
   "bin": {

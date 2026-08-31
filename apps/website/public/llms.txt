@@ -76,6 +76,6 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
 
 ## Links
 
-- Source: https://github.com/mgcrea/mcp-cupertino
-- How it ships, and why not the App Store: https://github.com/mgcrea/mcp-cupertino/blob/main/docs/distribution.md
-- What is open, what is sold: https://github.com/mgcrea/mcp-cupertino/blob/main/docs/licensing.md
+- Source: https://github.com/mgcrea/cupertino
+- How it ships, and why not the App Store: https://github.com/mgcrea/cupertino/blob/main/docs/distribution.md
+- What is open, what is sold: https://github.com/mgcrea/cupertino/blob/main/docs/licensing.md

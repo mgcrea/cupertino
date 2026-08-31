@@ -442,7 +442,7 @@ appcast: ## Sign the release zip and write a one-item appcast
 	"      <sparkle:shortVersionString>$$version</sparkle:shortVersionString>" \
 	'      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>' \
 	"      <description><![CDATA[$$notes]]></description>" \
-	"      <enclosure url=\"https://github.com/mgcrea/mcp-cupertino/releases/download/app-v$$version/Cupertino.zip\"" \
+	"      <enclosure url=\"https://github.com/mgcrea/cupertino/releases/download/app-v$$version/Cupertino.zip\"" \
 	"        type=\"application/octet-stream\" $$sig/>" \
 	'    </item>' \
 	'  </channel>' \

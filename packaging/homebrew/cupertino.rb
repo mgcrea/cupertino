@@ -10,8 +10,8 @@ cask "cupertino" do
   version "@@VERSION@@"
   sha256 "@@SHA256@@"
 
-  url "https://github.com/mgcrea/mcp-cupertino/releases/download/app-v#{version}/Cupertino.zip",
-      verified: "github.com/mgcrea/mcp-cupertino/"
+  url "https://github.com/mgcrea/cupertino/releases/download/app-v#{version}/Cupertino.zip",
+      verified: "github.com/mgcrea/cupertino/"
   name "Cupertino"
   desc "Menu bar broker giving MCP clients access to your Apple apps"
   homepage "https://cupertino.mgcrea.io/"

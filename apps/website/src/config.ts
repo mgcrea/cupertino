@@ -15,7 +15,7 @@ export const SITE_URL = `https://${SITE_DOMAIN}`;
 export const APP_NAME = "Cupertino";
 export const BUNDLE_ID = "io.mgcrea.cupertino";
 
-export const REPO_URL = "https://github.com/mgcrea/mcp-cupertino";
+export const REPO_URL = "https://github.com/mgcrea/cupertino";
 
 export const ISSUES_URL = `${REPO_URL}/issues`;
 export const DOCS = {

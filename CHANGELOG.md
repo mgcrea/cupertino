@@ -658,12 +658,12 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.4.0...HEAD
-[1.4.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.1...app-v1.4.0
-[1.3.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.3.0...app-v1.3.1
-[1.3.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.2...app-v1.3.0
-[1.2.2]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.1...app-v1.2.2
-[1.2.1]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.2.0...app-v1.2.1
-[1.2.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.1.0...app-v1.2.0
-[1.1.0]: https://github.com/mgcrea/mcp-cupertino/compare/app-v1.0.0...app-v1.1.0
-[1.0.0]: https://github.com/mgcrea/mcp-cupertino/releases/tag/app-v1.0.0
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...HEAD
+[1.4.0]: https://github.com/mgcrea/cupertino/compare/app-v1.3.1...app-v1.4.0
+[1.3.1]: https://github.com/mgcrea/cupertino/compare/app-v1.3.0...app-v1.3.1
+[1.3.0]: https://github.com/mgcrea/cupertino/compare/app-v1.2.2...app-v1.3.0
+[1.2.2]: https://github.com/mgcrea/cupertino/compare/app-v1.2.1...app-v1.2.2
+[1.2.1]: https://github.com/mgcrea/cupertino/compare/app-v1.2.0...app-v1.2.1
+[1.2.0]: https://github.com/mgcrea/cupertino/compare/app-v1.1.0...app-v1.2.0
+[1.1.0]: https://github.com/mgcrea/cupertino/compare/app-v1.0.0...app-v1.1.0
+[1.0.0]: https://github.com/mgcrea/cupertino/releases/tag/app-v1.0.0
