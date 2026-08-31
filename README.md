@@ -383,8 +383,19 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 
 The **Activity** window records tool names and the arguments each was called with. Message
 contents — a mail body, a message, a note's text — are blanked unless you turn them on for that
-surface, and results are recorded only for a surface that asks. Nothing is written to disk: the
-log is a bounded ring in memory, cleared when Cupertino quits.
+surface, and results are recorded only for a surface that asks. Nothing is written to disk unless
+you ask for it: by default the log is a bounded ring in memory, cleared when Cupertino quits.
+
+Settings › Activity turns on a durable **audit log**: append-only JSONL under Application Support,
+0600, in segments, with retention by age and size. Whether that file carries arguments is a second
+switch, and whether it carries message contents is a third — getting a mail body onto disk takes
+three deliberate acts, because that is what it is.
+
+Each record carries a hash of the one before it, so an edited field, a removed record or a truncated
+file can be detected. That is the whole claim: it catches tampering by something that does not know
+it is a chain. It is **not** proof against anyone who can write the file, because they can recompute
+it. Export writes the segments plus a manifest; signing is optional, proves the export came from
+this Mac unaltered, and means nothing to a recipient who was not given the key some other way.
 It is the answer to "what did the assistant just do with my mail?", and the reason the servers run
 under an app you can see rather than inside whichever editor spawned them.
 

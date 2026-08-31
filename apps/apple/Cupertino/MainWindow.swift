@@ -470,8 +470,10 @@ struct MainView: View {
       // shipped; it gained the second sentence when arguments did.
       Text(
         "Tool, prompt and resource names, and the arguments each was called with. Message "
-          + "contents and results are per-surface and off unless you turn them on. Nothing here "
-          + "is written to disk.")
+          + "contents and results are per-surface and off unless you turn them on. "
+          + (AuditLog.isEnabled
+            ? "An audit log is being kept on disk — see Settings › Activity."
+            : "Nothing here is written to disk."))
         .font(.caption)
         .foregroundStyle(.secondary)
         // Bounded, and it has to be. `fixedSize(horizontal: false, vertical:
