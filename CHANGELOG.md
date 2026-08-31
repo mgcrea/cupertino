@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.5.0`,
-`notes-v1.5.0`, `reminders-v1.5.0`, `core-v1.5.0` for the npm packages, and `app-v1.5.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.6.0`,
+`notes-v1.6.0`, `reminders-v1.6.0`, `core-v1.6.0` for the npm packages, and `app-v1.6.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.6.0] - 2026-08-31
 
 ### Added
 
@@ -74,17 +74,21 @@ summary.
   dispatches nothing at all. Clicking and filling belong to the extension lane, where Safari
   grants one website at a time; they are not built.
 
-  Two disclosures the caller cannot infer, both carried in the tool output: these verbs LAUNCH
-  Safari when it is not running, and a Reading List add is `verified: true` or `null`, never
-  `false` — Safari writes `Bookmarks.plist` on its own schedule, so an add that worked is
-  routinely invisible a moment later, and a caller that read that as failure would retry into a
-  duplicate that no verb can remove.
+  Three disclosures the caller cannot infer, all carried in the tool output or its description:
+  these verbs LAUNCH Safari when it is not running; a Reading List add FETCHES the page in the
+  background, so saving a link contacts that host from the user's browser; and an add is
+  `verified: true` or `null`, never `false` — Safari writes `Bookmarks.plist` on its own
+  schedule, so an add that worked is routinely invisible a moment later, and a caller that read
+  that as failure would retry into a duplicate that no verb can remove.
 
   The JXA was written from the dictionary and measured afterwards, which is the reverse of how
   every other lane here landed — `scripts/probe-safari-write.mjs` is the instrument, and it found
   the uncertain idiom sound: `tab-push` in 166 ms, `current-tab` in 108 ms, the Reading List add
-  in 148 ms, and the `open location` fallback never fired. How long Safari takes to write an added
-  item into `Bookmarks.plist` is still unknown, which is why `verified` may be null.
+  in 148 ms, and the `open location` fallback never fired. It also found the shipped tool
+  advertising a `title` parameter Safari overrules: a custom title survives only for a URL that
+  does not resolve, which is both why the description now calls it best-effort and how the
+  background fetch was discovered. How quickly Safari commits an add to `Bookmarks.plist` is still
+  unmeasured, which is why `verified` may be null.
 
 ### Changed
 
@@ -105,6 +109,15 @@ summary.
   directory.
 
 ### Fixed
+
+- **A composer shrunk to hide the citation-stripping flash stayed shrunk.** Mail persists the
+  compose window's frame, so the [1, 1] window pushed off-screen while quotes were stripped was
+  inherited by the next composer opened by hand — and on a send that only saves a draft, that was
+  the very window the caller had just been told to review in Mail. The frame is read before the
+  window moves (once off-screen the window server answers with what it clamped to, not what you
+  chose) and restored, position first, before the caller sees the window again — on the failure
+  path too, so a strip that throws does not cost you your composer. A window whose geometry cannot
+  be read back is left alone rather than hidden with no way to put it back.
 
 - **The Safari extension row no longer offers a button that cannot work.** It showed "Open Safari…"
   for every state that was not enabled, including `notInstalled` — which is the normal answer on a
@@ -899,7 +912,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...HEAD
+[1.6.0]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...app-v1.6.0
 [1.5.0]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...app-v1.5.0
 [1.4.0]: https://github.com/mgcrea/cupertino/compare/app-v1.3.1...app-v1.4.0
 [1.3.1]: https://github.com/mgcrea/cupertino/compare/app-v1.3.0...app-v1.3.1
