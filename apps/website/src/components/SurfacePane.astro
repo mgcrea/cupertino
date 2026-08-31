@@ -41,10 +41,13 @@ import SectionHeader from "./SectionHeader.astro";
     padding at all — it borrows its gap from whatever precedes it — so this
     section's bottom padding is what keeps the two apart. */}
 <section class="wrap py-[96px]">
-  <SectionHeader eyebrow="The app" heading="One pane per<br />surface.">
-    Cupertino is a window you can open, not a background process. Each surface gets a pane: whether
-    the app can be driven, whether its store can be read, who is talking to it, and what it can
-    currently say.
+  {/* Eyebrow and heading both stay clear of `Screens.astro` further down, which
+      owns "The app" over "A window, not a background process." This section is
+      the narrower thing — one pane — and saying so in prose here would state
+      that section's heading twice on one page. */}
+  <SectionHeader eyebrow="The window" heading="One pane per<br />surface.">
+    Every Apple app Cupertino brokers gets its own pane: whether it can be driven, whether its store
+    can be read, who is talking to it, and what it can currently say.
   </SectionHeader>
 
   {/* No heading in the caption — `SectionHeader` above carries it, and stating
