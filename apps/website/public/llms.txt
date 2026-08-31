@@ -38,15 +38,16 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
   off no Apple Event is ever sent. Roughly 3% of messages across all history keep their text only
   in an archived blob that SQL cannot reach, and since Apple stopped writing the plain column in
   early 2026 that is ~100% of recent ones, so the server decodes them.
-- Safari — 6 tools, all always registered. `@mgcrea/mcp-apple-safari`. History, live tabs, bookmarks
+- Safari — 7 tools, all always registered. `@mgcrea/mcp-apple-safari`. History, live tabs, bookmarks
   and the Reading List, read-only. The one surface whose two lanes see almost disjoint things rather
   than the same thing at different speeds: Apple Events sees what is open right now, the file lane
   sees everything except that. `list_tabs` is the only tool in the bundle that works with no Full
-  Disk Access at all — it needs an Automation grant instead. There is no write tool and no
-  `do JavaScript` tool, so nothing reads page content: the latter needs a developer-menu toggle that
-  is not a TCC grant and whose state cannot be read, so diagnostics could never say in advance
-  whether it would work. There is no second route either — Safari exposes no AXWebArea for its page
-  content, so the Accessibility lane that reaches Mail's composer does not reach a web page.
+  Disk Access at all — it needs an Automation grant instead. Page content comes from a bundled
+  Safari extension, enabled in Safari and allowed per website, and `apple_safari_read_page` returns
+  it as text or HTML — a snapshot from when the page loaded, always carrying its age. There is no
+  write tool and no `do JavaScript` tool: that verb needs a developer-menu toggle that is not a TCC
+  grant, whose state cannot be read, and which is global rather than per-site. Safari exposes no
+  AXWebArea for page content either, so the extension is the only route.
 - Maps — 10 tools, 2 behind the write gate. Favourites, Guides, recents and places filed in no Guide, with coordinates; saves and removes favourites. `@mgcrea/mcp-apple-maps`
 
 ## Price

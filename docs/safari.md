@@ -271,7 +271,16 @@ real `osascript` runner. That found one bug this document's version also has: th
 `WebBookmarkTypeList` whose `Title` is the empty string, so treating any non-null title as a path
 segment prefixes every folder path with a leading slash.
 
-## A Safari Web Extension is the only remaining route, and it is viable
+## The Safari Web Extension lane, built
+
+**Shipped.** `apps/apple/CupertinoSafariExtension` captures a page when it loads on a website the
+user has allowed it on, and `apple_safari_read_page` reads it. Verified end to end against a real
+page — Hacker News, 3,681 characters of text and 34,907 of HTML, returned through the built server
+over stdio on a run where that same server reported `history=UNREADABLE`. The three lanes really are
+independent: this one needs neither Full Disk Access nor an Automation grant.
+
+The rest of this section is the Phase 0 evidence that said it was payable, kept because the traps it
+names cost real time and will cost it again on the next Apple app that grows an extension.
 
 Measured 2026-08-30/31 on macOS 26.6, against a throwaway signed and notarized probe app. The
 question was whether an extension could do what neither `do JavaScript` nor Accessibility can, and

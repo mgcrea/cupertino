@@ -261,11 +261,17 @@ produce two active tabs. A tab's `history` field being null means **not found in
 pushState commits no history row at all. Each match reports `historyMatch`, and even an `exact` one
 can be a different site when the address is reused, as any `localhost` URL is.
 
-**There is no `do JavaScript` tool, so nothing here reads page content.** That verb needs "Allow
-JavaScript from Apple Events", a Safari developer-menu toggle which is not a TCC grant and whose own
-state cannot be read — so diagnostics could never tell you in advance whether it would work. There
-is no second route either: Safari exposes no `AXWebArea` for its page content, so the Accessibility
-lane that reaches Mail's composer does not reach a web page.
+**Page content comes from a Safari extension, and only for websites you allow it on.**
+`apple_safari_read_page` returns a page as readable text or raw HTML. It is a snapshot taken when
+the page loaded rather than a live read, so every result says when it was captured and how old it
+is — a page you have navigated away from still answers, and saying so is the point.
+
+**There is still no `do JavaScript` tool.** That verb needs "Allow JavaScript from Apple Events", a
+developer-menu toggle which is not a TCC grant and whose own state cannot be read, so diagnostics
+could never tell you in advance whether it would work — and it is global: any process able to send
+Apple Events could then run script in any tab. Safari exposes no `AXWebArea` for page content
+either, so the Accessibility lane that reaches Mail's composer does not reach a web page. The
+extension is the only route, and it is the one Safari scopes per website.
 See [docs/safari.md](docs/safari.md).
 
 ### Maps
