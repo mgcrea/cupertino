@@ -55,6 +55,30 @@ const surfaceCount = SPELLED[SURFACES.length] ?? SURFACES.length;
  * search results, which is the lie the paragraph at the top is about. Both
  * appear together, at the release, or neither does.
  */
+/**
+ * Publisher and site identity. `@id` lets the SoftwareApplication schema below
+ * point at the same organisation rather than restating it.
+ */
+const organizationSchema = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "@id": `${SITE_URL}/#organization`,
+  name: "Magenta Creations",
+  url: "https://mg-crea.com",
+  email: "support@mgcrea.io",
+  sameAs: ["https://mg-crea.com", "https://github.com/mgcrea"],
+};
+
+const websiteSchema = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "@id": `${SITE_URL}/#website`,
+  name: APP_NAME,
+  url: SITE_URL,
+  publisher: { "@id": `${SITE_URL}/#organization` },
+  inLanguage: "en",
+};
+
 const schema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -85,7 +109,7 @@ const schema = {
 };
 ---
 
-<Layout schema={schema}>
+<Layout schema={[organizationSchema, websiteSchema, schema]}>
   <Nav />
   <main>
     <Hero />
