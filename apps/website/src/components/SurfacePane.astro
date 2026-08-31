@@ -1,0 +1,70 @@
+---
+/**
+ * The real app, one scroll below the hero.
+ *
+ * This is one of the six captures written into src/assets/shots by
+ * `make screenshots`; the other five stay in `Screens.astro`. It is promoted
+ * out of that section for two reasons the section itself argues for.
+ *
+ * `Screens.astro` says the hand-drawn macOS mocks — `MenuBar.astro`,
+ * `Grant.astro`, `Activity.astro` — exist "so a reader can check the drawings
+ * against it". Left at the eighth section, the thing to check them against
+ * arrived five sections AFTER the drawings. It comes first now, so what follows
+ * reads as a diagram of something already seen.
+ *
+ * And `Hero.astro` records that the visual it replaced "put nothing
+ * Apple-app-shaped above the fold". The hero card answers that with
+ * `SurfaceGlyph` line drawings, which are deliberately not Apple's icons and
+ * deliberately do not look like them. This shot is where the reader sees the
+ * apps they actually recognise — Mail, Notes, Reminders, Calendar, Contacts,
+ * Messages, Safari and Maps in the sidebar, drawn by macOS at capture time
+ * because `SurfaceIcon.swift` asks `NSWorkspace` for them. That is the app's
+ * own UI photographed, which is why it is allowed here and exporting the same
+ * icons into `public/` is not. See the header of `SurfaceGlyph.astro`.
+ *
+ * The image is IMPORTED, not copied. It is the same file `Screens.astro` reads,
+ * and `make screenshots` deletes every .png in that directory on every run —
+ * parking a duplicate anywhere else would go stale on the next capture. To
+ * change what this shows, change the fixture in
+ * apps/apple/Cupertino/DemoSeed.swift and re-run.
+ *
+ * `#shot-surface` moved here with the figure. The anchor predates this section
+ * and still resolves; the `shot-` prefix is what keeps it from colliding with
+ * `Activity.astro`'s bare `#activity`.
+ */
+import { Picture } from "astro:assets";
+import surfaceShot from "../assets/shots/surface.png";
+import SectionHeader from "./SectionHeader.astro";
+---
+
+{/* `py-[96px]` matches `Examples` above. `MenuBar` below carries no top
+    padding at all — it borrows its gap from whatever precedes it — so this
+    section's bottom padding is what keeps the two apart. */}
+<section class="wrap py-[96px]">
+  <SectionHeader eyebrow="The app" heading="One pane per<br />surface.">
+    Cupertino is a window you can open, not a background process. Each surface gets a pane: whether
+    the app can be driven, whether its store can be read, who is talking to it, and what it can
+    currently say.
+  </SectionHeader>
+
+  {/* No heading in the caption — `SectionHeader` above carries it, and stating
+      it twice on one screen reads as a mistake. */}
+  <figure id="shot-surface" class="reveal m-0 scroll-mt-24">
+    {/* Widths are the rendered CSS widths, not the source's — the shot is
+        2240px wide at 2x, so 1120 is the 1x plate and 2240 the retina one.
+        avif then webp, with the PNG as the fallback the <picture> keeps. */}
+    <Picture
+      src={surfaceShot}
+      alt="Cupertino's Mail pane: automation allowed, the Envelope Index readable, writes enabled, 20 tools · 3 prompts · 3 resources, and five connected clients."
+      widths={[720, 1120, 2240]}
+      sizes="(min-width: 1180px) 1120px, 100vw"
+      formats={["avif", "webp"]}
+      fallbackFormat="png"
+      class="block h-auto w-full rounded-[14px] border border-rule-2 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+    />
+    <figcaption class="mt-5 max-w-[76ch] text-[14.5px] leading-[1.65] text-pretty text-fg-dim">
+      The tool, prompt and resource count comes from asking the server itself, live — so flipping the
+      write toggle above it changes what it reports.
+    </figcaption>
+  </figure>
+</section>

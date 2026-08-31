@@ -19,11 +19,18 @@ workspace at once. oxfmt formats the `.css`, `.mjs` and `.ts` here but leaves `.
 
 ## `src/assets/shots/` belongs to the pipeline
 
-The five app screenshots in `Screens.astro` are captured, not placed. `make screenshots` from the
-repository root builds Cupertino, launches it in demo mode onto each screen, checks the result
-against committed goldens, and writes the images here.
+The six app screenshots are captured, not placed. `make screenshots` from the repository root builds
+Cupertino, launches it in demo mode onto each screen, checks the result against committed goldens,
+and writes the images here.
 
-Two of the five — `prompt` and `activity` — are the _same_ Log pane, and they earn separate slots
+They are split across two components, and the split is the point. `surface` is promoted into
+**`SurfacePane.astro`**, one scroll below the hero — the drawn macOS mocks below it (`MenuBar`,
+`Grant`, `Activity`) exist to be checked against a real capture, so a capture has to come before
+them, and that is the pane where the Apple apps are visibly the subject. The other five stay in
+**`Screens.astro`**. One pipeline, one directory, two readers: nothing about `make screenshots`
+changes, and neither component may copy a PNG out of here.
+
+Two of the five in `Screens.astro` — `prompt` and `activity` — are the _same_ Log pane, and they earn separate slots
 only because their fixtures differ: one question's trace, then the general log with a refused write
 in it. The captions are what carries that; captioned loosely they read as the same picture twice.
 `prompt`'s fixture is `DemoSeed.heroTurnLogLines`, a hand-kept mirror of `HERO_TURN` in
@@ -31,7 +38,8 @@ in it. The captions are what carries that; captioned loosely they read as the sa
 
 The figures' anchors are prefixed `shot-`. `Activity.astro` owns the bare `#activity` and the hero's
 "every call visible" chip points at it, so an unprefixed id here is a duplicate in the page and an
-ambiguous anchor.
+ambiguous anchor. `#shot-surface` moved up with its figure and now lives in `SurfacePane.astro`; the
+anchor still resolves, just much earlier in the page.
 
 **That command deletes every `.png` in `src/assets/shots/` before writing.** Do not park anything
 else in the directory, and do not edit the files — the next capture overwrites them. To change what

@@ -13,6 +13,7 @@ import Pricing from "../components/Pricing.astro";
 import SafariPages from "../components/SafariPages.astro";
 import Screens from "../components/Screens.astro";
 import Status from "../components/Status.astro";
+import SurfacePane from "../components/SurfacePane.astro";
 import Surfaces from "../components/Surfaces.astro";
 import ToolMarquee from "../components/ToolMarquee.astro";
 import WriteGate from "../components/WriteGate.astro";
@@ -118,6 +119,12 @@ const schema = {
         is the section that says what that means before the page starts arguing
         about permissions. */}
     <Examples />
+    {/* Then the app itself, photographed, before any of the drawn mocks. It
+        answers what Examples just asked — here is the thing serving those
+        calls — and it is the picture `MenuBar`, `Grant` and `Activity` are
+        meant to be checkable against, which only works if it comes first.
+        Promoted out of `Screens`, which keeps the other five captures. */}
+    <SurfacePane />
     <MenuBar />
     <ToolMarquee />
     <Grant />

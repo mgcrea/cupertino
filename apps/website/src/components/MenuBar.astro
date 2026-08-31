@@ -1,14 +1,16 @@
 ---
 /**
- * The first product shot: the surface Cupertino shows uninvited. It is drawn
- * rather than captured because a menu-bar dropdown is a high-layer panel that
- * `appshot` cannot photograph — it only takes ordinary windows — and because
- * this strip has to reflow on a phone, which an image cannot.
+ * The surface Cupertino shows uninvited. It is drawn rather than captured
+ * because a menu-bar dropdown is a high-layer panel that `appshot` cannot
+ * photograph — it only takes ordinary windows — and because this strip has to
+ * reflow on a phone, which an image cannot.
  *
- * It is no longer the ONLY thing there is to show. `Screens.astro` carries real
- * captures of the main window, so keep this drawing honest against them: the
- * row list here is built from `Surface.all`, the same table the app's sidebar
- * uses.
+ * It used to be the first product shot on the page, and it is neither the first
+ * nor the only one now. `SurfacePane.astro` sits directly above with a real
+ * capture of the main window, and `Screens.astro` carries five more further
+ * down — so a reader arrives here having just seen the thing this is a drawing
+ * of. Keep it honest against them: the row list is built from `Surface.all`,
+ * the same table the app's sidebar uses.
  *
  * Beside it, one exchange in a host: the two tools a real question actually
  * calls, with their measured timings and the lane each one came off.
