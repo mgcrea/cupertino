@@ -12,6 +12,54 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **The Safari pane reports the extension.** Safari is the only surface with three independent
+  lanes, and its pane rendered two of them: Access is the Apple Events lane, Store is the file
+  lane, and the extension — the only route to page content, and the only thing
+  `apple_safari_read_page` runs on — was not shown at all. A Page content card now sits between
+  Store and Capabilities, saying whether the extension is enabled, how many pages it has captured
+  and how fresh the newest one is, with the two setup steps behind a disclosure.
+
+  It belongs in the app because it cannot live anywhere else: a disabled extension leaves its last
+  captures on disk and stops adding more, so `apple_safari_diagnostics` goes on reporting a healthy
+  store that answers with an ever-older page. Only Safari knows the switch is off, and only the
+  containing app may ask it. The count is what makes the row worth more than the switch — Safari
+  grants the extension one website at a time, so "enabled" and "allowed nowhere" look identical
+  until something counts the captures. Verified against the running extension: 4 captures and a
+  261-second newest age, the same two numbers `apple_safari_diagnostics` reported off the same
+  directory.
+
+### Fixed
+
+- **The Safari extension row no longer offers a button that cannot work.** It showed "Open Safari…"
+  for every state that was not enabled, including `notInstalled` — which is the normal answer on a
+  locally built app, where the appex is stripped because Safari will not list an extension whose
+  container is not notarized. The button is now absent in the two states nothing in Safari can
+  resolve, the same way the Automation row stopped offering "Allow…" for states that cannot be
+  re-prompted.
+
+- **"Open Safari…" opens Safari's Extensions settings**, with Cupertino selected, rather than
+  launching the browser and leaving someone to find a three-level menu. There is still no
+  `x-apple.systempreferences:` pane for it, which is why this was a plain launch; there is a
+  `SFSafariApplication` call that does exactly this, and the launch is kept as its fallback.
+
+- **The extension's state was only read when a window opened.** It is the one status here that
+  someone changes in another app and comes straight back to check, and it is re-read on every visit
+  to the Safari pane now.
+
+- **A Safari error that was not "no such extension" reported as "not installed".** `SFErrorCode` has
+  three values and only the first means that; the other two are "we could not ask", which is a
+  state the enum already had. Reporting them as a missing extension is the one answer that sends
+  someone to reinstall the app.
+
+- **`notInstalled` claimed a cause that was only true of a local build.** It said "not in this build
+  — a locally built app ships no extension" to everyone. In a release build the likely cause is
+  different and so is the fix: Safari will not list an extension whose container is translocated or
+  outside `/Applications`, which `InstallLocation` already knew and no row was asking it.
+
 ## [1.5.0] - 2026-08-31
 
 ### Added
@@ -779,7 +827,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...HEAD
+[1.5.0]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...app-v1.5.0
 [1.4.0]: https://github.com/mgcrea/cupertino/compare/app-v1.3.1...app-v1.4.0
 [1.3.1]: https://github.com/mgcrea/cupertino/compare/app-v1.3.0...app-v1.3.1
 [1.3.0]: https://github.com/mgcrea/cupertino/compare/app-v1.2.2...app-v1.3.0
