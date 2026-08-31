@@ -6,16 +6,20 @@ import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerHistoryTools } from "./history.js";
 import { registerPageTools } from "./pages.js";
 import { registerTabTools } from "./tabs.js";
+import { registerWriteTools } from "./writes.js";
 
 export type ToolContext = {
   /**
-   * Accepted and deliberately unused.
+   * Gates the two tools that change something outside this process.
    *
-   * v1 registers no mutating tool, so there is nothing for the flag to gate.
-   * The shape is kept so this surface matches the others and so a write path
-   * has an obvious place to hang itself. `tools.test.ts` asserts the tool list
-   * is IDENTICAL with writes on and off, which is what stops one being added
-   * here without that decision being taken deliberately.
+   * Both are Apple Events — `open_url` and `add_reading_list_item` — so with
+   * writes off this server sends an Apple Event for exactly one thing, reading
+   * live tabs, and changes nothing anywhere. Neither tool needs Full Disk
+   * Access, which makes this the one surface where the write lane can work on a
+   * machine whose read lane cannot.
+   *
+   * What the flag does NOT gate, because it does not exist: anything that acts
+   * inside a page. See `writes.ts`.
    */
   allowWrites: boolean;
 };
@@ -33,11 +37,13 @@ export type ToolContext = {
 export const registerTools = (
   server: McpServer,
   client: AppleSafariClient,
-  _ctx: ToolContext,
+  ctx: ToolContext,
 ): void => {
   registerDiagnosticsTools(server, client);
   registerHistoryTools(server, client);
   registerTabTools(server, client);
   registerPageTools(server, client);
   registerBookmarkTools(server, client);
+  if (!ctx.allowWrites) return;
+  registerWriteTools(server, client);
 };

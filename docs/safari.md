@@ -405,6 +405,103 @@ as opposed to the extension pushing. This decides whether a tool returns live co
 carrying a `capturedAt`, and it is the one thing Phase 0 did not settle. Push demonstrably works, so
 a push-with-freshness-disclosure design is shippable without it.
 
+**There is a second door to that API, and it is the better one.** Safari's dictionary carries a
+hidden command — `dispatch message to extension` (`sfridste`), direct parameter "a dictionary
+describing the message" — which is `SFSafariApplication.dispatchMessage` reachable by Apple Event.
+Confirmed present in `sdef /Applications/Safari.app` on macOS 26.6 by
+`scripts/probe-safari-write.mjs` (Q1); its dictionary shape, and whether it wakes a non-persistent
+MV3 service worker, are unmeasured.
+
+Why it matters more than the Swift call: `SafariWebExtensionHandler.swift` records that there is no
+channel from the app into a running MCP server, so an app-driven pull could not be triggered by a
+tool. An Apple Event can be sent BY the server, which removes the app from the path entirely. That
+makes it the candidate for a command channel into the extension — the thing a click-or-fill tool
+would need, and the reason such a tool is not on the Apple Events lane. See "Writes, built" below.
+
+## Writes, built
+
+**Shipped, and smaller than the surface could support on purpose.** Two verbs:
+`apple_safari_open_url` and `apple_safari_add_reading_list_item`, behind `APPLE_SAFARI_ALLOW_WRITES`
+like every other surface's writes. `surfaces.json` flipped `supportsWrites` to true with them.
+
+**The reason `supportsWrites` was false was half right, and the half that was wrong chose the first
+verb.** This document said opening a URL or adding to the Reading List "is an Apple Event that
+navigates a real, visible browser". True of the first. `add reading list item` opens nothing, loads
+nothing and moves nothing on screen — it is the only write in the bundle with no visible effect at
+all, which is why it was the one to build first.
+
+**Neither write needs Full Disk Access.** Both are Apple Events, so this is the one surface in the
+bundle whose write lane works on a machine where its read lane does not. The `verified` field on the
+Reading List add is the exception and degrades honestly when the grant is missing.
+
+### The scheme allowlist is the security boundary, not input validation
+
+`do JavaScript` is still not shipped, for the reasons this document has given since the beginning:
+the toggle is global, permanent, unscoped, and its state cannot be read, so diagnostics can never say
+in advance whether the verb would work.
+
+Adding a navigation verb puts that decision under pressure from an unexpected direction. **Navigating
+a tab to a `javascript:` URL is `do JavaScript` through the front door** — same capability, no
+toggle, no consent, reached through a tool whose description says it opens web pages. `file:` is the
+same shape one step down: a navigation verb that reads local files.
+
+So the write lane accepts `http` and `https` and nothing else, as an allowlist rather than a
+blocklist, enforced in `client/safari.ts` before any Apple Event is sent AND again inside the JXA.
+`test/writes.test.ts` asserts a refusal sends no Apple Event at all — a refusal that still dispatched
+would be a refusal in name only.
+
+Whether Safari itself would accept such a URL is unmeasured; `scripts/probe-safari-write.mjs
+--scheme-gate` asks. The allowlist does not depend on the answer.
+
+### `liveTabs: false` outranks `allowWrites`
+
+That flag is documented as leaving a server that "never sends an Apple Event and so never triggers
+the Automation prompt". A write that ignored it would break the promise silently, on the one machine
+whose owner asked for it — and invisibly, because the tool list does not vary with runtime state. So
+both writes refuse when it is off, naming the variable.
+
+### The Reading List lags its own file, and the tool says so rather than guessing
+
+Safari owns `Bookmarks.plist` and writes it on its own schedule, so an item that was genuinely added
+can be absent from the file a moment later. `verified` therefore has three states and not two: `true`
+(re-read and found), `null` with a reason (not visible yet, or the file is unreadable), and **never
+`false`**. Reporting an unconfirmed write as a failed one is the worse error, because the caller
+retries — and the Reading List accepts duplicates while `sdef` offers no verb to remove one. The lag
+itself is unmeasured; `--reading-list` in the probe measures it, and if it turns out to be instant the
+tool can promise more than it does now.
+
+Safari's hidden `sync all plist to disk` (`sfriplst`) looks like the fix for the lag. It is
+undocumented and unmeasured, and is not used.
+
+### What is deliberately not here
+
+**Anything that acts inside a page** — click, fill, scroll. The only Apple Event that could is
+`do JavaScript`, and the argument above rules it out. That capability belongs on the extension lane,
+where Safari grants access one website at a time rather than all of them forever. It needs a command
+channel INTO the extension, which does not exist today: `dispatch message to extension` is the
+candidate, and it is unmeasured. Until then Cupertino can open a page and read it, and cannot touch
+it.
+
+**`close_tab`**, because closing destroys state that cannot be recovered — a half-filled form, a page
+that no longer resolves — and it is the one verb here that doing again differently does not undo. Not
+hard; a separate decision.
+
+**`search_web`**, which is `open_url` with the search engine's URL.
+
+### Unverified, and this is the one place this package guesses
+
+Every other lane here was measured before it shipped. These scripts were not: they were written on a
+machine with no Automation grant, so the JXA is reasoned from the dictionary rather than observed.
+`osacompile` proves they parse; nothing yet proves they do what they say.
+
+The specific uncertainty is the new-tab idiom — `Safari.Tab({url}).push()` into a window's tab list.
+The script falls back to `open location` when it throws and REPORTS which route it took, so the first
+real run says so out loud instead of leaving it to be inferred, and the tool discloses that the
+fallback placed the page wherever Safari chose. `scripts/probe-safari-write.mjs --open` is the
+instrument. Q0 and Q1 of that probe have been run on macOS 26.6: Apple Events reach Safari, and the
+dictionary still carries `add reading list item` with both optional parameters and a writable
+`tab.URL`.
+
 ## Still open
 
 - ~~**Reading List counts.**~~ Measured: 6 folders, 200 leaves, tree depth 2. The Reading List
@@ -419,8 +516,9 @@ a push-with-freshness-disclosure design is shippable without it.
 - **`Downloads.plist`** — 9,431 bytes, still unexamined. `packages/safari` reports its presence in
   diagnostics and never parses it.
 - **`CloudTabs.db`** — absent here, so tabs open on other devices are unmeasured.
-- **Writes.** Opening a URL or adding to the Reading List is an Apple Event and was not attempted;
-  it navigates a real browser.
+- ~~**Writes.**~~ Built, for two verbs — see "Writes, built" above. What remains open is narrower
+  and is listed there: the JXA idioms are reasoned rather than observed, and
+  `scripts/probe-safari-write.mjs` is the instrument that closes that.
 - ~~**No history schema fixture captured.**~~ Captured:
   `packages/safari/test/fixtures/safari-history.sql`, schema only, replayed by
   `packages/safari/test/store.test.ts`. Every open question it was meant to settle came back the

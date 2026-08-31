@@ -14,6 +14,36 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **Safari can open a page and save one for later.** `apple_safari_open_url` opens a URL in a new
+  tab or in the tab the user is looking at, and `apple_safari_add_reading_list_item` saves one to
+  the Reading List. Both are Apple Events behind `APPLE_SAFARI_ALLOW_WRITES`, so Safari is the
+  first surface whose write lane needs no Full Disk Access at all — and the last surface that had
+  no write lane. `supportsWrites` in `surfaces.json` flips with them.
+
+  The reason it was false gets a correction rather than a reversal. It read "opening a URL or
+  adding to the Reading List is an Apple Event that navigates a real, visible browser", which is
+  true of the first and false of the second: `add reading list item` opens nothing and loads
+  nothing. That is why it was the verb to build first.
+
+  **No `do JavaScript`, and a navigation verb is where that decision gets tested.** Navigating a
+  tab to a `javascript:` URL is that verb through the front door — same capability, without the
+  developer-menu toggle, through a tool whose description says it opens web pages. So both writes
+  take an http/https allowlist, enforced before any Apple Event is sent and again inside the JXA,
+  and `test/writes.test.ts` asserts a refusal dispatches nothing at all. Clicking and filling
+  belong to the extension lane, where Safari grants one website at a time; they are not built.
+
+  Two disclosures the caller cannot infer, both carried in the tool output: these verbs LAUNCH
+  Safari when it is not running, and a Reading List add is `verified: true` or `null`, never
+  `false` — Safari writes `Bookmarks.plist` on its own schedule, so an add that worked is
+  routinely invisible a moment later, and a caller that read that as failure would retry into a
+  duplicate that no verb can remove.
+
+  The JXA is the one lane in this package that shipped reasoned rather than measured; the tab
+  idiom falls back to `open location` and reports which route it took.
+  `scripts/probe-safari-write.mjs` is the instrument that closes it.
+
 ### Changed
 
 - **The Safari pane reports the extension.** Safari is the only surface with three independent

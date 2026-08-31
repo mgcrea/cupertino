@@ -11,12 +11,17 @@ import { z } from "zod";
  * Configuration is environment-only — this server holds no secret at all. Its
  * access is the macOS permission the user granted, which is the whole point.
  *
- * What is deliberately ABSENT: anything gating writes. `allowWrites` is
- * inherited from `BaseConfigSchema` and ignored, because v1 registers no
- * mutating tool. docs/safari.md records that no write was ever probed, and the
- * reason is worth restating: opening a URL or adding to the Reading List is an
- * Apple Event that navigates a real, visible browser. That is not a measurement
- * to take without asking, and not a capability to ship untested.
+ * `allowWrites` is inherited from `BaseConfigSchema` and, since the navigation
+ * lane landed, actually gates something: `open_url` and
+ * `add_reading_list_item`. It was ignored for v1 on the grounds that "opening a
+ * URL or adding to the Reading List is an Apple Event that navigates a real,
+ * visible browser" — true of the first and false of the second, which is what
+ * made the Reading List the right verb to build first.
+ *
+ * `liveTabs` outranks it. That flag promises a server that sends no Apple Event
+ * at all, and a write would break the promise on the one machine whose owner
+ * asked for it, so the writes refuse when it is off — see
+ * `AppleSafariClient.openUrl`.
  */
 const ConfigSchema = BaseConfigSchema.extend({
   /** Explicit history path. Bypasses discovery — for tests and forensic copies. */

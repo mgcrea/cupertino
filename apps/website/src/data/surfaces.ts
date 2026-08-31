@@ -242,18 +242,19 @@ export const SURFACES: readonly Surface[] = [
       "apple_safari_list_reading_list",
       "apple_safari_diagnostics",
     ],
-    // Empty on purpose, and the only empty column here. Opening a URL or adding
-    // to the Reading List navigates a real, visible browser, and no write on
-    // this surface was ever probed. There is also no `do JavaScript` tool, so
-    // page content comes from the bundled Safari extension instead: that verb
-    // needs a developer-menu toggle which is not a TCC grant and whose own
-    // state cannot be read, so diagnostics could never say in advance whether
-    // it would work, and Safari exposes no AXWebArea for page content either
-    // (measured, macOS 26.6). The extension is scoped per website by Safari
-    // itself, which the toggle is not. See docs/safari.md.
-    write: [],
+    // Two verbs that move a browser between pages, and nothing that acts
+    // inside one. There is deliberately no `do JavaScript` tool: it needs a
+    // developer-menu toggle which is not a TCC grant and whose own state
+    // cannot be read, so diagnostics could never say in advance whether it
+    // would work — and Safari exposes no AXWebArea for page content either
+    // (measured, macOS 26.6). So page content comes from the bundled Safari
+    // extension, which Safari scopes per website, as the toggle is not.
+    // The same reasoning is why these two accept http and https URLs only: a
+    // javascript: URL would reach that verb through a navigation tool. See
+    // docs/safari.md.
+    write: ["apple_safari_open_url", "apple_safari_add_reading_list_item"],
     pitch:
-      "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says.",
+      "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says. Opens a URL or saves one for later behind the write gate.",
     withoutGrant:
       "Live tabs and page contents — the only things in the whole bundle that work with no Full Disk Access at all. Tabs need an Automation grant; page contents need the extension, allowed per website.",
   },

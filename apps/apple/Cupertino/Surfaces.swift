@@ -239,31 +239,51 @@ struct Surface: Identifiable, Hashable {
       // An ungranted Safari server is not a slower Safari server, it is a
       // different and much smaller one.
       //
-      // So usesAppleEvents is TRUE while supportsWrites is FALSE, which no
-      // other surface does. Apple Events is a READ lane here, and that does
-      // not breach the lane policy in docs/distribution.md: the policy
-      // forbids a slow Apple Events read lane that DUPLICATES the file lane.
-      // Live tabs are not duplicated by anything. The file lane cannot
-      // answer 'what is open right now' at any price, because Safari never
-      // writes it down.
+      // Apple Events is a READ lane here as well as a write one, which no
+      // other surface does, and that does not breach the lane policy in
+      // docs/distribution.md: the policy forbids a slow Apple Events read
+      // lane that DUPLICATES the file lane. Live tabs are not duplicated by
+      // anything. The file lane cannot answer 'what is open right now' at
+      // any price, because Safari never writes it down.
       //
       // storePath names History.db, but the grant covers a directory:
       // Bookmarks.plist sits beside it and holds the Reading List. One file
       // is named because the status row needs one path to test, and history
       // is the larger half.
       //
-      // supportsWrites is FALSE for v0.1. Opening a URL or adding to the
-      // Reading List is an Apple Event that navigates a real, visible
-      // browser, and docs/safari.md records that no write was ever probed.
+      // supportsWrites was FALSE for v0.1, on the grounds that opening a URL
+      // or adding to the Reading List is an Apple Event that navigates a
+      // real, visible browser. True of the first and false of the second:
+      // add reading list item opens nothing and loads nothing, which is why
+      // it was the write to build first. It covers exactly two tools.
       //
-      // A THIRD permission exists and is deliberately not needed. Safari's
-      // `do JavaScript` requires 'Allow JavaScript from Apple Events', a
-      // developer-menu toggle that is not a TCC grant and whose own state is
-      // unreadable. This server ships no verb that needs it, which is what
+      // The writes need NO Full Disk Access, which nothing else here can say.
+      // Both are Apple Events, so this is the one surface whose write lane
+      // works on a machine where its read lane does not.
+      //
+      // Neither write is undoable by this server. The Reading List has no
+      // remove verb in the dictionary at all, so a duplicate add is
+      // permanent as far as Cupertino is concerned, and the tool says so.
+      //
+      // A THIRD permission exists and is STILL deliberately not needed, and
+      // the write lane is where that gets tested. Safari's `do JavaScript`
+      // requires 'Allow JavaScript from Apple Events', a developer-menu
+      // toggle that is not a TCC grant and whose own state is unreadable.
+      // It is the only verb that can act inside a page, and it is not
+      // shipped: a navigation verb is not a scripting verb. The consequence
+      // is a scheme allowlist rather than a comment — navigating a tab to a
+      // javascript: URL would be `do JavaScript` through the front door, so
+      // the write lane accepts http and https and nothing else. That is what
       // keeps Permissions.swift's two-state model honest for this surface.
+      //
+      // Clicking, typing and scrolling belong to the extension lane, where
+      // Safari gates access one website at a time, not to Apple Events,
+      // which is all-or-nothing and permanent. Unbuilt: it needs a command
+      // channel INTO the extension, and Safari's hidden `dispatch message
+      // to extension` verb is the unmeasured candidate. See docs/safari.md.
       bundleID: "com.apple.Safari",
       usesAppleEvents: true,
-      supportsWrites: false,
+      supportsWrites: true,
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_SAFARI_",

@@ -159,16 +159,32 @@ describe("tool registration", () => {
   });
 
   /**
-   * v1 has no write tool, and that is a decision rather than an omission.
-   * docs/safari.md records that no write on this surface was ever probed —
-   * opening a URL or adding to the Reading List navigates a real, visible
-   * browser. This asserts the list is IDENTICAL with writes on, so adding one
-   * cannot happen without this test being changed deliberately.
+   * The write lane, and the assertion that used to say the opposite.
+   *
+   * This test read "registers the same tools with writes enabled" until the
+   * navigation lane landed — a tripwire so that a write tool could not appear
+   * without somebody deciding to let it. It has been changed deliberately, and
+   * it still does the same job in the other direction: the read set must be
+   * untouched, and exactly two verbs may appear.
    */
-  it("registers the same tools with writes enabled", async () => {
+  it("adds two write tools with writes enabled, and nothing else", async () => {
     const off = await toolNames(await connect());
     const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_WRITES: "true" }));
-    expect(on).toEqual(off);
+    expect(on.filter((n) => !off.includes(n))).toEqual([
+      "apple_safari_add_reading_list_item",
+      "apple_safari_open_url",
+    ]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  /**
+   * The default matters more than the gate. A surface that navigates somebody's
+   * browser must not do it because a flag was forgotten.
+   */
+  it("registers no write tool by default", async () => {
+    const names = await toolNames(await connect());
+    expect(names).not.toContain("apple_safari_open_url");
+    expect(names).not.toContain("apple_safari_add_reading_list_item");
   });
 
   /**

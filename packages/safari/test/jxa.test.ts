@@ -9,24 +9,33 @@ import { describe, expect, it } from "vitest";
 
 import * as bookmarks from "../src/client/jxa/bookmarks.js";
 import * as tabs from "../src/client/jxa/tabs.js";
+import * as writes from "../src/client/jxa/writes.js";
 
 /**
  * JXA scripts are strings, so nothing else in the toolchain looks at them. A
  * typo becomes a runtime failure against a live Safari — the most expensive
  * place to find one. `osacompile` catches it for free.
  */
-const SCRIPTS = [
-  ...Object.entries(tabs).filter(([, v]) => typeof v === "string"),
-  ...Object.entries(bookmarks).filter(([, v]) => typeof v === "string"),
-] as [string, string][];
+const strings = (mod: object): [string, string][] =>
+  Object.entries(mod).filter(([, v]) => typeof v === "string") as [string, string][];
+
+/**
+ * Split, because one assertion below is true of one half and false of the
+ * other. Everything else in this file applies to every script.
+ */
+const READ_SCRIPTS = [...strings(tabs), ...strings(bookmarks)];
+const WRITE_SCRIPTS = strings(writes);
+const SCRIPTS = [...READ_SCRIPTS, ...WRITE_SCRIPTS];
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "client", "jxa");
 
 describe("JXA scripts", () => {
   it("found every script", () => {
-    // Two: live tabs, and the bookmark walk. See the write test below for why
-    // there is no third.
-    expect(SCRIPTS.length).toBe(2);
+    // Two reads — live tabs and the bookmark walk — and two writes: open a URL
+    // and add a Reading List item. A fifth appearing without this number
+    // changing means a script is not being checked by anything below.
+    expect(READ_SCRIPTS.length).toBe(2);
+    expect(WRITE_SCRIPTS.length).toBe(2);
   });
 
   it.each(SCRIPTS)("%s passes the interpolation tripwire", (_name, source) => {
@@ -93,18 +102,51 @@ describe("JXA scripts", () => {
   });
 
   /**
-   * v1 is read-only, and these are the verbs that would change something. All
-   * of them navigate a real, visible browser, and docs/safari.md records that
-   * no write on this surface was ever probed.
+   * The read scripts stay reads. This used to cover every script in the
+   * package, and the write lane is the deliberate exception rather than a
+   * relaxation: the same verbs are still forbidden everywhere they were, and
+   * are now REQUIRED to appear only in `jxa/writes.ts`.
    */
-  it("never navigates or mutates", () => {
-    for (const [, source] of SCRIPTS) {
+  it("never navigates or mutates, outside the write scripts", () => {
+    for (const [, source] of READ_SCRIPTS) {
       expect(source).not.toMatch(/\.close\(/);
       expect(source).not.toMatch(/setValue|\.delete\(/i);
       // Assigning to a tab's URL is how you navigate somebody's browser.
       expect(source).not.toMatch(/\.url\s*=/);
       expect(source).not.toMatch(/\bmake\b|\bopenLocation\b/i);
     }
+  });
+
+  /**
+   * The scheme gate, asserted in the script itself and not only in TypeScript.
+   *
+   * `safari.ts` refuses a non-http(s) URL before any Apple Event is sent, and
+   * that is the check which produces a good error message. This is the one that
+   * still holds if a future caller reaches these scripts by another path — a
+   * `javascript:` URL through a navigation verb is `do JavaScript` by another
+   * name, which is the capability this whole surface declines to offer.
+   */
+  it.each(WRITE_SCRIPTS)("%s refuses a non-http scheme in the script", (_name, source) => {
+    expect(source).toContain("BAD_SCHEME");
+    expect(source).toContain('indexOf("https://")');
+  });
+
+  /**
+   * Safari is launched by any Apple Event sent to it, and both write verbs are
+   * disclosed as doing so. That disclosure is only honest if the scripts read
+   * `running` BEFORE the command that would launch it.
+   */
+  it.each(WRITE_SCRIPTS)("%s measures whether Safari was already running", (_name, source) => {
+    const asked = source.indexOf("S.running()");
+    expect(asked).toBeGreaterThan(-1);
+    // The first verb that would launch Safari. Read `running` after any of
+    // these and the answer is always true, so the disclosure would be a lie
+    // that no test on payloads could catch.
+    const launches = ["openLocation", "addReadingListItem", "S.Tab(", "currentTab.url ="]
+      .map((verb) => source.indexOf(verb))
+      .filter((at) => at > -1);
+    expect(launches.length).toBeGreaterThan(0);
+    expect(asked).toBeLessThan(Math.min(...launches));
   });
 
   /**

@@ -9,11 +9,13 @@ import type { Config } from "../config.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
+  PreconditionError,
   SAFARI_SURFACE,
   SafariHistoryUnavailableError,
 } from "./errors.js";
 import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
+import { ADD_READING_LIST_ITEM, OPEN_URL } from "./jxa/writes.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { urlVariants, type MatchKind } from "./match.js";
 import {
@@ -140,6 +142,46 @@ type TabsPayload = {
     active: boolean;
     frontmost: boolean;
   }[];
+};
+
+export type OpenUrlResult = {
+  /**
+   * Which idiom actually placed the page. `tab-push` and `current-tab` are the
+   * precise routes; either `open-location` spelling means Safari chose where
+   * the page went, so the tab reported below may not be where a caller expects.
+   */
+  route: "current-tab" | "tab-push" | "open-location" | "open-location-fallback" | null;
+  /** Null when it could not be read — never guessed. */
+  launchedSafari: boolean | null;
+  windows: number | null;
+  /** Read back immediately, so a still-loading page reports nulls. */
+  tab: { url: string | null; title: string | null; index: number | null };
+};
+
+export type AddReadingListItemResult = {
+  launchedSafari: boolean | null;
+  /** `true` when re-read and found. Never `false` — see `addReadingListItem`. */
+  verified: true | null;
+  verifyNote: string | null;
+};
+
+/**
+ * The scheme gate, and the security boundary of this whole lane.
+ *
+ * `javascript:` navigates a tab into script execution, which is exactly the
+ * capability `jxa/writes.ts` refuses to ship; `file:` turns a navigation verb
+ * into a local-file reader. An allowlist rather than a blocklist, because the
+ * set of schemes a browser will act on is open-ended and the set this surface
+ * means is two.
+ */
+export const assertNavigableUrl = (url: string): void => {
+  if (!/^https?:\/\//i.test(url)) {
+    throw new PreconditionError(
+      `Refusing to open "${url.slice(0, 80)}". Only http:// and https:// URLs are allowed. ` +
+        `A javascript: URL would execute script in the page, which this server does not offer, ` +
+        `and a file: URL would read local files through the browser.`,
+    );
+  }
 };
 
 export type CreateClientOptions = {
@@ -383,6 +425,102 @@ export class AppleSafariClient {
           previewText: e.previewText,
         })),
     };
+  }
+
+  /**
+   * Open a URL in Safari.
+   *
+   * ## Refused when the Apple Events lane is switched off
+   *
+   * `liveTabs: false` is documented as leaving a server that "never sends an
+   * Apple Event and so never triggers the Automation prompt". A write that
+   * ignored the flag would break that promise silently, on the one machine
+   * whose owner asked for it — so it is refused instead. The flag is about the
+   * lane, not about reads.
+   */
+  async openUrl(input: {
+    url: string;
+    target: "new-tab" | "current-tab";
+    activate: boolean;
+  }): Promise<OpenUrlResult> {
+    this.#assertAppleEventsAllowed("Opening a URL");
+    assertNavigableUrl(input.url);
+    return await this.#osascript.run<OpenUrlResult>(OPEN_URL, {
+      url: input.url,
+      target: input.target,
+      activate: input.activate,
+    });
+  }
+
+  /**
+   * Add an item to the Reading List.
+   *
+   * ## Verification is best-effort, and never turns a success into a failure
+   *
+   * Safari owns `Bookmarks.plist` and writes it on its own schedule, so an item
+   * that was genuinely added can be absent from the file a moment later. The
+   * walk is attempted when the file is readable, and its three outcomes are
+   * kept distinct: `true` (found), `null` with a reason (not visible yet, or
+   * not readable at all), and never `false`. Reporting an unconfirmed write as
+   * a failed one would be the worse error — the caller would retry, and Safari
+   * would end up with two entries.
+   *
+   * Safari's own `sync all plist to disk` verb looks like the fix for the lag.
+   * It is hidden, undocumented and unmeasured, so it is not used here.
+   */
+  async addReadingListItem(input: {
+    url: string;
+    title?: string | undefined;
+    previewText?: string | undefined;
+  }): Promise<AddReadingListItemResult> {
+    this.#assertAppleEventsAllowed("Adding to the Reading List");
+    assertNavigableUrl(input.url);
+
+    const payload = await this.#osascript.run<{ launchedSafari: boolean | null }>(
+      ADD_READING_LIST_ITEM,
+      { url: input.url, title: input.title, previewText: input.previewText },
+    );
+
+    let verified: true | null = null;
+    let verifyNote: string | null =
+      "Full Disk Access is missing, so the Reading List could not be re-read to confirm the add.";
+
+    if (this.located().bookmarks.readable) {
+      try {
+        const { bookmarks } = await this.bookmarks({ readingListOnly: true });
+        const found = bookmarks.some((b) => b.url === input.url);
+        verified = found ? true : null;
+        verifyNote = found
+          ? null
+          : "The item is not in Bookmarks.plist yet. Safari writes that file on its own " +
+            "schedule, so this is expected immediately after an add and does not mean the add " +
+            "failed. Do not retry — that is how a Reading List ends up with two of everything.";
+      } catch {
+        // The walk is a courtesy. Its failure says nothing about the write.
+        verifyNote =
+          "The Reading List could not be re-read to confirm the add. The add itself reported " +
+          "success.";
+      }
+    }
+
+    return { launchedSafari: payload.launchedSafari, verified, verifyNote };
+  }
+
+  /**
+   * The guard both writes share.
+   *
+   * Throws rather than returning a flag: there is no partially-performed write
+   * to describe, and a caller that ignored a boolean would report a page as
+   * opened that never was.
+   */
+  #assertAppleEventsAllowed(what: string): void {
+    if (!this.#config.liveTabs) {
+      throw new PreconditionError(
+        `${what} needs the Apple Events lane, which is disabled by configuration ` +
+          `(APPLE_SAFARI_LIVE_TABS=false). This server is running history-only and sends no ` +
+          `Apple Event.`,
+      );
+    }
   }
 
   /** Where the Safari extension writes its captures. */
