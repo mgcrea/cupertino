@@ -101,6 +101,68 @@ back to the store by reference. Leave it out of a v1 and say so, the way Safari
 reports `Downloads.plist` and never parses it. The `-beta` Apple put in the
 filename is a second reason.
 
+## Four lanes, two of them closed
+
+**Recorded so they are not re-opened.** This section was deleted once by accident
+during an edit and the framework question was raised again within the day, which
+is the argument for keeping the evidence rather than the conclusion.
+
+| Lane                          | Verdict                        | Evidence                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HomeKit.framework`, native   | **closed**                     | `HMHomeManager.h` is `API_AVAILABLE(ios(8.0), watchos(2.0), tvos(10.0), macCatalyst(14.0))` — **Catalyst only, and no plain `macos`**. There is no `HomeKit.framework` in the public macOS SDK at all; on macOS it exists only under `/System/Library/PrivateFrameworks/`.                                                                                              |
+| `com.apple.developer.homekit` | **closed for this app**        | The capability's distribution types are `AD_HOC`, `DEVELOPMENT`, `STORE` — and **no `DEVELOPER_ID`**, read out of Xcode's `DVTPortalCachedPortalCapabilities.json`, where App Groups, iCloud, Push, Personal VPN and Associated Domains all _do_ list it. Cupertino ships Developer ID. See below for why "just ship on the App Store" is not the escape it looks like. |
+| Apple Events                  | **closed**                     | No `.sdef` in `/System/Applications/Home.app`, no `NSAppleScriptEnabled`.                                                                                                                                                                                                                                                                                               |
+| File lane                     | **open — this is the surface** | `~/Library/HomeKit`, Full-Disk-Access gated, held open by `homed`.                                                                                                                                                                                                                                                                                                      |
+
+Reproduce either check in one command:
+
+```
+grep -h "API_AVAILABLE(ios(8.0)" \
+  "$(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks/HomeKit.framework/Headers/HMHomeManager.h"
+python3 -c 'import json;d=json.load(open("/Applications/Xcode.app/Contents/SharedFrameworks/DVTPortal.framework/Versions/A/Resources/DVTPortalCachedPortalCapabilities.json"));print([[x["name"] for x in i["attributes"]["distributionTypes"]] for i in d["data"] if i["attributes"]["name"]=="HomeKit"])'
+```
+
+### Why the App Store is not the way around it
+
+The entitlement IS offered for `STORE`, so the obvious move is to ship there.
+That trade does not work, and the reason is not preference:
+[distribution.md](distribution.md) marks the decision settled, and its load-bearing
+reasons are structural. **The sandbox is mandatory on the App Store and Full Disk
+Access does not lift it** — sandbox policy and `kTCCServiceSystemPolicyAllFiles`
+are evaluated independently, so `~/Library/Mail`, `~/Library/Messages` and the
+rest stay denied whatever the user granted. **A sandboxed app also cannot exec
+`/usr/bin/osascript`**, which is the only subprocess in the runtime and the whole
+write lane.
+
+So taking the entitlement costs Mail, Notes, Reminders, Calendar, Contacts,
+Messages, Safari and Maps — every write verb on every surface, and every file-lane
+read. It buys live state and control on one. That is seven surfaces for one, and
+it is not close.
+
+### What the entitlement would actually buy
+
+Worth stating precisely, because two thirds of the obvious case do not survive
+contact with the probe's results:
+
+| Claimed gain                         | Actually                                                                                                                                                                         |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "names would no longer be encrypted" | **Moot.** Nothing is encrypted. The probe measured 115,466 B of legible text across 146 columns and **zero sealed** name-bearing blobs. There is no constraint here to dissolve. |
+| "no Full Disk Access prompt"         | **Worth nothing incrementally.** Cupertino already requires the grant for seven surfaces, and it is indivisible. Home adds no permission cost whatsoever.                        |
+| "live state, and control"            | **True, and it is the only real gain.** Live characteristic values never touch disk, so no amount of file reading reaches them, and there is no write lane at all.               |
+
+One genuine benefit, purchasable only at a price that destroys the rest of the
+app. That is the whole calculation.
+
+Two things this does NOT rule out, kept honest: the private framework loads —
+`dlopen` on `/System/Library/PrivateFrameworks/HomeKit.framework/HomeKit`
+succeeds and `HMHomeManager`, `HMHome`, `HMAccessory`, `HMRoom`, `HMService` and
+`HMCharacteristic` all resolve. But `homed` gates on the entitlement, and AMFI
+validates `com.apple.developer.*` against the provisioning profile at launch, so
+the expected result is a notarized app that ships fine and returns zero homes on
+every user's Mac. That last step is **inferred, not measured** — settling it means
+instantiating `HMHomeManager` under three signings, which may raise a TCC dialog.
+Nobody has run it.
+
 ## Running the probe
 
 `~/Library/HomeKit` is Full-Disk-Access gated, and **this repo's agent shell holds
