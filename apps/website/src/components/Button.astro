@@ -20,9 +20,18 @@ interface Props {
   size?: "sm" | "md" | "lg";
   external?: boolean;
   class?: string;
+  /** Spread through, so a caller can point at an sr-only note. See bastion's Nav. */
+  "aria-describedby"?: string;
 }
 
-const { href, variant = "primary", size = "md", external = false, class: className } = Astro.props;
+const {
+  href,
+  variant = "primary",
+  size = "md",
+  external = false,
+  class: className,
+  ...rest
+} = Astro.props;
 
 const VARIANTS = {
   primary: "bg-accent font-medium text-accent-ink hover:bg-accent-hi",
@@ -41,6 +50,7 @@ const SIZES = {
 <a
   href={href}
   {...external ? { target: "_blank", rel: "noopener" } : {}}
+  {...rest}
   class:list={[
     "inline-flex items-center justify-center gap-1.5 text-center whitespace-nowrap transition-colors",
     VARIANTS[variant],
