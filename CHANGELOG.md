@@ -76,6 +76,26 @@ summary.
   as a row of toggles, which showed the control — this shows the consequence, and the numbers come
   off the real server rather than a fixture.
 
+### Fixed
+
+- **The Activity log pane rendered nothing at all.** Its footer caption grew a second sentence when
+  arguments started being recorded, and it carried `fixedSize(horizontal: false, vertical: true)` —
+  a request for whatever height the text needs at the width it is proposed. Inside that `HStack` the
+  proposed width is near zero, so the caption wrapped into a column 2060pt tall, the split view
+  adopted that as its ideal height, and a 572pt window laid its entire contents out at y = -587.
+  Sidebar, log and footer all existed in the accessibility tree and none of them was on screen.
+
+  The ask is now bounded with `lineLimit(3)` instead — three, not the two the capture needs, because
+  this window goes down to 780pt wide and truncating a privacy claim with an ellipsis is the one
+  way this footer must not fail. `layoutPriority` and a flexible `frame` were
+  both tried and neither reaches it — the fix is not to ask for an unbounded height in the first
+  place. It was latent under the one-line caption, which wrapped tall enough to be wrong and short
+  enough to fit.
+
+  Found by the screenshot pipeline: the `activity` and `prompt` plates came out as empty windows,
+  and because both were empty they were also byte-identical, which `appshot check`'s duplicate
+  detection reports as a staging failure rather than a visual change.
+
 ## [1.4.0] - 2026-08-30
 
 ### Added

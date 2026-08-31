@@ -474,7 +474,26 @@ struct MainView: View {
           + "is written to disk.")
         .font(.caption)
         .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+        // Bounded, and it has to be. `fixedSize(horizontal: false, vertical:
+        // true)` asks for the height this text needs at whatever width it is
+        // proposed, and inside this HStack that proposal is near zero — so the
+        // caption wrapped into a column 2060pt tall, the split view took that as
+        // its ideal height, and a 572pt window laid its entire contents out at
+        // y = -587. Nothing painted: sidebar, log and footer all existed in the
+        // accessibility tree and none of them was on screen. The `activity` and
+        // `prompt` plates photographed an empty window.
+        //
+        // It was latent under the one-line caption, which wrapped tall enough to
+        // be wrong and short enough to fit; the second sentence is what pushed
+        // it past the window. `layoutPriority` and a flexible `frame` were both
+        // tried and neither reaches it — the fix is not to ask for an unbounded
+        // height in the first place.
+        //
+        // Three rather than two: two is what it takes at the size the plates are
+        // captured, but this window goes down to 780pt wide and the sentence is
+        // load-bearing — truncating a privacy claim with an ellipsis is the one
+        // way this footer must not fail.
+        .lineLimit(3)
       Spacer()
       Toggle("Follow", isOn: $following)
         .toggleStyle(.checkbox)
