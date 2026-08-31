@@ -29,10 +29,12 @@ summary.
 
   **No `do JavaScript`, and a navigation verb is where that decision gets tested.** Navigating a
   tab to a `javascript:` URL is that verb through the front door — same capability, without the
-  developer-menu toggle, through a tool whose description says it opens web pages. So both writes
-  take an http/https allowlist, enforced before any Apple Event is sent and again inside the JXA,
-  and `test/writes.test.ts` asserts a refusal dispatches nothing at all. Clicking and filling
-  belong to the extension lane, where Safari grants one website at a time; they are not built.
+  developer-menu toggle, through a tool whose description says it opens web pages. Measured on
+  macOS 26.6: Safari **accepts** such a URL, with no refusal and no toggle involved, so this is
+  the boundary rather than a precaution. Both writes take an http/https allowlist, enforced before
+  any Apple Event is sent and again inside the JXA, and `test/writes.test.ts` asserts a refusal
+  dispatches nothing at all. Clicking and filling belong to the extension lane, where Safari
+  grants one website at a time; they are not built.
 
   Two disclosures the caller cannot infer, both carried in the tool output: these verbs LAUNCH
   Safari when it is not running, and a Reading List add is `verified: true` or `null`, never
@@ -40,9 +42,11 @@ summary.
   routinely invisible a moment later, and a caller that read that as failure would retry into a
   duplicate that no verb can remove.
 
-  The JXA is the one lane in this package that shipped reasoned rather than measured; the tab
-  idiom falls back to `open location` and reports which route it took.
-  `scripts/probe-safari-write.mjs` is the instrument that closes it.
+  The JXA was written from the dictionary and measured afterwards, which is the reverse of how
+  every other lane here landed — `scripts/probe-safari-write.mjs` is the instrument, and it found
+  the uncertain idiom sound: `tab-push` in 166 ms, `current-tab` in 108 ms, the Reading List add
+  in 148 ms, and the `open location` fallback never fired. How long Safari takes to write an added
+  item into `Bookmarks.plist` is still unknown, which is why `verified` may be null.
 
 ### Changed
 
