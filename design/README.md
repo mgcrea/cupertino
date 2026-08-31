@@ -98,14 +98,51 @@ transcribe that literally.** Rendered through `NSImage`'s SVG rep — the same p
 takes — the mask's soft edge leaves roughly 25% residual alpha the whole length of the cut, and that
 residue bridges the disc to the horizon. The glyph comes out as one connected shape instead of two.
 
-The file uses a `<clipPath>` instead, which cuts hard. Its path is the horizon offset 3 units
-straight up. That is a vertical offset rather than a true normal offset, which is only legitimate
-because the curve is shallow: its steepest slope is `dy/dx = -0.19`, so the normal offset there is
-2.95 where the vertical one is 3.00 — 0.03pt, which never reaches a pixel.
+The file uses a `<clipPath>` instead, which cuts hard.
 
-The clip is also **extended flat past the horizon's ends**. The horizon no longer spans the canvas,
-but the cut has to be continuous everywhere the disc and its halo reach, and the curve is level at
-both ends so the extension is a straight line at that height.
+### The clip is a true normal offset
+
+It used to be the horizon shifted **straight up** by 3 units, which is only correct while the curve
+is shallow. Once the hill became the icon's wave (below) it stopped being shallow: the wave puts a
+`0.43` slope directly under the sun, where a vertical shift measures only **2.75** units of sky
+perpendicular instead of 3.00. At the icon's own 2.6 amplitude it would be 2.45 — a quarter of the
+sky gone, in the one place that cannot afford it.
+
+So the clip is the horizon pushed 3 units along its **own perpendicular**, fitted as two cubics.
+Three things were checked rather than assumed:
+
+- **Max deviation from the exact offset is 0.025 units = 0.013pt** — tighter than the 0.03pt the old
+  vertical shortcut carried even on the shallow dome.
+- **It cannot cusp.** A normal offset self-intersects if it exceeds the curve's radius of curvature;
+  the minimum here is 15.55 units against a 3-unit offset.
+- **The sky is now exactly `3 − 0.9 = 2.10` units = 1.05pt at every point**, at any amplitude,
+  rather than only where the curve happens to be flat. Resize the hill or the sun freely; leave the
+  3 and the 1.8 alone.
+
+The clip is still **extended flat past the horizon's ends**, because the horizon does not span the
+canvas but the cut has to be continuous everywhere the disc and its halo reach.
+
+### The hill is the icon's
+
+It was a symmetric dome, which the icon's ridge never was. `cupertino-mark.svg` draws an S-wave —
+`M-40 744 Q256 536 552 744 T1120 744` — crest left, trough right, and the glyph now carries that
+curve at the same proportions:
+
+|          | across the span | at           |
+| -------- | --------------- | ------------ |
+| crest    | 25.5%           | 10.90, 27.01 |
+| crossing | 51.0%           | 18.30, 28.61 |
+| trough   | 76%             | 25.55, 30.21 |
+
+Only the **amplitude** is dialled down: 1.6 units against the 2.6 a proportional transcription would
+give. 2.6 holds together and was rendered — but its trough reaches y32.0, and at 18pt the sun starts
+reading as sliding off to the right rather than setting behind a ridge. Keep the proportions and
+move the amplitude alone.
+
+One consequence worth knowing: an asymmetric hill puts the ink **mass** about 0.44 units right of
+centre, where the old dome was centred. The ink _bounding box_ is still symmetric (x2.5–33.5), which
+is what AppKit centres the status item on, so nothing shifts in the bar. The icon's own ridge is
+asymmetric in exactly the same direction.
 
 ### Measurements
 
@@ -116,25 +153,23 @@ tile — the number that actually says which of two glyphs looks heavier in a ba
 |                    | ink             | ink % | ink mass cy | strokes |
 | ------------------ | --------------- | ----- | ----------- | ------- |
 | `tray.full` @ 18pt | 21.00 × 16.00pt | —     | —           | —       |
-| this glyph         | 15.50 × 9.50pt  | 22.9  | 21.09       | 0.90pt  |
-| connected state    | 15.50 × 11.50pt | 29.3  | 19.78       | 0.90pt  |
+| this glyph         | 15.50 × 9.90pt  | 22.5  | 21.10       | 0.90pt  |
+| connected state    | 15.50 × 11.90pt | 28.6  | 19.74       | 0.90pt  |
 | Bastion, idle      | 11.50 × 9.10pt  | 22.4  | 21.09       | —       |
 | Bastion, active    | 15.75 × 12.40pt | 29.7  | 19.77       | 0.80pt  |
 
 Wide and short is still the shape of a horizon and still deliberate — but it is no longer _only_
-that. The ink now sits within half a point of Bastion's in both states, which is the whole intent.
-Horizontally it is dead centred: the horizon's round caps reach 2.6 and 33.4, midpoint exactly 18.
-Vertically the disc crowns at 11.54 and the caps bottom out at 30.54.
+that. The ink sits within about a point of Bastion's in both states, which is the whole intent. The
+ink box is dead centred horizontally: the horizon's round caps reach 2.6 and 33.4, midpoint exactly 18. Vertically the disc crowns at 11.66 and the trough's cap bottoms out at 31.11.
 
 Three numbers are worth keeping in view:
 
-- **1.05pt of sky** between the disc's cut (y25.59 at the centre) and the top of the horizon's
-  stroke (y27.69). That gap is the glyph. Lose it and the sun welds to the horizon and the mark is a
-  blob. It is **structural, not tuned**: the clip rides 3 units above the horizon and the horizon's
-  stroke is 1.8, so the gap is 3 − 0.9 whatever size the sun is. Resize freely; leave those two.
+- **1.05pt of sky** between the disc's cut and the top of the horizon's stroke, at every point along
+  the curve. That gap is the glyph. Lose it and the sun welds to the horizon and the mark is a blob.
+  It is **structural, not tuned** — see "The clip is a true normal offset" above.
 - **1.30pt of gutter** at left and right, up from 0.55pt. The horizon used to run the full live area
   with its caps spilling to 1.1 and 34.9 and no room left; it now has room on both sides.
-- **11.5 units of headroom** above the disc, which is what lets the halo be generous.
+- **11.7 units of headroom** above the disc, which is what lets the halo be generous.
 
 ### The family
 
@@ -144,16 +179,17 @@ third lighter and much wider — 34.0 × 16.8 units at 16.8% ink, against 23.0 �
 because its width was all horizon: a thin rule running nearly edge to edge past a small sun. Side by
 side they did not read as one family; they read as a block and a line.
 
-Three numbers changed, and nothing else did:
+What changed, and nothing else did:
 
-|              | before                       | after                          |
-| ------------ | ---------------------------- | ------------------------------ |
-| horizon span | x2..x34 (32 units), rise 1.6 | **x3.5..x32.5 (29), rise 1.4** |
-| sun          | r8.2                         | **r10.2**                      |
-| halo         | r11.4                        | **r13.4**                      |
+|         | before                                       | after                                                  |
+| ------- | -------------------------------------------- | ------------------------------------------------------ |
+| horizon | x2..x34 (32 units), symmetric dome, rise 1.6 | **x3.5..x32.5 (29), the icon's S-wave, amplitude 1.6** |
+| sun     | r8.2                                         | **r10.2**                                              |
+| halo    | r11.4                                        | **r13.4**                                              |
+| clip    | horizon offset vertically                    | **true normal offset**                                 |
 
-The halo moved only to hold its 2.4-unit gap against the bigger sun; see below. Both stroke weights
-are untouched, and so is every invariant above.
+The halo moved only to hold its 2.4-unit gap against the bigger sun; see below. The clip had to
+change because the hill did. Both stroke weights are untouched, and so is every invariant above.
 
 ### The connected state
 
@@ -173,7 +209,7 @@ cannot quietly turn a setting sun into a rising one. Keep that ratio on any resi
 
 That the ring can be this generous is the point of moving to F3. E2c put its sun at `cy9.5` with 3.7
 units of headroom, which forced a 1.1-unit stroke across a 1.65-unit gap — and measured, **that ring
-never actually separated from its sun at 2x**, whatever its file claimed. F3 leaves 11.5 units above
+never actually separated from its sun at 2x**, whatever its file claimed. F3 leaves 11.7 units above
 the disc.
 
 The ring is also what makes this state ride higher than the idle one: it adds 4.0 units above the
@@ -187,8 +223,8 @@ Change it in both or not at all.
 
 |                        | this glyph | Bastion |
 | ---------------------- | ---------- | ------- |
-| idle, ink mass cy      | 21.09      | 21.09   |
-| connected, ink mass cy | 19.78      | 19.77   |
+| idle, ink mass cy      | 21.10      | 21.09   |
+| connected, ink mass cy | 19.74      | 19.77   |
 
 Mass rather than box, for the reason it was always mass here: the disc is a solid shape in the upper
 half against a 0.9pt line below it, so the eye follows the disc and a box-centred glyph reads high.
@@ -227,8 +263,19 @@ The check, at 18pt, counting 8-connected components of the rendered alpha at a t
 | idle      | 2 — disc, horizon       | 1 — all merged |
 | connected | 3 — halo, disc, horizon | 1 — all merged |
 
-Both hold at 16pt as well as 18pt, and identically whether measured on the SVG or on the rendition
-`actool` compiles into `Assets.car`.
+Measured across sizes, for the connected state, which is the demanding one:
+
+| size | components | note                                              |
+| ---- | ---------- | ------------------------------------------------- |
+| 20pt | 3          |                                                   |
+| 18pt | 3          | **the size the menu bar draws**                   |
+| 16pt | 2          | halo and hill merge — see below                   |
+| 14pt | 1          | the size the website draws; the dome did this too |
+
+**Do not tune against 16pt.** The result there is not monotonic in amplitude — sweeping it, 0.9 and
+1.1 separate while 0.6, 1.3 and 1.6 do not — which means it is pixel-phase luck at a 32×32 raster
+rather than a real margin. 18pt is the size that ships and it holds at every amplitude tried. 14pt
+merges for the dome as well, so the website's small rendering is unchanged by any of this.
 
 At 1x everything merges into one silhouette and the connected state reads as ringed-and-fatter
 rather than as separate shapes. That is the intended degradation, not a bug to chase: retina is the
