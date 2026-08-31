@@ -106,6 +106,20 @@ jobs:
       - name: Wiring merge 🔧
         if: runner.os == 'macOS'
         run: make wiring-check
+      # Beside the wiring check and for the same reasons: standalone swiftc, no
+      # app, no network. `unit` covers what a recorded call is allowed to carry
+      # — which is what stops a mail body reaching a log — and the audit chain.
+      # `audit-check` covers what an export signature is computed over, using a
+      # stub in place of the Keychain so it runs on a machine that has none.
+      #
+      # Both are new since this file last listed its checks, and a check CI does
+      # not run is a check that rots.
+      - name: Unit checks 🔍
+        if: runner.os == 'macOS'
+        run: make unit
+      - name: Audit export signing 🔍
+        if: runner.os == 'macOS'
+        run: make audit-check
       # docs/licensing.md sells the app partly on it being unable to reach the
       # network, so that claim is a gate rather than a sentence in a README.
       # Unsigned is fine: the audit reads symbols, and signing does not add any.
