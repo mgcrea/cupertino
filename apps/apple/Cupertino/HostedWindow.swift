@@ -21,16 +21,9 @@ final class HostedWindow {
   private let contentSize: NSSize?
   private let content: () -> AnyView
 
-  /// Dropped when the window closes, rather than kept for the life of the
-  /// process, which is what makes closing and reopening a genuine repair. See
-  /// `discard(_:)` for what that is a repair *for*. The frame is not lost with
-  /// it: `setFrameAutosaveName` has already persisted it and the rebuilt window
-  /// restores it.
+  /// Not released on close, so reopening restores the same window and AppKit
+  /// keeps the frame it autosaved.
   private var window: NSWindow?
-
-  /// Removed with the window it watches. One per window, added when the window
-  /// is built.
-  private var closeObserver: NSObjectProtocol?
 
   /// Lives only long enough to see off SwiftUI's opening resize. See `show()`.
   private var resizeGuard: OpeningResizeGuard?
@@ -76,35 +69,6 @@ final class HostedWindow {
   }
 
   func show() {
-    // Asking for a window that is already in front of you is only ever a request
-    // for a working one, so this is where a wedged window gets replaced. Nothing
-    // else arrives here in that state: the menu bar's "Open Cupertino" is the
-    // only route that can be taken while the window is key and the app is
-    // active, and a person takes it because what they are looking at is not
-    // doing its job. A Dock click never gets this far — the delegate's
-    // `applicationShouldHandleReopen` returns early while a window is visible.
-    //
-    // MEASURED, on the wedge this was written for: an installed 1.4.0 sat for
-    // forty minutes showing a main window that drew nothing and hit-tested
-    // nothing. The main thread was idle in `-[NSApplication run]`, the servers
-    // kept answering calls throughout, and `heap` on the live pid found the
-    // `NavigationSplitView`'s two split items present but the sidebar `List`'s
-    // backing table never built. No exception was thrown, so the `unusable`
-    // guard below never had anything to catch.
-    //
-    // A structural test cannot tell that window from a healthy one — half the
-    // tree is there, at sane frames, and the sidebar carries a 15s
-    // `TimelineView` that a live window redraws on. Rebuilding on the gesture is
-    // honest about that: it costs one hosting controller in the case where
-    // nothing was wrong, and it is the only thing that helps in the case where
-    // something was.
-    if let existing = window, existing.isVisible, existing.isKeyWindow, NSApp.isActive {
-      discard(existing, because: "asked to open a window that was already in front")
-    } else if let existing = window, existing.contentView?.subviews.isEmpty == true {
-      // The one shape that IS decidable without guessing: a hosting root that
-      // built nothing at all.
-      discard(existing, because: "its content view was empty")
-    }
     if window == nil {
       let hosting = NSHostingController(rootView: content())
       // The minimum and nothing else. An `NSHostingController` will otherwise
@@ -201,26 +165,6 @@ final class HostedWindow {
         created.saveFrame(usingName: autosaveName)
       }
       window = created
-      // Dropping the reference on close is the whole repair. Before it, a window
-      // that had stopped drawing lasted as long as the process:
-      // `isReleasedWhenClosed = false` kept it alive, this method rebuilt only
-      // `if window == nil`, and nothing ever set it back — so ⌘W and every
-      // reopen after it
-      // handed the same dead window back, and quitting the app was the only way
-      // out.
-      closeObserver = NotificationCenter.default.addObserver(
-        forName: NSWindow.willCloseNotification, object: created, queue: .main
-      ) { [weak self] _ in
-        MainActor.assumeIsolated {
-          guard let self, self.window === created else { return }
-          self.forget()
-        }
-      }
-      // Not under `appshot capture`: a capture photographs the log, and a line
-      // about the window it is being photographed in is not part of the product.
-      if !DemoSeed.isEnabled {
-        hostLog("cupertino", .info, "built the \(autosaveName) window")
-      }
 
       // SwiftUI sizes a `NavigationSplitView` window to its own idea of the
       // content's width, on a layout pass that lands after `show()` has already
@@ -267,29 +211,6 @@ final class HostedWindow {
       NSApp.activate(ignoringOtherApps: true)
     }
     DockPresence.update()
-  }
-
-  /// Take a window down for good, so the next `show()` builds a fresh hosting
-  /// controller and with it a fresh SwiftUI tree.
-  private func discard(_ existing: NSWindow, because reason: String) {
-    hostLog("cupertino", .info, "rebuilding the \(autosaveName) window — \(reason)")
-    forget()
-    // Ordered out first: `close()` on a visible window animates, and this one is
-    // about to be replaced by another at the same frame.
-    existing.orderOut(nil)
-    existing.close()
-  }
-
-  /// Let go of the current window and everything hung off it, without touching
-  /// the window itself — the close path is already closing it.
-  private func forget() {
-    resizeGuard?.stop()
-    resizeGuard = nil
-    if let closeObserver {
-      NotificationCenter.default.removeObserver(closeObserver)
-      self.closeObserver = nil
-    }
-    window = nil
   }
 }
 
