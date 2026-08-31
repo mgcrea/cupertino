@@ -438,6 +438,50 @@ struct UnitCheck {
       "an absent argument is omitted, not nulled",
       !AuditChain.canonical(record(1, "t", prev: AuditChain.genesis)).contains("args"))
 
+    // MARK: - Searching the log
+
+    print("\nLog search: what a query matches")
+
+    func row(_ text: String, surface: String = "mail", args: String? = nil,
+             result: String? = nil) -> LogStore.Entry {
+      LogStore.Entry(
+        at: Date(), surface: surface, level: .call, text: text, arguments: args, result: result)
+    }
+
+    let order = row(
+      "apple_mail_get_message", args: #"{"id":"msg-992","mailbox":"INBOX"}"#,
+      result: #"{"subject":"«redacted»","from":"a@b.com"}"#)
+
+    check("the tool name matches", order.matches("get_message"))
+    check("the surface matches", order.matches("mail"))
+    // The reason to search a log at all: the identifier is in the arguments,
+    // not in the tool name.
+    check("an argument matches", order.matches("992"))
+    check("a result matches", order.matches("a@b.com"))
+    check("something absent does not", !order.matches("calendar"))
+
+    check("case is ignored", order.matches("APPLE_MAIL_GET_MESSAGE"))
+    check("in payloads too", order.matches("MSG-992"))
+    check("accents are ignored", row("café_tool").matches("cafe"))
+    check("a row with no payload still matches its name", row("ping").matches("ping"))
+    check("and does not match a payload it does not have", !row("ping").matches("992"))
+
+    print("\nLog search: a match the row would not show")
+
+    // A payload is previewed at a fixed length, so a match past that point
+    // lists a row with no visible reason for being there — which reads as a
+    // bug rather than as a truncation. `FeedRow` opens such a row itself.
+    let buried = row("tool", args: String(repeating: "x", count: 300) + "needle")
+    check("a match past the preview is flagged", buried.matchIsHidden("needle", preview: 160))
+    check(
+      "a match inside the preview is not",
+      !row("tool", args: "needle" + String(repeating: "x", count: 300))
+        .matchIsHidden("needle", preview: 160))
+    check("a match in the tool name is not", !order.matchIsHidden("get_message", preview: 160))
+    check("a match in the surface is not", !order.matchIsHidden("mail", preview: 160))
+    check("a row that does not match at all is not", !order.matchIsHidden("absent", preview: 160))
+    check("an empty query flags nothing", !buried.matchIsHidden("", preview: 160))
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")

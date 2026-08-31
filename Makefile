@@ -212,6 +212,8 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 	@swiftc -O -o apps/apple/.build/unit-check \
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/SafariCaptures.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 

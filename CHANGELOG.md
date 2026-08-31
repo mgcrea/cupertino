@@ -44,6 +44,11 @@ summary.
   fingerprint to send them once. A new Mac makes a new key, and exports already signed keep
   verifying against the old one.
 
+- **The Activity log has a search.** It matches the tool name, the surface and the arguments and
+  results a call carried, so "which call touched that note" is answerable without reading the
+  feed. A row whose match falls past the truncated preview opens itself, rather than appearing in
+  the results with no visible reason for being there.
+
 - **Safari can open a page and save one for later.** `apple_safari_open_url` opens a URL in a new
   tab or in the tab the user is looking at, and `apple_safari_add_reading_list_item` saves one to
   the Reading List. Both are Apple Events behind `APPLE_SAFARI_ALLOW_WRITES`, so Safari is the

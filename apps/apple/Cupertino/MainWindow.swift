@@ -69,6 +69,7 @@ struct MainView: View {
   @State private var callsOnly = false
   @State private var following = true
   @State private var exported: String?
+  @State private var query = ""
 
   static let allSurfaces = "all"
 
@@ -109,10 +110,23 @@ struct MainView: View {
     return Pane(rawValue: selection) ?? .log
   }
 
+  private var needle: String { query.trimmingCharacters(in: .whitespaces) }
+
+  /// Why the feed is empty, which is three different facts.
+  ///
+  /// "Nothing matches this filter" in front of a log that has never had a line
+  /// in it sends someone looking for a filter to clear.
+  private var emptyReason: String {
+    if LogStore.shared.entries.isEmpty { return "Nothing yet." }
+    if !needle.isEmpty { return "Nothing matches \u{201C}\(query)\u{201D}." }
+    return "Nothing matches this filter."
+  }
+
   private var entries: [LogStore.Entry] {
     LogStore.shared.entries.filter { entry in
       if surface != Self.allSurfaces && entry.surface != surface { return false }
       if callsOnly && entry.level == .info { return false }
+      if !needle.isEmpty && !entry.matches(needle) { return false }
       return true
     }
   }
@@ -337,8 +351,35 @@ struct MainView: View {
       Toggle("Calls and errors only", isOn: $callsOnly)
         .toggleStyle(.checkbox)
 
+      // Over the payloads too, not just the tool name — "which call touched
+      // that note" is what a log this size gets opened for, and the answer is
+      // in the arguments. Composes with the picker and the toggle rather than
+      // replacing them: three narrowings of one list.
+      HStack(spacing: 4) {
+        Image(systemName: "magnifyingglass")
+          .foregroundStyle(.tertiary)
+          .font(.caption)
+        TextField("Search", text: $query)
+          .textFieldStyle(.plain)
+          .frame(minWidth: 90, idealWidth: 150)
+        if !query.isEmpty {
+          Button { query = "" } label: {
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+          }
+          .buttonStyle(.plain)
+          .help("Clear the search")
+        }
+      }
+      .padding(.horizontal, 6).padding(.vertical, 3)
+      .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
+      .frame(maxWidth: 220)
+
       Spacer()
 
+      if !needle.isEmpty {
+        Text("\(entries.count) of \(LogStore.shared.entries.count)")
+          .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+      }
       Button("Copy") {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entries.map(line).joined(separator: "\n"), forType: .string)
@@ -379,7 +420,7 @@ struct MainView: View {
       }
       .overlay(alignment: .center) {
         if entries.isEmpty {
-          Text(LogStore.shared.entries.isEmpty ? "Nothing yet." : "Nothing matches this filter.")
+          Text(emptyReason)
             .foregroundStyle(.secondary)
         }
       }
@@ -440,7 +481,7 @@ struct MainView: View {
 
 
   private func row(_ entry: LogStore.Entry) -> some View {
-    LogRow(entry: entry, tint: tint(entry.level), clock: Self.clock)
+    LogRow(entry: entry, tint: tint(entry.level), clock: Self.clock, highlight: needle)
   }
 
   private func tint(_ level: LogStore.Level) -> Color {
@@ -671,11 +712,20 @@ private struct LogRow: View {
   let entry: LogStore.Entry
   let tint: Color
   let clock: DateFormatter
+  /// The active search, so a row can open itself when the reason it matched is
+  /// past the preview. Empty when nothing is being searched for.
+  var highlight: String = ""
 
   @State private var expanded = false
 
   /// How much of a payload shows before the row is opened.
   private static let preview = 160
+
+  /// Open either because the reader asked, or because the match is out of
+  /// sight and a row listed for no visible reason reads as a bug.
+  private var isOpen: Bool {
+    expanded || entry.matchIsHidden(highlight, preview: Self.preview)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
@@ -702,7 +752,7 @@ private struct LogRow: View {
         payload("result", result, tint: entry.failed ? .red : .secondary)
       }
       if longest > Self.preview {
-        Button(expanded ? "Show less" : "Show all \(longest) characters") { expanded.toggle() }
+        Button(isOpen ? "Show less" : "Show all \(longest) characters") { expanded.toggle() }
           .buttonStyle(.link)
           .font(.caption2)
           .padding(.leading, 84)
@@ -718,7 +768,7 @@ private struct LogRow: View {
       Text(label)
         .foregroundStyle(.tertiary)
         .frame(width: 76, alignment: .trailing)
-      Text(expanded ? text : String(text.prefix(Self.preview)))
+      Text(isOpen ? text : String(text.prefix(Self.preview)))
         .foregroundStyle(tint)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)

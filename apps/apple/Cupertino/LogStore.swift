@@ -47,6 +47,45 @@ final class LogStore {
 
     /// Roughly what this row costs, for the byte budget below.
     var weight: Int { text.utf8.count + (arguments?.utf8.count ?? 0) + (result?.utf8.count ?? 0) }
+
+    /// Whether this row answers a search.
+    ///
+    /// Over the payloads as well as the name, because "which call touched order
+    /// 992" is what a log this size gets opened for, and the answer is in the
+    /// arguments rather than in `shopify_get_order`. The surface is searched too,
+    /// so a surface name narrows the feed without reaching for the picker.
+    ///
+    /// Case- and diacritic-insensitive: a log is skimmed, not queried, and
+    /// making someone match the case of a tool name they are trying to find is
+    /// a filter that mostly returns nothing.
+    func matches(_ needle: String) -> Bool {
+      let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+      if text.range(of: needle, options: options) != nil { return true }
+      if surface.range(of: needle, options: options) != nil { return true }
+      if let arguments, arguments.range(of: needle, options: options) != nil { return true }
+      if let result, result.range(of: needle, options: options) != nil { return true }
+      return false
+    }
+
+    /// Whether the match is somewhere the row does not show until it is opened.
+    ///
+    /// A payload is previewed at a fixed length, so a search that hit character
+    /// 900 of an argument would list a row with no visible reason for being
+    /// there — the failure being that the feature looks broken rather than
+    /// looks incomplete. `FeedRow` opens such a row itself.
+    func matchIsHidden(_ needle: String, preview: Int) -> Bool {
+      guard !needle.isEmpty, matches(needle) else { return false }
+      let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+      if text.range(of: needle, options: options) != nil { return false }
+      if surface.range(of: needle, options: options) != nil { return false }
+      for payload in [arguments, result].compactMap({ $0 }) {
+        if String(payload.prefix(preview)).range(of: needle, options: options) != nil {
+          return false
+        }
+      }
+      return true
+    }
+
   }
 
   /// Bounded: this runs for as long as the machine is up, and an unbounded log
