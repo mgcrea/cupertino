@@ -279,6 +279,21 @@ page — Hacker News, 3,681 characters of text and 34,907 of HTML, returned thro
 over stdio on a run where that same server reported `history=UNREADABLE`. The three lanes really are
 independent: this one needs neither Full Disk Access nor an Automation grant.
 
+**The app reports it, because nothing else can.** The Safari pane carries a Page content card
+beside Access and Store — the three cards are the three lanes — saying whether the extension is
+enabled, how many pages it holds and how old the newest is. That last part is the point:
+`getStateOfSafariExtension` answers about a SWITCH, and Safari grants the extension one website at
+a time, so "enabled" and "allowed on nothing" are the same answer until something counts the
+captures. `apple_safari_diagnostics` cannot make up the difference from its side — a disabled
+extension leaves its last captures in place and stops adding more, so the store looks healthy while
+answering with an ever-older page.
+
+Two things measured while building it. `SFSafariApplication.showPreferencesForExtension` does open
+Safari's Extensions pane with our row selected, which the previous plain launch did not; its
+completion handler carries an error, so the launch is kept as the fallback. And `SFErrorCode` has
+three cases where the code matched only the domain — `noExtensionFound` is 1, and 2 and 3 are
+"could not ask", which had been reporting as an extension that is not installed.
+
 The rest of this section is the Phase 0 evidence that said it was payable, kept because the traps it
 names cost real time and will cost it again on the next Apple app that grows an extension.
 

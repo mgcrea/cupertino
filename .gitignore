@@ -9,6 +9,10 @@ coverage
 __pycache__/
 .idea
 .mcp.json
+# Agent tooling state. Note this also keeps .claude/skills/ local: a project
+# skill committed here would be shared with every clone, and this is the
+# choice not to.
+.claude
 .reference
 
 # spike build output (the source is kept: it documents why the launcher exists)
