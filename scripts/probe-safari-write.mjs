@@ -161,28 +161,52 @@ if (want("--reading-list")) {
   if (!value.ok) {
     log(`   FAILED — ${value.error.code}: ${value.error.message}`);
   } else {
-    log(`   added in ${ms} ms. Polling the file for up to 30 s…`);
-    const started = Date.now();
-    let sawIt = false;
-    while (Date.now() - started < 30_000) {
-      // grep the binary plist for the marker rather than parsing it: the only
-      // question is whether THIS run's URL is in the file, and the marker is
-      // unique. Nobody else's entry is read, matched or printed.
-      try {
-        execFileSync("/usr/bin/grep", ["-q", MARKER, BOOKMARKS]);
-        sawIt = true;
-        break;
-      } catch {
-        execFileSync("/bin/sleep", ["1"]);
-      }
-    }
-    out.readingList.visibleAfterMs = sawIt ? Date.now() - started : null;
-    log(
-      sawIt
-        ? `   visible on disk after ${Math.round((Date.now() - started) / 1000)} s.`
-        : "   NOT visible after 30 s — which is the lag `verified: null` exists for.",
-    );
+    log(`   added in ${ms} ms.`);
     log(`   REMOVE IT BY HAND: it is titled "Cupertino probe" in the Reading List.`);
+
+    // THE INSTRUMENT CHECK, and the first version of this probe did not have
+    // it. Without Full Disk Access every grep below returns EPERM, the poll
+    // times out, and the run reports "not visible after 30 s" — which reads as
+    // a measurement of Safari's write lag and is really a measurement of this
+    // process's permissions. An absence must never be reported as data.
+    let canRead = true;
+    try {
+      execFileSync("/usr/bin/grep", ["-q", "cupertino-probe-never-matches", BOOKMARKS]);
+    } catch (error) {
+      // grep exits 1 for "no match" and 2 for "cannot read". Only the second
+      // says anything about the instrument.
+      canRead = error.status === 1;
+    }
+
+    if (!canRead) {
+      out.readingList.visibleAfterMs = null;
+      out.readingList.lagUnmeasurable = "no Full Disk Access in this process";
+      log("   LAG UNMEASURABLE from here: Bookmarks.plist is EPERM without Full Disk Access.");
+      log("   Re-run from a process that holds it. This says nothing about whether the add");
+      log("   landed — check the Reading List in Safari, where it should already be visible.");
+    } else {
+      log("   Polling the file for up to 30 s…");
+      const started = Date.now();
+      let sawIt = false;
+      while (Date.now() - started < 30_000) {
+        // grep the binary plist for the marker rather than parsing it: the only
+        // question is whether THIS run's URL is in the file, and the marker is
+        // unique. Nobody else's entry is read, matched or printed.
+        try {
+          execFileSync("/usr/bin/grep", ["-q", MARKER, BOOKMARKS]);
+          sawIt = true;
+          break;
+        } catch {
+          execFileSync("/bin/sleep", ["1"]);
+        }
+      }
+      out.readingList.visibleAfterMs = sawIt ? Date.now() - started : null;
+      log(
+        sawIt
+          ? `   visible on disk after ${Math.round((Date.now() - started) / 1000)} s.`
+          : "   NOT visible after 30 s — which is the lag `verified: null` exists for.",
+      );
+    }
   }
 }
 
