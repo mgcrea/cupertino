@@ -271,6 +271,81 @@ real `osascript` runner. That found one bug this document's version also has: th
 `WebBookmarkTypeList` whose `Title` is the empty string, so treating any non-null title as a path
 segment prefixes every folder path with a leading slash.
 
+## A Safari Web Extension is the only remaining route, and it is viable
+
+Measured 2026-08-30/31 on macOS 26.6, against a throwaway signed and notarized probe app. The
+question was whether an extension could do what neither `do JavaScript` nor Accessibility can, and
+do it without costing something this project cannot pay.
+
+**It can be a Developer-ID app, and the container does NOT have to be sandboxed.** This is the
+finding that decides the direction, because `docs/distribution.md` forecloses the App Store — the
+sandbox denies the store lanes outright — and Apple's own `safari-web-extension-converter` template
+sets `ENABLE_APP_SANDBOX = YES` on _both_ the app and the extension. Overriding the app target to
+`NO`, leaving the appex sandboxed, still builds, signs, notarizes (`Accepted`), passes
+`spctl` as `Notarized Developer ID`, registers in `pluginkit`, and appears in Safari's Settings →
+Extensions where it can be enabled. No Develop-menu "Allow unsigned extensions" is involved.
+
+**The whole chain runs with real page content, and the appex needs no app group — so Cupertino
+needs no new entitlement.** Measured end to end on `https://example.com`: a content script extracted
+the page, a background service worker relayed it through `browser.runtime.sendNativeMessage`, the
+sandboxed appex wrote it as JSON into its container, and a shell with no Full Disk Access read it
+back — 125 characters of text alongside `htmlLength: 544` for the raw `outerHTML`, which is both
+halves of the `format: "text" | "html"` split the tool is specified to offer. A sandboxed appex's own
+container — `~/Library/Containers/<appex-id>/Data/…`, `drwx------` and owned by the user — is
+readable by any same-user process outside the sandbox, so the node server can read what the
+extension writes. Measured with a negative control: a shell that is DENIED on
+`~/Library/Safari/History.db`, `~/Library/Mail` and `~/Library/Messages/chat.db` nonetheless reads
+the containers of `uBlock Origin Lite`, `Keepa` and the probe. `~/Library/Containers` is not
+TCC-protected for same-user access.
+
+That matters more than it sounds. The alternative — an app-group container — means adding
+`com.apple.security.application-groups` to an entitlements file that today holds exactly one key,
+and `docs/distribution.md` calls the bundle identity "the most expensive string in the project:
+changing it is a new TCC identity, so every existing user re-grants Full Disk Access". The container
+route avoids that entirely.
+
+**It costs the network audit nothing.** `scripts/audit-network.sh` discovers Mach-O binaries under
+`Contents/` by `file -b` rather than from a list, so an appex is scanned automatically — and a
+`SafariWebExtensionHandler` linking `SafariServices` introduces **zero** denied symbols
+(`nm -u` and `otool -L` both empty against the DENY list). It adds exactly one audited binary.
+
+### Three costs that are not obvious until you build one
+
+**Safari will not list an extension whose container app is not notarized AND stapled.** Signing is
+not enough, and the failure is silent: no error, no entry, nothing in the system log. Measured
+twice, in both directions. The consequence is that `make app` and `make run` cannot exercise an
+extension at all — Debug builds are signed with Apple Development and never notarized — so this work
+needs the full `make build-release` path, an Apple round trip per iteration.
+
+**Apple's template grants the CONTAINING app `com.apple.security.network.client`.** On a project
+that advertises no network and gates it in CI, that would ship a network entitlement under a
+no-network claim — and `audit-network.sh` inspects symbols, not entitlements, so it would pass
+straight through. Strip it deliberately, and consider asserting its absence in the audit.
+
+**Xcode's automatic signing adds `com.apple.security.get-task-allow`, which notarization rejects
+outright.** The first submission came back `Invalid` naming that entitlement on both binaries. The
+appex must be hand-signed with its own entitlements file, inside `make sign`, before the outer app
+is sealed — the same inner-out rule the bundle already follows for Sparkle, node and the bridge.
+
+**The converter references resource files individually, not as a folder.** `manifest.json` and
+`content.js` each get their own `PBXFileReference` and an entry in the resources build phase. Add a
+`background.js` without wiring it in and the build SUCCEEDS, the bundle ships without it, and the
+only evidence is a line in Safari's own extension error list — "Unable to find background.js in the
+extension's resources" — which nothing in the toolchain surfaces. This cost several build,
+notarize and restart cycles to find. Whatever ships here wants a check that the files in
+`Resources/` match what `manifest.json` names.
+
+Also: the appex bundle identifier must be prefixed by the app's, so Debug
+(`io.mgcrea.cupertino.debug`) and Release get different extension identifiers — and Safari keys
+enablement state to that identifier. The two builds hold separate extension state.
+
+### What is not yet measured
+
+**Whether the app can PULL from the extension on demand** (`SFSafariApplication.dispatchMessage`),
+as opposed to the extension pushing. This decides whether a tool returns live content or a cache
+carrying a `capturedAt`, and it is the one thing Phase 0 did not settle. Push demonstrably works, so
+a push-with-freshness-disclosure design is shippable without it.
+
 ## Still open
 
 - ~~**Reading List counts.**~~ Measured: 6 folders, 200 leaves, tree depth 2. The Reading List
