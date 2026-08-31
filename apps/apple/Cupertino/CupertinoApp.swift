@@ -482,23 +482,56 @@ struct StatusMenu: View {
 
       Divider()
 
-      // Three, not four. A fourth truncated "Open Cupertino" to "Open Cuperti…"
-      // at 320pt, and Refresh was the one to lose: `onAppear` already refreshes
-      // every time the menu opens, and `requestAutomation` writes its own result
-      // back, so there is no state it could reach that those two do not.
+      // Four again, but only one of them is spelled. A fourth TEXT button
+      // truncated "Open Cupertino" to "Open Cuperti…" at 320pt, which is what
+      // cost Refresh its place — `onAppear` already refreshes every time the
+      // menu opens and `requestAutomation` writes its own result back, so it
+      // reached no state the other two did not. Two glyphs cost a fraction of
+      // that width, so the row grew back without the panel having to.
       //
       // The gap goes after "Open Cupertino", not before "Quit". What opens
-      // something sits left, what leaves sits right, and Settings belongs with
-      // the second — it is a window you go to, not a thing this panel does.
+      // something sits left, what you GO TO sits right — Settings and the log
+      // are both windows you go to, not things this panel does.
       HStack {
         Button("Open Cupertino") { MainWindowController.show() }
           .buttonStyle(.glass)
+
         Spacer()
-        // ⌘, as well, matching the app menu item. The main menu already
-        // answers that chord app-wide, popover or no popover; declaring it here
-        // is what puts the shortcut where somebody looking for it would look.
-        Button("Settings…") { SettingsOpener.show() }
-          .keyboardShortcut(",", modifiers: .command)
+
+        // Logs is the exception to the paragraph above, and worth naming rather
+        // than quietly re-adding a row that was removed.
+        //
+        // Refresh was dropped because nothing it reached was state the panel did
+        // not already have. The log is the opposite: every line above is a count
+        // of calls, and "what were those calls" is the one question this summary
+        // raises and cannot answer. It is also what people arrive with urgently
+        // — an agent just touched their mail and they want to see what.
+        //
+        // Both are icons, and both sit right, which is the rule stated above:
+        // what opens something sits left, what you GO TO sits right. Spelling
+        // them is what the comment above measured truncating "Open Cupertino"
+        // at 320pt; a gear and a list are the two glyphs nobody needs taught, so
+        // the tooltips and the shortcuts carry the names instead of twenty more
+        // points of panel.
+        Button {
+          MainWindowController.show(.log)
+        } label: {
+          Image(systemName: "list.bullet.rectangle")
+        }
+        .keyboardShortcut("l", modifiers: .command)
+        .help("Logs (⌘L) — what every client has called, live")
+
+        // ⌘, as well, matching the app menu item. The main menu already answers
+        // that chord app-wide, popover or no popover; declaring it here is what
+        // puts the shortcut where somebody looking for it would look.
+        Button {
+          SettingsOpener.show()
+        } label: {
+          Image(systemName: "gearshape")
+        }
+        .keyboardShortcut(",", modifiers: .command)
+        .help("Settings (⌘,)")
+
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
       .controlSize(.small)

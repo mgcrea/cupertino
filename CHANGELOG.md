@@ -49,6 +49,11 @@ summary.
   feed. A row whose match falls past the truncated preview opens itself, rather than appearing in
   the results with no visible reason for being there.
 
+- **Logs and Settings are one click from the menu bar.** Two glyphs beside Quit, with ⌘L and ⌘,
+  while the panel is open. The log is the destination the panel argues for: every line in it is a
+  count of calls, and "what were those calls" is the question the summary raises and cannot
+  answer.
+
 - **Safari can open a page and save one for later.** `apple_safari_open_url` opens a URL in a new
   tab or in the tab the user is looking at, and `apple_safari_add_reading_list_item` saves one to
   the Reading List. Both are Apple Events behind `APPLE_SAFARI_ALLOW_WRITES`, so Safari is the
