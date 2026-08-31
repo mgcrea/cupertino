@@ -166,6 +166,14 @@ export type AddReadingListItemResult = {
 };
 
 /**
+ * A pause, used only to straddle Safari's write lag. Named rather than inlined
+ * so a zero — which the tests pass — reads as "do not wait" instead of as a
+ * timer that fires immediately.
+ */
+const delay = (ms: number): Promise<void> =>
+  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+
+/**
  * The scheme gate, and the security boundary of this whole lane.
  *
  * `javascript:` navigates a tab into script execution, which is exactly the
@@ -487,14 +495,26 @@ export class AppleSafariClient {
 
     if (this.located().bookmarks.readable) {
       try {
-        const { bookmarks } = await this.bookmarks({ readingListOnly: true });
-        const found = bookmarks.some((b) => b.url === input.url);
+        // TWO attempts, a beat apart, and the beat is the whole point. Safari
+        // was measured committing an add to Bookmarks.plist after 2 s; a walk
+        // taken immediately — which is what this did first — reads a file that
+        // cannot yet contain the answer, so it paid for an 880 KB traversal to
+        // report `null` on every successful add. The first attempt straddles
+        // the measured lag and the second covers a slower one.
+        let found = false;
+        for (const attempt of [0, 1]) {
+          await delay(this.#config.readingListConfirmMs);
+          const { bookmarks } = await this.bookmarks({ readingListOnly: true });
+          found = bookmarks.some((b) => b.url === input.url);
+          if (found || attempt === 1) break;
+        }
         verified = found ? true : null;
         verifyNote = found
           ? null
           : "The item is not in Bookmarks.plist yet. Safari writes that file on its own " +
-            "schedule, so this is expected immediately after an add and does not mean the add " +
-            "failed. Do not retry — that is how a Reading List ends up with two of everything.";
+            "schedule — measured at 2 s, and this waited longer than that — so a miss here is " +
+            "unusual but still does not mean the add failed. Do not retry: that is how a " +
+            "Reading List ends up with two of everything, and nothing here can remove one.";
       } catch {
         // The walk is a courtesy. Its failure says nothing about the write.
         verifyNote =

@@ -73,6 +73,10 @@ const connect = async (env: NodeJS.ProcessEnv = {}, rec: Recorder = recorder()) 
     APPLE_SAFARI_INDEX_MODE: "off",
     APPLE_SAFARI_BOOKMARKS: FIXTURE_BOOKMARKS,
     APPLE_SAFARI_ALLOW_WRITES: "true",
+    // No real wait in tests. The delay exists to straddle Safari's measured 2 s
+    // write lag, and a suite that slept for it would pay 3 s per unconfirmed
+    // add to prove something about a fake osascript.
+    APPLE_SAFARI_READING_LIST_CONFIRM_MS: "0",
     ...env,
   });
   const { server } = createServer({ config, home: "/nonexistent-home", osascript: rec.runner });
@@ -247,6 +251,30 @@ describe("apple_safari_add_reading_list_item", () => {
     expect(r.json()).toMatchObject({ verified: null });
     expect(r.text).toContain("does not mean the add failed");
     expect(r.text).toContain("Do not retry");
+  });
+
+  /**
+   * The reason the confirmation is deferred at all. Safari commits an add to
+   * Bookmarks.plist after a measured 2 s, so one immediate walk could never
+   * find it — the tool would pay for an 880 KB traversal to report `null` on
+   * every successful add. A miss must cost a SECOND look before it is reported.
+   */
+  it("looks twice before reporting an add unconfirmed", async () => {
+    const rec = recorder();
+    const c = await connect({}, rec);
+    await call(c, "apple_safari_add_reading_list_item", { url: "https://brand-new.example/post" });
+    const walks = rec.sent.filter((s) => s.script.includes("NSDictionary"));
+    expect(walks).toHaveLength(2);
+  });
+
+  it("stops at the first look when the item is already there", async () => {
+    const rec = recorder();
+    const c = await connect({}, rec);
+    await call(c, "apple_safari_add_reading_list_item", {
+      url: "https://longread.example/essay",
+    });
+    const walks = rec.sent.filter((s) => s.script.includes("NSDictionary"));
+    expect(walks).toHaveLength(1);
   });
 
   it("omits the optional fields rather than sending blanks", async () => {

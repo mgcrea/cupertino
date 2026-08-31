@@ -43,6 +43,20 @@ const ConfigSchema = BaseConfigSchema.extend({
    * someone running a locally built app reaches the right container.
    */
   pagesPath: z.string().optional(),
+  /**
+   * How long to wait before re-reading `Bookmarks.plist` to confirm a Reading
+   * List add, and how long to wait again before giving up.
+   *
+   * MEASURED: Safari committed an add to the file after **2 s** on macOS 26.6.
+   * The first version of this checked immediately, which is a walk of an 880 KB
+   * plist that could not yet contain the answer — it would have reported
+   * `verified: null` on essentially every successful add, at full cost. Two
+   * attempts a beat apart straddle the measured lag without turning a 148 ms
+   * write into a long one.
+   *
+   * Zero disables the wait, which is how the tests avoid sleeping.
+   */
+  readingListConfirmMs: z.number().int().min(0).max(10_000).default(1_500),
   indexMode: z.enum(["auto", "ro", "immutable", "off"]).default("auto"),
   /**
    * Read live tabs through Apple Events.
@@ -77,6 +91,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),
     pagesPath: trimmed(env.APPLE_SAFARI_PAGES),
+    readingListConfirmMs: parseIntOpt(env.APPLE_SAFARI_READING_LIST_CONFIRM_MS),
     indexMode: trimmed(env.APPLE_SAFARI_INDEX_MODE),
     liveTabs: parseBool(env.APPLE_SAFARI_LIVE_TABS),
     defaultRangeDays: parseIntOpt(env.APPLE_SAFARI_DEFAULT_RANGE_DAYS),

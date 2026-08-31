@@ -543,7 +543,7 @@ from the user's browser, to build the entry. Adding a URL to somebody's Reading 
 action taken on their behalf, and a caller deciding whether to save a link should know that the link
 gets contacted.
 
-### The Reading List lag is still unmeasured, and the first attempt to measure it was wrong
+### The Reading List lag is 2 seconds, and the first attempt to measure it was wrong
 
 The probe polls `Bookmarks.plist` for the item it just added. Run from an unprivileged process every
 poll returns `EPERM`, the loop times out, and the first version of it printed "NOT visible after 30 s
@@ -556,12 +556,20 @@ than as absent.
 The add itself succeeded in 148 ms. What remains unknown is the LOWER bound — how quickly Safari
 writes it down — which needs a re-run from a process holding Full Disk Access.
 
-An upper bound now exists, from a different instrument. Both probe items were read back through
-`apple_safari_list_reading_list`, which walks `Bookmarks.plist` from the bridge process that does
-hold the grant, and both were present: the second within seconds of its add. So the file is written
-promptly rather than at some later checkpoint, and `verified: true` should be the common case. The
-three-state design stands regardless — the cost of being wrong in one direction is a duplicate
-nothing can remove.
+**Measured: 2 s.** Re-run from a terminal holding Full Disk Access, the probe added an item in 85 ms
+and found it in `Bookmarks.plist` 2 s later. So Safari writes promptly rather than at some later
+checkpoint.
+
+**That number falsified the confirmation design.** `addReadingListItem` re-read the file
+IMMEDIATELY after the add — a walk of an 880 KB plist that could not yet contain the answer. It
+would have reported `verified: null` on essentially every successful add, at full cost, and the note
+attached to it would have blamed a lag that had already been paid for elsewhere. The confirmation is
+now two looks a beat apart (`APPLE_SAFARI_READING_LIST_CONFIRM_MS`, default 1,500 ms), which
+straddles the measured lag and still gives up rather than blocking. `test/writes.test.ts` pins both
+arms: a hit stops after one walk, a miss costs two.
+
+The three-state design stands regardless — the cost of being wrong in the other direction is a
+duplicate nothing can remove.
 
 ## Still open
 

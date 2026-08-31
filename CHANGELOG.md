@@ -87,8 +87,9 @@ summary.
   in 148 ms, and the `open location` fallback never fired. It also found the shipped tool
   advertising a `title` parameter Safari overrules: a custom title survives only for a URL that
   does not resolve, which is both why the description now calls it best-effort and how the
-  background fetch was discovered. How quickly Safari commits an add to `Bookmarks.plist` is still
-  unmeasured, which is why `verified` may be null.
+  background fetch was discovered. Safari commits an add to `Bookmarks.plist` after a measured 2 s,
+  which is why the confirmation is two looks a beat apart rather than the immediate re-read it
+  started as — that one could never have found anything.
 
 ### Changed
 
