@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-contacts",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Model Context Protocol server for the macOS Apple Contacts app",
   "keywords": [
     "address-book",

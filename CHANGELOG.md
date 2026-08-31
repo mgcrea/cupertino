@@ -6,15 +6,70 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.4.0`,
-`notes-v1.4.0`, `reminders-v1.4.0`, `core-v1.4.0` for the npm packages, and `app-v1.4.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.5.0`,
+`notes-v1.5.0`, `reminders-v1.5.0`, `core-v1.5.0` for the npm packages, and `app-v1.5.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.5.0] - 2026-08-31
 
 ### Added
+
+- **Safari can read what a page actually says.** `apple_safari_read_page` returns a tab's readable
+  text or its raw HTML — the capability this surface has never had and the one most often expected
+  of it. It arrives through a Safari web extension rather than Apple Events, so it needs no Full
+  Disk Access and no Automation grant. Verified end to end against a real capture rather than only
+  in tests: Hacker News, 3,681 characters of text, through the built server over stdio, on a run
+  that reported `history=UNREADABLE` in the same breath. The three Safari lanes are independent,
+  and this is the one that needs no grant at all.
+
+  macOS does offer a built-in route — "Allow JavaScript from Apple Events" — and it is a skeleton
+  key: one switch, no scope, and afterwards any process that can send Apple Events runs script in
+  any tab, including whatever is logged in. Its state cannot even be read back, so nothing can tell
+  you it is on. The extension is asked per website instead.
+
+  The hand-off is a file, because nothing can push into a running MCP server: `ServerHost` spawns
+  node with a fixed environment and there is no channel afterwards. The extension writes captures
+  into its own appex container, which is 0700, owned by the user and not TCC-protected, so the
+  unsandboxed server reads it with no grant and no app group — measured with a negative control, a
+  shell denied on `History.db`, `~/Library/Mail` and `chat.db` still reads three appex containers.
+  It is a cache and says so: a 30 minute TTL, 20 entries, 256 KB of text.
+
+  Settings grows a row under Page content saying whether the extension is switched on, with a
+  button into Safari, where that switch actually lives — there is no system preferences pane for
+  it. Only the containing app can ask: a standalone binary calling the same API is refused with
+  `SFErrorDomain` error 1. A disabled extension leaves its last captures on disk and simply stops
+  adding more, so without this the store keeps looking healthy while answering with an ever-older
+  page.
+
+- **The Activity log records what a call was made with, not just its name.** A per-surface capture
+  mode chooses between names only, arguments, and arguments with results. Content is blanked by
+  default, and separately: a mail body, a message and a note's text all arrive as arguments, so the
+  prose inside them is dropped while the structure — which tool, which mailbox, which recipient —
+  is kept. Nothing is written to disk; the log stays a bounded in-memory ring.
+
+- **Messages can read one-time codes**, behind `APPLE_MESSAGES_ALLOW_CODES`. `find_codes` is a
+  read, and the reason it needs a switch of its own rather than riding on `allowWrites` is what it
+  completes: this server already holds the conversation history while a sibling holds Mail, which
+  between them is the password-reset channel. Adding live authentication codes to that assembles an
+  account-takeover primitive out of parts that were each individually reasonable, so it defaults
+  off. It ships in place of a Passwords surface, which does not exist.
+
+- **Safari tells the frontmost tab from the merely active one.** `active` is selected in its own
+  window, so two open windows produced two active tabs and nothing said which one a person was
+  actually looking at. `apple_safari_list_tabs` now also reads Safari's own `frontmost` property
+  and each window's front-to-back index, marks at most one tab `frontmost`, and takes
+  `only: "active" | "frontmost"` to narrow the result. When that order cannot be read it says
+  `windowOrderUnknown`, so a caller asking for it gets an explanation rather than a silent empty
+  list.
+
+  The history enrichment behind it was rebuilt at the same time. Safari shares no id between the
+  live-tab and history lanes, so the join is a URL and nothing else, and the old one was a single
+  exact lookup plus a query-stripping retry run as up to 2N individual reads. An ordered ladder now
+  tries fragment, trailing slash, scheme, `www.` and tracking parameters before falling back to
+  that query strip as the weakest rung, resolves a whole tab set in one chunked SQL `IN`, and
+  reports which rung answered so a caller can tell a faithful match from a loose one.
 
 - **Surfaces can be switched off, in Settings › Surfaces.** A surface that is off is not served at
   all: it is left out of the server keys Cupertino writes into a client's config, pruned from the
@@ -76,6 +131,27 @@ summary.
   as a row of toggles, which showed the control — this shows the consequence, and the numbers come
   off the real server rather than a fixture.
 
+- **The menu bar glyph is a setting sun**: a solid disc clipped by a stroked horizon, replacing the
+  thin-wave mark it had before. The cut is a `clipPath` rather than the canvas's own mask —
+  measured through `NSImage`'s SVG rep, the mask's soft edge leaves about 25% residual alpha along
+  the cut and bridges the disc and the horizon into one shape. The connected state adds a halo
+  whose gap was swept rather than chosen: 2.4 units is one step past where the ring's antialiased
+  edge stops fusing with the disc at 2x.
+
+- **The website gained a Safari section, a privacy policy, a feedback form, and the EULA at
+  `/terms`.** The Safari section is about the permission rather than the feature, which is the same
+  argument the rest of the site already makes about Full Disk Access and terminals: reading a web
+  page is unremarkable, and what you hand over in order to do it is not. The EULA is rendered from
+  `apps/apple/EULA` rather than restated, so the document a buyer agrees to at checkout is the one
+  the app was built with. The feedback form exists for the reports that should not be public — a
+  useful Cupertino bug report quotes a subject line, a chat, an account name or a contact, and the
+  issue tracker is public and permanent. Organization and WebSite JSON-LD were added alongside.
+
+- The menu bar popover groups its buttons by what they do: "Open Cupertino" sits left, and
+  "Settings…" moves right to join "Quit". What opens something is on one side, what leaves is on
+  the other, and Settings belongs with the second — it is a window you go to, not a thing the
+  panel itself does.
+
 ### Fixed
 
 - **The Activity log pane rendered nothing at all.** Its footer caption grew a second sentence when
@@ -95,6 +171,31 @@ summary.
   Found by the screenshot pipeline: the `activity` and `prompt` plates came out as empty windows,
   and because both were empty they were also byte-identical, which `appshot check`'s duplicate
   detection reports as a staging failure rather than a visual change.
+
+- **Settings no longer opens as a tab of the main window.** `NSWindow.tabbingMode` defaults to
+  `.automatic`, so on a Mac with Desktop & Dock → "Prefer tabs when opening documents" set to
+  Always, macOS tabs any two same-class titled, resizable windows together. Neither of this app's
+  windows is a document and neither has a second instance to be tabbed with, so Settings was
+  absorbed as a tab of the main window and ⌘, appeared to do nothing — the pane it opened was
+  behind the tab already showing.
+
+- **Maps is no longer described as read-only.** The Permissions pane derived its Automation caption
+  from `usesAppleEvents` alone, where false meant "not needed — this surface reads only". That held
+  for every surface until Maps, which is the only one with `usesAppleEvents` false that writes
+  anyway, through SQL into its Core Data store rather than an Apple Event. So the one surface that
+  reached the false branch was the one the sentence was wrong about, and 1.4.0 shipped it next to a
+  working write toggle. It branches on `supportsWrites` now; the grant is equally not needed either
+  way, and only the reason differs.
+
+- **A green Accessibility row that was not actually working.** This shipped in the 1.4.0 build and
+  is recorded here because it was never announced. One bundle identifier can hold several
+  Accessibility entries at once — one per path and signature it has been granted at, so an
+  installed copy, a debug build and every earlier reinstall each get their own — and the app's
+  `AXIsProcessTrusted()` check and the servers' functional check can match different ones. `tccutil
+reset` reported clearing four entries for `io.mgcrea.cupertino` on the machine that surfaced it.
+  The cure is clearing them and granting once from the running bundle, then never granting again.
+  Diagnostics, the Settings hint and the code comments now say that instead of the retracted claim
+  that Accessibility simply does not inherit.
 
 ## [1.4.0] - 2026-08-30
 
