@@ -204,20 +204,33 @@ if [ "$saw_sparkle" -eq 1 ]; then
   # in Cupertino.entitlements measures the need for, and get-task-allow, which
   # only a Debug build carries. Anything else is a claim nobody made.
   #
-  # Skipped, loudly, on an unsigned bundle. CI builds with
-  # CODE_SIGNING_ALLOWED=NO and `codesign -d` answers "code object is not signed
-  # at all" on stderr with a ZERO exit status — so a naive read comes back empty
-  # and looks exactly like a bundle whose entitlements could not be parsed. This
-  # check said FAIL for that, which would have turned an unsigned CI build into a
-  # security-audit failure. "Not checked" is the honest answer, and saying it out
-  # loud is what stops the gap being mistaken for a pass.
-  if ! codesign -dv "$APP" >/dev/null 2>&1; then
-    printf '  --    %-46s unsigned build, not checked\n' "entitlements"
+  # Skipped, loudly, on a bundle that carries no real signature. `codesign -dv`
+  # cannot be the discriminator on its own: CODE_SIGNING_ALLOWED=NO does not
+  # produce an UNSIGNED binary on Apple silicon, it produces an ad-hoc
+  # linker-signed one, and `codesign -dv` exits 0 on that. So the earlier guard
+  # never fired in CI, the read below came back empty, and — under `set -e` with
+  # `pipefail` — the failing pipeline killed this script mid-audit with no
+  # message at all, right after the XPCServices line. A security audit that dies
+  # silently is worse than one that fails loudly, which is what this cost.
+  #
+  # Ask the signature what KIND it is, and skip only for the two kinds that
+  # cannot carry entitlements anyway. A Developer ID build stays strict: absent
+  # or unparseable entitlements there are still a FAIL, because that is a
+  # distributable artifact making a claim nobody checked.
+  siginfo=$(codesign -dv "$APP" 2>&1 || true)
+  case "$siginfo" in
+    *"not signed at all"*) skip="unsigned build" ;;
+    *adhoc*|*linker-signed*) skip="ad-hoc signed build" ;;
+    *) skip="" ;;
+  esac
+  if [ -n "$skip" ]; then
+    printf '  --    %-46s %s, not checked\n' "entitlements" "$skip"
     granted="__unsigned__"
   else
     granted=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null \
       | plutil -convert json -o - - 2>/dev/null \
-      | python3 -c 'import json,sys; print(",".join(sorted(json.load(sys.stdin))))' 2>/dev/null)
+      | python3 -c 'import json,sys; print(",".join(sorted(json.load(sys.stdin))))' 2>/dev/null \
+      || true)
   fi
   case "$granted" in
     "__unsigned__") ;;
