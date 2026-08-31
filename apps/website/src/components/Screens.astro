@@ -91,6 +91,37 @@ const shots = [
     alt: "Cupertino's Notes pane with Allow writes unchecked, its capabilities card reading seven tools, one prompt and three resources, and Safari dimmed in the sidebar as a switched-off surface.",
   },
 ] as const;
+
+/**
+ * Every plate is rendered at the SAME pixel scale, which is not what `w-full`
+ * on its own gives you.
+ *
+ * Five of these are the main window at 2240px; `settings` is the Settings
+ * window, which is genuinely a smaller window and comes out of the capture at
+ * 2000. Stretched to a shared column width it rendered about 12% larger than
+ * the others — same traffic lights, same 13pt type, visibly bigger — and a set
+ * of screenshots at two scales reads as two applications.
+ *
+ * So the column is 1120 CSS px for the widest capture and each other plate
+ * takes its share of that, centred. `sizes` has to follow, or the browser picks
+ * a candidate for a width the image is never rendered at.
+ *
+ * Ported from bastion, which hit the same thing with a 1520px Settings window.
+ * It derives everything from the imported image's own width, so a capture that
+ * changes size needs no second edit here.
+ */
+const COLUMN = 1120;
+const widest = Math.max(...shots.map((shot) => shot.image.width));
+
+const plate = (image: (typeof shots)[number]["image"]) => {
+  const share = image.width / widest;
+  const css = Math.round(COLUMN * share);
+  return {
+    style: `max-width:${css}px`,
+    widths: [Math.round(css * 0.65), css, css * 2],
+    sizes: `(min-width: 1180px) ${css}px, ${Math.round(share * 100)}vw`,
+  };
+};
 ---
 
 <section id="screens" class="wrap scroll-mt-20 py-[96px]">
@@ -104,17 +135,18 @@ const shots = [
     {
       shots.map(({ image, id, title, body, alt }) => (
         <figure id={`shot-${id}`} class="reveal m-0 scroll-mt-24">
-          {/* Widths are the rendered CSS widths, not the source's — the shot is
-              2240px wide at 2x, so 1120 is the 1x plate and 2240 the retina one.
-              avif then webp, with the PNG as the fallback the <picture> keeps. */}
+          {/* Widths are the rendered CSS widths, not the source's: the plate is
+              drawn at `css` and the largest candidate is its 2x. avif then webp,
+              with the PNG as the fallback the <picture> keeps. */}
           <Picture
             src={image}
             alt={alt}
-            widths={[720, 1120, 2240]}
-            sizes="(min-width: 1180px) 1120px, 100vw"
+            widths={plate(image).widths}
+            sizes={plate(image).sizes}
             formats={["avif", "webp"]}
             fallbackFormat="png"
-            class="block h-auto w-full rounded-[14px] border border-rule-2 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+            style={plate(image).style}
+            class="mx-auto block h-auto w-full rounded-[14px] border border-rule-2 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
           />
           <figcaption class="mt-5 grid grid-cols-1 gap-2 lg:grid-cols-[1fr_1.15fr] lg:gap-16">
             <h3 class="m-0 font-display text-[20px] font-semibold tracking-[-0.03em] text-fg">
