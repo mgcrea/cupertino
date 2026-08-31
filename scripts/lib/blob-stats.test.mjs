@@ -12,7 +12,7 @@
 // `node --test`, no framework, matching probe-kit.test.mjs.
 
 import assert from "node:assert/strict";
-import { randomBytes, createCipheriv } from "node:crypto";
+import { randomBytes, createCipheriv, createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { gzipSync, deflateSync } from "node:zlib";
 
@@ -61,10 +61,62 @@ const bplistish = (n) => {
   return out;
 };
 
+/**
+ * The first byte of every magic in `blob-stats.mjs`'s container table. A draw
+ * beginning with one of these is skipped below.
+ *
+ * Nine of 256, and almost all of the risk is one of them: `protobuf-ish` is the
+ * single byte 0x0a, so about one buffer in 256 opens like a container by pure
+ * chance. Checking only the first byte is a deliberate over-rejection — it needs
+ * no knowledge of the full magics, so it cannot drift out of step with them the
+ * way a copy of the table would.
+ */
+const CONTAINER_LEAD_BYTES = new Set([0x62, 0x1f, 0x78, 0x04, 0x53, 0x3c, 0x89, 0xff, 0x0a]);
+
+/**
+ * Deterministic bytes with no container header, for the fixtures that only need
+ * "opaque and fixed width". Same reasoning as `ciphertext` above: `randomBytes`
+ * opens with 0x0a about once in 256, and `protobuf-ish` is that single byte.
+ */
+let opaqueNonce = 0;
+const opaqueBytes = (n) => {
+  for (;;) {
+    const chunks = [];
+    for (let i = 0; chunks.length * 64 < n; i++) {
+      chunks.push(createHash("sha512").update(`blob-stats/opaque/${opaqueNonce}/${i}`).digest());
+    }
+    opaqueNonce++;
+    const out = Buffer.concat(chunks).subarray(0, n);
+    if (!CONTAINER_LEAD_BYTES.has(out[0])) return out;
+  }
+};
+
 /** Genuine AES-CTR ciphertext, not randomBytes pretending to be some. */
+let ciphertextNonce = 0;
 const ciphertext = (n) => {
-  const cipher = createCipheriv("aes-256-ctr", randomBytes(32), randomBytes(16));
-  return Buffer.concat([cipher.update(prose(n)), cipher.final()]);
+  // Key and IV are derived from a counter rather than drawn with `randomBytes`,
+  // and a draw that opens like a container is skipped. The samples still differ
+  // from one another, which is what the classifier is being asked about; what
+  // changes is that the same twelve samples come back on every run.
+  //
+  // MEASURED, and the reason this is not a style preference: with random keys
+  // about one buffer in 330 tripped `looksEncrypted`, nearly always by opening
+  // with 0x0a and being read as `protobuf-ish`. `container === null` is one of
+  // that predicate's conjuncts, so any test asking twelve samples to ALL look
+  // encrypted failed about 3.5% of the time, and this file about 10% of the
+  // time. It cost this release two red CI runs before it was recognised as
+  // chance rather than platform, having passed on macOS and failed on ubuntu
+  // inside a single run.
+  for (;;) {
+    const material = createHash("sha512").update(`blob-stats/${ciphertextNonce++}`).digest();
+    const cipher = createCipheriv(
+      "aes-256-ctr",
+      material.subarray(0, 32),
+      material.subarray(32, 48),
+    );
+    const out = Buffer.concat([cipher.update(prose(n)), cipher.final()]);
+    if (!CONTAINER_LEAD_BYTES.has(out[0])) return out;
+  }
 };
 
 describe("byte statistics", () => {
@@ -152,7 +204,7 @@ describe("classifySamples", () => {
     // Core Data stores a uuid as 16 raw bytes. On the first real HomeKit run
     // dozens of columns were exactly this, and reporting them as UNKNOWN buried
     // the few columns that genuinely had not decided.
-    const r = classifySamples(many(() => randomBytes(16)));
+    const r = classifySamples(many(() => opaqueBytes(16)));
     assert.equal(r.verdict, "SHORT-FIXED-WIDTH");
     assert.match(r.reason, /exactly 16 B/);
   });
