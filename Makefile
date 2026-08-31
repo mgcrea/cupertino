@@ -207,12 +207,20 @@ smoke: ## Handshake both servers through the bridge, as CI does directly
 			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
 	done
 
-unit: ## Assert what a recorded call carries, with no app and no network
+unit: ## Assert what a recorded call carries and that the audit chain holds, with no app
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/unit-check \
 		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/SafariCaptures.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
+
+audit-check: ## Prove an export signature survives a round trip, with no app and no Keychain
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/audit-check \
+		apps/apple/Cupertino/AuditSigning.swift \
+		scripts/audit-check.swift
+	@apps/apple/.build/audit-check
 
 wiring-check: ## Assert the config merge leaves other people's files alone
 	@mkdir -p apps/apple/.build

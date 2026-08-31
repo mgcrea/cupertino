@@ -258,6 +258,118 @@ struct UnitCheck {
 
     try? FileManager.default.removeItem(at: tmp)
 
+    // MARK: - The audit chain
+    //
+    // Everything here is invisible when it goes wrong: a chain that verifies a
+    // forged log, or one that cries tamper over a log nobody touched, both look
+    // exactly like a chain that works until somebody depends on the answer.
+
+    func record(_ seq: Int, _ text: String, prev: String, args: String? = nil)
+      -> AuditChain.Record
+    {
+      AuditChain.seal(
+        AuditChain.Record(
+          seq: seq, at: Date(timeIntervalSince1970: 1_756_000_000 + Double(seq)),
+          surface: "mail", kind: .call, text: text, args: args, prev: prev))
+    }
+
+    /// A sealed run of `count` records, each linked to the one before.
+    func chain(_ count: Int, from: String = AuditChain.genesis) -> [AuditChain.Record] {
+      var out: [AuditChain.Record] = []
+      var prev = from
+      for seq in 1...count {
+        let sealed = record(seq, "apple_mail_tool_\(seq)", prev: prev)
+        out.append(sealed)
+        prev = sealed.hash
+      }
+      return out
+    }
+
+    print("\nAudit chain: a sequence nobody touched")
+
+    let clean = chain(5)
+    let cleanLines = clean.map { AuditChain.line($0) }
+    let cleanReport = AuditChain.verify(lines: cleanLines)
+    check("five records verify", cleanReport.isIntact)
+    check("and are all counted", cleanReport.records == 5)
+    check("the head is the last hash", cleanReport.head == clean[4].hash)
+    check("a blank line is skipped, not failed", AuditChain.verify(lines: cleanLines + [""]).isIntact)
+    check("an empty log verifies as genesis", AuditChain.verify(lines: []).head == AuditChain.genesis)
+
+    print("\nAudit chain: tampering")
+
+    // An edited field. The record still parses and still links; only its own
+    // hash stops matching, which is the whole point of hashing the fields.
+    var edited = cleanLines
+    edited[2] = edited[2].replacingOccurrences(of: "apple_mail_tool_3", with: "apple_mail_tool_X")
+    let editedReport = AuditChain.verify(lines: edited)
+    check("an edited field is caught", !editedReport.isIntact)
+    check("and is named by its seq", editedReport.failures.contains(.brokenHash(seq: 3)))
+
+    // A deleted middle record. Nothing is edited, so every hash still matches
+    // its own body — the break is the LINK, which is the reason `prev` exists.
+    var deleted = cleanLines
+    deleted.remove(at: 2)
+    let deletedReport = AuditChain.verify(lines: deleted)
+    check("a deleted middle record is caught", !deletedReport.isIntact)
+    check("as a broken link on the record after it", deletedReport.failures.contains(.brokenLink(seq: 4)))
+    check("and as a gap in the sequence", deletedReport.failures.contains(.outOfOrder(seq: 4)))
+
+    // Reordering. Hashes still match their bodies; the links do not.
+    var swapped = cleanLines
+    swapped.swapAt(1, 2)
+    check("a reordered pair is caught", !AuditChain.verify(lines: swapped).isIntact)
+
+    // THE ONE A CHAIN CANNOT CATCH, and the reason the manifest carries a
+    // count. Lopping off the tail leaves a shorter, perfectly valid chain.
+    let truncated = Array(cleanLines.prefix(3))
+    let truncatedReport = AuditChain.verify(lines: truncated)
+    check("a truncated tail still verifies", truncatedReport.isIntact)
+    check("but the count is lower", truncatedReport.records == 3)
+    check("and the head has moved back", truncatedReport.head == clean[2].hash)
+
+    check(
+      "a corrupt line is reported by line number",
+      AuditChain.verify(lines: ["{not json"]).failures == [.unreadable(line: 1)])
+    check(
+      "a record from a future format is refused rather than hashed",
+      AuditChain.verify(lines: [cleanLines[0].replacingOccurrences(of: "\"v\":1", with: "\"v\":9")])
+        .failures.contains(.unknownVersion(line: 1, version: 9)))
+
+    print("\nAudit chain: segments")
+
+    // Retention prunes whole segments, so a segment must link to the one
+    // before it. Verified against the right head it is intact; against genesis
+    // it is a broken link on its first record, which is what stops a dropped
+    // segment from passing as a complete log.
+    let second = chain(3, from: clean[4].hash).map { AuditChain.line($0) }
+    check("a segment verifies from the previous head", AuditChain.verify(lines: second, from: clean[4].hash).isIntact)
+    check(
+      "and fails from genesis",
+      AuditChain.verify(lines: second).failures.contains(.brokenLink(seq: 1)))
+
+    print("\nAudit chain: the canonical form")
+
+    // The hash is taken over bytes a verifier must be able to rebuild. These
+    // are the inputs most likely to make two implementations disagree.
+    let quoted = record(1, "tool", prev: AuditChain.genesis, args: #"{"q":"he said \"hi\""}"#)
+    check("quotes survive a round trip", AuditChain.verify(lines: [AuditChain.line(quoted)]).isIntact)
+    let newline = record(1, "tool", prev: AuditChain.genesis, args: "line1\nline2\ttab")
+    check("newlines and tabs do", AuditChain.verify(lines: [AuditChain.line(newline)]).isIntact)
+    let unicode = record(1, "tool", prev: AuditChain.genesis, args: #"{"note":"café 🔒 日本"}"#)
+    check("multibyte text does", AuditChain.verify(lines: [AuditChain.line(unicode)]).isIntact)
+    let control = record(1, "tool", prev: AuditChain.genesis, args: "bell\u{07}null-ish\u{01}")
+    check("control characters do", AuditChain.verify(lines: [AuditChain.line(control)]).isIntact)
+
+    // Sealing twice must not change anything, or a record re-read and re-sealed
+    // would look edited.
+    check("sealing is deterministic", AuditChain.seal(quoted).hash == quoted.hash)
+    // And an omitted optional must not be written as null: a writer and a
+    // verifier that disagree about that produce different bytes.
+    check(
+      "an absent argument is omitted, not nulled",
+      !AuditChain.canonical(record(1, "t", prev: AuditChain.genesis)).contains("args"))
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
