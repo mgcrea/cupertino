@@ -67,7 +67,11 @@ So a body is pasted into the composer window and read back out of it. Nothing re
 ready on the strength of an assignment having been accepted, because that is exactly what lied.
 
 Mail also wraps any body set by AppleScript in `<blockquote type="cite">` — FB11734014, filed 2023,
-still open — so the composer's Format ▸ Quote Level ▸ Decrease is driven to undo it.
+still open — so the composer's Format ▸ Quote Level ▸ Decrease is driven to undo it. That menu only
+validates for the frontmost application, so Mail has to come forward for a moment; the composer is
+shrunk and pushed off-screen for the duration and then put back exactly where it was found, because
+Mail persists the compose window's frame and a window left at 1×1 is inherited by the next composer
+opened by hand. A window whose geometry cannot be read back is not moved at all.
 
 ## What recreation cannot carry across
 

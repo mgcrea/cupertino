@@ -391,7 +391,15 @@ function maxQuoteLevel(el, depth) {
  * composer to its minimum and push it off-screen first (macOS clamps it back to
  * leave a 40px sliver — that residue is not removable from outside Mail's
  * process, as the window server ignores alpha changes from a foreign
- * connection), then hand the user's app back before sending.
+ * connection), then put the window back exactly where it was found before the
+ * user's app is handed back.
+ *
+ * Restoring is NOT cosmetic. Mail persists the compose window's frame, so a
+ * composer left at [1, 1] off-screen is inherited by the next one the user
+ * opens by hand -- and on a send that only saves a draft, the window this
+ * shrank is the very window the caller is told is "open in Mail for review".
+ * So a window whose geometry cannot be read back is not moved at all: the flash
+ * of a composer coming forward is worth less than a window stuck at [1, 1].
  *
  * Failure is reported, never fatal: a quoted send still beats a lost one.
  */
@@ -409,9 +417,24 @@ function stripCitation(windowName) {
   // An empty subject names the window something else; the composer is frontmost regardless.
   if (!win) win = wins[0];
 
-  // Out of sight before Mail comes forward, so the user sees as little as possible.
-  try { win.size = [1, 1]; } catch (e) {}
-  try { win.position = [-100000, -100000]; } catch (e) {}
+  // Read the real geometry BEFORE moving: once the window is off-screen the
+  // window server answers with what it clamped to, not what the user chose.
+  var was = null;
+  try { was = { size: win.size(), position: win.position() }; } catch (e) { was = null; }
+  var unhide = function () {
+    if (!was) return;
+    // Position first, so the window grows back from the right top-left corner.
+    try { win.position = was.position; } catch (e) {}
+    try { win.size = was.size; } catch (e) {}
+  };
+
+  // Out of sight before Mail comes forward, so the user sees as little as
+  // possible -- and only when the geometry came back, because hiding a window
+  // we have no way to put back is how it stays hidden.
+  if (was) {
+    try { win.size = [1, 1]; } catch (e) {}
+    try { win.position = [-100000, -100000]; } catch (e) {}
+  }
 
   var previous = prop(function () {
     return SE.applicationProcesses.whose({ frontmost: true })[0].name();
@@ -443,6 +466,10 @@ function stripCitation(windowName) {
   } catch (e) {
     stripped = false;
   }
+
+  // Before the caller sends, saves, or leaves this window on screen, and on the
+  // failure path too: a strip that threw must not cost the user their composer.
+  unhide();
 
   if (previous && previous !== "Mail") {
     try { SE.processes.byName(previous).frontmost = true; } catch (e) {}
