@@ -146,13 +146,14 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
 };
 
 describe("tool registration", () => {
-  it("registers six read tools", async () => {
+  it("registers seven read tools", async () => {
     expect(await toolNames(await connect())).toEqual([
       "apple_safari_diagnostics",
       "apple_safari_get_page",
       "apple_safari_list_bookmarks",
       "apple_safari_list_reading_list",
       "apple_safari_list_tabs",
+      "apple_safari_read_page",
       "apple_safari_search_history",
     ]);
   });

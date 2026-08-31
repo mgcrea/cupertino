@@ -16,6 +16,14 @@ import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { urlVariants, type MatchKind } from "./match.js";
+import {
+  ageSeconds,
+  defaultPagesDirectory,
+  pagesStatus,
+  readPages,
+  type CapturedPage,
+  type PagesStatus,
+} from "./pages.js";
 import { encodeBookmarkRef, encodeHistoryRef } from "./ref.js";
 import { openStore, type HistoryRow, type RangeQuery, type SafariStore } from "./store.js";
 
@@ -375,6 +383,34 @@ export class AppleSafariClient {
           previewText: e.previewText,
         })),
     };
+  }
+
+  /** Where the Safari extension writes its captures. */
+  get pagesDirectory(): string {
+    return this.#config.pagesPath ?? defaultPagesDirectory(this.#home);
+  }
+
+  /**
+   * The freshest capture of one URL, or null.
+   *
+   * Matching is exact. The extension records `location.href`, which is the URL
+   * the page itself reports — so it already agrees with what
+   * `apple_safari_list_tabs` returns for that tab, and the variant ladder that
+   * history needs does not apply here. Two tabs on the same URL collapse to one
+   * entry by construction, because the extension keys its files by URL digest.
+   */
+  page(url: string): { page: CapturedPage; ageSeconds: number } | null {
+    const hit = readPages(this.pagesDirectory).find((p) => p.url === url);
+    return hit ? { page: hit, ageSeconds: ageSeconds(hit) } : null;
+  }
+
+  /** Every capture currently on disk, newest first. */
+  pages(): { page: CapturedPage; ageSeconds: number }[] {
+    return readPages(this.pagesDirectory).map((page) => ({ page, ageSeconds: ageSeconds(page) }));
+  }
+
+  pagesStatus(): PagesStatus {
+    return pagesStatus(this.pagesDirectory);
   }
 
   /** Everything diagnostics needs, with no lane allowed to fail the whole call. */

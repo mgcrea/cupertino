@@ -16,6 +16,7 @@ export const buildDiagnostics = async (
   client: AppleSafariClient,
 ): Promise<Record<string, unknown>> => {
   const status = client.status();
+  const pages = client.pagesStatus();
   const located = status.located;
   return {
     server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
@@ -39,6 +40,21 @@ export const buildDiagnostics = async (
         needs: "an Automation grant for com.apple.Safari, and Safari running",
         answers: "the tabs currently open",
         enabled: client.config.liveTabs,
+      },
+      extension: {
+        needs:
+          "the Cupertino Safari extension, enabled in Safari and allowed on the site in question",
+        answers: "what a page actually says, as text or HTML",
+        // `working` is measured — the store exists — and `captured` is what is in
+        // it. Both matter: a directory with nothing in it means the extension ran
+        // but has been allowed on no site, which is a different fix from not
+        // having the extension at all.
+        working: pages.exists,
+        captured: pages.count,
+        directory: pages.directory,
+        note:
+          "A capture is a SNAPSHOT taken when the page loaded, not a live read. Nothing here can " +
+          "ask Safari for a fresh copy, so every result carries capturedAt and ageSeconds.",
       },
       writes: "none — this server registers no mutating tool",
     },
@@ -81,13 +97,14 @@ export const buildDiagnostics = async (
       "History timestamps are placed on an epoch DETECTED from the store rather than an " +
         "assumed one, because an earlier probe run misread this column by 31 years. When " +
         "detection fails, every date reads null rather than being guessed.",
-      "This server ships no `do JavaScript` verb, so it cannot read page content. That " +
-        "would need 'Allow JavaScript from Apple Events', a Safari developer-menu toggle " +
-        "that is not a TCC grant and whose own state cannot be read. The refusal itself is " +
-        "loud — error 8, naming the toggle — but because the state is unreadable this " +
-        "report could never tell you in advance whether the verb would work, only after " +
-        "trying it. Accessibility is not an alternative: Safari exposes no AXWebArea for " +
-        "its page content at all (measured, macOS 26.6), so there is no second route.",
+      "Page content comes from the Safari extension and nowhere else, and it is a SNAPSHOT " +
+        "rather than a live read — apple_safari_read_page returns what a page looked like when " +
+        "it was captured, with capturedAt and ageSeconds saying when. This server still ships " +
+        "no `do JavaScript` verb: that would need 'Allow JavaScript from Apple Events', a " +
+        "developer-menu toggle that is not a TCC grant and whose state cannot be read, so this " +
+        "report could never say in advance whether it would work. Accessibility is not a route " +
+        "either — Safari exposes no AXWebArea for page content at all (measured, macOS 26.6). " +
+        "The extension is the only one, and it sees only the sites you allow it on.",
       "This server cannot open URLs, add to the Reading List, or change anything at all. " +
         "Those are Apple Events that navigate a real, visible browser, and none of them " +
         "was ever probed.",

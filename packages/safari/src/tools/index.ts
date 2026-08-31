@@ -4,6 +4,7 @@ import type { AppleSafariClient } from "../client/safari.js";
 import { registerBookmarkTools } from "./bookmarks.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerHistoryTools } from "./history.js";
+import { registerPageTools } from "./pages.js";
 import { registerTabTools } from "./tabs.js";
 
 export type ToolContext = {
@@ -37,5 +38,6 @@ export const registerTools = (
   registerDiagnosticsTools(server, client);
   registerHistoryTools(server, client);
   registerTabTools(server, client);
+  registerPageTools(server, client);
   registerBookmarkTools(server, client);
 };

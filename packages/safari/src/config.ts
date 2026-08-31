@@ -29,6 +29,15 @@ const ConfigSchema = BaseConfigSchema.extend({
    * Reading List by implication.
    */
   bookmarksPath: z.string().optional(),
+  /**
+   * Explicit path to the Safari extension's capture store.
+   *
+   * Discovery resolves the extension's sandbox container, which is keyed by its
+   * bundle identifier — and that identifier differs between a Debug and a
+   * Release app. Overriding it is how a test points at a fixture, and how
+   * someone running a locally built app reaches the right container.
+   */
+  pagesPath: z.string().optional(),
   indexMode: z.enum(["auto", "ro", "immutable", "off"]).default("auto"),
   /**
    * Read live tabs through Apple Events.
@@ -62,6 +71,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     debug: parseBool(env.APPLE_SAFARI_DEBUG),
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),
+    pagesPath: trimmed(env.APPLE_SAFARI_PAGES),
     indexMode: trimmed(env.APPLE_SAFARI_INDEX_MODE),
     liveTabs: parseBool(env.APPLE_SAFARI_LIVE_TABS),
     defaultRangeDays: parseIntOpt(env.APPLE_SAFARI_DEFAULT_RANGE_DAYS),
