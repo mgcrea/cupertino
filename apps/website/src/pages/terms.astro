@@ -1,0 +1,48 @@
+---
+/**
+ * The EULA, served from the file the app ships.
+ *
+ * Read at build time from `apps/apple/EULA` rather than copied into this page,
+ * because the two must never disagree: Stripe Checkout requires agreement to
+ * terms before payment, and §5 of that document describes the consent the buyer
+ * gives there. A page that drifted from the shipped text would make the
+ * agreement describe a checkout that does not exist.
+ *
+ * `?raw`, not `readFileSync`. Vite resolves this against THIS file at build time
+ * and inlines the bytes; a runtime read resolves against the bundled chunk,
+ * which lands in dist/ and cannot see apps/apple at all.
+ *
+ * Plain text, rendered as plain text. It is a legal document, not a landing
+ * page, and reformatting it into headings and cards would be a second rendering
+ * to keep in sync for no gain to the person reading it.
+ */
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import { APP_NAME, REPO_URL } from "../config";
+
+import eula from "../../../apple/EULA?raw";
+---
+
+<Layout
+  title={`Licence terms — ${APP_NAME}`}
+  description={`The end user licence agreement for the signed, notarized builds of ${APP_NAME}: what a key covers, offline validation, and the thirty-day refund.`}
+>
+  <Nav />
+  <main class="wrap mx-auto max-w-[80ch] px-6 py-20 md:py-28">
+    <div class="mono text-accent">sec · terms</div>
+    <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
+      Licence terms
+    </h1>
+    <p class="mt-6 max-w-[62ch] text-[16px] leading-[1.7] text-fg-dim">
+      This covers the signed builds. The source is separate and has
+      <a href={`${REPO_URL}/blob/main/apps/apple/LICENSE`} class="underline">its own licence</a>;
+      the reasoning behind both is in
+      <a href={`${REPO_URL}/blob/main/docs/licensing.md`} class="underline">docs/licensing.md</a>.
+    </p>
+
+    <pre
+      class="mt-12 overflow-x-auto font-mono text-[13px] leading-[1.65] whitespace-pre-wrap text-fg-dim">{eula}</pre>
+  </main>
+  <Footer />
+</Layout>
