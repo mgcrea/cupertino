@@ -18,6 +18,10 @@ struct SurfaceDetail: View {
   let model: StatusModel
 
   @State private var store: StoreStatus = .checking
+  /// Safari only. `nil` until the first probe returns, so the card can say
+  /// "Looking…" rather than "nothing captured" at a directory it has not read.
+  @State private var captures: SafariCaptures?
+  @State private var showSetup = false
   /// Its own copy of the key `SurfaceSwitch` writes, so this pane re-lays out
   /// the moment the switch moves. Same reason `CapabilitiesCard` keeps one for
   /// the write flag.
@@ -43,6 +47,7 @@ struct SurfaceDetail: View {
         if enabled {
           accessSection
           storeSection
+          pageContentSection
           CapabilitiesCard(surface: surface)
           activity
         } else {
@@ -52,12 +57,16 @@ struct SurfaceDetail: View {
           // answers "would this work if I turned it back on", which may well be
           // the question that follows.
           storeSection
+          pageContentSection
         }
       }
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .task(id: surface.id) { await resolveStore() }
+    .task(id: surface.id) {
+      await resolveStore()
+      await resolveExtension()
+    }
   }
 
   /// The icon is the system's, fetched at runtime — see `SurfaceIcon`. It also
@@ -224,6 +233,173 @@ struct SurfaceDetail: View {
     }
   }
 
+  /// Safari's THIRD lane, which nothing else in this window reports.
+  ///
+  /// The other two cards above are the other two: `accessSection` is the Apple
+  /// Events lane and `storeSection` is the file lane. `surfaces.json` calls
+  /// Safari "the only surface whose two lanes are NOT fallbacks for each
+  /// other", and the extension is a third that overlaps neither — it is the
+  /// only route to what a page SAYS, and `apple_safari_read_page` is the only
+  /// tool behind it.
+  ///
+  /// It is here rather than only in Settings because it is the one
+  /// permission-like fact **the server cannot measure for itself**. A disabled
+  /// extension leaves its last captures on disk and stops adding more, so
+  /// `apple_safari_diagnostics` goes on reporting a healthy store that answers
+  /// with an ever-older page. Only Safari knows the switch is off, and only the
+  /// containing app may ask it — `packages/safari/src/client/pages.ts` says as
+  /// much at the point where it gives up on knowing.
+  @ViewBuilder private var pageContentSection: some View {
+    if surface.id == Permissions.safariSurfaceID {
+      Card("Page content") {
+        let status = model.safariExtension
+        HStack(alignment: .firstTextBaseline) {
+          Image(systemName: Self.extensionIcon(status))
+            .foregroundStyle(Self.extensionTint(status))
+          VStack(alignment: .leading, spacing: 2) {
+            Text(Self.extensionLabel(status))
+            Text(StatusStyle.safariExtensionHint(status, location: model.location))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          Spacer()
+          // Suppressed while the surface is off, for the reason `offSection`
+          // gives: no server can start, so enabling the extension changes
+          // nothing that can be observed. The STATE stays visible because it is
+          // a fact about this Mac, which is the same argument that keeps
+          // `storeSection` on an off surface.
+          if enabled, let label = StatusStyle.safariExtensionAction(status) {
+            Button(label) { Permissions.openSafariExtensionSettings() }
+              .buttonStyle(.glass)
+              .controlSize(.small)
+          }
+        }
+        .font(.callout)
+
+        if status == .enabled {
+          Divider()
+          capturesLine
+        }
+
+        if enabled, status == .enabled || status == .disabled {
+          Divider()
+          setupDisclosure
+        }
+      }
+    }
+  }
+
+  /// What the switch being on has actually produced.
+  ///
+  /// The line that makes this card worth more than the Settings row it
+  /// duplicates. Safari grants the extension one website at a time, so
+  /// "enabled" and "allowed nowhere" render identically up there — and the
+  /// second is the state people are actually in after following the
+  /// instructions halfway.
+  private var capturesLine: some View {
+    Group {
+      switch captures {
+      case nil:
+        Text("Looking…").foregroundStyle(.secondary)
+      case .some(let seen) where seen.count == 0:
+        Text("Nothing captured yet. Safari asks per website, and none has been allowed.")
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      case .some(let seen):
+        VStack(alignment: .leading, spacing: 2) {
+          Text(
+            "\(seen.count) page\(seen.count == 1 ? "" : "s") captured"
+              + (seen.newestAge.map { " · newest \(Self.age($0))" } ?? ""))
+          if seen.isQuiet {
+            // Says the captures are old and deliberately not why — switched
+            // off, or allowed on no site visited since, cannot be told apart
+            // from a directory listing. Same restraint
+            // `apple_safari_diagnostics` applies to the same measurement.
+            Text("Nothing recent. They are kept for 30 minutes, so this lane has gone quiet.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+      }
+    }
+    .font(.callout)
+    .monospacedDigit()
+  }
+
+  /// The half of the setup that is not a switch.
+  ///
+  /// Two steps, because the second is the one that gets missed: Settings
+  /// already says in prose that "enabling it is not enough on its own", and
+  /// prose in another window is not where somebody stuck is looking. Collapsed
+  /// once the extension is on, open while it is off.
+  private var setupDisclosure: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Setting it up").font(.callout)
+        Spacer()
+        Button(showSetup ? "Hide" : "Show") { withAnimation(.snappy) { showSetup.toggle() } }
+          .buttonStyle(.glass)
+          .controlSize(.small)
+      }
+      if showSetup {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("1. Safari ▸ Settings ▸ Extensions, and tick Cupertino.")
+          Text(
+            "2. On a site you want it to read, click Cupertino in Safari's toolbar and choose "
+              + "Always Allow on This Website.")
+          Text(
+            "Step 2 is per website and there is no way to grant it for all of them — which is "
+              + "the point. The alternative macOS offers, \"Allow JavaScript from Apple Events\", "
+              + "is one switch that opens every tab to every app that can send an Apple Event.")
+          .foregroundStyle(.secondary)
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .onAppear { showSetup = model.safariExtension == .disabled }
+  }
+
+  private static func extensionIcon(_ status: SafariExtensionStatus) -> String {
+    switch status {
+    case .enabled: "checkmark.circle.fill"
+    case .disabled: "lock.circle.fill"
+    // The same glyph `SurfaceIconView` falls back to for an app that is not on
+    // this Mac, because it is the same shape of fact.
+    case .notInstalled: "app.dashed"
+    case .unknown: "questionmark.circle"
+    }
+  }
+
+  private static func extensionTint(_ status: SafariExtensionStatus) -> Color {
+    switch status {
+    case .enabled: .green
+    case .disabled: .orange
+    case .notInstalled, .unknown: .secondary
+    }
+  }
+
+  private static func extensionLabel(_ status: SafariExtensionStatus) -> String {
+    switch status {
+    case .enabled: "Extension enabled"
+    case .disabled: "Extension off"
+    case .notInstalled: "Extension not installed"
+    case .unknown: "Extension state unknown"
+    }
+  }
+
+  /// Coarse on purpose. This is a freshness cue, and a capture that landed 97
+  /// seconds ago is "a minute ago" for every decision anyone makes from it.
+  private static func age(_ seconds: TimeInterval) -> String {
+    let minutes = Int(seconds / 60)
+    if minutes < 1 { return "just now" }
+    if minutes < 60 { return "\(minutes) min ago" }
+    let hours = minutes / 60
+    return hours < 24 ? "\(hours)h ago" : "\(hours / 24)d ago"
+  }
+
   private var activity: some View {
     Card("Activity") {
       let live = Sessions.shared.live.filter { $0.surface == surface.id }
@@ -253,6 +429,26 @@ struct SurfaceDetail: View {
       Divider()
       CaptureControls(surface: surface)
     }
+  }
+
+  /// Re-ask Safari, and count what the extension has written.
+  ///
+  /// On every visit to the pane rather than once per window, because this is
+  /// the one status here that someone is expected to change in another app and
+  /// come straight back to check. `model.refresh()` fires from three
+  /// `.onAppear`s and none of them is this pane.
+  ///
+  /// Both halves are off the main actor. The first is an IPC to Safari and the
+  /// second reads a directory — the rule `StatusModel.refreshAutomation`
+  /// documents with a measured run-loop freeze applies to both.
+  private func resolveExtension() async {
+    guard surface.id == Permissions.safariSurfaceID else { return }
+    guard !DemoSeed.isEnabled else {
+      captures = DemoSeed.safariCaptures
+      return
+    }
+    model.refreshSafariExtension()
+    captures = await Task.detached(priority: .userInitiated) { Permissions.safariCaptures() }.value
   }
 
   /// Off the main actor: resolving Mail's store walks up to nineteen candidate

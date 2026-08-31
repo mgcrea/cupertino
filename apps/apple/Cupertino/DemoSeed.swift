@@ -427,6 +427,15 @@ enum DemoSeed {
   /// because the Makefile strips the appex.
   nonisolated static let safariExtension = SafariExtensionStatus.enabled
 
+  /// What the Safari pane says the extension has captured.
+  ///
+  /// Seeded for the reason every answer in this file is: the real probe reads
+  /// this Mac's appex container, so a marketing image would publish how many
+  /// pages the person holding the camera had just been reading, and the count
+  /// would differ on every machine that ran the capture.
+  nonisolated static let safariCaptures = SafariCaptures(
+    count: 3, newestAge: 2 * 60)
+
   /// The version the marketing images show.
   ///
   /// Pinned for the reason at the top of this file: the real one is whatever the

@@ -258,6 +258,112 @@ enum Permissions {
     NSWorkspace.shared.open(url)
   }
 
+  // MARK: Safari extension
+
+  /// Which surface the extension belongs to.
+  ///
+  /// Named here rather than in `surfaces.json` for the reason
+  /// `systemEventsBundleID` gives above: the extension is not a Surface. It
+  /// registers no tools, has no store and no env prefix, and exactly one
+  /// surface will ever have one. A flag in the manifest would mean touching
+  /// the schema, `generate-surfaces.mjs` and the Swift template to carry a
+  /// boolean that is true once.
+  static let safariSurfaceID = "safari"
+
+  static var safariExtensionID: String {
+    (Bundle.main.bundleIdentifier ?? BridgeProtocol.appIdentifier) + ".SafariExtension"
+  }
+
+  /// Ask Safari whether the extension is enabled.
+  ///
+  /// Asynchronous, and unavoidably so — the API is completion-handler based and
+  /// talks to Safari, so it must never be called while painting a row. That is
+  /// the same rule the Automation probes carry, for the same reason.
+  ///
+  /// Only the containing app may ask. A separate process gets `SFErrorDomain
+  /// error 1`, which is measured: a standalone probe binary built from the same
+  /// call site was refused, and this succeeds only because it runs inside the
+  /// bundle that ships the extension.
+  static func safariExtension() async -> SafariExtensionStatus {
+    await withCheckedContinuation { continuation in
+      SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: safariExtensionID) {
+        state, error in
+        if let state {
+          continuation.resume(returning: state.isEnabled ? .enabled : .disabled)
+        } else if let error = error as NSError?, error.domain == SFErrorDomain,
+          error.code == SFErrorCode.noExtensionFound.rawValue
+        {
+          // Safari has no record of it. On a Debug build that is correct: the
+          // Makefile strips the appex, because Safari will not list an
+          // extension whose container is not notarized and stapled.
+          //
+          // The CODE is checked, not just the domain. `SFErrorCode` has three
+          // values and only this one means "no such extension" — 2 is
+          // `noAttachmentFound` and 3 is `loadingInterrupted`, which are both
+          // "we could not ask" and belong in `.unknown`. Matching the domain
+          // alone reported them as an extension that is not installed, which
+          // is the one answer that sends someone to reinstall the app.
+          continuation.resume(returning: .notInstalled)
+        } else {
+          continuation.resume(returning: .unknown)
+        }
+      }
+    }
+  }
+
+  /// Safari's own Extensions settings, which is where this switch lives.
+  ///
+  /// There is no `x-apple.systempreferences:` pane for it — it is Safari's
+  /// preferences, not the system's. What there IS is
+  /// `showPreferencesForExtension`, which opens that pane with our row already
+  /// selected; the SDK header says so in as many words ("Opens Safari
+  /// Extensions preferences and selects extension with the identifier"). This
+  /// used to launch Safari and stop there, which left someone who had just
+  /// been told to enable an extension in a browser window, hunting a
+  /// three-level menu for it.
+  ///
+  /// The launch is kept as the fallback rather than dropped, because that call
+  /// reports failure asynchronously and its failure modes are not enumerated
+  /// anywhere. Landing in Safari is worse than landing on the pane and better
+  /// than a button that does nothing.
+  static func openSafariExtensionSettings() {
+    SFSafariApplication.showPreferencesForExtension(withIdentifier: safariExtensionID) { error in
+      guard error != nil else { return }
+      DispatchQueue.main.async { launchSafari() }
+    }
+  }
+
+  private static func launchSafari() {
+    guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+    else { return }
+    NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
+  }
+
+  /// Where the extension writes. Mirrors `defaultPagesDirectory` in
+  /// `packages/safari/src/client/pages.ts`.
+  ///
+  /// The identifier is DERIVED, like `safariExtensionID` and for the same
+  /// reason — a Debug build must ask about its own extension.
+  /// `packages/safari/src/client/pages.ts` hardcodes the release one, which is
+  /// a latent bug there rather than a licence to repeat it here.
+  ///
+  /// Needs no grant of any kind. The extension writes into its own appex
+  /// container, which is `drwx------` owned by the user and is not
+  /// TCC-protected; docs/safari.md records the negative control — a shell
+  /// denied on `History.db`, `~/Library/Mail` and `chat.db` reading three appex
+  /// containers, two of them belonging to other vendors' apps.
+  static var safariPagesDirectory: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Containers/\(safariExtensionID)")
+      .appendingPathComponent("Data/Library/Application Support/pages")
+  }
+
+  /// Blocking. The logic lives in `SafariCaptures` so `make unit` can assert
+  /// it; this only supplies the path.
+  static func safariCaptures() -> SafariCaptures {
+    SafariCaptures.read(directory: safariPagesDirectory)
+  }
+
   // MARK: Accessibility
 
   /// Is this process trusted to read another app's UI?
@@ -293,54 +399,6 @@ enum Permissions {
   /// never "grant it again" — it is to clear the identifier and grant once from
   /// the bundle that is running. `apple_mail_diagnostics` reports
   /// `composerUiRead`, which measures the composer instead of asking about it.
-  /// The bundle identifier of our own Safari extension.
-  ///
-  /// Derived rather than hardcoded, because it differs per configuration: the
-  /// appex identifier must be prefixed by the app's, and the Debug app is
-  /// `io.mgcrea.cupertino.debug`. A literal here would query the release
-  /// extension from a debug build and report someone else's state.
-  static var safariExtensionID: String {
-    (Bundle.main.bundleIdentifier ?? BridgeProtocol.appIdentifier) + ".SafariExtension"
-  }
-
-  /// Ask Safari whether the extension is enabled.
-  ///
-  /// Asynchronous, and unavoidably so — the API is completion-handler based and
-  /// talks to Safari, so it must never be called while painting a row. That is
-  /// the same rule the Automation probes carry, for the same reason.
-  ///
-  /// Only the containing app may ask. A separate process gets `SFErrorDomain
-  /// error 1`, which is measured: a standalone probe binary built from the same
-  /// call site was refused, and this succeeds only because it runs inside the
-  /// bundle that ships the extension.
-  static func safariExtension() async -> SafariExtensionStatus {
-    await withCheckedContinuation { continuation in
-      SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: safariExtensionID) {
-        state, error in
-        if let state {
-          continuation.resume(returning: state.isEnabled ? .enabled : .disabled)
-        } else if let error = error as NSError?, error.domain == "SFErrorDomain" {
-          // Safari has no record of it. On a Debug build that is correct: the
-          // Makefile strips the appex, because Safari will not list an
-          // extension whose container is not notarized and stapled.
-          continuation.resume(returning: .notInstalled)
-        } else {
-          continuation.resume(returning: .unknown)
-        }
-      }
-    }
-  }
-
-  /// Safari's own Extensions settings, which is where this switch lives.
-  ///
-  /// There is no `x-apple.systempreferences:` pane for it — it is Safari's
-  /// preferences, not the system's — so this opens Safari and lets it show its
-  /// own window rather than pretending a URL scheme exists.
-  static func openSafariExtensionSettings() {
-    guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
-    else { return }
-    NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
-  }
 
   static func accessibility() -> AccessibilityStatus {
     AXIsProcessTrusted() ? .granted : .denied

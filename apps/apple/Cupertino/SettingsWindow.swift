@@ -401,15 +401,20 @@ struct PermissionsPane: View {
       // more, so the store keeps answering with an ever-older page.
       Section {
         LabeledContent {
-          switch model.safariExtension {
-          case .enabled:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-          case .disabled, .notInstalled, .unknown:
-            Button("Open Safari…") { Permissions.openSafariExtensionSettings() }
+          HStack(spacing: 8) {
+            if model.safariExtension == .enabled {
+              Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+            // One label per state, or none, from `StatusStyle` — so this row
+            // and the Safari pane's cannot drift, and neither can offer a
+            // button for a state it cannot act on.
+            if let label = StatusStyle.safariExtensionAction(model.safariExtension) {
+              Button(label) { Permissions.openSafariExtensionSettings() }
+            }
           }
         } label: {
           Text("Safari extension")
-          Text(StatusStyle.safariExtensionHint(model.safariExtension))
+          Text(StatusStyle.safariExtensionHint(model.safariExtension, location: model.location))
         }
       } header: {
         Text("Page content")
@@ -882,16 +887,50 @@ enum StatusStyle {
   /// "off": on a Debug build the appex is stripped, so that is the correct
   /// answer, and telling someone to enable a thing that is not there is how a
   /// permission row wastes ten minutes.
-  static func safariExtensionHint(_ status: SafariExtensionStatus) -> String {
+  ///
+  /// It takes the install location because that sentence was only ever true of
+  /// a Debug build, and it was shown to everyone. In a RELEASE build the same
+  /// state has a different cause and a different fix: Safari will not list an
+  /// extension whose container is translocated or living outside
+  /// `/Applications`, which `InstallLocation` already knows and no other row
+  /// was asking it about.
+  static func safariExtensionHint(
+    _ status: SafariExtensionStatus, location: InstallLocation
+  ) -> String {
     switch status {
     case .enabled:
       "enabled — allow it per website from Safari's toolbar"
     case .disabled:
       "switched off in Safari"
     case .notInstalled:
-      "not in this build — a locally built app ships no extension"
+      #if DEBUG
+        "not in this build — a locally built app ships no extension"
+      #else
+        location.isInApplications
+          ? "Safari has no record of it yet. Open Safari, then check Settings ▸ Extensions."
+          : "Safari cannot see it from where this app is running — move Cupertino to Applications and open it from there."
+      #endif
     case .unknown:
       "could not be read"
+    }
+  }
+
+  /// The button beside that row, or none.
+  ///
+  /// Same shape as `actionLabel` above, and for the same reason it was written:
+  /// this row used to offer "Open Safari…" for every state that was not
+  /// enabled, which made a provably dead button. On a Debug build the appex is
+  /// stripped, so `notInstalled` is the normal answer and Safari has nothing to
+  /// show; `unknown` means the question failed, which sending someone to Safari
+  /// does not answer either.
+  ///
+  /// `enabled` DOES get one, which is the case that looks least like it needs
+  /// it. The switch being on is only half the setup — Safari asks per website —
+  /// and the pane that grants that is the pane this opens.
+  static func safariExtensionAction(_ status: SafariExtensionStatus) -> String? {
+    switch status {
+    case .enabled, .disabled: "Open Safari…"
+    case .notInstalled, .unknown: nil
     }
   }
 

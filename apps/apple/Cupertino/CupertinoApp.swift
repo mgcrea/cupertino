@@ -245,7 +245,13 @@ final class StatusModel {
 
   /// Off the main thread, for the same reason the automation glyphs are: this
   /// asks Safari, and a row must never wait on another process to paint.
-  private func refreshSafariExtension() {
+  ///
+  /// Not private: `SurfaceDetail` calls it on every visit to the Safari pane.
+  /// `refresh()` only runs from three `.onAppear`s, so the state survived
+  /// someone flipping the switch in Safari and coming straight back — the one
+  /// row on that pane whose value is expected to change while you are looking
+  /// at another window.
+  func refreshSafariExtension() {
     Task {
       let state = await Permissions.safariExtension()
       await MainActor.run { self.safariExtension = state }

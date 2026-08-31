@@ -210,7 +210,8 @@ smoke: ## Handshake both servers through the bridge, as CI does directly
 unit: ## Assert what a recorded call carries, with no app and no network
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/unit-check \
-		apps/apple/Cupertino/CallCapture.swift scripts/unit-check.swift
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/SafariCaptures.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
 wiring-check: ## Assert the config merge leaves other people's files alone

@@ -29,6 +29,23 @@ struct UnitCheck {
     }
   }
 
+  /// One capture, shaped as the appex writes it.
+  static func write(_ dir: URL, _ name: String, at date: Date) {
+    let entry: [String: Any] = [
+      "url": "https://example.com/\(name)",
+      "title": "t",
+      "capturedAt": ISO8601DateFormatter().string(from: date),
+      "text": "hello", "html": "<p>hello</p>",
+      "textTruncated": false, "htmlTruncated": false,
+    ]
+    let file = dir.appendingPathComponent(name)
+    try? JSONSerialization.data(withJSONObject: entry).write(to: file)
+    // Set apart from `capturedAt` on purpose: these two must not be assumed
+    // equal, and the tests that rely on the fallback need them to differ.
+    try? FileManager.default.setAttributes(
+      [.modificationDate: date], ofItemAtPath: file.path)
+  }
+
   static func params(_ args: [String: Any]) -> [String: Any] {
     ["name": "t", "arguments": args]
   }
@@ -192,6 +209,54 @@ struct UnitCheck {
     check(
       "a runaway line is dropped rather than buffered",
       runaway.lines(Data("y\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "y")
+
+    print("\nSafari captures: what the extension has written")
+
+    // The store this reads is written by the appex and read by the node server,
+    // so its shape is a contract between three components. These assert the
+    // cases that are silent when they go wrong: a lane that has stopped being
+    // written reported as healthy, and one bad file taking down the row.
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent("cupertino-unit-\(UUID().uuidString)")
+
+    // A directory that was never created is the same answer as an empty one:
+    // nothing has been captured. The extension makes it on its first write.
+    check("a missing directory reads as nothing captured", SafariCaptures.read(directory: tmp) == .none)
+
+    try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    check("and so does an empty one", SafariCaptures.read(directory: tmp) == .none)
+
+    let now = Date()
+    write(tmp, "a.json", at: now.addingTimeInterval(-120))
+    write(tmp, "b.json", at: now.addingTimeInterval(-600))
+    let two = SafariCaptures.read(directory: tmp, now: now)
+    check("both captures are counted", two.count == 2)
+    // Newest, not first-found and not the most recently touched.
+    check("the freshest one sets the age", two.newestAge.map { Int($0) } == 120)
+    check("which is not quiet", !two.isQuiet)
+
+    // Nothing recent. The pane says the captures are old and does not guess
+    // why, because a directory listing cannot tell "switched off" from
+    // "allowed on no site visited since".
+    let cold = SafariCaptures.read(directory: tmp, now: now.addingTimeInterval(SafariCaptures.ttl))
+    check("past the TTL the lane reads as quiet", cold.isQuiet)
+
+    // Written by an older extension, or torn mid-write. It must not take the
+    // row down, and it must not be silently dated to the epoch either — the
+    // mtime is the fallback the file itself cannot supply.
+    let junk = tmp.appendingPathComponent("c.json")
+    try? Data("not json".utf8).write(to: junk)
+    try? FileManager.default.setAttributes(
+      [.modificationDate: now.addingTimeInterval(-30)], ofItemAtPath: junk.path)
+    let withJunk = SafariCaptures.read(directory: tmp, now: now)
+    check("an unreadable entry is still counted", withJunk.count == 3)
+    check("and falls back to its mtime rather than the epoch", withJunk.newestAge.map { Int($0) } == 30)
+
+    // Only ours. The container holds other things.
+    try? Data("{}".utf8).write(to: tmp.appendingPathComponent("notes.txt"))
+    check("non-JSON files are ignored", SafariCaptures.read(directory: tmp, now: now).count == 3)
+
+    try? FileManager.default.removeItem(at: tmp)
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
