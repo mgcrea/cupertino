@@ -46,12 +46,38 @@ const out = join(here, "..", "apps", "apple", "CupertinoSafariExtension", "Resou
 /** The sizes `Resources/manifest.json` names. scripts/verify-extension.sh fails the build if they disagree. */
 const SIZES = [48, 96, 128, 256, 512];
 
+/**
+ * How much of the canvas the squircle spans, with transparency around it.
+ *
+ * macOS builds this inset into the icon grid — an app icon's rounded square
+ * occupies 824 of 1024 points and the rest is padding, which is why every icon
+ * in a Dock or a preferences list optically matches its neighbours. A web
+ * extension icon is a plain PNG with no grid applied, so drawing the plate
+ * edge to edge makes it read heavier and larger than every peer beside it in
+ * Safari's Extensions pane, even at identical pixel dimensions.
+ */
+const PLATE_SPAN = 824 / 1024;
+
 const svg = await readFile(source);
 await mkdir(out, { recursive: true });
 for (const size of SIZES) {
+  const plate = Math.round(size * PLATE_SPAN);
+  // Split the remainder so an odd difference does not shift the mark off centre.
+  const before = Math.floor((size - plate) / 2);
+  const after = size - plate - before;
   // density matches apps/website/scripts/generate-icons.mjs: rasterise well
   // above the target and let sharp downsample, or the curves alias.
-  const png = await sharp(svg, { density: 400 }).resize(size, size).png().toBuffer();
+  const png = await sharp(svg, { density: 400 })
+    .resize(plate, plate)
+    .extend({
+      top: before,
+      bottom: after,
+      left: before,
+      right: after,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toBuffer();
   await writeFile(join(out, `icon-${size}.png`), png);
 }
 console.log(`  rendered ${SIZES.length} extension icon(s) from ${source.split("/").slice(-2).join("/")}`);

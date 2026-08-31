@@ -328,6 +328,19 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 	@scripts/verify-servers.sh "$(RELEASE_APP)"
 	@$(MAKE) --no-print-directory sign
 	@scripts/verify-extension.sh "$(RELEASE_APP)"
+	@# Unregister the build product from LaunchServices.
+	@#
+	@# It carries the same extension identifier as the installed copy, and Safari
+	@# lists extensions per INSTALLATION rather than per identifier — so a local
+	@# release build puts a second, identical "Cupertino" in Settings > Extensions
+	@# with no way to tell which is live. `pluginkit` does dedupe by identifier,
+	@# which is why it reports one while Safari shows two; that disagreement cost
+	@# an hour of looking at the wrong tool.
+	@#
+	@# The installed copy is the one that should be discoverable. This is a build
+	@# artifact, and nothing launches it from here.
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+		-u "$(abspath $(RELEASE_APP))" 2>/dev/null || true
 
 # Inner-out, and never in the other order: signing the bundle first and then
 # touching anything inside it invalidates the outer signature.
