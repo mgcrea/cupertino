@@ -21,8 +21,8 @@
  * for exactly this reason — nothing masks an SVG on a web page either. So the
  * right source was already sitting there.
  */
-import { createRequire } from "node:module";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,4 +80,6 @@ for (const size of SIZES) {
     .toBuffer();
   await writeFile(join(out, `icon-${size}.png`), png);
 }
-console.log(`  rendered ${SIZES.length} extension icon(s) from ${source.split("/").slice(-2).join("/")}`);
+console.log(
+  `  rendered ${SIZES.length} extension icon(s) from ${source.split("/").slice(-2).join("/")}`,
+);
