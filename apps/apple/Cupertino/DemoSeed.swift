@@ -420,6 +420,13 @@ enum DemoSeed {
   /// This is also the isolation boundary: without it the automation glyphs and
   /// the Full Disk Access dot describe the capturing Mac, so the same commit
   /// produces a green image on one machine and an orange one on another.
+  /// The extension reads as enabled in the marketing images.
+  ///
+  /// Same reason as every other answer here: a screenshot is of the product,
+  /// not of this laptop, and on a Debug build the real answer is `notInstalled`
+  /// because the Makefile strips the appex.
+  nonisolated static let safariExtension = SafariExtensionStatus.enabled
+
   /// The version the marketing images show.
   ///
   /// Pinned for the reason at the top of this file: the real one is whatever the

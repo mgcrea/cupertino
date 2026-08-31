@@ -196,6 +196,14 @@ final class StatusModel {
   /// fits the per-surface `automation` table.
   private(set) var accessibility: AccessibilityStatus = .denied
   private(set) var systemEvents: AutomationStatus = .notDetermined
+  /// Whether Safari is running our extension — the one permission-like fact the
+  /// SERVER cannot measure for itself.
+  ///
+  /// It can see captures on disk, but a disabled extension leaves its last ones
+  /// there and simply stops adding more, so the store looks healthy and answers
+  /// with an ever-older page. Only Safari knows the switch is off, and only the
+  /// containing app may ask it.
+  private(set) var safariExtension: SafariExtensionStatus = .unknown
   private(set) var location: InstallLocation = .current
   private(set) var clients: [ClientWiring.Client: ClientWiring.Status] = [:]
   private(set) var lastError: String?
@@ -217,6 +225,7 @@ final class StatusModel {
       diskAccess = DemoSeed.diskAccess
       accessibility = DemoSeed.accessibility
       systemEvents = DemoSeed.automation
+      safariExtension = DemoSeed.safariExtension
       automation = Dictionary(
         uniqueKeysWithValues: Surface.all.map { ($0.id, DemoSeed.automation) })
       clients = Dictionary(
@@ -231,6 +240,16 @@ final class StatusModel {
     clients = Dictionary(
       uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
     refreshAutomation()
+    refreshSafariExtension()
+  }
+
+  /// Off the main thread, for the same reason the automation glyphs are: this
+  /// asks Safari, and a row must never wait on another process to paint.
+  private func refreshSafariExtension() {
+    Task {
+      let state = await Permissions.safariExtension()
+      await MainActor.run { self.safariExtension = state }
+    }
   }
 
   /// The automation glyphs, gathered off the main thread — and never on it.

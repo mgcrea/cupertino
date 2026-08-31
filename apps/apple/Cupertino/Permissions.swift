@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 import Foundation
+import SafariServices
 
 /// Full Disk Access, as one indivisible fact.
 ///
@@ -40,6 +41,24 @@ enum AutomationStatus: Equatable {
 enum AccessibilityStatus: Equatable {
   case granted
   case denied
+}
+
+/// Whether Safari is running our web extension.
+///
+/// Four states, and the fourth is the one that matters. `notInstalled` is not a
+/// failure: a Debug build ships no extension at all (see the `app` target in the
+/// Makefile), so on a locally built copy this is the correct and expected
+/// answer. Reporting it as "disabled" would send someone to Safari to enable
+/// something that is not there.
+enum SafariExtensionStatus: Equatable {
+  case enabled
+  case disabled
+  /// Safari does not know this extension. A Debug build, or an app that has
+  /// never been launched from its installed location.
+  case notInstalled
+  /// The query itself failed. Distinct from `notInstalled`, because "we could
+  /// not ask" and "the answer is no" are different facts.
+  case unknown
 }
 
 enum Permissions {
@@ -274,6 +293,55 @@ enum Permissions {
   /// never "grant it again" — it is to clear the identifier and grant once from
   /// the bundle that is running. `apple_mail_diagnostics` reports
   /// `composerUiRead`, which measures the composer instead of asking about it.
+  /// The bundle identifier of our own Safari extension.
+  ///
+  /// Derived rather than hardcoded, because it differs per configuration: the
+  /// appex identifier must be prefixed by the app's, and the Debug app is
+  /// `io.mgcrea.cupertino.debug`. A literal here would query the release
+  /// extension from a debug build and report someone else's state.
+  static var safariExtensionID: String {
+    (Bundle.main.bundleIdentifier ?? BridgeProtocol.appIdentifier) + ".SafariExtension"
+  }
+
+  /// Ask Safari whether the extension is enabled.
+  ///
+  /// Asynchronous, and unavoidably so — the API is completion-handler based and
+  /// talks to Safari, so it must never be called while painting a row. That is
+  /// the same rule the Automation probes carry, for the same reason.
+  ///
+  /// Only the containing app may ask. A separate process gets `SFErrorDomain
+  /// error 1`, which is measured: a standalone probe binary built from the same
+  /// call site was refused, and this succeeds only because it runs inside the
+  /// bundle that ships the extension.
+  static func safariExtension() async -> SafariExtensionStatus {
+    await withCheckedContinuation { continuation in
+      SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: safariExtensionID) {
+        state, error in
+        if let state {
+          continuation.resume(returning: state.isEnabled ? .enabled : .disabled)
+        } else if let error = error as NSError?, error.domain == "SFErrorDomain" {
+          // Safari has no record of it. On a Debug build that is correct: the
+          // Makefile strips the appex, because Safari will not list an
+          // extension whose container is not notarized and stapled.
+          continuation.resume(returning: .notInstalled)
+        } else {
+          continuation.resume(returning: .unknown)
+        }
+      }
+    }
+  }
+
+  /// Safari's own Extensions settings, which is where this switch lives.
+  ///
+  /// There is no `x-apple.systempreferences:` pane for it — it is Safari's
+  /// preferences, not the system's — so this opens Safari and lets it show its
+  /// own window rather than pretending a URL scheme exists.
+  static func openSafariExtensionSettings() {
+    guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+    else { return }
+    NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
+  }
+
   static func accessibility() -> AccessibilityStatus {
     AXIsProcessTrusted() ? .granted : .denied
   }

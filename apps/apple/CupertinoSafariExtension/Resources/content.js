@@ -16,7 +16,10 @@
     const clone = document.body?.cloneNode(true);
     if (!clone) return "";
     for (const n of clone.querySelectorAll("script,style,noscript,template")) n.remove();
-    return (clone.innerText || "").replace(/[ \t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return (clone.innerText || "")
+      .replace(/[ \t ]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   function capture() {

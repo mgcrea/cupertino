@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { QUIET_AFTER_SECONDS } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { compact, fail, ok, wrapResult } from "./util.js";
 
@@ -101,11 +102,23 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
                 "choose to allow it on that website. Enabling the extension alone is not enough.",
             );
           }
+          // A quiet lane changes what the miss MEANS. With recent captures, the
+          // extension is demonstrably running and this URL simply is not one of
+          // them. With nothing recent, the likelier story is that it was
+          // switched off — and telling someone their URL is unpermitted when
+          // the extension is off sends them to the wrong setting.
+          const quiet =
+            status.newestAgeSeconds !== null && status.newestAgeSeconds > QUIET_AFTER_SECONDS;
           return fail(
-            `No capture for that exact URL. ${status.count} other page(s) are captured, so the ` +
-              `extension is working — this URL is either not open, on a site the extension is ` +
-              `not allowed on, or was captured under a slightly different address. ` +
-              `apple_safari_list_tabs reports the URL Safari itself holds.`,
+            quiet
+              ? `No capture for that URL, and nothing has been captured for ` +
+                  `${Math.round((status.newestAgeSeconds ?? 0) / 60)} minutes — the extension ` +
+                  `looks switched off, or allowed on no site visited since. Check Safari > ` +
+                  `Settings > Extensions. The ${status.count} page(s) still on disk are stale.`
+              : `No capture for that exact URL. ${status.count} other page(s) are captured ` +
+                  `recently, so the extension is working — this URL is either not open, on a ` +
+                  `site the extension is not allowed on, or was captured under a slightly ` +
+                  `different address. apple_safari_list_tabs reports the URL Safari itself holds.`,
           );
         }
 

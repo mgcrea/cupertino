@@ -66,7 +66,32 @@ export type PagesStatus = {
   exists: boolean;
   /** Entries currently on disk, before any TTL judgement. */
   count: number;
+  /**
+   * Age of the freshest capture, or null when there are none.
+   *
+   * This is how the lane detects its own silence. Whether the extension is
+   * ENABLED is a switch in Safari's UI that only the containing app can read,
+   * and a value passed to this process at spawn would be a snapshot of a
+   * setting the user can flip a second later — reported confidently and wrong.
+   *
+   * What can be measured here is quietness. The extension prunes on write with
+   * a 30 minute TTL, so if it were running and being used, something would be
+   * recent. A newest capture older than that means the lane has gone quiet:
+   * switched off, or allowed on no site the user has visited since. Either way
+   * the honest thing is to say the captures are old, not to assert why.
+   */
+  newestAgeSeconds: number | null;
 };
+
+/**
+ * Past this, the lane is reported as quiet.
+ *
+ * Matches the extension's own TTL in `SafariWebExtensionHandler.swift`. If the
+ * two drift, this reports quiet while entries are still being kept, or stays
+ * silent about a store that has stopped being written — so they are the same
+ * number on purpose.
+ */
+export const QUIET_AFTER_SECONDS = 30 * 60;
 
 const isPage = (v: unknown): v is CapturedPage =>
   typeof v === "object" &&
@@ -107,17 +132,22 @@ export const readPages = (directory: string): CapturedPage[] => {
   return pages.toSorted((a, b) => (a.capturedAt < b.capturedAt ? 1 : -1));
 };
 
-export const pagesStatus = (directory: string): PagesStatus => {
+export const pagesStatus = (directory: string, now: number = Date.now()): PagesStatus => {
   try {
     const stat = statSync(directory);
-    if (!stat.isDirectory()) return { directory, exists: false, count: 0 };
+    if (!stat.isDirectory()) {
+      return { directory, exists: false, count: 0, newestAgeSeconds: null };
+    }
+    const pages = readPages(directory);
     return {
       directory,
       exists: true,
-      count: readdirSync(directory).filter((n) => n.endsWith(".json")).length,
+      count: pages.length,
+      // readPages sorts newest first.
+      newestAgeSeconds: pages[0] ? ageSeconds(pages[0], now) : null,
     };
   } catch {
-    return { directory, exists: false, count: 0 };
+    return { directory, exists: false, count: 0, newestAgeSeconds: null };
   }
 };
 

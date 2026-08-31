@@ -394,6 +394,32 @@ struct PermissionsPane: View {
             + "as a reply that will not send.")
       }
 
+      // Not an app-wide grant like the three above, and not a per-surface one
+      // either: it is a switch inside Safari. It earns a row because it is the
+      // only permission here the SERVER cannot see for itself — a disabled
+      // extension leaves its last captures on disk and simply stops adding
+      // more, so the store keeps answering with an ever-older page.
+      Section {
+        LabeledContent {
+          switch model.safariExtension {
+          case .enabled:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+          case .disabled, .notInstalled, .unknown:
+            Button("Open Safari…") { Permissions.openSafariExtensionSettings() }
+          }
+        } label: {
+          Text("Safari extension")
+          Text(StatusStyle.safariExtensionHint(model.safariExtension))
+        }
+      } header: {
+        Text("Page content")
+      } footer: {
+        Text(
+          "Reading what a page says needs this extension, and Safari grants it one website at a "
+            + "time — enabling it is not enough on its own. Everything else Safari can answer "
+            + "works without it.")
+      }
+
     }
     .formStyle(.grouped)
   }
@@ -847,6 +873,25 @@ enum StatusStyle {
     // step that has not happened yet rather than a permission that was refused.
     case .appNotRunning: "not running — open it to check"
     case .failed(let code): "error \(code)"
+    }
+  }
+
+  /// What the Safari extension row says under its name.
+  ///
+  /// `notInstalled` gets its own sentence rather than being folded into
+  /// "off": on a Debug build the appex is stripped, so that is the correct
+  /// answer, and telling someone to enable a thing that is not there is how a
+  /// permission row wastes ten minutes.
+  static func safariExtensionHint(_ status: SafariExtensionStatus) -> String {
+    switch status {
+    case .enabled:
+      "enabled — allow it per website from Safari's toolbar"
+    case .disabled:
+      "switched off in Safari"
+    case .notInstalled:
+      "not in this build — a locally built app ships no extension"
+    case .unknown:
+      "could not be read"
     }
   }
 

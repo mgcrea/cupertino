@@ -31,6 +31,8 @@ const store = (entries: Record<string, unknown>[] | null): string => {
   return pages;
 };
 
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
 const capture = (over: Record<string, unknown> = {}) => ({
   url: "https://example.com/",
   title: "Example Domain",
@@ -147,6 +149,45 @@ describe("telling the failure modes apart", () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain("extension is working");
     expect(r.text).toContain("1 other page");
+  });
+});
+
+/**
+ * Whether the extension is ENABLED lives in Safari's UI and only the containing
+ * app can read it. What this process can measure is silence — and silence
+ * changes what a miss means, which is the difference between sending someone to
+ * Safari's Extensions pane and sending them to check a URL.
+ */
+describe("a lane that has gone quiet", () => {
+  it("blames the extension when nothing has been captured for a long time", async () => {
+    const r = await read(store([capture({ capturedAt: hoursAgo(3) })]), {
+      url: "https://other.example/",
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("switched off");
+    expect(r.text).toContain("stale");
+  });
+
+  it("does NOT blame the extension when captures are recent", async () => {
+    const r = await read(store([capture()]), { url: "https://other.example/" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("extension is working");
+    expect(r.text).not.toContain("switched off");
+  });
+
+  /**
+   * A quiet lane still serves what it has. The captures are real, and the
+   * timestamp says how old — refusing them would lose information the caller
+   * may want, so the honest move is to answer and date it.
+   */
+  it("still returns an old capture when asked for it by URL", async () => {
+    const r = await read(store([capture({ capturedAt: hoursAgo(3) })]), {
+      url: "https://example.com/",
+    });
+    expect(r.isError).toBe(false);
+    const body = r.json() as { ageSeconds: number; stale: string };
+    expect(body.ageSeconds).toBeGreaterThan(10_000);
+    expect(body.stale).toContain("minutes ago");
   });
 });
 
