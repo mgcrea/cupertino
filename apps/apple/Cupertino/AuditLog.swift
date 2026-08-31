@@ -120,7 +120,7 @@ final class AuditLog {
     open()
     let number = append(
       kind: .call, surface: entry.surface, text: entry.text,
-      args: Self.recordsPayloads ? entry.arguments : nil)
+      args: Self.recordsPayloads ? Self.forDisk(entry.arguments) : nil)
     remember(entry.id, number)
   }
 
@@ -134,7 +134,7 @@ final class AuditLog {
     open()
     append(
       kind: entry.failed ? .error : .result, surface: entry.surface, text: entry.text,
-      args: nil, result: Self.recordsPayloads ? entry.result : nil,
+      args: nil, result: Self.recordsPayloads ? Self.forDisk(entry.result) : nil,
       failed: entry.failed ? true : nil, ref: reference)
   }
 
@@ -169,18 +169,10 @@ final class AuditLog {
 
   /// Blank the prose again on the way to disk, unless it was asked for.
   ///
-  /// The live row may already carry content — a surface set to include it shows
-  /// it in the window. Writing that same string to a file is a separate
-  /// decision, so this re-reads the JSON and redacts it a second time rather
-  /// than trusting what the window happens to be holding. Belt and braces on
-  /// purpose: the failure mode is somebody's mail in a file.
+  /// The rule itself lives in `CallCapture.reredact`, which `make unit`
+  /// compiles; this is only the setting lookup.
   nonisolated static func forDisk(_ payload: String?) -> String? {
-    guard let payload else { return nil }
-    guard !recordsContent else { return payload }
-    guard let data = payload.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data)
-    else { return CallCapture.redacted }
-    return CallCapture.encode(CallCapture.redact(object, content: false)) ?? CallCapture.redacted
+    CallCapture.reredact(payload, content: recordsContent)
   }
 
   private func remember(_ id: UUID, _ number: Int) {

@@ -101,6 +101,28 @@ struct UnitCheck {
     check("Api-Key matches api_key", CallCapture.shouldRedact("Api-Key", content: true))
     check("mailbox is not content", !CallCapture.shouldRedact("mailbox", content: false))
 
+    print("\nCall capture: a second redaction on the way to disk")
+
+    // The regression. The live row may carry content; the file is a separate
+    // decision, and the first port of the audit log wired this in the wrong
+    // order so a search query reached disk with the switch off.
+    let live = #"{"limit":1,"query":"private-canary"}"#
+    let onDisk = CallCapture.reredact(live, content: false)
+    check("content is blanked again for the file", onDisk?.contains("private-canary") == false)
+    check("and the structure survives it", onDisk?.contains("\"limit\":1") == true)
+    check(
+      "content passes through when the file is allowed it",
+      CallCapture.reredact(live, content: true)?.contains("private-canary") == true)
+    check("nil stays nil", CallCapture.reredact(nil, content: false) == nil)
+    // Something that is not the JSON this wrote has fields that cannot be
+    // identified, so none of them are kept.
+    check(
+      "an unparseable payload is blanked entirely",
+      CallCapture.reredact("{not json", content: false) == CallCapture.redacted)
+    check(
+      "and is passed through only when content is allowed",
+      CallCapture.reredact("{not json", content: true) == "{not json")
+
     print("\nCall capture: what each mode records")
 
     check(

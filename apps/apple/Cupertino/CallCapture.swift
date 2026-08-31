@@ -164,6 +164,31 @@ enum CallCapture {
     }
   }
 
+  /// Redact an ALREADY-ENCODED payload a second time, on its way to disk.
+  ///
+  /// The live row may carry content — a surface set to include it shows it in
+  /// the window — and writing that same string to a file is a separate
+  /// decision. So this re-parses what the window is holding and redacts it
+  /// again rather than trusting it.
+  ///
+  /// Belt and braces on purpose, and not hypothetically: the first port of the
+  /// audit log wired the caller in the wrong order and the redaction was simply
+  /// never applied, so a search query went to disk with content switched off.
+  /// It is a pure function here, and not on the writer, so `make unit` can hold
+  /// it still.
+  ///
+  /// A payload that cannot be re-parsed is blanked entirely rather than passed
+  /// through: something that is not the JSON this wrote is something whose
+  /// fields cannot be identified, and the safe answer is to keep none of them.
+  static func reredact(_ payload: String?, content: Bool) -> String? {
+    guard let payload else { return nil }
+    guard !content else { return payload }
+    guard let data = payload.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data)
+    else { return redacted }
+    return encode(redact(object, content: false)) ?? redacted
+  }
+
   // MARK: - Redaction
 
   /// Walk a decoded JSON value, blanking what is not being recorded.
