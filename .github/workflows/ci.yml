@@ -117,6 +117,13 @@ jobs:
       - name: Unit checks 🔍
         if: runner.os == 'macOS'
         run: make unit
+      # The screen surface's equivalent of the MCP handshake below, which cannot
+      # cover it: that step runs `node packages/<id>/dist/cli.js`, and this
+      # surface has no package. Needs no app, no socket, no licence and no TCC
+      # grant, so it is a build gate rather than a thing a developer remembers.
+      - name: Screen server 🔍
+        if: runner.os == 'macOS'
+        run: make screen-check
       - name: Audit export signing 🔍
         if: runner.os == 'macOS'
         run: make audit-check

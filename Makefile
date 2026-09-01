@@ -26,6 +26,7 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
 SURFACES     := mail notes reminders calendar contacts messages safari maps screen
 NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
+SWIFT_SURFACES := screen
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -201,12 +202,53 @@ dev-config: ## Point the Debug app at packages/*/dist instead of bundled servers
 	@printf '{ "node": "%s", "repo": "%s" }\n' "$$(command -v node)" "$(CURDIR)" \
 		> "$(SUPPORT)/dev.json"
 
+smoke-swift: ## Handshake only the app-served surfaces through the bridge
+	@# The gate `scripts/verify-servers.sh` cannot be.
+	@#
+	@# That script proves a NODE server starts and answers by scanning its
+	@# cli.js and spawning it under the runtime shipping beside it. A surface
+	@# the app serves itself has neither, so it is invisible there — and
+	@# `make bundle` runs only that script, which would let a broken
+	@# in-process server reach a signature. Three releases already shipped
+	@# servers that died on their first line with every gate green.
+	@#
+	@# Separate from `make smoke` because that one also handshakes the node
+	@# surfaces, which need either a bundle or `make dev-config` to resolve.
+	@# This needs neither: the app is the server.
+	@for s in $(SWIFT_SURFACES); do \
+		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"make","version":"0"}}}' \
+			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"serverInfo"' \
+			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
+	done
+
 smoke: ## Handshake both servers through the bridge, as CI does directly
 	@for s in $(SURFACES); do \
 		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"make","version":"0"}}}' \
 			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"serverInfo"' \
 			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
 	done
+
+screen-check: ## Assert the in-process screen server speaks MCP, with no app
+	@# The gate scripts/verify-servers.sh cannot be: it scans a cli.js and
+	@# spawns it, and a surface the app serves itself has neither. `make bundle`
+	@# runs only that script, so without this a broken in-process server would
+	@# reach a signature.
+	@#
+	@# Drives ScreenServer.handle directly rather than handshaking through the
+	@# bridge, because the socket is claimed by BUNDLE IDENTIFIER: on a machine
+	@# with Cupertino installed a bridge handshake tests the installed copy and
+	@# passes while the artifact is broken. `make smoke-swift` is that handshake,
+	@# for when you know what is running.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/screen-check \
+		apps/apple/Cupertino/ScreenServer.swift \
+		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/screen-check.swift
+	@apps/apple/.build/screen-check
 
 unit: ## Assert what a recorded call carries and that the audit chain holds, with no app
 	@mkdir -p apps/apple/.build

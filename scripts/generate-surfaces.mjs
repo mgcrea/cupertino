@@ -178,6 +178,16 @@ const scriptable = surfaces.filter((s) => s.usesAppleEvents);
  * handshake that runs `node packages/$s/dist/cli.js`, and `make servers`.
  */
 const nodeIds = surfaces.filter((s) => s.runtime === "node").map((s) => s.id);
+/**
+ * The surfaces the app serves itself.
+ *
+ * `verify-servers.sh` cannot cover these — there is no cli.js to scan and no
+ * child runtime to spawn — so the only thing that proves one actually speaks
+ * MCP is a handshake through the bridge. `make smoke-swift` is that check, and
+ * it needs its own list because the full `make smoke` also spawns the node
+ * servers, which need a bundle or a dev config to exist.
+ */
+const swiftIds = surfaces.filter((s) => s.runtime !== "node").map((s) => s.id);
 
 /** "Mail, Notes, Reminders and Calendar" — the form every prose string wants. */
 const andList = (names) =>
@@ -286,7 +296,7 @@ target("Makefile", (src) => {
     src,
     `# <generated:surfaces> ${BANNER}\n`,
     `# </generated:surfaces>`,
-    `SURFACES     := ${ids.join(" ")}\nNODE_SURFACES := ${nodeIds.join(" ")}\n`,
+    `SURFACES     := ${ids.join(" ")}\nNODE_SURFACES := ${nodeIds.join(" ")}\nSWIFT_SURFACES := ${swiftIds.join(" ")}\n`,
     "Makefile SURFACES",
   );
   // The screenshot toggles: Mail on, everything else off, and a surface with no
