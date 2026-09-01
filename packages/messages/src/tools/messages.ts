@@ -29,6 +29,24 @@ const parseBound = (raw: string | undefined, field: string): Date | undefined =>
   return d;
 };
 
+/**
+ * Close a range that named only a start.
+ *
+ * `defaultRangeDays` has been in the config since this surface shipped, with a
+ * comment saying exactly this, and nothing ever read it — Safari applies its
+ * equivalent, Messages did not. A `from` with no `to` therefore ran to now,
+ * however far back the start was.
+ *
+ * Applied here rather than in `client.window`, which `find_codes` also calls
+ * with a start alone and genuinely does mean "until now".
+ */
+const closeRange = (from: Date | undefined, to: Date | undefined, days: number): Date | undefined => {
+  if (to !== undefined || from === undefined) return to;
+  const end = new Date(from);
+  end.setDate(end.getDate() + days);
+  return end;
+};
+
 export const registerMessageTools = (server: McpServer, client: AppleMessagesClient): void => {
   server.registerTool(
     "apple_messages_list_messages",
@@ -51,7 +69,11 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
     },
     async ({ chatRef, from, to, includeReactions, limit }) =>
       wrap(async () => {
-        const window = client.window(parseBound(from, "from"), parseBound(to, "to"));
+        const fromDate = parseBound(from, "from");
+        const window = client.window(
+          fromDate,
+          closeRange(fromDate, parseBound(to, "to"), client.config.defaultRangeDays),
+        );
         return client.listMessages({
           ...(chatRef ? { chatRef: decodeChatRef(chatRef) } : {}),
           ...window,
