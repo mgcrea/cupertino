@@ -6,6 +6,15 @@ import type { AppleSafariClient } from "../client/safari.js";
 import { compact, fail, ok, wrapResult } from "./util.js";
 
 /**
+ * What `read_page` returns when the caller names no `maxChars`.
+ *
+ * Roughly a long article. The extension stores up to 256 KiB of text and 1 MiB
+ * of html per page, so an undefaulted cap meant a routine read could land a
+ * quarter of a million tokens in the conversation.
+ */
+const DEFAULT_MAX_CHARS = 32_768;
+
+/**
  * The extension lane: reading what a page actually says.
  *
  * ## Why this exists at all, and why it is not `do JavaScript`
@@ -73,8 +82,9 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
           .min(1)
           .optional()
           .describe(
-            "Truncate the returned content to this many characters. The response says whether " +
-              "it was cut.",
+            `Truncate the returned content to this many characters. Defaults to ` +
+              `${DEFAULT_MAX_CHARS.toLocaleString("en-US")}, which is a long article; raise it ` +
+              `to read more. The response says whether it was cut.`,
           ),
       },
       annotations: { readOnlyHint: true, idempotentHint: false },
@@ -124,8 +134,14 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
 
         const { page, ageSeconds } = hit;
         const body = format === "html" ? page.html : page.text;
-        const cut = maxChars !== undefined && body.length > maxChars;
-        const content = cut ? body.slice(0, maxChars) : body;
+        // Defaulted rather than optional. Left unbounded this returned the
+        // whole capture — up to the extension's own caps of 256 KiB of text or
+        // 1 MiB of html, which is a quarter of a million tokens for a tool a
+        // model reaches for casually. `get_message_source` already defaults its
+        // byte budget for the same reason; this is that decision, applied here.
+        const cap = maxChars ?? DEFAULT_MAX_CHARS;
+        const cut = body.length > cap;
+        const content = cut ? body.slice(0, cap) : body;
 
         return ok(
           compact({
