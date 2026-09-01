@@ -1,0 +1,67 @@
+---
+/**
+ * The Magenta Creations "M", for the footer credit that links to mg-crea.com.
+ *
+ * The geometry is copied from mgcrea-website's `design/mark.svg`, which that repo
+ * generates from `src/data/mark.ts`. mgcrea-website is the authority on the mark and
+ * **nothing here checks the two agree** — if the logo changes there, this is a hand-copy
+ * that has to be re-copied, the same way each site's sibling-app icon is.
+ *
+ * Three things about the drawing are load-bearing:
+ *
+ * - The right half is `currentColor`, not the brand's `#ece8e1`. That is what lets the
+ *   same file work on a dark site and a light one — the half takes the colour of
+ *   whatever footer text it sits beside, so it can never go invisible against the ground.
+ * - The seam is a sliver of the GROUND showing between the halves, not an ink colour, so
+ *   it defaults to this footer's own background token rather than a hex. Several of these
+ *   sites define that token twice for a light and a dark theme; a baked hex would be
+ *   right in one of them and a stray line in the other.
+ * - The clip-path ids are scoped by `uid`. SVG ids are document-global, so a second mark
+ *   on the same page with the same ids clips against the first one's rects instead.
+ *
+ * The viewBox is the mark's ink box (64x52), not the 100x100 artboard mgcrea-website's
+ * own component uses. That artboard carries ~36% slack, which at footer size leaves the
+ * glyph looking timid beside the wordmark.
+ *
+ * It is `aria-hidden`: every use sits inside a link that already reads "Magenta
+ * Creations", and a role="img" carrying the same label makes a screen reader say it twice.
+ */
+export interface Props {
+  /** Rendered height in px; width follows the mark's own 64:52 ratio. */
+  size?: number;
+  /** Suffix for the clip-path ids. Change it if two marks share a page. */
+  uid?: string;
+  /** The gap between the halves. Defaults to this footer's ground. */
+  seam?: string;
+  class?: string;
+}
+
+const { size = 15, uid = "mc", seam = "var(--color-bg, #0b0c0f)", class: className } = Astro.props;
+const width = Math.round((size * 64) / 52);
+---
+
+<svg
+  width={width}
+  height={size}
+  viewBox="18 24 64 52"
+  fill="none"
+  aria-hidden="true"
+  class:list={className}
+  style="display:block;flex:none"
+>
+  <defs>
+    <clipPath id={`${uid}-l`}><rect x="18" y="24" width="32" height="52" /></clipPath>
+    <clipPath id={`${uid}-r`}><rect x="50" y="24" width="32" height="52" /></clipPath>
+  </defs>
+  <path
+    d="M18 76V24h11l21 25 21-25h11v52H71V42L50 67 29 42v34z"
+    fill="#ff2e93"
+    clip-path={`url(#${uid}-l)`}
+  />
+  <path
+    d="M18 76V24h11l21 25 21-25h11v52H71V42L50 67 29 42v34z"
+    fill="currentColor"
+    clip-path={`url(#${uid}-r)`}
+  />
+  <path d="M49.45 48.345L50 49L50.55 48.345V66.345L50 67L49.45 66.345Z" fill={seam} opacity=".55" />
+</svg>

@@ -1,6 +1,7 @@
 ---
 import { BUNDLE_ID, DOCS, ISSUES_URL, REPO_URL, SIBLING_APP } from "../config";
 import Logo from "./Logo.astro";
+import MagentaMark from "./MagentaMark.astro";
 
 const columns = [
   {
@@ -53,6 +54,17 @@ const columns = [
         Unofficial. Not affiliated with Apple.<br />
         <code class="font-mono">{BUNDLE_ID}</code> · MIT
       </p>
+      {/* The publisher, in the one form every mgcrea site now uses. This footer
+          named no publisher at all until here — "Unofficial" says who it is NOT
+          affiliated with, which is not the same as saying who made it. */}
+      <a
+        href="https://mg-crea.com"
+        target="_blank"
+        rel="noopener"
+        class="inline-flex items-center gap-1.5 text-[12.5px] text-fg-muted transition-colors hover:text-accent-hi"
+      >
+        <MagentaMark size={13} uid="footer" />Magenta Creations
+      </a>
     </div>
 
     {
