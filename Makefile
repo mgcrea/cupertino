@@ -570,11 +570,15 @@ icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.sv
 	@# plain PNGs, and .appiconset is the one format appshot emits them in.
 	@$(MAKE) --no-print-directory extension-icons
 
-extension-icons: ## Render the Safari extension's PNGs from design/cupertino-mark.svg
-	@# Rasterises design/cupertino-icon.svg, which already carries the corner
+extension-icons: ## Render the Safari extension's round PNGs from design/cupertino-mark.svg
+	@# Rasterises design/cupertino-icon.svg, which already carries the bleed
 	@# clip. An .appiconset does not: the mark bleeds past the plate by design and
 	@# macOS masks an app icon for free, but these PNGs are drawn in browser
 	@# chrome that masks nothing, so the hills spilled out of the corners.
+	@# These are discs, not the app's squircle — one of the two places they are
+	@# drawn is Safari's toolbar, a row of monochrome SF Symbols where a plate
+	@# with corners reads as a pasted-on sticker. The script derives the disc's
+	@# diameter from the squircle's area so the weight does not change with it.
 	@node scripts/generate-extension-icons.mjs
 
 # ── App screenshots ───────────────────────────────────────────────────────────
