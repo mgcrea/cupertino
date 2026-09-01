@@ -2,7 +2,6 @@
   "name": "@mgcrea/mcp-apple-contacts",
   "version": "1.6.0",
   "description": "Search and read Apple Contacts — resolves numbers and emails to names, writes off by default",
-  "mcpName": "io.github.mgcrea/mcp-apple-contacts",
   "keywords": [
     "address-book",
     "apple",
@@ -66,5 +65,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-contacts"
 }

@@ -2,7 +2,6 @@
   "name": "@mgcrea/mcp-apple-reminders",
   "version": "1.6.0",
   "description": "Search, read and act on Apple Reminders — lists, due dates, writes off by default",
-  "mcpName": "io.github.mgcrea/mcp-apple-reminders",
   "keywords": [
     "apple",
     "apple-reminders",
@@ -66,5 +65,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-reminders"
 }

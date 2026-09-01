@@ -2,7 +2,6 @@
   "name": "@mgcrea/mcp-apple-mail",
   "version": "1.6.0",
   "description": "Search, read and act on Apple Mail — threads, attachments, body search, writes off by default",
-  "mcpName": "io.github.mgcrea/mcp-apple-mail",
   "keywords": [
     "apple",
     "apple-mail",
@@ -68,5 +67,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-mail"
 }

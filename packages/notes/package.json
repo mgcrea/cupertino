@@ -2,7 +2,6 @@
   "name": "@mgcrea/mcp-apple-notes",
   "version": "1.6.0",
   "description": "Search, read and act on Apple Notes — folders, attachments, writes off by default",
-  "mcpName": "io.github.mgcrea/mcp-apple-notes",
   "keywords": [
     "apple",
     "apple-notes",
@@ -65,5 +64,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-notes"
 }

@@ -2,7 +2,6 @@
   "name": "@mgcrea/mcp-apple-messages",
   "version": "1.6.0",
   "description": "Search and read Apple Messages — chats and decoded text, sending off by default",
-  "mcpName": "io.github.mgcrea/mcp-apple-messages",
   "keywords": [
     "apple",
     "apple-messages",
@@ -68,5 +67,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-messages"
 }
