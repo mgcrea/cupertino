@@ -6,6 +6,7 @@ import {
 } from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
+import { runCommand, type CommandResult } from "./actions.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
@@ -541,6 +542,38 @@ export class AppleSafariClient {
           `Apple Event.`,
       );
     }
+  }
+
+  /**
+   * Ask a page to do something, through the extension.
+   *
+   * ## The one lane that needs no permission at all
+   *
+   * No Apple Event, so no Automation grant — and `liveTabs` deliberately does
+   * NOT gate it, because that flag promises a server that sends no Apple Event
+   * and this sends none. No Full Disk Access either: the appex container is
+   * readable and writable by any same-user process. What it needs instead is
+   * the user having allowed the extension on that specific website, which is a
+   * consent Safari collects per site and they can revoke per site.
+   *
+   * That makes it the narrowest-consent capability in the bundle, and the one
+   * that fails most legibly: with no grant nothing polls, and the caller gets a
+   * timeout that says exactly which of the three conditions is missing.
+   */
+  async pageAction(input: {
+    action: "elements" | "click" | "fill" | "scroll" | "codes";
+    url?: string | undefined;
+    elementId?: string | undefined;
+    text?: string | undefined;
+    direction?: "up" | "down" | undefined;
+    limit?: number | undefined;
+  }): Promise<CommandResult> {
+    return await runCommand(
+      { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
+      // `includeCodes` is attached HERE rather than by the caller, so there is
+      // one place the setting can enter the channel and no tool can pass it.
+      { ...input, includeCodes: this.#config.allowCodes },
+    );
   }
 
   /** Where the Safari extension writes its captures. */

@@ -103,7 +103,11 @@ use it to _save_ entries. It lets you be a password manager; it never lets you r
 file lane is the interesting one: `keychain-2.db` **opens read-only with no Full Disk Access at
 all**, and is still unreadable — `srvr` and `acct` are SHA-1 digests and the payload is ciphertext.
 The store is readable and the data is not, which is the inverse of the Maps trap. What ships instead
-is `apple_messages_find_codes`, because SMS is where 2FA codes actually arrive.
+is `apple_messages_find_codes`, because SMS is where 2FA codes actually arrive — joined later by
+`apple_safari_find_codes` for the ones a website displays rather than sends, on a FIFTH lane that
+document did not evaluate: a Safari extension content script, which needs no TCC grant at all and is
+consented per site. Neither reaches the vault, and passwords.md now says so in a table so the two
+questions do not get conflated.
 
 **Home has left that set for a probe of its own** — see [home.md](home.md). Two of its four lanes are
 already closed and worth recording here so they are not re-opened: `HomeKit.framework` is
@@ -112,8 +116,16 @@ no `DEVELOPER_ID` distribution type at all, so no Developer-ID build of this app
 lane it links; Home.app ships no `.sdef`. What is left is a file lane at `~/Library/HomeKit`, held
 open by `homed` and Full-Disk-Access gated, plus `/usr/bin/shortcuts` for control. That last pairing
 is new: **`shortcuts list` works with no Full Disk Access while the store does not**, so this would be
-the first surface whose read and control lanes sit behind different grants. `scripts/probe-home.mjs`
-is written and must be hand-run; nothing is decided until it has been.
+the first surface whose read and control lanes sit behind different grants.
+
+`scripts/probe-home.mjs` has since been hand-run against a real store and it is a **GO**: the store
+opens `mode=ro` under the grant Cupertino already asks for, nothing name-bearing is sealed
+(115,466 B of legible text across 146 columns), the chain home -> room -> accessory -> service
+resolves by scalar foreign key at coverage 1.000, and a full read costs 3 ms. One limit shapes the
+product rather than blocking it: reading the store twice across a 90-second window moved no
+role-bearing table, and `ZMKFCHARACTERISTIC` carries a value RANGE rather than a current value, so
+this is **configuration only** — a static inventory that cannot say whether a light is on. Live
+values arrive over HAP and stay in `homed`'s memory.
 
 **Maps came out of that set and shipped**, and how it nearly did not is the transferable part.
 

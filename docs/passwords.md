@@ -20,6 +20,11 @@ reasons that no permission, grant or entitlement available to a Developer-ID bui
 | **File lane**   | **closed — and NOT by permission** | cryptography; see below                |
 | Framework / API | closed                             | an Apple-private keychain access group |
 
+> **A fifth lane was added later and does not change this verdict.** The Safari extension can read
+> a code a WEBSITE shows, which is a different question from reading the vault — see
+> [The fifth lane](#the-fifth-lane-the-safari-extension-and-what-it-does-not-reach) below. All four
+> lanes above stay closed.
+
 The probe is a **canary, not a discovery tool**: it re-runs all four checks and exits non-zero if
 any lane opens, so a future macOS that changes this is noticed rather than assumed.
 
@@ -146,14 +151,51 @@ It does **not** reopen on a new TCC grant, because no grant is relevant. Anyone 
   grant, and sits squarely in the "scriptable and dangerous" category
   [surfaces.md](surfaces.md) already rejects for Terminal and System Settings.
 
+## The fifth lane: the Safari extension, and what it does not reach
+
+**This document was written against four lanes and there is now a fifth.** It changes nothing above
+and is recorded here so nobody re-derives it: a Safari Web Extension content script reads the DOM of
+a page the user has allowed it on, which means it can read a one-time code a **website is showing**
+— and it needs no TCC grant of any kind to do it, only Safari's own per-site consent.
+
+That is worth stating precisely, because the shapes are easy to confuse:
+
+| Question                                             | Answer                                   |
+| ---------------------------------------------------- | ---------------------------------------- |
+| Read a code an issuer's page has just displayed       | **yes** — the extension lane             |
+| Read a code Safari AutoFill typed into a page's field | **yes** — same lane, same consent        |
+| Read the code Passwords.app generates for a TOTP item | **no** — every lane above, still closed  |
+| Read a stored password                                | **no**, and no setting in the app enables it |
+
+The third row is the one that matters. A TOTP seed lives in the vault; what a page displays is not
+the vault, and reaching one says nothing about reaching the other. Anyone reading this document
+because "Cupertino can read 2FA codes now" should stop at that row.
+
+`packages/safari` also declines the second row's neighbours by construction: `page_elements` never
+returns the value of a field classified as a **credential** — `type=password`, `cc-number`, `cc-csc`
+— and no flag turns that back on, because the flag is named for codes and widening it past them
+would make it claim more than its label does.
+
 ## What ships instead
 
-The actual goal behind the request was 2FA codes, and that has a lane which is already open and
-already granted: most codes arrive by SMS. See `apple_messages_find_codes` in
+The actual goal behind the request was 2FA codes, and those have lanes which are already open and
+already granted.
+
+**Most codes arrive by SMS.** See `apple_messages_find_codes` in
 [`packages/messages`](../packages/messages), gated behind `APPLE_MESSAGES_ALLOW_CODES` — its own
 switch rather than `allowWrites`, because a server that reads Mail and Messages is already holding
 the password-_reset_ channel, and adding live auth codes to it is a change of tier that deserves a
 deliberate opt-in.
+
+**Some are shown by the site itself**, and those go through the extension: `apple_safari_find_codes`
+behind `APPLE_SAFARI_ALLOW_CODES`, plus the one-time-code field value in `apple_safari_page_elements`
+under the same flag. The extraction heuristic is the same function, lifted to
+[`packages/core`](../packages/core) when Safari became its second caller.
+
+**That Safari gate is deliberately weaker than the Messages one, and the difference should not be
+papered over.** On Messages, off means the tool does not exist and the alternative is sifting whole
+threads. Here `apple_safari_read_page` stays ungated, so off removes the targeted field read and the
+live DOM scan — not every byte of a page. It is a gate on convenience and precision, not on access.
 
 ## Privacy
 

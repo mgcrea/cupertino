@@ -276,18 +276,53 @@ struct Surface: Identifiable, Hashable {
       // the write lane accepts http and https and nothing else. That is what
       // keeps Permissions.swift's two-state model honest for this surface.
       //
-      // Clicking, typing and scrolling belong to the extension lane, where
+      // Clicking, typing and scrolling went to the EXTENSION lane, where
       // Safari gates access one website at a time, not to Apple Events,
-      // which is all-or-nothing and permanent. Unbuilt: it needs a command
-      // channel INTO the extension, and Safari's hidden `dispatch message
-      // to extension` verb is the unmeasured candidate. See docs/safari.md.
+      // which is all-or-nothing and permanent. They are built, and they send
+      // no Apple Event at all: the server drops a command in the appex's own
+      // container, the content script's poll claims it, and the answer comes
+      // back the same way. The container is readable AND writable by any
+      // same-user process — measured both ways — so this lane needs no TCC
+      // grant of any kind, only the per-site consent Safari already collects.
+      //
+      // `dispatch message to extension` was the candidate for waking the
+      // extension instead of polling, and it was MEASURED and rejected: it
+      // accepts an empty dictionary and a bogus extension identifier without
+      // complaint and returns nothing, so a message that went nowhere cannot
+      // be told from one that arrived. Polling costs a native round trip per
+      // allowed page per second, and is the only route with no Apple Event
+      // anywhere in it. See docs/safari.md.
+      //
+      // The `gates` entry below is the second on any surface, and like the
+      // first it gates a READ. It is NOT behind allowWrites for the same
+      // reason: that flag means "may change something", and reaching a read
+      // through it would mean granting the right to click a button in order
+      // to see a number.
+      //
+      // What it governs is narrow and deliberately so. `page_elements`
+      // always redacts a CREDENTIAL field — a password or a card number —
+      // whatever this flag says, because no tool here has a use for one. The
+      // flag governs the other class: a one-time-code field, whose value is
+      // withheld by default and returned when it is on. It also registers
+      // `apple_safari_find_codes`, which reads a code the page RENDERS AS
+      // TEXT and that no element enumeration can see.
+      //
+      // This gate is WEAKER than the Messages one and the difference should
+      // not be papered over. There, off means the codes tool does not exist
+      // and the alternative is sifting whole threads. Here `read_page` stays
+      // ungated, so off means only the targeted field read and the live DOM
+      // scan are gone — not every byte of a page. See docs/passwords.md for
+      // why the Passwords app itself is unreachable and this is what ships
+      // in its place.
       bundleID: "com.apple.Safari",
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_SAFARI_",
-      gates: []
+      gates: [
+        Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets Safari tools read a one-time 2FA code from a page you have allowed the extension on. Off by default."),
+      ]
     ),
     Surface(
       id: "maps",

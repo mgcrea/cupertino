@@ -240,6 +240,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_safari_list_tabs",
       "apple_safari_list_bookmarks",
       "apple_safari_list_reading_list",
+      "apple_safari_page_elements",
       "apple_safari_diagnostics",
     ],
     // Two verbs that move a browser between pages, and nothing that acts
@@ -252,9 +253,33 @@ export const SURFACES: readonly Surface[] = [
     // The same reasoning is why these two accept http and https URLs only: a
     // javascript: URL would reach that verb through a navigation tool. See
     // docs/safari.md.
-    write: ["apple_safari_open_url", "apple_safari_add_reading_list_item"],
+    write: [
+      "apple_safari_open_url",
+      "apple_safari_add_reading_list_item",
+      "apple_safari_click",
+      "apple_safari_fill",
+      "apple_safari_scroll",
+    ],
+    // A read, and still not in `read`. The extension can see a 2FA code a page
+    // is showing, so that goes behind its own flag rather than arriving with
+    // the rest. Two things move together when it is on: this tool, for a code
+    // rendered as TEXT where there is no field to enumerate, and the value of a
+    // one-time-code FIELD in apple_safari_page_elements. A password or a card
+    // number is withheld either way, whatever the setting says.
+    //
+    // Weaker than the Messages gate of the same name, and worth saying so:
+    // apple_safari_read_page is ungated, so turning this off removes the
+    // targeted read, not every byte of a page. See docs/passwords.md for why
+    // the Passwords app itself is unreachable and this is what ships instead.
+    gated: [
+      {
+        name: "apple_safari_find_codes",
+        env: "APPLE_SAFARI_ALLOW_CODES",
+        why: "Reads a one-time 2FA code from a page you have allowed the extension on. Off unless you turn it on.",
+      },
+    ],
     pitch:
-      "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says. Opens a URL or saves one for later behind the write gate.",
+      "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says, plus clicking and typing on it. Opens a URL or saves one for later behind the write gate.",
     withoutGrant:
       "Live tabs and page contents — the only things in the whole bundle that work with no Full Disk Access at all. Tabs need an Automation grant; page contents need the extension, allowed per website.",
   },

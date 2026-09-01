@@ -359,6 +359,14 @@ extension's resources" — which nothing in the toolchain surfaces. This cost se
 notarize and restart cycles to find. Whatever ships here wants a check that the files in
 `Resources/` match what `manifest.json` names.
 
+> **No longer true of this repo, and the check exists.** `CupertinoSafariExtension` is a
+> `PBXFileSystemSynchronizedRootGroup` with only `Info.plist` excepted, so a new file in
+> `Resources/` is picked up with no `project.pbxproj` edit — `actions.js` was added that way.
+> Anyone reaching for the pbxproj on the strength of the paragraph above is about to hand-edit
+> something that maintains itself. The trap it describes is real for a converter-generated project
+> and is guarded here regardless: `scripts/verify-extension.sh` fails the build when the bundle
+> does not carry a file `manifest.json` names.
+
 Also: the appex bundle identifier must be prefixed by the app's, so Debug
 (`io.mgcrea.cupertino.debug`) and Release get different extension identifiers — and Safari keys
 enablement state to that identifier. The two builds hold separate extension state.
@@ -475,12 +483,20 @@ undocumented and unmeasured, and is not used.
 
 ### What is deliberately not here
 
-**Anything that acts inside a page** — click, fill, scroll. The only Apple Event that could is
-`do JavaScript`, and the argument above rules it out. That capability belongs on the extension lane,
-where Safari grants access one website at a time rather than all of them forever. It needs a command
-channel INTO the extension, which does not exist today: `dispatch message to extension` is the
-candidate, and it is unmeasured. Until then Cupertino can open a page and read it, and cannot touch
-it.
+> **Superseded.** This said acting inside a page needed a command channel that did not exist. It
+> exists — see [Acting on a page, built](#acting-on-a-page-built). What survives is the reason those
+> verbs are NOT on the Apple Events lane, which is the paragraph below and is unchanged.
+
+**Anything that acts inside a page, ON THIS LANE** — click, fill, scroll. The only Apple Event that
+could is `do JavaScript`, and the argument above rules it out. That capability belongs on the
+extension lane, where Safari grants access one website at a time rather than all of them forever.
+
+**The value of a credential field**, on any lane. `page_elements` reports what a text field holds,
+and `input[type=password]` is a text field — the first version of it returned passwords, from a tool
+marked `readOnlyHint` whose description did not mention values at all. A field classified as a
+credential now comes back `redacted: "credential"` with `hasValue` and no value, and **no setting
+returns it**. The one-time-code setting is named for codes and does not widen past them; see
+[Reading a code](#reading-a-code-and-the-two-places-one-can-be).
 
 **`close_tab`**, because closing destroys state that cannot be recovered — a half-filled form, a page
 that no longer resolves — and it is the one verb here that doing again differently does not undo. Not
@@ -571,6 +587,162 @@ arms: a hit stops after one walk, a miss costs two.
 The three-state design stands regardless — the cost of being wrong in the other direction is a
 duplicate nothing can remove.
 
+## Acting on a page, built
+
+**Shipped:** `apple_safari_page_elements`, `apple_safari_click`, `apple_safari_fill` and
+`apple_safari_scroll`. This is the capability `do JavaScript` would have bought, taken through the
+extension instead, and it is the first lane in the bundle that needs **no TCC grant of any kind**.
+
+### The channel, and the two candidates it beat
+
+Reading a page needed one direction: the extension pushes, the server reads. Acting needs the other,
+and the push-only design could not carry it.
+
+| Route                                              | Verdict                                                            |
+| -------------------------------------------------- | ------------------------------------------------------------------ |
+| `do JavaScript`                                    | Refused since v0.1. Global, permanent, unscoped, state unreadable. |
+| `dispatch message to extension`                    | **Measured and rejected — see below.**                             |
+| `SFSafariApplication.dispatchMessage` from the app | Works, reports errors, but the app cannot reach a running server.  |
+| **Files in the appex container**                   | **Shipped.** No Apple Event, no grant, no app in the path.         |
+
+**`dispatch message to extension` is a bad channel on its own merits, and that is worth recording
+because it looked like the answer.** It is Safari's hidden scripting counterpart to
+`SFSafariApplication.dispatchMessage`, and the server could have called it directly, cutting the app
+out. Probed on macOS 26.6 with six dictionary shapes — `name`/`extensionIdentifier`,
+`messageName`/…, `withName`/…, an **empty dictionary**, and a **bogus extension identifier**. All six
+were accepted. None returned anything. First call 66 ms, the rest under 1 ms.
+
+So the verb validates nothing and reports nothing: a message delivered to the right extension and a
+message delivered nowhere are indistinguishable from the caller. That is the same silent-failure
+property this document rejected `do JavaScript` for, arrived at from the other direction.
+
+**What shipped instead needs nothing from Safari but the per-site grant it already collects.** The
+appex container is writable as well as readable by a same-user unsandboxed process — measured, both
+directions, including creating a subdirectory. So the server writes `commands/<uuid>.json`, the
+content script's poll claims it, runs it, and the answer lands in `results/<uuid>.json`. Three
+directories in one container, no Apple Event anywhere in the path.
+
+### The page polls, and what that costs
+
+Nothing outside Safari can wake a content script, and both push routes are the ones ruled out above.
+So the page asks: **one native round trip per second while its tab is visible, one per ten seconds
+while it is hidden.** A hidden tab is slowed rather than stopped, because a background tab is a
+legitimate target and a loop that stopped would make "not in front" look exactly like "not
+installed".
+
+That is the floor on every action tool's latency, and it is why the timeout defaults to 12 s
+(`APPLE_SAFARI_ACTION_TIMEOUT_MS`).
+
+### At-most-once, and never at-least-once
+
+A command is deleted as it is handed out, so two tabs on the same URL cannot both run one click. The
+consequence is deliberate: a page that dies mid-command loses it, and the server reports a timeout
+rather than retrying. **A click that MIGHT have landed must never be repeated automatically** — that
+is how one purchase becomes two. The tool descriptions say so, and the timeout message tells the
+caller to look at the page rather than try again.
+
+The command also carries an `expiresAt` tied to the same deadline the server gives up on, and the
+server deletes the command file when it times out. Either alone would prevent a click landing minutes
+after the caller was told it had not.
+
+### Elements are addressed by ID, never by selector
+
+`click(selector)` is the obvious design and the wrong one. It requires the caller to already know the
+DOM, which means shipping it the page's HTML and hoping the selector still matches on arrival — and
+when it does not match, it does not fail, it matches something else and clicks the wrong thing.
+
+So the page hands out the list. `page_elements` enumerates the interactive nodes with a short id
+apiece, and the acting tools take one of those ids. **A stale id is an error rather than a different
+element**, which is the whole property: ids are handed out per enumeration and die on navigation.
+
+`page_elements` is ungated: it changes nothing, and asking what is on a page is the class of act
+this surface already performs when it reads one. The three that act are behind `allowWrites` — a
+second lock on top of the per-site grant, not the only one.
+
+**What IS gated on `page_elements` is not the tool but a field's contents.** A credential field's
+value is never returned, and a one-time-code field's only under `APPLE_SAFARI_ALLOW_CODES`. That
+split lives in the content script rather than the server on purpose: a result crosses the boundary
+as a file in the appex container, which is readable by any same-user process, so redacting after the
+write would mean writing the secret down first and removing it after.
+
+### Reading a code, and the two places one can be
+
+**Shipped, behind `APPLE_SAFARI_ALLOW_CODES`** — a gate of its own rather than `allowWrites`, for
+the reason Messages gives: that flag means "may change something", and reaching a read through it
+would mean granting the right to click a button in order to see a number.
+
+A 2FA code on a web page is in one of two places, and they need different mechanisms:
+
+| Where it is                          | What reads it                       | Why the other cannot         |
+| ------------------------------------ | ----------------------------------- | ---------------------------- |
+| In a field, put there by AutoFill    | `page_elements`, `value` unredacted | Not text; nothing to scan    |
+| **Rendered as text on the page**     | `find_codes`, a live DOM scan       | Not an element; nothing to enumerate |
+
+**The second is the ordinary case and it is the one that needed new code.** A code arrives in a
+webmail message, an issuer's dashboard, a bank's confirmation panel. There is no input to enumerate,
+so no amount of toggling makes `page_elements` see it.
+
+**And `read_page` cannot substitute for it.** That reads the capture store, written at
+`document_idle` and again after a route change. A code delivered by XHR into an already-open tab
+**was never captured**. The `codes` action scans the DOM at command time, which is the only thing
+that sees it — and is the reason this is a new action rather than server-side extraction over a
+capture. The cheap version was considered and is strictly worse: stale by up to 30 minutes, blind to
+post-load codes, and it drags a page of text through `results/` for a six-digit answer.
+
+**The page returns text and judges nothing.** `findCodes` walks text nodes and hands back bounded
+excerpts; `extractCode` runs on the server. That keeps one tested copy of a heuristic that exists
+precisely because the naive version is wrong — and it is why the heuristic could be lifted to
+`packages/core` when Safari became its second caller rather than duplicated.
+
+**The excerpt window creeps, and that is not cosmetic.** A fixed ±120-character slice can cut
+`4111 1111 1111 1111` in half and hand the extractor a fragment that its own card-number
+disqualification would have caught in full. Each boundary therefore extends outward while it is
+still inside a number. The window must also stay wider than `NEAR + LONGEST_KEYWORD` in `codes.ts`,
+or the extractor's keyword reach silently shrinks; both are pinned by tests.
+
+**Freshness has no `ageSeconds` and cannot have one.** A message carries the time it arrived; a
+paragraph does not. What the tool reports instead:
+
+| Field            | Means                                                              |
+| ---------------- | ------------------------------------------------------------------ |
+| `scannedAt`      | the DOM was in this state at this instant — live, not cached        |
+| `roundTripMs`    | how stale the answer already is by the time the caller sees it      |
+| `pageAgeSeconds` | an **upper** bound on the code's age and never a lower one          |
+
+That last one is the honest half. A page loaded four seconds ago can only hold a four-second-old
+code; a webmail tab open for six hours reports six hours, which correctly refuses to reassure.
+
+**`low` confidence cannot occur on this lane.** The only route to it is `fromShortcode`, and a page
+has no sender to corroborate with — so a digit run with no keyword near it yields nothing at all
+rather than a weak match. That is a stricter tool than the Messages one, not a looser one.
+
+**What the gate does NOT buy, and docs/passwords.md now carries the table.** It reads a code a
+*website shows*. It does not reach Passwords.app, whose four lanes are all closed and stay closed,
+and it never returns a password or a card number whatever it is set to.
+
+### Not verified end to end
+
+The server half is tested against a fake extension — 17 tests covering the command shape, the page's
+own refusals, the timeout message, the command being taken back, and that `includeCodes` reaches the
+wire from CONFIG rather than from anything a caller can pass.
+
+**The extension half is no longer only `node --check`.** `test/content-script.test.ts` evaluates
+`actions.js` in a `node:vm` against a hand-rolled DOM stub — 39 tests over field classification and
+the code scan, including a negative control that serialises the whole payload and asserts no secret
+fixture string appears anywhere in it. That is the assertion which survives someone adding a new
+output field later. It is not jsdom: this package depends on the MCP SDK and zod and nothing else,
+and a DOM implementation pulled in for one file would be a bad trade.
+
+What still cannot be tested from here is everything that depends on a REAL DOM and a real Safari:
+whether the `TreeWalker` filter skips what a live page actually nests, and what the scan costs on a
+large single-page app.
+
+**It cannot be more than that from here.** Safari will not list an extension whose container app is
+not notarized and stapled, so exercising this needs a full `make build-release` and an Apple round
+trip — and installing over a running Safari can crash it. The first real run is the one that says
+whether a content script sharing an isolated world really does see `cupertinoRunCommand` across two
+files, and whether one second is a poll rate anyone can live with.
+
 ## Still open
 
 - ~~**Reading List counts.**~~ Measured: 6 folders, 200 leaves, tree depth 2. The Reading List
@@ -582,6 +754,21 @@ duplicate nothing can remove.
   that account. `packages/safari` detects the epoch from the store at open time anyway rather than
   hardcoding this result, because the failure mode is a date that is well-formed and wrong by 31
   years, which nothing downstream can notice.
+- **What the codes scan COSTS on a real page.** Unmeasured, and the poll budget is about a second.
+  `probe-safari.mjs` is the wrong instrument — it measures the file lane. The cheap fix is to have
+  `findCodes` return `scanMs` beside `scannedAt`, so the first notarized run reports it rather than
+  the number being guessed at now.
+- **`all_frames: false`** means a code inside a cross-origin iframe — common for hosted auth widgets
+  — is invisible to both the field read and the text scan. Flipping it multiplies the poll rate by
+  the frame count, which is a separate decision with a measurable cost, so it is recorded rather
+  than made.
+- **The extractor's false-positive rate over PAGE TEXT.** The table in `packages/core` is
+  SMS-shaped: short machine-written notifications. A web page is a far richer source of digit runs,
+  and the 400-character cap that did a lot of the work there is now partly substituted by
+  excerpting. The heuristic is **reused, not re-validated**, and the first notarized run against
+  real webmail is what would validate it.
+- **Whether Safari AutoFill ever writes a code into page TEXT** rather than only into the field. If
+  it does not, the AutoFill case is closed by construction as well as by policy.
 - **`Downloads.plist`** — 9,431 bytes, still unexamined. `packages/safari` reports its presence in
   diagnostics and never parses it.
 - **`CloudTabs.db`** — absent here, so tabs open on other devices are unmeasured.

@@ -5,19 +5,60 @@
  */
 export const SAFARI_GUIDE = `# Safari — how to drive this server
 
-## Read-only, and deliberately so
+## What this server can and cannot do
 
-This server cannot open a URL, add to the Reading List, or change anything at
-all. Page content comes from the bundled Safari extension:
-\`apple_safari_read_page\` returns a page as text or HTML, but only for
-websites the user has allowed the extension on, and only as a SNAPSHOT from
-when the page loaded. Check \`ageSeconds\` before calling it the current page.
+It reads history, bookmarks and the Reading List; it sees live tabs; and
+through the bundled Safari extension it reads, clicks, types in and scrolls a
+page. Behind the write gate it also opens a URL and saves one to the Reading
+List. If the gate is off, say plainly that it cannot rather than trying.
+
+Page content comes from the extension, for websites the user has allowed it
+on. \`apple_safari_read_page\` returns a SNAPSHOT from when the page loaded —
+check \`ageSeconds\` before calling it the current page. The acting tools
+(\`page_elements\`, \`click\`, \`fill\`, \`scroll\`) go to the live page instead,
+and cost about a second on a visible tab and up to ten on a hidden one.
 
 There is still no \`do JavaScript\` verb, and Safari exposes no AXWebArea for
 page content, so the extension is the only route — which is the point: Safari
 scopes it per website, and the toggle would not have been scoped at all.
-If asked to open or change something, say
-plainly that it cannot.
+
+## Field values, and the one-time-code setting
+
+\`apple_safari_page_elements\` reports what a text field currently holds, in
+\`value\` — except where the field looks like it holds a secret. A password or
+a card number comes back \`redacted: "credential"\` and NO setting returns it.
+A one-time 2FA field comes back \`redacted: "code"\` unless the user has
+switched on "Read one-time codes"; \`hasValue\` still says whether it is filled.
+
+When that setting is on, \`apple_safari_find_codes\` also exists, for the more
+common case: a code the page shows as TEXT, where there is no field to
+enumerate at all. It scans the live DOM, so it sees a code that arrived after
+the page loaded and that \`read_page\` therefore never captured. It cannot tell
+an expired code from a live one — there is no timestamp on a paragraph — so
+check \`confidence\` and prefer a code the user can confirm.
+
+## Filling a code you just read
+
+The whole sequence, and the order matters less than it looks:
+
+1. \`apple_safari_page_elements\` on the page ASKING for the code, to get the id
+   of the field.
+2. \`apple_safari_find_codes\` on the page SHOWING it — or
+   \`apple_messages_find_codes\` if it arrived by SMS.
+3. \`apple_safari_fill\` the id from step 1 with the code from step 2.
+
+Reading a code does NOT invalidate ids from step 1: ids die on navigation or on
+a re-enumeration of THAT page, and neither scanning a different page nor
+scanning the same one enumerates anything. Only \`page_elements\` hands out ids,
+and only it clears the old ones.
+
+\`fill\` does not submit. Click the submit button separately.
+
+**Two things that make this fail, both worth checking rather than assuming.**
+A code may be expired — nothing here can tell, so if the user has been waiting,
+ask them to trigger a new one. And a site that splits the code across six
+single-character boxes cannot be filled by one \`fill\`; enumerate again
+afterwards and look at \`hasValue\` before clicking submit.
 
 ## Three lanes that are not fallbacks for each other
 

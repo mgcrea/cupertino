@@ -47,18 +47,166 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
   private static let maxTextBytes = 256 * 1024
   private static let maxHTMLBytes = 1024 * 1024
 
+  /// How long a command result survives uncollected.
+  ///
+  /// Much shorter than a capture's half hour. A result is correlated to one
+  /// in-flight tool call; if the server has not collected it within a minute it
+  /// has already timed out and reported, and keeping the answer longer would
+  /// only leave a record of what was clicked lying on disk.
+  private static let channelTTL: TimeInterval = 60
+
   func beginRequest(with context: NSExtensionContext) {
     let item = context.inputItems.first as? NSExtensionItem
     let message = item?.userInfo?[SFExtensionMessageKey] as? [String: Any]
 
-    var stored = false
-    if let message, (message["kind"] as? String) == "capture" {
-      stored = store(message)
+    var payload: [String: Any] = ["stored": false]
+    switch message?["kind"] as? String {
+    case "capture":
+      payload = ["stored": store(message ?? [:])]
+    case "poll":
+      // The command channel's only inbound step. Commands are claimed as they
+      // are handed out — see `claimCommands` — so two tabs on the same URL
+      // cannot both run one.
+      payload = ["commands": claimCommands(for: message?["url"] as? String ?? "")]
+    case "result":
+      payload = ["stored": storeResult(message ?? [:])]
+    default:
+      break
     }
 
     let response = NSExtensionItem()
-    response.userInfo = [SFExtensionMessageKey: ["stored": stored]]
+    response.userInfo = [SFExtensionMessageKey: payload]
     context.completeRequest(returningItems: [response], completionHandler: nil)
+  }
+
+  // MARK: - The command channel
+
+  /// Where the server drops work and collects answers.
+  ///
+  /// Two directories rather than one, because the two have opposite writers and
+  /// opposite readers: the server writes `commands` and reads `results`, this
+  /// handler reads `commands` and writes `results`. A single directory would
+  /// make "not yet picked up" and "picked up, no answer yet" the same state.
+  ///
+  /// Both sit beside `pages` in this appex's container, for the reason that
+  /// store gives: an unsandboxed same-user process can read and write here with
+  /// no Full Disk Access and no app group, so nothing in this lane needs a
+  /// permission or a new entitlement. Measured in both directions.
+  private func channelDirectory(_ name: String) -> URL? {
+    let fm = FileManager.default
+    guard let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    else { return nil }
+    let dir = support.appendingPathComponent(name, isDirectory: true)
+    if !fm.fileExists(atPath: dir.path) {
+      try? fm.createDirectory(
+        at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+    return dir
+  }
+
+  /// Hand out the commands waiting for this page, and delete them as we do.
+  ///
+  /// CLAIMED BY DELETION, which is the whole concurrency design. Every allowed
+  /// page polls on its own timer, so without this two tabs on the same URL
+  /// would each run the same click. Deleting on hand-out makes a command
+  /// at-most-once: if the page dies before reporting, the command is simply
+  /// lost and the server times out — which is the honest outcome, because a
+  /// click that MIGHT have happened must never be retried automatically.
+  ///
+  /// A command with no `url` is unscoped and goes to whoever polls first. That
+  /// is deliberate for `elements`-style questions about "the page", and it is
+  /// why the server names a URL for anything that acts.
+  private func claimCommands(for url: String) -> [[String: Any]] {
+    guard let dir = channelDirectory("commands") else { return [] }
+    let fm = FileManager.default
+    guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+    else { return [] }
+
+    var claimed: [[String: Any]] = []
+    for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+    where file.pathExtension == "json" {
+      guard let data = try? Data(contentsOf: file),
+        let object = try? JSONSerialization.jsonObject(with: data),
+        let command = object as? [String: Any]
+      else {
+        // Unreadable or not ours. Remove it rather than reading it forever:
+        // this directory is a queue, and a poison entry must not survive to be
+        // re-examined on every poll by every page.
+        try? fm.removeItem(at: file)
+        continue
+      }
+
+      if let expiry = command["expiresAt"] as? Double,
+        Date().timeIntervalSince1970 > expiry
+      {
+        try? fm.removeItem(at: file)
+        continue
+      }
+
+      let wanted = command["url"] as? String
+      guard wanted == nil || wanted == url else { continue }
+
+      try? fm.removeItem(at: file)
+      claimed.append(command)
+      // One per poll. A page that has just been clicked is a page whose DOM has
+      // moved, so element ids from before that click may no longer resolve —
+      // running a batch would be running most of it against a page that no
+      // longer matches what the caller was looking at.
+      break
+    }
+    return claimed
+  }
+
+  /// Record what a page did, for the server to collect.
+  private func storeResult(_ message: [String: Any]) -> Bool {
+    guard let dir = channelDirectory("results"),
+      let id = message["id"] as? String, !id.isEmpty,
+      // The id names a file, so it must not be able to name a DIFFERENT file.
+      // The server generates these, but this handler is reachable by anything
+      // the extension runs, and a traversal here would write outside the
+      // container.
+      id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" })
+    else { return false }
+
+    var entry: [String: Any] = [
+      "id": id,
+      "completedAt": ISO8601DateFormatter().string(from: Date()),
+      "ok": (message["ok"] as? Bool) ?? false,
+    ]
+    if let data = message["data"] { entry["data"] = data }
+    if let error = message["error"] { entry["error"] = error }
+
+    guard JSONSerialization.isValidJSONObject(entry),
+      let data = try? JSONSerialization.data(withJSONObject: entry)
+    else { return false }
+
+    let file = dir.appendingPathComponent(id + ".json")
+    do {
+      try data.write(to: file, options: .atomic)
+    } catch {
+      os_log(.error, "cupertino: could not store a result: %{public}@", String(describing: error))
+      return false
+    }
+    pruneChannel(dir)
+    return true
+  }
+
+  /// Results are collected by a server that may have gone away. Age them out on
+  /// the same reasoning as a capture: an answer nobody came back for is not
+  /// worth keeping, and this one describes a page too.
+  private func pruneChannel(_ dir: URL) {
+    let fm = FileManager.default
+    guard
+      let files = try? fm.contentsOfDirectory(
+        at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [])
+    else { return }
+    let now = Date()
+    for file in files where file.pathExtension == "json" {
+      let modified =
+        (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        ?? .distantPast
+      if now.timeIntervalSince(modified) > Self.channelTTL { try? fm.removeItem(at: file) }
+    }
   }
 
   /// The store's directory, created on first use.

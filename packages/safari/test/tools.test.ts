@@ -146,13 +146,16 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
 };
 
 describe("tool registration", () => {
-  it("registers seven read tools", async () => {
+  it("registers eight ungated tools", async () => {
     expect(await toolNames(await connect())).toEqual([
       "apple_safari_diagnostics",
       "apple_safari_get_page",
       "apple_safari_list_bookmarks",
       "apple_safari_list_reading_list",
       "apple_safari_list_tabs",
+      // Ungated deliberately: enumerating a page changes nothing, and it is the
+      // same class of act as reading one, which this surface already does.
+      "apple_safari_page_elements",
       "apple_safari_read_page",
       "apple_safari_search_history",
     ]);
@@ -165,14 +168,20 @@ describe("tool registration", () => {
    * navigation lane landed — a tripwire so that a write tool could not appear
    * without somebody deciding to let it. It has been changed deliberately, and
    * it still does the same job in the other direction: the read set must be
-   * untouched, and exactly two verbs may appear.
+   * untouched, and only the named verbs may appear.
    */
-  it("adds two write tools with writes enabled, and nothing else", async () => {
+  it("adds five write tools with writes enabled, and nothing else", async () => {
     const off = await toolNames(await connect());
     const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_WRITES: "true" }));
     expect(on.filter((n) => !off.includes(n))).toEqual([
+      // Two Apple Events that move the browser between pages…
       "apple_safari_add_reading_list_item",
+      // …and three that act inside one, through the extension, sending no
+      // Apple Event at all.
+      "apple_safari_click",
+      "apple_safari_fill",
       "apple_safari_open_url",
+      "apple_safari_scroll",
     ]);
     expect(off.filter((n) => !on.includes(n))).toEqual([]);
   });
@@ -185,6 +194,8 @@ describe("tool registration", () => {
     const names = await toolNames(await connect());
     expect(names).not.toContain("apple_safari_open_url");
     expect(names).not.toContain("apple_safari_add_reading_list_item");
+    expect(names).not.toContain("apple_safari_click");
+    expect(names).not.toContain("apple_safari_fill");
   });
 
   /**
@@ -194,6 +205,54 @@ describe("tool registration", () => {
    */
   it("registers history tools even with no readable store", async () => {
     expect(await toolNames(await connect())).toContain("apple_safari_search_history");
+  });
+
+  /**
+   * The codes gate, mirroring the one Messages established.
+   *
+   * The two flags are orthogonal in both directions, and both directions are
+   * worth an assertion: granting the right to click a button must not hand over
+   * a 2FA code, and granting the right to read a code must not hand over the
+   * ability to navigate somebody's browser.
+   */
+  it("adds only find_codes when APPLE_SAFARI_ALLOW_CODES is set", async () => {
+    const off = await toolNames(await connect());
+    const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_CODES: "true" }));
+    expect(on.filter((n) => !off.includes(n))).toEqual(["apple_safari_find_codes"]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  it("hides find_codes completely when the flag is off", async () => {
+    expect(await toolNames(await connect())).not.toContain("apple_safari_find_codes");
+  });
+
+  it("keeps the codes gate independent of allowWrites", async () => {
+    const writes = await toolNames(await connect({ APPLE_SAFARI_ALLOW_WRITES: "true" }));
+    expect(writes).not.toContain("apple_safari_find_codes");
+
+    const codes = await toolNames(await connect({ APPLE_SAFARI_ALLOW_CODES: "true" }));
+    expect(codes).not.toContain("apple_safari_open_url");
+    expect(codes).not.toContain("apple_safari_click");
+    expect(codes).not.toContain("apple_safari_fill");
+    expect(codes).not.toContain("apple_safari_scroll");
+    expect(codes).not.toContain("apple_safari_add_reading_list_item");
+
+    const both = await toolNames(
+      await connect({ APPLE_SAFARI_ALLOW_WRITES: "true", APPLE_SAFARI_ALLOW_CODES: "true" }),
+    );
+    expect(both).toContain("apple_safari_find_codes");
+    expect(both).toContain("apple_safari_click");
+  });
+
+  /**
+   * `find_codes` READS. It must never be marked destructive, and turning the
+   * gate on must not change what anything else claims about itself.
+   */
+  it("registers find_codes as a read-only tool", async () => {
+    const { tools } = await (await connect({ APPLE_SAFARI_ALLOW_CODES: "true" })).listTools();
+    const codes = tools.find((t) => t.name === "apple_safari_find_codes");
+    expect(codes?.annotations?.readOnlyHint).toBe(true);
+    expect(codes?.annotations?.destructiveHint).toBeUndefined();
   });
 });
 

@@ -12,6 +12,79 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Safari can click, type and scroll on a page — through the extension, with no Apple Event and
+  no TCC grant at all.** `apple_safari_page_elements` lists what is clickable with a short id
+  apiece; `apple_safari_click`, `apple_safari_fill` and `apple_safari_scroll` act on those ids
+  behind the write gate. `page_elements` is ungated: enumerating changes nothing, and it is the
+  same class of act as reading a page, which this surface already does.
+
+  **It is the capability `do JavaScript` would have bought, taken through the one door that is
+  consented per website.** That verb is still refused for the reasons it always was — global,
+  permanent, unscoped, state unreadable. The extension is the same power granted one site at a
+  time, visibly, revocably.
+
+  The channel is files in the extension's own container, which is writable as well as readable by
+  a same-user process. Nothing else was good enough: `dispatch message to extension`, Safari's
+  hidden verb for waking an extension, was measured accepting an empty dictionary and a bogus
+  extension identifier without complaint and returning nothing — a message that went nowhere
+  cannot be told from one that arrived, which is the same silent failure `do JavaScript` was
+  rejected for.
+
+  Two properties the tool descriptions carry because a caller cannot infer them: commands are
+  **at-most-once** — a click that times out may still have landed, and must never be retried
+  automatically — and element ids **die on navigation**, so a click that loaded something
+  invalidates every id the caller holds. Elements are addressed by id rather than CSS selector
+  precisely because a stale selector does not fail, it clicks the wrong thing.
+
+  Verified against a fake extension, not against Safari: exercising the real one needs a notarized
+  build, since Safari will not list an extension whose container app is not stapled.
+
+  **`page_elements` never hands out a credential.** It reports what a text field holds, and
+  `input[type=password]` is a text field — the first cut of it returned passwords and card numbers,
+  from a tool marked read-only whose description did not mention values at all. A field classified
+  as a credential now comes back `redacted: "credential"` with `hasValue` and no value, and no
+  setting returns it. The classification runs in the content script rather than the server, because
+  a result crosses the boundary as a file in the appex container: redacting afterwards would mean
+  writing the secret down first.
+
+- **Safari can read a one-time 2FA code, behind `APPLE_SAFARI_ALLOW_CODES`.** Off by default, its
+  own gate rather than the write gate — reaching a read through `allowWrites` would mean granting
+  the right to click a button in order to see a number.
+
+  A code on a page is in one of two places and they need different mechanisms. In a FIELD, where
+  AutoFill put it: `page_elements` returns its value under this flag. Rendered as TEXT, which is
+  the ordinary case: `apple_safari_find_codes` scans the live DOM, because there is no input to
+  enumerate and `read_page` cannot help either — a code delivered by XHR into an already-open tab
+  was never captured.
+
+  The page returns bounded excerpts and judges nothing; extraction runs on the server, on the same
+  heuristic Messages uses. That heuristic moved to `@mgcrea/mcp-apple-core` when Safari became its
+  second caller, rather than being duplicated into a second copy that would drift. It is the first
+  heuristic in core, which has otherwise been plumbing, and it is **reused rather than
+  re-validated**: its test table is SMS-shaped, and a web page is a much richer source of digit
+  runs. `low` confidence cannot occur on this lane at all — the only route to it is a shortcode
+  sender, and a page has none — so a digit run with no keyword near it yields nothing.
+
+  **There is no `ageSeconds` here and there cannot be.** A message carries the time it arrived; a
+  paragraph does not, and an expired code reads exactly like a live one. `pageAgeSeconds` bounds
+  the age from above and never from below.
+
+  `apple_safari_fill` stopped forbidding it, which it had done since before any of this existed —
+  its description told a caller to never put a one-time code through it, so the two halves of this
+  feature contradicted each other and the read was useless. Filling a code is now the case it names
+  first. A password or a card number is still not: nothing here can read either, so a value about to
+  go through that tool came from somewhere else. It also now says what it cannot do — a site that
+  splits a code across six single-character boxes takes one string into one element and will not
+  work, so enumerate again and check rather than assuming it took.
+
+  It reads a code a **website shows**. It does not reach Passwords.app, whose four lanes are all
+  closed and stay closed — `docs/passwords.md` now carries a table of the four questions so the two
+  do not get conflated, and records the extension as a fifth lane it had not evaluated.
+
 ## [1.6.0] - 2026-08-31
 
 ### Added

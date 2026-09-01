@@ -56,3 +56,64 @@
     onRouteChange();
   };
 })();
+
+// ── Commands ────────────────────────────────────────────────────────────────
+//
+// The other direction: the page ASKS whether anything has been requested of it,
+// runs it, and reports back. See `actions.js` for what it can run.
+//
+// ## Why the page polls instead of being pushed to
+//
+// Nothing outside Safari can wake a content script. The routes that exist are
+// an Apple Event (`dispatch message to extension`) — which was measured to
+// accept an empty dictionary and a bogus extension id without complaint, so a
+// misdelivered message is indistinguishable from a delivered one — and
+// `SFSafariApplication.dispatchMessage` from the containing app, which reports
+// errors properly but needs the app in the path.
+//
+// A poll needs neither. It is the only route with no Apple Event anywhere in
+// it, which is the whole point of this lane, and it fails visibly: if the
+// native side is unreachable the loop keeps running and nothing is silently
+// lost. `runCommandsNow` below is the seam for a push to arrive later without
+// another notarized build.
+//
+// ## What it costs, and why the rate is what it is
+//
+// One native round trip per interval per allowed page. A hidden tab drops to a
+// tenth of the rate rather than stopping: a background tab is still a
+// legitimate target, and a loop that stopped would make "the tab was not in
+// front" look exactly like "the extension is not installed".
+(function () {
+  const VISIBLE_MS = 1000;
+  const HIDDEN_MS = 10000;
+  let stopped = false;
+
+  async function pump() {
+    if (stopped) return;
+    try {
+      const response = await browser.runtime.sendMessage({ kind: "poll", url: location.href });
+      for (const command of response?.commands ?? []) {
+        // Never let one command's failure strand the next: each is reported on
+        // its own, and `cupertinoRunCommand` is written never to throw.
+        const result = window.cupertinoRunCommand
+          ? window.cupertinoRunCommand(command)
+          : { ok: false, error: "The action runner did not load on this page." };
+        await browser.runtime.sendMessage({ kind: "result", id: command.id, ...result });
+      }
+    } catch {
+      // The background worker may be asleep, restarting, or gone. A failed poll
+      // is a poll that did not happen, never a broken page.
+    }
+    setTimeout(pump, document.hidden ? HIDDEN_MS : VISIBLE_MS);
+  }
+
+  // The seam a push would use: a wake can call this to collapse the latency to
+  // the next poll without changing anything else here.
+  window.cupertinoPumpNow = pump;
+
+  addEventListener("pagehide", () => {
+    stopped = true;
+  });
+
+  pump();
+})();

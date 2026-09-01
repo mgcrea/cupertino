@@ -45,7 +45,10 @@ export const buildDiagnostics = async (
       extension: {
         needs:
           "the Cupertino Safari extension, enabled in Safari and allowed on the site in question",
-        answers: "what a page actually says, as text or HTML",
+        answers:
+          "what a page actually says, as text or HTML — and, through a command channel in " +
+          "the same container, what is on it (page_elements), acting on it (click, fill, " +
+          "scroll) and any one-time code it is showing (find_codes)",
         // `working` is measured — the store exists — and `captured` is what is in
         // it. Both matter: a directory with nothing in it means the extension ran
         // but has been allowed on no site, which is a different fix from not
@@ -66,9 +69,24 @@ export const buildDiagnostics = async (
         directory: pages.directory,
         note:
           "A capture is a SNAPSHOT taken when the page loaded, not a live read. Nothing here can " +
-          "ask Safari for a fresh copy, so every result carries capturedAt and ageSeconds.",
+          "ask Safari for a fresh copy, so every result carries capturedAt and ageSeconds. The " +
+          "ACTING tools do not use captures at all: they send a command the page picks up on " +
+          "its next poll, which is about a second on a visible tab and up to ten on a hidden " +
+          "one. A timeout there means nothing was listening — the extension off, or not " +
+          "allowed on that site, or the page closed — and never that the page refused.",
       },
-      writes: "none — this server registers no mutating tool",
+      writes: client.config.allowWrites
+        ? "enabled — open_url and add_reading_list_item (Apple Events), plus click, fill and " +
+          "scroll (extension, no Apple Event)"
+        : "off — set APPLE_SAFARI_ALLOW_WRITES to enable open_url, add_reading_list_item, " +
+          "click, fill and scroll. They are not registered at all, so they do not appear in " +
+          "the tool list.",
+      codes: client.config.allowCodes
+        ? "enabled — apple_safari_find_codes is registered, and page_elements returns the " +
+          "value of a one-time-code field. A password or card number is still withheld."
+        : 'off — a one-time-code field reads back as redacted:"code" and ' +
+          "apple_safari_find_codes is not registered. Set APPLE_SAFARI_ALLOW_CODES to change " +
+          "that. A password or card number is withheld either way.",
     },
     history: {
       path: located.historyPath,
@@ -117,9 +135,18 @@ export const buildDiagnostics = async (
         "report could never say in advance whether it would work. Accessibility is not a route " +
         "either — Safari exposes no AXWebArea for page content at all (measured, macOS 26.6). " +
         "The extension is the only one, and it sees only the sites you allow it on.",
-      "This server cannot open URLs, add to the Reading List, or change anything at all. " +
-        "Those are Apple Events that navigate a real, visible browser, and none of them " +
-        "was ever probed.",
+      "The write lane is two different things behind one flag. open_url and " +
+        "add_reading_list_item are Apple Events that need no Full Disk Access, so they work " +
+        "on a machine where the read lane does not; they accept http and https only, because " +
+        "a javascript: URL would reach `do JavaScript` through a navigation tool. click, fill " +
+        "and scroll send no Apple Event at all — they go through the extension, which Safari " +
+        "consents to one website at a time. Neither Reading List add is undoable: the " +
+        "dictionary has no remove verb.",
+      "page_elements never returns the value of a field that looks like a credential — a " +
+        "password, a card number — whatever the settings say. A one-time-code field is " +
+        "withheld too unless APPLE_SAFARI_ALLOW_CODES is set, and `redacted` says which case " +
+        "applies while `hasValue` still says whether the field is filled. The Passwords app " +
+        "itself is unreachable by any lane; see docs/passwords.md.",
       "The exact History.db schema has not been read back on a granted machine, so every " +
         "column is treated as optional: a renamed or missing one reports null instead of " +
         "failing the query. `itemFk` and `itemPk` above show what was actually resolved.",

@@ -57,6 +57,15 @@ const ConfigSchema = BaseConfigSchema.extend({
    * Zero disables the wait, which is how the tests avoid sleeping.
    */
   readingListConfirmMs: z.number().int().min(0).max(10_000).default(1_500),
+  /**
+   * How long an action tool waits for a page to answer.
+   *
+   * Generous on purpose, and the number comes from the other side: the content
+   * script polls every second while its tab is visible and every ten while it
+   * is hidden, so anything under ten seconds would report a background tab as
+   * unreachable when it was merely asleep.
+   */
+  actionTimeoutMs: z.number().int().min(500).max(60_000).default(12_000),
   indexMode: z.enum(["auto", "ro", "immutable", "off"]).default("auto"),
   /**
    * Read live tabs through Apple Events.
@@ -68,6 +77,28 @@ const ConfigSchema = BaseConfigSchema.extend({
    * where that prompt is unwelcome, and for any headless use.
    */
   liveTabs: z.boolean().default(true),
+  /**
+   * Return a one-time code that a page is showing.
+   *
+   * Deliberately NOT folded into `allowWrites`. That flag means "may change
+   * something", and reaching a read through it would mean granting the right
+   * to click a button in order to see a number.
+   *
+   * What it governs is narrower than the name suggests, and the boundary is
+   * worth stating because it is not the obvious one. `page_elements` redacts a
+   * CREDENTIAL field — a password, a card number — whatever this flag says, and
+   * no setting turns that back on, because no tool here has a use for one. This
+   * flag governs the other class: a one-time-code field, withheld by default and
+   * returned when it is on. It also registers `apple_safari_find_codes` for the
+   * code a page renders as TEXT, which no element enumeration can see.
+   *
+   * And it is WEAKER than the Messages gate of the same name, which should not
+   * be papered over. There, off means the tool does not exist and the
+   * alternative is sifting whole threads. Here `read_page` stays ungated, so off
+   * removes the targeted field read and the live DOM scan — not every byte of a
+   * page. A caller who wants the bytes can still have them.
+   */
+  allowCodes: z.boolean().default(false),
   /** Window for a range query that names neither edge. */
   defaultRangeDays: z.number().int().min(1).max(3_660).default(30),
   /**
@@ -86,12 +117,14 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_SAFARI_ALLOW_WRITES),
+    allowCodes: parseBool(env.APPLE_SAFARI_ALLOW_CODES),
     exposePrompts: parseBool(env.APPLE_SAFARI_EXPOSE_PROMPTS),
     debug: parseBool(env.APPLE_SAFARI_DEBUG),
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),
     pagesPath: trimmed(env.APPLE_SAFARI_PAGES),
     readingListConfirmMs: parseIntOpt(env.APPLE_SAFARI_READING_LIST_CONFIRM_MS),
+    actionTimeoutMs: parseIntOpt(env.APPLE_SAFARI_ACTION_TIMEOUT_MS),
     indexMode: trimmed(env.APPLE_SAFARI_INDEX_MODE),
     liveTabs: parseBool(env.APPLE_SAFARI_LIVE_TABS),
     defaultRangeDays: parseIntOpt(env.APPLE_SAFARI_DEFAULT_RANGE_DAYS),
