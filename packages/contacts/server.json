@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-contacts",
   "title": "Apple Contacts",
   "description": "Search and read Apple Contacts — resolves numbers and emails to names, writes off by default",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-contacts",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

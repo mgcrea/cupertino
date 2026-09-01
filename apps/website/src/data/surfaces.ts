@@ -93,9 +93,10 @@ export const SURFACES: readonly Surface[] = [
       "apple_notes_move_note",
       "apple_notes_delete_notes",
       "apple_notes_save_attachment",
+      "apple_notes_add_attachment",
     ],
     pitch:
-      "Search, read and attachments across every folder and account, with five mutating tools behind the write gate.",
+      "Search, read and attachments across every folder and account, with six mutating tools behind the write gate.",
     withoutGrant:
       "Fully usable below roughly 5k notes with no grant at all — only attachment bytes need it.",
   },

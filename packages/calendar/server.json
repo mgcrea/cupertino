@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-calendar",
   "title": "Apple Calendar",
   "description": "Search, read and act on Apple Calendar — ranges, free-time lookup, writes off by default",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-calendar",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

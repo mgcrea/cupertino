@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.6.0`,
-`notes-v1.6.0`, `reminders-v1.6.0`, `core-v1.6.0` for the npm packages, and `app-v1.6.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.7.0`,
+`notes-v1.7.0`, `reminders-v1.7.0`, `core-v1.7.0` for the npm packages, and `app-v1.7.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.7.0] - 2026-09-01
 
 ### Added
 
@@ -62,6 +62,44 @@ summary.
 
   Verified against a fake extension, not against Safari: exercising the real one needs a notarized
   build, since Safari will not list an extension whose container app is not stapled.
+
+- **Notes can attach a file to a note, and reading attachment bytes back actually works.**
+  `apple_notes_add_attachment` puts a file into a note — the only way to get an image in there,
+  since an `<img>` in the body is dropped. It goes through the Standard Suite's
+  `make new attachment ... withData:`, licensed by note's hidden `<element type="attachment">`
+  even though every property on the attachment class itself reads `access="r"`.
+
+  **`save_attachment`'s file lane had never saved a single real attachment.** It resolved against
+  the attachment id, but `ICAttachment` carries no path of its own and the id Apple Events hands
+  back contains slashes, so no directory was ever named after it. Its tests passed because the
+  fixture used a shape the dictionary does not return — the failure was invisible from inside the
+  suite. The bytes live behind `ZMEDIA`, a foreign key to the `ICMedia` row holding the identifier,
+  generation and filename segments, and `#findMedia` resolves through that row now, established
+  against a live store by `scripts/probe-notes-media.mjs`.
+
+  It also corrects a claim these docs had been making: attachment bytes were called the one pure
+  capability gain of the file lane. They are not. Notes answers `save attachment ... in <file>`
+  itself, over Apple Events, with no Full Disk Access at all — the file lane buys speed here, not
+  capability.
+
+- **Every server publishes to the MCP Registry.** Each surface ships a `server.json`, and a
+  `publish-registry` job pushes it once the npm publish for that tag has landed. A client that does
+  not already know these packages exist finds them through the registry, which is also what feeds
+  the third-party directories; `docs/alternatives.md` records why that was worth automating, which
+  is that every rival is listed in several and this was listed in none.
+
+  **It runs after `publish-npm`, never beside it.** The registry proves ownership by fetching the
+  just-published tarball's `package.json` from registry.npmjs.org and checking its `mcpName`
+  against `server.json`'s `name`, so a job running in parallel races the very publish it is
+  validating and fails on a version npm has not seen yet. Authentication is GitHub OIDC against the
+  `io.github.mgcrea/*` namespace, so there is no registry token to store, rotate, or leak from a
+  laptop. A tag whose package has no `server.json` — `core`, `app`, `api` — is resolved and
+  skipped rather than failed, and a version already in the registry is a notice rather than a red
+  run over a release that already completed.
+
+  `scripts/generate-version.mjs` owns both version fields in each `server.json`, so what the
+  registry receives agrees with the tag by construction rather than by a second bump somebody has
+  to remember.
 
 ### Fixed
 
@@ -121,6 +159,30 @@ summary.
   closed and stay closed — `docs/passwords.md` now carries a table of the four questions so the two
   do not get conflated, and records the extension as a fifth lane it had not evaluated.
 
+- **A tool's `limit` can no longer quietly exceed the ceiling its own description advertises.**
+  Twenty-odd call sites spelled `limit ?? maxResults` by hand in five different ways, and three
+  surfaces did it with no `Math.min` at all — so their real ceiling was `maxResults` while
+  `limitArg`'s description told the model the default was 25. A model that trusted the description
+  and omitted the argument could get eight times the rows it asked for. `resolveLimit(limit,
+maxResults, fallback)` in `@mgcrea/mcp-apple-core` replaces every one of those spellings across
+  all eight surfaces, and is now the only place a caller's limit meets the configured ceiling.
+
+- **`apple_safari_read_page` bounds what it returns.** `maxChars` was optional with no fallback, so
+  a call that omitted it got the whole capture — up to the extension's own caps of 256 KiB of text
+  or 1 MiB of html, a quarter of a million tokens out of a tool a model reaches for casually. It
+  defaults to 32,768 characters now, the same call `get_message_source` already made for its own
+  byte budget.
+
+- **`apple_messages_list_messages` honours `defaultRangeDays` when it is given only a `from`.**
+  `client.window` was called with the parsed `from`/`to` and nothing else, so naming just a start
+  ran all the way to now, however far back that start was. The setting has been in the config since
+  this surface shipped, with a comment describing exactly this behaviour, and nothing ever read it —
+  Safari already closed an open-ended range this way and Messages did not. `find_codes` keeps its
+  own open-ended call, where "until now" is genuinely what is meant.
+
+- **The Safari extension's toolbar icon renders as a disc rather than a squircle**, which is the
+  shape Safari actually masks a toolbar item to.
+
 ### Changed
 
 - **Updates is its own pane in Settings, instead of a section partway down General.** It was
@@ -129,6 +191,18 @@ summary.
   asked for, so Check Now is the only way an unopted build ever looks at all, and it was the
   second card on a page otherwise about launching at login and where the bundle lives. The pane
   repeats the version in its first row, so "am I current" is still answered in one place.
+
+- **Mail's message rows carry `ref` alone, not `ref` plus the three fields it is built from.**
+  `id`, `accountUuid` and `mailbox` are exactly what a `MessageIdentity` is assembled out of — it
+  names them now — so repeating them on every row of every list paid for the same identity twice,
+  measured at 38% of a 25-row reply. Both call sites still carry them internally and drop them once
+  `ref` exists. A caller that was reading those fields off a row should read them off `ref`, which
+  is the value every tool taking a message already wants.
+
+- **Tool results are compact JSON.** Every result went through `null, 2` pretty-printing; measured
+  against these servers' own response shapes that added 25-41% to the payload depending on how many
+  short keys a row carries, worst on exactly the lists already big enough to matter. A model has no
+  use for the indentation.
 
 ## [1.6.0] - 2026-08-31
 
@@ -1031,7 +1105,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...HEAD
+[1.7.0]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...app-v1.7.0
 [1.6.0]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...app-v1.6.0
 [1.5.0]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...app-v1.5.0
 [1.4.0]: https://github.com/mgcrea/cupertino/compare/app-v1.3.1...app-v1.4.0
