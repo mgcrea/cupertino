@@ -62,7 +62,7 @@ const jsonContents = (uri: string, data: unknown) => ({
     {
       uri,
       mimeType: "application/json",
-      text: JSON.stringify(data, null, 2),
+      text: JSON.stringify(data),
     },
   ],
 });

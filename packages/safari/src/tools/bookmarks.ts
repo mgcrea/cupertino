@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
-import { compact, limitArg, ok, wrapResult } from "./util.js";
+import { compact, limitArg, ok, resolveLimit, wrapResult } from "./util.js";
 
 /**
  * Bookmarks and the Reading List.
@@ -42,7 +42,7 @@ export const registerBookmarkTools = (server: McpServer, client: AppleSafariClie
               b.url.toLowerCase().includes(needle) ||
               b.folder?.toLowerCase().includes(needle),
           );
-        const capped = rows.slice(0, limit ?? client.config.maxResults);
+        const capped = rows.slice(0, resolveLimit(limit, client.config.maxResults));
         return ok(
           compact({
             bookmarks: capped,
@@ -77,7 +77,7 @@ export const registerBookmarkTools = (server: McpServer, client: AppleSafariClie
         const rows = unreadOnly
           ? result.bookmarks.filter((b) => b.unread === true)
           : result.bookmarks;
-        const capped = rows.slice(0, limit ?? client.config.maxResults);
+        const capped = rows.slice(0, resolveLimit(limit, client.config.maxResults));
         return ok(
           compact({
             readingList: capped,

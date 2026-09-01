@@ -7,8 +7,17 @@ export type ToolResult = {
   isError?: boolean;
 };
 
+/**
+ * Compact, not pretty-printed.
+ *
+ * A model does not need the indentation, and it is not free: measured against
+ * rows matching these servers' own types, `null, 2` adds 25-41% depending on how
+ * many short keys a row carries - worst on the widest lists, which are exactly
+ * the responses already big enough to matter. Every tool in every surface
+ * returns through here, so this is the one place it is paid.
+ */
 export const ok = (data: unknown): ToolResult => ({
-  content: [{ type: "text", text: JSON.stringify(data ?? { ok: true }, null, 2) }],
+  content: [{ type: "text", text: JSON.stringify(data ?? { ok: true }) }],
 });
 
 /**
@@ -23,7 +32,7 @@ export const fail = (message: string, extra?: unknown): ToolResult => ({
   content: [
     {
       type: "text",
-      text: JSON.stringify({ error: message, ...(extra ? { details: extra } : {}) }, null, 2),
+      text: JSON.stringify({ error: message, ...(extra ? { details: extra } : {}) }),
     },
   ],
   isError: true,
@@ -71,7 +80,28 @@ export const limitArg = z
   .min(1)
   .max(200)
   .optional()
-  .describe("Maximum number of results. Defaults to 25.");
+  .describe(
+    "Maximum number of results. Each tool states its own default; " +
+      "`maxResults` is the ceiling either way.",
+  );
+
+/**
+ * Settle a caller's `limit` against the tool's default and the config ceiling.
+ *
+ * Written out by hand at twenty-odd call sites before this existed, in five
+ * different spellings - and three surfaces spelled it `limit ?? maxResults`,
+ * with no `Math.min` at all. That made their real default 200 while `limitArg`
+ * told every model it was 25, so a model that trusted the description and
+ * omitted the argument got eight times the rows it asked for.
+ *
+ * `fallback` is the tool's own documented default, not a global one: a mailbox
+ * listing and a day of events do not want the same number.
+ */
+export const resolveLimit = (
+  limit: number | undefined,
+  maxResults: number,
+  fallback = 25,
+): number => Math.min(limit ?? fallback, maxResults);
 
 export const confirmArg = z
   .literal(true)

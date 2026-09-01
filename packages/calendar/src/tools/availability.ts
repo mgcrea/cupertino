@@ -8,6 +8,7 @@ import {
   includeCancelledArg,
   includeDeclinedArg,
   limitArg,
+  resolveLimit,
   toArg,
   wrap,
 } from "./util.js";
@@ -125,7 +126,7 @@ export const registerAvailabilityTools = (server: McpServer, client: AppleCalend
           granularityMinutes: args.granularityMinutes ?? 15,
           allDayBusy: args.allDayBusy ?? false,
           respectFreeMarking: args.respectFreeMarking ?? false,
-          limit: args.limit ?? Math.min(25, client.config.maxResults),
+          limit: resolveLimit(args.limit, client.config.maxResults),
         }),
       ),
   );

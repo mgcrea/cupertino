@@ -1,6 +1,7 @@
 import {
   createOsascriptRunner,
   IndexUnavailableError,
+  resolveLimit,
   withBusyRetry,
   type Logger,
   type OsascriptRunner,
@@ -165,11 +166,11 @@ export class AppleContactsClient {
   }
 
   list(limit?: number): IndexContact[] {
-    return this.#require().list(limit ?? this.#config.maxResults);
+    return this.#require().list(resolveLimit(limit, this.#config.maxResults));
   }
 
   search(query: string, limit?: number): IndexContact[] {
-    return this.#require().search(query, limit ?? this.#config.maxResults);
+    return this.#require().search(query, resolveLimit(limit, this.#config.maxResults));
   }
 
   /** One contact with its phone numbers and email addresses. */

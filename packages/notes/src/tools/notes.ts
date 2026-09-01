@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { AppleNotesClient } from "../client/notes.js";
-import { folderArg, limitArg, noteRefArg, ok, okText, wrap, wrapResult } from "./util.js";
+import { folderArg, limitArg, noteRefArg, ok, okText, resolveLimit, wrap, wrapResult } from "./util.js";
 
 export const registerNoteTools = (
   server: McpServer,
@@ -23,7 +23,7 @@ export const registerNoteTools = (
     },
     async ({ folder, limit }) =>
       wrap(() =>
-        client.listNotes({ folder, limit: limit ?? Math.min(25, client.config.maxResults) }),
+        client.listNotes({ folder, limit: resolveLimit(limit, client.config.maxResults) }),
       ),
   );
 
@@ -52,7 +52,7 @@ export const registerNoteTools = (
         client.searchNotes({
           query,
           scope: scope ?? "full",
-          limit: limit ?? Math.min(25, client.config.maxResults),
+          limit: resolveLimit(limit, client.config.maxResults),
           offset: offset ?? 0,
         }),
       ),

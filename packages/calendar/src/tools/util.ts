@@ -12,6 +12,7 @@ export {
   limitArg,
   ok,
   okText,
+  resolveLimit,
   toFailure,
   wrap,
   wrapResult,

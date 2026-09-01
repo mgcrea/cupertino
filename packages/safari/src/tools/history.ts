@@ -11,6 +11,7 @@ import {
   historyRefArg,
   limitArg,
   ok,
+  resolveLimit,
   scopeArg,
   toArg,
   wrapResult,
@@ -59,12 +60,13 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
           maxRangeDays: config.maxRangeDays,
         });
 
+        const capped = resolveLimit(limit, config.maxResults);
         const result = client.search({
           ...(query ? { query } : {}),
           scope: scope ?? "full",
           from: range.from,
           to: range.to,
-          limit: limit ?? config.maxResults,
+          limit: capped,
         });
 
         return ok(
@@ -85,7 +87,7 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
                   "Every result is unfiltered by date."
                 : undefined,
             truncated: result.truncated
-              ? `More results exist beyond limit=${limit ?? config.maxResults}.`
+              ? `More results exist beyond limit=${capped}.`
               : undefined,
             datesUnavailable: result.datesAvailable
               ? undefined

@@ -9,6 +9,7 @@ import {
   includeCancelledArg,
   includeDeclinedArg,
   limitArg,
+  resolveLimit,
   toArg,
   wrap,
 } from "./util.js";
@@ -38,7 +39,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
       wrap(async () =>
         client.listEvents({
           ...args,
-          limit: args.limit ?? Math.min(50, client.config.maxResults),
+          limit: resolveLimit(args.limit, client.config.maxResults, 50),
         }),
       ),
   );
@@ -66,7 +67,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
       wrap(async () =>
         client.searchEvents({
           ...args,
-          limit: args.limit ?? Math.min(50, client.config.maxResults),
+          limit: resolveLimit(args.limit, client.config.maxResults, 50),
         }),
       ),
   );

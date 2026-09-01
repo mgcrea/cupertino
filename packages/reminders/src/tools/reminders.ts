@@ -8,6 +8,7 @@ import {
   listArg,
   priorityArg,
   reminderRefArg,
+  resolveLimit,
   wrap,
 } from "./util.js";
 
@@ -53,7 +54,7 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
       wrap(() =>
         client.listReminders({
           ...args,
-          limit: args.limit ?? Math.min(50, client.config.maxResults),
+          limit: resolveLimit(args.limit, client.config.maxResults, 50),
         }),
       ),
   );
@@ -80,7 +81,7 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
         client.searchReminders(query, {
           ...rest,
           ...(scope ? { scope } : {}),
-          limit: rest.limit ?? Math.min(50, client.config.maxResults),
+          limit: resolveLimit(rest.limit, client.config.maxResults, 50),
         }),
       ),
   );

@@ -13,6 +13,7 @@ import {
 import {
   createOsascriptRunner,
   IndexUnavailableError,
+  resolveLimit,
   withBusyRetry,
   type Logger,
   type OsascriptRunner,
@@ -327,13 +328,13 @@ export class AppleMessagesClient {
         ...(opts.fromApple === undefined ? {} : { fromApple: opts.fromApple }),
         ...(opts.toApple === undefined ? {} : { toApple: opts.toApple }),
         ...(opts.includeReactions === undefined ? {} : { includeReactions: opts.includeReactions }),
-        limit: opts.limit ?? this.#config.maxResults,
+        limit: resolveLimit(opts.limit, this.#config.maxResults),
       }),
     );
   }
 
   searchMessages(query: string, limit?: number): RenderedMessage[] {
-    return this.#render(this.#require().search(query, limit ?? this.#config.maxResults));
+    return this.#render(this.#require().search(query, resolveLimit(limit, this.#config.maxResults)));
   }
 
   getMessage(guid: string):
@@ -490,7 +491,7 @@ export class AppleMessagesClient {
   }
 
   listChats(limit?: number): RenderedChat[] {
-    const rows: ChatRow[] = this.#require().chats(limit ?? this.#config.maxResults);
+    const rows: ChatRow[] = this.#require().chats(resolveLimit(limit, this.#config.maxResults));
     this.#resolve(rows.flatMap((c) => c.participants));
     return rows.map((c) => ({
       ref: encodeChatRef(c.guid),

@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
-import { accountArg, limitArg, mailboxArg, messageRefArg, wrap } from "./util.js";
+import { accountArg, limitArg, mailboxArg, messageRefArg, resolveLimit, wrap } from "./util.js";
 
 /** Searching, listing and counting. */
 export const registerSearchTools = (server: McpServer, client: AppleMailClient): void => {
@@ -50,7 +50,7 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
       wrap(async () => {
         const result = await client.searchMessages({
           ...args,
-          limit: Math.min(args.limit ?? 25, client.config.maxResults),
+          limit: resolveLimit(args.limit, client.config.maxResults),
           offset: args.offset ?? 0,
         });
         if (!result) {
@@ -115,7 +115,7 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
       wrap(async () => {
         const messages = await client.threadOf(
           ref,
-          Math.min(limit ?? 50, client.config.maxResults),
+          resolveLimit(limit, client.config.maxResults, 50),
         );
         if (!messages) {
           return {
@@ -153,7 +153,7 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
           return { messages: [], note: "No accounts are visible to this server." };
         }
         const box = mailbox ?? (resolved.mailboxes.includes("INBOX") ? "INBOX" : "Inbox");
-        const result = await client.listRecent(resolved, box, limit ?? 25);
+        const result = await client.listRecent(resolved, box, resolveLimit(limit, client.config.maxResults));
         const lanes = await client.lanes();
         return {
           account: resolved.name,

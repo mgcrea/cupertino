@@ -10,6 +10,7 @@ import {
   ok,
   placeRefArg,
   queryArg,
+  resolveLimit,
   wrapResult,
 } from "./util.js";
 
@@ -38,7 +39,8 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ limit }) =>
       wrapResult(async () => {
-        const result = client.places("favorite", { limit: limit ?? client.config.maxResults });
+        const capped = resolveLimit(limit, client.config.maxResults);
+        const result = client.places("favorite", { limit: capped });
         const unlinked = result.places.filter((p) => !p.linked).length;
         return ok(
           compact({
@@ -70,7 +72,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
               "rules — de-duplication at least — that are not recorded in the store, so this " +
               "is everything saved, not everything shown.",
             truncated: result.truncated
-              ? `More favourites exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More favourites exist beyond limit=${capped}.`
               : undefined,
             datesUnavailable: result.datesAvailable
               ? undefined
@@ -92,7 +94,8 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ limit }) =>
       wrapResult(async () => {
-        const result = client.collections({ limit: limit ?? client.config.maxResults });
+        const capped = resolveLimit(limit, client.config.maxResults);
+        const result = client.collections({ limit: capped });
         return ok(
           compact({
             collections: result.collections,
@@ -111,7 +114,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
                 "inside a collection cannot be listed. `placesCount` is Maps' own number and is " +
                 "still accurate; apple_maps_list_collection_places will return nothing.",
             truncated: result.truncated
-              ? `More collections exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More collections exist beyond limit=${capped}.`
               : undefined,
           }),
         );
@@ -131,8 +134,9 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     async ({ ref, limit }) =>
       wrapResult(async () => {
         const collectionId = client.collectionRowId(decodeCollectionRef(ref));
+        const capped = resolveLimit(limit, client.config.maxResults);
         const result = client.places("collection-item", {
-          limit: limit ?? client.config.maxResults,
+          limit: capped,
           collectionId: collectionId ?? undefined,
         });
         const collections = client.collections({ limit: 1_000 });
@@ -148,7 +152,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
             places: result.places,
             count: result.places.length,
             truncated: result.truncated
-              ? `More places exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More places exist beyond limit=${capped}.`
               : undefined,
           }),
         );
@@ -178,8 +182,9 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
               "apple_maps_list_collections still works.",
           );
         }
+        const capped = resolveLimit(limit, client.config.maxResults);
         const result = client.places("collection-item", {
-          limit: limit ?? client.config.maxResults,
+          limit: capped,
           unfiled: true,
         });
         return ok(
@@ -187,7 +192,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
             places: result.places,
             count: result.places.length,
             truncated: result.truncated
-              ? `More places exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More places exist beyond limit=${capped}.`
               : undefined,
           }),
         );
@@ -206,7 +211,8 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ limit }) =>
       wrapResult(async () => {
-        const result = client.places("history", { limit: limit ?? client.config.maxResults });
+        const capped = resolveLimit(limit, client.config.maxResults);
+        const result = client.places("history", { limit: capped });
         const named = result.places.filter((p) => p.name).length;
         return ok(
           compact({
@@ -224,7 +230,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
                   `missing data.`
                 : undefined,
             truncated: result.truncated
-              ? `More entries exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More entries exist beyond limit=${capped}.`
               : undefined,
             datesUnavailable: result.datesAvailable
               ? undefined
@@ -247,13 +253,14 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ query, limit }) =>
       wrapResult(async () => {
-        const result = client.search({ query, limit: limit ?? client.config.maxResults });
+        const capped = resolveLimit(limit, client.config.maxResults);
+        const result = client.search({ query, limit: capped });
         return ok(
           compact({
             places: result.places,
             count: result.places.length,
             truncated: result.truncated
-              ? `More matches exist beyond limit=${limit ?? client.config.maxResults}.`
+              ? `More matches exist beyond limit=${capped}.`
               : undefined,
           }),
         );
