@@ -129,6 +129,43 @@ for (const name of publishedPackages) {
   });
 }
 
+// ─── The Safari extension's manifest ─────────────────────────────────────────
+
+/**
+ * The WebExtension manifest carries its own `version`, and it drifted to 1.0
+ * while the appex around it tracked the app correctly — the bundle version
+ * comes from MARKETING_VERSION at build time, so Safari and `pluginkit` always
+ * showed the right number and nothing ever surfaced the stale one.
+ *
+ * It is not cosmetic. `browser.runtime.getManifest().version` is what the
+ * extension's own code reads to stamp what it writes, and a version that never
+ * moves cannot tell a stale content script from a current one — which is
+ * exactly the state an open tab is left in by an update.
+ *
+ * MV3 constrains this field harder than semver does: one to four dot-separated
+ * integers, nothing else. A pre-release like `1.7.0-beta.1` is INVALID and
+ * Safari would reject the whole manifest, so the suffix is dropped rather than
+ * copied. That loses the distinction between a beta and its release inside the
+ * manifest alone; the bundle version beside it keeps the full string.
+ */
+target("apps/apple/CupertinoSafariExtension/Resources/manifest.json", (src) => {
+  const manifestVersion = VERSION.split("-")[0];
+  if (!/^\d+(\.\d+){0,3}$/.test(manifestVersion)) {
+    console.error(
+      `manifest.json: "${manifestVersion}" is not a valid MV3 version (1-4 dot-separated integers)`,
+    );
+    process.exit(3);
+  }
+  const pattern = /^  "version": "[^"]*",$/m;
+  if (!pattern.test(src)) {
+    console.error(
+      'apps/apple/CupertinoSafariExtension/Resources/manifest.json: no top-level "version" line to rewrite',
+    );
+    process.exit(3);
+  }
+  return src.replace(pattern, `  "version": "${manifestVersion}",`);
+});
+
 // ─── The website's APP_VERSION ───────────────────────────────────────────────
 
 target("apps/website/src/config.ts", (src) =>

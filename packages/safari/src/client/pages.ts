@@ -58,6 +58,13 @@ export type CapturedPage = {
   /** The capture hit the extension's per-entry byte cap and was cut. */
   textTruncated: boolean;
   htmlTruncated: boolean;
+  /**
+   * Which build of the extension captured this, as the content script reported
+   * it. Optional because entries written before this existed carry none, and
+   * because an orphaned content script cannot read its own manifest — both of
+   * which mean "older than us", which is what the reader does with it.
+   */
+  extensionVersion?: string | null;
 };
 
 export type PagesStatus = {

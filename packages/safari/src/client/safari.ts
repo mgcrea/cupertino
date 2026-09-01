@@ -5,6 +5,7 @@ import {
   type ReadOnlyMode,
 } from "@mgcrea/mcp-apple-core";
 
+import { BUILD_INFO } from "../build-info.js";
 import type { Config } from "../config.js";
 import { runCommand, type CommandResult } from "./actions.js";
 import { renderInstant, type Epoch } from "./dates.js";
@@ -568,11 +569,50 @@ export class AppleSafariClient {
     direction?: "up" | "down" | undefined;
     limit?: number | undefined;
   }): Promise<CommandResult> {
-    return await runCommand(
-      { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
-      // `includeCodes` is attached HERE rather than by the caller, so there is
-      // one place the setting can enter the channel and no tool can pass it.
-      { ...input, includeCodes: this.#config.allowCodes },
+    try {
+      return await runCommand(
+        { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
+        // `includeCodes` is attached HERE rather than by the caller, so there is
+        // one place the setting can enter the channel and no tool can pass it.
+        { ...input, includeCodes: this.#config.allowCodes },
+      );
+    } catch (error) {
+      throw this.#explainSilence(error, input.url);
+    }
+  }
+
+  /**
+   * Turn "nothing answered" into the one diagnosis the caller cannot reach.
+   *
+   * A timeout has three ordinary causes and the message already names them: the
+   * extension is not enabled, it is not allowed on that site, or the page is
+   * not open. There is a fourth that looks identical and is nobody's fault —
+   * **an update leaves already-open tabs running the previous content script**,
+   * orphaned from their own runtime and unable to answer or even to capture.
+   *
+   * The evidence is a capture this URL left behind stamped with a version that
+   * is not ours. Both halves ship inside one app bundle, so they are the same
+   * version whenever they are the same build; a difference means the tab
+   * predates an update. Absent evidence, nothing is added — a guess here would
+   * send someone reloading tabs to fix a permission they never granted.
+   */
+  #explainSilence(error: unknown, url: string | undefined): unknown {
+    if (!(error instanceof PreconditionError) || !url) return error;
+
+    const hit = this.page(url);
+    // No capture at all says nothing either way: a page that was never allowed
+    // and a page whose capture aged out look the same from here.
+    if (!hit) return error;
+
+    const seen = hit.page.extensionVersion ?? null;
+    if (seen === BUILD_INFO.version) return error;
+
+    return new PreconditionError(
+      `${error.message} This page was last captured by ` +
+        `${seen === null ? "an extension too old to say which version" : `extension ${seen}`}, ` +
+        `and this server is ${BUILD_INFO.version} — both ship inside the same app, so they only ` +
+        `differ when a tab has been open across an update. That tab is still running the previous ` +
+        `content script and cannot answer. RELOAD it and try again.`,
     );
   }
 

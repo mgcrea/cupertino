@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -99,6 +100,27 @@ const fakeExtension = (
   return { seen, stop: () => clearInterval(timer) };
 };
 
+/**
+ * A capture as the extension writes one, stamped with the build that wrote it.
+ * Named by the SHA-256 of the URL, which is how the appex keys these files.
+ */
+const capture = (pages: string, url: string, extensionVersion: string | null) => {
+  const entry = {
+    url,
+    title: "Old",
+    capturedAt: new Date().toISOString(),
+    text: "",
+    html: "",
+    textTruncated: false,
+    htmlTruncated: false,
+    ...(extensionVersion === null ? {} : { extensionVersion }),
+  };
+  writeFileSync(
+    join(pages, `${createHash("sha256").update(url).digest("hex")}.json`),
+    JSON.stringify(entry),
+  );
+};
+
 let running: { stop: () => void } | null = null;
 afterEach(() => {
   running?.stop();
@@ -194,6 +216,57 @@ describe("when no page answers", () => {
 
     const left = readdirSync(dirs.commands).filter((f) => f.endsWith(".json"));
     expect(left).toEqual([]);
+  });
+});
+
+/**
+ * The fourth cause of silence, and the only one that is nobody's fault.
+ *
+ * A Sparkle update replaces the appex immediately, but an already-open tab
+ * keeps running the content script it loaded before — orphaned from its own
+ * runtime, unable to answer a poll or even to capture. From the server that is
+ * indistinguishable from "not allowed on this site", and the fix is completely
+ * different: reload the tab.
+ */
+describe("when the tab is running a pre-update content script", () => {
+  it("says to reload the tab when the capture predates this build", async () => {
+    const dirs = paths();
+    capture(dirs.pages, "https://x.example/", "1.4.0");
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("RELOAD");
+    expect(r.text).toContain("1.4.0");
+  });
+
+  it("treats an unstamped capture as older, because it is", async () => {
+    const dirs = paths();
+    capture(dirs.pages, "https://x.example/", null);
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    expect(r.text).toContain("too old to say which version");
+  });
+
+  /**
+   * The half that keeps this honest. With no capture there is no evidence, and
+   * a guess would send somebody reloading tabs to fix a per-site grant they
+   * never gave.
+   */
+  it("adds nothing when there is no capture to reason from", async () => {
+    const dirs = paths();
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    expect(r.text).not.toContain("RELOAD");
+  });
+
+  it("adds nothing when the capture is from this very build", async () => {
+    const dirs = paths();
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    capture(dirs.pages, "https://x.example/", BUILD_INFO.version);
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    expect(r.text).not.toContain("RELOAD");
   });
 });
 

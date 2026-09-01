@@ -6,6 +6,23 @@
 // which is global, permanent, unscoped and unreadable — see docs/safari.md.
 
 (function () {
+  /**
+   * This build's version, straight from the manifest that shipped with the
+   * running code. `make version` keeps it equal to the app's, so the server can
+   * compare it against its own and know whether the two halves are the same
+   * build — they ship inside one bundle, so any difference means a tab is
+   * running code from before an update.
+   */
+  function version() {
+    try {
+      return browser.runtime.getManifest().version || null;
+    } catch {
+      // An orphaned content script cannot reach its own runtime. Null is the
+      // honest answer and is itself evidence of exactly that.
+      return null;
+    }
+  }
+
   // Two shapes, because the tool offers both and they cost very different
   // amounts of context: a Reddit thread is tens of KB of text and hundreds of
   // KB of markup. Extracting here rather than in the server keeps the large
@@ -30,6 +47,12 @@
         title: document.title || "",
         text: readableText(),
         html: document.documentElement?.outerHTML || "",
+        // Which build wrote this. An update leaves already-open tabs running
+        // the PREVIOUS content script — orphaned, unable to reach the
+        // background worker at all — so a capture stamped with an older
+        // version beside a page that answers nothing is the one signal that
+        // separates "reload the tab" from "the extension is not allowed here".
+        extensionVersion: version(),
       });
     } catch {
       // The background worker may be asleep or the page may be closing. A lost
@@ -84,6 +107,15 @@
 // legitimate target, and a loop that stopped would make "the tab was not in
 // front" look exactly like "the extension is not installed".
 (function () {
+  /** Same as the capture block's, and separate because each IIFE is its own scope. */
+  function manifestVersion() {
+    try {
+      return browser.runtime.getManifest().version || null;
+    } catch {
+      return null;
+    }
+  }
+
   const VISIBLE_MS = 1000;
   const HIDDEN_MS = 10000;
   let stopped = false;
@@ -91,14 +123,23 @@
   async function pump() {
     if (stopped) return;
     try {
-      const response = await browser.runtime.sendMessage({ kind: "poll", url: location.href });
+      const response = await browser.runtime.sendMessage({
+        kind: "poll",
+        url: location.href,
+        extensionVersion: manifestVersion(),
+      });
       for (const command of response?.commands ?? []) {
         // Never let one command's failure strand the next: each is reported on
         // its own, and `cupertinoRunCommand` is written never to throw.
         const result = window.cupertinoRunCommand
           ? window.cupertinoRunCommand(command)
           : { ok: false, error: "The action runner did not load on this page." };
-        await browser.runtime.sendMessage({ kind: "result", id: command.id, ...result });
+        await browser.runtime.sendMessage({
+          kind: "result",
+          id: command.id,
+          extensionVersion: manifestVersion(),
+          ...result,
+        });
       }
     } catch {
       // The background worker may be asleep, restarting, or gone. A failed poll

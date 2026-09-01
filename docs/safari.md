@@ -673,10 +673,10 @@ would mean granting the right to click a button in order to see a number.
 
 A 2FA code on a web page is in one of two places, and they need different mechanisms:
 
-| Where it is                          | What reads it                       | Why the other cannot         |
-| ------------------------------------ | ----------------------------------- | ---------------------------- |
-| In a field, put there by AutoFill    | `page_elements`, `value` unredacted | Not text; nothing to scan    |
-| **Rendered as text on the page**     | `find_codes`, a live DOM scan       | Not an element; nothing to enumerate |
+| Where it is                       | What reads it                       | Why the other cannot                 |
+| --------------------------------- | ----------------------------------- | ------------------------------------ |
+| In a field, put there by AutoFill | `page_elements`, `value` unredacted | Not text; nothing to scan            |
+| **Rendered as text on the page**  | `find_codes`, a live DOM scan       | Not an element; nothing to enumerate |
 
 **The second is the ordinary case and it is the one that needed new code.** A code arrives in a
 webmail message, an issuer's dashboard, a bank's confirmation panel. There is no input to enumerate,
@@ -703,11 +703,11 @@ or the extractor's keyword reach silently shrinks; both are pinned by tests.
 **Freshness has no `ageSeconds` and cannot have one.** A message carries the time it arrived; a
 paragraph does not. What the tool reports instead:
 
-| Field            | Means                                                              |
-| ---------------- | ------------------------------------------------------------------ |
-| `scannedAt`      | the DOM was in this state at this instant — live, not cached        |
-| `roundTripMs`    | how stale the answer already is by the time the caller sees it      |
-| `pageAgeSeconds` | an **upper** bound on the code's age and never a lower one          |
+| Field            | Means                                                          |
+| ---------------- | -------------------------------------------------------------- |
+| `scannedAt`      | the DOM was in this state at this instant — live, not cached   |
+| `roundTripMs`    | how stale the answer already is by the time the caller sees it |
+| `pageAgeSeconds` | an **upper** bound on the code's age and never a lower one     |
 
 That last one is the honest half. A page loaded four seconds ago can only hold a four-second-old
 code; a webmail tab open for six hours reports six hours, which correctly refuses to reassure.
@@ -717,8 +717,31 @@ has no sender to corroborate with — so a digit run with no keyword near it yie
 rather than a weak match. That is a stricter tool than the Messages one, not a looser one.
 
 **What the gate does NOT buy, and docs/passwords.md now carries the table.** It reads a code a
-*website shows*. It does not reach Passwords.app, whose four lanes are all closed and stay closed,
+_website shows_. It does not reach Passwords.app, whose four lanes are all closed and stay closed,
 and it never returns a password or a card number whatever it is set to.
+
+### The version is the fourth cause of silence
+
+Both halves of this lane ship inside one app bundle, so they are always the same build — except for
+one window that Sparkle opens on every update. **Replacing the app swaps the appex immediately, but
+an already-open tab keeps running the content script it loaded before.** That script is orphaned:
+it cannot reach its own runtime, so it answers no poll and writes no capture. From the server it
+looks exactly like "the extension is not allowed on this site", and the fix is completely different.
+
+So everything the extension writes now carries `extensionVersion`, taken from
+`browser.runtime.getManifest().version`. On a timeout the server looks for a capture of that URL; if
+one exists stamped with a version that is not its own, it appends the real diagnosis — reload the
+tab — to the three ordinary causes. With no capture it adds nothing, because a page that was never
+allowed and a page whose capture aged out look identical from here, and a guess would send somebody
+reloading tabs to fix a grant they never gave.
+
+That only works because the manifest version tracks the app. **It did not.** `manifest.json` said
+`1.0` while the appex around it said 1.6.0 — the bundle version comes from `MARKETING_VERSION` at
+build time, so Safari and `pluginkit` always showed the right number and nothing ever surfaced the
+stale one. `scripts/generate-version.mjs` owns the field now, with `make version-check` failing on
+drift like every other copy. One wrinkle it has to handle that semver does not: MV3 allows only one
+to four dot-separated integers, so a pre-release suffix is dropped rather than copied — `1.7.0-beta.1`
+in the manifest would make Safari reject the whole thing.
 
 ### Not verified end to end
 

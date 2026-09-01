@@ -63,6 +63,22 @@ summary.
   Verified against a fake extension, not against Safari: exercising the real one needs a notarized
   build, since Safari will not list an extension whose container app is not stapled.
 
+### Fixed
+
+- **The Safari extension's manifest version tracks the app again.** `manifest.json` said `1.0`
+  while the appex around it correctly said 1.6.0 — the bundle version comes from
+  `MARKETING_VERSION` at build time, so Safari and `pluginkit` always showed the right number and
+  nothing ever surfaced the stale one. `scripts/generate-version.mjs` owns the field now, so
+  `make version-check` fails on drift like it does for every other copy of the version. MV3 allows
+  only one to four dot-separated integers, so a pre-release suffix is dropped rather than copied.
+
+  It was not cosmetic. The extension now stamps `extensionVersion` on every capture and result,
+  and the server uses it to name the one cause of silence a caller cannot diagnose: a Sparkle
+  update swaps the appex immediately, but an already-open tab keeps running the previous content
+  script, orphaned and unable to answer. That is indistinguishable from "not allowed on this site"
+  and has a completely different fix, so the timeout now says to reload the tab — but only when a
+  capture stamped with another version proves it, never on a guess.
+
   **`page_elements` never hands out a credential.** It reports what a text field holds, and
   `input[type=password]` is a text field — the first cut of it returned passwords and card numbers,
   from a tool marked read-only whose description did not mention values at all. A field classified

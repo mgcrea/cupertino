@@ -175,6 +175,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     ]
     if let data = message["data"] { entry["data"] = data }
     if let error = message["error"] { entry["error"] = error }
+    if let version = message["extensionVersion"] as? String { entry["extensionVersion"] = version }
 
     guard JSONSerialization.isValidJSONObject(entry),
       let data = try? JSONSerialization.data(withJSONObject: entry)
@@ -246,7 +247,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     let (text, textTruncated) = clamp(message["text"] as? String ?? "", to: Self.maxTextBytes)
     let (html, htmlTruncated) = clamp(message["html"] as? String ?? "", to: Self.maxHTMLBytes)
 
-    let entry: [String: Any] = [
+    var entry: [String: Any] = [
       "url": url,
       "title": message["title"] as? String ?? "",
       "capturedAt": ISO8601DateFormatter().string(from: Date()),
@@ -255,6 +256,13 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
       "textTruncated": textTruncated,
       "htmlTruncated": htmlTruncated,
     ]
+    // The version of the code that actually ran in the page, as the content
+    // script reported it — NOT this handler's. The two can differ: an update
+    // replaces the appex immediately while an already-open tab keeps running
+    // the previous content script, and it is that tab the server needs to
+    // identify. Absent when the content script could not reach its own runtime,
+    // which is itself the orphaned state.
+    if let version = message["extensionVersion"] as? String { entry["extensionVersion"] = version }
 
     guard let data = try? JSONSerialization.data(withJSONObject: entry) else { return false }
     let file = dir.appendingPathComponent(filename(for: url))
