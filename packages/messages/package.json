@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-messages",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Messages app",
+  "description": "Search and read Apple Messages — chats and decoded text, sending off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-messages",
   "keywords": [
     "apple",
     "apple-messages",

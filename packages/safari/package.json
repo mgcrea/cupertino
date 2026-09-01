@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-safari",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Safari app",
+  "description": "Read and act on Safari — history, tabs and reading list, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-safari",
   "keywords": [
     "apple",
     "apple-safari",

@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-mail",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Mail app",
+  "description": "Search, read and act on Apple Mail — threads, attachments, body search, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-mail",
   "keywords": [
     "apple",
     "apple-mail",

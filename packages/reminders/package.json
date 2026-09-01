@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-reminders",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Reminders app",
+  "description": "Search, read and act on Apple Reminders — lists, due dates, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-reminders",
   "keywords": [
     "apple",
     "apple-reminders",

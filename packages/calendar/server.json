@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mgcrea/mcp-apple-calendar",
+  "title": "Apple Calendar",
+  "description": "Search, read and act on Apple Calendar — ranges, free-time lookup, writes off by default",
+  "version": "1.6.0",
+  "websiteUrl": "https://cupertino.mgcrea.io",
+  "repository": {
+    "url": "https://github.com/mgcrea/cupertino",
+    "source": "github",
+    "subfolder": "packages/calendar"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@mgcrea/mcp-apple-calendar",
+      "version": "1.6.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "APPLE_CALENDAR_ALLOW_WRITES",
+          "description": "Register the mutating tools. Off by default, and the gate decides whether the write tools exist at all rather than merely refusing — an agent with writes off cannot see them.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_CALENDAR_CALENDARS",
+          "description": "Restrict every read and write to these calendars, by name.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-maps",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Maps app",
+  "description": "Read and act on Apple Maps — favourites, Guides and recents, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-maps",
   "keywords": [
     "apple",
     "apple-maps",

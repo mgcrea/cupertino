@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-contacts",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Contacts app",
+  "description": "Search and read Apple Contacts — resolves numbers and emails to names, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-contacts",
   "keywords": [
     "address-book",
     "apple",

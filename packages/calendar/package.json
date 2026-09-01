@@ -1,7 +1,8 @@
 {
   "name": "@mgcrea/mcp-apple-calendar",
   "version": "1.6.0",
-  "description": "Model Context Protocol server for the macOS Apple Calendar app",
+  "description": "Search, read and act on Apple Calendar — ranges, free-time lookup, writes off by default",
+  "mcpName": "io.github.mgcrea/mcp-apple-calendar",
   "keywords": [
     "apple",
     "apple-calendar",
