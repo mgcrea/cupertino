@@ -48,6 +48,23 @@ export const registerActionTools = (server: McpServer, client: AppleNotesClient)
   );
 
   server.registerTool(
+    "apple_notes_add_attachment",
+    {
+      description:
+        "Attach a file to a note. This is the only way to put an image in a note — an <img> tag " +
+        "in the body creates an attachment whose bytes are never loaded.",
+      inputSchema: {
+        ref: noteRefArg,
+        path: z
+          .string()
+          .min(1)
+          .describe("Absolute path to the file to attach. It is read by Notes, not copied here."),
+      },
+    },
+    async ({ ref, path }) => wrap(() => client.addAttachment(ref, path)),
+  );
+
+  server.registerTool(
     "apple_notes_move_note",
     {
       description: "Move a note to another folder.",

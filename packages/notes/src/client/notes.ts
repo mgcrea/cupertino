@@ -18,9 +18,9 @@ import {
   LIST_ATTACHMENTS,
   LIST_FOLDERS,
 } from "./jxa/read.js";
-import { CREATE_NOTE, DELETE_NOTES, MOVE_NOTE, UPDATE_NOTE } from "./jxa/write.js";
+import { ADD_ATTACHMENT, CREATE_NOTE, DELETE_NOTES, MOVE_NOTE, UPDATE_NOTE } from "./jxa/write.js";
 import { locateStore, type LocateResult } from "./locate.js";
-import { decodeRef, encodeRef, refFromPrimaryKey } from "./ref.js";
+import { attachmentPrimaryKey, decodeRef, encodeRef, refFromPrimaryKey } from "./ref.js";
 import { NoteStore, openStore, type NoteRow } from "./store.js";
 
 export type LaneStatus = {
@@ -393,7 +393,28 @@ export class AppleNotesClient {
     }[]
   > {
     const decoded = decodeRef(ref);
-    return withBusyRetry(() => this.runner.run(LIST_ATTACHMENTS, { id: decoded.id }));
+    const listed = await withBusyRetry(() =>
+      this.runner.run<
+        {
+          id: string | null;
+          name: string | null;
+          url: string | null;
+          contentIdentifier: string | null;
+        }[]
+      >(LIST_ATTACHMENTS, { id: decoded.id }),
+    );
+    // Notes can enumerate the same attachment more than once — measured after a
+    // `make`, where one new attachment appeared twice in the element collection
+    // and `count of attachments` said 3 for 2 real ones. Passing that through
+    // would have a caller save the same file twice, or believe a note holds
+    // attachments it does not.
+    const seen = new Set<string>();
+    return listed.filter((a) => {
+      if (!a.id) return true;
+      if (seen.has(a.id)) return false;
+      seen.add(a.id);
+      return true;
+    });
   }
 
   /**
@@ -425,7 +446,20 @@ export class AppleNotesClient {
     const meta = list.find((a) => a.id === attachmentId);
     if (!meta) throw new PreconditionError(`No attachment ${attachmentId} on note ${ref}.`);
 
-    const source = this.#findMedia(located.mediaRoot, attachmentId, meta.name);
+    // ICAttachment holds no path, so the directory names come from the ICMedia
+    // row it points at. That needs the index; without it there is nothing to
+    // resolve against and saying so beats walking the tree for a name that is
+    // not there.
+    const pk = attachmentPrimaryKey(attachmentId);
+    const media = pk === null ? null : (this.index()?.mediaFor(pk) ?? null);
+    if (!media) {
+      throw new PreconditionError(
+        `Cannot resolve where ${attachmentId} is stored. Its media record is missing from ` +
+          `NoteStore.sqlite, so there is no directory name to look for.`,
+      );
+    }
+
+    const source = this.#findMedia(located.mediaRoot, media);
     if (!source) {
       throw new PreconditionError(
         `Found the attachment's metadata but no file for it under ${located.mediaRoot}.`,
@@ -445,7 +479,7 @@ export class AppleNotesClient {
     }
     // basename() first: the name comes from note content, which is
     // attacker-controlled in exactly the way path traversal needs.
-    const name = basename(meta.name ?? basename(source));
+    const name = basename(media.filename ?? meta.name ?? basename(source));
     const target = resolve(join(dir, name));
     if (target !== join(dir, name) || !target.startsWith(dir + sep)) {
       throw new PreconditionError(`Refusing to write outside ${dir}.`);
@@ -459,37 +493,75 @@ export class AppleNotesClient {
     return { path: target, bytes: bytes.length };
   }
 
-  /** Bounded walk for a file whose directory is named after the attachment id. */
-  #findMedia(root: string, attachmentId: string, name: string | null, depth = 0): string | null {
-    if (depth > 5) return null;
-    let entries: string[];
-    try {
-      entries = readdirSync(root);
-    } catch {
-      return null;
-    }
-    for (const entry of entries) {
-      const full = join(root, entry);
-      let isDir = false;
+  /**
+   * The file for an ICMedia row.
+   *
+   * Layout, verified on a real store:
+   *
+   *     Accounts/<account>/Media/<identifier>/<generation>/<filename>
+   *
+   * The account directory is not known here, so each one is tried — there are a
+   * handful, not thousands. Every segment after the identifier is treated as a
+   * hint rather than a certainty: the generation directory is skipped when the
+   * row has none, and a directory holding a single file answers even when the
+   * filename on disk differs from the one recorded.
+   */
+  #findMedia(
+    root: string,
+    media: { identifier: string; generation: string | null; filename: string | null },
+  ): string | null {
+    const accounts = (() => {
       try {
-        isDir = statSync(full).isDirectory();
+        return readdirSync(root);
+      } catch {
+        return [];
+      }
+    })();
+
+    const fileIn = (dir: string): string | null => {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return null;
+      }
+      const files = entries.filter((e) => {
+        try {
+          return statSync(join(dir, e)).isFile();
+        } catch {
+          return false;
+        }
+      });
+      if (media.filename && files.includes(media.filename)) return join(dir, media.filename);
+      // A single file is unambiguous whatever it is called; several are not, and
+      // guessing among them would hand back the wrong bytes silently.
+      return files.length === 1 ? join(dir, files[0] as string) : null;
+    };
+
+    for (const account of accounts) {
+      const base = join(root, account, "Media", media.identifier);
+      try {
+        if (!statSync(base).isDirectory()) continue;
       } catch {
         continue;
       }
-      if (isDir) {
-        if (entry === attachmentId) {
-          const inner = (() => {
-            try {
-              return readdirSync(full);
-            } catch {
-              return [];
-            }
-          })();
-          const pick = name ? (inner.find((f) => f === name) ?? inner[0]) : inner[0];
-          if (pick) return join(full, pick);
+      const candidates = media.generation ? [join(base, media.generation), base] : [base];
+      for (const dir of candidates) {
+        const hit = fileIn(dir);
+        if (hit) return hit;
+      }
+      // The generation directory is named in the row, but fall back to whatever
+      // single subdirectory is actually there rather than failing on a rename.
+      const subdirs = (() => {
+        try {
+          return readdirSync(base).filter((e) => statSync(join(base, e)).isDirectory());
+        } catch {
+          return [];
         }
-        const found = this.#findMedia(full, attachmentId, name, depth + 1);
-        if (found) return found;
+      })();
+      if (subdirs.length === 1) {
+        const hit = fileIn(join(base, subdirs[0] as string));
+        if (hit) return hit;
       }
     }
     return null;
@@ -500,6 +572,29 @@ export class AppleNotesClient {
   async createNote(opts: { title?: string; body?: string; folderId?: string }): Promise<unknown> {
     this.#bodies = null;
     return withBusyRetry(() => this.runner.run(CREATE_NOTE, opts));
+  }
+
+  /**
+   * Attach a file to a note.
+   *
+   * The path is resolved and checked here rather than in JXA: Notes reports a
+   * missing or unreadable file as a generic refusal, which would surface as
+   * "Notes refused the file" for what is really a typo.
+   */
+  async addAttachment(ref: string, filePath: string): Promise<unknown> {
+    const decoded = decodeRef(ref);
+    const resolved = resolve(filePath);
+    let stats;
+    try {
+      stats = statSync(resolved);
+    } catch {
+      throw new PreconditionError(`No file at ${resolved}.`);
+    }
+    if (!stats.isFile()) {
+      throw new PreconditionError(`${resolved} is not a file.`);
+    }
+    this.#bodies = null;
+    return withBusyRetry(() => this.runner.run(ADD_ATTACHMENT, { id: decoded.id, path: resolved }));
   }
 
   async updateNote(ref: string, body: string, mode: "replace" | "append"): Promise<unknown> {

@@ -96,6 +96,71 @@ export const MOVE_NOTE = script(
 );
 
 /**
+ * Attach a file to a note.
+ *
+ * The scripting dictionary looks read-only on attachments — every property of
+ * the `attachment` class is `access="r"` — but that reads the wrong half of it.
+ * `note` declares `<element type="attachment">`, and `make` comes from the
+ * Standard Suite, so it appears in no command list of the Notes suite. Apple
+ * says so outright in a comment on the hidden `contents` property: the point of
+ * hiding it is "to facilitate creating an attachment like this: make new
+ * attachment with data myFile".
+ *
+ * THE FORM MATTERS. Measured on macOS 26.6, only one of the three works:
+ *
+ *   N.make({new: "attachment", at: note, withData: Path(f)})       works
+ *   N.make({new: "attachment", at: note.attachments, withData: f}) -10014
+ *   note.attachments.push(N.Attachment({contents: Path(f)}))       -10000
+ *
+ * `at:` takes the note itself, not its attachment collection — the opposite of
+ * how `folder.notes.push` creates a note two functions up.
+ *
+ * Setting an image through the note `body` instead does NOT work and fails
+ * deceptively: `<img src="file://...">` creates an attachment row whose bytes
+ * are never fetched, and a `data:` URI lands as `public.data` with no preview.
+ * See docs/notes.md.
+ */
+export const ADD_ATTACHMENT = script(
+  `
+  var note = null;
+  try { note = N.notes.byId(String(p.id)); } catch (e) { note = null; }
+  if (!note) return err("NOTE_NOT_FOUND", "No note with id " + p.id);
+  if (prop(function () { return note.passwordProtected(); }, false)) {
+    return err("NOTE_LOCKED", "That note is password-protected; unlock it in Notes first.");
+  }
+
+  var before = {};
+  var existing = prop(function () { return note.attachments(); }, []);
+  for (var i = 0; i < existing.length; i++) {
+    try { before[String(existing[i].id())] = true; } catch (e) {}
+  }
+
+  try {
+    N.make({ new: "attachment", at: note, withData: Path(String(p.path)) });
+  } catch (e) {
+    return err("ATTACH_FAILED", "Notes refused the file: " + e);
+  }
+
+  // Report the attachment that appeared, not a count. Notes can enumerate the
+  // same attachment more than once, so a count would be wrong as often as right.
+  var added = null;
+  var after = prop(function () { return note.attachments(); }, []);
+  for (var j = 0; j < after.length; j++) {
+    var id = null;
+    try { id = String(after[j].id()); } catch (e) { continue; }
+    if (!before[id]) {
+      added = { id: id, name: prop((function (a) { return function () { return String(a.name()); }; })(after[j]), null) };
+      break;
+    }
+  }
+  if (!added) return err("ATTACH_FAILED", "Notes reported no new attachment on that note.");
+
+  return ok({ noteId: String(p.id), attachment: added });
+`,
+  MUTATION,
+);
+
+/**
  * Delete notes.
  *
  * Notes moves them to Recently Deleted rather than destroying them, which is

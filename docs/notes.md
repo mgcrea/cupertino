@@ -78,13 +78,20 @@ Apple Events alone and can add the file lane when it is needed.
 
 ### What the file lane buys, in priority order
 
-1. **Attachment bytes.** The dictionary exposes `name`, `id`, `URL` and `content identifier` but
-   **no filesystem path**, so contents require reading `Accounts/<uuid>/Media/`. Apple Events
-   cannot do this at any speed — the only pure capability gain, and the reason Notes runs under
-   the launcher at all.
-2. **Search at scale.** Everything above ~5k notes. Title and date filtering comes free from
+1. **Search at scale.** Everything above ~5k notes. Title and date filtering comes free from
    `ZTITLE1`; full text additionally needs the gunzip-plus-protobuf decode.
-3. **Attachment listing at scale**, which is per-note over Apple Events.
+2. **Attachment listing at scale**, which is per-note over Apple Events.
+
+**It does not buy attachment bytes.** This list used to open with them, called them "the only pure
+capability gain" and made them the reason Notes runs under the launcher at all. That was wrong:
+`save attachment … in <file>` is a Standard Suite command Notes answers itself, so the bytes come
+back with **no Full Disk Access at all** — measured byte-identical from an unprivileged shell. See
+[Attachments can be created and saved](#attachments-can-be-created-and-saved-over-apple-events).
+
+So for Notes specifically the file lane buys **speed, not capability**. That is a note about where
+the cost falls, not an argument to drop the permission: `save_attachment` is implemented on the file
+lane and needs it, and Cupertino requires Full Disk Access for other surfaces regardless. Reaching
+for Apple Events here would trade a working path for a second one, not remove a requirement.
 
 A hybrid is worth considering before committing to the decoder: use the index for everything it
 answers cheaply — title match, folder, dates, attachment presence, ordering, paging — and Apple
@@ -216,8 +223,90 @@ Attachments are entities inside `ZICCLOUDSYNCINGOBJECT` — there is **no `ZICAT
 | `ICAttachmentLocation`     | 0    |
 
 Path-bearing columns: `ZFILENAME`, `ZIDENTIFIER`, `ZURLSTRING`, `ZREMOTEFILEURLSTRING`,
-`ZTOKENCONTENTIDENTIFIER`. `Accounts/` is readable under Full Disk Access, so the row-to-file
-mapping is the remaining piece to establish for `save_attachment`.
+`ZTOKENCONTENTIDENTIFIER`. `Accounts/` is readable under Full Disk Access.
+
+**The row-to-file mapping**, established by `scripts/probe-notes-media.mjs` against a live store.
+This is the _fallback_ path — `save attachment … in <file>` over Apple Events is simpler and needs
+no permission at all (see above) — but it is what answers when Notes is not running:
+
+```
+Accounts/<account>/Media/<ICMedia.ZIDENTIFIER>/<ICMedia.ZGENERATION1>/<ICMedia.ZFILENAME>
+                          36 chars, a UUID      38 chars, {UUID}       the bytes
+```
+
+`ICAttachment` carries **no path of its own** — not a filename, not a directory. It reaches the
+bytes through `ZMEDIA`, a numeric foreign key to an `ICMedia` row, and that row holds all three
+segments. Two consequences worth stating, because both cost time:
+
+1. **The Apple Events id cannot locate anything.** `x-coredata://<store>/ICAttachment/p<N>`
+   contains slashes, so no directory is ever named it. `save_attachment` shipped comparing a
+   directory entry against exactly that id, which is unsatisfiable — the feature could not save a
+   single real attachment. Its tests passed because the fixture used the id `att-1`, a shape the
+   scripting dictionary never returns.
+2. **Only the inner directory holds bytes.** The identifier directory contains just the generation
+   directory — 657 of each on the probed library, exactly paired. Any walk that skips directories
+   without direct files discards the level that carries the identifying name.
+
+`ZGENERATION1` is treated as optional in the reader rather than assumed, so a row without one
+resolves against the identifier directory instead of failing.
+
+### Attachments can be created and saved, over Apple Events
+
+**This section corrects an earlier claim in this file** — that attachments could not be created and
+that their bytes needed Full Disk Access. Both were wrong, and the way they were wrong is the same
+reading error [Mail already caught](mail-compose.md#attachments-can-be-added-and-the-dictionary-always-said-so):
+the `attachment` class lists only read-only **properties**, so a skim concludes it is read-only. But
+`note` declares
+
+```xml
+<element type="attachment">
+  <cocoa key="scriptingAttachments" insert-at-beginning="yes"/>
+</element>
+```
+
+and `make` and `save` come from the **Standard Suite**, not the Notes suite — so neither appears in
+the dictionary's own command list. Apple even states the intent in a comment on the hidden
+`contents` property:
+
+```xml
+<!-- ... to facilitate creating an attachment like this: "make new attachment with data myFile". -->
+<contents type="file" hidden="yes"/>
+```
+
+Both directions are measured on macOS 26.6, with a 1152-byte PNG:
+
+| Operation                                                  | Result                                               |
+| ---------------------------------------------------------- | ---------------------------------------------------- |
+| `make new attachment with data (POSIX file "…")` at a note | Works. Renders as a real image in Notes.             |
+| `save attachment id "…" of note id "…" in POSIX file "…"`  | Works, **without Full Disk Access**. Byte-identical. |
+
+`save` is the one that matters architecturally: Notes performs the read itself, so the caller's TCC
+never enters into it. The cost is a different permission, not none — it needs Automation and a
+running Notes — but that is already required for every write on this surface.
+
+### What does NOT work: images through the HTML body
+
+Setting `body` with an image tag is the obvious thing to reach for, and it fails in a way that looks
+like success. The importer accepts `<img>` and `<object>` and creates a real `ICAttachment` row for
+each:
+
+| Form in `body`                        | Row created   | Bytes               | Renders as         |
+| ------------------------------------- | ------------- | ------------------- | ------------------ |
+| `<img src="file://…">`                | image-typed   | never fetched       | broken placeholder |
+| `<object data="file://…">`            | image-typed   | never fetched       | broken placeholder |
+| `<img src="data:image/png;base64,…">` | `public.data` | decoded, byte-exact | generic file chip  |
+
+The data URI is the near miss: the bytes survive intact and `ZFILESIZE` matches the original
+exactly, but the MIME type is dropped, so Notes files it as opaque data and shows no preview.
+Nothing settable from `body` changes that — the importer decides the type. A `file://` source is not
+a sandbox problem either: it fails identically for a valid PNG in `~/Downloads`, which Notes can
+read. The bytes are simply never fetched.
+
+Use `make new attachment` instead. It is the supported path and it works.
+
+**The presence of an `ICAttachment` row proves nothing.** Every form above creates one, including
+the two that render as placeholders. Only rendering, or bytes on disk, tells them apart — which is
+exactly the check to run before believing an attachment write succeeded.
 
 **Budget for the maintenance.** 61 tables of undocumented Core Data, a gzipped protobuf body format,
 and a schema fingerprint that will drift on macOS releases. A real recurring cost — the argument for

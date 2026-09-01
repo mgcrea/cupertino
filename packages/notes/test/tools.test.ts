@@ -115,6 +115,7 @@ const READ_TOOLS = [
  * its identical tool the same way.
  */
 const WRITE_TOOLS = [
+  "apple_notes_add_attachment",
   "apple_notes_create_note",
   "apple_notes_delete_notes",
   "apple_notes_move_note",

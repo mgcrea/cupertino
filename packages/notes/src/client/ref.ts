@@ -53,6 +53,20 @@ export const decodeRef = (raw: string): NoteRef => {
   return { id: id as string, primaryKey: Number(pk) };
 };
 
+/**
+ * `Z_PK` for an attachment id, which is shaped like a note id but for ICAttachment.
+ *
+ * The entity segment is not pinned: Apple Events hands back ICAttachment for a
+ * file and ICInlineAttachment for an inline one, and both address a row in the
+ * same table by the same trailing p-number.
+ */
+const CORE_DATA_ATTACHMENT_ID = /^x-coredata:\/\/[^/]+\/IC\w*Attachment\w*\/p(\d+)$/;
+
+export const attachmentPrimaryKey = (id: string): number | null => {
+  const pk = CORE_DATA_ATTACHMENT_ID.exec(id)?.[1];
+  return pk ? Number(pk) : null;
+};
+
 /** Build a ref from an index row, which only ever knows the primary key. */
 export const refFromPrimaryKey = (storeUuid: string, primaryKey: number): string =>
   encodeRef(`x-coredata://${storeUuid}/ICNote/p${primaryKey}`);

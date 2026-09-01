@@ -18,10 +18,10 @@ this, use it, and only then decide whether to grant Full Disk Access.
 It does not scale for ever: there is no index behind it, so every query pays the full cost again.
 The wall is around 5–10k notes. `apple_notes_diagnostics` tells you which lane is answering.
 
-| Permission             | Needed for                        | Without it                                      |
-| ---------------------- | --------------------------------- | ----------------------------------------------- |
-| **Automation → Notes** | everything                        | nothing works; you get a `-1743` error          |
-| **Full Disk Access**   | search at scale, attachment bytes | the server still runs, on the Apple Events lane |
+| Permission             | Needed for                         | Without it                                      |
+| ---------------------- | ---------------------------------- | ----------------------------------------------- |
+| **Automation → Notes** | everything                         | nothing works; you get a `-1743` error          |
+| **Full Disk Access**   | search at scale, `save_attachment` | the server still runs, on the Apple Events lane |
 
 Neither is granted to Notes.app — it is the _reader_ that needs permission.
 
@@ -31,7 +31,11 @@ Read: `diagnostics`, `list_accounts`, `list_folders`, `list_notes`, `search_note
 `list_attachments`, `save_attachment`.
 
 Write, registered **only** when `APPLE_NOTES_ALLOW_WRITES=1` — with the flag off they are invisible
-to the model, not merely refused: `create_note`, `update_note`, `move_note`, `delete_notes`.
+to the model, not merely refused: `create_note`, `update_note`, `move_note`, `delete_notes`,
+`add_attachment`.
+
+`add_attachment` is the only way to put an image in a note. An `<img>` tag in a note's body creates
+an attachment whose bytes Notes never loads — see [docs/notes.md](../../docs/notes.md).
 
 ## Configuration
 

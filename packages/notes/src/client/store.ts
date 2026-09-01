@@ -60,6 +60,11 @@ export type StoreCapabilities = {
     widgetSnippet: boolean;
     folder: boolean;
     locked: boolean;
+    /** `ZMEDIA`, the ICAttachment -> ICMedia hop that leads to the bytes. */
+    media: boolean;
+    mediaFilename: boolean;
+    /** `ZGENERATION1`, the inner directory. Absent on older schemas. */
+    mediaGeneration: boolean;
   };
   deletionColumns: string[];
   missing: string[];
@@ -70,6 +75,9 @@ const OPTIONAL = {
   widgetSnippet: "ZWIDGETSNIPPET",
   folder: "ZFOLDER",
   locked: "ZISPASSWORDPROTECTED",
+  media: "ZMEDIA",
+  mediaFilename: "ZFILENAME",
+  mediaGeneration: "ZGENERATION1",
 } as const;
 
 export const introspect = (db: DatabaseSync): StoreCapabilities => {
@@ -107,6 +115,9 @@ export const introspect = (db: DatabaseSync): StoreCapabilities => {
       widgetSnippet: cols.includes(OPTIONAL.widgetSnippet),
       folder: cols.includes(OPTIONAL.folder),
       locked: cols.includes(OPTIONAL.locked),
+      media: cols.includes(OPTIONAL.media),
+      mediaFilename: cols.includes(OPTIONAL.mediaFilename),
+      mediaGeneration: cols.includes(OPTIONAL.mediaGeneration),
     },
     // Kept in the predicate even though the probed library had nothing in the
     // trash: that clause was never exercised, which makes it untested rather
@@ -277,6 +288,51 @@ export class NoteStore {
     }
     const decoded = extractNoteText(inflated);
     return { text: decoded.text, via: decoded.via, encrypted: false };
+  }
+
+  /**
+   * Where an attachment's bytes live, resolved through ICMedia.
+   *
+   * ICAttachment carries NO path of its own — not a filename, not a directory.
+   * It points at an ICMedia row through `ZMEDIA`, and that row holds the two
+   * directory names and the filename:
+   *
+   *     Accounts/<account>/Media/<ZIDENTIFIER>/<ZGENERATION1>/<ZFILENAME>
+   *
+   * Established against a real store (see `scripts/probe-notes-media.mjs`): the
+   * identifier directory contains only the generation directory, and only the
+   * inner one holds bytes — 657 of each on the probed library, exactly paired.
+   * That is why the id Apple Events returns cannot locate anything by itself,
+   * and why matching a directory against it never worked.
+   *
+   * `ZGENERATION1` is treated as optional rather than assumed: the caller falls
+   * back to the identifier directory when it is absent, so a schema without the
+   * generation level degrades instead of failing.
+   */
+  mediaFor(attachmentPk: number): {
+    identifier: string;
+    generation: string | null;
+    filename: string | null;
+  } | null {
+    if (!this.caps.has.media) return null;
+    const generation = this.caps.has.mediaGeneration ? "m.ZGENERATION1" : "NULL";
+    const filename = this.caps.has.mediaFilename ? "m.ZFILENAME" : "NULL";
+    const row = this.#db
+      .prepare(
+        `SELECT m.ZIDENTIFIER AS identifier, ${generation} AS generation, ${filename} AS filename ` +
+          `FROM ZICCLOUDSYNCINGOBJECT a ` +
+          `JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = a.ZMEDIA ` +
+          `WHERE a.Z_PK = ?`,
+      )
+      .get(attachmentPk) as
+      | { identifier: string | null; generation: string | null; filename: string | null }
+      | undefined;
+    if (!row?.identifier) return null;
+    return {
+      identifier: row.identifier,
+      generation: row.generation ?? null,
+      filename: row.filename ?? null,
+    };
   }
 
   close(): void {

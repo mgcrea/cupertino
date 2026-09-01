@@ -355,9 +355,11 @@ on a small library. But the lane has no index and pays the full cost on every qu
 projection puts the wall at roughly 5–10k notes. Notes gets two lanes like Mail; what differs is
 that it can ship on the fallback and add the file lane after.
 
-The pure capability gain — the thing Apple Events cannot do at any speed — is **attachment bytes**:
-the dictionary exposes `URL` and `content identifier` but no filesystem path, so contents require
-reading `Accounts/<uuid>/Media/`.
+There is **no pure capability gain** here. Attachment bytes were originally taken for one — the
+dictionary exposes `URL` and `content identifier` but no filesystem path — but `save attachment … in
+<file>` is a Standard Suite command Notes answers itself, returning the bytes with no Full Disk
+Access at all. For Notes the file lane buys speed only; see
+[docs/notes.md](notes.md#attachments-can-be-created-and-saved-over-apple-events).
 
 ### Lane policy: the file lane reads, Apple Events writes
 
