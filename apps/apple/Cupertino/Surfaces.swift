@@ -529,7 +529,7 @@ struct Surface: Identifiable, Hashable {
       bundleID: nil,
       kind: .capability,
       iconPath: "/System/Library/ExtensionKit/Extensions/DisplaysExt.appex",
-      symbol: "displays",
+      symbol: "display",
       usesAppleEvents: false,
       supportsWrites: false,
       storePath: nil,

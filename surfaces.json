@@ -383,7 +383,7 @@
       "runtime": "swift",
       "bundleId": null,
       "iconPath": "/System/Library/ExtensionKit/Extensions/DisplaysExt.appex",
-      "symbol": "displays",
+      "symbol": "display",
       "usesAppleEvents": false,
       "supportsWrites": false,
       "storePath": null,

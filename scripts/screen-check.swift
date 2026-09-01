@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Asserts that the in-process `screen` server speaks MCP, and that its gate
@@ -207,6 +208,29 @@ struct ScreenCheck {
     check(
       "the two states do not render alike",
       !(blind["targets"] is NSArray) && seeing["targets"] is NSArray)
+
+    // ─── the icon fallback has to actually exist ────────────────────────────
+    //
+    // surfaces.json REQUIRES a symbol for every capability, because iconPath
+    // points into /System and Apple moves those names. That requirement buys
+    // nothing if the symbol itself is not a real one: NSImage returns nil and
+    // the row renders empty, which is the blank the mandatory fallback was
+    // added to prevent. Shipped once already — `displays` does not exist; the
+    // symbol is `display`.
+    for capability in Surface.capabilities {
+      check(
+        "\(capability.id): symbol '\(capability.symbol ?? "")' resolves",
+        capability.symbol.flatMap {
+          NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+        } != nil)
+      // The colour icon is the one actually drawn; a moved path is survivable,
+      // a wrong one from day one is just a mistake.
+      if let path = capability.iconPath {
+        check(
+          "\(capability.id): iconPath exists on this Mac",
+          FileManager.default.fileExists(atPath: path))
+      }
+    }
 
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
