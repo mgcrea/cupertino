@@ -6,11 +6,105 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.7.0`,
-`notes-v1.7.0`, `reminders-v1.7.0`, `core-v1.7.0` for the npm packages, and `app-v1.7.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.8.0`,
+`notes-v1.8.0`, `reminders-v1.8.0`, `core-v1.8.0` for the npm packages, and `app-v1.8.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.8.0] - 2026-09-01
+
+### Added
+
+- **A fifth surface, `screen`, brokering ScreenCaptureKit rather than an Apple app.**
+  `apple_screen_list_targets`, `apple_screen_diagnostics` and `apple_screen_capture_surface`, the
+  last behind `allowCapture` — off by default, and superseding the one-time-code gates Messages and
+  Safari each carried.
+
+  **It has no npm package and could not have one.** The Screen Recording grant lives in the app, so
+  the server has to live there too. `surfaces.json` gains a `runtime` field (`node | swift`), the
+  generator enforces the `bundleId`/`npmName` rules that each runtime implies, and `ServerHost`
+  answers this surface's JSON-RPC directly through `ScreenServer` instead of spawning a node child.
+  Everything that loops over surfaces for a reason unrelated to packaging — the bridge, the closed
+  table, the settings UI — still takes every surface unchanged; only the lists that actually mean
+  "has a node package" read the new `NODE_SURFACES`.
+
+  Identity was measured rather than assumed: an `LSUIElement` Developer ID bundle holds
+  `kTCCServiceScreenCapture`, its spawned children inherit it, and the grant survives both
+  re-signing and the bundle moving.
+
+- **Settings separates apps from capabilities, and each has a real icon.** `surfaces.json` carries
+  an explicit `kind` (`app | capability`) rather than inferring one from a missing `bundleId`. An
+  app takes its icon from LaunchServices as before; a capability names its own `iconPath` — Apple's
+  own Settings extension, so it sits beside the app icons instead of reading as a different kind of
+  row — with a mandatory `symbol` fallback, because Apple's extension names under `/System` are not
+  predictable (`DisplaysExt.appex` sits beside `Sound.appex`).
+
+  `screen` is the first capability. The sidebar splits into two titled sections so it no longer
+  reads as an app nobody can find in their Applications folder, and the automation caption gains a
+  case of its own: "not needed — there is no app to script", rather than the app-only "reads only"
+  framing.
+
+- **Claude Code is a drop-in client instead of a copy-a-command one.** The app writes
+  `~/.claude.json` directly — top-level `mcpServers` for the client row, `projects[<dir>].mcpServers`
+  for local-scope folders — behind a stamp-and-retry guard that refuses a merge computed from bytes
+  a concurrent session has since replaced, and a `0600` mode on any file this app creates.
+
+  The previous refusal rested on two claims that do not hold. The file's mode survives the swap;
+  and the concurrency risk is the same read-modify-write that `claude mcp add` performs from a
+  second process, so handing over the command relocated the race rather than avoiding it — while
+  giving up the one advantage this app has, which is that it reads back the file it wrote and can
+  report a clobbered entry.
+
+### Fixed
+
+- **The in-process server is gated by something.** The screen surface shipped with no test of any
+  kind while every node surface has a suite, and `scripts/verify-servers.sh` structurally cannot
+  cover it: it scans a `cli.js` for bare imports and spawns it under the bundled runtime, and a
+  surface the app serves itself has neither. `make bundle` runs only that script, so a broken
+  in-process server would have reached a signature — which is the exact failure verify-servers.sh
+  was written for, after three releases shipped servers that died on their first line.
+
+  `make screen-check` drives `ScreenServer.handle` directly: no socket, no app launch, no licence,
+  no TCC grant, so CI runs it as a build gate. It pins the handshake, that a notification draws no
+  reply, both states of the capture gate, the closed-table refusals, that the capture schema offers
+  no surface without an app, and that an unreadable window list renders as `null` rather than as an
+  empty list — absent and EPERM being different findings. Each assertion was checked by
+  reintroducing the bug it describes.
+
+  `make smoke-swift` handshakes app-served surfaces through the bridge, and is deliberately **not**
+  a build gate: the socket is claimed by bundle identifier, so on any machine with Cupertino
+  installed it would test the installed copy and pass while the artifact is broken.
+
+- **"Install and Relaunch" worked, having read as broken.** The relaunch was held until
+  `Sessions.live` emptied, but a session is a connection held open for a client's lifetime rather
+  than a tool call, so it was rarely empty and the held install never fired. Sparkle's postpone hook
+  only fires for an explicit click in the first place — automatic updates are off — so this deferred
+  nothing it was meant to. The EOF it was guarding against is still handled unconditionally a few
+  milliseconds later, in `updaterWillRelaunchApplication`, which SIGTERMs every server for an
+  ordinary shutdown.
+
+- **The Capabilities card no longer fails with an error about a file it does not use.**
+  `SurfaceCatalog` spawned a node server through `ServerLocator` for every surface, which for a
+  swift-hosted one failed with "dev.json is unusable" — a real error about something with no bearing
+  on a server that is not a node process. It drives `ScreenServer.handle` directly for that runtime
+  now, so the card still demonstrates the real tool list rather than describing it a second time.
+
+- **The screen surface's detail pane names the permission it actually needs.** Access showed only
+  "Automation — not needed" and no Screen Recording row at all, so the surface read as ready while
+  every tool would refuse. That row is wired to `Permissions.screenRecording()`, and its button
+  opens the settings pane rather than re-calling `CGRequestScreenCaptureAccess`, which only ever
+  prompts once. The Store card is hidden for a capability instead of asserting that everything goes
+  through Apple Events, and the write-gate caption no longer describes a gate a surface with no
+  mutating tools does not have.
+
+- **"Include contents" says what it actually redacts.** The toggle and its caption described only
+  the argument half of `CallCapture`'s redaction — a mail body, a message, a note's text — and said
+  nothing about the result half, which is withheld entirely on the grounds that every word of it was
+  answered by the server. A reader would reasonably have expected return values in the log. It is
+  relabelled from "Include message contents", since it governs nine surfaces and the app-wide log
+  and "message" fit only two of them, and the caption now names «redacted», the literal string that
+  appears.
 
 ## [1.7.0] - 2026-09-01
 
@@ -1105,7 +1199,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...HEAD
+[1.8.0]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...app-v1.8.0
 [1.7.0]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...app-v1.7.0
 [1.6.0]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...app-v1.6.0
 [1.5.0]: https://github.com/mgcrea/cupertino/compare/app-v1.4.0...app-v1.5.0

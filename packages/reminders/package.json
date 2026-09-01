@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-reminders",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Search, read and act on Apple Reminders — lists, due dates, writes off by default",
   "keywords": [
     "apple",

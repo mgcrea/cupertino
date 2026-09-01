@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-contacts",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Search and read Apple Contacts — resolves numbers and emails to names, writes off by default",
   "keywords": [
     "address-book",
