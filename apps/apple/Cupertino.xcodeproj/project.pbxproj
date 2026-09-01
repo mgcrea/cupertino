@@ -519,6 +519,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Cupertino records from the microphone on behalf of the MCP servers it hosts, and only when you switch recording on for the Sound surface. macOS shows its orange recording indicator the whole time.";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar, Contacts, Messages and Safari on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -555,6 +556,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Cupertino-Info.plist";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Cupertino records from the microphone on behalf of the MCP servers it hosts, and only when you switch recording on for the Sound surface. macOS shows its orange recording indicator the whole time.";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Cupertino controls Mail, Notes, Reminders, Calendar, Contacts, Messages and Safari on behalf of the MCP servers it hosts, so the AI assistant you connect can read and act on that data.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (

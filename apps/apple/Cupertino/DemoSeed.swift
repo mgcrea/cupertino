@@ -449,6 +449,12 @@ enum DemoSeed {
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted
   nonisolated static let accessibility: AccessibilityStatus = .granted
+  /// Every surface's store grant, including the two that are not Full Disk
+  /// Access. Screen Recording in particular is the one a marketing image would
+  /// otherwise report from the capturing Mac — and it is the grant the popover
+  /// now paints, so an ungranted laptop would put an orange Screen row into the
+  /// App Store.
+  nonisolated static let storeGrant: StoreGrant = .granted
 
   /// The store row in `SurfaceDetail`, which otherwise prints an absolute path
   /// under the developer's real home directory into a public image.

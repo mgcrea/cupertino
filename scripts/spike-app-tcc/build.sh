@@ -36,6 +36,7 @@ reset)
   tccutil reset AppleEvents "$bundle_id" || true
   tccutil reset Accessibility "$bundle_id" || true
   tccutil reset ScreenCapture "$bundle_id" || true
+  tccutil reset Microphone "$bundle_id" || true
   echo "TCC grants for $bundle_id revoked."
   exit 0
   ;;
@@ -66,6 +67,12 @@ cc -Wall -Wextra -Werror -O2 \
 echo "swift: $here/../probe-screen.swift"
 swiftc -O -o "$app/Contents/Resources/probe-screen" "$here/../probe-screen.swift"
 
+# Same reasoning for the microphone: CoreAudio, AVFoundation and Speech are all
+# unreachable from node, and the grant has to land on the bundle rather than on
+# whatever launched the toolchain.
+echo "swift: $here/../probe-sound.swift"
+swiftc -O -o "$app/Contents/Resources/probe-sound" "$here/../probe-sound.swift"
+
 sed -e "s#@NODE@#$node_bin#g" -e "s#@REPO@#$repo#g" \
   "$here/spike.sh.in" > "$app/Contents/Resources/spike.sh"
 chmod +x "$app/Contents/Resources/spike.sh"
@@ -85,6 +92,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>Cupertino Spike is checking whether an app can read Mail and Notes on behalf of the MCP servers it hosts.</string>
+  <!-- MANDATORY, and unlike every other grant in this spike its absence is not
+       a denial: macOS TERMINATES a process that touches the microphone with no
+       usage description. Screen Recording needs no such string, which is why
+       this is the first lane to need one and the first that would otherwise
+       look like a crash rather than a permission result. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Cupertino Spike is checking whether an app can record from the microphone on behalf of the MCP servers it hosts.</string>
 </dict>
 </plist>
 PLIST
@@ -154,5 +168,29 @@ measured here rather than assumed. Compare the same binary run two ways:
 
 A GO from that lane is still provisional: it cannot tell a target window from
 the window occluding it. Open the PNGs it writes before believing it.
+
+The microphone lane is the FOURTH question, and it is the only one you do not
+have to grant in advance: the microphone PROMPTS. Launch the spike and a dialog
+should appear naming "Cupertino Spike" — that dialog IS the finding, because it
+means the grant is landing on the bundle and not on your editor. Measured from
+an agent shell, the ancestry reads:
+
+  swift-frontend <- zsh <- claude <- Code Helper (Plugin) <- Code
+
+so a "denied" seen there is Visual Studio Code's answer, not Cupertino's, and
+says nothing about whether this design works.
+
+  authorizationStatus authorized + non-silent yes   the grant reaches a child
+  authorizationStatus authorized + non-silent NO    green flag over a dead
+                                                    device — check it is not
+                                                    muted or held by another app
+  killed with no output                             NSMicrophoneUsageDescription
+                                                    is missing from Info.plist;
+                                                    macOS terminates rather than
+                                                    denies, and this is the only
+                                                    lane where that happens
+
+Speak while it runs, or the peak level is a fact about a quiet room rather than
+about the lane.
 
 TXT

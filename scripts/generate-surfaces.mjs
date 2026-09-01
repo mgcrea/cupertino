@@ -66,6 +66,22 @@ const validate = (surfaces) => {
     for (const key of ["usesAppleEvents", "supportsWrites"]) {
       if (typeof s[key] !== "boolean") problems.push(`${at}: ${key} must be a boolean`);
     }
+    // WHEN the events go out, not whether they may. Messages and Contacts read
+    // through the file lane and script the app only to write, so on a Mac with
+    // writes off they send nothing at all — and the status glyph used to nag
+    // for an Automation grant that nothing would ever spend.
+    //
+    // This narrows what the APP ASKS FOR, never what it MAY ask for. The
+    // consent string in project.pbxproj is built from `scriptable` below, which
+    // reads `usesAppleEvents` and must keep naming both surfaces: turning
+    // writes on has to work without a re-signed binary.
+    if (s.usesAppleEvents) {
+      if (!["always", "writes"].includes(s.appleEventsScope)) {
+        problems.push(`${at}: appleEventsScope must be "always" or "writes"`);
+      }
+    } else if (s.appleEventsScope !== null) {
+      problems.push(`${at}: appleEventsScope must be null — this surface sends no Apple Event`);
+    }
     // Which process serves it. Explicit rather than inferred from a missing
     // npmName, so the targets that mean "has a node package" can say so.
     if (!["node", "swift"].includes(s.runtime)) {
@@ -120,9 +136,14 @@ const validate = (surfaces) => {
     if (s.storePath !== null && typeof s.storePath !== "string") {
       problems.push(`${at}: storePath must be a string or null`);
     }
-    if (!["full-disk-access", "contacts", "screen-recording"].includes(s.storePermission)) {
+    if (
+      !["full-disk-access", "contacts", "screen-recording", "microphone"].includes(
+        s.storePermission,
+      )
+    ) {
       problems.push(
-        `${at}: storePermission must be "full-disk-access", "contacts" or "screen-recording"`,
+        `${at}: storePermission must be "full-disk-access", "contacts", "screen-recording" ` +
+          `or "microphone"`,
       );
     }
     if (s.envPrefix !== `APPLE_${s.id?.toUpperCase().replaceAll("-", "_")}_`) {
@@ -235,6 +256,7 @@ const STORE_PERMISSION = {
   "full-disk-access": "fullDiskAccess",
   contacts: "contacts",
   "screen-recording": "screenRecording",
+  microphone: "microphone",
 };
 
 const swiftGate = (g) =>
@@ -255,6 +277,7 @@ const swiftSurface = (s) => {
     `      iconPath: ${s.iconPath == null ? "nil" : swiftString(s.iconPath)},`,
     `      symbol: ${s.symbol == null ? "nil" : swiftString(s.symbol)},`,
     `      usesAppleEvents: ${s.usesAppleEvents},`,
+    `      appleEventsScope: ${s.appleEventsScope === null ? "nil" : `.${s.appleEventsScope}`},`,
     `      supportsWrites: ${s.supportsWrites},`,
     `      storePath: ${s.storePath === null ? "nil" : swiftString(s.storePath)},`,
     `      storePermission: .${STORE_PERMISSION[s.storePermission]},`,

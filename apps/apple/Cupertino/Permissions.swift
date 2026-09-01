@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import ApplicationServices
 import Carbon
@@ -48,9 +49,51 @@ enum ScreenRecordingStatus: Hashable {
   case denied
 }
 
+/// The microphone, as FOUR states — and it is the first grant here that can
+/// afford four.
+///
+/// `AccessibilityStatus` and `ScreenRecordingStatus` have two because TCC
+/// answers them with a boolean and cannot separate a refusal from a question
+/// nobody has asked. `AVCaptureDevice.authorizationStatus(for:)` does separate
+/// them, and the difference is worth surfacing: `notDetermined` means the app
+/// can still raise the prompt itself, while `denied` means only System Settings
+/// will do. Collapsing them would send someone to the wrong place.
+enum MicrophoneStatus: Hashable {
+  case granted
+  case denied
+  /// Nobody has been asked yet. The prompt is still available.
+  case notDetermined
+  /// Policy forbids it — a managed Mac or Screen Time. Asking will not help.
+  case restricted
+
+  /// The spelling that goes on the wire, in diagnostics.
+  var wireName: String {
+    switch self {
+    case .granted: "granted"
+    case .denied: "denied"
+    case .notDetermined: "notDetermined"
+    case .restricted: "restricted"
+    }
+  }
+}
+
 enum AccessibilityStatus: Equatable {
   case granted
   case denied
+}
+
+/// The one grant a surface's store sits behind, normalised across the three TCC
+/// services that gate one.
+///
+/// `Surface.storePermission` names which service; this says whether it is held.
+/// Two states, not three, for the reason `ScreenRecordingStatus` has two: TCC
+/// answers Screen Recording and Contacts with a boolean and cannot separate a
+/// refusal from a question never asked. Full Disk Access has a third case of its
+/// own — `storeMissing`, a fact about the machine rather than about permission —
+/// which `storeGrant(for:diskAccess:)` folds in deliberately.
+enum StoreGrant: Equatable {
+  case granted
+  case missing
 }
 
 /// Whether Safari is running our web extension.
@@ -443,6 +486,43 @@ enum Permissions {
     CGRequestScreenCaptureAccess()
   }
 
+  /// The microphone, for THIS process's responsible identity.
+  ///
+  /// MEASURED, macOS 26.6 through scripts/spike-app-tcc lane 2d: the grant lands
+  /// on the app bundle, is inherited by a grandchild, and survives a rebuild and
+  /// re-sign — see docs/sound.md. Measured rather than inherited from the Full
+  /// Disk Access verdict, because that generalisation was already wrong once,
+  /// for Accessibility.
+  ///
+  /// A TRAP THAT LOOKS LIKE A CRASH: macOS TERMINATES a process that touches the
+  /// microphone with no `NSMicrophoneUsageDescription` in its Info.plist. Every
+  /// other grant here denies and lets the app carry on. If this ever appears to
+  /// take the app down rather than return `.denied`, that string is missing.
+  static func microphone() -> MicrophoneStatus {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized: .granted
+    case .denied: .denied
+    case .notDetermined: .notDetermined
+    case .restricted: .restricted
+    @unknown default: .denied
+    }
+  }
+
+  /// Raise the system prompt, which only works while the status is
+  /// `notDetermined`. Once denied, System Settings is the only route — which is
+  /// exactly why `MicrophoneStatus` keeps the two apart.
+  static func requestMicrophone() async -> Bool {
+    await AVCaptureDevice.requestAccess(for: .audio)
+  }
+
+  static func openMicrophoneSettings() {
+    let url = URL(
+      string:
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone"
+    )!
+    NSWorkspace.shared.open(url)
+  }
+
   /// The pane, because the prompt only ever appears once.
   ///
   /// `CGRequestScreenCaptureAccess` shows the system dialog on the first call
@@ -455,6 +535,70 @@ enum Permissions {
         string:
           "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
       )!)
+  }
+
+  // MARK: Contacts
+
+  /// Is the Contacts store readable?
+  ///
+  /// `access(2)` on the store, and deliberately NOT `CNContactStore`. Linking
+  /// Contacts.framework means shipping `NSContactsUsageDescription`, which makes
+  /// the app claim the grant in its metadata for every user — including everyone
+  /// who never turns this surface on. The file test is also the more honest
+  /// question: what the server does is open that directory, and this asks
+  /// exactly that.
+  ///
+  /// It is a SEPARATE grant from Full Disk Access, which is the whole reason
+  /// this function exists. The comment on `diskAccess()` records the measurement:
+  /// `Library/Application Support/AddressBook` opens without the whole-disk
+  /// grant because kTCCServiceAddressBook gates it, and reading that as an
+  /// answer about Full Disk Access is what made the old status row lie.
+  ///
+  /// Unlike Full Disk Access, macOS PROMPTS for this one — so the advice a
+  /// failing Contacts surface should give is different in kind.
+  static func contacts() -> StoreGrant {
+    guard let surface = Surface.named("contacts"), let path = resolveStore(surface) else {
+      // No store on this Mac. Nothing to read, so nothing is being refused.
+      return .granted
+    }
+    return access(path, R_OK) == 0 ? .granted : .missing
+  }
+
+  /// The Contacts privacy pane.
+  ///
+  /// Its own opener rather than a shared one: the three services live behind
+  /// three different anchors, and a button that opens the wrong pane is worse
+  /// than no button — it reads as "this is where you fix it" and is not.
+  static func openContactsSettings() {
+    NSWorkspace.shared.open(
+      URL(
+        string:
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Contacts"
+      )!)
+  }
+
+  // MARK: The grant, per surface
+
+  /// Whether the grant that gates this surface's store is held.
+  ///
+  /// One call for the three TCC services `Surface.StorePermission` names, so a
+  /// status row can ask "is this surface's permission in place" without knowing
+  /// which permission that is — which is what let the popover report Screen as
+  /// "not needed" while every capture on the Mac was refusing.
+  ///
+  /// Takes `diskAccess` rather than probing it, because that answer is app-wide:
+  /// `diskAccess()` walks every surface's store looking for one that exists, and
+  /// nine surfaces asking it nine times would pay for one fact nine times.
+  ///
+  /// `.storeMissing` counts as missing here. It means there is nothing on this
+  /// Mac to read, which for a status row is not a state to paint green.
+  static func storeGrant(for surface: Surface, diskAccess: DiskAccessStatus) -> StoreGrant {
+    switch surface.storePermission {
+    case .fullDiskAccess: diskAccess == .granted ? .granted : .missing
+    case .contacts: contacts()
+    case .screenRecording: screenRecording() == .granted ? .granted : .missing
+    case .microphone: microphone() == .granted ? .granted : .missing
+    }
   }
 
   /// Ask for Accessibility, with the system's prompt visible.

@@ -67,7 +67,10 @@ const SITE = join(ROOT, "apps", "website", "src", "data", "surfaces.ts");
  * call, so the pattern differs. Same crudeness, same justification as the
  * regex note above: a literal is what carries the name.
  */
-const SWIFT_SERVERS = [["screen", join(ROOT, "apps", "apple", "Cupertino", "ScreenServer.swift")]];
+const SWIFT_SERVERS = [
+  ["screen", join(ROOT, "apps", "apple", "Cupertino", "ScreenServer.swift")],
+  ["sound", join(ROOT, "apps", "apple", "Cupertino", "SoundServer.swift")],
+];
 
 /** Every tool name passed to `server.registerTool`, across every package. */
 const registeredTools = () => {

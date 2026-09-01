@@ -14,7 +14,7 @@ one, so nothing in Claude reads Mail.app on the desktop out of the box. Everythi
 including Cupertino — exists to fill that hole.
 
 That qualifier is new as of this refresh and it is load-bearing. Anthropic's **iOS** app now drives
-Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the eight
+Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the nine
 surfaces on this page, on a platform this cannot ship to. Claude Desktop separately installs an
 Apple **Notes** extension from Settings › Extensions in one click, no JSON and no Terminal; whether
 Anthropic authors that extension or merely lists it could not be settled from Anthropic's own
@@ -61,15 +61,15 @@ reporting `indexAgeSeconds` and `walBlind` when it cannot be certain.
 
 ## The field
 
-| Project                                                                           | Lane                                                       | Notes                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [patrickfreyer/apple-mail-mcp](https://github.com/patrickfreyer/apple-mail-mcp)   | AppleScript only                                           | The popular one (201★, was ~168), 22 tools. Unified search, threading, drafts, analytics — all of it through the lane measured at 74 s. Now ships as a Claude Code Plugin and a `.mcpb`, and asks for Automation only, no Full Disk Access. Its `--read-only` is a flag: the tools stay registered and refuse.                                         |
-| [imdinu/apple-mail-mcp](https://github.com/imdinu/apple-mail-mcp)                 | Envelope Index + **owned FTS5 body index** + JXA fallback  | The serious technical peer. GPL-3.0, PyPI, 8 tools, **read-only**. Its [benchmark site](https://imdinu.github.io/apple-mail-mcp/benchmarks/) now times 7 servers at the MCP protocol level on a 73.5k-message mailbox — ~7 ms subject search, ~28 ms body — and has made benchmarking the category's evaluation criterion. Reports no index staleness. |
-| [BastianZim/apple-mail-mcp](https://github.com/bastianzim/apple-mail-mcp)         | Envelope Index + `.emlx` direct, **no AppleScript at all** | New since the August survey. MIT, `uvx`, 4 tools, **read-only**, tested to 290k messages. The only server besides `imdinu` that completes every row of that benchmark, and ~1★ — technically credible and structurally invisible. Its body search caps at the newest 5000 messages without saying so.                                                  |
-| [LMCP](https://www.local-mcp.com/guides/best-mcp-server-mac)                      | AppleScript/JXA + FDA for the databases                    | Breadth play: 188+ tools over 25+ domains, well past Apple's own apps. Free tier, and a two-minute installer that auto-configures Claude Desktop, Cursor and VS Code. Markets its permissions as "auditable and revocable", which is the closest anyone comes to the argument below.                                                                   |
-| [marius-cetanas/macos-mail-mcp](https://github.com/marius-cetanas/macos-mail-mcp) | AppleScript                                                | 20 tools, read + compose.                                                                                                                                                                                                                                                                                                                              |
-| [lionsr/mcp-apple](https://lobehub.com/mcp/lionsr-mcp-apple)                      | JXA, shipped as a `.mcpb` desktop extension                | One-click install in Claude Desktop, which is a real distribution advantage.                                                                                                                                                                                                                                                                           |
-| [peakmojo/applescript-mcp](https://github.com/peakmojo/applescript-mcp)           | arbitrary `osascript`                                      | Hands the model unbounded execution on the Mac. This is precisely the blast radius the closed table in `Surfaces.swift` exists to prevent, and it is worth naming rather than ignoring: it is easy to install and it is the wrong trade.                                                                                                               |
+| Project                                                                           | Lane                                                       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [patrickfreyer/apple-mail-mcp](https://github.com/patrickfreyer/apple-mail-mcp)   | AppleScript only                                           | The popular one (201★, was ~168), 22 tools. Unified search, threading, drafts, analytics — all of it through the lane measured at 74 s. Now ships as a Claude Code Plugin and a `.mcpb`, and asks for Automation only, no Full Disk Access. Its `--read-only` is a flag: the tools stay registered and refuse.                                                                                                                                                                 |
+| [imdinu/apple-mail-mcp](https://github.com/imdinu/apple-mail-mcp)                 | Envelope Index + **owned FTS5 body index** + JXA fallback  | The serious technical peer. GPL-3.0, PyPI, 8 tools, **read-only**. Its [benchmark site](https://imdinu.github.io/apple-mail-mcp/benchmarks/) now times 7 servers at the MCP protocol level on a 73.5k-message mailbox — ~7 ms subject search, ~28 ms body — and has made benchmarking the category's evaluation criterion. Reports no index staleness.                                                                                                                         |
+| [BastianZim/apple-mail-mcp](https://github.com/bastianzim/apple-mail-mcp)         | Envelope Index + `.emlx` direct, **no AppleScript at all** | New since the August survey. MIT, `uvx`, 4 tools, **read-only**, tested to 290k messages. The only server besides `imdinu` that completes every row of that benchmark, and ~1★ — technically credible and structurally invisible. Its body search caps at the newest 5000 messages without saying so.                                                                                                                                                                          |
+| [LMCP](https://www.local-mcp.com/guides/best-mcp-server-mac)                      | AppleScript/JXA + FDA for the databases                    | Breadth play: 188+ tools over 25+ domains, well past Apple's own apps. **Free outright**, not a free tier — every tool, no paid plan, closed source; the one paid thing is an opt-in Cloud Relay for mobile and web clients. Two-minute installer that auto-configures Claude Desktop, Cursor and VS Code, and it runs on **macOS 12+** against this one's 26+. Markets its permissions as "auditable and revocable", which is the closest anyone comes to the argument below. |
+| [marius-cetanas/macos-mail-mcp](https://github.com/marius-cetanas/macos-mail-mcp) | AppleScript                                                | 20 tools, read + compose.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| [lionsr/mcp-apple](https://lobehub.com/mcp/lionsr-mcp-apple)                      | JXA, shipped as a `.mcpb` desktop extension                | One-click install in Claude Desktop, which is a real distribution advantage.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| [peakmojo/applescript-mcp](https://github.com/peakmojo/applescript-mcp)           | arbitrary `osascript`                                      | Hands the model unbounded execution on the Mac. This is precisely the blast radius the closed table in `Surfaces.swift` exists to prevent, and it is worth naming rather than ignoring: it is easy to install and it is the wrong trade.                                                                                                                                                                                                                                       |
 
 Several others (sweetrb, attilagyorffy, s-morgan-jeffries, griches, falconbradley, oscar23445) are
 AppleScript wrappers of varying completeness. The pattern is uniform enough that they do not each
@@ -115,8 +115,9 @@ absent instead of a vanished tool. Nobody else reports index staleness at all �
 now that the peer servers are also index-backed, because a fast wrong answer is the failure mode
 they share.
 
-**One grant covers all eight surfaces.** Full Disk Access is indivisible, so a second single-surface
-server buys no containment and costs another trip to System Settings.
+**One grant covers all eight app surfaces.** Full Disk Access is indivisible, so a second
+single-surface server buys no containment and costs another trip to System Settings. `screen` is the
+exception and does not ride on it: it takes its own Screen Recording grant, which is a second trip.
 
 ## Where we lose
 
@@ -128,9 +129,9 @@ the permanent refresh problem an FTS5 index would cost. `imdinu` still wins the 
 The refusal names the candidate count and the bound, which is the part that matters: it is not a
 silent cap reported as an absence. See [mail-body.md](mail-body.md).
 
-**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers eight
+**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers nine
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why
-Terminal, Script Editor and System Settings are excluded on purpose — but "eight" loses a feature
+Terminal, Script Editor and System Settings are excluded on purpose — but "nine" loses a feature
 comparison to "188" and will keep doing so.
 
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
@@ -148,16 +149,19 @@ and they are sitting where no prospective user reads them. Entering that benchma
 unbounded body-search row, which is already conceded above — being absent from the comparison is
 worse than losing one line of it.
 
-**Published, with one asterisk.** The signed app ships from GitHub releases and a Homebrew tap, and
-as of 2026-08-26 the packages ship too: all eight — `-core`, `-mail`, `-notes`, `-reminders`,
-`-calendar`, `-contacts`, `-messages` and `-safari` — are on npm at 1.3.0. The distribution gap this
-section was written about is closed.
+**Published, and the asterisk is closed.** The signed app ships from GitHub releases and a Homebrew
+tap, and the packages ship too: all nine — `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
+`-contacts`, `-messages`, `-safari` and `-maps` — are on npm at 1.8.0. `screen` has none and could
+not: the Screen Recording grant lives in the app, so a published package could do nothing. The
+distribution gap this section was written about is closed.
 
-The asterisk is `-messages` and `-safari`, and it is worth recording rather than quietly enjoying.
-Both were published **from a laptop, so neither carries a provenance attestation** — the one thing
-[distribution.md](distribution.md) keeps `npm.publish: false` in `.release-it.json` to prevent. npm
-forbids republishing a version, so those two builds cannot be re-signed; the next release is where
-the attestation comes back. The other six went through the `publish-npm` job and have one.
+The asterisk was `-messages` and `-safari` at 1.3.0, and it is worth recording rather than quietly
+forgetting. Both were published **from a laptop, so neither carried a provenance attestation** — the
+one thing [distribution.md](distribution.md) keeps `npm.publish: false` in `.release-it.json` to
+prevent. npm forbids republishing a version, so those two builds could not be re-signed and 1.3.0
+of each is still unattested on the registry. The prediction held: the next release restored it, and
+as of 1 September every package's current version carries one — verified against
+`registry.npmjs.org/-/npm/v1/attestations` rather than assumed.
 
 This section used to claim the gap was closed for both. It was written from the intent of the
 `publish-npm` job rather than from the registry, which is the same mistake it criticises the

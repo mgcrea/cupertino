@@ -32,26 +32,31 @@ off cannot see that they exist.
 
 ## Surfaces
 
-| Surface   | Package                                    | Status                                                          |
-| --------- | ------------------------------------------ | --------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes  |
-| Notes     | [`packages/notes`](packages/notes)         | implemented — 12 tools, search/read/attachments + gated writes  |
-| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes       |
-| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes  |
-| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 7 tools, chats/search/decoded text + gated send   |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 6 tools, history/tabs/reading list, read-only     |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents, gated writes |
-| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite     |
+| Surface   | Package                                    | Status                                                                                |
+| --------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes                        |
+| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                        |
+| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                             |
+| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                        |
+| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                       |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 8 tools, chats/search/decoded text + gated send and codes               |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                      |
+| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package                |
+| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                           |
 
-Each surface is its own server and its own npm package, so a host loads only the tools it wants.
+Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
+an Apple app is also its own npm package; `screen` is not, and could not be — it brokers
+ScreenCaptureKit rather than an app, the Screen Recording grant lives in the app, so the app serves
+it in-process and a published package could do nothing. See [docs/screen.md](docs/screen.md).
+
 They share one bundle and one Full Disk Access grant, which is the whole reason they live together
 — see [docs/distribution.md](docs/distribution.md).
 
 ## Quick start
 
-Each server is on npm and runs straight from `npx` — for Claude Code, a `.mcp.json` beside your
-project:
+Every server that brokers an Apple app is on npm and runs straight from `npx` — for Claude Code, a
+`.mcp.json` beside your project:
 
 ```json
 {
@@ -530,9 +535,10 @@ pnpm probe:calendar  # settles whether Calendar has a file lane at all
 pnpm probe:safari    # History.db, and the Reading List hiding inside Bookmarks.plist
 pnpm probe:maps      # MapsSync, the store with no file extension behind the grant
 pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Full Disk Access
+pnpm probe:screen    # ScreenCaptureKit — Screen Recording, and it takes effect on relaunch
 ```
 
-Every probed surface now has a package. **Safari is the only read-only one** — it registers no mutating tool, and that is a recorded decision rather than an omission: opening a URL or adding to Safari's Reading List navigates a real, visible browser and was never probed. See [docs/safari.md](docs/safari.md). **Maps writes without an Apple Event at all**, which nothing else here does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface now has a package except `screen`, which the app serves in-process. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

@@ -26,7 +26,8 @@ export interface Surface {
     | "messages"
     | "safari"
     | "maps"
-    | "screen";
+    | "screen"
+    | "sound";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -260,6 +261,44 @@ export const SURFACES: readonly Surface[] = [
     pitch:
       "A picture of a window your assistant is already working with — Mail, Safari, Calendar — written to disk and handed back as a path. Only the apps Cupertino brokers: never an arbitrary app, window, display or region. Nothing is raised or focused, and a window sitting behind another app still captures its own content.",
     withoutGrant: "Nothing — Screen Recording is the only way in, and it takes effect on relaunch.",
+  },
+  {
+    id: "sound",
+    name: "Sound",
+    // No npm package, for the same reason as Screen: CoreAudio, AVFoundation
+    // and Speech are all unreachable from node, and switching the default audio
+    // device has no command-line equivalent at all.
+    pkg: "\u2014",
+    // The only surface whose reads need NO permission of any kind. Devices and
+    // volume answer on a Mac that has granted Cupertino nothing.
+    read: ["apple_sound_list_devices", "apple_sound_get_volume", "apple_sound_diagnostics"],
+    write: [
+      "apple_sound_set_volume",
+      "apple_sound_set_muted",
+      "apple_sound_set_default_device",
+      "apple_sound_speak",
+    ],
+    gated: [
+      {
+        name: "apple_sound_start_recording",
+        env: "APPLE_SOUND_ALLOW_RECORDING",
+        why: "Records from the microphone to a file. Off by default, needs the Microphone permission, and macOS shows its orange recording indicator \u2014 naming Cupertino \u2014 the whole time it runs.",
+      },
+      {
+        name: "apple_sound_stop_recording",
+        env: "APPLE_SOUND_ALLOW_RECORDING",
+        why: "Finishes the recording and returns its path, size, duration and whether it was silent.",
+      },
+      {
+        name: "apple_sound_recording_status",
+        env: "APPLE_SOUND_ALLOW_RECORDING",
+        why: "Whether a recording is running, read from the live recorder rather than from a cached flag.",
+      },
+    ],
+    pitch:
+      "Your Mac's speakers and microphone. List the audio devices, read and set the volume, mute, switch to your headphones \u2014 none of which needs any permission \u2014 and, behind a separate switch that is off by default, record a memo to a file. Recording is never hidden: macOS shows its orange indicator, naming Cupertino, for as long as it runs.",
+    withoutGrant:
+      "Devices, volume and mute all work with no grant at all. Only recording needs the Microphone permission.",
   },
   {
     id: "safari",

@@ -209,7 +209,9 @@ struct MainView: View {
       Button { SettingsOpener.show(.permissions) } label: {
         HStack(spacing: 6) {
           Circle()
-            .fill(model.diskAccess == .granted ? Color.green : Color.orange)
+            .fill(
+              StatusStyle.healthTint(model.diskAccess == .granted ? .ready : .needsSetup)
+            )
             .frame(width: 7, height: 7)
           Text("Full Disk Access").font(.caption)
           Spacer()
@@ -599,15 +601,17 @@ private struct SurfaceSidebarRow: View {
         Text(surface.displayName)
           .foregroundStyle(enabled ? .primary : .tertiary)
         Spacer(minLength: 4)
-        // The glyph goes rather than greys. A TCC grant reported against a
-        // server that will never start is a true fact about the wrong subject,
-        // which is the same reason `StatusStyle.automationIcon` draws
-        // `minus.circle` for a surface that never scripts its app.
-        if enabled {
-          Image(systemName: StatusStyle.icon(model.automation[surface.id]))
+        // The glyph goes rather than greys. A grant reported against a server
+        // that will never start is a true fact about the wrong subject.
+        //
+        // The aggregate, matching the popover — `SurfaceStatus` rather than
+        // `AutomationStatus`, so this row and that one cannot answer different
+        // questions about the same surface.
+        if enabled, let status = model.status(for: surface) {
+          Image(systemName: StatusStyle.healthIcon(status.health))
             .font(.caption)
-            .foregroundStyle(StatusStyle.tint(model.automation[surface.id]))
-            .help(StatusStyle.caption(model.automation[surface.id]))
+            .foregroundStyle(StatusStyle.healthTint(status.health))
+            .help(status.caption)
         }
       }
     } icon: {

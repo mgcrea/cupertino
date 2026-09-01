@@ -534,6 +534,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
+  /// A gate by ID, never by position. `gates.first` was correct while every
+  /// surface had at most one and becomes silently wrong the moment one has two.
+  private func isGateOn(_ surface: Surface, _ id: String) -> Bool {
+    guard let gate = surface.gates.first(where: { $0.id == id }) else { return false }
+    return SurfaceSettings.isGateOn(surface, gate)
+  }
+
   private func serveInProcess(surface: Surface, client: Int32) {
     let session = UUID()
     let pid = ProcessInfo.processInfo.processIdentifier
@@ -545,10 +552,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
       hostLog(surface.id, .info, "server stopped")
     }
 
-    let gateOn = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
-    hostLog(surface.id, .info, "server started (in-process) allowCapture=\(gateOn)")
+    let gates = SurfaceSettings.enabledGates(surface)
+    hostLog(
+      surface.id, .info,
+      "server started (in-process) allowWrites=\(SurfaceSettings.allowWrites(surface)) "
+        + "gates=[\(gates.joined(separator: ","))]")
 
-    while let line = ScreenServer.nextLine(client) {
+    while let line = InProcessRPC.nextLine(client) {
       if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
 
       // Switching a surface off has to take effect without restarting every
@@ -562,13 +572,34 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
 
-      // Read per request, so flipping the toggle takes effect without
-      // restarting the editor — the same guarantee `stopSessions` gives a node
-      // server by signalling it.
-      let captureAllowed = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
-      guard
-        let response = ScreenServer.handle(line, surface: surface, captureAllowed: captureAllowed)
-      else { continue }
+      // Read per request, so flipping a toggle takes effect without restarting
+      // the editor — the same guarantee `stopSessions` gives a node server by
+      // signalling it.
+      //
+      // Dispatched on the surface id rather than on a protocol, because the two
+      // servers do not take the same gates: `screen` has one and `sound` has a
+      // write flag AND a gate that are deliberately independent. A shared
+      // signature would have to pass both to both and pretend that is one idea.
+      let response: String?
+      switch surface.id {
+      case "screen":
+        response = ScreenServer.handle(
+          line, surface: surface,
+          captureAllowed: isGateOn(surface, "allowCapture"))
+      case "sound":
+        response = SoundServer.handle(
+          line, surface: surface,
+          writesAllowed: SurfaceSettings.allowWrites(surface),
+          recordingAllowed: isGateOn(surface, "allowRecording"))
+      default:
+        // Unreachable: `runtime` comes from the closed table and only these two
+        // are swift-hosted. Logged rather than silent, because the manifest and
+        // this switch are two places one fact lives, and a new swift surface
+        // that forgets this line would otherwise hang rather than say why.
+        hostLog(surface.id, .error, "no in-process server for this surface")
+        return
+      }
+      guard let response else { continue }
       _ = writeAll(client, Data("\(response)\n".utf8))
     }
   }

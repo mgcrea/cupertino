@@ -49,9 +49,22 @@ struct Surface: Identifiable, Hashable {
   /// Whether this surface ever sends an Apple Event.
   ///
   /// False means no Automation prompt is ever shown for it and none is needed:
-  /// Contacts reads its store and nothing else. Asking for a permission the code
-  /// never uses is the opposite of what the closed table is for.
+  /// Maps writes SQL into its own store and Screen has no app to script at all.
+  /// Asking for a permission the code never uses is the opposite of what the
+  /// closed table is for.
   let usesAppleEvents: Bool
+  /// WHEN those events go out. `nil` when none ever do.
+  ///
+  /// `usesAppleEvents` answers whether the grant is ever needed; this answers
+  /// whether it is needed **as this Mac is configured**. Messages and Contacts
+  /// read through the file lane and script their app only to write, so with
+  /// `allowWrites` off they send nothing — and a status glyph keyed on
+  /// `usesAppleEvents` alone nagged forever for a grant nothing would spend.
+  ///
+  /// It narrows what the app ASKS FOR, never what it MAY ask for: the Apple
+  /// Events consent string is still generated from `usesAppleEvents`, so
+  /// turning writes on works without a re-signed binary.
+  let appleEventsScope: AppleEventsScope?
   /// Whether the server has any mutating tool for the write toggle to gate.
   ///
   /// False hides the toggle rather than showing one that changes nothing —
@@ -95,6 +108,16 @@ struct Surface: Identifiable, Hashable {
     let description: String
   }
 
+  /// Whether the Apple Events lane carries reads too, or only writes.
+  enum AppleEventsScope: Hashable {
+    /// The read lane goes through Apple Events, so the grant is needed the
+    /// moment the surface is on. Mail, Notes, Reminders, Calendar, Safari.
+    case always
+    /// Events are the WRITE lane and nothing else; reads come off the file
+    /// lane. The grant is needed only once `allowWrites` is on.
+    case writes
+  }
+
   enum StorePermission: Hashable {
     /// The indivisible whole-disk grant. Never prompts; must be given by hand.
     case fullDiskAccess
@@ -105,6 +128,12 @@ struct Surface: Identifiable, Hashable {
     /// window costs the same grant as capturing the display. What bounds it is
     /// this table, not the system: see docs/screen.md.
     case screenRecording
+    /// `kTCCServiceMicrophone`. Unlike every other grant here it PROMPTS rather
+    /// than needing a trip to System Settings — and unlike every other grant,
+    /// its usage description is mandatory: macOS terminates a process that
+    /// touches the microphone with no `NSMicrophoneUsageDescription`, so a
+    /// missing string reads as a crash rather than as a denial.
+    case microphone
   }
 
   /// Which process actually serves this surface.
@@ -147,6 +176,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .always,
       supportsWrites: true,
       storePath: "Library/Mail/V*/MailData/Envelope Index",
       storePermission: .fullDiskAccess,
@@ -162,6 +192,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .always,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
       storePermission: .fullDiskAccess,
@@ -184,6 +215,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .always,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.reminders",
       storePermission: .fullDiskAccess,
@@ -209,6 +241,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .always,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
       storePermission: .fullDiskAccess,
@@ -241,6 +274,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .writes,
       supportsWrites: true,
       storePath: "Library/Application Support/AddressBook",
       storePermission: .contacts,
@@ -301,6 +335,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .writes,
       supportsWrites: true,
       storePath: "Library/Messages/chat.db",
       storePermission: .fullDiskAccess,
@@ -400,6 +435,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: true,
+      appleEventsScope: .always,
       supportsWrites: true,
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
@@ -459,6 +495,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: nil,
       symbol: nil,
       usesAppleEvents: false,
+      appleEventsScope: nil,
       supportsWrites: true,
       storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
       storePermission: .fullDiskAccess,
@@ -531,6 +568,7 @@ struct Surface: Identifiable, Hashable {
       iconPath: "/System/Library/ExtensionKit/Extensions/DisplaysExt.appex",
       symbol: "display",
       usesAppleEvents: false,
+      appleEventsScope: nil,
       supportsWrites: false,
       storePath: nil,
       storePermission: .screenRecording,
@@ -538,6 +576,60 @@ struct Surface: Identifiable, Hashable {
       runtime: .swift,
       gates: [
         Surface.Gate(id: "allowCapture", envSuffix: "ALLOW_CAPTURE", label: "Allow screen capture", description: "Lets apple_screen_capture_surface take a picture of a surface app's window. Needs Screen Recording, supersedes the one-time-code gates, and is off by default."),
+      ]
+    ),
+    Surface(
+      id: "sound",
+      displayName: "Sound",
+      // The SECOND capability, and the first that is two features wearing one
+      // name. Speakers and microphone have almost nothing in common: the output
+      // half needs NO permission at all and the input half needs a TCC class the
+      // app had never held. docs/sound.md keeps them apart and so does the gate.
+      //
+      // supportsWrites is TRUE, unlike screen, and the difference is the point.
+      // screen set it false because allowCapture already gated its only writing
+      // tool. Here volume, mute, speak and play are mutations that are NOT
+      // recording, and they have to be reachable without ever enabling the
+      // microphone. Two independent gates, following the allowCodes precedent:
+      // a change of tier gets its own switch rather than allowWrites.
+      //
+      // MEASURED, macOS 26.6, see docs/sound.md. 4 devices in 28 ms. The default
+      // output AND input devices are both settable, and that is the one
+      // capability with no CLI and no AppleScript equivalent anywhere — it is
+      // why this is CoreAudio rather than osascript. 3 of 4 devices expose no
+      // volume control at all, which is hardware rather than a failure, so
+      // get_volume reports it per device instead of erroring.
+      //
+      // The microphone grant lands on the bundle, is inherited by a grandchild
+      // and survives a rebuild and re-sign — measured through spike-app-tcc
+      // lane 2d, not inherited from the Full Disk Access verdict. That
+      // generalisation was already wrong once, for Accessibility.
+      //
+      // NOT INVISIBLE, and the copy must not imply otherwise. macOS shows a
+      // non-suppressible orange indicator naming Cupertino for as long as the
+      // microphone is live. Routing recording through QuickTime instead would
+      // have made that indicator say QuickTime — borrowed visibility that
+      // hides the agent behind an app the user never asked to record, which is
+      // the opposite of the attribution docs/alternatives.md claims as a win.
+      //
+      // RECORD TO CAF, NEVER M4A. Same AAC codec, byte-identical size, and a
+      // truncated m4a is not a short recording but NO recording: measured, it
+      // fails AudioFileOpenURL outright while the CAF still opens with intact
+      // duration and format. stop() must also run on app termination, because an
+      // unfinalised container is the same total loss.
+      bundleID: nil,
+      kind: .capability,
+      iconPath: "/System/Library/ExtensionKit/Extensions/Sound.appex",
+      symbol: "speaker.wave.2",
+      usesAppleEvents: false,
+      appleEventsScope: nil,
+      supportsWrites: true,
+      storePath: nil,
+      storePermission: .microphone,
+      envPrefix: "APPLE_SOUND_",
+      runtime: .swift,
+      gates: [
+        Surface.Gate(id: "allowRecording", envSuffix: "ALLOW_RECORDING", label: "Allow microphone recording", description: "Lets apple_sound_start_recording capture from the microphone to a file. Needs the Microphone permission, shows the system's orange indicator while it runs, and is off by default."),
       ]
     ),
   ]
@@ -549,5 +641,21 @@ struct Surface: Identifiable, Hashable {
 
   static func named(_ id: String) -> Surface? {
     all.first { $0.id == id }
+  }
+
+  /// Whether this surface will actually send an Apple Event **as configured**.
+  ///
+  /// The question a status glyph should be asking. `usesAppleEvents` is the
+  /// wrong one on its own: it is true for Messages and Contacts, whose reads
+  /// are file-lane and whose only scripted verb is a write, so a Mac with
+  /// writes off showed an orange "not yet asked" for a grant that nothing on
+  /// it would ever spend.
+  ///
+  /// Takes the flag rather than reading `SurfaceSettings` so this stays pure —
+  /// it is called from a detached probe and from view code, and neither should
+  /// be the thing that decides where the defaults are read.
+  func needsAutomation(allowWrites: Bool) -> Bool {
+    guard usesAppleEvents else { return false }
+    return appleEventsScope == .always || allowWrites
   }
 }

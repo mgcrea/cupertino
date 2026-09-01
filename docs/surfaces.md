@@ -211,13 +211,21 @@ generated region is a red build rather than a shipped inconsistency.
 | `apps/website/src/data/surfaces.ts`     | the `id` union (not the tool names)                              |
 | `.mcp.json`                             | the dev bridge entries (written, not checked — it is gitignored) |
 
-Adding a surface is one manifest entry and `make surfaces`, plus two declarations that decide what
+Adding a surface is one manifest entry and `make surfaces`, plus three declarations that decide what
 kind of thing it is:
 
-| Field     | Meaning                                                                                                                                                                                                   |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`    | `app` brokers one Apple application; `capability` brokers something the system provides and no app owns. Drives how the settings list is grouped, which icon is drawn, and which permission is asked for. |
-| `runtime` | `node` is a package under `packages/<id>`; `swift` is served in-process by the app.                                                                                                                       |
+| Field              | Meaning                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`             | `app` brokers one Apple application; `capability` brokers something the system provides and no app owns. Drives how the settings list is grouped, which icon is drawn, and which permission is asked for. |
+| `runtime`          | `node` is a package under `packages/<id>`; `swift` is served in-process by the app.                                                                                                                       |
+| `appleEventsScope` | `always` if the read lane goes through Apple Events; `writes` if events are the write lane and reads come off files; `null` when `usesAppleEvents` is false.                                              |
+
+`appleEventsScope` is the one that decides what a status glyph asks for, and it is separate from
+`usesAppleEvents` on purpose. `usesAppleEvents` says whether the grant is ever needed — it generates
+the consent string in `project.pbxproj`, so narrowing it would mean a re-signed binary to turn writes
+on. `appleEventsScope` says whether it is needed **as this Mac is configured**: Messages and Contacts
+read through the file lane and script their app only to write, so with `allowWrites` off they send no
+event at all, and the popover used to nag them for a grant nothing on the machine would ever spend.
 
 They are declared rather than inferred from each other. Today every capability is also `swift` and
 has no `bundleId`, and that is a coincidence of there being one of them — the next capability should
@@ -381,12 +389,14 @@ with the store tests the hypothesis against itself.
   `packages/contacts/test/fixtures/contacts-store.sql`, 94 objects, no rows.) (Calendar's is captured, and the premise
   of this note was wrong: `writeFixture` creates the directory, so `--write` never needed the package
   to exist first.)
-- **Contacts needs a permission the app does not act on.** It sits behind its own TCC service, not
-  Full Disk Access, and unlike FDA it PROMPTS — see [contacts.md](contacts.md). `surfaces.json` now
-  records which grant gates each store and `Surface.storePermission` carries it into the app, but
-  `Permissions.swift` still only ever checks Full Disk Access, so a Contacts store that cannot be
-  opened is still reported with the wrong advice. Whether FDA alone opens it is measured in one
-  direction only. That pane owes two states, this one and Safari's.
+- ~~**Contacts needs a permission the app does not act on.**~~ Fixed. It sits behind its own TCC
+  service, not Full Disk Access, and unlike FDA it PROMPTS — see [contacts.md](contacts.md).
+  `Permissions.swift` only ever checked Full Disk Access, so a Contacts store that could not be
+  opened was reported with the wrong advice. `Permissions.storeGrant(for:diskAccess:)` now dispatches
+  on `Surface.storePermission` across all three services, `Permissions.contacts()` probes this one
+  with `access(2)` on the store — not `CNContactStore`, which would make the app claim the grant in
+  its metadata for everyone who never turns the surface on — and the Access card draws a row for
+  whichever grant a surface actually runs on rather than special-casing Screen Recording.
 - ~~**The Automation row is a dead end while the target app is closed.**~~ Fixed. Contacts is what
   exposed it: Mail, Notes, Reminders and Calendar are apps people leave open, so `.appNotRunning` was
   effectively unreachable until a surface arrived that nobody keeps running. MEASURED, macOS 26.6,

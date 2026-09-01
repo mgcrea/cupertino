@@ -18,32 +18,14 @@ import Foundation
 /// `test/…` on the node side and by `make smoke` here.
 enum ScreenServer {
 
-  /// Matches what the node servers negotiate, so a host sees one protocol
-  /// across every Cupertino surface.
-  static let protocolVersion = "2024-11-05"
+  /// Shared with every other in-process surface — see `InProcessRPC`.
+  static let protocolVersion = InProcessRPC.protocolVersion
 
   // ─── the loop ──────────────────────────────────────────────────────────────
 
   /// One newline-delimited JSON-RPC message. MCP's stdio framing, which the
   /// socket carries verbatim.
-  static func nextLine(_ fd: Int32) -> String? {
-    var out = [UInt8]()
-    // Bounded: a caller that never sends a newline must not be able to grow
-    // this without limit. 1 MiB is far above any real request here.
-    let limit = 1 << 20
-    while out.count < limit {
-      var byte: UInt8 = 0
-      let n = read(fd, &byte, 1)
-      if n < 0 {
-        if errno == EINTR { continue }
-        return nil
-      }
-      if n == 0 { return out.isEmpty ? nil : String(decoding: out, as: UTF8.self) }
-      if byte == UInt8(ascii: "\n") { return String(decoding: out, as: UTF8.self) }
-      out.append(byte)
-    }
-    return nil
-  }
+  static func nextLine(_ fd: Int32) -> String? { InProcessRPC.nextLine(fd) }
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
@@ -338,73 +320,37 @@ enum ScreenServer {
 
   // ─── plumbing ──────────────────────────────────────────────────────────────
 
-  /// Run an async call from this server's own thread.
-  ///
-  /// Safe here and NOT safe on the main thread: `serve` runs on a thread of its
-  /// own per connection, so blocking it waits on nothing that ScreenCaptureKit
-  /// needs. The same pattern on main would deadlock.
+  /// Shared with every other in-process surface — see `InProcessRPC.blocking`.
   private static func blocking<T>(_ body: @escaping () async throws -> T) throws -> T {
-    let box = ResultBox<T>()
-    let sem = DispatchSemaphore(value: 0)
-    Task {
-      do { box.result = .success(try await body()) } catch { box.result = .failure(error) }
-      sem.signal()
-    }
-    sem.wait()
-    guard let result = box.result else {
-      throw ScreenCapture.Failure.captureFailed("the request", code: 0)
-    }
-    return try result.get()
+    try InProcessRPC.blocking(body)
   }
 
-  private static func jsonText(_ object: Any) -> String {
-    guard
-      let data = try? JSONSerialization.data(
-        withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-      let text = String(data: data, encoding: .utf8)
-    else { return "{}" }
-    return text
-  }
+  private static func jsonText(_ object: Any) -> String { InProcessRPC.jsonText(object) }
 
   private static func envelope(_ id: Any?, _ body: [String: Any]) -> String {
-    var msg: [String: Any] = ["jsonrpc": "2.0"]
-    msg["id"] = id ?? NSNull()
-    for (k, v) in body { msg[k] = v }
-    guard let data = try? JSONSerialization.data(withJSONObject: msg),
-      let text = String(data: data, encoding: .utf8)
-    else { return #"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"encode failed"}}"# }
-    return text
+    InProcessRPC.envelope(id, body)
   }
 
   private static func result(_ id: Any?, _ value: Any) -> String {
-    envelope(id, ["result": value])
+    InProcessRPC.result(id, value)
   }
 
   private static func error(_ id: Any?, code: Int, message: String) -> String {
-    envelope(id, ["error": ["code": code, "message": message]])
+    InProcessRPC.error(id, code: code, message: message)
   }
 
   /// A tool RESULT carrying text, which is what every node surface returns.
   private static func ok(_ id: Any?, _ value: [String: Any]) -> String {
-    result(id, ["content": [["type": "text", "text": jsonText(value)]]])
+    InProcessRPC.ok(id, value)
   }
 
   /// A tool failure is a result with `isError`, not a JSON-RPC error — the
   /// model has to be able to read why.
   private static func failure(_ id: Any?, _ message: String) -> String {
-    result(id, ["content": [["type": "text", "text": message]], "isError": true])
+    InProcessRPC.failure(id, message)
   }
 
   private static func failed(_ id: Any?, _ error: Error) -> String {
     failure(id, error.localizedDescription)
   }
-}
-
-/// Carries one `Result` across the `Task` boundary in `ScreenServer.blocking`.
-///
-/// `@unchecked Sendable` is honest here rather than a shrug: exactly one write
-/// happens inside the task and exactly one read after `sem.wait()`, so the
-/// semaphore is the ordering.
-private final class ResultBox<T>: @unchecked Sendable {
-  var result: Result<T, Error>?
 }

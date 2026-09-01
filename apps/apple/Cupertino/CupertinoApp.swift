@@ -105,6 +105,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    // Before the host, not after: a running recording is only a file once
+    // `stop()` has finalised the container. Quitting mid-recording without this
+    // leaves an unfinalised one — survivable in the CAF this surface writes,
+    // and a total loss in the m4a it deliberately does not. Cheap insurance
+    // either way, and it also drops the microphone indicator promptly rather
+    // than at process teardown.
+    SoundCapture.shared.finishForTermination()
     ServerHost.shared.stop()
   }
 }
@@ -218,6 +225,15 @@ final class StatusModel {
 
   private(set) var diskAccess: DiskAccessStatus = .denied
   private(set) var automation: [String: AutomationStatus] = [:]
+  /// The TCC service each surface's store sits behind, and whether that store
+  /// opens. Both per surface, and both gathered in the same detached pass as
+  /// `automation` — see `refreshGrants`.
+  ///
+  /// These exist because a status glyph keyed on `automation` alone was wrong
+  /// in both directions: it drew Screen grey and "not needed" while every
+  /// capture refused, and it drew Mail green with its store unreadable.
+  private(set) var grants: [String: StoreGrant] = [:]
+  private(set) var stores: [String: StoreStatus] = [:]
   /// The two grants a Mail composer needs, which nothing else in this window
   /// covers. Both are about the app itself rather than a surface, so neither
   /// fits the per-surface `automation` table.
@@ -255,6 +271,20 @@ final class StatusModel {
       safariExtension = DemoSeed.safariExtension
       automation = Dictionary(
         uniqueKeysWithValues: Surface.all.map { ($0.id, DemoSeed.automation) })
+      // Seeded for the reason every answer in this branch is: the real probes
+      // read the capturing Mac, so an honest capture publishes whether whoever
+      // built the image had granted Screen Recording — and the same commit
+      // produces a green row on one machine and an orange one on another.
+      grants = Dictionary(
+        uniqueKeysWithValues: Surface.all.map { ($0.id, DemoSeed.storeGrant) })
+      stores = Dictionary(
+        uniqueKeysWithValues: Surface.all.map { surface in
+          (
+            surface.id,
+            DemoSeed.storePath(for: surface).map { StoreStatus.found(path: $0, readable: true) }
+              ?? .missing
+          )
+        })
       clients = Dictionary(
         uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.Status.configured) })
       return
@@ -266,7 +296,7 @@ final class StatusModel {
     accessibility = Permissions.accessibility()
     clients = Dictionary(
       uniqueKeysWithValues: ClientWiring.clients.map { ($0, ClientWiring.status(of: $0)) })
-    refreshAutomation()
+    refreshGrants()
     refreshSafariExtension()
   }
 
@@ -308,7 +338,7 @@ final class StatusModel {
   /// Only the surfaces that actually send an Apple Event. Asking TCC about a
   /// surface that never scripts anything would report it as "not yet asked"
   /// forever, and put an Allow… button on a permission nothing would use.
-  private func refreshAutomation() {
+  private func refreshGrants() {
     // Strings rather than `Surface` values, so what crosses to the detached
     // task is unambiguously Sendable no matter what Surface grows later.
     // Enabled only. Asking TCC about a surface that will never start spends a
@@ -317,22 +347,70 @@ final class StatusModel {
     // be an app. Nothing is dropped here in practice — surfaces.json refuses a
     // manifest with `usesAppleEvents` true and no bundle id — so the filter
     // above already guarantees one.
-    let targets = SurfaceSettings.enabledSurfaces.filter(\.usesAppleEvents)
+    //
+    // `needsAutomation`, not `usesAppleEvents`: Messages and Contacts read
+    // through the file lane and script their app only to write, so with writes
+    // off they send nothing and this asks TCC nothing. That is two blocking
+    // IPCs saved per refresh, and — the reason it was changed — two rows that
+    // no longer nag for a grant nothing on the Mac would ever spend.
+    let surfaces = SurfaceSettings.enabledSurfaces
+    let targets = surfaces
+      .filter { $0.needsAutomation(allowWrites: SurfaceSettings.allowWrites($0)) }
       .compactMap { surface in surface.bundleID.map { (surface.id, $0) } }
     // System Events goes through the same door and must ride the same detached
     // task. It is not a Surface, so it cannot come from the list above — but it
     // is the identical blocking IPC, and running it on the main thread would
     // reproduce the freeze this whole method exists to avoid.
     let systemEventsID = Permissions.systemEventsBundleID
+    // Read on the main actor and carried in, not probed inside the task: this
+    // is app-wide, `diskAccess()` walks the surface list to find one store that
+    // exists, and nine surfaces asking it nine times pays for one fact nine
+    // times.
+    let disk = diskAccess
     Task.detached {
       let statuses = targets.map { ($0.0, Permissions.automation(for: $0.1)) }
       let resolved = Dictionary(uniqueKeysWithValues: statuses)
       let events = Permissions.automation(for: systemEventsID)
+      // The store probes ride this task for a smaller reason than the freeze
+      // above, but the same one: resolving Mail's `V*` glob walks up to
+      // nineteen candidate paths, and `refresh()` runs on every menu open.
+      let grants = Dictionary(
+        uniqueKeysWithValues: surfaces.map {
+          ($0.id, Permissions.storeGrant(for: $0, diskAccess: disk))
+        })
+      let stores = Dictionary(
+        uniqueKeysWithValues: surfaces.map { surface -> (String, StoreStatus) in
+          guard let path = Permissions.resolveStore(surface) else { return (surface.id, .missing) }
+          // `Darwin.access`, spelled out: `@Observable` synthesises an
+          // `access(keyPath:)` on this class, and the bare name resolves to it.
+          return (surface.id, .found(path: path, readable: Darwin.access(path, R_OK) == 0))
+        })
       await MainActor.run {
         self.automation = resolved
         self.systemEvents = events
+        self.grants = grants
+        self.stores = stores
       }
     }
+  }
+
+  /// This surface's verdict, or `nil` until the first probe lands.
+  ///
+  /// Optional rather than an optimistic default: the alternative is painting
+  /// green for the frame before the answer arrives, and a row that flickers
+  /// from ready to a warning is worse than one that says it does not know yet.
+  /// Callers draw the same `questionmark.circle` they drew for an unknown
+  /// `AutomationStatus` before this existed.
+  func status(for surface: Surface) -> SurfaceStatus? {
+    guard let grant = grants[surface.id] else { return nil }
+    return SurfaceStatus(
+      surface: surface,
+      // nil when nothing will be sent, which is NOT "not yet asked" — there is
+      // nothing to ask for. `SurfaceStatus` leans on that distinction.
+      automation: surface.needsAutomation(allowWrites: SurfaceSettings.allowWrites(surface))
+        ? (automation[surface.id] ?? .notDetermined) : nil,
+      grant: grant,
+      store: stores[surface.id] ?? .checking)
   }
 
   func configure(_ client: ClientWiring.Client) {
@@ -430,14 +508,17 @@ struct StatusMenu: View {
       // explanations, the writes toggles and the client wiring moved to
       // Settings when a fourth surface made this taller than the thing it is
       // supposed to be a summary of.
+      // Through `StatusStyle` like everything else now. This row painted
+      // green/`.secondary` while the sidebar footer painted the same fact
+      // green/orange — two colours for one grant, neither of them the shared
+      // mapping.
       HStack {
+        let health: SurfaceHealth = model.diskAccess == .granted ? .ready : .needsSetup
         Label {
           Text("Full Disk Access")
         } icon: {
-          Image(
-            systemName: model.diskAccess == .granted ? "checkmark.circle.fill" : "xmark.circle.fill"
-          )
-          .foregroundStyle(model.diskAccess == .granted ? .green : .secondary)
+          Image(systemName: StatusStyle.healthIcon(health))
+            .foregroundStyle(StatusStyle.healthTint(health))
         }
         Spacer()
         if model.diskAccess != .granted {
@@ -446,6 +527,18 @@ struct StatusMenu: View {
             .controlSize(.small)
         }
       }
+
+      // The one grant that is not a surface's own. It gates six of the rows
+      // below, which is why it sits above them and why they no longer repeat
+      // it — a rule, not a layout choice: see `SurfaceStatus.grant`.
+      //
+      // A divider rather than a "Permissions" heading. A heading announces a
+      // category, and nothing would ever join this one: Accessibility, System
+      // Events and the Safari extension are app-wide too, and `PermissionsPane`
+      // records that they were deliberately kept out of this panel. One rule
+      // line separates the app-wide fact from the per-surface list for a pixel,
+      // on the panel whose own comment above records being trimmed twice.
+      Divider()
 
       // Enabled only, and this is the feature's most visible payoff. The comment
       // above records that the explanations moved to Settings "when a fourth
@@ -460,40 +553,34 @@ struct StatusMenu: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      // One verdict per surface, not one grant. The glyph used to come from
+      // `AutomationStatus` alone, which drew Screen grey and "not needed" while
+      // every capture on the Mac refused, and drew Mail green with its store
+      // unreadable. `SurfaceStatus` weighs every requirement the manifest
+      // declares — and the button below now offers the step for whichever one
+      // is missing, rather than only ever an Automation prompt.
       ForEach(SurfaceSettings.enabledSurfaces) { surface in
+        let status = model.status(for: surface)
         HStack {
           Label {
             Text(surface.displayName)
           } icon: {
-            Image(systemName: StatusStyle.automationIcon(surface, model.automation[surface.id]))
-              .foregroundStyle(StatusStyle.automationTint(surface, model.automation[surface.id]))
+            // The probe has not landed yet. Same glyph an unknown
+            // `AutomationStatus` drew here before — see `StatusModel.status`.
+            Image(
+              systemName: status.map { StatusStyle.healthIcon($0.health) } ?? "questionmark.circle"
+            )
+            .foregroundStyle(status.map { StatusStyle.healthTint($0.health) } ?? Color.secondary)
           }
           Spacer()
-          switch surface.usesAppleEvents ? model.automation[surface.id] : nil {
-          case .notDetermined:
-            // Ask here, where the dialog is expected, rather than letting the
-            // first tool call block on it 30 seconds into a conversation.
-            Button(StatusStyle.actionLabel(.notDetermined) ?? "") {
-              model.requestAutomation(surface)
-            }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-          case .denied:
-            // A denial cannot be re-prompted; it has to be changed in Settings.
-            Button(StatusStyle.actionLabel(.denied) ?? "") {
-              Permissions.openAutomationSettings()
-            }
-            .controlSize(.small)
-          case .appNotRunning:
-            // Same reasoning as the Permissions pane: consent cannot be asked
-            // for a closed app, so the only useful control opens it first.
-            Button(StatusStyle.actionLabel(.appNotRunning) ?? "") {
-              model.requestAutomation(surface)
-            }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-          default:
-            Text(StatusStyle.automationCaption(surface, model.automation[surface.id]))
+          // Ask here, where the dialog is expected, rather than letting the
+          // first tool call block on it 30 seconds into a conversation.
+          if let action = status?.action {
+            Button(action.label) { action.run() }
+              .buttonStyle(.glass)
+              .controlSize(.small)
+          } else if let status {
+            Text(status.caption)
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -702,15 +789,32 @@ struct WritesToggle: View {
 
   private let surface: Surface
   private let style: Style
+  /// Optional because the Settings row has no model to hand and does not need
+  /// one — that pane is not painting a status glyph.
+  private let model: StatusModel?
   @AppStorage private var allowWrites: Bool
 
-  init(surface: Surface, style: Style = .inline) {
+  init(surface: Surface, style: Style = .inline, model: StatusModel? = nil) {
     self.surface = surface
     self.style = style
+    self.model = model
     _allowWrites = AppStorage(wrappedValue: false, "allowWrites.\(surface.id)")
   }
 
   var body: some View {
+    toggle
+      // For a surface whose events are the write lane, this switch decides
+      // whether an Automation grant is needed at all — so flipping it changes
+      // the row above. Nothing else would re-probe: the popover refreshes on
+      // `onAppear` and this pane does not, so the Access card would sit on the
+      // previous answer until the window was reopened.
+      .onChange(of: allowWrites) {
+        guard surface.appleEventsScope == .writes else { return }
+        model?.refresh()
+      }
+  }
+
+  @ViewBuilder private var toggle: some View {
     switch style {
     case .inline:
       Toggle("Allow writes", isOn: $allowWrites)

@@ -788,6 +788,13 @@ enum StatusStyle {
   }
 
   static func automationCaption(_ surface: Surface, _ status: AutomationStatus?) -> String {
+    // Scripted only to write, and writes are off — so nothing will send an
+    // event and nothing will ask for the grant. Reporting "not yet asked" here
+    // was true and useless: it nagged for a permission that turning one switch
+    // on is the only way to ever spend.
+    if surface.appleEventsScope == .writes, !SurfaceSettings.allowWrites(surface) {
+      return "not needed — writes are off"
+    }
     guard !surface.usesAppleEvents else { return caption(status) }
     // A capability has no app behind it, so "reads only" would explain the
     // wrong thing: the grant is not declined here, there is simply nothing to
@@ -826,6 +833,33 @@ enum StatusStyle {
     }
   }
 
+  /// The aggregate glyph and tint — what the popover, the sidebar row and the
+  /// sidebar footer all paint now.
+  ///
+  /// Here rather than on `SurfaceHealth` itself for the reason this whole enum
+  /// exists: one place decides what green means, so the three renderers cannot
+  /// drift. `SurfaceHealth` is the verdict; these are how it looks.
+  static func healthIcon(_ health: SurfaceHealth) -> String {
+    switch health {
+    case .ready: "checkmark.circle.fill"
+    // A triangle rather than a cross. A cross reads as broken, and this state
+    // is "one step left" — the button beside it is the step.
+    case .needsSetup: "exclamationmark.triangle.fill"
+    case .fault: "xmark.octagon.fill"
+    }
+  }
+
+  static func healthTint(_ health: SurfaceHealth) -> Color {
+    switch health {
+    case .ready: .green
+    case .needsSetup: .orange
+    case .fault: .red
+    }
+  }
+
+  /// The AUTOMATION glyph, which is now one input to the aggregate above rather
+  /// than the whole verdict. Still drawn on its own by the Access card, whose
+  /// job is the per-grant breakdown.
   static func icon(_ status: AutomationStatus?) -> String {
     switch status {
     case .granted: "checkmark.circle.fill"

@@ -67,6 +67,13 @@ jobs:
       # Release whose consent prompt names the wrong apps.
       - name: Surface manifest 🔍
         run: make surfaces-check
+      # The README's table is the one copy of the surface list that is NOT
+      # generated — its third column is hand-written prose no manifest knows.
+      # So it drifted: three wrong counts, a missing `screen` row, and Safari
+      # described as read-only while registering five write-gated tools. A
+      # false safety claim in the file most readers see first is worth a step.
+      - name: README surfaces 🔍
+        run: make readme-check
       # Same contract for the release version. It lived in eleven places and the
       # release commit bumped ten: the website announced 1.2.0 through both
       # 1.2.1 and 1.2.2, which is the one copy a visitor reads. The root

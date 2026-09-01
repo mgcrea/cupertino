@@ -18,9 +18,13 @@ struct SurfaceDetail: View {
   let model: StatusModel
 
   @State private var store: StoreStatus = .checking
-  /// A capability's own TCC grant. Resolved in `.task`, not read inline: a view
-  /// body runs often and this is a fact about the machine, not about the render.
-  @State private var screenRecording: ScreenRecordingStatus?
+  /// The TCC service this surface's store sits behind. Resolved in `.task`, not
+  /// read inline: a view body runs often and this is a fact about the machine,
+  /// not about the render.
+  ///
+  /// Its own state rather than `model.grants`, because that table covers the
+  /// ENABLED surfaces only and this pane reports an off surface too.
+  @State private var grant: StoreGrant?
   /// Safari only. `nil` until the first probe returns, so the card can say
   /// "Looking…" rather than "nothing captured" at a directory it has not read.
   @State private var captures: SafariCaptures?
@@ -34,13 +38,6 @@ struct SurfaceDetail: View {
     self.surface = surface
     self.model = model
     _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
-  }
-
-  enum StoreStatus {
-    case checking
-    /// No file lane at all, or nothing on this machine to read.
-    case missing
-    case found(path: String, readable: Bool)
   }
 
   var body: some View {
@@ -73,8 +70,9 @@ struct SurfaceDetail: View {
     .task(id: surface.id) {
       await resolveStore()
       await resolveExtension()
-      screenRecording =
-        surface.storePermission == .screenRecording ? Permissions.screenRecording() : nil
+      grant = DemoSeed.isEnabled
+        ? DemoSeed.storeGrant
+        : Permissions.storeGrant(for: surface, diskAccess: model.diskAccess)
     }
   }
 
@@ -154,6 +152,30 @@ struct SurfaceDetail: View {
     .count
   }
 
+  /// What the grant gating this store is called, in the words System Settings
+  /// uses — this row sends someone to a named pane and has to match it.
+  private var grantName: String {
+    switch surface.storePermission {
+    case .fullDiskAccess: "Full Disk Access"
+    case .contacts: "Contacts"
+    case .screenRecording: "Screen Recording"
+    case .microphone: "Microphone"
+    }
+  }
+
+  /// What breaks without it, per surface. Screen refuses outright; Contacts
+  /// still has an Apple Events lane for writes, so "every tool" would be false.
+  private var grantFailureHint: String {
+    switch surface.storePermission {
+    case .fullDiskAccess: "not granted"
+    case .contacts: "not granted — reads will find nothing"
+    case .screenRecording: "not granted — every capture will refuse"
+    // Only recording refuses. Devices and volume need no grant at all, which is
+    // the whole shape of this surface and would be misreported by "every tool".
+    case .microphone: "not granted — recording will refuse, devices and volume still work"
+    }
+  }
+
   private var accessSection: some View {
     Card("Access") {
       HStack {
@@ -186,35 +208,56 @@ struct SurfaceDetail: View {
       }
       .font(.callout)
 
-      // The grant this surface actually runs on. Without it the row above says
-      // "not needed" and nothing else on the pane mentions a permission at all,
-      // so the surface reads as ready when every tool will refuse.
+      // The grant this surface actually runs on. Without it the row above can
+      // say "not needed" and nothing else on the pane mentions a permission at
+      // all, so the surface reads as ready when every tool will refuse.
       //
-      // The button opens the pane rather than calling
-      // `CGRequestScreenCaptureAccess`, which only ever prompts once and is
-      // silent afterwards — a button that works one time is the dead end the
-      // Automation row was already fixed for.
-      if surface.storePermission == .screenRecording {
+      // Driven by `storePermission` rather than special-cased to Screen
+      // Recording, which is how Contacts had gone since it shipped without a
+      // row for the one grant it runs on — it declared its own TCC service and
+      // nothing in the app ever probed it. The `microphone` case docs/sound.md
+      // anticipates gets a row here for free.
+      //
+      // Full Disk Access is the deliberate exception: it is app-wide, and
+      // `SurfaceDetail`'s own doc comment says not to report it per surface —
+      // the Store card below reports what IS per surface, whether this store
+      // opens.
+      if surface.storePermission != .fullDiskAccess {
         Divider()
         HStack {
-          let granted = screenRecording == .granted
+          let granted = grant == .granted
           Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
             .foregroundStyle(granted ? Color.green : Color.orange)
-          Text("Screen Recording")
+          Text(grantName)
           Spacer()
-          Text(
-            screenRecording == nil
-              ? "checking…" : (granted ? "granted" : "not granted — every capture will refuse")
-          )
-          .foregroundStyle(.secondary)
-          if screenRecording == .denied {
-            Button("Allow…") { Permissions.openScreenRecordingSettings() }
-              .buttonStyle(.glass)
-              .controlSize(.small)
+          Text(grant == nil ? "checking…" : (granted ? "granted" : grantFailureHint))
+            .foregroundStyle(.secondary)
+          // The pane, never the request call. `CGRequestScreenCaptureAccess`
+          // prompts once and returns silently ever after — a button that works
+          // one time is the dead end the Automation row was already fixed for.
+          if grant == .missing {
+            Button("Allow…") {
+              switch surface.storePermission {
+              case .contacts: Permissions.openContactsSettings()
+              case .screenRecording: Permissions.openScreenRecordingSettings()
+              case .fullDiskAccess: Permissions.openDiskAccessSettings()
+              // The microphone is the one grant whose prompt is still live
+              // while nobody has been asked, so the comment above does not
+              // apply to it — see SurfaceStatus.action.
+              case .microphone:
+                if Permissions.microphone() == .notDetermined {
+                  Task { _ = await Permissions.requestMicrophone() }
+                } else {
+                  Permissions.openMicrophoneSettings()
+                }
+              }
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
           }
         }
         .font(.callout)
-        if screenRecording == .denied {
+        if grant == .missing, surface.storePermission == .screenRecording {
           Text("Takes effect when Cupertino relaunches, not when the switch is flipped.")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -227,7 +270,7 @@ struct SurfaceDetail: View {
 
         // Safety, not licensing. docs/licensing.md rules out gating writes behind
         // the licence, and this toggle behaves identically either way.
-        WritesToggle(surface: surface)
+        WritesToggle(surface: surface, model: model)
           .padding(.leading, 0)
       }
 

@@ -132,6 +132,36 @@ else
   screen_rc=127
 fi
 
+# --- Lane 2d: the microphone, for the proposed `sound` surface ---
+#
+# A FOURTH service, and the first one whose absent usage description is fatal
+# rather than merely denying: macOS TERMINATES a process that touches the
+# microphone with no NSMicrophoneUsageDescription. build.sh puts one in the
+# Info.plist, and if this lane ever reports a signal-kill rather than a status,
+# that string is the first thing to check.
+#
+# Unlike Full Disk Access, Accessibility and Screen Recording, the microphone
+# PROMPTS — so there is nothing to drag into a list. A dialog naming "Cupertino
+# Spike" is itself the finding: it means the grant is landing on the bundle
+# rather than on the terminal.
+#
+# --force is CORRECT here for the same reason it is on the screen lane, and
+# wrong everywhere else. From a terminal the probe refuses to provoke the prompt
+# because the prompt would name the editor — measured: the ancestry from an
+# agent shell reads `zsh <- claude <- Code Helper (Plugin) <- Code`, so a grant
+# given there belongs to Visual Studio Code. Inside this bundle the responsible
+# process IS the app.
+echo
+echo "--- microphone lane: probe-sound (child of the app)"
+if [ -x "$here/probe-sound" ]; then
+  "$here/probe-sound" --force --seconds=2
+  sound_rc=$?
+  echo "sound lane rc=$sound_rc  (0 = GO, 3 = undetermined, 4 = measured NO-GO)"
+else
+  echo "sound lane SKIPPED: no probe-sound in $here (rebuild with ./build.sh)"
+  sound_rc=127
+fi
+
 # --- Lane 3: the REAL code path, not a toy probe ---
 # scripts/probe-envelope-index.mjs is the phase-0 spike that produced
 # docs/envelope-index.md. Its output is redacted by design (DDL, counts,
@@ -147,6 +177,6 @@ else
 fi
 
 echo
-echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc accessibility_rc=$ax_rc screen_rc=$screen_rc"
+echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc accessibility_rc=$ax_rc screen_rc=$screen_rc sound_rc=$sound_rc"
 [ "$file_rc" -eq 0 ] || exit 3
 exit 0

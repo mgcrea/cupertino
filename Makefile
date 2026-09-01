@@ -24,9 +24,9 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps screen
+SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound
 NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
-SWIFT_SURFACES := screen
+SWIFT_SURFACES := screen sound
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -241,6 +241,7 @@ screen-check: ## Assert the in-process screen server speaks MCP, with no app
 	@# for when you know what is running.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/screen-check \
+		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/ScreenServer.swift \
 		apps/apple/Cupertino/ScreenCapture.swift \
 		apps/apple/Cupertino/Surfaces.swift \
@@ -249,6 +250,29 @@ screen-check: ## Assert the in-process screen server speaks MCP, with no app
 		apps/apple/Cupertino/InstallLocation.swift \
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/screen-check.swift
 	@apps/apple/.build/screen-check
+
+sound-check: ## Assert the in-process sound server speaks MCP and its gates are independent
+	@# The same gate scripts/verify-servers.sh cannot be, for the reason
+	@# screen-check gives: a surface the app serves itself has no cli.js to
+	@# scan and no runtime to spawn it under.
+	@#
+	@# Runs with NO microphone permission, deliberately. The ungated half of
+	@# this surface needs no grant at all and has to answer anyway, and the
+	@# gated half has to be invisible rather than loud.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/sound-check \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/SoundServer.swift \
+		apps/apple/Cupertino/SoundCapture.swift \
+		apps/apple/Cupertino/SoundDevices.swift \
+		apps/apple/Cupertino/Permissions.swift \
+		apps/apple/Cupertino/SafariCaptures.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
+	@apps/apple/.build/sound-check
 
 unit: ## Assert what a recorded call carries and that the audit chain holds, with no app
 	@mkdir -p apps/apple/.build
@@ -569,6 +593,9 @@ surfaces: ## Regenerate every copy of the surface list from surfaces.json
 surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
 	@node scripts/generate-surfaces.mjs --check
 
+readme-check: ## Fail if README's Surfaces table has drifted from the tree
+	@node scripts/readme-surfaces-check.mjs
+
 version: ## Propagate the root package.json version into every copy of it
 	@node scripts/generate-version.mjs
 
@@ -687,8 +714,8 @@ SHOT_SCREENS := surface prompt activity connections settings writes
 # inside a backslash continuation — putting the generated region in the middle of
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
-SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \
