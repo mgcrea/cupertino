@@ -2,7 +2,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { AppleNotesClient } from "../client/notes.js";
-import { folderArg, limitArg, noteRefArg, ok, okText, resolveLimit, wrap, wrapResult } from "./util.js";
+import {
+  folderArg,
+  limitArg,
+  noteRefArg,
+  ok,
+  okText,
+  resolveLimit,
+  wrap,
+  wrapResult,
+} from "./util.js";
 
 export const registerNoteTools = (
   server: McpServer,

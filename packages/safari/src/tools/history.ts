@@ -86,9 +86,7 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
                 ? "This store has no usable visit-time column, so the date range was NOT applied. " +
                   "Every result is unfiltered by date."
                 : undefined,
-            truncated: result.truncated
-              ? `More results exist beyond limit=${capped}.`
-              : undefined,
+            truncated: result.truncated ? `More results exist beyond limit=${capped}.` : undefined,
             datesUnavailable: result.datesAvailable
               ? undefined
               : "Timestamps could not be placed on a known epoch, so every date reads null. " +

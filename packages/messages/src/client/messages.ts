@@ -334,7 +334,9 @@ export class AppleMessagesClient {
   }
 
   searchMessages(query: string, limit?: number): RenderedMessage[] {
-    return this.#render(this.#require().search(query, resolveLimit(limit, this.#config.maxResults)));
+    return this.#render(
+      this.#require().search(query, resolveLimit(limit, this.#config.maxResults)),
+    );
   }
 
   getMessage(guid: string):

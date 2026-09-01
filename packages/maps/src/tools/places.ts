@@ -151,9 +151,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
           compact({
             places: result.places,
             count: result.places.length,
-            truncated: result.truncated
-              ? `More places exist beyond limit=${capped}.`
-              : undefined,
+            truncated: result.truncated ? `More places exist beyond limit=${capped}.` : undefined,
           }),
         );
       }),
@@ -191,9 +189,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
           compact({
             places: result.places,
             count: result.places.length,
-            truncated: result.truncated
-              ? `More places exist beyond limit=${capped}.`
-              : undefined,
+            truncated: result.truncated ? `More places exist beyond limit=${capped}.` : undefined,
           }),
         );
       }),
@@ -229,9 +225,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
                   `rows have coordinates and dates but no label. This is the store's shape, not ` +
                   `missing data.`
                 : undefined,
-            truncated: result.truncated
-              ? `More entries exist beyond limit=${capped}.`
-              : undefined,
+            truncated: result.truncated ? `More entries exist beyond limit=${capped}.` : undefined,
             datesUnavailable: result.datesAvailable
               ? undefined
               : "Timestamps could not be placed on a known epoch, so every date reads null.",
@@ -259,9 +253,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
           compact({
             places: result.places,
             count: result.places.length,
-            truncated: result.truncated
-              ? `More matches exist beyond limit=${capped}.`
-              : undefined,
+            truncated: result.truncated ? `More matches exist beyond limit=${capped}.` : undefined,
           }),
         );
       }),

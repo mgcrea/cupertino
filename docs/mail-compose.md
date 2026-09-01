@@ -79,9 +79,9 @@ opened by hand. A window whose geometry cannot be read back is not moved at all.
 Two things, and both are invisible in the result, which is why both are refused rather than
 dropped:
 
-| Lost            | Why                                                                                                                                                                        | What `update_draft` does                                                                          |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **Threading**   | `In-Reply-To` and `References` are written by Mail's own `reply` command, which needs the original message. A recreated reply draft looks perfect and starts a new thread. | Reads `all headers`; refuses if either header is present, pointing at `reply_to_message` instead. |
+| Lost            | Why                                                                                                                                                                                                                                                                 | What `update_draft` does                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Threading**   | `In-Reply-To` and `References` are written by Mail's own `reply` command, which needs the original message. A recreated reply draft looks perfect and starts a new thread.                                                                                          | Reads `all headers`; refuses if either header is present, pointing at `reply_to_message` instead. |
 | **Attachments** | Not a dictionary limit — see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so). The bytes live in the original's sidecar tree, not as a file on disk, so re-attaching means extracting them first. Possible; not implemented. | Counts `mailAttachments`; refuses if any.                                                         |
 
 A third case is a limitation rather than a loss: a draft with **no subject** is refused unless the
@@ -124,14 +124,14 @@ end to end, and the class description names `make` as its purpose.
 Four accounts, a 180x180 PNG and a 1-page PDF staged in `/private/tmp`, three mails sent to the
 author's own iCloud address and deleted afterwards.
 
-| Probe | Result |
-| ----- | ------ |
-| AppleScript `make new attachment ... at after the last paragraph` | Works. `count of attachments of content` = 1. |
-| JXA `m.content.attachments.push(M.Attachment({fileName: Path(f)}))` | **Works.** No throw, count = 1. This is the form to ship. |
-| JXA `M.make({new:"attachment", ..., at: m.content.paragraphs.at(-1).after})` | Works. Equivalent, more verbose. |
-| JXA `... at: m.content.attachments.end` or `paragraphs.end` | Throws `Invalid key form.` |
-| Survives `send()` | **Yes.** Received mail carries `image/png` and `application/pdf` parts, base64, with `filename=`. |
-| On the `reply` composer | **Yes**, and `In-Reply-To`/`References` survive with it. |
+| Probe                                                                        | Result                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| AppleScript `make new attachment ... at after the last paragraph`            | Works. `count of attachments of content` = 1.                                                     |
+| JXA `m.content.attachments.push(M.Attachment({fileName: Path(f)}))`          | **Works.** No throw, count = 1. This is the form to ship.                                         |
+| JXA `M.make({new:"attachment", ..., at: m.content.paragraphs.at(-1).after})` | Works. Equivalent, more verbose.                                                                  |
+| JXA `... at: m.content.attachments.end` or `paragraphs.end`                  | Throws `Invalid key form.`                                                                        |
+| Survives `send()`                                                            | **Yes.** Received mail carries `image/png` and `application/pdf` parts, base64, with `filename=`. |
+| On the `reply` composer                                                      | **Yes**, and `In-Reply-To`/`References` survive with it.                                          |
 
 Two caveats that matter more than the yes:
 

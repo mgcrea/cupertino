@@ -153,7 +153,11 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
           return { messages: [], note: "No accounts are visible to this server." };
         }
         const box = mailbox ?? (resolved.mailboxes.includes("INBOX") ? "INBOX" : "Inbox");
-        const result = await client.listRecent(resolved, box, resolveLimit(limit, client.config.maxResults));
+        const result = await client.listRecent(
+          resolved,
+          box,
+          resolveLimit(limit, client.config.maxResults),
+        );
         const lanes = await client.lanes();
         return {
           account: resolved.name,

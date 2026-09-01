@@ -40,7 +40,11 @@ const parseBound = (raw: string | undefined, field: string): Date | undefined =>
  * Applied here rather than in `client.window`, which `find_codes` also calls
  * with a start alone and genuinely does mean "until now".
  */
-const closeRange = (from: Date | undefined, to: Date | undefined, days: number): Date | undefined => {
+const closeRange = (
+  from: Date | undefined,
+  to: Date | undefined,
+  days: number,
+): Date | undefined => {
   if (to !== undefined || from === undefined) return to;
   const end = new Date(from);
   end.setDate(end.getDate() + days);
