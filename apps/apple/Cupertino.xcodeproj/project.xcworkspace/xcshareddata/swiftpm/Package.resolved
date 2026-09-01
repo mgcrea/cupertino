@@ -1,0 +1,15 @@
+{
+  "originHash" : "08845cb10c051a5d803fb1687fa67a30560033224ebef31761f72240f9babdaa",
+  "pins" : [
+    {
+      "identity" : "swift-support-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mgcrea/swift-support-kit.git",
+      "state" : {
+        "revision" : "f6b96173f2e920934c908ff572b9994f02679a51",
+        "version" : "1.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}

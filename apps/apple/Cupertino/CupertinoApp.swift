@@ -1,3 +1,4 @@
+import SupportKitUI
 import SwiftUI
 
 /// Starting the host belongs to the app lifecycle, not to the menu: the
@@ -157,6 +158,28 @@ struct CupertinoApp: App {
         Button("Settings…") { SettingsWindowController.show() }
           .keyboardShortcut(",", modifiers: .command)
       }
+
+      // The Help menu, from the shared package the other eight apps already
+      // use: Report an Issue, Send Feedback, and the support page, all three
+      // built from `Support.app` rather than typed out here.
+      //
+      // No help closure. Those apps pass one to keep their existing ⌘/ sheet at
+      // the top of the group; Cupertino has no help window to open, and
+      // `SupportCommands` takes the action as an optional precisely so an app
+      // without one is not made to invent a help sheet before it can have a
+      // feedback link.
+      //
+      // Reachable whenever there IS a main menu — which for a `MenuBarExtra`
+      // app means while a window is open, since `DockPresence` is what flips the
+      // activation policy to `.regular`. That is the same condition the Settings
+      // item above already lives under, and the popover's "Open Cupertino"
+      // is the route to it. The popover itself does not get a fourth row: the
+      // comment on that HStack measured a fourth TEXT button truncating "Open
+      // Cupertino" at 320pt, and a feedback link is not worth widening the panel.
+      SupportCommands(
+        app: Support.app,
+        preferIssueTracker: Support.preferIssueTracker
+      )
     }
   }
 }

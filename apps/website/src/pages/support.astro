@@ -1,0 +1,109 @@
+---
+/**
+ * The support page.
+ *
+ * New, and it exists because the app now links to it. `SupportCommands` from
+ * `swift-support-kit` renders three Help items — the tracker, the feedback form
+ * and `siteURL + supportPath` — and the third had nowhere to land: this was the
+ * only site in the fleet with a /feedback/ but no /support/. The other eight
+ * shipped both together.
+ *
+ * It routes rather than explains. Three channels, and the only thing a reader
+ * has to get right is which one their problem belongs in — public tracker for
+ * anything about the software, the form for anything that quotes their own mail
+ * or contacts, mail for a licence. Everything past that is a link.
+ */
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import {
+  APP_NAME,
+  DOCS,
+  FEEDBACK_URL,
+  ISSUES_URL,
+  PRICING,
+  SUPPORT_EMAIL,
+  SUPPORT_EMAIL_HREF,
+} from "../config";
+---
+
+<Layout
+  title={`Support — ${APP_NAME}`}
+  description={`Get help with ${APP_NAME}: the public issue tracker, a private feedback form for reports that quote your own data, or email.`}
+>
+  <Nav />
+  <main class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+    <div class="mono text-accent">sec · support</div>
+    <h1
+      class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]"
+    >
+      Support
+    </h1>
+
+    <div
+      class="mt-12 text-[16px] leading-[1.7] text-fg-dim
+             [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:font-display [&_h2]:text-[22px] [&_h2]:font-semibold [&_h2]:tracking-[-0.01em] [&_h2]:text-fg
+             [&_p]:mt-4
+             [&_ul]:mt-4 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5 [&_ul]:marker:text-fg-muted
+             [&_strong]:font-medium [&_strong]:text-fg
+             [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:text-fg
+             [&_a:not([class])]:text-fg [&_a:not([class])]:underline [&_a:not([class])]:decoration-rule-2 [&_a:not([class])]:underline-offset-4"
+    >
+      <p>
+        Three ways in, and which one to use comes down to a single question:
+        <strong>does telling us what went wrong mean quoting your own data?</strong>
+      </p>
+
+      <h2>A bug, a question, an idea</h2>
+      <p>
+        The <a href={ISSUES_URL} rel="noopener noreferrer">issue tracker</a> is the primary channel
+        and the best place for anything that is not about your own mailbox — a tool that misbehaves
+        on an empty folder, a client that will not wire up, a protocol question, a feature request.
+        It is public, so the answer is there for whoever asks next.
+      </p>
+
+      <h2>Anything that quotes your own data</h2>
+      <p>
+        A real {APP_NAME} bug report often has to include a subject line, a chat, an account name or
+        a contact. The tracker is public and permanent; the
+        <a href={FEEDBACK_URL}>feedback form</a> is neither. No account is needed and the email
+        address is optional — leave it blank and the report is anonymous.
+      </p>
+      <p>
+        <strong>{APP_NAME} still makes no network connection of its own.</strong> Choosing Send Feedback
+        in the app does not send anything: it hands your browser a URL and stops. Everything that URL
+        carries — the app version, the macOS version, the Mac model and the language — is visible in
+        the address bar, and on the page as four fields you can edit or clear before pressing send.
+      </p>
+
+      <h2>Licences and payment</h2>
+      <p>
+        Email <a href={SUPPORT_EMAIL_HREF}>{SUPPORT_EMAIL}</a> for a key that will not activate, a
+        lost key, or a refund inside the {PRICING.refundDays}-day window. A key is checked on your
+        Mac and never sent anywhere, so a support reply is the only way we can look at one — quote
+        the address you bought with rather than the key itself.
+      </p>
+      <p>
+        What a key covers, and what keeps working without one, is set out in the
+        <a href="/terms">terms</a> and in
+        <a href={DOCS.licensing} rel="noopener noreferrer">docs/licensing.md</a>.
+      </p>
+
+      <h2>Finding the Help menu</h2>
+      <p>
+        {APP_NAME} lives in the menu bar, so it only has an app menu while one of its windows is
+        open. Choose <strong>Open Cupertino</strong> from the menu bar panel and Help ▸ Send
+        Feedback is there. Opening this page or the form directly in a browser works exactly as
+        well — the app only ever hands them over.
+      </p>
+
+      <h2>What to expect</h2>
+      <p>
+        Everything gets read, and most things get an answer within a few working days. A report that
+        says which version, which macOS and which MCP client was connected is one that can usually be
+        answered in the first reply rather than the third.
+      </p>
+    </div>
+  </main>
+  <Footer />
+</Layout>

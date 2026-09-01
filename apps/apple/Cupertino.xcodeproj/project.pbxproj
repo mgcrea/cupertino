@@ -11,6 +11,8 @@
 		0BCE00013100000000000001 /* CupertinoBridge in Embed Helper */ = {isa = PBXBuildFile; fileRef = 091399AC3035FE8D00800564 /* CupertinoBridge */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0BCE00013100000000000010 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; };
 		0BCE00013100000000000011 /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0BCE00013100000000000013 /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		0FEEDB0753AAC00000000003 /* SupportKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0FEEDB0753AAC00000000001 /* SupportKit */; };
+		0FEEDB0753AAC00000000004 /* SupportKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FEEDB0753AAC00000000002 /* SupportKitUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -129,6 +131,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				0BCE00013100000000000010 /* Sparkle.framework in Frameworks */,
+				0FEEDB0753AAC00000000003 /* SupportKit in Frameworks */,
+				0FEEDB0753AAC00000000004 /* SupportKitUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -218,6 +222,8 @@
 			);
 			name = Cupertino;
 			packageProductDependencies = (
+				0FEEDB0753AAC00000000001 /* SupportKit */,
+				0FEEDB0753AAC00000000002 /* SupportKitUI */,
 			);
 			productName = Cupertino;
 			productReference = 09145EC53035FC8A00D90D97 /* Cupertino.app */;
@@ -275,6 +281,9 @@
 			);
 			mainGroup = 09145EBC3035FC8A00D90D97;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0FEEDB0753AAC00000000000 /* XCRemoteSwiftPackageReference "swift-support-kit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 09145EC63035FC8A00D90D97 /* Products */;
 			projectDirPath = "";
@@ -672,6 +681,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0FEEDB0753AAC00000000000 /* XCRemoteSwiftPackageReference "swift-support-kit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mgcrea/swift-support-kit.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0FEEDB0753AAC00000000001 /* SupportKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0FEEDB0753AAC00000000000 /* XCRemoteSwiftPackageReference "swift-support-kit" */;
+			productName = SupportKit;
+		};
+		0FEEDB0753AAC00000000002 /* SupportKitUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0FEEDB0753AAC00000000000 /* XCRemoteSwiftPackageReference "swift-support-kit" */;
+			productName = SupportKitUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 09145EBD3035FC8A00D90D97 /* Project object */;
 }
