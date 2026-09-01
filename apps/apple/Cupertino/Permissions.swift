@@ -443,6 +443,20 @@ enum Permissions {
     CGRequestScreenCaptureAccess()
   }
 
+  /// The pane, because the prompt only ever appears once.
+  ///
+  /// `CGRequestScreenCaptureAccess` shows the system dialog on the first call
+  /// and returns silently on every one after it, so a button wired to it alone
+  /// is a button that stops working — the same dead-end shape `.denied`
+  /// Automation had before `StatusStyle.actionLabel` existed.
+  static func openScreenRecordingSettings() {
+    NSWorkspace.shared.open(
+      URL(
+        string:
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+      )!)
+  }
+
   /// Ask for Accessibility, with the system's prompt visible.
   ///
   /// Unlike Automation there is no consent dialog that grants it in place — the

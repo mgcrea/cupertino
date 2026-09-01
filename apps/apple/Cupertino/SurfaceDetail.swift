@@ -18,6 +18,9 @@ struct SurfaceDetail: View {
   let model: StatusModel
 
   @State private var store: StoreStatus = .checking
+  /// A capability's own TCC grant. Resolved in `.task`, not read inline: a view
+  /// body runs often and this is a fact about the machine, not about the render.
+  @State private var screenRecording: ScreenRecordingStatus?
   /// Safari only. `nil` until the first probe returns, so the card can say
   /// "Looking…" rather than "nothing captured" at a directory it has not read.
   @State private var captures: SafariCaptures?
@@ -46,7 +49,11 @@ struct SurfaceDetail: View {
         heading
         if enabled {
           accessSection
-          storeSection
+          // No Store card for a capability. It has no store, and the empty-state
+          // copy under it says "everything goes through Apple Events", which is
+          // false twice over here: this surface has no file lane AND sends no
+          // Apple Event. A card that can only lie is better absent.
+          if surface.kind == .app { storeSection }
           pageContentSection
           CapabilitiesCard(surface: surface)
           activity
@@ -56,7 +63,7 @@ struct SurfaceDetail: View {
           // it costs a `stat` and an `access(2)`, and it is the only card that
           // answers "would this work if I turned it back on", which may well be
           // the question that follows.
-          storeSection
+          if surface.kind == .app { storeSection }
           pageContentSection
         }
       }
@@ -66,6 +73,8 @@ struct SurfaceDetail: View {
     .task(id: surface.id) {
       await resolveStore()
       await resolveExtension()
+      screenRecording =
+        surface.storePermission == .screenRecording ? Permissions.screenRecording() : nil
     }
   }
 
@@ -176,6 +185,42 @@ struct SurfaceDetail: View {
         }
       }
       .font(.callout)
+
+      // The grant this surface actually runs on. Without it the row above says
+      // "not needed" and nothing else on the pane mentions a permission at all,
+      // so the surface reads as ready when every tool will refuse.
+      //
+      // The button opens the pane rather than calling
+      // `CGRequestScreenCaptureAccess`, which only ever prompts once and is
+      // silent afterwards — a button that works one time is the dead end the
+      // Automation row was already fixed for.
+      if surface.storePermission == .screenRecording {
+        Divider()
+        HStack {
+          let granted = screenRecording == .granted
+          Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .foregroundStyle(granted ? Color.green : Color.orange)
+          Text("Screen Recording")
+          Spacer()
+          Text(
+            screenRecording == nil
+              ? "checking…" : (granted ? "granted" : "not granted — every capture will refuse")
+          )
+          .foregroundStyle(.secondary)
+          if screenRecording == .denied {
+            Button("Allow…") { Permissions.openScreenRecordingSettings() }
+              .buttonStyle(.glass)
+              .controlSize(.small)
+          }
+        }
+        .font(.callout)
+        if screenRecording == .denied {
+          Text("Takes effect when Cupertino relaunches, not when the switch is flipped.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
 
       if surface.supportsWrites {
         Divider()
@@ -560,9 +605,13 @@ struct CapabilitiesCard: View {
           .controlSize(.small)
       }
       Text(
-        allowWrites
-          ? "Writes are on, so the mutating tools and the prompts that end in one are registered."
-          : "Writes are off, so the mutating tools and the prompts that end in one are not registered at all — not refused later."
+        !surface.supportsWrites
+          // A surface with no mutating tool has no write gate, so explaining
+          // what the gate is doing describes a control that is not on the pane.
+          ? "This surface registers no mutating tool, so there is no write gate."
+          : allowWrites
+            ? "Writes are on, so the mutating tools and the prompts that end in one are registered."
+            : "Writes are off, so the mutating tools and the prompts that end in one are not registered at all — not refused later."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

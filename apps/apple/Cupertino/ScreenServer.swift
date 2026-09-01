@@ -80,7 +80,7 @@ enum ScreenServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
-  private static func handle(_ line: String, surface: Surface) -> String? {
+  static func handle(_ line: String, surface: Surface) -> String? {
     guard let data = line.data(using: .utf8),
       let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let method = msg["method"] as? String

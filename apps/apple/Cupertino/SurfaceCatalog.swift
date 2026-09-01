@@ -103,6 +103,22 @@ enum SurfaceCatalog {
   {
     if let hit = await cached(surface, allowWrites: allowWrites, gates: gates) { return hit }
 
+    // A capability is served in-process, so there is nothing to locate and
+    // nothing to spawn. Asking `ServerLocator` produced "dev.json is unusable"
+    // on this pane — a real error about a file that has no bearing on a server
+    // which is not a node process at all.
+    //
+    // This still DEMONSTRATES rather than claims, which is the whole point of
+    // this type: it drives `ScreenServer.handle` — the same dispatch an MCP
+    // client reaches through the bridge — rather than describing the tool list
+    // a second time in Swift.
+    if surface.runtime == .swift {
+      let caps = inProcess(surface, allowWrites: allowWrites)
+      let cacheKey = key(surface, allowWrites, gates)
+      await MainActor.run { cache[cacheKey] = caps }
+      return caps
+    }
+
     let binaries: ServerBinaries
     do {
       binaries = try ServerLocator.locate(surface)
@@ -122,6 +138,30 @@ enum SurfaceCatalog {
         }
       }
     }
+  }
+
+  /// The same three list calls the spawning probe makes, over the in-process
+  /// server. No process, no pipes, no deadline: it cannot hang, because there
+  /// is nothing to wait for.
+  private static func inProcess(_ surface: Surface, allowWrites: Bool) -> Capabilities {
+    func list(_ method: String, _ key: String, _ name: @escaping ([String: Any]) -> String)
+      -> [Item]
+    {
+      let request = #"{"jsonrpc":"2.0","id":1,"method":"\#(method)"}"#
+      guard let reply = ScreenServer.handle(request, surface: surface),
+        let data = reply.data(using: .utf8),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let result = object["result"] as? [String: Any],
+        let raw = result[key] as? [[String: Any]]
+      else { return [] }
+      return raw.map { Item(name: name($0), detail: firstSentence($0["description"] as? String)) }
+        .sorted { $0.name < $1.name }
+    }
+    return Capabilities(
+      tools: list("tools/list", "tools") { $0["name"] as? String ?? "?" },
+      prompts: list("prompts/list", "prompts") { $0["name"] as? String ?? "?" },
+      resources: list("resources/list", "resources") { $0["uri"] as? String ?? "?" },
+      allowWrites: allowWrites)
   }
 
   // ─── the probe ─────────────────────────────────────────────────────────────
