@@ -471,7 +471,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // arrives by exactly the path `--server=mail` does.
     if surface.runtime == .swift {
       reply(client, BridgeProtocol.ok)
-      ScreenServer.serve(surface: surface, client: client)
+      serveInProcess(surface: surface, client: client)
       return
     }
 
@@ -533,6 +533,46 @@ nonisolated final class ServerHost: @unchecked Sendable {
       kill(pid, SIGTERM)
     }
   }
+
+  private func serveInProcess(surface: Surface, client: Int32) {
+    let session = UUID()
+    let pid = ProcessInfo.processInfo.processIdentifier
+    Task(priority: Sessions.priority) { @MainActor in
+      Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+    }
+    defer {
+      Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
+      hostLog(surface.id, .info, "server stopped")
+    }
+
+    let gateOn = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
+    hostLog(surface.id, .info, "server started (in-process) allowCapture=\(gateOn)")
+
+    while let line = ScreenServer.nextLine(client) {
+      if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+
+      // Switching a surface off has to take effect without restarting every
+      // editor. A node server is stopped with SIGTERM by `stopSessions`; this
+      // one has no pid of its own to signal — the app's own pid is in that map
+      // for display only, and signalling it would kill Cupertino — so the check
+      // lives here, on the request, which is the same guarantee by a different
+      // route.
+      guard SurfaceSettings.isEnabled(surface) else {
+        hostLog(surface.id, .info, "switched off — closing session")
+        return
+      }
+
+      // Read per request, so flipping the toggle takes effect without
+      // restarting the editor — the same guarantee `stopSessions` gives a node
+      // server by signalling it.
+      let captureAllowed = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
+      guard
+        let response = ScreenServer.handle(line, surface: surface, captureAllowed: captureAllowed)
+      else { continue }
+      _ = writeAll(client, Data("\(response)\n".utf8))
+    }
+  }
+
 
   private func run(surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool) {
     let process = Process()

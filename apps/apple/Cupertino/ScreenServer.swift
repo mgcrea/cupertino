@@ -24,42 +24,9 @@ enum ScreenServer {
 
   // ─── the loop ──────────────────────────────────────────────────────────────
 
-  static func serve(surface: Surface, client: Int32) {
-    let session = UUID()
-    let pid = ProcessInfo.processInfo.processIdentifier
-    Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
-    }
-    defer {
-      Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
-      hostLog(surface.id, .info, "server stopped")
-    }
-
-    let gateOn = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
-    hostLog(surface.id, .info, "server started (in-process) allowCapture=\(gateOn)")
-
-    while let line = nextLine(client) {
-      if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-
-      // Switching a surface off has to take effect without restarting every
-      // editor. A node server is stopped with SIGTERM by `stopSessions`; this
-      // one has no pid of its own to signal — the app's own pid is in that map
-      // for display only, and signalling it would kill Cupertino — so the check
-      // lives here, on the request, which is the same guarantee by a different
-      // route.
-      guard SurfaceSettings.isEnabled(surface) else {
-        hostLog(surface.id, .info, "switched off — closing session")
-        return
-      }
-
-      guard let response = handle(line, surface: surface) else { continue }
-      _ = writeAll(client, Data("\(response)\n".utf8))
-    }
-  }
-
   /// One newline-delimited JSON-RPC message. MCP's stdio framing, which the
   /// socket carries verbatim.
-  private static func nextLine(_ fd: Int32) -> String? {
+  static func nextLine(_ fd: Int32) -> String? {
     var out = [UInt8]()
     // Bounded: a caller that never sends a newline must not be able to grow
     // this without limit. 1 MiB is far above any real request here.
@@ -80,7 +47,7 @@ enum ScreenServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
-  static func handle(_ line: String, surface: Surface) -> String? {
+  static func handle(_ line: String, surface: Surface, captureAllowed: Bool) -> String? {
     guard let data = line.data(using: .utf8),
       let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let method = msg["method"] as? String
@@ -103,7 +70,8 @@ enum ScreenServer {
       return isNotification ? nil : result(id, [String: Any]())
 
     case "tools/list":
-      return isNotification ? nil : result(id, ["tools": tools(surface: surface)])
+      return isNotification
+        ? nil : result(id, ["tools": tools(surface: surface, captureAllowed: captureAllowed)])
 
     case "resources/list":
       return isNotification ? nil : result(id, ["resources": resources()])
@@ -111,7 +79,7 @@ enum ScreenServer {
     case "resources/read":
       guard !isNotification else { return nil }
       let uri = ((msg["params"] as? [String: Any])?["uri"] as? String) ?? ""
-      return readResource(uri, id: id, surface: surface)
+      return readResource(uri, id: id, surface: surface, captureAllowed: captureAllowed)
 
     case "prompts/list":
       return isNotification ? nil : result(id, ["prompts": [Any]()])
@@ -121,7 +89,7 @@ enum ScreenServer {
       let params = msg["params"] as? [String: Any] ?? [:]
       let name = params["name"] as? String ?? ""
       let args = params["arguments"] as? [String: Any] ?? [:]
-      return call(name, args: args, id: id, surface: surface)
+      return call(name, args: args, id: id, surface: surface, captureAllowed: captureAllowed)
 
     default:
       guard !isNotification else { return nil }
@@ -137,7 +105,7 @@ enum ScreenServer {
   /// — invisible to the model rather than refused when called. That is the same
   /// property `allowWrites` has on every other surface, and docs/alternatives.md
   /// claims it as a differentiator, so it has to hold here too.
-  private static func tools(surface: Surface) -> [[String: Any]] {
+  private static func tools(surface: Surface, captureAllowed: Bool) -> [[String: Any]] {
     let empty: [String: Any] = ["type": "object", "properties": [String: Any](), "required": [Any]()]
     var list: [[String: Any]] = [
       [
@@ -158,9 +126,7 @@ enum ScreenServer {
       ],
     ]
 
-    guard let gate = surface.gates.first, SurfaceSettings.isGateOn(surface, gate) else {
-      return list
-    }
+    guard captureAllowed else { return list }
     list.append([
       "name": "apple_screen_capture_surface",
       "description":
@@ -197,9 +163,9 @@ enum ScreenServer {
     return list
   }
 
-  private static func call(_ name: String, args: [String: Any], id: Any?, surface: Surface)
-    -> String
-  {
+  private static func call(
+    _ name: String, args: [String: Any], id: Any?, surface: Surface, captureAllowed: Bool
+  ) -> String {
     switch name {
     case "apple_screen_list_targets":
       do {
@@ -216,10 +182,10 @@ enum ScreenServer {
       } catch { return failed(id, error) }
 
     case "apple_screen_diagnostics":
-      return ok(id, diagnostics(surface: surface))
+      return ok(id, diagnostics(surface: surface, captureAllowed: captureAllowed))
 
     case "apple_screen_capture_surface":
-      guard let gate = surface.gates.first, SurfaceSettings.isGateOn(surface, gate) else {
+      guard captureAllowed else {
         // Unreachable through a compliant client, since the tool is not listed.
         return failure(id, "Screen capture is switched off. Turn on \"\(surface.gates.first?.label ?? "capture")\" in Cupertino.")
       }
@@ -264,14 +230,16 @@ enum ScreenServer {
     ]
   }
 
-  private static func readResource(_ uri: String, id: Any?, surface: Surface) -> String {
+  private static func readResource(
+    _ uri: String, id: Any?, surface: Surface, captureAllowed: Bool
+  ) -> String {
     switch uri {
     case "cupertino://screen/guide":
       return result(id, [
         "contents": [["uri": uri, "mimeType": "text/markdown", "text": guide]]
       ])
     case "cupertino://screen/diagnostics":
-      let text = jsonText(diagnostics(surface: surface))
+      let text = jsonText(diagnostics(surface: surface, captureAllowed: captureAllowed))
       return result(id, [
         "contents": [["uri": uri, "mimeType": "application/json", "text": text]]
       ])
@@ -315,7 +283,16 @@ enum ScreenServer {
       showing is in the picture.
     """
 
-  private static func diagnostics(surface: Surface) -> [String: Any] {
+  /// `probe` exists for the check, and for one assertion specifically.
+  ///
+  /// Whether the window list is readable is a fact about the machine, so the
+  /// null-versus-empty invariant below could otherwise only be exercised on a
+  /// Mac without the grant — it would pass on a developer's machine while
+  /// silently testing nothing. Injecting the lookup makes both branches
+  /// reachable anywhere.
+  static func diagnostics(
+    surface: Surface, captureAllowed: Bool, probe: (() throws -> [ScreenCapture.Target])? = nil
+  ) -> [String: Any] {
     let flag = ScreenCapture.isGranted()
     var enumerated: Any = "not attempted"
     // NULL, not []. An empty array reads as "no surface is capturable" when the
@@ -324,7 +301,7 @@ enum ScreenServer {
     // three times about the Maps store. The two states must not render alike.
     var targets: Any = NSNull()
     do {
-      let list = try blocking { try await ScreenCapture.targets() }
+      let list = try probe?() ?? blocking { try await ScreenCapture.targets() }
       enumerated = true
       targets = list.map {
         ["surface": $0.surface, "windows": $0.windows, "appRunning": $0.appRunning]
@@ -347,9 +324,7 @@ enum ScreenServer {
           + "than one TCC row. The cure is `tccutil reset ScreenCapture io.mgcrea.cupertino`, "
           + "not another grant.",
       ],
-      "gate": [
-        "id": gate?.id ?? "", "on": gate.map { SurfaceSettings.isGateOn(surface, $0) } ?? false,
-      ],
+      "gate": ["id": gate?.id ?? "", "on": captureAllowed],
       "captureDirectory": ScreenCapture.root.path,
       "targets": targets,
       "caveats": [

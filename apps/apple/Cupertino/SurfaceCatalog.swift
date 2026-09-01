@@ -144,11 +144,14 @@ enum SurfaceCatalog {
   /// server. No process, no pipes, no deadline: it cannot hang, because there
   /// is nothing to wait for.
   private static func inProcess(_ surface: Surface, allowWrites: Bool) -> Capabilities {
+    // The cache key already includes the gates, so this is read once per
+    // distinct setting rather than per render.
+    let captureAllowed = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
     func list(_ method: String, _ key: String, _ name: @escaping ([String: Any]) -> String)
       -> [Item]
     {
       let request = #"{"jsonrpc":"2.0","id":1,"method":"\#(method)"}"#
-      guard let reply = ScreenServer.handle(request, surface: surface),
+      guard let reply = ScreenServer.handle(request, surface: surface, captureAllowed: captureAllowed),
         let data = reply.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let result = object["result"] as? [String: Any],
