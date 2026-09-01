@@ -352,8 +352,33 @@ exact against an oracle · read cost is Safari-scale (tens of ms), not Mail-scal
 
 ## Still open
 
-Everything the file lane decides. In particular: whether `datastore3.sqlite` is
-legible at all; whether it holds live characteristic values or only
-configuration; which of the five files is the real store and which are CloudKit
-bookkeeping; the retention window in `eventstore-beta.sqlite`, and whether
-anything Apple has labelled `-beta` should be built on at all.
+Everything below the file lane is answered; what remains is listed here so the next person does not
+have to reconstruct which questions were actually closed.
+
+- **The Shortcuts control lane has never run.** `--no-shortcuts` was passed on every granted run, so
+  section 9 of the probe has not executed once. Enumeration is free and needs no grant. Timing a run
+  needs a hand-made shortcut containing a single `Nothing` action, named `Cupertino Probe No-Op`,
+  passed as `--shortcut=`. Whether running one prompts for a grant decides whether the escape hatch
+  is usable unattended, and whether `Permissions.swift` owes a new state.
+- **Whether an accessory was actually toggled** during the 90-second live-state window is not
+  recorded. If one was, configuration-only is settled outright. If not, the run shows only that an
+  idle home does not write to disk, which is unsurprising. The structural evidence points the same
+  way, so this is confirmation rather than a blocker.
+- **Whether `homed` refuses an unentitled client is inferred, not measured.** The private framework
+  loads: `dlopen` on `/System/Library/PrivateFrameworks/HomeKit.framework/HomeKit` succeeds and
+  `HMHomeManager`, `HMHome`, `HMAccessory`, `HMRoom`, `HMService` and `HMCharacteristic` all
+  resolve. The expectation that `homed` then hands back zero homes rests on AMFI validating
+  `com.apple.developer.*` against the provisioning profile, not on a run. Settling it means
+  instantiating `HMHomeManager` under three signings and may raise a TCC dialog. The file-lane GO
+  does not depend on it.
+- **`datastore3.sqlite` is unexamined.** 13.9 MB, not Core Data at all — a generic `record_v2` /
+  `store_v2` store whose `model_data` and `external_data` are plain bplist. It holds nothing in
+  role-bearing tables, so it is not the surface, but 13.9 MB of legible bplist is not nothing
+  either.
+- **The eight MAC-address-named bplist files have never been opened.** They are per-accessory, they
+  are legible, and their names alone were enough to stop a report (see Privacy).
+
+What is NOT open: the store is legible, Full Disk Access is sufficient, `core.sqlite` is the store,
+the object graph resolves, the epoch is `apple-seconds`, and `eventstore-beta.sqlite` is unusable in
+a v1 — no date column, integer keys that join nothing by reference, and a name Apple has labelled
+beta.

@@ -37,6 +37,16 @@ Settled. Recorded so it is not re-opened.
 6. **MailKit is not a way round it.** `MEExtension` is the sanctioned route into Mail, but it
    covers compose sessions, message actions, content blocking and message security. It cannot
    enumerate or search a mailbox.
+7. **A store-only entitlement is not a reason to reconsider, and HomeKit is the case that tests
+   it.** `com.apple.developer.homekit` is genuinely offered for `STORE` distribution and genuinely
+   not for Developer ID — its capability lists `AD_HOC`, `DEVELOPMENT`, `STORE` and no
+   `DEVELOPER_ID`, where App Groups, iCloud, Push, Personal VPN and Associated Domains all list it.
+   So the trade is real: going to the store is the only way this app could ever control an
+   accessory or read live characteristic values, which no amount of file reading reaches because
+   they never touch disk. It still loses. Points 1 and 4 apply unchanged, so the price is the file
+   lane and every write verb on Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and
+   Maps. Seven surfaces for one, and the one is already shippable read-only without it — see
+   [home.md](home.md).
 
 Apple Events to Mail _is_ shippable on the store, via
 `com.apple.security.temporary-exception.apple-events`. That buys point 2 and nothing else.
