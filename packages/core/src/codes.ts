@@ -1,9 +1,28 @@
 /**
- * One-time-code extraction, as a pure function over message text.
+ * One-time-code extraction, as a pure function over text.
  *
  * No I/O by design: everything here is decided from a string plus one bit about
- * the sender, so the whole thing tests offline against a table. That also keeps
- * it liftable to Mail, where the same problem exists with messier input.
+ * the sender, so the whole thing tests offline against a table.
+ *
+ * ── WHY THIS SITS IN CORE ────────────────────────────────────────────────────
+ *
+ * It was written in `packages/messages` and said of itself that it was liftable
+ * to Mail. Safari asked second — a code rendered in a page's text is the same
+ * problem — and a second caller is the event that settles it, because the two
+ * alternatives are both bad. Safari depending on the Messages package would
+ * drag `chat.db` and a Contacts dependency across for one pure function. A
+ * duplicate would drift silently, and the heuristic is exactly where the
+ * mistakes live.
+ *
+ * This is the first HEURISTIC in core, which has otherwise been plumbing —
+ * config, sqlite, osascript, tools, resources. Worth naming rather than
+ * sneaking in: what belongs here is a judgement no surface owns, and this one
+ * is now owned by two.
+ *
+ * The table in `test/codes.test.ts` is the asset, not this file. It is
+ * SMS-shaped — short machine-written notifications — and a web page is a much
+ * richer source of digit runs, so for the Safari caller this heuristic is
+ * REUSED rather than re-validated. See docs/safari.md.
  *
  * ── WHY THIS IS NOT A REGEX ──────────────────────────────────────────────────
  *
@@ -225,6 +244,12 @@ export type ExtractOptions = {
    * Whether the sender is a shortcode. Corroborating only — it raises a weak
    * match to usable and never creates one. `packages/contacts` classifies these
    * and `Correspondent.resolution` carries the verdict.
+   *
+   * It is ONE caller's corroborating bit and deliberately still named for it. A
+   * caller with no sender at all — Safari, reading a page — simply leaves it
+   * false, and the consequence is worth knowing rather than working around: on
+   * that lane a `low` match can never occur, because the only route to one is
+   * this flag. A page with digits and no keyword yields null.
    */
   fromShortcode?: boolean;
 };

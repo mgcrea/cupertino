@@ -127,8 +127,9 @@ individually reasonable, so it defaults off and the two gates are independent in
 
 Codes are matched by signal rather than by a `\d{4,8}` regex, and every result carries a
 `confidence` and a `matched` saying how it was found; anything below `high` should be checked
-against the message body before use. See `src/client/codes.ts`, and `docs/passwords.md` in the
-repo for why the Passwords app itself is unreachable and this is what ships in its place.
+against the message body before use. See `src/codes.ts` in `@mgcrea/mcp-apple-core` — the heuristic moved there when
+`@mgcrea/mcp-apple-safari` became its second caller — and `docs/passwords.md` in the repo for
+why the Passwords app itself is unreachable and this is what ships in its place.
 
 ## Notes that will bite you
 

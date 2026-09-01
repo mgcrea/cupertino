@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractCode } from "../src/client/codes.js";
+import { extractCode } from "../src/codes.js";
 
 /**
  * The negative table is the point of this file.

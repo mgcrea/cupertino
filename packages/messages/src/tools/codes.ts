@@ -1,7 +1,7 @@
+import { extractCode } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { extractCode } from "../client/codes.js";
 import type { AppleMessagesClient } from "../client/messages.js";
 import { limitArg, wrap } from "./util.js";
 
@@ -13,7 +13,7 @@ import { limitArg, wrap } from "./util.js";
  * on is a store this server already reads under a grant the user has already
  * given. The value it adds over `apple_messages_search_messages` is not access,
  * which was never missing; it is EXTRACTION, which is where the mistakes live.
- * See `client/codes.ts` for why that is not a regex.
+ * See `codes.ts` in @mgcrea/mcp-apple-core for why that is not a regex.
  *
  * The window defaults tight on purpose. A one-time code is only interesting
  * while it is live, and a generous default turns this into a tool that reads
