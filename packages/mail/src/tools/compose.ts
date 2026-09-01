@@ -160,8 +160,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
         "it does: on a reply or forward draft, because In-Reply-To is set by Mail's reply " +
         "command and a recreated one would silently start a new thread; on a draft carrying " +
-        "attachments, because they cannot be re-attached; and on anything that is not in the " +
-        "Drafts mailbox, because deleting a sent or received message and writing a lookalike is " +
+        "attachments, because their bytes are not available as files to re-attach; and on " +
+        "anything not in the Drafts mailbox, because deleting a sent or received message and " +
+        "writing a lookalike is " +
         "not editing. In every refusal the original is untouched. If the replacement cannot be " +
         "confirmed the original is KEPT and you are told there are now two — never assume a " +
         "clean swap without reading `replaced`.",

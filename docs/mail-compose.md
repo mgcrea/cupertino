@@ -3,7 +3,8 @@
 Regenerate the dictionary evidence with `sdef /System/Applications/Mail.app` on each new macOS
 release. Read on macOS 26.6, and checked against a live Mail with four accounts — see
 [Measured against a live Mail](#measured-against-a-live-mail), where two of the three findings
-contradict the dictionary.
+contradict the dictionary. One claim in an earlier version of this file was itself wrong --
+see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so).
 
 **Implemented** — `apple_mail_update_draft` rewrites a standalone draft by recreating it, and
 refuses the cases recreation cannot carry across. See `packages/mail/src/client/jxa/write.ts`.
@@ -81,11 +82,81 @@ dropped:
 | Lost            | Why                                                                                                                                                                        | What `update_draft` does                                                                          |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Threading**   | `In-Reply-To` and `References` are written by Mail's own `reply` command, which needs the original message. A recreated reply draft looks perfect and starts a new thread. | Reads `all headers`; refuses if either header is present, pointing at `reply_to_message` instead. |
-| **Attachments** | The dictionary can read a `mail attachment` but has no verb for adding one to an `outgoing message`.                                                                       | Counts `mailAttachments`; refuses if any.                                                         |
+| **Attachments** | Not a dictionary limit — see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so). The bytes live in the original's sidecar tree, not as a file on disk, so re-attaching means extracting them first. Possible; not implemented. | Counts `mailAttachments`; refuses if any.                                                         |
 
 A third case is a limitation rather than a loss: a draft with **no subject** is refused unless the
 caller supplies one, because the subject is the only handle for finding the replacement again
 after Mail saves it, and without that confirmation the original cannot be deleted safely.
+
+## Attachments can be added, and the dictionary always said so
+
+This section corrects an earlier claim in this file. It said Mail "has no verb for adding an
+attachment to an `outgoing message`". That is wrong, and the way it was wrong is worth keeping,
+because it is a reading error anyone re-deriving this will repeat.
+
+The command list in [Four facts](#four-facts-from-mails-own-dictionary) is the **Mail suite's**
+commands. `make` is not in it because `make` belongs to the **Standard Suite**, which Mail pulls in
+wholesale:
+
+```xml
+<xi:include href="file://localhost/System/Library/ScriptingDefinitions/CocoaStandard.sdef"
+            xpointer="xpointer(/dictionary/suite/node()[not(self::command and
+                      ((@name = 'delete') or (@name = 'duplicate') or (@name = 'move')))])"/>
+```
+
+Only `delete`, `duplicate` and `move` are overridden. `make` comes through untouched. And the Text
+Suite supplies the class to make:
+
+```xml
+<class name="attachment" code="atts" inherits="rich text"
+       description="Represents an inline text attachment. This class is used mainly for make commands.">
+  <property name="file name" code="atfn" type="file" description="The file for the attachment"/>
+</class>
+```
+
+`attachment` is an `<element>` of `rich text`, and `outgoing message`'s content is
+`<contents name="content" code="ctnt" type="rich text"/>`. The Text Suite carries
+`<access-group identifier="com.apple.mail.compose" access="rw"/>`. So the chain is licensed
+end to end, and the class description names `make` as its purpose.
+
+### Measured on macOS 26.6 (build 25G72)
+
+Four accounts, a 180x180 PNG and a 1-page PDF staged in `/private/tmp`, three mails sent to the
+author's own iCloud address and deleted afterwards.
+
+| Probe | Result |
+| ----- | ------ |
+| AppleScript `make new attachment ... at after the last paragraph` | Works. `count of attachments of content` = 1. |
+| JXA `m.content.attachments.push(M.Attachment({fileName: Path(f)}))` | **Works.** No throw, count = 1. This is the form to ship. |
+| JXA `M.make({new:"attachment", ..., at: m.content.paragraphs.at(-1).after})` | Works. Equivalent, more verbose. |
+| JXA `... at: m.content.attachments.end` or `paragraphs.end` | Throws `Invalid key form.` |
+| Survives `send()` | **Yes.** Received mail carries `image/png` and `application/pdf` parts, base64, with `filename=`. |
+| On the `reply` composer | **Yes**, and `In-Reply-To`/`References` survive with it. |
+
+Two caveats that matter more than the yes:
+
+**The disposition is `inline`, not `attachment`.** The file is placed at a point in the body flow,
+and Mail emits it the way it emits a file dragged into a compose window by hand:
+
+```
+multipart/alternative
+├── text/plain                                    <- the plain alternative; names nothing
+└── multipart/mixed          (multipart/related when there is one file on a reply)
+    ├── text/html
+    ├── image/png        Content-Disposition: inline; filename=probe.png
+    ├── text/html
+    ├── application/pdf  Content-Disposition: inline; filename=probe.pdf
+    └── text/html
+```
+
+This is native Mail output, not a degraded form — but it is a body edit, so **order is caller-visible**
+and the `text/plain` alternative mentions nothing. A PDF behaves exactly like a PNG here; there is
+nothing image-specific about it.
+
+**`content` still lies on a reply.** On the composer returned by `reply`, `content` read back as
+length 1 — the attachment character alone, with none of the quoted original. So the count read back
+from that path is not evidence of anything; the send is. Consistent with
+[why the body cannot go through the scripting interface](#why-the-body-still-cannot-go-through-the-scripting-interface).
 
 ## The order is the safety property
 

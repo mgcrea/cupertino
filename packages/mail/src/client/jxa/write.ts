@@ -370,8 +370,10 @@ export const SEND_MESSAGE = script(
  *   * **Threading.** `In-Reply-To` and `References` are set by Mail's own
  *     `reply` command, which needs the original message. A recreated reply
  *     draft looks perfect and starts a new thread.
- *   * **Attachments.** They can be read but not re-attached; the dictionary has
- *     no verb for adding one to an outgoing message.
+ *   * **Attachments.** Adding one to an outgoing message IS possible:
+ *     `content.attachments.push(Mail.Attachment({fileName: Path(f)}))`, measured
+ *     on macOS 26.6. What is missing is a file to point at. The bytes live in the
+ *     original's sidecar tree, and extracting them first is not done here.
  *
  * Both are refused rather than silently dropped. A draft that is correct in
  * every visible respect except the part nobody checks is the exact failure the
@@ -488,9 +490,9 @@ export const UPDATE_DRAFT = script(
     return ok({
       replaced: false, degraded: true, capability: "attachments", draft: facts,
       reason:
-        "This draft carries " + attachments + " attachment(s). Mail's scripting interface can " +
-        "read an attachment but has no verb for adding one to an outgoing message, so " +
-        "recreating the draft would silently drop them.",
+        "This draft carries " + attachments + " attachment(s). Recreating it would silently drop " +
+        "them: their bytes live inside the original message, not as files this can point at, and " +
+        "re-attaching means extracting them first, which is not done here.",
       hint: "Edit the body in Mail directly, which keeps the attachments."
     });
   }
