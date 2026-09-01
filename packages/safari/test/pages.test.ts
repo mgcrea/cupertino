@@ -203,6 +203,30 @@ describe("truncation", () => {
   });
 
   /**
+   * The cap applies with no `maxChars` at all. It was optional and undefaulted,
+   * so a plain read returned the whole capture - up to the extension's own
+   * 256 KiB of text, which is a quarter of a million tokens for a tool a model
+   * reaches for casually.
+   */
+  it("caps by default when maxChars is not given", async () => {
+    const r = await read(store([capture({ text: "x".repeat(40_000) })]), {
+      url: "https://example.com/",
+    });
+    const body = r.json() as { chars: number; truncated: boolean };
+    expect(body.chars).toBe(32_768);
+    expect(body.truncated).toBe(true);
+  });
+
+  it("returns a short page whole, with no truncation flag", async () => {
+    const r = await read(store([capture({ text: "x".repeat(500) })]), {
+      url: "https://example.com/",
+    });
+    const body = r.json() as { chars: number; truncated?: boolean };
+    expect(body.chars).toBe(500);
+    expect(body.truncated).toBeUndefined();
+  });
+
+  /**
    * The extension's own cap is a different fact from this call's, and reporting
    * only one would let a caller believe it had the whole page.
    */
