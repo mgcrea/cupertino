@@ -146,17 +146,84 @@ enum ClientWiringMerge {
 
   // MARK: - Writing
 
+  enum WriteError: LocalizedError {
+    /// The file moved on between the read and the swap, so the merge in hand
+    /// was computed from bytes that are no longer there.
+    case changedUnderneath(URL)
+
+    var errorDescription: String? {
+      switch self {
+      case .changedUnderneath(let url):
+        return "\(url.lastPathComponent) changed while it was being read; nothing was written"
+      }
+    }
+  }
+
+  /// What a config looked like when the caller read it, so the write can refuse
+  /// to land a merge computed from bytes somebody has since replaced.
+  ///
+  /// Size and modification date rather than a hash of the contents: the largest
+  /// of these files is 130 KB and this runs on every Configure, while the only
+  /// question being asked is "did anything touch it", which two `stat` fields
+  /// answer for free.
+  ///
+  /// `absent` is a state and not an error. A file that does not exist yet is
+  /// exactly as legitimate a precondition as one that does — and a config
+  /// created in the window between the two is precisely what this is for.
+  enum Stamp: Equatable {
+    case absent
+    case present(size: Int, modified: Date)
+  }
+
+  /// `FileManager`, deliberately, and not `URL.resourceValues`: an `NSURL`
+  /// caches the values it has already been asked for, so two stamps taken from
+  /// the same `URL` around a write come back identical and the precondition
+  /// this exists for silently passes. Measured — the first version of this
+  /// function did exactly that.
+  static func stamp(of url: URL) -> Stamp {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+      let size = attributes[.size] as? Int, let modified = attributes[.modificationDate] as? Date
+    else { return .absent }
+    return .present(size: size, modified: modified)
+  }
+
   /// Backup, atomic temp, swap. Returns the backup URL if one was made.
   ///
   /// Three properties this has to hold, because the file belongs to someone
   /// else: every unrelated key survives, the previous contents are recoverable,
   /// and a crash mid-write cannot leave a truncated config.
+  ///
+  /// `expecting` narrows a fourth risk without pretending to eliminate it. A
+  /// mismatch means the file changed since the caller read it, and the merge in
+  /// hand would silently drop that change; the caller re-reads and tries again.
+  /// What it CANNOT do is win against a process holding its own snapshot of the
+  /// whole file — Claude Code keeps one for the length of a session and writes
+  /// it back on its own schedule. Nothing short of a lock neither side takes
+  /// would fix that, and `claude mcp add` does not take one either. It is a
+  /// narrower window, not a closed one, which is why the audit that notices a
+  /// clobbered write matters more than this does.
+  ///
+  /// `newFileMode` applies only when this call is the one creating the file.
+  /// Replacing an existing one already preserves its mode — `replaceItemAt`
+  /// keeps the original's metadata unless asked not to, measured at 0600 in and
+  /// 0600 out — so the only way to loosen a config is to be the one that made
+  /// it, and the per-user client configs are all files that should be 0600
+  /// whether or not they hold credentials today.
   @discardableResult
-  static func write(_ root: [String: Any], to url: URL, backupSuffix: String) throws -> URL? {
+  static func write(
+    _ root: [String: Any],
+    to url: URL,
+    backupSuffix: String,
+    expecting: Stamp? = nil,
+    newFileMode: Int? = nil
+  ) throws -> URL? {
     let fm = FileManager.default
     var backup: URL?
 
-    if fm.fileExists(atPath: url.path) {
+    if let expecting, stamp(of: url) != expecting { throw WriteError.changedUnderneath(url) }
+
+    let existed = fm.fileExists(atPath: url.path)
+    if existed {
       backup = url.appendingPathExtension(backupSuffix)
       try? fm.removeItem(at: backup!)
       try fm.copyItem(at: url, to: backup!)
@@ -181,6 +248,9 @@ enum ClientWiringMerge {
       try? fm.removeItem(at: temp)
       throw error
     }
+    if !existed, let newFileMode {
+      try? fm.setAttributes([.posixPermissions: newFileMode], ofItemAtPath: url.path)
+    }
     return backup
   }
 
@@ -200,5 +270,33 @@ enum ClientWiringMerge {
     guard let projects = root["projects"] as? [String: Any] else { return nil }
     guard let entry = projects[folder] as? [String: Any] else { return nil }
     return entry["mcpServers"] as? [String: Any] ?? [:]
+  }
+
+  /// Merge into one folder's local scope, leaving the other ninety-eight
+  /// project blocks and the seventy-six top-level keys beside them alone.
+  ///
+  /// Written as an explicit read-modify-write of two nested dictionaries rather
+  /// than the obvious `root["projects"]![folder]!["mcpServers"]` chain, because
+  /// Swift dictionaries are value types and that chain operates on copies. The
+  /// bug it produces is a write that reports success and changes nothing.
+  ///
+  /// A folder Claude Code has never heard of gets a block holding nothing but
+  /// `mcpServers`. That is the same shape `claude mcp add --scope local` leaves
+  /// behind, and Claude Code fills in the rest of its own keys when it next
+  /// opens the folder.
+  static func mergedIntoLocalScope(
+    into root: [String: Any],
+    folder: String,
+    entries: [String: [String: Any]],
+    legacy: [String: String],
+    remove: Set<String>
+  ) -> [String: Any] {
+    var root = root
+    var projects = root["projects"] as? [String: Any] ?? [:]
+    let project = projects[folder] as? [String: Any] ?? [:]
+    projects[folder] = merged(
+      into: project, rootKey: "mcpServers", entries: entries, legacy: legacy, remove: remove)
+    root["projects"] = projects
+    return root
   }
 }

@@ -68,6 +68,9 @@ struct WiringCheck {
     projectFileIsJustAnotherMerge()
     disabledSurfacesArePruned()
     extraIsReportedAndActionable()
+    staleWriteIsRefused()
+    newFileModeIsApplied()
+    localScopeIsWritten()
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 { exit(1) }
@@ -360,8 +363,7 @@ struct WiringCheck {
     check("parent directories created", fm.fileExists(atPath: fresh.path))
   }
 
-  /// Local scope, which lives at `projects["<dir>"].mcpServers` in a file this
-  /// app reads and never writes.
+  /// Local scope, which lives at `projects["<dir>"].mcpServers`.
   ///
   /// The distinction under test is the one that decides which button a folder
   /// row shows: a folder Claude Code has never heard of and a folder it knows
@@ -435,6 +437,176 @@ struct WiringCheck {
     check("the repo's own server survives", servers["postgres"] != nil)
     check("every surface was added", surfaces.allSatisfy { servers["cupertino-\($0.id)"] != nil })
     check("nothing else was invented", servers.count == surfaces.count + 1)
+  }
+
+
+  // MARK: - 12. A merge computed from bytes that have since changed is refused
+
+  /// The property `ClientWiring.mergeWrite` retries on. It does not close the
+  /// race — a process holding its own snapshot of the whole file will still
+  /// clobber this — but it does mean a merge is never landed on top of a change
+  /// that arrived while the file was being read.
+  static func staleWriteIsRefused() {
+    print("stale write refused")
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("wiring-check-\(UUID().uuidString)")
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let config = dir.appendingPathComponent("mcp.json")
+    try? "{\"theme\":\"dark\"}".write(to: config, atomically: true, encoding: .utf8)
+
+    let before = ClientWiringMerge.stamp(of: config)
+    let root = (try? ClientWiringMerge.readJSON(config)) ?? [:]
+    let merged = ClientWiringMerge.merged(
+      into: root, rootKey: "mcpServers", entries: entries(), legacy: legacy, remove: [])
+
+    // Somebody else writes between the read and the swap.
+    try? "{\"theme\":\"light\",\"numStartups\":9}".write(
+      to: config, atomically: true, encoding: .utf8)
+
+    var refused = false
+    do {
+      _ = try ClientWiringMerge.write(
+        merged, to: config, backupSuffix: "cupertino-backup", expecting: before)
+    } catch ClientWiringMerge.WriteError.changedUnderneath(_) {
+      refused = true
+    } catch {
+    }
+    check("a changed file is refused", refused)
+    let after = (try? ClientWiringMerge.readJSON(config)) ?? [:]
+    check("their write survived", after["numStartups"] as? Int == 9)
+    check("nothing of ours was written", after["mcpServers"] == nil)
+    check(
+      "no backup was taken for a write that did not happen",
+      !fm.fileExists(atPath: config.appendingPathExtension("cupertino-backup").path))
+
+    // The retry's second pass: a stamp taken after their write goes through.
+    let fresh = ClientWiringMerge.stamp(of: config)
+    let second = try? ClientWiringMerge.write(
+      ClientWiringMerge.merged(
+        into: try! ClientWiringMerge.readJSON(config), rootKey: "mcpServers",
+        entries: entries(), legacy: legacy, remove: []),
+      to: config, backupSuffix: "cupertino-backup", expecting: fresh)
+    check("a current stamp writes", second != nil)
+    let final = (try? ClientWiringMerge.readJSON(config)) ?? [:]
+    check("their key is still there", final["numStartups"] as? Int == 9)
+    check("and ours arrived", (final["mcpServers"] as? [String: Any])?["cupertino-mail"] != nil)
+
+    // A file that does not exist yet is a precondition of its own, and one that
+    // appears in the window has to be caught the same way.
+    let unborn = dir.appendingPathComponent("nothing-here.json")
+    let absent = ClientWiringMerge.stamp(of: unborn)
+    check("a missing file stamps as absent", absent == .absent)
+    try? "{}".write(to: unborn, atomically: true, encoding: .utf8)
+    var caught = false
+    do {
+      _ = try ClientWiringMerge.write(
+        ["mcpServers": [:]], to: unborn, backupSuffix: "cupertino-backup", expecting: absent)
+    } catch ClientWiringMerge.WriteError.changedUnderneath(_) {
+      caught = true
+    } catch {
+    }
+    check("a file created in the window is refused", caught)
+  }
+
+  // MARK: - 13. Creating a config does not loosen it
+
+  /// Two halves of one promise. A file this app creates in `$HOME` is 0600,
+  /// because Claude Code will put OAuth credentials in it later and will not go
+  /// back to tighten a mode it did not set. A file that already exists keeps
+  /// whatever mode it has — `replaceItemAt` preserves the original's metadata —
+  /// so nothing here can widen a config either.
+  static func newFileModeIsApplied() {
+    print("file modes")
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("wiring-check-\(UUID().uuidString)")
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    func mode(_ url: URL) -> Int? {
+      (try? fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)??.intValue
+    }
+
+    let fresh = dir.appendingPathComponent("claude.json")
+    _ = try? ClientWiringMerge.write(
+      ["mcpServers": entries()], to: fresh, backupSuffix: "cupertino-backup", newFileMode: 0o600)
+    check("a config we create is 0600", mode(fresh) == 0o600)
+
+    // Asked for the same mode, an existing file is left as it is: the flag
+    // names what to do when creating, not a mode to impose on somebody's file.
+    let theirs = dir.appendingPathComponent("mcp.json")
+    try? "{}".write(to: theirs, atomically: true, encoding: .utf8)
+    try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: theirs.path)
+    _ = try? ClientWiringMerge.write(
+      ["mcpServers": entries()], to: theirs, backupSuffix: "cupertino-backup", newFileMode: 0o600)
+    check("an existing config keeps its own mode", mode(theirs) == 0o644)
+
+    // And the mode of a file that was already tight survives the swap, which is
+    // the case that matters for `~/.claude.json`.
+    let tight = dir.appendingPathComponent("tight.json")
+    try? "{}".write(to: tight, atomically: true, encoding: .utf8)
+    try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tight.path)
+    _ = try? ClientWiringMerge.write(
+      ["mcpServers": entries()], to: tight, backupSuffix: "cupertino-backup")
+    check("0600 in, 0600 out", mode(tight) == 0o600)
+  }
+
+  // MARK: - 14. Local scope is written into one project block only
+
+  /// The write behind the folder rows' `local` scope. The file it edits is the
+  /// one holding ninety-nine other project blocks and seventy-six unrelated
+  /// top-level keys, so "leaves everything else alone" is the whole test.
+  static func localScopeIsWritten() {
+    print("local scope merge")
+    let dir = "/Users/someone/Projects/thing"
+    let other = "/Users/someone/Projects/other"
+    let root: [String: Any] = [
+      "numStartups": 41,
+      "oauthAccount": ["accountUuid": "abc"],
+      "projects": [
+        dir: [
+          "allowedTools": ["Bash"],
+          "mcpServers": ["postgres": ["command": "npx", "args": ["-y", "@some/pg-mcp"]]],
+        ],
+        other: ["allowedTools": [], "history": ["a", "b"]],
+      ],
+    ]
+
+    let out = ClientWiringMerge.mergedIntoLocalScope(
+      into: root, folder: dir, entries: entries(), legacy: legacy, remove: [])
+
+    check("top-level keys survive", out["numStartups"] as? Int == 41)
+    check("credentials survive", (out["oauthAccount"] as? [String: Any])?["accountUuid"] != nil)
+    let projects = out["projects"] as? [String: Any] ?? [:]
+    check("no project block invented or lost", projects.count == 2)
+    let untouched = projects[other] as? [String: Any]
+    check("the other folder is untouched", (untouched?["history"] as? [String])?.count == 2)
+    check("the other folder gained no servers", untouched?["mcpServers"] == nil)
+
+    let mine = projects[dir] as? [String: Any] ?? [:]
+    check("the folder's own keys survive", (mine["allowedTools"] as? [String])?.first == "Bash")
+    let servers = mine["mcpServers"] as? [String: Any] ?? [:]
+    check("the folder's own server survives", servers["postgres"] != nil)
+    check("every surface was added", surfaces.allSatisfy { servers["cupertino-\($0.id)"] != nil })
+
+    // Nothing of ours in the file at all: a folder Claude Code has never heard
+    // of gets a block, and only that block.
+    let cold = ClientWiringMerge.mergedIntoLocalScope(
+      into: ["numStartups": 1], folder: dir, entries: entries(), legacy: legacy, remove: [])
+    let coldServers = ClientWiringMerge.localScopeServers(in: cold, folder: dir)
+    check("an unknown folder gets its block", coldServers?.count == surfaces.count)
+    check("and nothing at the top level", cold["mcpServers"] == nil)
+
+    // Switching a surface off prunes it from the folder, not from the file's
+    // other project blocks — the same `remove` gate the user-scope merge uses.
+    var pruned = entries()
+    pruned.removeValue(forKey: "cupertino-maps")
+    let after = ClientWiringMerge.mergedIntoLocalScope(
+      into: out, folder: dir, entries: pruned, legacy: legacy, remove: ["cupertino-maps"])
+    let left = ClientWiringMerge.localScopeServers(in: after, folder: dir) ?? [:]
+    check("a switched-off surface is pruned from the folder", left["cupertino-maps"] == nil)
+    check("the folder's own server still survives", left["postgres"] != nil)
   }
 
 }

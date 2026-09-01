@@ -537,7 +537,6 @@ private struct ProjectFoldersSection: View {
   @AppStorage("wiring.projectScope") private var scopeRaw = ClientWiring.ProjectScope.local
     .rawValue
   @State private var folders: [URL] = ProjectFoldersSection.remembered
-  @State private var copied: URL?
   @State private var error: String?
 
   /// Demo mode answers from a table, like every other fact these captures show.
@@ -574,7 +573,6 @@ private struct ProjectFoldersSection: View {
         FolderRow(
           folder: folder,
           scope: scope,
-          copied: copied == folder,
           wire: { wire(folder) },
           forget: {
             ClientWiring.forget(folder)
@@ -609,32 +607,22 @@ private struct ProjectFoldersSection: View {
     wire(folder)
   }
 
-  /// One button, two behaviours, because the two scopes genuinely differ in
-  /// what this app is willing to do — see `ClientWiring.ProjectScope`.
+  /// One button, one behaviour. The scope picks which file is merged into —
+  /// see `ClientWiring.ProjectScope`.
   private func wire(_ folder: URL) {
     error = nil
-    switch scope {
-    case .project:
-      do { try ClientWiring.configureProject(folder) } catch {
-        self.error = error.localizedDescription
-      }
-      folders = ProjectFoldersSection.remembered
-    case .local:
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(ClientWiring.localCommands(for: folder), forType: .string)
-      copied = folder
-      Task {
-        try? await Task.sleep(for: .seconds(2))
-        copied = nil
-      }
+    do { try ClientWiring.configure(folder: folder, scope: scope) } catch {
+      self.error = error.localizedDescription
     }
+    // Redrawn either way: a failed write leaves the row's status telling the
+    // truth about the file, which is what the red line above is beside.
+    folders = ProjectFoldersSection.remembered
   }
 }
 
 private struct FolderRow: View {
   let folder: URL
   let scope: ClientWiring.ProjectScope
-  let copied: Bool
   let wire: () -> Void
   let forget: () -> Void
 
@@ -643,15 +631,10 @@ private struct FolderRow: View {
   var body: some View {
     LabeledContent {
       HStack(spacing: 8) {
-        switch scope {
-        case .local:
-          Button(copied ? "Copied" : "Copy command", action: wire)
-        case .project:
-          if status == .configured {
-            Button("Reveal") { ClientWiring.reveal(folder: folder) }
-          } else {
-            Button(status == .notConfigured ? "Write" : "Update", action: wire)
-          }
+        if status == .configured {
+          Button("Reveal") { ClientWiring.reveal(folder: folder, scope: scope) }
+        } else {
+          Button(status == .notConfigured ? "Write" : "Update", action: wire)
         }
         Button("Remove", action: forget)
           .buttonStyle(.borderless)
@@ -737,15 +720,14 @@ private struct ClientRow: View {
       EmptyView()
     } else {
       switch client.wiring {
-      // Not edited automatically on purpose: these files are JSONC, TOML, or —
-      // in Claude Code's case — strict JSON that holds API credentials and that
-      // running sessions write to concurrently. See `ClientWiring.Wiring`.
+      // Not edited automatically on purpose: these files are JSONC or TOML, and
+      // re-serialising either would delete comments somebody wrote by hand. See
+      // `ClientWiring.Wiring`.
       case .command:
         HStack {
-          // Its own button, never appended to the adds. `localCommands` chains
-          // with `&&` and `claude mcp remove` exits non-zero on a name that is
-          // not there, so a removal spliced into that chain would abort every
-          // add after it. Deletion is also the half worth reading first.
+          // Its own button, never appended to the adds: a remove for a name
+          // that was never there exits non-zero, and deletion is the half worth
+          // reading first. See `ClientWiring.removalCommands`.
           if let removals = ClientWiring.removalCommands(for: client) {
             Button(removed ? "Copied" : "Copy removal") { copy(removals, into: $removed) }
           }

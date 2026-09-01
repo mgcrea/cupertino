@@ -229,21 +229,24 @@ export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Termina
  * top-level `mcpServers`: the app merges its four entries in, keeps a backup
  * and leaves every other key alone.
  *
- * `command` is the clients whose config is not ours to rewrite. Visual Studio
- * Code's is JSONC and Codex's is TOML, and re-serialising either would delete
- * the comments in a file the user maintains by hand. Claude Code's
- * `~/.claude.json` is strict JSON and technically writable, but it holds API
- * credentials and running sessions write to it concurrently, so a
- * read-modify-write from a menu bar could drop somebody else's change. All
- * three get a line to paste instead — for the two with a CLI, one that the
- * client itself executes.
+ * `command` is the clients whose config is not ours to rewrite, and the reason
+ * is syntax rather than stakes: Visual Studio Code's is JSONC and Codex's is
+ * TOML, and re-serialising either would delete the comments in a file the user
+ * maintains by hand. Both get a line to paste instead — one their own CLI runs.
+ *
+ * Claude Code was on that list until its two reasons were checked. Its
+ * `~/.claude.json` does hold credentials, but the swap preserves the file's
+ * mode; and running sessions do write to it, which is the same race
+ * `claude mcp add` runs from a second process. Handing over the command moved
+ * the race rather than avoiding it, so the app writes the file — with a backup,
+ * an atomic swap, and a refusal if anything touched it in between.
  *
  * ChatGPT is on neither list: it takes remote HTTP connectors and cannot spawn
  * a local stdio server at all.
  */
 export const WIRING = {
-  automatic: ["Claude Desktop", "Cursor", "LM Studio", "Windsurf"],
-  command: ["Claude Code", "Visual Studio Code", "Codex CLI"],
+  automatic: ["Claude Code", "Claude Desktop", "Cursor", "LM Studio", "Windsurf"],
+  command: ["Visual Studio Code", "Codex CLI"],
   /**
    * How many of each `MenuBar.astro` draws. It is a fixed-height mock of a
    * 320pt popover, and the real one only ever lists the clients you actually

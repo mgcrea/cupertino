@@ -104,19 +104,27 @@ can have both. The app only ever touches its own `cupertino-*` keys — an `appl
 belonging to some other server is left alone.
 
 Cupertino is machine configuration, not a project dependency, so it belongs in a per-user config:
-one file each for Claude Desktop, Cursor, LM Studio and Windsurf, and `--scope user` for the CLIs,
-which is what the app's copyable commands use. Deliberately **not** `--scope project`, which writes
-an `.mcp.json` meant to be committed — that entry is an absolute path into a bundle on one Mac,
-backed by one person's Full Disk Access grant, and it would be useless to a teammate and unwise to
-offer them.
+one file each for Claude Code, Claude Desktop, Cursor, LM Studio and Windsurf, and `--scope user`
+in the line Codex gets to paste. Deliberately **not** `--scope project`, which writes an `.mcp.json`
+meant to be committed — that entry is an absolute path into a bundle on one Mac, backed by one
+person's Full Disk Access grant, and it would be useless to a teammate and unwise to offer them.
 
-Which clients get written and which get a command is not about popularity. The app merges into a
-config only when it is strict JSON with servers under `mcpServers`; Visual Studio Code's is JSONC
-and Codex's is TOML, and re-serialising either would delete the comments in a file maintained by
-hand. Claude Code's `~/.claude.json` is strict JSON, but it holds credentials and running sessions
-write to it concurrently, so a read-modify-write from a menu bar could drop somebody else's change.
-Those three get a line to paste. ChatGPT is absent entirely: it takes remote HTTP connectors and
-cannot spawn a local stdio server at all.
+Which clients get written and which get a command is not about popularity, and it is not about how
+much the file matters. The app merges into a config when it is strict JSON with servers under
+`mcpServers`; Visual Studio Code's is JSONC and Codex's is TOML, and re-serialising either would
+delete the comments in a file maintained by hand. Those two get a line to paste. ChatGPT is absent
+entirely: it takes remote HTTP connectors and cannot spawn a local stdio server at all.
+
+Claude Code's `~/.claude.json` is written directly, and it is the one config where that deserves a
+paragraph: it holds this machine's credentials beside ninety-odd project blocks, and Claude Code
+writes to it while it runs. So every write copies the file to `~/.claude.json.cupertino-backup`
+first, lands through a temp file and an atomic swap, and is refused outright if anything touched the
+file between the read and the swap — in which case the app re-reads and merges again. What no
+writer can promise is the last word: a session holding its own copy of the file will win, and
+`claude mcp add` is the same read-modify-write from another process, which is why handing over that
+line was never the safer option. The difference is that the app reads the file it wrote, so a
+clobbered entry shows up as **Not configured** the next time you open Settings, with a button that
+fixes it.
 
 This repo's own [`.mcp.json`](.mcp.json) is the exception, and it names its servers
 `cupertino-*-dev` on purpose: it points at `apps/apple/.build`, so working on the app means having

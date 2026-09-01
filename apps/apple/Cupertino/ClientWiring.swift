@@ -27,13 +27,19 @@ enum ClientWiring {
 
     /// A command to paste, for clients whose config is not ours to rewrite.
     ///
-    /// Two different refusals, one mechanism. VS Code, Zed and Goose keep
-    /// their config in JSONC or YAML and Codex in TOML; re-serialising any of
-    /// them through `JSONSerialization` would delete every comment in a file
-    /// the user maintains by hand. Claude Code's `~/.claude.json` is strict
-    /// JSON and technically writable, but it is a large file holding API
-    /// credentials that running sessions write to concurrently, so a
-    /// read-modify-write from a menu bar could drop somebody else's change.
+    /// One refusal now, and it is about syntax rather than about stakes. VS
+    /// Code, Zed and Goose keep their config in JSONC or YAML and Codex in
+    /// TOML; re-serialising any of them through `JSONSerialization` would
+    /// delete every comment in a file the user maintains by hand.
+    ///
+    /// Claude Code used to be here too, on the grounds that `~/.claude.json`
+    /// holds credentials and that running sessions write to it concurrently.
+    /// Neither survived being checked. The mode is preserved across the swap,
+    /// so a 0600 file stays 0600; and the concurrency is the same
+    /// read-modify-write `claude mcp add` performs from a second process, so
+    /// handing over the command relocated the race rather than avoiding it —
+    /// while giving up the one advantage this app has, which is that it already
+    /// reads that file and can say when a write has been clobbered.
     ///
     /// `probe` is a strict-JSON file we may *read* to report status, and never
     /// write. nil where the config is not JSON at all.
@@ -112,8 +118,9 @@ enum ClientWiring {
       return false
     }
 
-    /// nil for command clients. Revealing `~/.claude.json` would point someone
-    /// at the credentials file we have just told them we refuse to touch.
+    /// nil for command clients: there is no file this app wrote to show, and
+    /// pointing Finder at one it only pastes lines for would be a claim it has
+    /// not earned.
     var revealTarget: URL? {
       if case .json(let path, _) = wiring { return path }
       return nil
@@ -121,6 +128,12 @@ enum ClientWiring {
   }
 
   private static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
+
+  /// Claude Code's per-user config, named once rather than spelled out at the
+  /// four places that touch it: the client row writes its top-level
+  /// `mcpServers`, the folder feature writes a project block inside the same
+  /// file, and each reads it back to draw a status.
+  static var claudeCodeConfig: URL { home.appendingPathComponent(".claude.json") }
 
   /// Both halves are deliberate, and the split is not about how popular a
   /// client is. It is about whether its config is a file we can rewrite
@@ -138,6 +151,27 @@ enum ClientWiring {
   /// accommodates them the day someone asks.
   static let clients: [Client] = [
     // Drop-in: strict JSON, servers under `mcpServers`, nothing to negotiate.
+    Client(
+      id: "claude-code",
+      displayName: "Claude Code",
+      symbol: "terminal",
+      bundleID: nil,
+      evidence: [
+        home.appendingPathComponent(".claude.json"),
+        home.appendingPathComponent(".claude"),
+        URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
+        URL(fileURLWithPath: "/usr/local/bin/claude"),
+      ],
+      // The top-level `mcpServers`, which is what `claude mcp add --scope user`
+      // writes and what every session on this Mac reads. The scope is the whole
+      // point: the CLI defaults to `local`, which files the server under
+      // whichever directory the command ran in, so Cupertino would appear in one
+      // repo and be missing from every other. Writing the file directly cannot
+      // get that wrong, because there is no cwd involved.
+      //
+      // Not `projects["<dir>"].mcpServers` either — that is the folder feature
+      // below, chosen deliberately, rather than a default a stray terminal picks.
+      wiring: .json(path: claudeCodeConfig, rootKey: "mcpServers")),
     Client(
       id: "claude-desktop",
       displayName: "Claude Desktop",
@@ -180,39 +214,7 @@ enum ClientWiring {
         path: home.appendingPathComponent(".codeium/windsurf/mcp_config.json"),
         rootKey: "mcpServers")),
 
-    // Copy-a-command: their config is not ours to rewrite.
-    Client(
-      id: "claude-code",
-      displayName: "Claude Code",
-      symbol: "terminal",
-      bundleID: nil,
-      evidence: [
-        home.appendingPathComponent(".claude.json"),
-        home.appendingPathComponent(".claude"),
-        URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
-        URL(fileURLWithPath: "/usr/local/bin/claude"),
-      ],
-      // `--scope user` is load-bearing. The flag defaults to `local`, which
-      // files the server under whichever project directory the command was run
-      // from, so Cupertino would appear in one repo and be missing from every
-      // other. The clients this app writes directly all have a single per-user
-      // file; this is the flag that makes a CLI behave the same way.
-      //
-      // Not `--scope project` either, which writes an `.mcp.json` into the repo
-      // meant to be committed and shared. The entry is an absolute path into a
-      // bundle on this Mac, backed by this user's Full Disk Access grant — it
-      // is personal machine configuration, not a dependency of anyone's project.
-      wiring: .command(
-        recipe: Recipe(
-          template: "claude mcp add --scope user {key} -- {bridge} --server={id}",
-          // `--scope user` again, and for the same reason: without it the
-          // removal is attempted against whatever directory the shell is in.
-          removeTemplate: "claude mcp remove --scope user {key}"),
-        // The one probe worth having. `--scope user` writes the top-level
-        // `mcpServers`, which is strict JSON we already know how to read.
-        // Project scope lives under `projects["<dir>"].mcpServers` and is
-        // deliberately not looked at.
-        probe: Probe(path: home.appendingPathComponent(".claude.json"), rootKey: "mcpServers"))),
+    // Copy-a-command: their config is not JSON, so it is not ours to rewrite.
     Client(
       id: "vscode",
       displayName: "Visual Studio Code",
@@ -373,10 +375,10 @@ enum ClientWiring {
   /// nothing to remove or no verb to remove it with.
   ///
   /// Its own copy action rather than appended to `commands`, and that is not a
-  /// layout preference. `localCommands` chains with `&&`, and `claude mcp
-  /// remove` on a name that is not present exits non-zero — so a removal spliced
-  /// into that chain would abort every add after it, silently. Deletion is also
-  /// the half somebody should read before pasting.
+  /// layout preference: a `codex mcp remove` for a name that was never there
+  /// exits non-zero, so pasting one block would report a failure for the half
+  /// that had nothing to do. Deletion is also the half somebody should read
+  /// before pasting.
   static func removalCommands(for recipe: Recipe) -> String? {
     guard let template = recipe.removeTemplate else { return nil }
     let disabled = Surface.all.filter { !SurfaceSettings.isEnabled($0) }
@@ -501,17 +503,48 @@ enum ClientWiring {
     guard case .json(let path, let rootKey) = client.wiring else {
       throw WriteError.notWritable(client.displayName)
     }
-
-    var root: [String: Any] = [:]
-    if FileManager.default.fileExists(atPath: path.path) {
-      root = try ClientWiringMerge.readJSON(path)
+    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      ClientWiringMerge.merged(
+        into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
     }
-    let merged = ClientWiringMerge.merged(
-      into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
-    let backup = try ClientWiringMerge.write(merged, to: path, backupSuffix: "cupertino-backup")
-
     hostLog("cupertino", .info, "configured \(client.displayName) at \(path.path)")
     return backup
+  }
+
+  /// Read, merge, write — with one retry when the file changed in between.
+  ///
+  /// Every write this app makes goes through here, so the read that a merge is
+  /// computed from and the swap that lands it are never separated by anything
+  /// but this function. The retry costs one extra read in the rare case and
+  /// turns "somebody else's change was silently dropped" into "the change we
+  /// were about to drop was merged in instead".
+  ///
+  /// The second failure is thrown rather than retried forever: a file being
+  /// rewritten faster than this can read it is not a race to keep entering, and
+  /// `StatusModel` already has somewhere to put the sentence.
+  ///
+  /// `newFileMode` is 0600 for the per-user client configs — files that live in
+  /// `$HOME` and hold, or will come to hold, credentials — and nil for a repo's
+  /// `.mcp.json`, which is an ordinary project file the user may well commit.
+  private static func mergeWrite(
+    into path: URL,
+    newFileMode: Int?,
+    merge: ([String: Any]) -> [String: Any]
+  ) throws -> URL? {
+    let attempts = 2
+    for attempt in 1...attempts {
+      let stamp = ClientWiringMerge.stamp(of: path)
+      var root: [String: Any] = [:]
+      if case .present = stamp { root = try ClientWiringMerge.readJSON(path) }
+      do {
+        return try ClientWiringMerge.write(
+          merge(root), to: path, backupSuffix: "cupertino-backup",
+          expecting: stamp, newFileMode: newFileMode)
+      } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
+        continue
+      }
+    }
+    throw ClientWiringMerge.WriteError.changedUnderneath(path)
   }
 
   // MARK: - Project folders
@@ -526,26 +559,21 @@ enum ClientWiring {
   /// were carrying ~73 tool definitions they never used. Wiring a folder is how
   /// someone opts the other 81 out without giving up the 12.
   ///
-  /// ## The two are not symmetrical, and the difference is not cosmetic
+  /// ## Two files, one write
   ///
-  /// Both are read by Claude Code. What separates them is which file holds the
-  /// entry, and only one of those is a file this app is willing to write.
+  /// Both are read by Claude Code and both are strict JSON with servers under
+  /// `mcpServers`, so both go through the same merge, backup and atomic write.
+  /// `project` writes `<dir>/.mcp.json`; `local` writes the `projects[<dir>]`
+  /// block of `~/.claude.json`, which is the same file the client row writes
+  /// and a different key inside it.
   ///
-  /// `project` is `.mcp.json` — strict JSON with servers under `mcpServers`,
-  /// the identical shape as the four drop-in clients, so it inherits the merge,
-  /// the backup and the atomic write.
-  ///
-  /// `local` cannot be written here, and the refusal is the one `Wiring`
-  /// already documents for Claude Code: `~/.claude.json` is a large file
-  /// holding API credentials that running sessions write to concurrently, so a
-  /// read-modify-write from a menu bar could drop somebody else's change. That
-  /// has not stopped being true because the entry moved under `projects`. So
-  /// `local` hands over a command, exactly as the client row does.
-  ///
-  /// The lopsided UX is the honest one: one option acts, the other delegates,
-  /// and the reason is a property of the file rather than of the feature.
+  /// `local` used to hand over a `claude mcp add --scope local` line instead,
+  /// for the reason `Wiring` no longer gives. The asymmetry it produced —
+  /// one option acting, the other pasting — described the app's caution rather
+  /// than any property of the two files, and it is gone.
   enum ProjectScope: String, CaseIterable, Identifiable, Hashable {
-    /// `~/.claude.json` under `projects[<dir>]`, via `claude mcp add --scope local`.
+    /// `~/.claude.json` under `projects[<dir>]` — where `claude mcp add
+    /// --scope local` would have put it.
     case local
     /// `<dir>/.mcp.json`, which this app writes.
     case project
@@ -589,33 +617,36 @@ enum ClientWiring {
   /// path, and routing it anywhere else is how the two would drift.
   @discardableResult
   static func configureProject(_ folder: URL) throws -> URL? {
-    let path = projectConfig(in: folder)
-    var root: [String: Any] = [:]
-    if FileManager.default.fileExists(atPath: path.path) {
-      root = try ClientWiringMerge.readJSON(path)
+    let backup = try mergeWrite(into: projectConfig(in: folder), newFileMode: nil) { root in
+      ClientWiringMerge.merged(
+        into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys,
+        remove: disabledKeys)
     }
-    let merged = ClientWiringMerge.merged(
-      into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys,
-      remove: disabledKeys)
-    let backup = try ClientWiringMerge.write(merged, to: path, backupSuffix: "cupertino-backup")
     hostLog("cupertino", .info, "configured folder \(folder.path)")
     return backup
   }
 
-  /// The lines to paste for `local` scope.
-  ///
-  /// `cd` is part of the command rather than an instruction above it. Local
-  /// scope files the server under whatever directory the CLI was run from, so a
-  /// command pasted into the wrong terminal wires the wrong folder and reports
-  /// success — the failure is silent, which makes it exactly the kind this
-  /// project puts in the command instead of in prose.
-  static func localCommands(for folder: URL) -> String {
-    let cd = "cd \(shellQuoted(folder.path))"
-    let adds = SurfaceSettings.enabledSurfaces.map { surface in
-      "claude mcp add --scope local \(serverKey(for: surface)) -- "
-        + "\(shellQuoted(bridgePath)) --server=\(surface.id)"
+  /// The same merge, one level deeper: into `projects[<dir>].mcpServers` of
+  /// Claude Code's config, leaving every other project block untouched.
+  @discardableResult
+  static func configureLocal(_ folder: URL) throws -> URL? {
+    let backup = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
+      ClientWiringMerge.mergedIntoLocalScope(
+        into: root, folder: folder.path, entries: entries, legacy: legacyKeys,
+        remove: disabledKeys)
     }
-    return ([cd] + adds).joined(separator: " \\\n  && ")
+    hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code")
+    return backup
+  }
+
+  /// What the folder row calls. The scope picks the file; nothing else about
+  /// the two paths differs any more.
+  @discardableResult
+  static func configure(folder: URL, scope: ProjectScope) throws -> URL? {
+    switch scope {
+    case .local: return try configureLocal(folder)
+    case .project: return try configureProject(folder)
+    }
   }
 
   /// Read-only, both scopes.
@@ -632,8 +663,16 @@ enum ClientWiring {
         return .unreadable(error.localizedDescription)
       }
     case .local:
-      let path = home.appendingPathComponent(".claude.json")
-      guard let root = try? ClientWiringMerge.readJSON(path) else { return .unknown }
+      guard FileManager.default.fileExists(atPath: claudeCodeConfig.path) else {
+        return .notConfigured
+      }
+      let root: [String: Any]
+      do { root = try ClientWiringMerge.readJSON(claudeCodeConfig) } catch {
+        return .unreadable(error.localizedDescription)
+      }
+      // Absent and empty are different answers — see `localScopeServers`. A
+      // folder Claude Code has never heard of is not configured; one it knows
+      // with nothing of ours in it goes through the audit like any other.
       guard let servers = ClientWiringMerge.localScopeServers(in: root, folder: folder.path)
       else { return .notConfigured }
       return status(
@@ -672,8 +711,12 @@ enum ClientWiring {
     rememberedFolders = rememberedFolders.filter { $0.path != folder.path }
   }
 
-  static func reveal(folder: URL) {
-    NSWorkspace.shared.activateFileViewerSelecting([projectConfig(in: folder)])
+  /// The file the folder's wiring actually landed in, which is not the same
+  /// file for the two scopes: `.mcp.json` inside the folder, or Claude Code's
+  /// own config in `$HOME`.
+  static func reveal(folder: URL, scope: ProjectScope) {
+    let target = scope == .project ? projectConfig(in: folder) : claudeCodeConfig
+    NSWorkspace.shared.activateFileViewerSelecting([target])
   }
 
   static func reveal(_ client: Client) {
