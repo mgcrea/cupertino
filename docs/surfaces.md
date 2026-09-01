@@ -2,8 +2,8 @@
 
 The per-surface findings live in [notes.md](notes.md), [reminders.md](reminders.md),
 [messages.md](messages.md), [calendar.md](calendar.md), [safari.md](safari.md),
-[contacts.md](contacts.md), [maps.md](maps.md), [home.md](home.md), [passwords.md](passwords.md)
-and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
+[contacts.md](contacts.md), [maps.md](maps.md), [home.md](home.md), [passwords.md](passwords.md),
+[screen.md](screen.md) and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
 be reached at all, what a new surface costs to add, and the rules the phase-0 probes have taught that
 now generalise across surfaces.
 
@@ -126,6 +126,23 @@ product rather than blocking it: reading the store twice across a 90-second wind
 role-bearing table, and `ZMKFCHARACTERISTIC` carries a value RANGE rather than a current value, so
 this is **configuration only** — a static inventory that cannot say whether a light is on. Live
 values arrive over HAP and stay in `homed`'s memory.
+
+**Screen capture has been probed and is a partial GO** — see [screen.md](screen.md). It is not an
+app and it is not in the table above; it would be a FIFTH lane, and the first thing here to need the
+"neither" row of the lane table — a framework linked into the app, because ScreenCaptureKit is
+unreachable from a node server that holds `PATH=/usr/bin:/bin`. The capability is not in doubt:
+`SCContentFilter` composites a window that is 100% covered by another app, in 30 ms, so capture is
+passive observation rather than something that has to raise windows. What is unmeasured is the
+identity — whether an `LSUIElement` Developer-ID app gets and keeps `kTCCServiceScreenCapture`, and
+whether that survives the bundle moving. **Do not answer those by generalising from
+`scripts/spike-app-tcc`**: it measured Full Disk Access and Apple Events, this document's own
+codebase generalised the verdict to every TCC service, and it was wrong for Accessibility. A
+screen-recording lane is wired into `spike.sh.in` for that reason.
+
+Two findings there generalise beyond the surface. A **raw window enumeration is not a target list** —
+Mail reports 16 windows and has one, the rest being shadows and helper layers — and **enumerable is
+not capturable**, since a titled window can fail `SCScreenshotManager` with `-3811`. Both are the
+same shape as "absent and EPERM are different findings": a count that looks like data and is not.
 
 **Maps came out of that set and shipped**, and how it nearly did not is the transferable part.
 

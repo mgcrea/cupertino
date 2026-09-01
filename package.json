@@ -35,6 +35,7 @@
     "probe:maps-write": "node scripts/probe-maps-write.mjs",
     "probe:home": "node scripts/probe-home.mjs",
     "probe:passwords": "node scripts/probe-passwords.mjs",
+    "probe:screen": "swift scripts/probe-screen.swift",
     "version:sync": "node scripts/generate-version.mjs",
     "version:check": "node scripts/generate-version.mjs --check"
   },

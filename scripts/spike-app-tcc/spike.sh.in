@@ -101,6 +101,29 @@ JXA
 ax_rc=$?
 echo "accessibility lane rc=$ax_rc"
 
+# --- Lane 2c: Screen Recording, the grant the proposed `screen` surface needs ---
+#
+# A THIRD service, measured rather than inherited. This spike found FDA and
+# Apple Events both inherit, the codebase generalised that to every TCC service,
+# and Accessibility proved the generalisation false (README: "One identifier,
+# four grants"). Screen Recording gets its own lane for the same reason.
+#
+# The probe reports its own blindness first and refuses to report a negative it
+# cannot stand behind — it exits 3 for UNDETERMINED rather than printing "no
+# capture lane", which is the mistake docs/surfaces.md records being made three
+# times about the Maps store.
+echo
+echo "--- screen recording lane: probe-screen (child of the app)"
+here=$(cd "$(dirname "$0")" && pwd)
+if [ -x "$here/probe-screen" ]; then
+  "$here/probe-screen" --surfaces="$REPO/surfaces.json" --out="$HOME/Library/Logs/cupertino-spike-shots"
+  screen_rc=$?
+  echo "screen lane rc=$screen_rc  (0 = GO, 3 = undetermined, 4 = measured NO-GO)"
+else
+  echo "screen lane SKIPPED: no probe-screen in $here (rebuild with ./build.sh)"
+  screen_rc=127
+fi
+
 # --- Lane 3: the REAL code path, not a toy probe ---
 # scripts/probe-envelope-index.mjs is the phase-0 spike that produced
 # docs/envelope-index.md. Its output is redacted by design (DDL, counts,
@@ -116,6 +139,6 @@ else
 fi
 
 echo
-echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc accessibility_rc=$ax_rc"
+echo "summary: file_lane_rc=$file_rc apple_events_rc=$ae_rc accessibility_rc=$ax_rc screen_rc=$screen_rc"
 [ "$file_rc" -eq 0 ] || exit 3
 exit 0

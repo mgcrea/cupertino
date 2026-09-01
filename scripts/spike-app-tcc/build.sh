@@ -35,6 +35,7 @@ reset)
   tccutil reset SystemPolicyAllFiles "$bundle_id" || true
   tccutil reset AppleEvents "$bundle_id" || true
   tccutil reset Accessibility "$bundle_id" || true
+  tccutil reset ScreenCapture "$bundle_id" || true
   echo "TCC grants for $bundle_id revoked."
   exit 0
   ;;
@@ -57,6 +58,13 @@ cc -Wall -Wextra -Werror -O2 \
   -DLOG_PATH="\"$log\"" \
   -o "$app/Contents/MacOS/cupertino-spike" \
   "$here/spike-main.c"
+
+# The screen probe has to run as a CHILD of the bundle to be attributed to it,
+# and ScreenCaptureKit is unreachable from node — so it is compiled in rather
+# than invoked through the toolchain, which a Finder-launched app cannot find.
+# Native arch only: this measures TCC attribution, not portability.
+echo "swift: $here/../probe-screen.swift"
+swiftc -O -o "$app/Contents/Resources/probe-screen" "$here/../probe-screen.swift"
 
 sed -e "s#@NODE@#$node_bin#g" -e "s#@REPO@#$repo#g" \
   "$here/spike.sh.in" > "$app/Contents/Resources/spike.sh"
@@ -106,6 +114,8 @@ Next, by hand — Full Disk Access never prompts, it has to be granted:
   2b. Same again in Accessibility, which is a separate grant and the one the
       Mail composer needs:
        open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+  2c. And again in Screen Recording, which is a THIRD separate grant:
+       open "x-apple.systempreferences:com.apple.systempreferences.PrivacySecurity.extension?Privacy_ScreenCapture"
   3. Make sure Mail (and Notes) are running — the Apple Events lane skips
      apps that are not, exactly as the real client does.
   4. $0 run
@@ -127,7 +137,22 @@ own. Grant Accessibility to the spike, relaunch it, and compare:
   trusted: denied  + uiRead: denied    it does not — and the composer design
                                        needs a route that does not depend on it
 
-The two columns disagreeing is itself the finding: `trusted` is a claim about an
-identity and `uiRead` is the thing the composer actually does.
+The two columns disagreeing is itself the finding: \`trusted\` is a claim about an
+identity and \`uiRead\` is the thing the composer actually does.
+
+The screen lane answers a THIRD question and inherits nothing from the other
+two. This spike measured FDA and Apple Events, the codebase generalised that to
+every TCC service, and it was wrong for Accessibility — so Screen Recording is
+measured here rather than assumed. Compare the same binary run two ways:
+
+  swift ../probe-screen.swift        responsible = your terminal
+  ./build.sh run                     responsible = "Cupertino Spike.app"
+
+  flag granted + SCShareableContent ok      the grant reaches a child
+  flag granted + SCShareableContent DENIED  the four-grants state — tccutil
+                                            reset ScreenCapture, never re-grant
+
+A GO from that lane is still provisional: it cannot tell a target window from
+the window occluding it. Open the PNGs it writes before believing it.
 
 TXT
