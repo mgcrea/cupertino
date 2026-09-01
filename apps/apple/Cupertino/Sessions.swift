@@ -54,35 +54,6 @@ final class Sessions {
 
   func closed(id: UUID) {
     live.removeAll { $0.id == id }
-    if live.isEmpty, let install = pendingInstall {
-      pendingInstall = nil
-      hostLog("update", .info, "last session closed — installing the update now")
-      install()
-    }
-  }
-
-  // MARK: - Holding an update until nothing is connected
-
-  /// Set while Sparkle has an update ready and something is still connected.
-  ///
-  /// Not observed and deliberately not shown: the wait is bounded by the
-  /// sessions already listed above, and a second progress surface for "waiting
-  /// to do the thing you agreed to" would be noise.
-  private var pendingInstall: (() -> Void)?
-
-  /// Install once the last session closes.
-  ///
-  /// Replacing the app under a live MCP session hands the client an EOF, which
-  /// its host reports as a dead server — Cupertino appearing to break at the
-  /// moment it updates. Sparkle asks whether to postpone and hands back the
-  /// block that resumes; holding it here is the only place that knows when the
-  /// answer changes.
-  ///
-  /// If nothing is connected by the time this is called, run it straight away
-  /// rather than waiting for a `closed` that will never arrive.
-  func installWhenIdle(_ install: @escaping () -> Void) {
-    guard !live.isEmpty else { return install() }
-    pendingInstall = install
   }
 
   func named(id: UUID, _ client: String) {

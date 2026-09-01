@@ -90,25 +90,26 @@ extension UpdateController: SPUUpdaterDelegate {
   nonisolated func updaterShouldPromptForPermissionToCheck(forUpdates updater: SPUUpdater) -> Bool
   { false }
 
-  /// Do not restart out from under live work.
+  /// Never postpone the relaunch.
   ///
-  /// An MCP client mid-tool-call gets an EOF and its host reports a dead
-  /// server, which reads as Cupertino breaking rather than as Cupertino
-  /// updating. Postpone while anything is connected and relaunch when the last
-  /// session closes — the invocation is held and fired from `Sessions`.
+  /// This once held the install until the last MCP session closed, on the
+  /// reasoning that a client mid-tool-call gets an EOF and its host reports a
+  /// dead server. Both halves of that were wrong. Sparkle calls this the moment
+  /// somebody clicks Install and Relaunch, so the only thing it ever deferred
+  /// was an explicit request — and `SUAutomaticallyUpdate` is false, so there is
+  /// no other path that can reach it. A session is one *connection*, held open
+  /// for the lifetime of the client, so `live` is empty only in the seconds
+  /// nobody has an assistant running: one Claude Code window is eight of them.
+  /// The held block therefore never fired, the panel dismissed with nothing
+  /// shown, and the button read as broken.
+  ///
+  /// The EOF is still real; it is just handled a few milliseconds later and
+  /// unconditionally, in `updaterWillRelaunchApplication` below, which SIGTERMs
+  /// every server so the clients see an ordinary shutdown.
   nonisolated func updater(
     _ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
     untilInvokingBlock installHandler: @escaping () -> Void
-  ) -> Bool {
-    MainActor.assumeIsolated {
-      guard !Sessions.shared.live.isEmpty else { return false }
-      hostLog(
-        "update", .info,
-        "update ready — waiting for \(Sessions.shared.live.count) session(s) to finish")
-      Sessions.shared.installWhenIdle(installHandler)
-      return true
-    }
-  }
+  ) -> Bool { false }
 
   /// Servers spawned by the outgoing bundle keep running from its inode after
   /// Sparkle replaces it, so an MCP host would quietly go on talking to the
