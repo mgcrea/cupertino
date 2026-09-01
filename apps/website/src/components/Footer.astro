@@ -1,5 +1,5 @@
 ---
-import { BUNDLE_ID, DOCS, ISSUES_URL, REPO_URL } from "../config";
+import { BUNDLE_ID, DOCS, ISSUES_URL, REPO_URL, SIBLING_APP } from "../config";
 import Logo from "./Logo.astro";
 
 const columns = [
@@ -27,11 +27,21 @@ const columns = [
       { label: "Privacy", href: "/privacy" },
     ],
   },
+  /**
+   * The sibling. A column of its own rather than a line inside "Source",
+   * because the three above all name parts of Cupertino and this does not —
+   * and because this footer renders on every page, which is the whole reason
+   * the cross-link lives down here as well as on the homepage.
+   */
+  {
+    title: "More apps",
+    links: [{ label: `${SIBLING_APP.name} ↗`, href: SIBLING_APP.url }],
+  },
 ] as const;
 ---
 
 <footer class="border-t border-rule py-12">
-  <div class="wrap grid grid-cols-1 gap-10 sm:grid-cols-[1.4fr_1fr_1fr]">
+  <div class="wrap grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
     <div class="flex flex-col gap-3">
       <div class="flex items-center gap-2.5">
         <Logo size={22} />

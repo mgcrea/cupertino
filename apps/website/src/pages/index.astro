@@ -12,6 +12,7 @@ import Nav from "../components/Nav.astro";
 import Pricing from "../components/Pricing.astro";
 import SafariPages from "../components/SafariPages.astro";
 import Screens from "../components/Screens.astro";
+import SiblingApp from "../components/SiblingApp.astro";
 import Status from "../components/Status.astro";
 import SurfacePane from "../components/SurfacePane.astro";
 import Surfaces from "../components/Surfaces.astro";
@@ -137,6 +138,11 @@ const schema = {
     <Surfaces />
     <Status />
     <Pricing />
+    {/* Between the price and the closing plate, never after it. r2-explorer's
+        index carries the same note: its page used to end on the sibling card,
+        which put an outbound link to a different product below the one CTA this
+        page exists to reach. */}
+    <SiblingApp />
     <Cta />
   </main>
   <Footer />

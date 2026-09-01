@@ -1,0 +1,84 @@
+---
+/**
+ * The cross-link to bastion, and the only place on this site that names it.
+ *
+ * Deliberately not a `SectionHeader` section. Every real section on this page
+ * opens with that eyebrow-and-display-heading grid, and a cross-promo that
+ * borrowed it would read as one of the page's own arguments. It gets an eyebrow
+ * and a card, which is the treatment contour and silhouette give the same block
+ * — subordinate to the sections above it and to the closing plate below.
+ *
+ * The card is `Cta.astro`'s plate: same radius, same border, same ground. The
+ * two sites already share a button and a type ramp to the pixel, so the one
+ * place they finally point at each other should look like it was always there.
+ *
+ * There is no `primary` button here. This page holds exactly one accent fill per
+ * viewport and the closing CTA directly below owns it — a filled button on a
+ * link to a different product is the page arguing against its own sale.
+ *
+ * Everything it says comes from `SIBLING_APP` in config.ts, which the footer
+ * reads too, so the name and the URL cannot drift between the two placements.
+ */
+import { SIBLING_APP } from "../config";
+import Button from "./Button.astro";
+---
+
+<section id="also" class="wrap py-[96px]">
+  <div class="reveal flex flex-col gap-6 rounded-[20px] border border-rule bg-bg-2 p-8 md:p-10">
+    <div class="mono text-accent">Also from Magenta Creations</div>
+
+    <div class="grid grid-cols-1 items-center gap-7 md:grid-cols-[auto_1fr_auto] md:gap-10">
+      {/*
+        Served from this site's own `public/`, never hotlinked: astro.config.mjs
+        sets `img-src 'self' data:`, so a cross-origin mark is blocked with an
+        empty box on screen and nothing in the build log — and, per the CSP note
+        in CLAUDE.md, invisibly so in dev. Check this one with `pnpm build &&
+        pnpm preview`.
+
+        `rounded-[22.4%]` rather than a pixel radius because the plate's own
+        corner is the fraction 230/1024 and this renders at two sizes. A
+        percentage stays correct at both.
+
+        Not `Logo.astro` — that component is hardcoded to `/app-icon.svg`, which
+        is this site's mark rather than the sibling's, and it has no radius of
+        its own to lend.
+      */}
+      <img
+        src={SIBLING_APP.icon}
+        alt=""
+        width="256"
+        height="256"
+        loading="lazy"
+        decoding="async"
+        class="h-16 w-16 shrink-0 rounded-[22.4%] md:h-20 md:w-20"
+      />
+
+      <div class="flex flex-col gap-2.5">
+        <h2
+          class="m-0 font-display text-[26px] leading-[1.2] font-semibold tracking-[-0.03em] text-balance"
+        >
+          {SIBLING_APP.name} — <em class="font-normal text-accent-hi not-italic"
+            >{SIBLING_APP.tagline}</em
+          >
+        </h2>
+        <p class="m-0 max-w-[58ch] text-[15.5px] leading-[1.6] text-pretty text-fg-dim">
+          {SIBLING_APP.pitch}
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 md:flex-col md:items-stretch">
+        <Button href={SIBLING_APP.url} variant="secondary" external>
+          Visit {SIBLING_APP.name} <span class="opacity-60">↗</span>
+        </Button>
+        <a
+          href={SIBLING_APP.repo}
+          target="_blank"
+          rel="noopener"
+          class="inline-flex items-center justify-center px-[19px] py-[11px] text-[14px] text-fg-muted transition-colors hover:text-accent-hi"
+        >
+          Read the source ↗
+        </a>
+      </div>
+    </div>
+  </div>
+</section>

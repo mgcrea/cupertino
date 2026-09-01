@@ -358,3 +358,38 @@ export const FEEDBACK_API = "https://feedback.mgcrea.io";
 
 /** The feedback form on this site. */
 export const FEEDBACK_URL = "/feedback/";
+
+/**
+ * The sibling app by the same studio, cross-linked from the homepage and the
+ * footer. One constant feeds both, so the name, the URL and the icon cannot
+ * drift between the two placements — which is the failure the r2/d1 pair has,
+ * where the same URL is typed into two files.
+ *
+ * There is no App Store URL and there is not going to be one: neither app is on
+ * the store. Both sell through `/buy` and ship the build from GitHub.
+ *
+ * The pitch does not claim the two interoperate. Nothing in either repo
+ * documents running Cupertino's servers under Bastion — Bastion's catalog does
+ * not list them and this app wires clients itself — and a cross-promo card is
+ * the worst possible place to invent an integration. What is true, and is all
+ * this says, is that they solve the same shape of problem one layer apart.
+ */
+export const SIBLING_APP = {
+  name: "Bastion",
+  tagline: "One MCP server, running once.",
+  pitch:
+    "Cupertino holds one grant for the Apple apps. Bastion does the same job for every other server you connect: one supervised process per profile instead of one per editor, credentials in the Keychain, and every tool call recorded.",
+  url: "https://bastion.mgcrea.io",
+  repo: "https://github.com/mgcrea/bastion",
+  /**
+   * Bastion's own `public/app-icon.svg`, copied into this site's `public/apps/`.
+   *
+   * Copied rather than hotlinked because astro.config.mjs sets `img-src 'self'
+   * data:`, so a cross-origin image is blocked with nothing on screen and
+   * nothing in the build log. It sits under `public/apps/` rather than the
+   * public root to keep a hand-copied one-off visibly apart from the three
+   * outputs `pnpm icons` writes — and nothing keeps this copy fresh, because
+   * that script only ever generates Cupertino's own mark.
+   */
+  icon: "/apps/bastion.svg",
+} as const;
