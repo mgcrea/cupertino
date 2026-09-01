@@ -126,4 +126,16 @@ const { id, size = 18, class: className } = Astro.props;
       </>
     )
   }
+  {
+    id === "screen" && (
+      <>
+        {/* A display with a smaller frame inside it: the surface captures a
+            WINDOW, not the screen, and the glyph should not promise otherwise.
+            Same grid and stroke weight as the rest of the set. */}
+        <rect x="2.5" y="3.75" width="15" height="11" rx="2" />
+        <path d="M7.25 17.25h5.5M10 14.75v2.5" />
+        <rect x="5.75" y="6.5" width="7" height="5.25" rx="1" />
+      </>
+    )
+  }
 </svg>

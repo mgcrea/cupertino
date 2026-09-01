@@ -73,7 +73,7 @@ func die(_ message: String, code: Int32 = 1) -> Never {
 // to read the whole disk with a permission granted for mail. The app validates
 // this against its own table too; this check is here so a typo fails fast.
 // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "safari", "maps"]
+let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "safari", "maps", "screen"]
 // </generated:surfaces>
 
 var requested: String?

@@ -24,7 +24,8 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps
+SURFACES     := mail notes reminders calendar contacts messages safari maps screen
+NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -260,7 +261,7 @@ server-deps: ## Build the workspace packages the server bundles inline
 
 servers: server-deps ## Bundle the MCP servers self-contained (no node_modules at runtime)
 	@pnpm exec tsdown --config apps/apple/tsdown.servers.config.ts -l warn
-	@for s in $(SURFACES); do \
+	@for s in $(NODE_SURFACES); do \
 		python3 -c "import json;src=json.load(open('packages/$$s/package.json'));json.dump({'name':src['name'],'version':src['version'],'type':'module','private':True},open('$(STAGED)/servers/$$s/package.json','w'),indent=2)"; \
 	done
 	@echo "  staged $$(find $(STAGED)/servers -name '*.js' | wc -l | tr -d ' ') server files"
@@ -645,7 +646,7 @@ SHOT_SCREENS := surface prompt activity connections settings writes
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
 SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \

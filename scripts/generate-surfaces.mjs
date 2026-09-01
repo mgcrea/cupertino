@@ -60,17 +60,41 @@ const validate = (surfaces) => {
     if (!/^[a-z][a-z0-9-]*$/.test(s.id ?? "")) problems.push(`${at}: id must be kebab-case`);
     if (seen.has(s.id)) problems.push(`${at}: duplicate id`);
     seen.add(s.id);
-    for (const key of ["displayName", "npmName", "bundleId", "envPrefix"]) {
+    for (const key of ["displayName", "envPrefix"]) {
       if (typeof s[key] !== "string" || !s[key]) problems.push(`${at}: ${key} is required`);
     }
     for (const key of ["usesAppleEvents", "supportsWrites"]) {
       if (typeof s[key] !== "boolean") problems.push(`${at}: ${key} must be a boolean`);
     }
+    // Which process serves it. Explicit rather than inferred from a missing
+    // npmName, so the targets that mean "has a node package" can say so.
+    if (!["node", "swift"].includes(s.runtime)) {
+      problems.push(`${at}: runtime must be "node" or "swift"`);
+    }
+    // A swift-hosted surface has no npm package and could not have one — the
+    // grant it needs lives in the app, so a published package would be an
+    // empty-handed claim. Tie the two together rather than letting them drift.
+    if (s.runtime === "swift") {
+      if (s.npmName !== null) problems.push(`${at}: a swift surface must have npmName: null`);
+    } else if (typeof s.npmName !== "string" || !s.npmName) {
+      problems.push(`${at}: npmName is required for a node surface`);
+    }
+    // No bundle id only for something that is not an app. An Apple Events
+    // surface must have a target to send to.
+    if (s.bundleId === null) {
+      if (s.usesAppleEvents) {
+        problems.push(`${at}: bundleId is required when usesAppleEvents is true`);
+      }
+    } else if (typeof s.bundleId !== "string" || !s.bundleId) {
+      problems.push(`${at}: bundleId must be a string or null`);
+    }
     if (s.storePath !== null && typeof s.storePath !== "string") {
       problems.push(`${at}: storePath must be a string or null`);
     }
-    if (!["full-disk-access", "contacts"].includes(s.storePermission)) {
-      problems.push(`${at}: storePermission must be "full-disk-access" or "contacts"`);
+    if (!["full-disk-access", "contacts", "screen-recording"].includes(s.storePermission)) {
+      problems.push(
+        `${at}: storePermission must be "full-disk-access", "contacts" or "screen-recording"`,
+      );
     }
     if (s.envPrefix !== `APPLE_${s.id?.toUpperCase().replaceAll("-", "_")}_`) {
       problems.push(`${at}: envPrefix must be APPLE_<ID>_ — the servers derive it that way`);
@@ -114,6 +138,17 @@ validate(surfaces);
 
 const ids = surfaces.map((s) => s.id);
 const scriptable = surfaces.filter((s) => s.usesAppleEvents);
+/**
+ * The surfaces that are a node package under `packages/<id>`.
+ *
+ * Not every target that loops over surfaces means this one. The bridge, the
+ * closed table, the settings UI and the dev config take EVERY surface, because
+ * a swift-hosted surface is reached exactly like the others — the bridge never
+ * parses JSON-RPC and cannot tell them apart. What must not include it is
+ * anything that reads `packages/<id>`: the bundler's entry map, the CI
+ * handshake that runs `node packages/$s/dist/cli.js`, and `make servers`.
+ */
+const nodeIds = surfaces.filter((s) => s.runtime === "node").map((s) => s.id);
 
 /** "Mail, Notes, Reminders and Calendar" — the form every prose string wants. */
 const andList = (names) =>
@@ -155,6 +190,14 @@ const target = (path, next, opts = {}) =>
 
 const swiftString = (v) => JSON.stringify(v);
 
+/** Manifest spelling to Swift case. A lookup, so an unmapped value is a crash
+ * here rather than a silent fall-through to Full Disk Access. */
+const STORE_PERMISSION = {
+  "full-disk-access": "fullDiskAccess",
+  contacts: "contacts",
+  "screen-recording": "screenRecording",
+};
+
 const swiftGate = (g) =>
   `        Surface.Gate(id: ${swiftString(g.id)}, envSuffix: ${swiftString(g.envSuffix)}, ` +
   `label: ${swiftString(g.label)}, description: ${swiftString(g.description)}),`;
@@ -168,12 +211,13 @@ const swiftSurface = (s) => {
     `      id: ${swiftString(s.id)},`,
     `      displayName: ${swiftString(s.displayName)},`,
     ...(lines.length ? lines : []),
-    `      bundleID: ${swiftString(s.bundleId)},`,
+    `      bundleID: ${s.bundleId === null ? "nil" : swiftString(s.bundleId)},`,
     `      usesAppleEvents: ${s.usesAppleEvents},`,
     `      supportsWrites: ${s.supportsWrites},`,
     `      storePath: ${s.storePath === null ? "nil" : swiftString(s.storePath)},`,
-    `      storePermission: .${s.storePermission === "contacts" ? "contacts" : "fullDiskAccess"},`,
+    `      storePermission: .${STORE_PERMISSION[s.storePermission]},`,
     `      envPrefix: ${swiftString(s.envPrefix)},`,
+    `      runtime: .${s.runtime},`,
     ...(gates.length === 0
       ? [`      gates: []`]
       : [`      gates: [`, ...gates.map(swiftGate), `      ]`]),
@@ -210,7 +254,7 @@ target("Makefile", (src) => {
     src,
     `# <generated:surfaces> ${BANNER}\n`,
     `# </generated:surfaces>`,
-    `SURFACES     := ${ids.join(" ")}\n`,
+    `SURFACES     := ${ids.join(" ")}\nNODE_SURFACES := ${nodeIds.join(" ")}\n`,
     "Makefile SURFACES",
   );
   // The screenshot toggles: Mail on, everything else off, and a surface with no
@@ -256,7 +300,7 @@ target(".github/workflows/ci.yml", (src) =>
     src,
     `          # <generated:surfaces> ${BANNER}\n`,
     `          # </generated:surfaces>`,
-    `          for server in ${ids.join(" ")}; do\n`,
+    `          for server in ${nodeIds.join(" ")}; do\n`,
     "ci.yml",
   ),
 );
@@ -268,8 +312,8 @@ target("apps/apple/tsdown.servers.config.ts", (src) =>
     src,
     `    // <generated:surfaces> ${BANNER}\n`,
     `    // </generated:surfaces>`,
-    surfaces
-      .map((s) => `    "${s.id}/dist/cli": here("../../packages/${s.id}/src/cli.ts"),\n`)
+    nodeIds
+      .map((id) => `    "${id}/dist/cli": here("../../packages/${id}/src/cli.ts"),\n`)
       .join(""),
     "tsdown.servers.config.ts",
   ),
@@ -336,7 +380,16 @@ target("apps/website/src/data/surfaces.ts", (src) =>
     src,
     `  // <generated:surfaces> ${BANNER}\n`,
     `  // </generated:surfaces>`,
-    `  id: ${ids.map(swiftString).join(" | ")};\n`,
+    // One member per line, ALWAYS, even when the union would fit on one.
+    //
+    // The formatter owns this file too, and at eight surfaces the single-line
+    // form fitted inside the print width while at nine it did not — so the
+    // generator and oxfmt disagreed the moment `screen` landed, and
+    // `make surfaces-check` went red on a file nobody had edited. MEASURED:
+    // oxfmt does not collapse a multi-line union back onto one line even when
+    // it would fit, so this shape is stable at any length and the two agree by
+    // construction rather than by counting characters.
+    `  id:\n${ids.map((id) => `    | ${swiftString(id)}`).join("\n")};\n`,
     "website surfaces.ts",
   ),
 );

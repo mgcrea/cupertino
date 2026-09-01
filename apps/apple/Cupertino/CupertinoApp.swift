@@ -290,8 +290,12 @@ final class StatusModel {
     // task is unambiguously Sendable no matter what Surface grows later.
     // Enabled only. Asking TCC about a surface that will never start spends a
     // blocking IPC on a question with no consumer.
+    // compactMap, not map: `bundleID` is optional now that a surface need not
+    // be an app. Nothing is dropped here in practice — surfaces.json refuses a
+    // manifest with `usesAppleEvents` true and no bundle id — so the filter
+    // above already guarantees one.
     let targets = SurfaceSettings.enabledSurfaces.filter(\.usesAppleEvents)
-      .map { ($0.id, $0.bundleID) }
+      .compactMap { surface in surface.bundleID.map { (surface.id, $0) } }
     // System Events goes through the same door and must ride the same detached
     // task. It is not a Surface, so it cannot come from the list above — but it
     // is the identical blocking IPC, and running it on the main thread would
@@ -328,13 +332,15 @@ final class StatusModel {
   /// app writes back the state it started in, which is the shape of a button
   /// that does nothing.
   func requestAutomation(_ surface: Surface) {
-    guard surface.usesAppleEvents else { return }
+    // Both conditions hold together by construction: the manifest cannot
+    // declare Apple Events without a target to send them to.
+    guard surface.usesAppleEvents, let bundleID = surface.bundleID else { return }
     let needsLaunch = automation[surface.id] == .appNotRunning
     Task.detached {
       let result =
         needsLaunch
-        ? Permissions.launchAndRequestAutomation(for: surface.bundleID)
-        : Permissions.requestAutomation(for: surface.bundleID)
+        ? Permissions.launchAndRequestAutomation(for: bundleID)
+        : Permissions.requestAutomation(for: bundleID)
       await MainActor.run { self.automation[surface.id] = result }
     }
   }

@@ -33,8 +33,11 @@ enum SurfaceIcon {
   /// substituting something that implies it is there.
   static func image(for surface: Surface) -> NSImage? {
     if let hit = cache[surface.id] { return hit }
-    guard
-      let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: surface.bundleID)
+    // `nil` bundle id is not "not installed" — it is a surface that is not an
+    // app at all, like `screen`. There is nothing to ask LaunchServices about,
+    // and the caller draws a symbol rather than a missing-app placeholder.
+    guard let bundleID = surface.bundleID,
+      let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
     else { return nil }
     let icon = NSWorkspace.shared.icon(forFile: url.path)
     cache[surface.id] = icon

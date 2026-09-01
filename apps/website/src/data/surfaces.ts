@@ -17,7 +17,16 @@
 export interface Surface {
   /** Anchor id and display key. */
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-  id: "mail" | "notes" | "reminders" | "calendar" | "contacts" | "messages" | "safari" | "maps";
+  id:
+    | "mail"
+    | "notes"
+    | "reminders"
+    | "calendar"
+    | "contacts"
+    | "messages"
+    | "safari"
+    | "maps"
+    | "screen";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -229,6 +238,28 @@ export const SURFACES: readonly Surface[] = [
     pitch:
       "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Saves and removes favourites behind the write gate.",
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
+  },
+  {
+    id: "screen",
+    name: "Screen",
+    // No npm package, and not an oversight: this surface is served by the app
+    // itself because ScreenCaptureKit is unreachable from node. A published
+    // package could do nothing — the Screen Recording grant lives in the app.
+    pkg: "—",
+    read: ["apple_screen_list_targets", "apple_screen_diagnostics"],
+    // Not a write in the mutating sense; it is gated because it puts a file on
+    // disk and because pixels contain whatever the window was showing.
+    write: [],
+    gated: [
+      {
+        name: "apple_screen_capture_surface",
+        env: "APPLE_SCREEN_ALLOW_CAPTURE",
+        why: "Captures a surface app's window to a PNG. Off by default, and it supersedes the one-time-code gates — a Safari window renders a code whatever those say.",
+      },
+    ],
+    pitch:
+      "A picture of a window your assistant is already working with — Mail, Safari, Calendar — written to disk and handed back as a path. Only the apps Cupertino brokers: never an arbitrary app, window, display or region. Nothing is raised or focused, and a window sitting behind another app still captures its own content.",
+    withoutGrant: "Nothing — Screen Recording is the only way in, and it takes effect on relaunch.",
   },
   {
     id: "safari",

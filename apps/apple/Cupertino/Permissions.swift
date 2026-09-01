@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import CoreGraphics
 import Foundation
 import SafariServices
 
@@ -38,6 +39,15 @@ enum AutomationStatus: Equatable {
 /// for a question nobody has been asked yet, and no API separates them. So
 /// `AutomationStatus.notDetermined` has no counterpart here — the button offers
 /// to ask either way, which is the correct action in both states.
+/// Screen Recording, as two states.
+///
+/// Two rather than three for the same reason `AccessibilityStatus` has two: TCC
+/// cannot distinguish "denied" from "never asked" for this service either.
+enum ScreenRecordingStatus: Hashable {
+  case granted
+  case denied
+}
+
 enum AccessibilityStatus: Equatable {
   case granted
   case denied
@@ -402,6 +412,35 @@ enum Permissions {
 
   static func accessibility() -> AccessibilityStatus {
     AXIsProcessTrusted() ? .granted : .denied
+  }
+
+  /// Screen Recording — the third TCC service this app models, and the first
+  /// added since `Surface.storePermission` started recording which grant gates
+  /// which surface.
+  ///
+  /// TWO answers, because they disagree and the disagreement is the diagnosis.
+  /// `CGPreflightScreenCaptureAccess` is a claim about this identity;
+  /// enumerating windows is the capability. A Mac that has run Cupertino from
+  /// more than one path holds several TCC rows under one identifier — the
+  /// "one identifier, four grants" state in scripts/spike-app-tcc/README.md —
+  /// and there the flag says yes while every capture is blind. The cure is
+  /// `tccutil reset ScreenCapture`, never another grant, so advice built on the
+  /// flag alone sends people round a loop that cannot terminate.
+  ///
+  /// Cheap enough to call from a settings pane: the flag is a lookup and the
+  /// enumeration is the same call the server makes.
+  ///
+  /// MEASURED, macOS 26.6: this grant is held by the app bundle, inherited by
+  /// processes it spawns, and survives both re-signing and the bundle moving —
+  /// see docs/screen.md. It is NOT inherited from whatever launched the app.
+  static func screenRecording() -> ScreenRecordingStatus {
+    CGPreflightScreenCaptureAccess() ? .granted : .denied
+  }
+
+  /// Unlike Full Disk Access, this one CAN be requested — and unlike Contacts,
+  /// the grant only takes effect on relaunch, which the UI has to say.
+  static func requestScreenRecording() {
+    CGRequestScreenCaptureAccess()
   }
 
   /// Ask for Accessibility, with the system's prompt visible.

@@ -43,18 +43,24 @@ rather than about capability.
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status                                         |
-| --------- | -------------------------------------------- | ---------------------------------------------- |
-| Mail      | file lane required — 74 s search             | implemented                                    |
-| Notes     | Apple Events usable below ~5k notes          | implemented                                    |
-| Reminders | dictionary complete for the core model       | implemented                                    |
-| Messages  | **file lane mandatory** — no read API exists | implemented                                    |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented                                    |
-| Safari    | two lanes see disjoint things                | implemented                                    |
-| Maps      | **file lane only** — no `.sdef` exists       | implemented, and writes without an Apple Event |
-| Contacts  | file-lane reads, 0 ms; store is plural       | implemented                                    |
+| Surface   | Lane verdict                                 | Status                                                 |
+| --------- | -------------------------------------------- | ------------------------------------------------------ |
+| Mail      | file lane required — 74 s search             | implemented                                            |
+| Notes     | Apple Events usable below ~5k notes          | implemented                                            |
+| Reminders | dictionary complete for the core model       | implemented                                            |
+| Messages  | **file lane mandatory** — no read API exists | implemented                                            |
+| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented                                            |
+| Safari    | two lanes see disjoint things                | implemented                                            |
+| Maps      | **file lane only** — no `.sdef` exists       | implemented, and writes without an Apple Event         |
+| Contacts  | file-lane reads, 0 ms; store is plural       | implemented                                            |
+| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms  | implemented, in the app: the first with no npm package |
 
-Every probed surface now has a package. **Safari is the only read-only one**, and that is recorded
+Every probed surface now has a server, though **Screen no longer means a package** — it is served
+in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
+holds no `screencapture`. `surfaces.json` carries a `runtime` field for exactly that split, so the
+targets that mean "has a node package" (the bundler's entry map, the CI handshake, `make servers`)
+say so, while the bridge, the closed table and the settings UI take every surface. **Safari is the
+only read-only one**, and that is recorded
 as a decision rather than left as an omission: `surfaces.json` carries the reasoning, and its
 `tools.test.ts` asserts the tool list is IDENTICAL with writes enabled, so a mutating tool cannot
 appear there without that decision being taken again.
@@ -132,12 +138,15 @@ app and it is not in the table above; it would be a FIFTH lane, and the first th
 "neither" row of the lane table — a framework linked into the app, because ScreenCaptureKit is
 unreachable from a node server that holds `PATH=/usr/bin:/bin`. The capability is not in doubt:
 `SCContentFilter` composites a window that is 100% covered by another app, in 30 ms, so capture is
-passive observation rather than something that has to raise windows. What is unmeasured is the
-identity — whether an `LSUIElement` Developer-ID app gets and keeps `kTCCServiceScreenCapture`, and
-whether that survives the bundle moving. **Do not answer those by generalising from
-`scripts/spike-app-tcc`**: it measured Full Disk Access and Apple Events, this document's own
-codebase generalised the verdict to every TCC service, and it was wrong for Accessibility. A
-screen-recording lane is wired into `spike.sh.in` for that reason.
+passive observation rather than something that has to raise windows. The identity question is
+answered too: an `LSUIElement` Developer-ID bundle holds `kTCCServiceScreenCapture` and its
+GRANDCHILDREN inherit it, measured through the screen-recording lane now wired into `spike.sh.in`.
+That lane exists because the verdict must not be generalised from `scripts/spike-app-tcc` — it
+measured Full Disk Access and Apple Events, this document's own codebase generalised to every TCC
+service, and it was wrong for Accessibility. The same bundle held three grants and not this one
+until it was granted separately. The grant also survives re-signing AND the bundle moving, keyed to
+identifier + certificate exactly as Full Disk Access is. The one thing still unmeasured is whether
+macOS 26 re-prompts periodically, which shapes the Permissions pane rather than the architecture.
 
 Two findings there generalise beyond the surface. A **raw window enumeration is not a target list** —
 Mail reports 16 windows and has one, the rest being shadows and helper layers — and **enumerable is
@@ -194,7 +203,7 @@ generated region is a red build rather than a shipped inconsistency.
 | --------------------------------------- | ---------------------------------------------------------------- |
 | `apps/apple/Cupertino/Surfaces.swift`   | `Surface.all`                                                    |
 | `apps/apple/CupertinoBridge/main.swift` | `let known = [...]`                                              |
-| `Makefile`                              | `SURFACES :=` and `SHOT_WRITES :=`                               |
+| `Makefile`                              | `SURFACES :=`, `NODE_SURFACES :=`, `SHOT_WRITES :=`              |
 | `.github/workflows/ci.yml`              | the stdio handshake loop                                         |
 | `apps/apple/tsdown.servers.config.ts`   | the bundler's entry map                                          |
 | `Cupertino.xcodeproj/project.pbxproj`   | the Apple Events consent string, ×2                              |
@@ -202,7 +211,8 @@ generated region is a red build rather than a shipped inconsistency.
 | `apps/website/src/data/surfaces.ts`     | the `id` union (not the tool names)                              |
 | `.mcp.json`                             | the dev bridge entries (written, not checked — it is gitignored) |
 
-Adding a surface is one manifest entry and `make surfaces`. Two things are deliberately NOT generated:
+Adding a surface is one manifest entry and `make surfaces` — plus a `runtime`, which decides whether
+it is a package under `packages/<id>` or served by the app. Two things are deliberately NOT generated:
 the website's tool names, which are transcribed from `packages/<id>/src/tools/` because a wrong name
 there is a claim the servers do not honour, and the marketing prose, which the site derives from its
 own `SURFACES` array at build time.

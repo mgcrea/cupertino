@@ -28,7 +28,9 @@
  *
  * Every `registerTool("…")` under `packages/<surface>/src/tools/` must appear in the
  * site's list, and every tool name in the site's list must be registered
- * somewhere. The second direction is the one that catches a rename: without it,
+ * somewhere. A surface served by the app rather than by a node package is
+ * scanned too — see `SWIFT_SERVERS`, and note that forgetting it makes this
+ * suite pass while covering nothing. The second direction is the one that catches a rename: without it,
  * renaming a tool and adding the new name leaves the old one advertised forever.
  *
  * Write-gated tools are registered through the same call and belong in the
@@ -51,6 +53,22 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SITE = join(ROOT, "apps", "website", "src", "data", "surfaces.ts");
 
+/**
+ * A surface served by the app itself, which has no `packages/<id>` to scan.
+ *
+ * `screen` is the first. Without this the suite still PASSES and silently stops
+ * covering the surface: the scan finds no tools for it, the site lists none
+ * either, and the two agree by both being empty. That is worse than a failure,
+ * because the whole point of this file is that a wrong tool list cannot ship
+ * quietly — so a runtime the scan does not know about has to be added here the
+ * moment it exists.
+ *
+ * The names live in a Swift dictionary literal rather than a `registerTool`
+ * call, so the pattern differs. Same crudeness, same justification as the
+ * regex note above: a literal is what carries the name.
+ */
+const SWIFT_SERVERS = [["screen", join(ROOT, "apps", "apple", "Cupertino", "ScreenServer.swift")]];
+
 /** Every tool name passed to `server.registerTool`, across every package. */
 const registeredTools = () => {
   const found = new Map();
@@ -64,6 +82,10 @@ const registeredTools = () => {
       // whitespace class is load-bearing rather than defensive.
       for (const m of src.matchAll(/registerTool\(\s*"([a-z0-9_]+)"/g)) found.set(m[1], pkg);
     }
+  }
+  for (const [surface, file] of SWIFT_SERVERS) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/"name":\s*"(apple_[a-z0-9_]+)"/g)) found.set(m[1], surface);
   }
   return found;
 };

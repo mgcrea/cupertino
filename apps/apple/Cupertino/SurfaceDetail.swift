@@ -77,10 +77,19 @@ struct SurfaceDetail: View {
       SurfaceIconView(surface: surface, size: 40)
       VStack(alignment: .leading, spacing: 2) {
         Text(surface.displayName).font(.title2)
-        Text(surface.bundleID)
-          .font(.system(.caption, design: .monospaced))
-          .foregroundStyle(.secondary)
-          .textSelection(.enabled)
+        // A surface with no bundle id is not an app. Saying so is better than
+        // an empty line where every other surface shows an identifier — the
+        // subtitle's job is to name what is being brokered.
+        if let bundleID = surface.bundleID {
+          Text(bundleID)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        } else {
+          Text("A system capability, not an app")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
       Spacer()
       // In the heading rather than inside Access, because it gates every card

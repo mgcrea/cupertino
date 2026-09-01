@@ -208,11 +208,15 @@ func runProbe() async -> Int32 {
       is your editor, not Cupertino, which is the misattribution this project
       exists to avoid.
 
-      Measure the identity that matters instead:
-          scripts/spike-app-tcc/build.sh && scripts/spike-app-tcc/build.sh run
+      If you are reading this from INSIDE the spike bundle, the responsible
+      process is the app and the prompt would name it — that is the measurement,
+      not a hazard. Pass --force (spike.sh does).
 
-      Or, if you really do mean to grant this to whatever launched this process:
-          --force
+      From a terminal, grant it to the app by hand instead, so nothing lands on
+      the editor:
+          open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+
+      Screen Recording takes effect on RELAUNCH, so quit and re-run afterwards.
     """)
     return UNDETERMINED
   }
@@ -380,10 +384,10 @@ func runProbe() async -> Int32 {
   // — and says nothing about the question the plan actually asked.
   if let off = offScreenRendered {
     row("off-screen window", off
-      ? "rendered"
-      : "blank — a minimised or never-drawn window does not composite (a LIMIT, not a blocker)")
+      ? "rendered — off-screen does not mean blank"
+      : "blank — this window was never drawn (off-screen alone does not predict this)")
     if !off {
-      caveats.append("minimised/never-drawn windows capture blank — capture_surface must report that rather than return an empty PNG")
+      caveats.append("an off-screen window captured blank — check the RESULT, never predict it from isOnScreen: a drawn window composites off screen too")
     }
   }
 

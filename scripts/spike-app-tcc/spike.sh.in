@@ -116,7 +116,15 @@ echo
 echo "--- screen recording lane: probe-screen (child of the app)"
 here=$(cd "$(dirname "$0")" && pwd)
 if [ -x "$here/probe-screen" ]; then
-  "$here/probe-screen" --surfaces="$REPO/surfaces.json" --out="$HOME/Library/Logs/cupertino-spike-shots"
+  # --force is CORRECT here and nowhere else. The probe refuses to provoke the
+  # consent prompt by default because from a terminal the prompt names the
+  # editor. Inside this bundle the responsible process IS the app, so the
+  # prompt names "Cupertino Spike" — which is the thing being measured, not a
+  # hazard. Without --force this lane refuses itself and advises running the
+  # spike, which is what is already running.
+  "$here/probe-screen" --force \
+    --surfaces="$REPO/surfaces.json" \
+    --out="$HOME/Library/Logs/cupertino-spike-shots"
   screen_rc=$?
   echo "screen lane rc=$screen_rc  (0 = GO, 3 = undetermined, 4 = measured NO-GO)"
 else

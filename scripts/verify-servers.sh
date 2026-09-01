@@ -63,10 +63,15 @@ fi
 
 # The manifest, never a hardcoded list: a surface added to surfaces.json and
 # forgotten by the bundler must fail here rather than go unmentioned. This is
-# the same source `make surfaces` generates SURFACES from.
+# the same source `make surfaces` generates NODE_SURFACES from.
+#
+# runtime == node only. A swift-hosted surface has no packages/<id> and never
+# reaches the bundler, so looking for a cli.js it could not have would fail every
+# build. The guarantee above is unchanged for the surfaces this actually covers.
 surfaces=$(python3 -c "
 import json
-print(' '.join(s['id'] for s in json.load(open('surfaces.json'))['surfaces']))
+print(' '.join(
+    s['id'] for s in json.load(open('surfaces.json'))['surfaces'] if s['runtime'] == 'node'))
 ")
 
 if [ -z "$surfaces" ]; then
@@ -74,6 +79,28 @@ if [ -z "$surfaces" ]; then
   echo "  FAIL  surfaces.json named no surfaces"
   echo ""
   exit 1
+fi
+
+# What this script does NOT cover, said out loud.
+#
+# A swift-hosted surface is served by the app binary, so there is no cli.js to
+# scan and no child runtime to spawn: neither property below applies to it. It
+# is verified by handshaking THROUGH THE BRIDGE, which `make smoke` and the
+# `make install` loop both do and `make bundle` does not.
+#
+# Printed rather than passed over, because a gate that quietly covers less than
+# its name suggests is the exact failure this file was written for — three
+# releases shipped servers that died on their first line and every gate was
+# green.
+swift_surfaces=$(python3 -c "
+import json
+print(' '.join(
+    s['id'] for s in json.load(open('surfaces.json'))['surfaces'] if s['runtime'] != 'node'))
+")
+if [ -n "$swift_surfaces" ]; then
+  echo ""
+  echo "  NOT COVERED HERE: $swift_surfaces (served by the app, not a node child)"
+  echo "                    verify with: make smoke"
 fi
 
 echo ""

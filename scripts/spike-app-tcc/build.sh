@@ -115,7 +115,7 @@ Next, by hand — Full Disk Access never prompts, it has to be granted:
       Mail composer needs:
        open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
   2c. And again in Screen Recording, which is a THIRD separate grant:
-       open "x-apple.systempreferences:com.apple.systempreferences.PrivacySecurity.extension?Privacy_ScreenCapture"
+       open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
   3. Make sure Mail (and Notes) are running — the Apple Events lane skips
      apps that are not, exactly as the real client does.
   4. $0 run

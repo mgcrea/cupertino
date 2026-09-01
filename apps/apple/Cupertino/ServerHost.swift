@@ -464,6 +464,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
 
+    // A swift-hosted surface is served here rather than spawned. There is no
+    // node package to locate, and there could not be: ScreenCaptureKit is
+    // unreachable from node and a server's PATH holds no `screencapture`. The
+    // bridge cannot tell — it never parses JSON-RPC — so `--server=screen`
+    // arrives by exactly the path `--server=mail` does.
+    if surface.runtime == .swift {
+      reply(client, BridgeProtocol.ok)
+      ScreenServer.serve(surface: surface, client: client)
+      return
+    }
+
     let binaries: ServerBinaries
     do {
       binaries = try ServerLocator.locate(surface)

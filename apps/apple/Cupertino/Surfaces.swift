@@ -20,9 +20,14 @@ struct Surface: Identifiable, Hashable {
   let id: String
   let displayName: String
   /// Target of the Apple Events lane, and the app whose icon represents this
-  /// surface. Always set — even a surface that never sends an Apple Event has
-  /// an app behind it, and `SurfaceIcon` asks LaunchServices for it by this id.
-  let bundleID: String
+  /// surface.
+  ///
+  /// `nil` only for a surface that is not an app at all. `screen` is the first:
+  /// it brokers a system capability, so there is no bundle to send an event to
+  /// and none for `SurfaceIcon` to ask LaunchServices about — that falls back to
+  /// a symbol. A surface with `usesAppleEvents` true must have one, and the
+  /// generator refuses a manifest where it does not.
+  let bundleID: String?
   /// Whether this surface ever sends an Apple Event.
   ///
   /// False means no Automation prompt is ever shown for it and none is needed:
@@ -47,6 +52,8 @@ struct Surface: Identifiable, Hashable {
   /// Prefix for the server's environment variables, e.g. `APPLE_MAIL_`.
   /// See `packages/<id>/.env.example` for the full set.
   let envPrefix: String
+  /// Which process serves this surface. See `Runtime`.
+  let runtime: Runtime
   /// Extra opt-in switches beyond the write gate. Usually empty.
   ///
   /// A gate is for a tool that is not a write — so `supportsWrites` is the
@@ -75,6 +82,29 @@ struct Surface: Identifiable, Hashable {
     case fullDiskAccess
     /// The Contacts privacy grant. Prompts on first read.
     case contacts
+    /// `kTCCServiceScreenCapture`. Like Full Disk Access it is per-process and
+    /// all-or-nothing — macOS has no per-target scoping, so capturing one
+    /// window costs the same grant as capturing the display. What bounds it is
+    /// this table, not the system: see docs/screen.md.
+    case screenRecording
+  }
+
+  /// Which process actually serves this surface.
+  ///
+  /// Every surface until `screen` was a node package the app spawns. Capture
+  /// cannot be: ScreenCaptureKit is unreachable from node, and a server is
+  /// handed `PATH=/usr/bin:/bin`, so `screencapture` is not callable either.
+  /// It is served in-process instead, and the bridge cannot tell — it never
+  /// parses JSON-RPC.
+  ///
+  /// Generated rather than inferred from a missing `npmName`, so the targets
+  /// that mean "surfaces with a node package" say so.
+  enum Runtime: Hashable {
+    /// `packages/<id>`, spawned by `ServerLocator`.
+    case node
+    /// Served by the app itself. No npm package exists or could work: the
+    /// grant lives in the app.
+    case swift
   }
 
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
@@ -91,6 +121,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Mail/V*/MailData/Envelope Index",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MAIL_",
+      runtime: .node,
       gates: []
     ),
     Surface(
@@ -102,6 +133,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_NOTES_",
+      runtime: .node,
       gates: []
     ),
     Surface(
@@ -120,6 +152,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Group Containers/group.com.apple.reminders",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_REMINDERS_",
+      runtime: .node,
       gates: []
     ),
     Surface(
@@ -141,6 +174,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_CALENDAR_",
+      runtime: .node,
       gates: []
     ),
     Surface(
@@ -169,6 +203,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Application Support/AddressBook",
       storePermission: .contacts,
       envPrefix: "APPLE_CONTACTS_",
+      runtime: .node,
       gates: []
     ),
     Surface(
@@ -225,6 +260,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Messages/chat.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MESSAGES_",
+      runtime: .node,
       gates: [
         Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets apple_messages_find_codes extract 2FA codes from recent messages. Off by default."),
       ]
@@ -320,6 +356,7 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_SAFARI_",
+      runtime: .node,
       gates: [
         Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets Safari tools read a one-time 2FA code from a page you have allowed the extension on. Off by default."),
       ]
@@ -375,7 +412,79 @@ struct Surface: Identifiable, Hashable {
       storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MAPS_",
+      runtime: .node,
       gates: []
+    ),
+    Surface(
+      id: "screen",
+      displayName: "Screen",
+      // The FIRST surface that is not an app. Every other entry brokers one
+      // Apple application; this one brokers a system capability, which is why
+      // bundleId and npmName are both null and why it is the first row where
+      // SurfaceIcon has no icon to ask LaunchServices for.
+      //
+      // A FIFTH lane, and the first to need what docs/surfaces.md calls the
+      // 'neither' row of the lane table: a framework linked into the app.
+      // ScreenCaptureKit is unreachable from node, and a server is handed
+      // PATH=/usr/bin:/bin, so /usr/sbin/screencapture is not callable either.
+      // Hence runtime 'swift' — served in-process by ServerHost. The bridge
+      // cannot tell the difference because it never parses JSON-RPC. An npm
+      // package is not merely absent but impossible: the grant lives in the
+      // app, so a published @mgcrea/mcp-apple-screen could do nothing.
+      //
+      // MEASURED, macOS 26.6, see docs/screen.md. Capture is ~30 ms a window.
+      // SCContentFilter(desktopIndependentWindow:) composites a window that is
+      // 100% COVERED by another app, so this is passive observation and never
+      // has to raise anything. kTCCServiceScreenCapture is held by this
+      // LSUIElement Developer-ID bundle, inherited by processes it spawns, and
+      // survives both re-signing and the bundle moving — the same identifier +
+      // certificate rule Full Disk Access follows.
+      //
+      // SCOPING BUYS AUDITABILITY, NOT A SMALLER GRANT, and the copy must not
+      // drift from that. kTCCServiceScreenCapture is per-process and
+      // all-or-nothing: macOS has no per-target scoping, so capturing Mail
+      // costs the identical grant as capturing the display Passwords happens to
+      // be sitting on. What bounds it is Surface.all, checked in Swift — the
+      // same trade the closed table already makes for Full Disk Access.
+      // During the probe, Passwords.app and Keychain Access were both running
+      // with open windows and neither is reachable, by construction.
+      //
+      // The gate below is the THIRD on any surface and the first that is not
+      // about one-time codes. It is off by default and it SUPERSEDES the
+      // allowCodes gates on messages and safari — a Safari window renders a
+      // one-time code whatever APPLE_SAFARI_ALLOW_CODES says, and pretending
+      // otherwise would make those gates decorative. See docs/passwords.md.
+      //
+      // supportsWrites is FALSE even though capture puts a PNG on disk, which
+      // is the reason the three save_attachment tools sit behind allowWrites.
+      // A second gate would be worse than none: allowCapture already gates the
+      // only tool that writes anything, and it is strictly stronger — off by
+      // default rather than off-by-default-and-then-usually-on.
+      //
+      // A RAW ENUMERATION IS NOT A TARGET LIST. Mail reports 16 windows and
+      // has one; the rest are shadows, toolbars and helper layers. Targets are
+      // filtered to windowLayer 0, at least 100x100, and on-screen-or-titled.
+      // And enumerable is not capturable: a titled window can still fail
+      // SCScreenshotManager with -3811, so list_targets must not promise a
+      // window capture_surface cannot grab.
+      //
+      // Window titles are withheld by default. 178 of 547 windows exposed one
+      // on the probed machine — a mail subject, a chat name, a document. Same
+      // rule ~/Library/HomeKit taught: a name can be the payload.
+      //
+      // No display capture and no region capture in v1. Those are the
+      // general-vision feature, and shipping them means the allowlist never
+      // existed. Widening later is deleting a check.
+      bundleID: nil,
+      usesAppleEvents: false,
+      supportsWrites: false,
+      storePath: nil,
+      storePermission: .screenRecording,
+      envPrefix: "APPLE_SCREEN_",
+      runtime: .swift,
+      gates: [
+        Surface.Gate(id: "allowCapture", envSuffix: "ALLOW_CAPTURE", label: "Allow screen capture", description: "Lets apple_screen_capture_surface take a picture of a surface app's window. Needs Screen Recording, supersedes the one-time-code gates, and is off by default."),
+      ]
     ),
   ]
   // </generated:surfaces>
