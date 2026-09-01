@@ -42,7 +42,10 @@ export const fromArg = z
 export const toArg = z
   .string()
   .optional()
-  .describe("End of the window, ISO-8601. Defaults to now.");
+  .describe(
+    "End of the window, ISO-8601. Defaults to 30 days after `from`, or to now when `from` is " +
+      "omitted too.",
+  );
 
 export const includeReactionsArg = z
   .boolean()
