@@ -131,6 +131,13 @@ jobs:
       - name: Screen server 🔍
         if: runner.os == 'macOS'
         run: make screen-check
+      # Same reasoning for the second in-process surface. Its gate is CI-safe by
+      # construction: it drives SoundServer.handle directly and asserts the gated
+      # half stays invisible on a machine with no microphone permission, which is
+      # exactly what a runner is.
+      - name: Sound server 🔍
+        if: runner.os == 'macOS'
+        run: make sound-check
       - name: Audit export signing 🔍
         if: runner.os == 'macOS'
         run: make audit-check

@@ -32,18 +32,19 @@ off cannot see that they exist.
 
 ## Surfaces
 
-| Surface   | Package                                    | Status                                                                                |
-| --------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes                        |
-| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                        |
-| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                             |
-| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                        |
-| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                       |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 8 tools, chats/search/decoded text + gated send and codes               |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                      |
-| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package                |
-| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                           |
+| Surface   | Package                                    | Status                                                                                         |
+| --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes                                 |
+| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                 |
+| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
+| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
+| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 8 tools, chats/search/decoded text + gated send and codes                        |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes          |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
+| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package                         |
+| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; served in-app, no npm package |
+| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
 Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
 an Apple app is also its own npm package; `screen` is not, and could not be — it brokers
@@ -545,8 +546,8 @@ Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-ki
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v1.8.0`,
-`reminders-v1.8.0`, `calendar-v1.8.0`, `core-v1.8.0`. The app is tagged `app-v1.8.0` and releases on its own lane —
+Releases are tagged per package, so a tag names what it publishes: `mail-v1.9.0`,
+`reminders-v1.9.0`, `calendar-v1.9.0`, `core-v1.9.0`. The app is tagged `app-v1.9.0` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 <!-- </generated:version> -->

@@ -6,11 +6,75 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.8.0`,
-`notes-v1.8.0`, `reminders-v1.8.0`, `core-v1.8.0` for the npm packages, and `app-v1.8.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.9.0`,
+`notes-v1.9.0`, `reminders-v1.9.0`, `core-v1.9.0` for the npm packages, and `app-v1.9.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.9.0] - 2026-09-01
+
+### Added
+
+- **A tenth surface, `sound`, and the second the app serves in-process.**
+  `apple_sound_list_devices`, `get_volume`/`set_volume`, `set_muted`,
+  `set_default_device`, `speak`, `recording_status` and `diagnostics` need no grant at all;
+  `start_recording`/`stop_recording` sit behind a new `allowRecording` gate that needs the
+  Microphone permission.
+
+  **`allowRecording` is independent of `allowWrites`, deliberately.** Volume, routing and speech are
+  mutations, but they are not recording, and a caller that wants to set the output device should not
+  have to grant the ability to record a room to get it.
+
+  Recordings are written as CAF and never m4a: a truncated m4a is a total loss, where a truncated
+  CAF still opens. A recording is exactly the file you do not get a second attempt at.
+
+- **Report an Issue, Send Feedback and Cupertino Support in the Help menu**, matching the rest of
+  the fleet. `trackerURL` points at this repository rather than the shared tracker, since Cupertino
+  has a public repo of its own, and `preferIssueTracker` orders the tracker above the form to match.
+  The site gains the `/support/` page that third link needs — it was the only one with a
+  `/feedback/` and no `/support/` — linked from the footer.
+
+- **The site cross-links Bastion as a sibling app**, from one `SIBLING_APP` constant feeding both
+  the homepage section and the footer column, so the name, URL and icon cannot drift apart. It
+  claims no interoperability: neither repo documents running these servers under Bastion, and a
+  cross-promo card is the wrong place to invent one.
+
+### Changed
+
+- **One status verdict per surface, instead of an automation-only glyph.** `StatusModel` and
+  `SurfaceStatus` weigh every requirement a manifest entry can declare — Automation, the store
+  grant, store readability — into a single health value. The old glyph drew Screen grey with "not
+  needed" while every capture refused, and drew Mail green while its store was unreadable.
+
+- **Automation is asked for only when it would be spent.** `Surface` gains `appleEventsScope`
+  (`always | writes | nil`): Messages and Contacts script their app only in order to write, so with
+  `allowWrites` off they were being polled for a grant they would never use.
+
+- **The JSON-RPC plumbing shared by in-process servers lives in `InProcessRPC`.** Framing,
+  envelopes and the blocking-task bridge moved out of `ScreenServer` once a second in-process server
+  needed them — extracted rather than copied, which is the drift `surfaces.json` exists to end.
+
+### Fixed
+
+- **The screen capability's icon fallback names an SF Symbol that exists.** It declared `displays`;
+  the symbol is `display`, so `NSImage` returned nil and the row would have rendered blank on any
+  Mac where `iconPath` had moved. That fallback is mandatory in `surfaces.json` precisely to prevent
+  a blank, and a name nobody had checked bought none of it. `make screen-check` now resolves every
+  capability's symbol through `NSImage` and confirms its `iconPath` is present — symbol lookup works
+  in a bare CLI with no `NSApplication`, so it stays a build gate rather than something only a
+  running app would reveal.
+
+- **CI runs the sound surface's gate.** `make sound-check` existed, passed, and was wired into
+  nothing — so the second in-process server had the same hole the first one shipped with: a gate
+  that only runs when somebody remembers it. It is CI-safe by construction, driving
+  `SoundServer.handle` directly and asserting that the gated half stays invisible on a machine with
+  no microphone permission, which is exactly what a runner is.
+
+- **README's Surfaces table lists Sound.** The table is hand-maintained prose rather than generated,
+  and `make readme-check` — which compares each row's claimed tool count against the registrations
+  in the tree — was red on `main`: Sound had shipped with no row at all. It now reads 10 tools,
+  counted from the server rather than from the commit message that introduced it.
 
 ## [1.8.0] - 2026-09-01
 
@@ -1199,7 +1263,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...HEAD
+[1.9.0]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...app-v1.9.0
 [1.8.0]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...app-v1.8.0
 [1.7.0]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...app-v1.7.0
 [1.6.0]: https://github.com/mgcrea/cupertino/compare/app-v1.5.0...app-v1.6.0

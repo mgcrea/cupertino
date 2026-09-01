@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-mail",
   "title": "Apple Mail",
   "description": "Search, read and act on Apple Mail — threads, attachments, body search, writes off by default",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-mail",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
