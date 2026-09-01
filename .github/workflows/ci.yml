@@ -234,6 +234,96 @@ jobs:
         working-directory: ${{ steps.pkg.outputs.dir }}
         run: pnpm publish --provenance --access public --no-git-checks
 
+  # The npm publish is only half of shipping a server: a client that does not
+  # already know these packages exist finds them through the MCP Registry, which
+  # is also what feeds the third-party directories (PulseMCP pauses its own form
+  # and tells you to publish here instead). docs/alternatives.md records why that
+  # mattered enough to automate — every rival is listed in several directories
+  # and this was listed in none.
+  publish-registry:
+    name: Publish to the MCP Registry
+    runs-on: ubuntu-latest
+    # AFTER the npm publish, never beside it. The registry verifies that the
+    # publisher owns the package by fetching the tarball's package.json from
+    # registry.npmjs.org and checking `mcpName` against server.json's `name`.
+    # Run in parallel, that fetch races the npm publish it is validating and
+    # fails on a version npm has not seen yet.
+    needs: publish-npm
+    # Same exclusions as publish-npm, for the same reasons: `app-v*` and `api-v*`
+    # name things that are not packages and have no server.json.
+    if: startsWith(github.ref, 'refs/tags/')
+      && !startsWith(github.ref, 'refs/tags/app-v')
+      && !startsWith(github.ref, 'refs/tags/api-v')
+    permissions:
+      contents: read
+      # The whole reason this authenticates by OIDC rather than a stored token:
+      # the namespace is io.github.mgcrea/*, and GitHub's own token proves the
+      # workflow runs in this repository. There is no registry secret to leak,
+      # rotate, or publish from a laptop with.
+      id-token: write
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+      # `core` is published on the same lockstep version but is not a server and
+      # has no server.json, so a `core-v*` tag reaches this job and correctly
+      # finds nothing to do. Skipping is right; failing would make a green npm
+      # release red for a file that is absent on purpose.
+      - name: Resolve package from tag 🔍
+        id: pkg
+        run: |
+          slug="${GITHUB_REF_NAME%%-v*}"
+          dir="packages/$slug"
+          if [ -f "$dir/server.json" ]; then
+            echo "dir=$dir" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$dir/server.json does not exist — nothing to publish to the registry."
+          fi
+      - name: Install mcp-publisher 🔧
+        if: steps.pkg.outputs.publish == 'true'
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+      # The version in server.json is generated from the root package.json by
+      # `make version` and gated by the Version manifest check in `test`, so it
+      # already agrees with the tag by the time this runs. Asserted rather than
+      # rewritten: a job that edits the file it publishes would paper over
+      # exactly the drift that check exists to catch.
+      - name: Check the version against the tag 🔍
+        if: steps.pkg.outputs.publish == 'true'
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#*-v}"
+          declared=$(node -p "require('./server.json').version")
+          if [ "$declared" != "$tag_version" ]; then
+            echo "::error::server.json says $declared but the tag says $tag_version."
+            echo "::error::Bump the root version, run \`make version\`, commit, and re-tag."
+            exit 1
+          fi
+      - name: Authenticate 🔑
+        if: steps.pkg.outputs.publish == 'true'
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: mcp-publisher login github-oidc
+      # Idempotent for the same reason publish-npm checks npm first: a re-run of
+      # a tag must not turn a completed release red. The registry rejects a
+      # version it already holds, so an "already exists" rejection is the state
+      # this job wanted and is reported as a notice rather than a failure.
+      - name: Publish 🚀
+        if: steps.pkg.outputs.publish == 'true'
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: |
+          if ! out=$(mcp-publisher publish 2>&1); then
+            printf '%s\n' "$out"
+            if printf '%s' "$out" | grep -qi 'already exists'; then
+              echo "::notice::this version is already in the registry — nothing to do."
+              exit 0
+            fi
+            exit 1
+          fi
+          printf '%s\n' "$out"
+
   github-release:
     name: GitHub release
     runs-on: ubuntu-latest

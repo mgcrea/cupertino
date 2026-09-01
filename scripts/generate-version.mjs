@@ -44,7 +44,7 @@
 //   node scripts/generate-version.mjs            # write
 //   node scripts/generate-version.mjs --check    # verify, write nothing
 
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,6 +126,45 @@ for (const name of publishedPackages) {
       process.exit(3);
     }
     return src.replace(pattern, `  "version": "${VERSION}",`);
+  });
+}
+
+// ─── The registry's server.json, where there is one ──────────────────────────
+
+/**
+ * Each published surface also describes itself to the MCP Registry, and the
+ * registry checks the version it is handed against the npm package it names —
+ * so a `server.json` left at the previous release does not drift quietly, it
+ * fails the publish.
+ *
+ * That is two more copies per surface, both of which had to say the same thing
+ * as the `package.json` beside them: the top-level `version`, and the one
+ * inside `packages[0]` naming the npm tarball. Sixteen new places for the
+ * number to live is exactly what this file exists to prevent, which is why they
+ * are generated rather than bumped by the release commit.
+ *
+ * Discovered from disk like the packages above, and deliberately not from
+ * `surfaces.json`: `core` is published on the same lockstep version but is not
+ * a server and has no `server.json`, so presence of the file is the test.
+ * Textual for the same reason as above — a reserialize would reflow all eight.
+ */
+for (const name of publishedPackages) {
+  const path = `packages/${name}/server.json`;
+  if (!existsSync(join(ROOT, path))) continue;
+  target(path, (src) => {
+    // Two indents, two meanings: two spaces is the server's own version, six is
+    // the npm package's inside `packages[0]`. Anchored so neither can match the
+    // other, and both are required — a file carrying only one of them is a
+    // `server.json` this generator no longer understands.
+    const top = /^  "version": "[^"]*",$/m;
+    const pkg = /^      "version": "[^"]*",$/m;
+    if (!top.test(src) || !pkg.test(src)) {
+      console.error(`${path}: expected both a top-level and a packages[] "version" line`);
+      process.exit(3);
+    }
+    return src
+      .replace(top, `  "version": "${VERSION}",`)
+      .replace(pkg, `      "version": "${VERSION}",`);
   });
 }
 
