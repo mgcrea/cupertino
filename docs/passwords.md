@@ -160,11 +160,11 @@ a page the user has allowed it on, which means it can read a one-time code a **w
 
 That is worth stating precisely, because the shapes are easy to confuse:
 
-| Question                                             | Answer                                   |
-| ---------------------------------------------------- | ---------------------------------------- |
-| Read a code an issuer's page has just displayed       | **yes** — the extension lane             |
-| Read a code Safari AutoFill typed into a page's field | **yes** — same lane, same consent        |
-| Read the code Passwords.app generates for a TOTP item | **no** — every lane above, still closed  |
+| Question                                              | Answer                                       |
+| ----------------------------------------------------- | -------------------------------------------- |
+| Read a code an issuer's page has just displayed       | **yes** — the extension lane                 |
+| Read a code Safari AutoFill typed into a page's field | **yes** — same lane, same consent            |
+| Read the code Passwords.app generates for a TOTP item | **no** — every lane above, still closed      |
 | Read a stored password                                | **no**, and no setting in the app enables it |
 
 The third row is the one that matters. A TOTP seed lives in the vault; what a page displays is not
