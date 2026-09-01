@@ -14,6 +14,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   case audit
   case permissions
   case clients
+  case updates
   case licence
 
   var id: String { rawValue }
@@ -21,7 +22,14 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   static let defaultsKey = "settingsPane"
 
   /// How the app behaves…
-  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .clients]
+  ///
+  /// Updates sits last. It was a Section in General, under the version number,
+  /// on the theory that somebody wondering whether they are current has already
+  /// looked there — which holds only for the people who scroll. The one manual
+  /// check the app has was the second card on a page whose other rows are about
+  /// launching at login and where the bundle lives, and a row in the sidebar is
+  /// findable without knowing that. Bastion splits it the same way.
+  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .clients, .updates]
 
   /// …and what was bought, which is a different question and the only reason
   /// the sidebar is in two groups rather than one list of four. Somebody opens
@@ -35,6 +43,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .audit: "Activity"
     case .permissions: "Permissions"
     case .clients: "Clients"
+    case .updates: "Updates"
     case .licence: "Licence"
     }
   }
@@ -45,6 +54,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .audit: "list.bullet.rectangle"
     case .permissions: "lock.shield"
     case .clients: "puzzlepiece.extension"
+    case .updates: "arrow.down.circle"
     case .licence: "key"
     }
   }
@@ -195,6 +205,7 @@ struct SettingsView: View {
     case .audit: AuditPane()
     case .permissions: PermissionsPane(model: model)
     case .clients: ClientsPane(model: model)
+    case .updates: UpdatesPane()
     case .licence: LicensePane()
     }
   }
@@ -237,9 +248,6 @@ struct GeneralPane: View {
         }
         .textSelection(.enabled)
       }
-
-
-      UpdatesSection()
 
       Section {
         Toggle(isOn: $launchAtLogin) {
@@ -941,50 +949,59 @@ enum StatusStyle {
   }
 }
 
-/// The update controls, directly under the version number because that is where
-/// somebody wondering whether they are current has already looked.
+/// The update controls.
+///
+/// A pane rather than the Section in General it used to be — see
+/// `SettingsPane.configuration` for why. What the version number gave it by
+/// being directly above, it now carries itself: the first row says which build
+/// this is, from the same `AppInfo.version` General reads, so the pane answers
+/// "am I current" without sending anybody back a page.
 ///
 /// Cupertino is the only thing in this app that can reach the internet, so the
 /// caption says what the check sends in plain terms rather than leaving it to
 /// the privacy policy. See docs/licensing.md.
-struct UpdatesSection: View {
+struct UpdatesPane: View {
   @State private var automatic = UpdateController.shared.automatic
   private var updates = UpdateController.shared
 
   var body: some View {
-    Section {
-      Toggle(isOn: $automatic) {
-        Text("Check for updates automatically")
-      }
-      .onChange(of: automatic) { _, on in
-        updates.setAutomatic(on)
-        // Answering here is answering the consent card too. Leaving it armed
-        // would ask again about a decision already made in this pane.
-        UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
+    Form {
+      Section {
+        LabeledContent("Version", value: AppInfo.version)
+
+        // The row's whole label is the answer to "am I current", because a row
+        // titled the same thing as the button beside it says nothing twice.
+        LabeledContent {
+          Button("Check Now…") { updates.checkNow() }
+            .disabled(updates.isChecking)
+        } label: {
+          Text(lastCheck)
+        }
       }
 
-      // The row's whole label is the answer to "am I current", because the
-      // section header already said the word Updates and a row titled the same
-      // thing under it says nothing twice.
-      LabeledContent {
-        Button("Check Now…") { updates.checkNow() }
-          .disabled(updates.isChecking)
-      } label: {
-        Text(lastCheck)
+      Section {
+        Toggle(isOn: $automatic) {
+          Text("Check for updates automatically")
+        }
+        .onChange(of: automatic) { _, on in
+          updates.setAutomatic(on)
+          // Answering here is answering the consent card too. Leaving it armed
+          // would ask again about a decision already made in this pane.
+          UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
+        }
+      } footer: {
+        Text(
+          """
+          This is the only network connection Cupertino makes, and it makes none \
+          at all until you turn this on or press Check Now. It reads one file, \
+          cupertino.mgcrea.io/appcast.xml, and sends no identifier with it: not \
+          your licence key, not a machine id.
+          """
+        )
+        .fixedSize(horizontal: false, vertical: true)
       }
-    } header: {
-      Text("Updates")
-    } footer: {
-      Text(
-        """
-        This is the only network connection Cupertino makes, and it makes none \
-        at all until you turn this on or press Check Now. It reads one file, \
-        cupertino.mgcrea.io/appcast.xml, and sends no identifier with it: not \
-        your licence key, not a machine id.
-        """
-      )
-      .fixedSize(horizontal: false, vertical: true)
     }
+    .formStyle(.grouped)
   }
 
   /// A sentence either way. The row previously showed nothing at all before the

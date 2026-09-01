@@ -85,6 +85,15 @@ summary.
   closed and stay closed — `docs/passwords.md` now carries a table of the four questions so the two
   do not get conflated, and records the extension as a fifth lane it had not evaluated.
 
+### Changed
+
+- **Updates is its own pane in Settings, instead of a section partway down General.** It was
+  under the version number on the theory that somebody wondering whether they are current has
+  already looked there, which holds only for people who scroll. Automatic checking is off until
+  asked for, so Check Now is the only way an unopted build ever looks at all, and it was the
+  second card on a page otherwise about launching at login and where the bundle lives. The pane
+  repeats the version in its first row, so "am I current" is still answered in one place.
+
 ## [1.6.0] - 2026-08-31
 
 ### Added
