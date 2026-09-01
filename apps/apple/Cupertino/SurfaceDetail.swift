@@ -730,11 +730,21 @@ private struct CaptureControls: View {
     .font(.callout)
 
     Toggle(isOn: $content) {
-      Text("Include message contents")
+      // Not "message contents": this control governs nine surfaces and the
+      // app-wide log, and only two of them have messages.
+      Text("Include contents")
+      // Both halves, because `CallCapture` redacts them differently and the
+      // sentence used to describe only the smaller one. Arguments lose the keys
+      // in `contentKeys`; a RESULT is withheld entirely, on the grounds that
+      // every word of it was answered by the server. A reader told only about
+      // blanked arguments would expect to find return values in the log.
+      //
+      // It names «redacted» because that is the literal string they will see.
       Text(
         resolved >= .arguments
-          ? "Off: the body, text and subject of what passes through \(surface.displayName) are "
-            + "blanked, and the structure around them is kept."
+          ? "Off: what \(surface.displayName)'s tools return is logged as «redacted», and prose "
+            + "in their arguments — a body, a subject, a query — is blanked. Names and structure "
+            + "are kept."
           : "Nothing is recorded beyond names, so there is no content to include.")
     }
     .font(.callout)

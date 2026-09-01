@@ -1036,11 +1036,15 @@ private struct AuditPane: View {
           .fixedSize(horizontal: false, vertical: true)
 
         Toggle(isOn: $content) {
-          Text("Include message contents")
+          Text("Include contents")
+          // The result half was missing here too. Examples kept, because they
+          // ground an abstract sentence — but they are examples of the argument
+          // half only, and a surface with no prose in its arguments (Screen)
+          // still has its return value withheld.
           Text(
-            "Off. A mail body, a message and a note's text arrive as arguments here, so they are "
-              + "blanked by default and what is left is the structure — which tool, which "
-              + "mailbox, which recipient.")
+            "Off. What a tool returns is logged as «redacted», and prose in its arguments — a "
+              + "mail body, a message, a note's text — is blanked. What is left is the "
+              + "structure: which tool, which mailbox, which recipient.")
         }
       } header: {
         Text("What is recorded")
