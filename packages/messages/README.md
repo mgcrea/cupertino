@@ -76,9 +76,17 @@ Write: `send_message`, and that is the whole dictionary. `sdef` lists three comm
 own. There is no edit, delete, mark-as-read or reaction verb to expose, so **everything this server
 can show you, it cannot change.**
 
-`send`'s direct parameter is typed `file` OR `text`; only the text form ships. A tool that hands an
-arbitrary local path to a remote person is an exfiltration primitive whose blast radius, unlike the
-text form's, is not bounded by what the model can say.
+`send`'s direct parameter is typed `file` OR `text`, and both forms ship in two lanes with different
+bounds. `attachmentId` forwards a file that is already in this Mac's Messages store — the same guid
+`save_attachment` takes, through the same "inside `~/Library/Messages`, or refuse" boundary — so it
+reaches no arbitrary path and needs no flag beyond `ALLOW_WRITES`. `filePath` names any local file,
+which is an exfiltration primitive whose blast radius, unlike the text form's, is not bounded by what
+the model can say; it exists as a parameter only when `APPLE_MESSAGES_ALLOW_FILE_SEND` is on, and it
+is off by default. There is no directory confinement on it on purpose — see
+[docs/messages.md](../../docs/messages.md) for why one would be a speed bump wearing a boundary's
+clothes.
+
+One call sends one thing, so a captioned photo is two calls.
 
 ### Sending, and how it reports what it sent
 
@@ -114,6 +122,7 @@ records exactly what that leaves open; the safe way to measure it is a message t
 | `APPLE_MESSAGES_MAX_RESULTS`        | `50`    | Default page size.                      |
 | `APPLE_MESSAGES_ALLOW_WRITES`       | off     | Register `send_message` at all.         |
 | `APPLE_MESSAGES_ALLOW_CODES`        | off     | Register `find_codes` at all.           |
+| `APPLE_MESSAGES_ALLOW_FILE_SEND`    | off     | Add `filePath` to `send_message`.       |
 | `APPLE_MESSAGES_SEND_RECONCILE_MS`  | `5000`  | How long to wait for the sent row.      |
 
 `APPLE_MESSAGES_ALLOW_CODES` gates `find_codes`, which extracts one-time 2FA codes from recently

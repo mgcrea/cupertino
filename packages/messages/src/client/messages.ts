@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve as resolvePath, sep } from "node:path";
+import { basename, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 
 import {
   AppleContactsClient,
@@ -87,6 +87,13 @@ export type CreateClientOptions = {
  */
 export type SendResult = {
   sent: true;
+  /**
+   * What was sent: `text`, `attachment` (a file already in the Messages store,
+   * named by its guid) or `file` (a local path, which only exists as an input
+   * when `allowFileSend` is on). One call sends exactly one of them — the
+   * dictionary's direct parameter is file OR text.
+   */
+  kind: "text" | "attachment" | "file";
   /** Which rung of the ladder in `client/jxa/core.ts` answered. */
   strategy: string;
   targetKind: string;
@@ -349,32 +356,25 @@ export class AppleMessagesClient {
   }
 
   /**
-   * Copy one attachment out of the Messages store onto disk.
+   * The SOURCE boundary for anything that names an attachment by its guid.
    *
-   * ## Why this is a copy and not an extraction
+   * `filename` comes out of a database this server never writes, and it is a
+   * fully-qualified path: taken at face value it names any file the process can
+   * read. So it is required to resolve inside the Messages root before a single
+   * byte is touched. That check has never fired on a real store and is not
+   * expected to — it is here so that the day the schema surprises us, the
+   * surprise is a refusal.
    *
-   * Mail's equivalent has to parse MIME out of an `.emlx` because the bytes are
-   * inside the message file. Messages does not work that way: `attachment` rows
-   * point at real files under `~/Library/Messages`, so the work here is finding
-   * the row, deciding the path is one we are willing to read, and copying.
-   *
-   * ## Two boundaries, not one
-   *
-   * The DESTINATION boundary is the same one Mail and Notes enforce:
-   * `attachmentDir` is a confinement, `directory` may only select inside it, and
-   * the leaf name is `basename`d because it comes from whoever sent the message.
-   *
-   * The SOURCE boundary is this surface's own. `filename` comes out of a
-   * database this server never writes, and it is a fully-qualified path: taken
-   * at face value it names any file the process can read. So it is required to
-   * resolve inside the Messages root before a single byte is read. That check
-   * has never fired on a real store and is not expected to — it is here so that
-   * the day the schema surprises us, the surprise is a refusal.
+   * Shared by the two callers that need it and MUST NOT be inlined into either:
+   * `saveAttachment` copies the file out, and `sendMessage` hands it to Messages
+   * to transfer. The second is the reason the bound matters more than it used
+   * to — a slip here no longer writes a wrong file to the user's own disk, it
+   * sends one to somebody else.
    */
-  async saveAttachment(
-    attachmentId: string,
-    opts: { directory?: string | undefined; overwrite?: boolean } = {},
-  ): Promise<{ path: string; bytes: number; source: string; mimeType: string | null }> {
+  #resolveStoreAttachment(attachmentId: string): {
+    source: string;
+    meta: NonNullable<ReturnType<MessagesStore["attachmentById"]>>;
+  } {
     const store = this.#require();
     const meta = store.attachmentById(attachmentId);
     if (!meta) {
@@ -398,7 +398,7 @@ export class AppleMessagesClient {
     const root = resolvePath(this.located().messagesRoot);
     if (source !== root && !source.startsWith(root + sep)) {
       throw new PreconditionError(
-        `Refusing to read ${source}: it is outside ${root}, and this tool only copies files ` +
+        `Refusing to read ${source}: it is outside ${root}, and this tool only handles files ` +
           "Messages itself stores.",
       );
     }
@@ -408,7 +408,62 @@ export class AppleMessagesClient {
           "while keeping the row, so this is a normal state for an old conversation.",
       );
     }
+    return { source, meta };
+  }
 
+  /**
+   * A local path this server is willing to hand to Messages, or a refusal.
+   *
+   * Deliberately thin, and deliberately NOT confined to a directory. The gate is
+   * `allowFileSend`, which is off by default and which `tools/actions.ts` reads
+   * before the parameter exists at all — see `config.ts` for why a confinement
+   * here would be a reassuring boundary rather than a real one.
+   *
+   * What is checked is only that the path is nameable and real: absolute, so
+   * nothing depends on this process's working directory, and an existing regular
+   * file, so a directory or a dangling path fails here rather than inside a JXA
+   * `send` where the error would arrive as an Apple Event failure.
+   */
+  #resolveOutboundFile(filePath: string): string {
+    if (!isAbsolute(filePath)) {
+      throw new PreconditionError(
+        `"${filePath}" is not an absolute path. This server has no meaningful working directory, ` +
+          "so a relative path cannot be resolved to the file you mean.",
+      );
+    }
+    const source = resolvePath(filePath);
+    if (!existsSync(source)) {
+      throw new PreconditionError(`There is no file at ${source}.`);
+    }
+    if (!statSync(source).isFile()) {
+      throw new PreconditionError(`${source} is not a regular file; Messages can only send files.`);
+    }
+    return source;
+  }
+
+  /**
+   * Copy one attachment out of the Messages store onto disk.
+   *
+   * ## Why this is a copy and not an extraction
+   *
+   * Mail's equivalent has to parse MIME out of an `.emlx` because the bytes are
+   * inside the message file. Messages does not work that way: `attachment` rows
+   * point at real files under `~/Library/Messages`, so the work here is finding
+   * the row, deciding the path is one we are willing to read, and copying.
+   *
+   * ## Two boundaries, not one
+   *
+   * The SOURCE boundary is `#resolveStoreAttachment` above, shared with the send
+   * lane. What is left here is the DESTINATION boundary, the same one Mail and
+   * Notes enforce: `attachmentDir` is a confinement, `directory` may only select
+   * inside it, and the leaf name is `basename`d because it comes from whoever
+   * sent the message.
+   */
+  async saveAttachment(
+    attachmentId: string,
+    opts: { directory?: string | undefined; overwrite?: boolean } = {},
+  ): Promise<{ path: string; bytes: number; source: string; mimeType: string | null }> {
+    const { source, meta } = this.#resolveStoreAttachment(attachmentId);
     const dest = resolvePath(this.#config.attachmentDir);
     const dir = opts.directory ? resolvePath(dest, opts.directory) : dest;
     if (dir !== dest && !dir.startsWith(dest + sep)) {
@@ -525,11 +580,22 @@ export class AppleMessagesClient {
    *      the user sent from their phone in the same second. Only when it is not
    *      available does the oldest row in the window win.
    *
+   * A file send is the case that exercises rung 3's fallback, and is why `text`
+   * is nullable here. There is no text to compare: Messages writes the outgoing
+   * attachment row with the U+FFFC placeholder, not with anything this server
+   * chose. So a file send reconciles by position alone, which is weaker, and
+   * that is stated rather than hidden — the window is still bounded by `since`
+   * and scoped to the one chat.
+   *
    * A miss is `pending`, never an error: the send already happened, and iMessage
    * writes its row asynchronously. Reporting a failure there would be the worst
    * possible lie — it would invite a retry that sends the message twice.
    */
-  async #reconcile(guid: string, since: number, text: string): Promise<RenderedMessage | null> {
+  async #reconcile(
+    guid: string,
+    since: number,
+    text: string | null,
+  ): Promise<RenderedMessage | null> {
     const deadline = Date.now() + this.#config.sendReconcileMs;
     for (;;) {
       // Reopen: this handle was opened before the send, and the point is to see
@@ -538,7 +604,9 @@ export class AppleMessagesClient {
       const store = this.store();
       if (!store) return null;
       const rows = store.sentSince([guid], since, 10);
-      const hit = rows.find((r) => r.text !== null && r.text === text) ?? rows[0];
+      const hit =
+        (text === null ? undefined : rows.find((r) => r.text !== null && r.text === text)) ??
+        rows[0];
       if (hit) return this.#render([hit])[0] ?? null;
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -552,17 +620,64 @@ export class AppleMessagesClient {
   }
 
   /**
+   * What this call is actually sending, resolved to the one thing JXA takes.
+   *
+   * The dictionary's direct parameter is `file` OR `text`, so exactly one lane
+   * runs. `tools/actions.ts` refuses a call that names more than one before it
+   * gets here; this is the second half of that rule, and it is the half that
+   * decides which BOUND applies — the store's own root for an `attachmentId`,
+   * or `allowFileSend` plus a real path for a `filePath`.
+   */
+  #payloadFor(input: {
+    text?: string | undefined;
+    attachmentId?: string | undefined;
+    filePath?: string | undefined;
+  }): {
+    kind: SendResult["kind"];
+    text: string | null;
+    file: string | null;
+  } {
+    if (input.attachmentId) {
+      const { source } = this.#resolveStoreAttachment(input.attachmentId);
+      return { kind: "attachment", text: null, file: source };
+    }
+    if (input.filePath) {
+      // Reached only when `allowFileSend` is on, because the parameter does not
+      // exist otherwise. Checked again here so the client is safe on its own
+      // terms rather than on the tool layer's.
+      if (!this.#config.allowFileSend) {
+        throw new PreconditionError(
+          "Sending an arbitrary local file is off. Set APPLE_MESSAGES_ALLOW_FILE_SEND=1 to " +
+            "enable it, or forward an attachment already in the Messages store by passing " +
+            "attachmentId instead.",
+        );
+      }
+      return { kind: "file", text: null, file: this.#resolveOutboundFile(input.filePath) };
+    }
+    if (!input.text) {
+      throw new PreconditionError("Nothing to send: give one of text, attachmentId or filePath.");
+    }
+    return { kind: "text", text: input.text, file: null };
+  }
+
+  /**
    * Send one message. A real one, to a real person, immediately.
    *
    * Everything difficult about this is in `client/jxa/core.ts`; what is left
-   * here is choosing the target from the file lane and reconciling afterwards.
+   * here is choosing the target from the file lane, deciding what may be sent,
+   * and reconciling afterwards.
    */
   async sendMessage(input: {
     chatRef?: string | undefined;
     to?: string | undefined;
-    text: string;
+    text?: string | undefined;
+    attachmentId?: string | undefined;
+    filePath?: string | undefined;
     service?: string | undefined;
   }): Promise<SendResult> {
+    // Before the target, so a call that could never send anything does not first
+    // go looking for somebody to send it to.
+    const payload = this.#payloadFor(input);
     const { guid, chat, handle } = this.#chatFor(input);
     const since = toAppleSeconds(new Date(Date.now() - 2_000));
 
@@ -578,7 +693,8 @@ export class AppleMessagesClient {
           ...(guid ? { chatGuid: guid } : {}),
           ...(handle ? { handle } : {}),
           ...(input.service ? { service: input.service } : {}),
-          text: input.text,
+          ...(payload.text === null ? {} : { text: payload.text }),
+          ...(payload.file === null ? {} : { file: payload.file }),
           allowLaunch: true,
         }),
       );
@@ -589,14 +705,16 @@ export class AppleMessagesClient {
       if (details?.code === "SEND_TARGET_NOT_FOUND") {
         throw new SendTargetNotFoundError(input.chatRef ?? input.to ?? "", attempts);
       }
+      if (details?.code === "SEND_PAYLOAD_INVALID") throw new PreconditionError(message);
       if (details?.code === "SEND_FAILED") throw new SendFailedError(message, attempts);
       throw err;
     }
 
-    const message = guid ? await this.#reconcile(guid, since, input.text) : null;
+    const message = guid ? await this.#reconcile(guid, since, payload.text) : null;
     if (handle) this.#resolve([handle]);
     return {
       sent: true,
+      kind: payload.kind,
       strategy: typeof data.strategy === "string" ? data.strategy : "unknown",
       targetKind: typeof data.targetKind === "string" ? data.targetKind : "unknown",
       chatRef: guid ? encodeChatRef(guid) : null,

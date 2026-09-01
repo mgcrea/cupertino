@@ -52,6 +52,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   registerTools(server, client, {
     allowWrites: config.allowWrites,
     allowCodes: config.allowCodes,
+    allowFileSend: config.allowFileSend,
   });
   /*
    * One flag, both primitives — see `exposePrompts` in core's config. A prompt

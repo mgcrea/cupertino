@@ -76,6 +76,31 @@ const ConfigSchema = BaseConfigSchema.extend({
    * costs, so it gets a switch of its own and defaults off.
    */
   allowCodes: z.boolean().default(false),
+  /**
+   * Lets `send_message` take an arbitrary local path, and defaults off.
+   *
+   * A SUB-GATE of `allowWrites`, not an independent switch like `allowCodes`:
+   * it widens a tool that only exists when writes are on, so with writes off it
+   * means nothing at all. That is the opposite arrangement to `allowCodes` and
+   * deliberately so — this one cannot stand alone, because there is nothing to
+   * widen.
+   *
+   * `send_message` can always forward an attachment already in this Mac's
+   * Messages store, because that set is bounded by construction. Naming a path
+   * is different in kind: it is the exfiltration primitive `client/jxa/core.ts`
+   * spent this surface's first two releases declining, and the untrusted text
+   * that would drive it arrives through this very server's read tools. So it is
+   * offered, and it is off, and turning it on is a decision someone makes once
+   * in their client config rather than one a model makes in a tool call.
+   *
+   * There is deliberately no accompanying directory confinement. Any client that
+   * can also write files defeats one with a single copy into the allowed
+   * directory, so a confinement here would read as a boundary while being a
+   * speed bump — and this repo would rather ship an honest flag than a
+   * reassuring one. `attachmentDir` is a real boundary because it constrains
+   * where this server WRITES, which nothing else on this surface can do.
+   */
+  allowFileSend: z.boolean().default(false),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -92,6 +117,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     defaultRangeDays: parseIntOpt(env.APPLE_MESSAGES_DEFAULT_RANGE_DAYS),
     sendReconcileMs: parseIntOpt(env.APPLE_MESSAGES_SEND_RECONCILE_MS),
     allowCodes: parseBool(env.APPLE_MESSAGES_ALLOW_CODES),
+    allowFileSend: parseBool(env.APPLE_MESSAGES_ALLOW_FILE_SEND),
     osascriptPath: trimmed(env.APPLE_MESSAGES_OSASCRIPT_PATH),
     osascriptTimeoutMs: parseIntOpt(env.APPLE_MESSAGES_OSASCRIPT_TIMEOUT_MS),
     maxResults: parseIntOpt(env.APPLE_MESSAGES_MAX_RESULTS),

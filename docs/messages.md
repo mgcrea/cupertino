@@ -308,11 +308,11 @@ Apple Events can do here.
 
 `sdef /System/Applications/Messages.app`, macOS 26.6. Three commands, total:
 
-| command  | shape                                              | shipped        |
-| -------- | -------------------------------------------------- | -------------- |
-| `send`   | `file` **or** `text`, `to` a participant or a chat | yes, text only |
-| `login`  | log in to all accounts                             | no             |
-| `logout` | log out of all accounts                            | no             |
+| command  | shape                                              | shipped         |
+| -------- | -------------------------------------------------- | --------------- |
+| `send`   | `file` **or** `text`, `to` a participant or a chat | yes, both forms |
+| `login`  | log in to all accounts                             | no              |
+| `logout` | log out of all accounts                            | no              |
 
 There is no edit, no delete, no mark-as-read, no typing indicator and no reaction. **Everything this
 server can show you, it cannot change** — a much sharper limit than any other surface here, and one
@@ -321,10 +321,43 @@ that comes from the dictionary rather than from a decision.
 `login`/`logout` are not exposed: `logout` signs the user out of iMessage on every device they own,
 which is not something to put behind a tool call, and there is no read path to justify `login`.
 
-`send`'s direct parameter is typed `file` OR `text`. **Only the text form ships.** A tool that
-transfers an arbitrary local path to a remote person is an exfiltration primitive whose blast radius,
-unlike the text form's, is not bounded by what the model can say. `test/jxa.test.ts` asserts no
-script contains `Path(`, so shipping it means taking that decision again.
+`send`'s direct parameter is typed `file` OR `text`. **Both forms ship, in two lanes with different
+bounds**, and the split is the point.
+
+Through 1.6 only the text form shipped, on the grounds that a tool which transfers an arbitrary local
+path to a remote person is an exfiltration primitive whose blast radius, unlike the text form's, is
+not bounded by what the model can say. That reasoning is unchanged. What changed is the observation
+that it argued against _one_ of the two things a file send could mean:
+
+| parameter      | what it can reach                           | gate                                     |
+| -------------- | ------------------------------------------- | ---------------------------------------- |
+| `attachmentId` | a file already in this Mac's Messages store | `ALLOW_WRITES`                           |
+| `filePath`     | any local file the process can read         | `ALLOW_WRITES` **and** `ALLOW_FILE_SEND` |
+
+`attachmentId` takes the same `attachment.guid` `save_attachment` takes and runs the same source
+boundary — resolve inside `messagesRoot`, or refuse. There is no path in the tool call and no
+arbitrary read, so the reachable set is bounded by construction and it needs no flag of its own.
+`filePath` **is** the primitive above, so it exists as a parameter only when
+`APPLE_MESSAGES_ALLOW_FILE_SEND` is on, and it is off by default.
+
+The exposure this defends against is specific to this surface: the untrusted text arrives through
+this server's own read tools. A stranger's message naming a path is read by `list_messages` and
+acted on by `send_message` in the same turn, and `confirm` is a `z.literal(true)` the model fills in
+itself — there is no person in that loop.
+
+There is deliberately **no directory confinement** on `filePath`. Any client that can also write
+files defeats one with a single copy into the allowed directory, so it would read as a boundary while
+being a speed bump. `attachmentDir` is a real boundary because it constrains where this server
+_writes_, which nothing else here can do.
+
+`test/jxa.test.ts` used to assert that no script contained `Path(` at all, with a docstring saying
+shipping the file form had to break that test first. It did. Its successor,
+`sends a file only as the path the client resolved`, pins the shape instead: one `Path(`, and its
+argument is the `p.file` the client already resolved. The script may not name a file — every bound
+lives in the client, where `test/send.test.ts` asserts both of them.
+
+One call sends one thing, because the dictionary's direct parameter is file **or** text. A captioned
+photo is two calls, and a call naming two payloads is refused rather than guessed at.
 
 The classes are worth recording because one of them is load-bearing:
 

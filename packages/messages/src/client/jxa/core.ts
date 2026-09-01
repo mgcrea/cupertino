@@ -49,11 +49,28 @@
  * every device is not something to do behind a tool call, and there is no read
  * to justify logging in.
  *
- * `send`'s direct parameter is typed `file` OR `text`. **This ships text only.**
- * The file form is one branch away and deliberately not taken: a tool that
- * transfers an arbitrary local path to a remote person is an exfiltration
- * primitive, and unlike the text form its blast radius is not bounded by what
- * the model can say. Recorded here so the omission reads as a decision.
+ * `send`'s direct parameter is typed `file` OR `text`. **Both ship, in two lanes
+ * with different bounds.** This paragraph used to record the file form as
+ * deliberately omitted — a tool that transfers an arbitrary local path to a
+ * remote person is an exfiltration primitive, and unlike the text form its blast
+ * radius is not bounded by what the model can say. That reasoning is unchanged.
+ * What changed is that it turned out to argue against *one* of the two things
+ * a file send could mean, not both:
+ *
+ *   - `attachmentId` forwards a file ALREADY in this Mac's Messages store,
+ *     named by the same `attachment.guid` `save_attachment` takes. The client
+ *     resolves it through the same source boundary — inside `messagesRoot`,
+ *     nothing else — so there is no arbitrary path and no arbitrary read. The
+ *     set is bounded by construction, which is why this lane ships under
+ *     `allowWrites` alone.
+ *   - `filePath` names any local file, and IS the primitive above. It is
+ *     registered only when `allowFileSend` is on, and defaults off.
+ *
+ * The script below cannot tell the two apart and must not try: it receives one
+ * already-resolved `p.file` and forwards it. Every bound lives in the client,
+ * because a script that composed its own path would move the boundary somewhere
+ * nothing tests. `test/jxa.test.ts` pins that — one `Path(`, and its argument is
+ * `p.file`.
  *
  * ## The `to` parameter, and why the file lane picks the target
  *

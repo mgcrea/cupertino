@@ -113,6 +113,47 @@ describe("tool registration", () => {
   });
 
   /**
+   * `allowFileSend` is the first flag that changes a tool's SCHEMA rather than
+   * the registered set, and the invariant in `src/tools/index.ts` covers that
+   * too: an MCP client caches the shape as well as the list, so a parameter that
+   * appeared and disappeared with runtime state would stay wrong.
+   *
+   * Absent rather than refused, for the reason `src/tools/actions.ts` gives one
+   * level up: a parameter that exists and always says no is a parameter the
+   * model will keep filling in. `attachmentId` is on the other side of that line
+   * — it is bounded by construction, so it needs no flag and is always there.
+   */
+  const sendSchema = async (env: NodeJS.ProcessEnv) => {
+    const { tools } = await (await connect(env)).listTools();
+    const send = tools.find((t) => t.name === "apple_messages_send_message");
+    return Object.keys(send?.inputSchema.properties ?? {});
+  };
+
+  it("hides the filePath parameter unless APPLE_MESSAGES_ALLOW_FILE_SEND is set", async () => {
+    const off = await sendSchema({ APPLE_MESSAGES_ALLOW_WRITES: "1" });
+    expect(off).not.toContain("filePath");
+    expect(off).toContain("attachmentId");
+
+    const on = await sendSchema({
+      APPLE_MESSAGES_ALLOW_WRITES: "1",
+      APPLE_MESSAGES_ALLOW_FILE_SEND: "1",
+    });
+    expect(on).toContain("filePath");
+    expect(on.filter((k) => !off.includes(k))).toEqual(["filePath"]);
+  });
+
+  /**
+   * The file-send flag is a SUB-gate of writes, not a third independent switch:
+   * it widens a tool that only exists when writes are on, so on its own it must
+   * do nothing at all.
+   */
+  it("keeps allowFileSend inert without writes", async () => {
+    const names = await toolNames(await connect({ APPLE_MESSAGES_ALLOW_FILE_SEND: "1" }));
+    expect(names).not.toContain("apple_messages_send_message");
+    expect(names).toEqual(await toolNames(await connect()));
+  });
+
+  /**
    * The two gates are independent in both directions. Turning writes on must
    * not smuggle in the codes tool, and turning codes on must not smuggle in the
    * ability to send.

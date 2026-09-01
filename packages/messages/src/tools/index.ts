@@ -29,6 +29,14 @@ export type ToolContext = {
    * see `config.ts` for why a read got a switch of its own.
    */
   allowCodes: boolean;
+  /**
+   * Widens `send_message` with a `filePath` parameter, and is meaningless
+   * without `allowWrites` — see `config.ts`. It changes the tool's SCHEMA rather
+   * than the registered set, which is why it belongs here and not in a call-time
+   * check: a parameter that exists and is always refused is a parameter the
+   * model will keep filling in.
+   */
+  allowFileSend: boolean;
 };
 
 /**
@@ -48,7 +56,10 @@ export type ToolContext = {
  * That invariant used to read "a pure function of `allowWrites` and nothing
  * else". `allowCodes` widened the input without weakening the guarantee, which
  * was always about runtime conditions rather than about there being exactly one
- * flag. `test/tools.test.ts` asserts each arm separately.
+ * flag. `allowFileSend` widens it again and is the first flag that changes a
+ * tool's SCHEMA rather than the registered set — the guarantee covers that too,
+ * for the same reason: an MCP client caches the shape as well as the list.
+ * `test/tools.test.ts` asserts each arm separately.
  */
 export const registerTools = (
   server: McpServer,
@@ -60,6 +71,6 @@ export const registerTools = (
   registerMessageTools(server, client);
   if (ctx.allowCodes) registerCodeTools(server, client);
   if (!ctx.allowWrites) return;
-  registerActionTools(server, client);
+  registerActionTools(server, client, ctx);
   registerAttachmentTools(server, client);
 };

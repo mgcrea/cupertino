@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -33,9 +33,43 @@ const appleNanos = (ms: number): bigint =>
   BigInt(Math.round(toAppleSeconds(new Date(ms)))) * 1_000_000_000n;
 
 let storePath: string;
+/**
+ * A fake home, so the attachment lane has somewhere real to resolve to.
+ *
+ * The text lane never needed one — it only ever touched the store — but
+ * `attachmentId` is bounded by "inside `messagesRoot`", and `messagesRoot` is
+ * derived from `home`. So the store moves under a temp home here, which is the
+ * same seam `attachments.test.ts` uses, and the bound becomes assertable
+ * instead of unreachable.
+ */
+let home: string;
+/** Outside `home` entirely: the file a boundary is supposed to refuse. */
+let outsideFile: string;
+/** Inside `home`, but not a file: what `filePath` must reject. */
+let outsideDir: string;
+
+/** A transfer directory name, in the shape Messages actually generates. */
+const TRANSFER_UUID = "DCE47D4E-E98B-45D4-8E12-23F8EC14BABB";
+
+/** The placeholder Messages writes for an attachment row, U+FFFC. */
+const OBJECT_REPLACEMENT = "\uFFFC";
 
 const build = (): string => {
-  const path = join(mkdtempSync(join(tmpdir(), "messages-send-")), "chat.db");
+  const dir = mkdtempSync(join(tmpdir(), "messages-send-"));
+  home = join(dir, "home");
+  // The measured layout, not a simplified one: two hex nibbles, a transfer UUID,
+  // then the original filename. Verified against a real store on 2026-09-01 —
+  // `~/Library/Messages/Attachments/1c/12/<uuid>/IMG_2314.mov`.
+  const attachments = join(home, "Library", "Messages", "Attachments", "1c", "12", TRANSFER_UUID);
+  mkdirSync(attachments, { recursive: true });
+  writeFileSync(join(attachments, "photo.heic"), "pretend heic bytes");
+
+  outsideDir = join(dir, "outside");
+  mkdirSync(outsideDir, { recursive: true });
+  outsideFile = join(outsideDir, "secret.txt");
+  writeFileSync(outsideFile, "the thing a confinement is supposed to keep here");
+
+  const path = join(home, "Library", "Messages", "chat.db");
   const db = new DatabaseSync(path);
   db.exec(readFileSync(FIXTURE, "utf8").replaceAll(TRIGGER, ""));
   db.exec(`
@@ -47,7 +81,31 @@ const build = (): string => {
       (2, 'iMessage;+;chat9001', 'chat9001', 'Book club', 43, 'iMessage'),
       (3, 'iMessage;-;friend@example.com', 'friend@example.com', NULL, 45, 'iMessage');
     INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1), (2, 1), (3, 2);
+    INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me,
+                         cache_has_attachments)
+      VALUES (1, 'MSG-WITH-PHOTO', 'look', 1, 'iMessage', 0, 0, 1);
+    INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (1, 1, 0);
   `);
+  const insert = db.prepare(
+    `INSERT INTO attachment (ROWID, guid, original_guid, filename, mime_type, transfer_name,
+       total_bytes, is_sticker) VALUES (?, ?, ?, ?, 'image/heic', 'photo.heic', 18, 0)`,
+  );
+  // Three shapes, and the store spells the first the way a real one does: a
+  // `~`-prefixed path the client expands against `home`.
+  insert.run(
+    1,
+    // `at_<index>_<message guid>` is the shape a real `attachment.guid` has.
+    "at_0_MSG-WITH-PHOTO",
+    "at_0_MSG-WITH-PHOTO",
+    `~/Library/Messages/Attachments/1c/12/${TRANSFER_UUID}/photo.heic`,
+  );
+  insert.run(2, "ATT-OFFLOADED", "ATT-OFFLOADED", null);
+  insert.run(3, "ATT-ESCAPED", "ATT-ESCAPED", outsideFile);
+  for (const id of [1, 2, 3]) {
+    db.prepare(`INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (1, ?)`).run(
+      id,
+    );
+  }
   db.close();
   return path;
 };
@@ -74,7 +132,9 @@ const runner = (
     }
     if (writeRow) {
       // What Messages does after `send`: writes the outgoing row, from another
-      // process, after this server's read handle was already open.
+      // process, after this server's read handle was already open. For a file it
+      // writes the U+FFFC placeholder rather than anything the caller chose,
+      // which is exactly why reconciliation cannot compare text on that lane.
       const db = new DatabaseSync(storePath);
       const chatId = p.chatGuid === "iMessage;+;chat9001" ? 2 : 1;
       const at = appleNanos(Date.now());
@@ -82,13 +142,19 @@ const runner = (
         `INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me,
                               associated_message_type)
          VALUES (99, 'SENT-GUID-1', ?, 0, 'iMessage', ?, 1, 0)`,
-      ).run(String(p.text), at);
+      ).run(p.file ? OBJECT_REPLACEMENT : String(p.text), at);
       db.prepare(
         `INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (?, 99, ?)`,
       ).run(chatId, at);
       db.close();
     }
-    return { strategy: "chat-guid", targetKind: "chat", launched: false, attempts: [] } as T;
+    return {
+      sent: p.file ? "file" : "text",
+      strategy: "chat-guid",
+      targetKind: "chat",
+      launched: false,
+      attempts: [],
+    } as T;
   },
 });
 
@@ -99,7 +165,7 @@ const connect = async (osascript: OsascriptRunner, env: NodeJS.ProcessEnv = {}) 
     APPLE_MESSAGES_SEND_RECONCILE_MS: "0",
     ...env,
   });
-  const { server } = createServer({ config, home: "/nonexistent-home", contacts: null, osascript });
+  const { server } = createServer({ config, home, contacts: null, osascript });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -272,5 +338,154 @@ describe("refusals", () => {
     });
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/Messages refused the send/);
+  });
+});
+
+/**
+ * The two attachment lanes, which exist to be bounded differently.
+ *
+ * `attachmentId` forwards a file already in this Mac's Messages store and is
+ * available whenever writes are; `filePath` names any local file and only exists
+ * as a parameter when `allowFileSend` is on. The tests that matter here are the
+ * refusals — `test/jxa.test.ts` deliberately stopped asserting "no file is ever
+ * sent" and points at these instead, so if they go the boundary is untested.
+ */
+describe("sending an attachment", () => {
+  const FILE_SEND = { APPLE_MESSAGES_ALLOW_FILE_SEND: "1" };
+
+  it("hands the script the resolved store path, and no text", async () => {
+    const seen: Sent[] = [];
+    const res = await send(await connect(runner(seen)), {
+      to: "+33612345678",
+      attachmentId: "at_0_MSG-WITH-PHOTO",
+    });
+    expect(res.isError).toBe(false);
+    // Expanded from the `~`-prefixed column against this test's home, which is
+    // the step that makes the boundary check below meaningful.
+    expect(seen[0]?.params.file).toBe(
+      join(home, "Library", "Messages", "Attachments", "1c", "12", TRANSFER_UUID, "photo.heic"),
+    );
+    expect(seen[0]?.params.text).toBeUndefined();
+    expect(res.json()).toMatchObject({ kind: "attachment" });
+  });
+
+  /**
+   * The source boundary, shared with `save_attachment` through
+   * `#resolveStoreAttachment`. `filename` comes out of a database this server
+   * never writes, so a row naming a file outside the Messages root is refused
+   * before anything is handed to Messages — and on this lane the consequence of
+   * missing it is not a bad copy on the user's own disk, it is a file sent to
+   * somebody else.
+   */
+  it("refuses an attachment whose path escapes the Messages root", async () => {
+    const seen: Sent[] = [];
+    const res = await send(await connect(runner(seen)), {
+      to: "+33612345678",
+      attachmentId: "ATT-ESCAPED",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/outside/);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("explains an offloaded attachment rather than sending nothing", async () => {
+    const res = await send(await connect(runner([])), {
+      to: "+33612345678",
+      attachmentId: "ATT-OFFLOADED",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/offloaded/);
+  });
+
+  it("refuses an attachment id that is not in the store", async () => {
+    const res = await send(await connect(runner([])), {
+      to: "+33612345678",
+      attachmentId: "ATT-NOPE",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/No attachment with id/);
+  });
+
+  /**
+   * A file send has no text to reconcile against — Messages writes U+FFFC — so
+   * it falls to the oldest row in a window that is still bounded by `since` and
+   * scoped to the one chat. Weaker, and reported honestly as `matched` only
+   * because the row really is the one this send caused.
+   */
+  it("reconciles a file send by position when there is no text to compare", async () => {
+    const client = await connect(runner([], "ok", true));
+    const res = await send(client, {
+      chatRef: "mc1:iMessage;-;+33612345678",
+      attachmentId: "at_0_MSG-WITH-PHOTO",
+    });
+    expect(res.isError).toBe(false);
+    expect(res.json()).toMatchObject({ kind: "attachment", reconciliation: "matched" });
+  });
+
+  it("has no filePath parameter unless the flag is on", async () => {
+    const seen: Sent[] = [];
+    const res = await send(await connect(runner(seen)), {
+      to: "+33612345678",
+      filePath: outsideFile,
+    });
+    expect(res.isError).toBe(true);
+    // Not a call-time refusal of a parameter that exists: with the flag off the
+    // parameter is not in the schema, so zod strips it and the call arrives with
+    // nothing to send. The refusal has to name the flag anyway, or it would
+    // answer a question this caller did not ask.
+    expect(res.text).toMatch(/APPLE_MESSAGES_ALLOW_FILE_SEND/);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("sends an arbitrary local file when the flag is on", async () => {
+    const seen: Sent[] = [];
+    const res = await send(await connect(runner(seen), FILE_SEND), {
+      to: "+33612345678",
+      filePath: outsideFile,
+    });
+    expect(res.isError).toBe(false);
+    expect(seen[0]?.params.file).toBe(outsideFile);
+    expect(res.json()).toMatchObject({ kind: "file" });
+  });
+
+  it("refuses a relative path", async () => {
+    const res = await send(await connect(runner([]), FILE_SEND), {
+      to: "+33612345678",
+      filePath: "secret.txt",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/absolute path/);
+  });
+
+  it("refuses a directory and a path that is not there", async () => {
+    const client = await connect(runner([]), FILE_SEND);
+    expect((await send(client, { to: "+33612345678", filePath: outsideDir })).text).toMatch(
+      /not a regular file/,
+    );
+    expect(
+      (await send(client, { to: "+33612345678", filePath: join(outsideDir, "ghost") })).text,
+    ).toMatch(/There is no file at/);
+  });
+
+  /**
+   * Messages' send takes a file OR a string, so a captioned photo is two calls.
+   * Guessing which half the caller meant is not an option worth having.
+   */
+  it("refuses a caption and an attachment in one call", async () => {
+    const seen: Sent[] = [];
+    const res = await send(await connect(runner(seen)), {
+      to: "+33612345678",
+      text: "look at this",
+      attachmentId: "at_0_MSG-WITH-PHOTO",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/exactly one of text or attachmentId/);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses a call with no payload at all", async () => {
+    const res = await send(await connect(runner([])), { to: "+33612345678" });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/exactly one of text or attachmentId/);
   });
 });

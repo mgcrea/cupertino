@@ -16,6 +16,26 @@ summary.
 
 ### Added
 
+- **Messages can send a photo, not only text.** `apple_messages_send_message` takes an
+  `attachmentId` — the same `attachment.guid` `apple_messages_save_attachment` takes — and forwards
+  that file to the conversation. It runs the same source boundary as saving does: the path resolves
+  inside `~/Library/Messages` or the send is refused.
+
+  **The two file lanes are gated differently, and that is the whole design.** `attachmentId` reaches
+  only files Messages itself already stores, so its blast radius is bounded by construction and it
+  ships behind `ALLOW_WRITES` like the rest of sending. Naming an arbitrary local path is a
+  different act — an exfiltration primitive, and one this surface is unusually exposed to, because
+  the untrusted text that would drive it arrives through this server's own read tools. So `filePath`
+  exists as a parameter only when `APPLE_MESSAGES_ALLOW_FILE_SEND` is set, and it is off by default.
+
+  Absent rather than refused: with the flag off, `filePath` is not in the tool's schema at all. A
+  parameter that exists and always says no is a parameter a model keeps filling in. There is no
+  directory confinement on it, deliberately — any client that can also write files defeats one with
+  a single copy, so it would read as a boundary while being a speed bump.
+
+  One call sends one thing, because Messages' `send` takes a file **or** a string. A captioned photo
+  is two calls, and a call naming two payloads is refused rather than guessed at.
+
 - **Safari can click, type and scroll on a page — through the extension, with no Apple Event and
   no TCC grant at all.** `apple_safari_page_elements` lists what is clickable with a short id
   apiece; `apple_safari_click`, `apple_safari_fill` and `apple_safari_scroll` act on those ids

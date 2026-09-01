@@ -89,14 +89,33 @@ describe("JXA scripts", () => {
   });
 
   /**
-   * `send`'s direct parameter is typed `file` OR `text` in the dictionary, and
-   * only the text form ships. A tool that hands an arbitrary local path to a
-   * remote person is an exfiltration primitive whose blast radius, unlike the
-   * text form's, is not bounded by what the model can say. Shipping it has to
-   * break this test first.
+   * The successor to `never sends a file`, which asserted no script contained
+   * `Path(` at all and said outright that shipping the file form had to break it
+   * first. It did break, exactly as intended, and this is what replaced it.
+   *
+   * The reasoning that test carried is unchanged: a tool that hands an arbitrary
+   * local path to a remote person is an exfiltration primitive whose blast
+   * radius, unlike the text form's, is not bounded by what the model can say.
+   * What changed is that the concern turned out to be about WHERE THE PATH COMES
+   * FROM, not about the call existing — `attachmentId` reaches `Path()` too, and
+   * forwards a file already in the Messages store.
+   *
+   * So the ban became a shape. The script may not name a file: one `Path(`, and
+   * its argument is the `p.file` the client already resolved and bounded. A
+   * script that joined, interpolated or defaulted its way to a path would move
+   * the boundary out of the client, where the two real bounds are asserted —
+   * `test/send.test.ts` covers both, "refuses an attachment whose path escapes
+   * the Messages root" and "refuses filePath when allowFileSend is off".
+   *
+   * The single `M.send(` is load-bearing for the neighbour below, not decoration
+   * — see `resolves a target before it sends`.
    */
-  it("never sends a file", () => {
-    for (const [, source] of SCRIPTS) expect(source).not.toContain("Path(");
+  it("sends a file only as the path the client resolved", () => {
+    for (const [, source] of SCRIPTS) {
+      expect(source.match(/Path\(/g) ?? []).toHaveLength(1);
+      expect(source).toContain("Path(p.file)");
+      expect(source.match(/M\.send\(/g) ?? []).toHaveLength(1);
+    }
   });
 
   /**
@@ -117,6 +136,11 @@ describe("JXA scripts", () => {
    * `send` outside the resolved-target branch could deliver to whatever the
    * dictionary picked by default, which on this surface is nobody's idea of a
    * safe fallback.
+   *
+   * `indexOf` compares the FIRST occurrence of each, so this check is only as
+   * strong as the script having one `M.send(` — which is why the file form is
+   * written as one call over a payload chosen beforehand, and why the test above
+   * pins the count.
    */
   it("resolves a target before it sends", () => {
     for (const [, source] of SCRIPTS) {

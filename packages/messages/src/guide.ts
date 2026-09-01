@@ -59,6 +59,14 @@ Sending is real and immediate. There is no draft state, no undo, and no
 confirmation step after the call. Confirm the recipient handle with the user
 before sending, exactly as it will be used.
 
+**One call sends one thing.** Messages' send takes a file or a string, never
+both, so a photo with a caption is two calls — send the attachment, then send
+the text. \`attachmentId\` forwards a file already in this Mac's Messages store,
+taking the same id \`apple_messages_save_attachment\` takes; it cannot reach a
+file outside Messages' own storage. Sending an arbitrary local path is a
+separate, off-by-default capability and usually absent — if there is no
+\`filePath\` parameter, that is the answer, not something to work around.
+
 Messages hands back no identifier for what it sent, so the sent row is found by
 re-reading the store. \`reconciliation: "pending"\` means it has not appeared yet.
 That is **not a failure and must not be retried** — retrying sends the message
