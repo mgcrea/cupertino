@@ -33,9 +33,22 @@ enum SurfaceIcon {
   /// substituting something that implies it is there.
   static func image(for surface: Surface) -> NSImage? {
     if let hit = cache[surface.id] { return hit }
-    // `nil` bundle id is not "not installed" — it is a surface that is not an
-    // app at all, like `screen`. There is nothing to ask LaunchServices about,
-    // and the caller draws a symbol rather than a missing-app placeholder.
+
+    // A capability has no app to ask LaunchServices about, so it names a file
+    // whose icon stands for it — Apple's own Settings extension. That keeps a
+    // capability looking like the colour icons beside it instead of announcing
+    // itself as a different kind of row.
+    //
+    // The path is checked rather than trusted: it points into /System, and
+    // those names move. A miss returns nil and `SurfaceIconView` draws the
+    // declared SF Symbol, which is why one is mandatory in the manifest.
+    if let iconPath = surface.iconPath {
+      guard FileManager.default.fileExists(atPath: iconPath) else { return nil }
+      let icon = NSWorkspace.shared.icon(forFile: iconPath)
+      cache[surface.id] = icon
+      return icon
+    }
+
     guard let bundleID = surface.bundleID,
       let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
     else { return nil }
@@ -55,6 +68,14 @@ struct SurfaceIconView: View {
       Image(nsImage: icon)
         .resizable()
         .interpolation(.high)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    } else if let symbol = surface.symbol {
+      // A capability whose icon file has moved. NOT `app.dashed`: that says
+      // "this app is not installed", and nothing was ever installed here.
+      Image(systemName: symbol)
+        .font(.system(size: size * 0.85))
+        .foregroundStyle(.secondary)
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     } else {

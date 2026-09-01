@@ -153,15 +153,30 @@ struct MainView: View {
   /// chrome is the one arrangement that always looks wrong.
   private var sidebar: some View {
     List(selection: pane) {
+      // Two groups, because they are two different offers. A surface brokers
+      // one Apple APP and costs that app's permission; a capability brokers
+      // something the system provides, has no app behind it, and costs a
+      // permission of its own — Screen Recording for `screen`. Filed together,
+      // "Screen" reads as an app nobody can find in their Applications folder.
       Section("Surfaces") {
         // Every surface, including the ones switched off. Hiding them would make
         // this window lie about which apps Cupertino knows, and would leave the
         // detail pane — where you turn one back on — unreachable from here.
         // Moving them to their own section is worse in a smaller way: the row
         // would jump out from under the cursor that just switched it off.
-        ForEach(Surface.all) { surface in
+        ForEach(Surface.apps) { surface in
           SurfaceSidebarRow(surface: surface, model: model)
             .tag(Pane.surface(surface.id))
+        }
+      }
+      // Absent rather than empty when there are none: a titled group with
+      // nothing in it advertises a feature that does not exist.
+      if !Surface.capabilities.isEmpty {
+        Section("Capabilities") {
+          ForEach(Surface.capabilities) { surface in
+            SurfaceSidebarRow(surface: surface, model: model)
+              .tag(Pane.surface(surface.id))
+          }
         }
       }
       Section("Activity") {

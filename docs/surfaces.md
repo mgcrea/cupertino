@@ -211,8 +211,27 @@ generated region is a red build rather than a shipped inconsistency.
 | `apps/website/src/data/surfaces.ts`     | the `id` union (not the tool names)                              |
 | `.mcp.json`                             | the dev bridge entries (written, not checked — it is gitignored) |
 
-Adding a surface is one manifest entry and `make surfaces` — plus a `runtime`, which decides whether
-it is a package under `packages/<id>` or served by the app. Two things are deliberately NOT generated:
+Adding a surface is one manifest entry and `make surfaces`, plus two declarations that decide what
+kind of thing it is:
+
+| Field     | Meaning                                                                                                                                                                                                   |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`    | `app` brokers one Apple application; `capability` brokers something the system provides and no app owns. Drives how the settings list is grouped, which icon is drawn, and which permission is asked for. |
+| `runtime` | `node` is a package under `packages/<id>`; `swift` is served in-process by the app.                                                                                                                       |
+
+They are declared rather than inferred from each other. Today every capability is also `swift` and
+has no `bundleId`, and that is a coincidence of there being one of them — the next capability should
+not have to be recognised by what it lacks.
+
+A capability names its own icon, because there is no app to ask LaunchServices about: `iconPath`
+points at Apple's own Settings extension so it sits beside the app icons rather than looking like a
+different kind of row, and `symbol` is a mandatory SF Symbol fallback. Both are required, because
+`iconPath` points into `/System` and those names move — `DisplaysExt.appex` sits beside
+`Sound.appex` in one directory, so there is no pattern to rely on. Without the fallback a moved path
+lands on `app.dashed`, which means "this app is not installed" and would be a lie about something
+that was never an app.
+
+Two things are deliberately NOT generated:
 the website's tool names, which are transcribed from `packages/<id>/src/tools/` because a wrong name
 there is a claim the servers do not honour, and the marketing prose, which the site derives from its
 own `SURFACES` array at build time.

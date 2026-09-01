@@ -79,14 +79,43 @@ const validate = (surfaces) => {
     } else if (typeof s.npmName !== "string" || !s.npmName) {
       problems.push(`${at}: npmName is required for a node surface`);
     }
-    // No bundle id only for something that is not an app. An Apple Events
-    // surface must have a target to send to.
-    if (s.bundleId === null) {
-      if (s.usesAppleEvents) {
-        problems.push(`${at}: bundleId is required when usesAppleEvents is true`);
+    // An APP brokers one Apple application; a CAPABILITY brokers something the
+    // system provides and no app owns. Declared rather than inferred from a
+    // missing bundleId: the two happen to coincide today, and the next
+    // capability should not have to be recognised by what it lacks.
+    if (!["app", "capability"].includes(s.kind)) {
+      problems.push(`${at}: kind must be "app" or "capability"`);
+    }
+    if (s.kind === "app") {
+      if (typeof s.bundleId !== "string" || !s.bundleId) {
+        problems.push(`${at}: an app surface needs a bundleId`);
       }
-    } else if (typeof s.bundleId !== "string" || !s.bundleId) {
-      problems.push(`${at}: bundleId must be a string or null`);
+      // Its icon comes from LaunchServices. Naming one here as well would be
+      // two sources for one picture, and they would disagree eventually.
+      if (s.symbol != null || s.iconPath != null) {
+        problems.push(
+          `${at}: an app surface takes its own icon — symbol and iconPath must be null`,
+        );
+      }
+    } else if (s.kind === "capability") {
+      if (s.bundleId !== null)
+        problems.push(`${at}: a capability surface must have bundleId: null`);
+      if (s.usesAppleEvents) {
+        problems.push(`${at}: a capability has no app to send an Apple Event to`);
+      }
+      // `symbol` is REQUIRED even though `iconPath` is preferred, because
+      // iconPath points into /System and Apple renames those: DisplaysExt.appex
+      // beside Sound.appex, in the same directory, is the evidence. A missing
+      // path must degrade to a chosen symbol rather than to `app.dashed`, which
+      // says "this app is not installed" about something that was never an app.
+      if (typeof s.symbol !== "string" || !s.symbol) {
+        problems.push(
+          `${at}: a capability needs a symbol (an SF Symbol name) as its icon fallback`,
+        );
+      }
+      if (s.iconPath !== null && typeof s.iconPath !== "string") {
+        problems.push(`${at}: iconPath must be a string or null`);
+      }
     }
     if (s.storePath !== null && typeof s.storePath !== "string") {
       problems.push(`${at}: storePath must be a string or null`);
@@ -212,6 +241,9 @@ const swiftSurface = (s) => {
     `      displayName: ${swiftString(s.displayName)},`,
     ...(lines.length ? lines : []),
     `      bundleID: ${s.bundleId === null ? "nil" : swiftString(s.bundleId)},`,
+    `      kind: .${s.kind},`,
+    `      iconPath: ${s.iconPath == null ? "nil" : swiftString(s.iconPath)},`,
+    `      symbol: ${s.symbol == null ? "nil" : swiftString(s.symbol)},`,
     `      usesAppleEvents: ${s.usesAppleEvents},`,
     `      supportsWrites: ${s.supportsWrites},`,
     `      storePath: ${s.storePath === null ? "nil" : swiftString(s.storePath)},`,

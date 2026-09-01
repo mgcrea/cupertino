@@ -22,12 +22,30 @@ struct Surface: Identifiable, Hashable {
   /// Target of the Apple Events lane, and the app whose icon represents this
   /// surface.
   ///
-  /// `nil` only for a surface that is not an app at all. `screen` is the first:
-  /// it brokers a system capability, so there is no bundle to send an event to
-  /// and none for `SurfaceIcon` to ask LaunchServices about — that falls back to
-  /// a symbol. A surface with `usesAppleEvents` true must have one, and the
-  /// generator refuses a manifest where it does not.
+  /// `nil` for every `.capability`, set for every `.app`. The generator refuses
+  /// a manifest where that does not hold.
   let bundleID: String?
+  /// What this surface brokers: one Apple application, or a system capability
+  /// that no app owns.
+  ///
+  /// Declared in the manifest rather than inferred from a missing `bundleID`.
+  /// The two coincide today and that is a coincidence — the distinction is
+  /// about what the user is being offered, and it drives how the list is
+  /// grouped, which icon is drawn and which permission is asked for.
+  let kind: Kind
+  /// A file whose icon stands for a capability — in practice Apple's own
+  /// Settings extension, so a capability sits beside the app icons rather than
+  /// looking like a different kind of thing.
+  ///
+  /// `nil` for an app, which has its own icon. Optional even for a capability
+  /// because it points into `/System` and those names move: `DisplaysExt.appex`
+  /// sits beside `Sound.appex` in one directory, so there is no pattern to rely
+  /// on and a miss must degrade rather than break.
+  let iconPath: String?
+  /// The SF Symbol a capability falls back to. Required for one, so a moved
+  /// `iconPath` never reaches `app.dashed` — which means "not installed" and
+  /// would be a lie about something that is not an app.
+  let symbol: String?
   /// Whether this surface ever sends an Apple Event.
   ///
   /// False means no Automation prompt is ever shown for it and none is needed:
@@ -99,6 +117,15 @@ struct Surface: Identifiable, Hashable {
   ///
   /// Generated rather than inferred from a missing `npmName`, so the targets
   /// that mean "surfaces with a node package" say so.
+  /// One Apple application, or a system capability no app owns.
+  enum Kind: Hashable {
+    /// Mail, Notes, Safari — brokers one app's data.
+    case app
+    /// Screen, and Sound next: brokers something the system provides. No bundle
+    /// id, no npm package, and its own TCC service rather than Full Disk Access.
+    case capability
+  }
+
   enum Runtime: Hashable {
     /// `packages/<id>`, spawned by `ServerLocator`.
     case node
@@ -116,6 +143,9 @@ struct Surface: Identifiable, Hashable {
       // packages/mail/src/client/locate.ts asks Mail itself first. For a
       // status row a glob is enough; the server does the real resolution.
       bundleID: "com.apple.mail",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Mail/V*/MailData/Envelope Index",
@@ -128,6 +158,9 @@ struct Surface: Identifiable, Hashable {
       id: "notes",
       displayName: "Notes",
       bundleID: "com.apple.Notes",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
@@ -147,6 +180,9 @@ struct Surface: Identifiable, Hashable {
       // because without the grant the container cannot even be listed, so the
       // store cannot be located at all.
       bundleID: "com.apple.reminders",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.reminders",
@@ -169,6 +205,9 @@ struct Surface: Identifiable, Hashable {
       // on a known path answers the question directly, with no listing step
       // that could fail for its own reasons.
       bundleID: "com.apple.iCal",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
@@ -198,6 +237,9 @@ struct Surface: Identifiable, Hashable {
       // And it is not Full Disk Access that gates it: Contacts has its own
       // TCC service, which — unlike Full Disk Access — prompts.
       bundleID: "com.apple.AddressBook",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Application Support/AddressBook",
@@ -255,6 +297,9 @@ struct Surface: Identifiable, Hashable {
       // hand. See docs/passwords.md for why the Passwords app itself is
       // unreachable and this is what ships in its place.
       bundleID: "com.apple.MobileSMS",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Messages/chat.db",
@@ -351,6 +396,9 @@ struct Surface: Identifiable, Hashable {
       // why the Passwords app itself is unreachable and this is what ships
       // in its place.
       bundleID: "com.apple.Safari",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: true,
       supportsWrites: true,
       storePath: "Library/Safari/History.db",
@@ -407,6 +455,9 @@ struct Surface: Identifiable, Hashable {
       // That leaves a Recents entry, which the tools disclose. The store is
       // CloudKit-mirrored, so a write reaches every device on the account.
       bundleID: "com.apple.Maps",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
       usesAppleEvents: false,
       supportsWrites: true,
       storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
@@ -476,6 +527,9 @@ struct Surface: Identifiable, Hashable {
       // general-vision feature, and shipping them means the allowlist never
       // existed. Widening later is deleting a check.
       bundleID: nil,
+      kind: .capability,
+      iconPath: "/System/Library/ExtensionKit/Extensions/DisplaysExt.appex",
+      symbol: "displays",
       usesAppleEvents: false,
       supportsWrites: false,
       storePath: nil,
@@ -488,6 +542,10 @@ struct Surface: Identifiable, Hashable {
     ),
   ]
   // </generated:surfaces>
+
+  /// The two groups the settings list shows, in manifest order.
+  static var apps: [Surface] { all.filter { $0.kind == .app } }
+  static var capabilities: [Surface] { all.filter { $0.kind == .capability } }
 
   static func named(_ id: String) -> Surface? {
     all.first { $0.id == id }

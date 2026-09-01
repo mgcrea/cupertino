@@ -789,6 +789,10 @@ enum StatusStyle {
 
   static func automationCaption(_ surface: Surface, _ status: AutomationStatus?) -> String {
     guard !surface.usesAppleEvents else { return caption(status) }
+    // A capability has no app behind it, so "reads only" would explain the
+    // wrong thing: the grant is not declined here, there is simply nothing to
+    // automate.
+    if surface.kind == .capability { return "not needed — there is no app to script" }
     // Reading "reads only" off usesAppleEvents held for every surface until Maps,
     // which writes SQL into its Core Data store and still sends no Apple Event.
     // The grant is equally not needed either way — only the reason differs, and
