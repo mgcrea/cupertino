@@ -41,11 +41,23 @@ import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref
  * unavailable, and the read-after-write rule.
  */
 
-export type MessageSummary = {
-  ref: string;
+/**
+ * The three fields `ref` is built from.
+ *
+ * Kept off `MessageSummary` deliberately. `ref` is `encodeRef` over exactly
+ * these, so emitting them beside it repeats the same identity three more times
+ * on every row of every list - measured at 38% of a 25-row reply for something
+ * that round-trips through `decodeRef`. Both lanes carry them internally and
+ * drop them once the ref exists.
+ */
+export type MessageIdentity = {
   id: number;
   accountUuid: string;
   mailbox: string;
+};
+
+export type MessageSummary = {
+  ref: string;
   subject: string | null;
   sender: string | null;
   dateReceived: string | null;
@@ -278,7 +290,7 @@ export class AppleMailClient {
       this.runner.run<{
         mailbox: string;
         total: number;
-        messages: Omit<MessageSummary, "ref">[];
+        messages: (Omit<MessageSummary, "ref"> & MessageIdentity)[];
       }>(LIST_RECENT, { accountUuid: account.id, mailbox: name, limit: capped }),
     );
     return { ...raw, messages: raw.messages.map((m) => this.#withRef(m)) };
@@ -291,14 +303,17 @@ export class AppleMailClient {
     opts: { withContent?: boolean; withSource?: boolean; withHeaders?: boolean } = {},
   ): Promise<MessageSummary[]> {
     const raw = await withBusyRetry(() =>
-      this.runner.run<(Omit<MessageSummary, "ref"> & { found?: boolean })[]>(GET_MESSAGES, {
-        accountUuid: ref.accountUuid,
-        mailbox: ref.mailbox,
-        ids,
-        withContent: opts.withContent ?? false,
-        withSource: opts.withSource ?? false,
-        withHeaders: opts.withHeaders ?? false,
-      }),
+      this.runner.run<(Omit<MessageSummary, "ref"> & MessageIdentity & { found?: boolean })[]>(
+        GET_MESSAGES,
+        {
+          accountUuid: ref.accountUuid,
+          mailbox: ref.mailbox,
+          ids,
+          withContent: opts.withContent ?? false,
+          withSource: opts.withSource ?? false,
+          withHeaders: opts.withHeaders ?? false,
+        },
+      ),
     );
     return raw.filter((m) => m.found !== false).map((m) => this.#withRef(m));
   }
@@ -548,9 +563,6 @@ export class AppleMailClient {
       : (row.senderAddress ?? null);
     return {
       ref: encodeRef({ accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid }),
-      id: row.rowid,
-      accountUuid: entry.accountUuid,
-      mailbox: entry.mailbox,
       subject: row.subject,
       sender,
       dateReceived: row.dateReceived,
@@ -1168,8 +1180,8 @@ export class AppleMailClient {
     });
   }
 
-  #withRef(m: Omit<MessageSummary, "ref">): MessageSummary {
-    const ref: MessageRef = { accountUuid: m.accountUuid, mailbox: m.mailbox, id: m.id };
-    return { ...m, ref: encodeRef(ref) };
+  #withRef(m: Omit<MessageSummary, "ref"> & MessageIdentity): MessageSummary {
+    const { id, accountUuid, mailbox, ...rest } = m;
+    return { ...rest, ref: encodeRef({ accountUuid, mailbox, id }) };
   }
 }
