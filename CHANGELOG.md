@@ -12,6 +12,28 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **The Sound pane advertised the Screen surface's tools.** The Capabilities card does not keep a
+  list of its own — it asks the server and renders the answer, which is what lets it demonstrate
+  that a gated tool is never registered rather than refused later. For the two surfaces the app
+  hosts itself it asked `ScreenServer` for all of them, so Sound's pane listed
+  `apple_screen_list_targets` and `cupertino://screen/guide`, and switching **Allow microphone
+  recording** on made `apple_screen_capture_surface` appear, because the gate was read by position
+  rather than by ID. The write flag was accepted and then dropped, so `apple_sound_set_volume` could
+  not have shown up even once the right server answered.
+
+  Only the card was wrong. `ServerHost` dispatched correctly the whole time, so a real MCP client
+  always reached the right server — which is also why nothing caught it: `make screen-check` and
+  `make sound-check` each drive one server directly, and both servers were fine.
+
+  Which server serves which surface, and what each one has to be told, now lives in one place
+  (`InProcessServers`) used by both the host and the card, and `make dispatch-check` asserts that
+  every in-process surface answers under its own name with its own `apple_<id>_*` tools and
+  `cupertino://<id>/*` resources, under every combination of the write flag and its gates.
+
 ## [1.10.0] - 2026-09-02
 
 ### Added

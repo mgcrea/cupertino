@@ -138,6 +138,13 @@ jobs:
       - name: Sound server 🔍
         if: runner.os == 'macOS'
         run: make sound-check
+      # The two steps above each drive ONE server. This one covers the code
+      # that picks which, which had two copies and shipped with the second one
+      # wrong — invisibly, because a list of the wrong surface's tools still
+      # looks like a list of tools.
+      - name: In-process dispatch 🔀
+        if: runner.os == 'macOS'
+        run: make dispatch-check
       - name: Audit export signing 🔍
         if: runner.os == 'macOS'
         run: make audit-check

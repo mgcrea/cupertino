@@ -274,6 +274,35 @@ sound-check: ## Assert the in-process sound server speaks MCP and its gates are 
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
 	@apps/apple/.build/sound-check
 
+dispatch-check: ## Assert each in-process surface is served by ITS OWN server
+	@# The gate neither screen-check nor sound-check can be: both drive one
+	@# server directly, and this bug lives in the code that CHOOSES the server.
+	@# It shipped — SurfaceCatalog handed every swift-runtime surface to
+	@# ScreenServer, so the Sound pane's Capabilities card listed
+	@# apple_screen_list_targets and the screen resources, while both server
+	@# checks went on passing because both servers were fine.
+	@#
+	@# Drives InProcessServers.handle, now the only copy of that choice, with
+	@# the write flag and the gates as VALUES — so every combination is pinned
+	@# without touching a preference, exactly as sound-check does.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/dispatch-check \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessServers.swift \
+		apps/apple/Cupertino/ScreenServer.swift \
+		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/SoundServer.swift \
+		apps/apple/Cupertino/SoundCapture.swift \
+		apps/apple/Cupertino/SoundDevices.swift \
+		apps/apple/Cupertino/Permissions.swift \
+		apps/apple/Cupertino/SafariCaptures.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/dispatch-check.swift
+	@apps/apple/.build/dispatch-check
+
 unit: ## Assert what a recorded call carries and that the audit chain holds, with no app
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/unit-check \
@@ -849,4 +878,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check dispatch-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check icon clean

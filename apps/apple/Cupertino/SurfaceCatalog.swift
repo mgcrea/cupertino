@@ -109,11 +109,11 @@ enum SurfaceCatalog {
     // which is not a node process at all.
     //
     // This still DEMONSTRATES rather than claims, which is the whole point of
-    // this type: it drives `ScreenServer.handle` — the same dispatch an MCP
+    // this type: it drives `InProcessServers.handle` — the same dispatch an MCP
     // client reaches through the bridge — rather than describing the tool list
     // a second time in Swift.
     if surface.runtime == .swift {
-      let caps = inProcess(surface, allowWrites: allowWrites)
+      let caps = try inProcess(surface, allowWrites: allowWrites)
       let cacheKey = key(surface, allowWrites, gates)
       await MainActor.run { cache[cacheKey] = caps }
       return caps
@@ -143,15 +143,40 @@ enum SurfaceCatalog {
   /// The same three list calls the spawning probe makes, over the in-process
   /// server. No process, no pipes, no deadline: it cannot hang, because there
   /// is nothing to wait for.
-  private static func inProcess(_ surface: Surface, allowWrites: Bool) -> Capabilities {
-    // The cache key already includes the gates, so this is read once per
-    // distinct setting rather than per render.
-    let captureAllowed = surface.gates.first.map { SurfaceSettings.isGateOn(surface, $0) } ?? false
+  ///
+  /// Every input a registration depends on is passed explicitly — which server,
+  /// the write flag, and each gate BY ID — because getting one wrong here is
+  /// invisible rather than loud. The card renders a perfectly plausible list
+  /// that belongs to another surface, or to another setting, and looks right.
+  /// It rendered `screen`'s on the Sound pane.
+  private static func inProcess(_ surface: Surface, allowWrites: Bool) throws -> Capabilities {
+    func ask(_ method: String) -> InProcessServers.Reply {
+      InProcessServers.handle(
+        #"{"jsonrpc":"2.0","id":1,"method":"\#(method)"}"#,
+        surface: surface,
+        // Forwarded rather than dropped, and forwarding it IS the feature: with
+        // writes off, `apple_sound_set_volume` is absent from this list because
+        // it was never registered, which is the claim this card exists to
+        // execute. It arrived here and went nowhere, so the Sound pane could
+        // not have shown a write tool even once the server was the right one.
+        allowWrites: allowWrites,
+        // The cache key already includes the gates, so these are read once per
+        // distinct setting rather than once per render.
+        gateOn: { SurfaceSettings.isGateOn(surface, id: $0) })
+    }
+
+    // A surface whose runtime says swift and which no server claims would
+    // otherwise render as three empty lists — a lie that looks like a server
+    // with nothing to offer. `ping` because every in-process server answers it
+    // and it touches nothing.
+    if case .noServer = ask("ping") {
+      throw Failure.badAnswer("This build has no in-process server for \(surface.id).")
+    }
+
     func list(_ method: String, _ key: String, _ name: @escaping ([String: Any]) -> String)
       -> [Item]
     {
-      let request = #"{"jsonrpc":"2.0","id":1,"method":"\#(method)"}"#
-      guard let reply = ScreenServer.handle(request, surface: surface, captureAllowed: captureAllowed),
+      guard case .message(let reply) = ask(method),
         let data = reply.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let result = object["result"] as? [String: Any],

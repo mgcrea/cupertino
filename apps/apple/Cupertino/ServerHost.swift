@@ -534,13 +534,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-  /// A gate by ID, never by position. `gates.first` was correct while every
-  /// surface had at most one and becomes silently wrong the moment one has two.
-  private func isGateOn(_ surface: Surface, _ id: String) -> Bool {
-    guard let gate = surface.gates.first(where: { $0.id == id }) else { return false }
-    return SurfaceSettings.isGateOn(surface, gate)
-  }
-
   private func serveInProcess(surface: Surface, client: Int32) {
     let session = UUID()
     let pid = ProcessInfo.processInfo.processIdentifier
@@ -576,31 +569,28 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // the editor — the same guarantee `stopSessions` gives a node server by
       // signalling it.
       //
-      // Dispatched on the surface id rather than on a protocol, because the two
-      // servers do not take the same gates: `screen` has one and `sound` has a
-      // write flag AND a gate that are deliberately independent. A shared
-      // signature would have to pass both to both and pretend that is one idea.
-      let response: String?
-      switch surface.id {
-      case "screen":
-        response = ScreenServer.handle(
-          line, surface: surface,
-          captureAllowed: isGateOn(surface, "allowCapture"))
-      case "sound":
-        response = SoundServer.handle(
-          line, surface: surface,
-          writesAllowed: SurfaceSettings.allowWrites(surface),
-          recordingAllowed: isGateOn(surface, "allowRecording"))
-      default:
-        // Unreachable: `runtime` comes from the closed table and only these two
-        // are swift-hosted. Logged rather than silent, because the manifest and
-        // this switch are two places one fact lives, and a new swift surface
-        // that forgets this line would otherwise hang rather than say why.
+      // WHICH server, and what each one has to be told, is `InProcessServers`'
+      // single copy of that fact. It used to be spelled here and a second time
+      // in `SurfaceCatalog`, and the second copy handed every swift-hosted
+      // surface to `ScreenServer`.
+      switch InProcessServers.handle(
+        line, surface: surface,
+        allowWrites: SurfaceSettings.allowWrites(surface),
+        gateOn: { SurfaceSettings.isGateOn(surface, id: $0) })
+      {
+      case .message(let response):
+        _ = writeAll(client, Data("\(response)\n".utf8))
+      case .noReply:
+        continue
+      case .noServer:
+        // Unreachable: `runtime` comes from the closed table and only two
+        // surfaces are swift-hosted. Logged rather than silent, because that
+        // table and the dispatch are two places one fact lives, and a new
+        // swift surface that forgets a case would otherwise hang rather than
+        // say why.
         hostLog(surface.id, .error, "no in-process server for this surface")
         return
       }
-      guard let response else { continue }
-      _ = writeAll(client, Data("\(response)\n".utf8))
     }
   }
 
@@ -888,6 +878,20 @@ enum SurfaceSettings {
   /// read it as off on every existing Mac.
   static func isGateOn(_ surface: Surface, _ gate: Surface.Gate) -> Bool {
     UserDefaults.standard.bool(forKey: gateKey(surface, gate))
+  }
+
+  /// The same read, addressed by gate ID rather than by `Gate` value.
+  ///
+  /// **A gate by ID, never by position.** `surface.gates.first` was correct
+  /// while every surface had at most one gate, and reads one surface's switch
+  /// as another's now that `screen` gates capture and `sound` gates recording.
+  /// It lives here, next to the read it wraps, rather than private to one
+  /// caller: two call sites need it, and the copy that was not the careful one
+  /// is the bug — `SurfaceCatalog` had `gates.first` and lit Screen's capture
+  /// tool from Sound's microphone switch.
+  static func isGateOn(_ surface: Surface, id: String) -> Bool {
+    guard let gate = surface.gates.first(where: { $0.id == id }) else { return false }
+    return isGateOn(surface, gate)
   }
 
   /// The env suffixes of every gate currently on, for `ServerLocator`.
