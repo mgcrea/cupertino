@@ -200,9 +200,17 @@ if [ "$saw_sparkle" -eq 1 ]; then
   # The symbol scan above is blind to entitlements by construction, so linking
   # Security.framework for `KeyStore` passed it silently — correctly, since a
   # Keychain is not a socket, but it made the blind spot worth closing. This
-  # asserts the set is EXACTLY the two expected: automation, which the comment
-  # in Cupertino.entitlements measures the need for, and get-task-allow, which
-  # only a Debug build carries. Anything else is a claim nobody made.
+  # asserts the set is EXACTLY what is measured: automation and audio-input,
+  # both of which the comments in Cupertino.entitlements measure the need for,
+  # plus get-task-allow, which only a Debug build carries. Anything else is a
+  # claim nobody made.
+  #
+  # Keep this in step with Cupertino.entitlements. The sound surface added
+  # audio-input there and not here, and the mismatch could not surface until the
+  # file parsed at all — signing died first, so the release job reached this
+  # check for the first time one commit later. Both halves of an entitlement
+  # change land together or the release fails at the step after the one you
+  # fixed. The names arrive sorted, so a new key goes in its alphabetical place.
   #
   # Skipped, loudly, on a bundle that carries no real signature. `codesign -dv`
   # cannot be the discriminator on its own: CODE_SIGNING_ALLOWED=NO does not
@@ -234,8 +242,8 @@ if [ "$saw_sparkle" -eq 1 ]; then
   fi
   case "$granted" in
     "__unsigned__") ;;
-    "com.apple.security.automation.apple-events"|\
-    "com.apple.security.automation.apple-events,com.apple.security.get-task-allow")
+    "com.apple.security.automation.apple-events,com.apple.security.device.audio-input"|\
+    "com.apple.security.automation.apple-events,com.apple.security.device.audio-input,com.apple.security.get-task-allow")
       printf '  ok    %-46s %s\n' "entitlements" "only what is measured" ;;
     "")
       printf '  FAIL  %-46s could not be read\n' "entitlements"
