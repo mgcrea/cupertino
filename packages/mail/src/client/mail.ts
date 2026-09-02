@@ -11,7 +11,14 @@ import {
   type EmlxLookup,
   type ParsedMessage,
 } from "./emlx.js";
-import { EnvelopeIndex, openIndex, type MessageRow, type SearchFilters } from "./envelope.js";
+import {
+  EnvelopeIndex,
+  openIndex,
+  type GroupField,
+  type GroupResult,
+  type MessageRow,
+  type SearchFilters,
+} from "./envelope.js";
 import { MAIL_SURFACE, MessageNotFoundError, PreconditionError } from "./errors.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
@@ -406,6 +413,60 @@ export class AppleMailClient {
       rowids.push(rowid);
     }
     return rowids;
+  }
+
+  /**
+   * Aggregate matches instead of listing them.
+   *
+   * Same filters as `searchMessages`, same index — the difference is that the
+   * counting happens in SQLite over the whole match set rather than in the
+   * model's head over a page of it. Returns null on the same condition
+   * `searchMessages` does, so callers keep one degradation path.
+   */
+  async groupMessages(
+    opts: Omit<SearchFilters, "mailboxRowids" | "offset"> & {
+      account?: string | undefined;
+      mailbox?: string | undefined;
+    },
+    field: GroupField,
+  ): Promise<
+    | (GroupResult & {
+        indexMode: string;
+        indexAgeSeconds: number | null;
+        walBlind: boolean;
+      })
+    | null
+  > {
+    const index = await this.index();
+    if (!index) return null;
+
+    const mailboxRowids = await this.#targetMailboxRowids(opts);
+    const result = index.groupBy({ ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) }, field);
+
+    // The mailbox lane groups on a rowid, which is an internal handle. Resolve
+    // it to the account/mailbox pair every other result speaks in, and only
+    // then — a rowid that no longer resolves keeps its count rather than
+    // vanishing from the totals.
+    const groups =
+      field === "mailbox"
+        ? await (async () => {
+            const lookup = await this.#mailboxLookup();
+            return result.groups.map((g) => {
+              const entry = g.key === null ? undefined : lookup.get(Number(g.key));
+              return entry
+                ? { ...g, key: entry.mailbox, label: entry.accountUuid }
+                : { ...g, label: g.label ?? null };
+            });
+          })()
+        : result.groups;
+
+    return {
+      ...result,
+      groups,
+      indexMode: index.mode,
+      indexAgeSeconds: await this.indexAgeSeconds(),
+      walBlind: index.mode === "immutable",
+    };
   }
 
   async searchMessages(

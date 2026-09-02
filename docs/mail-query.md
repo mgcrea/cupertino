@@ -1,0 +1,93 @@
+# The mail query lane — projection and aggregation
+
+**Implemented** — `apple_mail_query`, in
+[`packages/mail/src/tools/query.ts`](../packages/mail/src/tools/query.ts), on read-only servers
+only. The SQL lives beside the search lane in
+[`envelope.ts`](../packages/mail/src/client/envelope.ts).
+
+## The question
+
+This started as "should we adopt Cloudflare-style Code Mode — one sandboxed `execute` tool and a
+generated TypeScript API — to cut what the tool surface costs in context?"
+
+No. The listing cost is real (93 tools across eight surfaces, ~40 KB of description prose before
+schema scaffolding), but code mode relocates that cost rather than removing it: the model still
+needs the API, and the win in the published versions comes from the _client_ lazily loading only
+the modules a task touches — which the clients that matter already do for tool schemas. What it
+would definitely cost is the thing the tool surface is _for_ here. A `run_code` tool holding Full
+Disk Access and write access to Mail collapses 93 individually-permissionable operations into one
+opaque call, and tool identity is what host allowlists key on, what the audit log records, and
+what `allowWrites` gates on in [`config.ts`](../packages/core/src/config.ts).
+
+One idea from it is worth having anyway: **intermediate results should not have to pass through
+the context window.**
+
+## What was actually missing
+
+`apple_mail_search_messages` is already a declarative query tool — thirteen filters, executed
+against Mail's own SQLite index. Filtering was never the gap. Three things were:
+
+| Gap              | What it cost                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| No projection    | Every hit returned a full summary. "Who emailed me most" paid for subject, dates and flags on every row.     |
+| No aggregation   | "Top ten senders", "unread per account" meant pulling rows into the context and having the model tally them. |
+| No cross-surface | One process per surface, so mail × contacts cannot be joined server-side.                                    |
+
+The third is out of scope and stays there: the surfaces are separate packages and separate
+processes, and `apple_contacts_resolve_handles` already reduces that particular chain to two
+calls.
+
+## The rule this lane is built around
+
+**Aggregation happens before `limit`, never after.**
+
+`resolveLimit` caps every read at `maxResults`. If grouping ran over the returned page, "top
+senders in 2026" would silently mean "top senders among the twenty-five rows we happened to
+return" — and that answer is shaped exactly like a correct one. There is no marker on it, and no
+way for a model to tell.
+
+So `EnvelopeIndex.groupBy` issues a `GROUP BY` over the full filtered set. `limit` caps the number
+of _groups_; the envelope always carries `totalRows` (messages aggregated, never capped) and
+`truncated` (whether `groups` is a top-N). The test that pins this is
+`"caps the number of groups without capping what was counted"` in
+[`test/query.test.ts`](../packages/mail/test/query.test.ts).
+
+Two smaller consequences of the same principle:
+
+- `COUNT(DISTINCT x)` skips nulls, so a "no sender" group would appear in `groups` while going
+  unreported in `totalGroups` — and `truncated` is derived from that number. The query adds the
+  null group back explicitly.
+- Unknown `select` names are reported in the result rather than dropped. A silently ignored field
+  name is indistinguishable from a field that was null on every row.
+
+Body search is deliberately **not** offered here. It is a linear file scan bounded by
+`bodyScanMax` (see [mail-body.md](mail-body.md)); putting it behind an aggregate would uncap the
+work with no row count to make the cost visible.
+
+## Measured
+
+Against a synthetic 800-message archive (40 senders over six months), through a real MCP client:
+
+|                                                          | bytes   | ~tokens | calls |
+| -------------------------------------------------------- | ------- | ------- | ----- |
+| `apple_mail_query {groupBy: "sender", dateFrom: …}`      | 1,633   | 408     | 1     |
+| the same answer by paging `search_messages` and tallying | 104,659 | 26,165  | 2     |
+
+**64x** on that question — 356 matching messages never enter the context window, only the forty
+groups they fall into. Projection alone, with no grouping, is **2.6x** on a 50-row listing
+(`select: ["ref", "sender"]`, 14,759 B → 5,642 B).
+
+The tool's own listing cost is 2,864 B (~716 tokens), so it repays itself several times over on a
+single grouped question. That was the condition for keeping it.
+
+## Why read-only servers only
+
+Not safety — the lane reaches nothing but the index, and is `readOnlyHint: true`. Budget. Every
+tool costs listing tokens on every connect, so this one has to demonstrate it saves more than the
+~400 tokens it adds before it goes on the surface most clients see. `registerTools` puts it behind
+the `!allowWrites` branch, and `test/tools.test.ts` pins that it stays off the write-enabled
+surface.
+
+The measurement that decides whether it spreads to the other surfaces: run the same question both
+ways — `groupBy: "sender"` versus paging `search_messages` — and compare total tokens. If it does
+not clearly win on mail, the richest index of the eight, it will not win anywhere.

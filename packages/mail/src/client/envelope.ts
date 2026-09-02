@@ -54,6 +54,36 @@ export type SearchFilters = {
   offset: number;
 };
 
+/**
+ * What a mail query can group on.
+ *
+ * The single source of truth for both the tool's enum and the SQL expressions
+ * in `#groupExpr` — a field can only be asked for if it is listed here, which
+ * is what keeps caller strings out of the statement.
+ */
+export const GROUP_FIELDS = ["sender", "mailbox", "subject", "day", "month"] as const;
+
+export type GroupField = (typeof GROUP_FIELDS)[number];
+
+export type GroupRow = {
+  /** The grouped value. Null where the underlying column is null. */
+  key: string | null;
+  /** A display form of `key` where the schema carries one, else null. */
+  label: string | null;
+  count: number;
+  unread: number;
+  firstAt: string | null;
+  lastAt: string | null;
+};
+
+export type GroupResult = {
+  groups: GroupRow[];
+  /** Distinct groups matched, before `limit` cut the list. */
+  totalGroups: number;
+  /** Messages aggregated. Never capped by `limit`. */
+  totalRows: number;
+};
+
 export { escapeLike, toFileUri };
 
 const contains = (value: string): string => `%${escapeLike(value)}%`;
@@ -156,8 +186,18 @@ export class EnvelopeIndex {
     return Math.floor(Date.parse(iso) / 1000) - this.caps.epochOffset;
   }
 
-  search(filters: SearchFilters): MessageRow[] {
-    const params: unknown[] = [];
+  /**
+   * The WHERE half of a filtered read, appending its bind values to `params`.
+   *
+   * Shared by `search` and `groupBy` so the two cannot drift: a filter that
+   * narrowed a listing but not its aggregate would make "count per sender in
+   * INBOX" quietly count the whole archive.
+   *
+   * Call this before adding any other bind value — the placeholders it appends
+   * have to come first in the parameter list, which mirrors WHERE preceding
+   * ORDER BY and LIMIT in every statement built from it.
+   */
+  #filterPredicate(filters: Omit<SearchFilters, "limit" | "offset">, params: unknown[]): string {
     const where: string[] = ["m.deleted = 0"];
 
     where.push(this.#mailboxPredicate(filters.mailboxRowids, params));
@@ -199,11 +239,34 @@ export class EnvelopeIndex {
       params.push(this.#toEpoch(filters.dateTo));
     }
 
-    // subject_prefix holds "Re: " / "Fwd: " separately from the deduplicated
-    // subject row, so the displayed subject is the concatenation of the two.
-    const subjectExpr = this.caps.has.subjectPrefix
+    return where.join(" AND ");
+  }
+
+  /**
+   * The joins every filtered read needs. `s` and `a` are LEFT joins because a
+   * message can legitimately have no subject row and no sender row, and an
+   * INNER join here would drop exactly those from counts.
+   */
+  static readonly #FROM =
+    "FROM messages m " +
+    "JOIN mailboxes mb ON mb.ROWID = m.mailbox " +
+    "LEFT JOIN subjects s ON s.ROWID = m.subject " +
+    "LEFT JOIN addresses a ON a.ROWID = m.sender";
+
+  /**
+   * subject_prefix holds "Re: " / "Fwd: " separately from the deduplicated
+   * subject row, so the displayed subject is the concatenation of the two.
+   */
+  get #subjectExpr(): string {
+    return this.caps.has.subjectPrefix
       ? "COALESCE(m.subject_prefix, '') || COALESCE(s.subject, '')"
       : "COALESCE(s.subject, '')";
+  }
+
+  search(filters: SearchFilters): MessageRow[] {
+    const params: unknown[] = [];
+    const predicate = this.#filterPredicate(filters, params);
+    const subjectExpr = this.#subjectExpr;
 
     const sql =
       `SELECT m.ROWID AS rowid, mb.url AS mailboxUrl, ${subjectExpr} AS subject, ` +
@@ -214,11 +277,8 @@ export class EnvelopeIndex {
       (this.caps.has.attachments
         ? "EXISTS (SELECT 1 FROM attachments at2 WHERE at2.message = m.ROWID) AS hasAttachment "
         : "0 AS hasAttachment ") +
-      `FROM messages m ` +
-      `JOIN mailboxes mb ON mb.ROWID = m.mailbox ` +
-      `LEFT JOIN subjects s ON s.ROWID = m.subject ` +
-      `LEFT JOIN addresses a ON a.ROWID = m.sender ` +
-      `WHERE ${where.join(" AND ")} ` +
+      `${EnvelopeIndex.#FROM} ` +
+      `WHERE ${predicate} ` +
       `ORDER BY m.date_received DESC LIMIT ? OFFSET ?`;
 
     params.push(filters.limit, filters.offset);
@@ -238,6 +298,94 @@ export class EnvelopeIndex {
       conversationId: (r.conversationId as number) ?? null,
       hasAttachment: Boolean(r.hasAttachment),
     }));
+  }
+
+  /**
+   * The column expression each groupable field aggregates on.
+   *
+   * A key here is the ONLY thing that reaches the statement — the tool matches
+   * the caller's string against `GROUP_FIELDS` and passes the matched literal,
+   * so no caller-controlled text is ever interpolated. `label` is a second,
+   * human-readable form of the same group where one exists; it goes through
+   * MAX() because everything outside GROUP BY has to be aggregated, and the
+   * value is constant within a group anyway.
+   */
+  #groupExpr(field: GroupField): { key: string; label: string } {
+    switch (field) {
+      case "sender":
+        return { key: "a.address", label: "MAX(NULLIF(a.comment, ''))" };
+      // Grouped on the rowid rather than the URL so the caller can map it back
+      // through the same mailbox lookup every other result uses.
+      case "mailbox":
+        return { key: "m.mailbox", label: "MAX(mb.url)" };
+      case "subject":
+        return { key: this.#subjectExpr, label: "NULL" };
+      case "day":
+        return { key: this.#dateBucket("%Y-%m-%d"), label: "NULL" };
+      case "month":
+        return { key: this.#dateBucket("%Y-%m"), label: "NULL" };
+    }
+  }
+
+  /** `date_received` is epoch-with-offset, so shift it before formatting. */
+  #dateBucket(format: string): string {
+    return `strftime('${format}', datetime(m.date_received + ${this.caps.epochOffset}, 'unixepoch'))`;
+  }
+
+  /**
+   * Count matches per group, over every match rather than a page of them.
+   *
+   * `filters.limit` caps the number of GROUPS returned, not the number of
+   * messages considered — that distinction is the whole point of this lane.
+   * Aggregating a page instead would answer "the top senders among the
+   * twenty-five rows we happened to return", which is indistinguishable from a
+   * real top-N unless you already knew to doubt it.
+   */
+  groupBy(filters: Omit<SearchFilters, "offset">, field: GroupField): GroupResult {
+    const { key, label } = this.#groupExpr(field);
+
+    const totalsParams: unknown[] = [];
+    const totalsPredicate = this.#filterPredicate(filters, totalsParams);
+    // COUNT(DISTINCT) skips NULL, so a "no sender" group would go unreported in
+    // totalGroups while still appearing in `groups` — and `truncated` is derived
+    // from that number. The second term adds the null group back when it exists.
+    const totals = this.#db
+      .prepare(
+        `SELECT COUNT(*) AS totalRows, ` +
+          `COUNT(DISTINCT ${key}) + MAX(CASE WHEN ${key} IS NULL THEN 1 ELSE 0 END) AS totalGroups ` +
+          `${EnvelopeIndex.#FROM} WHERE ${totalsPredicate}`,
+      )
+      .get(...(totalsParams as never[])) as { totalRows: number; totalGroups: number | null };
+
+    const params: unknown[] = [];
+    const predicate = this.#filterPredicate(filters, params);
+    params.push(filters.limit);
+
+    const rows = this.#db
+      .prepare(
+        `SELECT ${key} AS key, ${label} AS label, COUNT(*) AS count, ` +
+          `SUM(CASE WHEN m.read = 0 THEN 1 ELSE 0 END) AS unread, ` +
+          `MIN(m.date_received) AS firstAt, MAX(m.date_received) AS lastAt ` +
+          `${EnvelopeIndex.#FROM} WHERE ${predicate} ` +
+          // Ordered by count so `limit` yields a top-N; the key breaks ties so
+          // repeating the same query cannot reshuffle equal-count groups.
+          `GROUP BY ${key} ORDER BY count DESC, key ASC LIMIT ?`,
+      )
+      .all(...(params as never[])) as Record<string, unknown>[];
+
+    return {
+      groups: rows.map((r) => ({
+        key: r.key === null ? null : String(r.key),
+        label: (r.label as string) || null,
+        count: Number(r.count),
+        unread: Number(r.unread ?? 0),
+        firstAt: this.#toIso(r.firstAt as number | null),
+        lastAt: this.#toIso(r.lastAt as number | null),
+      })),
+      totalRows: totals.totalRows,
+      // MAX() over zero rows is NULL, which is the empty-result case.
+      totalGroups: totals.totalGroups ?? 0,
+    };
   }
 
   count(filters: Omit<SearchFilters, "limit" | "offset">): { total: number; unread: number } {

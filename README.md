@@ -34,7 +34,7 @@ off cannot see that they exist.
 
 | Surface   | Package                                    | Status                                                                                         |
 | --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 20 tools, search/read/attachments + gated writes                                 |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 21 tools, search/read/attachments + gated writes                                 |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                 |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
@@ -462,6 +462,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/licensing.md](docs/licensing.md)                         | what is open, what is sold, what buys trust   |
 | [docs/alternatives.md](docs/alternatives.md)                   | what else reads Apple Mail, and where we lose |
 | [docs/mail-body.md](docs/mail-body.md)                         | the body-search lane, and how it is decided   |
+| [docs/mail-query.md](docs/mail-query.md)                       | the query lane, and why not CodeMode          |
 | [docs/notes.md](docs/notes.md)                                 | Apple Notes phase-0 measurements              |
 | [docs/reminders.md](docs/reminders.md)                         | Apple Reminders phase-0 measurements          |
 | [docs/messages.md](docs/messages.md)                           | Apple Messages: measurements, decoder, send   |

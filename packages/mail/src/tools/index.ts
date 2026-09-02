@@ -6,6 +6,7 @@ import { registerActionTools } from "./actions.js";
 import { registerComposeTools } from "./compose.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
+import { registerQueryTools } from "./query.js";
 import { registerSearchTools } from "./search.js";
 
 export type ToolContext = {
@@ -36,7 +37,16 @@ export const registerTools = (
   registerSearchTools(server, client);
   registerMessageTools(server, client, ctx.allowWrites);
 
-  if (!ctx.allowWrites) return;
+  if (!ctx.allowWrites) {
+    /*
+     * Read-only servers only, for now. Not because the tool is unsafe with
+     * writes on — it reaches nothing but the index — but because every tool
+     * costs listing tokens on every connect, and this one has to prove it saves
+     * more than it costs before it goes on the surface most clients see.
+     */
+    registerQueryTools(server, client);
+    return;
+  }
 
   registerActionTools(server, client);
   registerComposeTools(server, client);

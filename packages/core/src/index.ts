@@ -43,6 +43,15 @@ export {
   type WorkflowPrompt,
 } from "./prompts.js";
 export {
+  describeAggregation,
+  groupByArg,
+  project,
+  selectArg,
+  type Aggregation,
+  type Bucket,
+  type Projected,
+} from "./query.js";
+export {
   registerSurfaceResources,
   RESOURCE_SCHEME,
   surfaceUri,
