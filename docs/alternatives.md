@@ -14,7 +14,7 @@ one, so nothing in Claude reads Mail.app on the desktop out of the box. Everythi
 including Cupertino — exists to fill that hole.
 
 That qualifier is new as of this refresh and it is load-bearing. Anthropic's **iOS** app now drives
-Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the nine
+Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the ten
 surfaces on this page, on a platform this cannot ship to. Claude Desktop separately installs an
 Apple **Notes** extension from Settings › Extensions in one click, no JSON and no Terminal; whether
 Anthropic authors that extension or merely lists it could not be settled from Anthropic's own
@@ -129,10 +129,12 @@ the permanent refresh problem an FTS5 index would cost. `imdinu` still wins the 
 The refusal names the candidate count and the bound, which is the part that matters: it is not a
 silent cap reported as an absence. See [mail-body.md](mail-body.md).
 
-**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers nine
+**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers ten
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why
-Terminal, Script Editor and System Settings are excluded on purpose — but "nine" loses a feature
-comparison to "188" and will keep doing so.
+Terminal, Script Editor and System Settings are excluded on purpose — but "ten" loses a feature
+comparison to "188" and will keep doing so. The tool counts are much closer than the scope counts
+suggest — 107 here against their 188 — which is why the honest argument is about what a tool may
+reach rather than how many there are.
 
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away. What is not
@@ -150,7 +152,7 @@ unbounded body-search row, which is already conceded above — being absent from
 worse than losing one line of it.
 
 **Published, and the asterisk is closed.** The signed app ships from GitHub releases and a Homebrew
-tap, and the packages ship too: all nine — `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
+tap, and the packages ship too: all nine node packages — `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
 `-contacts`, `-messages`, `-safari` and `-maps` — are on npm at 1.8.0. `screen` has none and could
 not: the Screen Recording grant lives in the app, so a published package could do nothing. The
 distribution gap this section was written about is closed.
