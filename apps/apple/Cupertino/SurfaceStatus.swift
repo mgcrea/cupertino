@@ -179,8 +179,9 @@ struct SurfaceStatus {
         // only the pane will do and a button wired to the prompt would silently
         // do nothing — the dead end this switch's comment warns about.
         if Permissions.microphone() == .notDetermined {
+          let surface = surface
           return Action(label: "Ask…") {
-            Task { _ = await Permissions.requestMicrophone() }
+            Task { await StatusModel.shared.requestMicrophone(surface) }
           }
         }
         return Action(label: "Allow…") { Permissions.openMicrophoneSettings() }

@@ -19,5 +19,34 @@
        own right is the Allow… button, and that is the one place this broke. -->
   <key>com.apple.security.automation.apple-events</key>
   <true/>
+
+  <!-- The microphone, and the same shape of failure as the key above: the app
+       is unsandboxed, but the HARDENED RUNTIME gates resource access too, and
+       without this key macOS does not refuse the recording — it refuses to
+       ASK.
+
+       MEASURED, macOS 26.6, two Developer ID bundles signed `--options
+       runtime`, identical but for this one key:
+
+           bare   before=notDetermined  requestAccess=false  after=denied
+           audio  before=notDetermined  requestAccess=true   after=authorized
+
+       `AVCaptureDevice.requestAccess` returns false immediately, with NO
+       consent dialog, and leaves the status `denied`. That is a dead end and
+       not a denial anyone can undo: the refusal writes NO TCC row, so the
+       second run reads `notDetermined` all over again and Cupertino never
+       appears in Privacy & Security › Microphone — which, unlike Full Disk
+       Access and Screen Recording, has no "+" button to add it with. The
+       "Allow…" button opened a pane where there was nothing to switch on.
+
+       Also measured: re-signing WITH the key fixes it on the next launch, with
+       no `tccutil reset` — there is no stale row to clear, which is the one
+       good consequence of the refusal never having been recorded.
+
+       scripts/spike-app-tcc missed this because build.sh signs its bundle
+       without `--options runtime`; lane 2d measured a grant the shipping app
+       could never reach. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

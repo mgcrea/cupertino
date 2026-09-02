@@ -12,6 +12,31 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **The Microphone permission could not be granted at all.** 1.9.0 shipped the `sound` surface
+  without `com.apple.security.device.audio-input` in the app's entitlements. The app is unsandboxed,
+  but the hardened runtime gates resource access too, and without that key macOS does not refuse the
+  recording — it refuses to ask: `AVCaptureDevice.requestAccess` returned `false` with no consent
+  dialog, and wrote no TCC row. So Cupertino never appeared in Privacy & Security › Microphone, and
+  that pane — unlike Full Disk Access, Screen Recording and Accessibility — has no "+" button to add
+  it with. The "Allow…" button opened a window with nothing in it to switch on.
+
+  Upgrading is the whole fix. There is no stale grant to clear and no `tccutil reset` to run, because
+  the refusal was never recorded.
+
+  `scripts/spike-app-tcc` missed this because it signed its bundle without `--options runtime`; it now
+  signs hardened with the app's own entitlements, so a lane that passes describes the app that ships.
+
+### Changed
+
+- The Microphone row in a surface's Access card now says **"Ask…"** when the button raises the system
+  prompt and "Allow…" when it opens the pane, matching the menu-bar popover — it had said "Allow…" in
+  both states. Answering the prompt also updates the row now, instead of leaving it reading
+  "Microphone needed" until something else triggered a refresh.
+
 ## [1.9.0] - 2026-09-01
 
 ### Added

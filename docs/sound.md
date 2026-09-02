@@ -128,6 +128,40 @@ misattribution the whole project exists to avoid.
 An earlier draft of the probe printed `ProcessInfo.processName` under the label "responsible process".
 Those are different things, and conflating them reports a question the probe never asked.
 
+### The trap the spike could not see: the hardened runtime
+
+Everything above was measured in a bundle signed **without** `--options runtime`, and it is the one
+place that mattered. The shipping app is hardened, and the hardened runtime gates resource access as
+well as code — so the microphone needs `com.apple.security.device.audio-input` in
+`apps/apple/Cupertino.entitlements`, exactly the way Apple Events needs
+`com.apple.security.automation.apple-events`. 1.9.0 shipped without it.
+
+Measured on macOS 26.6, two Developer ID bundles signed `--options runtime`, identical but for that
+one key:
+
+| Bundle             | `before`        | `requestAccess`        | `after`      |
+| ------------------ | --------------- | ---------------------- | ------------ |
+| no `audio-input`   | `notDetermined` | **`false`**, no dialog | `denied`     |
+| with `audio-input` | `notDetermined` | `true`                 | `authorized` |
+
+The failure is not a denial, it is a **refusal to ask** — the same shape the Apple Events entitlement
+comment records, where macOS declines to prompt for an app that never declared it sends events.
+
+Three consequences, all measured:
+
+- **No dialog ever appears.** `requestAccess` returns `false` in well under a second, so the "Ask…"
+  button reads as a button that does nothing.
+- **The refusal writes no TCC row.** A second run reads `notDetermined` again, and Cupertino never
+  appears in Privacy & Security › Microphone. That pane has **no "+" button** — unlike Full Disk
+  Access, Screen Recording and Accessibility — so `openMicrophoneSettings()` opens a window with
+  nothing in it to switch on. This was the user-visible bug: "Allow" opens the pane and you cannot add
+  the app there.
+- **Re-signing with the key is the whole fix.** The next launch prompts and grants, with no
+  `tccutil reset` — the one good consequence of a denial that was never recorded.
+
+`scripts/spike-app-tcc/build.sh` now signs hardened with the app's own entitlements, so a lane that
+passes describes the app that ships. A spike signed unlike the app measures a different app.
+
 ### Two traps worth keeping
 
 **A missing usage description is fatal, not a denial.** macOS **terminates** a process that touches the

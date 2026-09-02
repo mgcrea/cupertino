@@ -165,6 +165,20 @@ struct SurfaceDetail: View {
 
   /// What breaks without it, per surface. Screen refuses outright; Contacts
   /// still has an Apple Events lane for writes, so "every tool" would be false.
+  /// "Ask…" when a prompt is what the button raises, "Allow…" when it opens a
+  /// pane.
+  ///
+  /// This used to be the literal "Allow…" for every state, which made the
+  /// microphone row promise the wrong thing in both directions: it said
+  /// "Allow…" over a button that raised the system prompt, and it went on
+  /// saying it once the answer was `denied` and the pane was the only route —
+  /// while the same row in the menu-bar popover said "Ask…". Two renderings of
+  /// one verdict, drifting. `SurfaceStatus.action` is the other half.
+  private var grantActionLabel: String {
+    surface.storePermission == .microphone && Permissions.microphone() == .notDetermined
+      ? "Ask…" : "Allow…"
+  }
+
   private var grantFailureHint: String {
     switch surface.storePermission {
     case .fullDiskAccess: "not granted"
@@ -236,7 +250,7 @@ struct SurfaceDetail: View {
           // prompts once and returns silently ever after — a button that works
           // one time is the dead end the Automation row was already fixed for.
           if grant == .missing {
-            Button("Allow…") {
+            Button(grantActionLabel) {
               switch surface.storePermission {
               case .contacts: Permissions.openContactsSettings()
               case .screenRecording: Permissions.openScreenRecordingSettings()
@@ -246,7 +260,10 @@ struct SurfaceDetail: View {
               // apply to it — see SurfaceStatus.action.
               case .microphone:
                 if Permissions.microphone() == .notDetermined {
-                  Task { _ = await Permissions.requestMicrophone() }
+                  Task {
+                    await model.requestMicrophone(surface)
+                    grant = Permissions.storeGrant(for: surface, diskAccess: model.diskAccess)
+                  }
                 } else {
                   Permissions.openMicrophoneSettings()
                 }

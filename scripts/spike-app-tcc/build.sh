@@ -5,9 +5,17 @@
 #   ./build.sh run      launch it through LaunchServices and tail the log
 #   ./build.sh reset    revoke its TCC grants so the next run starts clean
 #
-# Deliberately NOT an Xcode project: no sandbox, no hardened runtime, no
-# generated build settings — the only variable under test is whether a signed
-# .app's TCC identity covers the processes it spawns.
+# Deliberately NOT an Xcode project: no sandbox, no generated build settings —
+# the only variable under test is whether a signed .app's TCC identity covers
+# the processes it spawns.
+#
+# It DOES sign hardened, with the app's own entitlements, and that is not a
+# detail. It used to sign plain, on the grounds that the hardened runtime was
+# not what was being measured. It was: the runtime gates resource access as
+# well as code, and lane 2d's microphone result was a grant the shipping app
+# could not reach, because Cupertino.entitlements had no
+# `com.apple.security.device.audio-input` and the consent dialog therefore
+# never appeared. A spike signed unlike the app measures a different app.
 
 set -eu
 
@@ -106,13 +114,20 @@ PLIST
 # Sign last: any change to bundle contents invalidates the signature, and TCC
 # keys on the signature. A real Developer ID cert is not needed to answer the
 # question — Apple Development, or ad-hoc, gives a usable local identity.
+#
+# `--options runtime --entitlements` matches how the app ships. See the header:
+# without them the microphone lane measures a prompt that the real app never
+# gets.
+ents="$repo/apps/apple/Cupertino.entitlements"
 ident=$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $2; exit}')
 if [ -n "$ident" ]; then
-  echo "sign:  Apple Development ($ident)"
-  codesign --force --sign "$ident" --identifier "$bundle_id" --timestamp=none "$app"
+  echo "sign:  Apple Development ($ident), hardened, $ents"
+  codesign --force --sign "$ident" --identifier "$bundle_id" \
+    --options runtime --entitlements "$ents" --timestamp=none "$app"
 else
-  echo "sign:  ad-hoc (no Apple Development identity found)"
-  codesign --force --sign - --identifier "$bundle_id" "$app"
+  echo "sign:  ad-hoc (no Apple Development identity found), hardened, $ents"
+  codesign --force --sign - --identifier "$bundle_id" \
+    --options runtime --entitlements "$ents" "$app"
 fi
 codesign -dv "$app" 2>&1 | sed 's/^/       /'
 

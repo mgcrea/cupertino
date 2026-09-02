@@ -468,6 +468,23 @@ final class StatusModel {
     Permissions.requestAccessibility()
     accessibility = Permissions.accessibility()
   }
+
+  /// Raise the microphone prompt and write the answer back.
+  ///
+  /// Its own method for the reason `requestAutomation` is one: the two call
+  /// sites used to fire `Task { _ = await Permissions.requestMicrophone() }`
+  /// and drop the result on the floor, so a row that had just been granted
+  /// went on saying "Microphone needed" until something else called
+  /// `refresh()`.
+  ///
+  /// The prompt blocks until answered, which can be minutes — but unlike the
+  /// Automation ones this is `async` on the main actor rather than detached,
+  /// because `AVCaptureDevice.requestAccess` does its waiting off-thread and
+  /// hands back a value.
+  func requestMicrophone(_ surface: Surface) async {
+    _ = await Permissions.requestMicrophone()
+    grants[surface.id] = Permissions.storeGrant(for: surface, diskAccess: diskAccess)
+  }
 }
 
 struct StatusMenu: View {
