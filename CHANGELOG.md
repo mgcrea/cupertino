@@ -6,13 +6,44 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.9.0`,
-`notes-v1.9.0`, `reminders-v1.9.0`, `core-v1.9.0` for the npm packages, and `app-v1.9.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.10.0`,
+`notes-v1.10.0`, `reminders-v1.10.0`, `core-v1.10.0` for the npm packages, and `app-v1.10.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.10.0] - 2026-09-02
+
+### Added
+
+- **`apple_mail_query`, projection and aggregation over the Mail index.** "Top ten senders" or
+  "unread per account" is now a `GROUP BY` the server runs, rather than a page of rows pulled into
+  the context for the model to tally. It takes the same filters as `apple_mail_search_messages` and
+  shares its WHERE-clause builder, so a filter that narrows a listing cannot silently miss the
+  aggregate.
+
+  **Aggregation always runs before `limit`, never after.** `limit` caps the number of groups
+  returned, and the envelope carries `totalRows` — messages aggregated, never capped — alongside
+  `truncated`, so a top-N answer cannot be mistaken for "top N among the page we happened to
+  return." That distinction is the whole reason to have the tool: an aggregate computed over a
+  truncated page is not a wrong number so much as a confidently wrong one.
+
+  It registers on read-only servers only, for now. Not because it is unsafe with writes on — it
+  reaches nothing but the index — but because every tool costs listing tokens on every connect, and
+  this one has to prove it saves more than it costs before it goes on the surface most clients see.
+  A Code-Mode-style single `execute` tool was considered and rejected first; it relocates the
+  tool-surface cost rather than removing it, and collapses per-operation permissioning into one
+  opaque call. See [docs/mail-query.md](docs/mail-query.md).
+
+- **The site credits Magenta Creations with the mark**, in the footer, the same form every mgcrea
+  site uses. "Unofficial. Not affiliated with Apple" says who this is not, not who made it.
+
+### Changed
+
+- The Microphone row in a surface's Access card now says **"Ask…"** when the button raises the system
+  prompt and "Allow…" when it opens the pane, matching the menu-bar popover — it had said "Allow…" in
+  both states. Answering the prompt also updates the row now, instead of leaving it reading
+  "Microphone needed" until something else triggered a refresh.
 
 ### Fixed
 
@@ -29,13 +60,6 @@ summary.
 
   `scripts/spike-app-tcc` missed this because it signed its bundle without `--options runtime`; it now
   signs hardened with the app's own entitlements, so a lane that passes describes the app that ships.
-
-### Changed
-
-- The Microphone row in a surface's Access card now says **"Ask…"** when the button raises the system
-  prompt and "Allow…" when it opens the pane, matching the menu-bar popover — it had said "Allow…" in
-  both states. Answering the prompt also updates the row now, instead of leaving it reading
-  "Microphone needed" until something else triggered a refresh.
 
 ## [1.9.0] - 2026-09-01
 
@@ -1288,7 +1312,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...HEAD
+[1.10.0]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...app-v1.10.0
 [1.9.0]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...app-v1.9.0
 [1.8.0]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...app-v1.8.0
 [1.7.0]: https://github.com/mgcrea/cupertino/compare/app-v1.6.0...app-v1.7.0

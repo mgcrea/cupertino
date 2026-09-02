@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-reminders",
   "title": "Apple Reminders",
   "description": "Search, read and act on Apple Reminders — lists, due dates, writes off by default",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-reminders",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

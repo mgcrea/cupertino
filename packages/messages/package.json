@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-messages",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Search and read Apple Messages — chats and decoded text, sending off by default",
   "keywords": [
     "apple",

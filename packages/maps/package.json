@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-maps",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Read and act on Apple Maps — favourites, Guides and recents, writes off by default",
   "keywords": [
     "apple",
