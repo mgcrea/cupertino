@@ -34,6 +34,10 @@ summary.
   every in-process surface answers under its own name with its own `apple_<id>_*` tools and
   `cupertino://<id>/*` resources, under every combination of the write flag and its gates.
 
+- **`docs/sound.md` named a `play` tool that was never built**, and left `diagnostics` off the same
+  row. `afplay` went with it: nothing shells out to it, so listing it as part of the free half's
+  lane described a capability the surface does not have.
+
 ## [1.10.0] - 2026-09-02
 
 ### Added

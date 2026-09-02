@@ -19,12 +19,12 @@ other needs a TCC class the app has never held.
 
 ## The two halves
 
-|        | Free half                                          | Recording half          |
-| ------ | -------------------------------------------------- | ----------------------- |
-| Tools  | devices, volume, mute, default-device, speak, play | start / stop / status   |
-| Lane   | CoreAudio (+ `/usr/bin/say`, `afplay`)             | AVFoundation            |
-| Grant  | **none**                                           | `kTCCServiceMicrophone` |
-| Status | **GO**                                             | **GO**                  |
+|        | Free half                                                 | Recording half          |
+| ------ | --------------------------------------------------------- | ----------------------- |
+| Tools  | devices, volume, mute, default-device, speak, diagnostics | start / stop / status   |
+| Lane   | CoreAudio (+ `/usr/bin/say`)                              | AVFoundation            |
+| Grant  | **none**                                                  | `kTCCServiceMicrophone` |
+| Status | **GO**                                                    | **GO**                  |
 
 ## The lane
 
@@ -296,7 +296,7 @@ Rejected as this surface's lane, not as a lane.
   `ISTypeIdentifier = com.apple.graphic-icon.sound`, exactly parallel to the `DisplaysExt.appex` that
   `screen` already points at. Symbol fallback `speaker.wave.2`.
 
-`supportsWrites` should be **true**, unlike `screen` — volume, mute, speak and play are mutations that
+`supportsWrites` should be **true**, unlike `screen` — volume, mute, speak and the default device are mutations that
 are not recording, and they must be reachable without ever enabling the microphone. Recording sits
 behind its own gate, `allowRecording`, following the `allowCodes` precedent that a change of tier gets
 _"its own switch rather than `allowWrites`"_.
