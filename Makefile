@@ -596,6 +596,9 @@ surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
 readme-check: ## Fail if README's Surfaces table has drifted from the tree
 	@node scripts/readme-surfaces-check.mjs
 
+demo-gif: ## Encode a screen recording into a README-sized GIF (REC=path/to.mov)
+	@scripts/demo-gif.sh "$(REC)" $(if $(OUT),"$(OUT)",)
+
 version: ## Propagate the root package.json version into every copy of it
 	@node scripts/generate-version.mjs
 
