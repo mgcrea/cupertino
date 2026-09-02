@@ -25,8 +25,8 @@
        without this key macOS does not refuse the recording — it refuses to
        ASK.
 
-       MEASURED, macOS 26.6, two Developer ID bundles signed `--options
-       runtime`, identical but for this one key:
+       MEASURED, macOS 26.6, two Developer ID bundles signed with the
+       hardened runtime, identical but for this one key:
 
            bare   before=notDetermined  requestAccess=false  after=denied
            audio  before=notDetermined  requestAccess=true   after=authorized
@@ -43,9 +43,16 @@
        no `tccutil reset` — there is no stale row to clear, which is the one
        good consequence of the refusal never having been recorded.
 
-       scripts/spike-app-tcc missed this because build.sh signs its bundle
-       without `--options runtime`; lane 2d measured a grant the shipping app
-       could never reach. -->
+       scripts/spike-app-tcc missed this because build.sh signed its bundle
+       without the hardened runtime; lane 2d measured a grant the shipping app
+       could never reach.
+
+       The codesign flag that turns it on cannot be named literally in here: a
+       double hyphen is illegal inside an XML comment, and AMFI's parser is the
+       strict one. `plutil -lint` accepts such a file happily, so the only
+       symptom is `Failed to parse entitlements: AMFIUnserializeXML: syntax
+       error` from codesign — which the release job is the first thing to run,
+       because a build with signing disabled never parses this file at all. -->
   <key>com.apple.security.device.audio-input</key>
   <true/>
 </dict>
