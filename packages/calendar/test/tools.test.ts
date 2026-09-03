@@ -78,8 +78,28 @@ describe("apple_calendar_diagnostics", () => {
   it("answers without a store rather than failing", async () => {
     const out = await call(await connect(), "apple_calendar_diagnostics");
     expect(out.isError).toBe(false);
-    const doc = out.json() as { server: { lanes: { index: string } } };
-    expect(doc.server.lanes.index).toBe("disabled");
+    const doc = out.json() as { lanes: { index: string } };
+    expect(doc.lanes.index).toBe("disabled");
+  });
+
+  /*
+   * `server` is identity, and it holds the lanes on no surface any more. It
+   * used to hold them here, on Notes and on Reminders — which is why those
+   * three could not report which build was running, the first thing anyone
+   * asks about a server behaving oddly.
+   */
+  it("reports which build is running, and how it is configured", async () => {
+    const out = await call(await connect(), "apple_calendar_diagnostics");
+    const doc = out.json() as {
+      server: { name: string; version: string; node: string; platform: string };
+      settings: { allowWrites: boolean; maxResults: number };
+    };
+    expect(doc.server.name).toBe("@mgcrea/mcp-apple-calendar");
+    expect(doc.server.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(doc.server.node).toBe(process.version);
+    expect(doc.server.platform).toBe(process.platform);
+    expect(doc.settings.allowWrites).toBe(false);
+    expect(doc.settings.maxResults).toBeGreaterThan(0);
   });
 
   /**
@@ -90,10 +110,10 @@ describe("apple_calendar_diagnostics", () => {
   it("says plainly that there is no Apple Events read lane", async () => {
     const out = await call(await connect(), "apple_calendar_diagnostics");
     const doc = out.json() as {
-      server: { lanes: { applescript: string } };
+      lanes: { applescript: string };
       permissions: { automation: string };
     };
-    expect(doc.server.lanes.applescript).toBe("not-used");
+    expect(doc.lanes.applescript).toBe("not-used");
     expect(doc.permissions.automation).toMatch(/reads never send an Apple Event/);
   });
 

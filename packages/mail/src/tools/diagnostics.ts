@@ -1,3 +1,4 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "../build-info.js";
@@ -54,14 +55,14 @@ export const buildDiagnostics = async (
     ? Math.max(0, Math.round((Date.now() - Date.parse(located.mtime)) / 1000))
     : null;
 
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: ctx.allowWrites,
+  });
+
   return {
-    server: {
-      name: BUILD_INFO.name,
-      version: BUILD_INFO.version,
-      gitCommit: BUILD_INFO.gitCommit,
-      node: process.version,
-      platform: process.platform,
-    },
+    ...base,
     lanes,
     messageFile,
     /*
@@ -183,11 +184,7 @@ export const buildDiagnostics = async (
       reason: located.reason,
     },
     settings: {
-      allowWrites: ctx.allowWrites,
-      // Off means the prompts and the cupertino:// resources are not registered
-      // at all. Reported here because this tool still is, so it stays the one
-      // place that explains a capability the client cannot see.
-      exposePrompts: client.config.exposePrompts,
+      ...base.settings,
       accountAllowlist: client.config.accounts.length ? client.config.accounts : "(all accounts)",
       indexMode: client.config.indexMode,
       degradedMaxMessages: client.config.degradedMaxMessages,

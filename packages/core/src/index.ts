@@ -10,6 +10,11 @@ export {
 } from "./ax.js";
 export { readPackageIdentity, type BuildInfo, type PackageIdentity } from "./build-info.js";
 export { runStdioServer, type StdioServerOptions } from "./cli.js";
+export {
+  buildBaseDiagnostics,
+  type BaseDiagnostics,
+  type BaseDiagnosticsInput,
+} from "./diagnostics.js";
 export { extractCode, type CodeConfidence, type CodeMatch, type ExtractOptions } from "./codes.js";
 export {
   BaseConfigSchema,

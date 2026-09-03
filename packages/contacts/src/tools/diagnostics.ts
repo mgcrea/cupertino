@@ -1,3 +1,4 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "../build-info.js";
@@ -23,12 +24,13 @@ export const buildDiagnostics = async (
   // tool" flatly, while apple_contacts_create_contact and
   // apple_contacts_update_contact have been registered behind this flag.
   const writes = client.config.allowWrites;
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: writes,
+  });
   return {
-    server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
-    // Off means the prompts and the cupertino:// resources are not registered at
-    // all. Reported here because this tool still is, so it stays the one place
-    // that explains a capability the client cannot see.
-    settings: { exposePrompts: client.config.exposePrompts, allowWrites: writes },
+    ...base,
     lane: {
       // There is only one, and saying so is more useful than implying a choice.
       reads: "file lane (read-only SQLite)",

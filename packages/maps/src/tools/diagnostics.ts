@@ -1,3 +1,4 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "../build-info.js";
@@ -17,12 +18,14 @@ export const buildDiagnostics = async (
 ): Promise<Record<string, unknown>> => {
   const status = client.status();
   const located = status.located;
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: client.config.allowWrites,
+  });
   return {
-    server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
-    settings: {
-      exposePrompts: client.config.exposePrompts,
-      seedTimeoutMs: client.config.seedTimeoutMs,
-    },
+    ...base,
+    settings: { ...base.settings, seedTimeoutMs: client.config.seedTimeoutMs },
     lanes: {
       summary:
         "Maps has ONE lane. Maps.app ships no scripting dictionary — there is no .sdef in the " +

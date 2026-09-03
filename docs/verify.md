@@ -61,8 +61,8 @@ npx @modelcontextprotocol/inspector node packages/reminders/dist/cli.js
 
 | Check                                            | Expected                                                         |
 | ------------------------------------------------ | ---------------------------------------------------------------- |
-| `diagnostics.server.lanes.index`                 | `live`, with `indexMode: "ro"`                                   |
-| `diagnostics.server.lanes.storeFingerprint`      | `278b001e3c55` on macOS 26.6                                     |
+| `diagnostics.lanes.index`                        | `live`, with `indexMode: "ro"`                                   |
+| `diagnostics.lanes.storeFingerprint`             | `278b001e3c55` on macOS 26.6                                     |
 | `diagnostics.store.candidates`                   | more than 1 — several `.sqlite` files is normal; largest wins    |
 | `list_reminders` → `source`                      | `index`. `apple-events` means the store was not opened           |
 | `list_reminders` → `hasMore`                     | `false` on a small library; `true` means the page was cut        |

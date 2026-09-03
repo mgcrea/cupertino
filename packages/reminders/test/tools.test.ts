@@ -649,13 +649,19 @@ describe("writes", () => {
 describe("diagnostics", () => {
   it("reports both lanes and names the settings in force", async () => {
     const out = (await call(await connect(), "apple_reminders_diagnostics")).json() as {
-      server: { lanes: { applescript: string; index: string } };
-      settings: { includeCompleted: boolean; allowWrites: boolean };
+      server: { name: string; version: string };
+      lanes: { applescript: string; index: string };
+      settings: { includeCompleted: boolean; allowWrites: boolean; maxResults: number };
       caveats: string[];
     };
-    expect(out.server.lanes.applescript).toBe("live");
+    expect(out.lanes.applescript).toBe("live");
     expect(out.settings.allowWrites).toBe(false);
     expect(out.settings.includeCompleted).toBe(false);
+    // `server` is identity on every surface now. This one reported the lanes
+    // there and so could not say which build was running at all.
+    expect(out.server.name).toBe("@mgcrea/mcp-apple-reminders");
+    expect(out.server.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(out.settings.maxResults).toBeGreaterThan(0);
   });
 
   /** The caveat that stops someone filing "move lost my ref" as a bug. */

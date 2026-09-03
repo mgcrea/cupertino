@@ -214,7 +214,7 @@ describe("diagnostics", () => {
   it("reports the index lane as disabled rather than broken when switched off", async () => {
     const client = await connect(config({ indexMode: "off" }));
     const out = await client.callTool({ name: "apple_notes_diagnostics", arguments: {} });
-    expect(JSON.parse(textOf(out)).server.lanes.index).toBe("disabled");
+    expect(JSON.parse(textOf(out)).lanes.index).toBe("disabled");
   });
 });
 

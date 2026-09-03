@@ -1,5 +1,7 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { BUILD_INFO } from "../build-info.js";
 import type { AppleNotesClient } from "../client/notes.js";
 import { ok, wrap } from "./util.js";
 
@@ -25,8 +27,18 @@ export const buildDiagnostics = async (
       ? "denied"
       : "unknown (no store found)";
 
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: ctx.allowWrites,
+  });
+
   return {
-    server: { lanes },
+    ...base,
+    // Out of `server` and into its own key. It lived under `server` on this
+    // surface and two others, which is why they could not report their own
+    // version: the one field that block is for had been given away.
+    lanes,
     permissions: {
       automation: lanes.applescript === "live" ? "granted" : "denied-or-notes-not-running",
       fullDiskAccess,
@@ -52,11 +64,7 @@ export const buildDiagnostics = async (
     },
     accounts,
     settings: {
-      allowWrites: ctx.allowWrites,
-      // Off means the prompts and the cupertino:// resources are not registered
-      // at all. Reported here because this tool still is, so it stays the one
-      // place that explains a capability the client cannot see.
-      exposePrompts: client.config.exposePrompts,
+      ...base.settings,
       accountAllowlist: client.config.accounts,
       indexMode: client.config.indexMode,
       maxResults: client.config.maxResults,

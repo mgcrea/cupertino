@@ -1,5 +1,7 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { BUILD_INFO } from "../build-info.js";
 import type { AppleRemindersClient } from "../client/reminders.js";
 import { ok, wrap } from "./util.js";
 
@@ -30,8 +32,18 @@ export const buildDiagnostics = async (
       ? "denied (found the store, cannot read it)"
       : "denied (cannot list the container, so the store cannot be located)";
 
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: ctx.allowWrites,
+  });
+
   return {
-    server: { lanes },
+    ...base,
+    // Out of `server` and into its own key. It lived under `server` on this
+    // surface and two others, which is why they could not report their own
+    // version: the one field that block is for had been given away.
+    lanes,
     permissions: {
       automation: lanes.applescript === "live" ? "granted" : "denied-or-reminders-not-running",
       fullDiskAccess,
@@ -60,11 +72,7 @@ export const buildDiagnostics = async (
     },
     accounts,
     settings: {
-      allowWrites: ctx.allowWrites,
-      // Off means the prompts and the cupertino:// resources are not registered
-      // at all. Reported here because this tool still is, so it stays the one
-      // place that explains a capability the client cannot see.
-      exposePrompts: client.config.exposePrompts,
+      ...base.settings,
       accountAllowlist: client.config.accounts,
       listAllowlist: client.config.lists,
       defaultList: client.config.defaultList ?? null,

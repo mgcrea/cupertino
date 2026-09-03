@@ -1,5 +1,7 @@
+import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { BUILD_INFO } from "../build-info.js";
 import type { AppleCalendarClient } from "../client/calendar.js";
 import { ok, wrap } from "./util.js";
 
@@ -34,8 +36,18 @@ export const buildDiagnostics = async (
       ? "denied (found the store, cannot read it)"
       : "unknown (no store file at the expected path)";
 
+  const base = buildBaseDiagnostics({
+    build: BUILD_INFO,
+    config: client.config,
+    allowWrites: ctx.allowWrites,
+  });
+
   return {
-    server: { lanes },
+    ...base,
+    // Out of `server` and into its own key — see the note in core's
+    // `buildBaseDiagnostics`: this block had been given away to the lanes, so
+    // the surface could not report which build was running.
+    lanes,
     permissions: {
       fullDiskAccess,
       automation: ctx.allowWrites
@@ -82,11 +94,7 @@ export const buildDiagnostics = async (
         }
       : null,
     settings: {
-      allowWrites: ctx.allowWrites,
-      // Off means the prompts and the cupertino:// resources are not registered
-      // at all. Reported here because this tool still is, so it stays the one
-      // place that explains a capability the client cannot see.
-      exposePrompts: client.config.exposePrompts,
+      ...base.settings,
       accountAllowlist: client.config.accounts,
       calendarAllowlist: client.config.calendars,
       defaultCalendar: client.config.defaultCalendar ?? null,
