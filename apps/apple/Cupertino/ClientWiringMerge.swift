@@ -44,6 +44,65 @@ enum ClientWiringMerge {
     return command.hasSuffix(bridgeSuffix)
   }
 
+  /// Where an entry points, whichever shape it is.
+  ///
+  /// `command` first, then `url`. Cupertino only ever writes a `command`, so the
+  /// `url` half exists purely to *describe* entries it did not write: a Claude
+  /// Code config legitimately holds `{"type": "http", "url": ...}` blocks, and a
+  /// list of other people's servers that rendered one of those as "no command"
+  /// would be describing the file wrongly. `isOurs` stays command-only — reading
+  /// a url here never widens what this app claims as its own.
+  static func identity(of entry: Any?) -> String? {
+    guard let entry = entry as? [String: Any] else { return nil }
+    if let command = entry["command"] as? String { return command }
+    if let url = entry["url"] as? String { return url }
+    return nil
+  }
+
+  /// An entry in a client's config that this app did not write.
+  ///
+  /// `identity` is nil for a shape carrying neither `command` nor `url` — hand
+  /// written and malformed, or a key holding a bare string. Listed anyway, on
+  /// purpose: it is in the file, it is not ours, and a view that silently skipped
+  /// it would be lying about what the file holds.
+  struct ForeignEntry: Equatable {
+    let key: String
+    let identity: String?
+  }
+
+  /// Everything under a servers object that `isOurs` does not claim, by key.
+  ///
+  /// Deliberately the same predicate the removal gate uses, so a Remove button
+  /// fed from this list can never appear beside an entry `removing` would refuse.
+  /// An `apple-mail` written by an older Cupertino is ours and does not appear
+  /// here; a third-party server that happens to be called `apple-mail` does.
+  static func foreignEntries(in servers: [String: Any]) -> [ForeignEntry] {
+    servers.keys.sorted()
+      .filter { !isOurs(servers[$0]) }
+      .map { ForeignEntry(key: $0, identity: identity(of: servers[$0])) }
+  }
+
+  /// The same question asked of every `projects[<dir>].mcpServers` block.
+  ///
+  /// Named for LOCAL SCOPE rather than for projects, because both words are
+  /// already taken here and mean different files: `project` scope is
+  /// `<dir>/.mcp.json`, and `local` scope is the block inside Claude Code's own
+  /// config. See `ClientWiring.ProjectScope`.
+  ///
+  /// Folders sorted, and a folder with nothing foreign in it dropped rather than
+  /// listed empty — the config this was written against holds ninety-eight of
+  /// them, and twelve have ever called a tool.
+  static func foreignLocalScopeEntries(
+    in root: [String: Any]
+  ) -> [(folder: String, entries: [ForeignEntry])] {
+    guard let projects = root["projects"] as? [String: Any] else { return [] }
+    return projects.keys.sorted().compactMap { folder in
+      guard let servers = localScopeServers(in: root, folder: folder) else { return nil }
+      let foreign = foreignEntries(in: servers)
+      return foreign.isEmpty ? nil : (folder: folder, entries: foreign)
+    }
+  }
+
   // MARK: - Merging
 
   /// Merge our servers in, leaving everything else untouched.
@@ -84,6 +143,87 @@ enum ClientWiringMerge {
     return root
   }
 
+  /// Remove every entry this app wrote under `rootKey`, and nothing else.
+  ///
+  /// The counterpart to `merged`, and the reason `isOurs` is narrow: unwiring
+  /// must never be a way to delete somebody's config. It reaches an entry left by
+  /// a copy of the app that has since moved, and an `apple-<surface>` key from
+  /// before the rename, for the same reason `merged`'s removal gate does — both
+  /// are ours, and both are exactly what is worth cleaning up.
+  ///
+  /// User scope only. The `projects` blocks are a different scope with a
+  /// different button, and a Remove on a client row that silently emptied
+  /// ninety-eight folders would be doing far more than it says.
+  static func unmerged(from root: [String: Any], rootKey: String) -> [String: Any] {
+    var root = root
+    guard var servers = root[rootKey] as? [String: Any] else { return root }
+    // Keys collected before anything is removed. Mutating a dictionary while
+    // iterating it is legal here — the loop holds its own copy — and it is the
+    // kind of legal that stops being obvious the moment somebody edits it.
+    for key in servers.keys.filter({ isOurs(servers[$0]) }) {
+      servers.removeValue(forKey: key)
+    }
+    // Assigned back even when the removal emptied it: absent and empty are
+    // different statements about a config — see `localScopeServers` — and this
+    // has no business inventing the difference in either direction.
+    root[rootKey] = servers
+    return root
+  }
+
+  /// Remove one named entry, and nothing else.
+  ///
+  /// Deliberately REFUSES a key `isOurs` claims. Taking Cupertino's own entries
+  /// out is `unmerged`, which knows about the whole set; this is the path for a
+  /// server somebody configured by hand and has since replaced with one of ours,
+  /// and the two must not be reachable from each other.
+  ///
+  /// A key that is absent — or that turns out to be ours because the file moved
+  /// on under the caller — is a no-op rather than an error. There is nothing to
+  /// undo, and nothing to say about it that the caller did not already know.
+  static func removing(key: String, from root: [String: Any], rootKey: String) -> [String: Any] {
+    var root = root
+    guard var servers = root[rootKey] as? [String: Any] else { return root }
+    guard servers[key] != nil, !isOurs(servers[key]) else { return root }
+    servers.removeValue(forKey: key)
+    root[rootKey] = servers
+    return root
+  }
+
+  /// The same, inside one `projects[<dir>]` block, leaving the other
+  /// ninety-seven alone.
+  ///
+  /// Explicit read-modify-write for the reason `mergedIntoLocalScope` spells out:
+  /// Swift dictionaries are value types, and the obvious
+  /// `root["projects"]![folder]!["mcpServers"]` chain edits copies and reports
+  /// success having changed nothing.
+  static func removing(
+    key: String, inLocalScope folder: String, from root: [String: Any]
+  ) -> [String: Any] {
+    var root = root
+    guard var projects = root["projects"] as? [String: Any],
+      let project = projects[folder] as? [String: Any]
+    else { return root }
+    projects[folder] = removing(key: key, from: project, rootKey: "mcpServers")
+    root["projects"] = projects
+    return root
+  }
+
+  /// Every entry of ours out of one folder's local scope.
+  ///
+  /// The unwire the folder list never had: `ClientWiring.forget` drops a folder
+  /// from `UserDefaults` and leaves its entries sitting in Claude Code's config,
+  /// where they go on costing every session opened there a tool list it cannot
+  /// use.
+  static func unmergedFromLocalScope(from root: [String: Any], folder: String) -> [String: Any] {
+    var root = root
+    guard var projects = root["projects"] as? [String: Any],
+      let project = projects[folder] as? [String: Any]
+    else { return root }
+    projects[folder] = unmerged(from: project, rootKey: "mcpServers")
+    root["projects"] = projects
+    return root
+  }
+
   // MARK: - Auditing
 
   /// What a status check concludes from a servers object alone.
@@ -105,43 +245,129 @@ enum ClientWiringMerge {
     case extra([String])
   }
 
+  /// What is under **one** key, against what should be there.
+  ///
+  /// `Audit` is this reduced over every expected entry, and a pane that draws a
+  /// row per surface needs the un-reduced form: "points elsewhere —
+  /// /Users/x/Downloads/Cupertino.app/..." spread across ten identical rows says
+  /// nothing about which of the ten it is talking about.
+  enum EntryState: Equatable {
+    /// No entry under that key — or something there that is not an object at
+    /// all, which nothing downstream could read as a server anyway.
+    case missing
+    /// Ours, and pointing at the bridge we would write.
+    case matches
+    /// Ours, pointing somewhere else — almost always a previous build, or a copy
+    /// of the app that has moved. Carries where it points now.
+    case stale(String)
+    /// Present, and not ours. Carries where it points, or nil for a shape with
+    /// neither a `command` nor a `url`.
+    ///
+    /// Unlike the two above it is not a fault in the wiring: it is somebody
+    /// else's server sitting under a name this app wants. What happens next is
+    /// policy rather than arithmetic — see `ClientWiring.collisions`.
+    case foreign(String?)
+  }
+
+  /// Compared against `expectedCommand` — `ClientWiring.bridgePath` — and never
+  /// against `args`.
+  ///
+  /// Checking the `--server=<id>` as well is cheap, and it would catch a
+  /// hand-edited `cupertino-mail` reaching `--server=notes`. It is left out
+  /// because the key is derived from the surface id rather than chosen by
+  /// anybody: no path through this app produces that pair, so the check would
+  /// only ever fire on a file somebody edited themselves — and it has no remedy
+  /// to offer them that Configure does not already offer.
+  static func state(of servers: [String: Any], key: String, expectedCommand: String) -> EntryState
+  {
+    guard let entry = servers[key] as? [String: Any] else { return .missing }
+    let found = identity(of: entry)
+    // Equality with the command we would write comes FIRST, and decides on its
+    // own. `isOurs` is a suffix test, and its job is recognising entries written
+    // by a copy of the app that has since moved; an entry already reaching the
+    // exact command in hand needs no such inference. Asking the suffix first
+    // makes the verdict depend on where the bundle happens to live, which is the
+    // one thing this comparison is not about.
+    if let found, found == expectedCommand { return .matches }
+    guard isOurs(entry) else { return .foreign(found) }
+    return .stale(found ?? "unknown")
+  }
+
+  /// The same conclusion as the `audit` below, from states already computed.
+  ///
+  /// Split out so the badge on a row and the sentence in a header are two
+  /// renderings of ONE computation rather than two implementations of one rule,
+  /// which is how they end up disagreeing about a file neither of them owns.
+  ///
+  /// `leftover` is handed in rather than folded out of `states`, and it has to
+  /// be: an entry for a switched-off surface is filed under a key that is not in
+  /// `expected` at all, so nothing computes a state for it and `.extra` would be
+  /// unreachable from the fold.
+  static func audit(
+    states: [(key: String, label: String, state: EntryState)],
+    leftover: [String]
+  ) -> Audit {
+    var missing: [String] = []
+    for entry in states {
+      switch entry.state {
+      case .missing:
+        missing.append(entry.label)
+      case .matches:
+        continue
+      // The first in order wins, and it outranks everything below: a config
+      // pointing at a bundle that has moved is one write away from working, and
+      // the path it found is the only useful thing to say about it.
+      case .stale(let found):
+        return .stale(found)
+      // Folded into `.stale` rather than given a verdict of its own. A
+      // whole-file `.collides` would be a state with no button behind it — the
+      // refusal lives in `ClientWiring`, and the ROW is where "taken" is worth
+      // saying, because that is the only place it can name which key.
+      case .foreign(let what):
+        return .stale(what ?? "unknown")
+      }
+    }
+    // A partially wired config used to report `.configured`, because any one
+    // matching entry was enough. That made every new surface invisible to
+    // everyone who had already configured the client — a green check beside a
+    // config that would never gain the new server.
+    if missing.count == states.count && leftover.isEmpty { return .notConfigured }
+    // Missing wins over extra when both are true. A missing server breaks a tool
+    // call; an extra one only costs an assistant definitions it will never use.
+    // The same Update button fixes both in one write, so the row loses nothing
+    // by naming the worse fault.
+    if !missing.isEmpty { return .incomplete(missing) }
+    return leftover.isEmpty ? .configured : .extra(leftover)
+  }
+
   /// `expected` is the server key paired with the human label to name in
   /// `.incomplete`, in the order the labels should read.
+  ///
+  /// A forwarder over `state` since the detail pane landed. It keeps its
+  /// signature because `ClientWiring` and `wiring-check` both call it, and it
+  /// keeps its answers because sections 4, 5 and 5c of that script were written
+  /// against the loop this replaced.
   static func audit(
     servers: [String: Any],
     expectedCommand: String,
     expected: [(key: String, label: String)],
     unexpected: [(key: String, label: String)]
   ) -> Audit {
-    var missing: [String] = []
-    for (key, label) in expected {
-      guard let entry = servers[key] as? [String: Any] else {
-        missing.append(label)
-        continue
-      }
-      if (entry["command"] as? String) != expectedCommand {
-        return .stale((entry["command"] as? String) ?? "unknown")
-      }
-    }
-    // Handed in rather than derived by scanning for `isOurs` keys absent from
-    // `expected`. That scan would flag `cupertino-<a surface this build has
-    // never heard of>` — written by a NEWER copy of the app — as junk, which is
-    // reporting an entry as stale because the reader is out of date.
-    //
-    // Only `isOurs` entries count, so a third-party squatter never puts a client
-    // into a state whose Update button would have nothing to do.
-    let stale = unexpected.filter { isOurs(servers[$0.key]) }.map(\.label)
-    // A partially wired config used to report `.configured`, because any one
-    // matching entry was enough. That made every new surface invisible to
-    // everyone who had already configured the client — a green check beside a
-    // config that would never gain the new server.
-    if missing.count == expected.count && stale.isEmpty { return .notConfigured }
-    // Missing wins over extra when both are true. A missing server breaks a tool
-    // call; an extra one only costs an assistant definitions it will never use.
-    // The same Update button fixes both in one write, so the row loses nothing
-    // by naming the worse fault.
-    if !missing.isEmpty { return .incomplete(missing) }
-    return stale.isEmpty ? .configured : .extra(stale)
+    audit(
+      states: expected.map {
+        (
+          key: $0.key, label: $0.label,
+          state: state(of: servers, key: $0.key, expectedCommand: expectedCommand)
+        )
+      },
+      // Handed in rather than derived by scanning for `isOurs` keys absent from
+      // `expected`. That scan would flag `cupertino-<a surface this build has
+      // never heard of>` — written by a NEWER copy of the app — as junk, which is
+      // reporting an entry as stale because the reader is out of date.
+      //
+      // Only `isOurs` entries count, so a third-party squatter never puts a client
+      // into a state whose Update button would have nothing to do.
+      leftover: unexpected.filter { isOurs(servers[$0.key]) }.map(\.label))
   }
 
   // MARK: - Writing

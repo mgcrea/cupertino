@@ -13,7 +13,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case audit
   case permissions
-  case clients
   case updates
   case licence
 
@@ -29,7 +28,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   /// check the app has was the second card on a page whose other rows are about
   /// launching at login and where the bundle lives, and a row in the sidebar is
   /// findable without knowing that. Bastion splits it the same way.
-  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .clients, .updates]
+  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .updates]
 
   /// …and what was bought, which is a different question and the only reason
   /// the sidebar is in two groups rather than one list of four. Somebody opens
@@ -42,7 +41,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "General"
     case .audit: "Activity"
     case .permissions: "Permissions"
-    case .clients: "Clients"
     case .updates: "Updates"
     case .licence: "Licence"
     }
@@ -53,7 +51,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "gearshape"
     case .audit: "list.bullet.rectangle"
     case .permissions: "lock.shield"
-    case .clients: "puzzlepiece.extension"
     case .updates: "arrow.down.circle"
     case .licence: "key"
     }
@@ -204,7 +201,6 @@ struct SettingsView: View {
     case .general: GeneralPane(model: model)
     case .audit: AuditPane()
     case .permissions: PermissionsPane(model: model)
-    case .clients: ClientsPane(model: model)
     case .updates: UpdatesPane()
     case .licence: LicensePane()
     }
@@ -444,330 +440,6 @@ struct SurfaceLabel: View {
   }
 }
 
-struct ClientsPane: View {
-  let model: StatusModel
-
-  /// A client we cannot find is not a client to nag anybody about. This is also
-  /// the entire implementation of "does not support ChatGPT desktop": it is not
-  /// in `ClientWiring.clients`, so there is no row and no explanation to
-  /// maintain.
-  private var visible: [ClientWiring.Client] {
-    ClientWiring.clients.filter { model.clients[$0].map { $0 != .notInstalled } ?? false }
-  }
-
-  var body: some View {
-    // Readiness is signalled from here rather than from `SettingsView`, and the
-    // pane it comes from has to be the pane the stage opens: the shutter waits
-    // on this file, so a signal from the window would let a capture fire before
-    // the rows below have drawn. `settings` is the only Settings stage left, and
-    // it opens this pane.
-    form.task { DemoSeed.signalReady(from: .settings) }
-  }
-
-  private var form: some View {
-    Form {
-      Section {
-        if visible.isEmpty {
-          Text("No MCP clients found on this Mac.").foregroundStyle(.secondary)
-        }
-        ForEach(visible) { client in
-          ClientRow(
-            client: client,
-            status: model.clients[client] ?? .notInstalled,
-            configure: { model.configure(client) })
-        }
-      } header: {
-        Text("MCP clients")
-      } footer: {
-        VStack(alignment: .leading, spacing: 6) {
-          Text(
-            "Cupertino writes its own bridge path into each client's config. Re-run these after moving the app, after a new surface ships, or after you turn one off."
-          )
-          // The `code` command is installed separately from VS Code itself, and
-          // the row is gated on the app rather than on the CLI: a false negative
-          // would hide the row entirely, which is worse than a paste that says
-          // "command not found" and names the thing to fix.
-          Text(
-            "Clients with a command keep their config in a format this app will not rewrite. Paste the command into a terminal — for Visual Studio Code that needs its \"code\" shell command installed."
-          )
-          // Only VS Code reaches this, and only once something is switched off.
-          // It is the one client with an add verb and no removal verb, so there
-          // is no command to offer — naming the file to edit beats a button that
-          // would paste something that does not exist.
-          if visible.contains(where: ClientWiring.needsManualRemoval) {
-            Text(
-              "Visual Studio Code has no command that removes a server, so a surface you turn off has to be taken out by hand — run \"MCP: List Servers\" in VS Code, or edit its mcp.json. That file is JSONC, which is why this app will not rewrite it."
-            )
-          }
-          if let error = model.lastError {
-            Text(error).foregroundStyle(.red)
-          }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-      }
-
-      ProjectFoldersSection(model: model)
-    }
-    .formStyle(.grouped)
-  }
-}
-
-/// Wiring one folder rather than the whole machine.
-///
-/// A section rather than a pane of its own: it is the same question the rows
-/// above answer — where do these servers get written — and separating them
-/// would invite someone to configure both and wonder why a project has the
-/// servers twice.
-///
-/// ## Why the scope is a control here and not a setting
-///
-/// It was nearly a preference in Settings, and that is the wrong shape. The
-/// choice is genuinely per-folder — this repo wants the entry committed, the
-/// client's repo very much does not — so a single global answer would be wrong
-/// half the time. More to the point, `project` scope writes a file into
-/// somebody's git working tree, and a preference set once and applied silently
-/// months later is the worst possible way to make that decision.
-///
-/// So it is a radio, sitting next to the button, resolved before the open panel
-/// appears. The last choice is remembered, which is the part a setting would
-/// have bought — without moving the decision away from the moment it matters.
-private struct ProjectFoldersSection: View {
-  let model: StatusModel
-
-  @AppStorage("wiring.projectScope") private var scopeRaw = ClientWiring.ProjectScope.local
-    .rawValue
-  @State private var folders: [URL] = ProjectFoldersSection.remembered
-  @State private var error: String?
-
-  /// Demo mode answers from a table, like every other fact these captures show.
-  static var remembered: [URL] {
-    DemoSeed.isEnabled ? DemoSeed.wiredFolders : ClientWiring.rememberedFolders
-  }
-
-  private var scope: ClientWiring.ProjectScope {
-    ClientWiring.ProjectScope(rawValue: scopeRaw) ?? .local
-  }
-
-  var body: some View {
-    Section {
-      Picker(
-        "Write to",
-        selection: Binding(get: { scope }, set: { scopeRaw = $0.rawValue })
-      ) {
-        ForEach(ClientWiring.ProjectScope.allCases) { option in
-          Text(option.displayName).tag(option)
-        }
-      }
-      .pickerStyle(.radioGroup)
-
-      Text(scope.detail)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
-      LabeledContent("Add a folder") {
-        Button("Choose…") { choose() }
-      }
-
-      ForEach(folders, id: \.path) { folder in
-        FolderRow(
-          folder: folder,
-          scope: scope,
-          wire: { wire(folder) },
-          forget: {
-            ClientWiring.forget(folder)
-            folders = ProjectFoldersSection.remembered
-          })
-      }
-    } header: {
-      Text("Project folders")
-    } footer: {
-      VStack(alignment: .leading, spacing: 6) {
-        Text(
-          "Wire a folder when you want these servers in one project rather than everywhere. A Claude Code session started in that folder gets them; every other session stays as it was."
-        )
-        if let error {
-          Text(error).foregroundStyle(.red)
-        }
-      }
-      .fixedSize(horizontal: false, vertical: true)
-    }
-  }
-
-  private func choose() {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
-    panel.prompt = "Wire"
-    panel.message = "Choose the project folder to wire Cupertino into."
-    guard panel.runModal() == .OK, let folder = panel.url else { return }
-    ClientWiring.remember(folder)
-    folders = ProjectFoldersSection.remembered
-    wire(folder)
-  }
-
-  /// One button, one behaviour. The scope picks which file is merged into —
-  /// see `ClientWiring.ProjectScope`.
-  private func wire(_ folder: URL) {
-    error = nil
-    do { try ClientWiring.configure(folder: folder, scope: scope) } catch {
-      self.error = error.localizedDescription
-    }
-    // Redrawn either way: a failed write leaves the row's status telling the
-    // truth about the file, which is what the red line above is beside.
-    folders = ProjectFoldersSection.remembered
-  }
-}
-
-private struct FolderRow: View {
-  let folder: URL
-  let scope: ClientWiring.ProjectScope
-  let wire: () -> Void
-  let forget: () -> Void
-
-  private var status: ClientWiring.Status { ClientWiring.projectStatus(folder, scope: scope) }
-
-  var body: some View {
-    LabeledContent {
-      HStack(spacing: 8) {
-        if status == .configured {
-          Button("Reveal") { ClientWiring.reveal(folder: folder, scope: scope) }
-        } else {
-          Button(status == .notConfigured ? "Write" : "Update", action: wire)
-        }
-        Button("Remove", action: forget)
-          .buttonStyle(.borderless)
-          .foregroundStyle(.secondary)
-      }
-    } label: {
-      Label {
-        VStack(alignment: .leading, spacing: 1) {
-          Text(folder.lastPathComponent)
-          // The full path, because two repos called `app` is the normal case
-          // and the last component alone would make them indistinguishable.
-          Text(folder.path)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.head)
-        }
-      } icon: {
-        Image(systemName: status == .configured ? "checkmark.circle.fill" : "folder")
-          .foregroundStyle(status == .configured ? .green : .secondary)
-      }
-    }
-  }
-}
-
-/// One client, and the one action it can take.
-///
-/// A view of its own rather than a branch inside the pane, because `copied` has
-/// to be per-row: with a single `copiedID` on the section, copying one client's
-/// command while another's two-second reset is still in flight clears the wrong
-/// label. `ForEach` identity scopes `@State` correctly for free.
-private struct ClientRow: View {
-  let client: ClientWiring.Client
-  let status: ClientWiring.Status
-  let configure: () -> Void
-  @State private var copied = false
-  @State private var removed = false
-
-  /// Shared by the two copy buttons so their two-second resets cannot drift.
-  private func copy(_ text: String, into flag: Binding<Bool>) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
-    flag.wrappedValue = true
-    // Confirmation, not a permanent state: the button has to invite a second
-    // copy after the app has moved and the paths changed.
-    Task {
-      try? await Task.sleep(for: .seconds(2))
-      flag.wrappedValue = false
-    }
-  }
-
-  var body: some View {
-    LabeledContent {
-      action
-    } label: {
-      Label {
-        VStack(alignment: .leading, spacing: 1) {
-          Text(client.displayName)
-          if let caption {
-            Text(caption)
-              .font(.caption)
-              .foregroundStyle(status.isFault ? .red : .secondary)
-          }
-        }
-      } icon: {
-        Image(systemName: status == .configured ? "checkmark.circle.fill" : "circle.dashed")
-          .foregroundStyle(status == .configured ? .green : .secondary)
-      }
-    }
-  }
-
-  private var caption: String? {
-    switch status {
-    case .incomplete(let missing): "missing \(missing.joined(separator: ", "))"
-    case .extra(let leftover): "still wired for \(leftover.joined(separator: ", "))"
-    case .unreadable(let why): why
-    default: nil
-    }
-  }
-
-  @ViewBuilder private var action: some View {
-    if case .unreadable = status {
-      EmptyView()
-    } else {
-      switch client.wiring {
-      // Not edited automatically on purpose: these files are JSONC or TOML, and
-      // re-serialising either would delete comments somebody wrote by hand. See
-      // `ClientWiring.Wiring`.
-      case .command:
-        HStack {
-          // Its own button, never appended to the adds: a remove for a name
-          // that was never there exits non-zero, and deletion is the half worth
-          // reading first. See `ClientWiring.removalCommands`.
-          if let removals = ClientWiring.removalCommands(for: client) {
-            Button(removed ? "Copied" : "Copy removal") { copy(removals, into: $removed) }
-          }
-          Button(copied ? "Copied" : "Copy command") {
-            guard let commands = ClientWiring.commands(for: client) else { return }
-            copy(commands, into: $copied)
-          }
-        }
-
-      case .json:
-        switch status {
-        case .configured:
-          Button("Reveal") { ClientWiring.reveal(client) }
-        case .stale:
-          // Points at a previous build — the common case after moving the app.
-          Button("Update") { configure() }
-        case .incomplete:
-          // Wired before a surface existed. Configure writes every surface that
-          // is switched on, so the same button finishes the job.
-          Button("Update") { configure() }
-        case .extra:
-          // Still holds a server for a surface that has since been switched off.
-          // The same write that adds the missing ones prunes these.
-          Button("Update") { configure() }
-        default:
-          Button("Configure") { configure() }
-        }
-      }
-    }
-  }
-}
-
-extension ClientWiring.Status {
-  /// Whether the caption under a client's name is a problem or just a note.
-  var isFault: Bool {
-    if case .unreadable = self { return true }
-    return false
-  }
-}
-
 /// The glyphs and sentences shared by the popover and the Permissions pane.
 ///
 /// Hoisted out of `StatusMenu` when the two grew a second caller: a status icon
@@ -854,6 +526,28 @@ enum StatusStyle {
     case .ready: .green
     case .needsSetup: .orange
     case .fault: .red
+    }
+  }
+
+  /// The dot beside a client, in the sidebar and at the top of its pane.
+  ///
+  /// Here rather than on `ClientWiring` for the reason every other glyph in this
+  /// enum is here: one place decides what green, orange and red mean in this
+  /// app, and a client that reads amber in the sidebar and red in its own header
+  /// is a small bug that reads as a big one.
+  ///
+  /// `.extra` is amber and not green, which is the one debatable call: nothing is
+  /// broken, and the entry only costs an assistant definitions it will never
+  /// use. It is amber because it is the state a button can finish, and grey
+  /// would file it with "nothing to do here".
+  static func clientTint(_ status: ClientWiring.Status) -> Color {
+    switch status {
+    case .configured: .green
+    case .incomplete, .extra: .orange
+    case .stale, .unreadable: .red
+    // Grey covers three different absences on purpose. None of them is a fault,
+    // and none of them is something this app can fix without being asked.
+    case .notInstalled, .notConfigured, .unknown: .secondary
     }
   }
 

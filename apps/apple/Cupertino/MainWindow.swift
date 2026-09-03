@@ -81,6 +81,9 @@ struct MainView: View {
   /// different places.
   enum Pane: Hashable {
     case surface(String)
+    /// One MCP client, and the config file this app writes into it. See
+    /// `ClientDetail` for why it is a destination rather than a settings row.
+    case client(String)
     case log
     case connections
   }
@@ -152,6 +155,39 @@ struct MainView: View {
   /// bar this window used to have is gone: hand-rolled chrome next to system
   /// chrome is the one arrangement that always looks wrong.
   private var sidebar: some View {
+    // Scrolled to the selection once the list exists, because the sidebar is now
+    // longer than the window at its minimum height. Two cases need it and
+    // neither is exotic: a deep link into a client's pane —
+    // `MainWindowController.show(.client(_:))`, which is what a surface's "still
+    // listed" button now calls — and a staged capture, which reaches its screen
+    // by launching onto it.
+    //
+    // Clients ONLY, and that is not an optimisation. Everything above them fits:
+    // eight surfaces, two capabilities and Activity are the twelve rows this
+    // sidebar has always had, and scrolling to one of those moves a list that did
+    // not need moving — measured on the marketing plates, where it pushed the
+    // Surfaces section off the top of three of them to select a row that was
+    // already on screen.
+    //
+    // `.task` rather than `.onAppear`: the anchor has to exist before anything
+    // scrolls to it, and on first appearance it does not yet.
+    ScrollViewReader { proxy in
+      sidebarList
+        .task {
+          guard case .client = current else { return }
+          proxy.scrollTo(current, anchor: .center)
+        }
+    }
+    // On the OUTER view, and it has to be: `NavigationSplitView` reads this off
+    // the view it was handed, so leaving it on the `List` inside the
+    // `ScrollViewReader` silently loses it — the column falls back to a default
+    // narrower than the minimum asked for here, and every client name past
+    // "Cursor" truncates to "Claude…", "LM Stu…", "Visual…". Two rows reading
+    // "Claude…" is worse than no dot at all.
+    .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+  }
+
+  private var sidebarList: some View {
     List(selection: pane) {
       // Two groups, because they are two different offers. A surface brokers
       // one Apple APP and costs that app's permission; a capability brokers
@@ -183,8 +219,31 @@ struct MainView: View {
         Label("Log", systemImage: "list.bullet.rectangle").tag(Pane.log)
         Label("Connections", systemImage: "cable.connector").tag(Pane.connections)
       }
+      // LAST, and that is not a judgement about how important a client is. It is
+      // the only section whose length is a property of the machine rather than of
+      // this app — two rows on one Mac, six on another — and a variable-length
+      // list above two fixed rows is how Log and Connections end up below the
+      // fold on somebody else's computer. They did, measured: the sidebar was
+      // already about four rows from its limit at the 460pt minimum with eight
+      // surfaces, and the first version of this section pushed Activity off every
+      // window and every marketing plate.
+      //
+      // Installed only, which is also the entire implementation of "Cupertino
+      // does not support ChatGPT desktop": it is not in `ClientWiring.clients`,
+      // so there is no row and no explanation to maintain. A client nobody has
+      // is not a client to nag anybody about.
+      //
+      // Absent rather than empty when there are none, for the same reason
+      // Capabilities is.
+      if !installedClients.isEmpty {
+        Section("Clients") {
+          ForEach(installedClients) { client in
+            ClientSidebarRow(client: client, model: model)
+              .tag(Pane.client(client.id))
+          }
+        }
+      }
     }
-    .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
     .safeAreaInset(edge: .bottom) { sidebarStatus }
   }
 
@@ -201,6 +260,14 @@ struct MainView: View {
   /// containment that does not exist.
   /// Distinct clients, not connections. See the comment at the use site.
   private var clientCount: Int { Sessions.shared.grouped.count }
+
+  /// The MCP clients this Mac actually has. Recomputed per redraw, because
+  /// `isInstalled` is a LaunchServices lookup and a file check rather than a
+  /// stored value, and installing an editor while this window is open is a
+  /// perfectly ordinary thing to do.
+  private var installedClients: [ClientWiring.Client] {
+    ClientWiring.clients.filter(\.isInstalled)
+  }
 
   private var sidebarStatus: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -334,6 +401,12 @@ struct MainView: View {
         SurfaceDetail(surface: surface, model: model)
       } else {
         Text("Unknown surface").foregroundStyle(.secondary)
+      }
+    case .client(let id):
+      if let client = ClientWiring.clients.first(where: { $0.id == id }) {
+        ClientDetail(client: client, model: model)
+      } else {
+        Text("Unknown client").foregroundStyle(.secondary)
       }
     case .log:
       VStack(spacing: 0) {
@@ -634,6 +707,39 @@ private struct SurfaceSidebarRow: View {
 }
 
 
+/// One client in the sidebar, with the same dot its own pane leads with.
+///
+/// A view of its own for the reason `SurfaceSidebarRow` is one: it reads
+/// something that does not publish — here a file on disk rather than
+/// `UserDefaults` — so a row that consulted it inline would keep its old
+/// appearance until something else invalidated the list.
+private struct ClientSidebarRow: View {
+  let client: ClientWiring.Client
+  let model: StatusModel
+
+  var body: some View {
+    // Load-bearing, and not dead code, both of them — the pair `ClientDetail`
+    // reads for the same two reasons: the revision catches this app's writes to
+    // the file, and `model.clients` catches a surface switch moving underneath
+    // it. Neither value is used; the status below is read from the file.
+    let _ = ClientConfigRevision.shared.value
+    let _ = model.clients
+    let status = ClientWiring.status(of: client)
+    Label {
+      HStack(spacing: 6) {
+        Text(client.displayName)
+        Spacer(minLength: 4)
+        Circle()
+          .fill(StatusStyle.clientTint(status))
+          .frame(width: 7, height: 7)
+      }
+    } icon: {
+      Image(systemName: client.symbol)
+    }
+    .help(status.summary)
+  }
+}
+
 /// `RawRepresentable` so the selection can live in `@AppStorage`. See
 /// `MainView.pane` for why it has to.
 extension MainView.Pane: RawRepresentable {
@@ -644,20 +750,25 @@ extension MainView.Pane: RawRepresentable {
     case "log": self = .log
     case "connections": self = .connections
     default:
-      // Only `surface:` carries a payload, and an id that is no longer in
-      // `Surface.all` still parses — `MainView.detail` already re-resolves it
-      // and draws "Unknown surface", which is a better answer than silently
-      // landing somewhere else.
-      guard rawValue.hasPrefix("surface:") else { return nil }
-      let id = String(rawValue.dropFirst("surface:".count))
-      guard !id.isEmpty else { return nil }
-      self = .surface(id)
+      // Only `surface:` and `client:` carry a payload, and an id that is no
+      // longer in `Surface.all` or `ClientWiring.clients` still parses —
+      // `MainView.detail` re-resolves it and says so, which is a better answer
+      // than silently landing somewhere else.
+      for prefix in ["surface:", "client:"] {
+        guard rawValue.hasPrefix(prefix) else { continue }
+        let id = String(rawValue.dropFirst(prefix.count))
+        guard !id.isEmpty else { return nil }
+        self = prefix == "surface:" ? .surface(id) : .client(id)
+        return
+      }
+      return nil
     }
   }
 
   var rawValue: String {
     switch self {
     case .surface(let id): "surface:\(id)"
+    case .client(let id): "client:\(id)"
     case .log: "log"
     case .connections: "connections"
     }

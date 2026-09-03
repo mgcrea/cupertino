@@ -58,6 +58,33 @@ struct WiringCheck {
     surfaces.map { (key: "cupertino-\($0.id)", label: $0.label) }
   }
 
+  /// A copy of the app somebody dragged out of a DMG and never moved. Still
+  /// ours — `isOurs` is a suffix test for exactly this case.
+  static let moved = "/Users/x/Downloads/Cupertino.app" + ClientWiringMerge.bridgeSuffix
+
+  /// Somebody else's server, in the three shapes a real config holds: a stdio
+  /// command, a remote url, and an entry that names neither.
+  static let npx: [String: Any] = ["command": "npx", "args": ["-y", "some-mcp"]]
+  static let remote: [String: Any] = ["type": "http", "url": "https://mcp.example.com/x"]
+  static let shapeless: [String: Any] = ["type": "http"]
+
+  /// Structural equality over the `Any` a JSON object decodes to.
+  ///
+  /// Every "nothing else changed" claim below needs one, and `==` on
+  /// `[String: Any]` does not exist. Ported from Bastion's copy of this script.
+  static func deepEqual(_ a: Any?, _ b: Any?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case let (x as [String: Any], y as [String: Any]):
+      return x.count == y.count && x.allSatisfy { deepEqual($0.value, y[$0.key]) }
+    case let (x as [Any], y as [Any]):
+      return x.count == y.count && zip(x, y).allSatisfy { deepEqual($0, $1) }
+    case (is NSNull, is NSNull): return true
+    case let (x as NSObject, y as NSObject): return x.isEqual(y)
+    default: return false
+    }
+  }
+
   static func main() {
     unrelatedKeysSurvive()
     rootKeyIsReal()
@@ -73,9 +100,112 @@ struct WiringCheck {
     staleWriteIsRefused()
     newFileModeIsApplied()
     localScopeIsWritten()
+    perEntryStateAgreesWithAudit()
+    foreignEntriesAreEverythingNotOurs()
+    removingTakesExactlyOneKey()
+    unmergedTakesOnlyOurs()
+
+    // Any paths on the command line are real client configs, read and never
+    // written. See `make wiring-check-real`.
+    for argument in CommandLine.arguments.dropFirst() {
+      realFileSurvives(URL(fileURLWithPath: argument))
+    }
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 { exit(1) }
+  }
+
+  // MARK: - The same guarantees, against a config somebody actually uses
+
+  /// Everything above is asserted against fixtures, and fixtures are written by
+  /// whoever is asserting things about them.
+  ///
+  /// This runs the same merge against the real files on this Mac — read-only,
+  /// nothing is written — because the shapes that break a merge are the ones
+  /// nobody thought to fixture: a `projects` map with ninety-eight blocks in it,
+  /// an entry that is a bare string, a JSON `null`, seventy-six top-level keys,
+  /// an `env` block holding a token. Bastion's copy of this script found two
+  /// bugs this way that its fixtures did not.
+  ///
+  /// A file that is absent or unparseable is skipped rather than failed: which
+  /// editors this Mac has is not a property of the code under test.
+  static func realFileSurvives(_ url: URL) {
+    print("\n\(url.path)")
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      return print("  skip (not on this Mac)")
+    }
+    guard let before = try? ClientWiringMerge.readJSON(url) else {
+      return check("reads as a JSON object", false)
+    }
+
+    let rootKey = before["servers"] != nil && before["mcpServers"] == nil ? "servers" : "mcpServers"
+    let originalServers = before[rootKey] as? [String: Any] ?? [:]
+    let ours = Set(originalServers.filter { ClientWiringMerge.isOurs($0.value) }.keys)
+    let after = ClientWiringMerge.merged(
+      into: before, rootKey: rootKey, entries: entries(), legacy: legacy, remove: [])
+
+    var topLevelIntact = true
+    for (key, value) in before where key != rootKey {
+      if !deepEqual(value, after[key]) { topLevelIntact = false }
+    }
+    check(
+      "every other top-level key is byte-identical (\(before.count - 1) of them)", topLevelIntact)
+
+    let afterServers = after[rootKey] as? [String: Any] ?? [:]
+    var untouched = true
+    var examined = 0
+    for (key, value) in originalServers where !ours.contains(key) && entries()[key] == nil {
+      examined += 1
+      if !deepEqual(value, afterServers[key]) { untouched = false }
+    }
+    check("every server we did not write is byte-identical (\(examined) of them)", untouched)
+    check(
+      "and none of them went missing",
+      originalServers.keys.allSatisfy { afterServers[$0] != nil || entries()[$0] != nil })
+    check("every surface arrived", entries().keys.allSatisfy { afterServers[$0] != nil })
+
+    // The readers the client pane draws from, over shapes no fixture has: a
+    // hundred project blocks, an entry that is a bare string, a `type: http`
+    // block with no command in it. They cannot fail an assertion the merge
+    // above would not — what they can do is disagree with `isOurs`, which is
+    // what puts a Remove button beside an entry that refuses to be removed.
+    let foreign = ClientWiringMerge.foreignEntries(in: originalServers)
+    check(
+      "the other-servers list is exactly what is not ours (\(foreign.count) of them)",
+      foreign.count == originalServers.count - ours.count)
+    check(
+      "and nothing in it is ours",
+      foreign.allSatisfy { !ClientWiringMerge.isOurs(originalServers[$0.key]) })
+
+    let byFolder = ClientWiringMerge.foreignLocalScopeEntries(in: before)
+    check(
+      "every folder listed is a folder in the file (\(byFolder.count) of them)",
+      byFolder.allSatisfy { (before["projects"] as? [String: Any])?[$0.folder] != nil })
+    check(
+      "no folder is listed with nothing in it", byFolder.allSatisfy { !$0.entries.isEmpty })
+
+    // The nested write, which is the one with something to destroy: Claude
+    // Code's per-folder blocks. The first folder in the file stands in for all
+    // of them, and the assertion is about the other ninety-seven.
+    guard let projects = before["projects"] as? [String: Any], let folder = projects.keys.sorted().first
+    else { return }
+    let nested = ClientWiringMerge.mergedIntoLocalScope(
+      into: before, folder: folder, entries: entries(), legacy: legacy, remove: [])
+    let nestedProjects = nested["projects"] as? [String: Any] ?? [:]
+    var othersIntact = true
+    for (key, value) in projects where key != folder {
+      if !deepEqual(value, nestedProjects[key]) { othersIntact = false }
+    }
+    check(
+      "a write into one folder leaves the other \(projects.count - 1) alone", othersIntact)
+    check(
+      "the written folder gained our servers",
+      ClientWiringMerge.localScopeServers(in: nested, folder: folder).map { servers in
+        entries().keys.allSatisfy { servers[$0] != nil }
+      } ?? false)
+    check(
+      "and the top-level servers object is untouched by it",
+      deepEqual(nested[rootKey], before[rootKey]))
   }
 
   // MARK: - 1. Every unrelated key survives
@@ -611,4 +741,339 @@ struct WiringCheck {
     check("the folder's own server still survives", left["postgres"] != nil)
   }
 
+  // MARK: - 15. A badge per entry, and a header that cannot disagree with it
+
+  /// The detail pane draws a badge per surface and a sentence above them, from
+  /// one read of one file. `audit` is `state` reduced, so the two cannot
+  /// disagree by construction — what is asserted here is that the reduction
+  /// still gives the answers sections 4, 5 and 5c were written against, and that
+  /// the finer partition a row needs did not change any of them.
+  static func perEntryStateAgreesWithAudit() {
+    print("per-entry state")
+    let key = "cupertino-mail"
+    func state(_ servers: [String: Any], _ k: String = key) -> ClientWiringMerge.EntryState {
+      ClientWiringMerge.state(of: servers, key: k, expectedCommand: bridge)
+    }
+
+    check("an absent key is .missing", state([:]) == .missing)
+    check("a key holding a bare string is .missing", state([key: "nonsense"]) == .missing)
+    check(
+      "our entry at the current bridge is .matches",
+      state([key: ["command": bridge, "args": ["--server=mail"]]]) == .matches)
+    check(
+      "our entry from a bundle that has moved is .stale, and names where",
+      state([key: ["command": moved, "args": ["--server=mail"]]]) == .stale(moved))
+    check(
+      "our pre-rename key is ours too, not somebody else's",
+      state(["apple-mail": ["command": moved, "args": ["--server=mail"]]], "apple-mail")
+        == .stale(moved))
+    check("a third-party command is .foreign, and names it", state([key: npx]) == .foreign("npx"))
+    check(
+      "a remote entry is .foreign, and names its url",
+      state([key: remote]) == .foreign("https://mcp.example.com/x"))
+    check("an entry naming neither is .foreign with nothing to name", state([key: shapeless]) == .foreign(nil))
+
+    // The reduction, against literals rather than against itself. One case per
+    // `Audit` case, plus the two payload pins.
+    var all: [String: Any] = [:]
+    for (k, entry) in entries() { all[k] = entry }
+    func verdict(
+      _ servers: [String: Any],
+      _ exp: [(key: String, label: String)] = expected,
+      _ unexp: [(key: String, label: String)] = []
+    ) -> ClientWiringMerge.Audit {
+      ClientWiringMerge.audit(
+        servers: servers, expectedCommand: bridge, expected: exp, unexpected: unexp)
+    }
+
+    check("nothing at all is .notConfigured", verdict([:]) == .notConfigured)
+    check("every surface at the current bridge is .configured", verdict(all) == .configured)
+    var short = all
+    short.removeValue(forKey: "cupertino-calendar")
+    check("one absent is .incomplete, naming it", verdict(short) == .incomplete(["Calendar"]))
+    var oneMoved = all
+    oneMoved["cupertino-maps"] = ["command": moved, "args": ["--server=maps"]]
+    check("one pointing elsewhere is .stale", verdict(oneMoved) == .stale(moved))
+    var taken = all
+    taken["cupertino-maps"] = npx
+    check(
+      "a foreign entry under our key is .stale, naming the squatter",
+      verdict(taken) == .stale("npx"))
+    check(
+      "the row says taken where the header says stale — different words, same verdict",
+      state(taken, "cupertino-maps") == .foreign("npx"))
+    var shapelessTaken = all
+    shapelessTaken["cupertino-maps"] = shapeless
+    check(
+      "an entry naming neither still audits as .stale(unknown)",
+      verdict(shapelessTaken) == .stale("unknown"))
+    // The one payload this refactor changed on purpose: `identity` falls back to
+    // `url`, so a remote squatter is now named instead of reported as "unknown".
+    // The VERDICT is what sections 4 and 5c pin, and it did not move.
+    var remoteTaken = all
+    remoteTaken["cupertino-maps"] = remote
+    check(
+      "a remote squatter is named rather than called unknown",
+      verdict(remoteTaken) == .stale("https://mcp.example.com/x"))
+
+    let withoutMaps = expected.filter { $0.key != "cupertino-maps" }
+    let mapsOff = [(key: "cupertino-maps", label: "Maps")]
+    check(
+      "a leftover of ours is .extra", verdict(all, withoutMaps, mapsOff) == .extra(["Maps"]))
+    check(
+      "a leftover that is not ours is not .extra",
+      verdict(taken, withoutMaps, mapsOff) == .configured)
+
+    // The property the pane depends on: no row missing and no leftovers can
+    // never read as incomplete, whatever else is in the file.
+    var clean = all
+    clean["someone-else"] = npx
+    clean["remote-thing"] = remote
+    if case .incomplete = verdict(clean) {
+      check("a full config with strangers in it is not .incomplete", false)
+    } else {
+      check("a full config with strangers in it is not .incomplete", true)
+    }
+  }
+
+  // MARK: - 16. Everything in the file that is not ours
+
+  /// What the pane lists under "Other servers in this file", which is also the
+  /// list every Remove button is drawn from. It has to agree with `removing`'s
+  /// refusal exactly: a button beside an entry that cannot be removed is a
+  /// button that does nothing.
+  static func foreignEntriesAreEverythingNotOurs() {
+    print("other people's servers")
+    let servers: [String: Any] = [
+      "cupertino-mail": ["command": bridge, "args": ["--server=mail"]],
+      "cupertino-notes": ["command": moved, "args": ["--server=notes"]],
+      "apple-safari": ["command": moved, "args": ["--server=safari"]],
+      "apple-notes": npx,
+      "remote": remote,
+      "junk": shapeless,
+      "stringy": "nonsense",
+    ]
+    let foreign = ClientWiringMerge.foreignEntries(in: servers)
+
+    check(
+      "exactly the keys that are not ours",
+      foreign.map(\.key) == ["apple-notes", "junk", "remote", "stringy"])
+    check("sorted by key", foreign.map(\.key) == foreign.map(\.key).sorted())
+    check(
+      "a command entry names its command",
+      foreign.first { $0.key == "apple-notes" }?.identity == "npx")
+    check(
+      "a remote entry names its url",
+      foreign.first { $0.key == "remote" }?.identity == "https://mcp.example.com/x")
+    check(
+      "an entry naming neither has nothing to name",
+      foreign.first { $0.key == "junk" }?.identity == nil)
+    check(
+      "a key holding a bare string is listed rather than dropped",
+      foreign.contains { $0.key == "stringy" && $0.identity == nil })
+    check("nothing at all is an empty list", ClientWiringMerge.foreignEntries(in: [:]).isEmpty)
+
+    // The invariant that keeps the Remove button honest.
+    var gateAgrees = true
+    for entry in foreign {
+      let after = ClientWiringMerge.removing(
+        key: entry.key, from: ["mcpServers": servers], rootKey: "mcpServers")
+      if (after["mcpServers"] as? [String: Any])?[entry.key] != nil { gateAgrees = false }
+    }
+    check("every entry listed is one `removing` actually takes out", gateAgrees)
+
+    // Local scope: four folders, one of which has something worth listing.
+    let root: [String: Any] = [
+      "numStartups": 41,
+      "projects": [
+        "/Users/you/b": ["mcpServers": ["apple-notes": npx, "cupertino-mail": ["command": bridge]]],
+        "/Users/you/a": ["mcpServers": ["cupertino-mail": ["command": bridge]]],
+        "/Users/you/c": ["mcpServers": [:] as [String: Any]],
+        "/Users/you/d": ["allowedTools": []],
+      ],
+    ]
+    let byFolder = ClientWiringMerge.foreignLocalScopeEntries(in: root)
+    check("only folders with something foreign in them are listed", byFolder.count == 1)
+    check("and it is the right folder", byFolder.first?.folder == "/Users/you/b")
+    check("with its foreign entry named", byFolder.first?.entries.map(\.key) == ["apple-notes"])
+    check(
+      "a file with no projects key has no local scope at all",
+      ClientWiringMerge.foreignLocalScopeEntries(in: ["numStartups": 1]).isEmpty)
+
+    // Sorting, with enough folders for insertion order to differ from it.
+    let many: [String: Any] = [
+      "projects": [
+        "/Users/you/z": ["mcpServers": ["a": npx]],
+        "/Users/you/m": ["mcpServers": ["a": npx]],
+        "/Users/you/a": ["mcpServers": ["a": npx]],
+      ]
+    ]
+    check(
+      "folders come back sorted",
+      ClientWiringMerge.foreignLocalScopeEntries(in: many).map(\.folder)
+        == ["/Users/you/a", "/Users/you/m", "/Users/you/z"])
+  }
+
+  // MARK: - 17. Taking exactly one entry out
+
+  /// The narrowest write this app makes, and the only one that removes something
+  /// it did not put there. It must take one key and leave every other byte of a
+  /// file it does not own alone.
+  static func removingTakesExactlyOneKey() {
+    print("removing one entry")
+    let root: [String: Any] = [
+      "numStartups": 41,
+      "mcpServers": [
+        "cupertino-mail": ["command": bridge, "args": ["--server=mail"]],
+        "apple-mail": ["command": moved, "args": ["--server=mail"]],
+        "apple-notes": npx,
+        "other": ["command": "uvx", "args": ["thing"], "env": ["TOKEN": "x", "DEBUG": "1"]],
+      ],
+      "projects": [
+        "/Users/you/a": ["mcpServers": ["apple-notes": npx, "kept": remote], "history": []],
+        "/Users/you/b": ["mcpServers": ["apple-notes": npx]],
+      ],
+    ]
+    let before = root["mcpServers"] as? [String: Any] ?? [:]
+
+    var out = ClientWiringMerge.removing(key: "apple-notes", from: root, rootKey: "mcpServers")
+    var servers = out["mcpServers"] as? [String: Any] ?? [:]
+    check("the named entry is gone", servers["apple-notes"] == nil)
+    check("exactly one entry went", servers.count == before.count - 1)
+    check(
+      "its siblings are byte-identical, env blocks included",
+      deepEqual(servers["other"], before["other"]))
+    check("unrelated top-level keys survive", out["numStartups"] as? Int == 41)
+    check(
+      "a user-scope removal does not reach the project blocks",
+      deepEqual(out["projects"], root["projects"]))
+
+    // The refusal. Cupertino's own entries come out through `unmerged`, which
+    // knows about the whole set; this door must not be a second way to do it.
+    out = ClientWiringMerge.removing(key: "cupertino-mail", from: root, rootKey: "mcpServers")
+    check(
+      "removing one of ours is refused",
+      (out["mcpServers"] as? [String: Any])?["cupertino-mail"] != nil)
+    out = ClientWiringMerge.removing(key: "apple-mail", from: root, rootKey: "mcpServers")
+    check(
+      "removing our legacy key is refused too, even from a bundle that moved",
+      (out["mcpServers"] as? [String: Any])?["apple-mail"] != nil)
+
+    out = ClientWiringMerge.removing(key: "never-there", from: root, rootKey: "mcpServers")
+    check("removing an absent key changes nothing", deepEqual(out, root))
+    out = ClientWiringMerge.removing(key: "apple-notes", from: root, rootKey: "servers")
+    check("a root key the file does not have is a no-op", deepEqual(out, root))
+    check("and is not invented", out["servers"] == nil)
+
+    let single: [String: Any] = ["mcpServers": ["apple-notes": npx]]
+    out = ClientWiringMerge.removing(key: "apple-notes", from: single, rootKey: "mcpServers")
+    check(
+      "emptying the object leaves it present and empty, not absent",
+      (out["mcpServers"] as? [String: Any])?.isEmpty == true)
+
+    // Nested: the value-type trap `mergedIntoLocalScope` was written against.
+    out = ClientWiringMerge.removing(
+      key: "apple-notes", inLocalScope: "/Users/you/a", from: root)
+    let projects = out["projects"] as? [String: Any] ?? [:]
+    let folder = projects["/Users/you/a"] as? [String: Any] ?? [:]
+    let folderServers = folder["mcpServers"] as? [String: Any] ?? [:]
+    check("the nested removal actually landed", folderServers["apple-notes"] == nil)
+    check("the folder's other server survives", folderServers["kept"] != nil)
+    check("the folder's own keys survive", folder["history"] != nil)
+    check(
+      "the other folder is untouched",
+      deepEqual(
+        projects["/Users/you/b"],
+        (root["projects"] as? [String: Any])?["/Users/you/b"]))
+    check(
+      "user scope is untouched by a local-scope removal",
+      deepEqual(out["mcpServers"], root["mcpServers"]))
+
+    out = ClientWiringMerge.removing(key: "apple-notes", inLocalScope: "/nope", from: root)
+    check("a folder the file does not know changes nothing", deepEqual(out, root))
+    let noServers: [String: Any] = ["projects": ["/Users/you/d": ["allowedTools": []]]]
+    out = ClientWiringMerge.removing(key: "apple-notes", inLocalScope: "/Users/you/d", from: noServers)
+    check("a folder with no mcpServers changes nothing", deepEqual(out, noServers))
+  }
+
+  // MARK: - 18. Removing everything of ours, and only that
+
+  /// What "Remove Cupertino's entries" writes. The guarantee is the same one
+  /// `merged` gives from the other direction, and it rests on the same
+  /// predicate: `isOurs` decides, so a third-party server under one of our own
+  /// key names survives a button that claims to remove ours.
+  static func unmergedTakesOnlyOurs() {
+    print("removing everything of ours")
+    let root: [String: Any] = [
+      "numStartups": 41,
+      "oauthAccount": ["emailAddress": "someone@example.com"],
+      "mcpServers": [
+        "cupertino-mail": ["command": bridge, "args": ["--server=mail"]],
+        "cupertino-notes": ["command": moved, "args": ["--server=notes"]],
+        "apple-safari": ["command": moved, "args": ["--server=safari"]],
+        "cupertino-maps": ["command": bridge, "args": ["--server=maps"]],
+        "apple-notes": npx,
+        "cupertino-squatter": npx,
+        "other": ["command": "uvx", "args": ["thing"], "env": ["TOKEN": "x"]],
+      ],
+      "projects": [
+        "/Users/you/a": ["mcpServers": ["cupertino-mail": ["command": bridge]], "history": []]
+      ],
+    ]
+    let before = root["mcpServers"] as? [String: Any] ?? [:]
+
+    let out = ClientWiringMerge.unmerged(from: root, rootKey: "mcpServers")
+    let servers = out["mcpServers"] as? [String: Any] ?? [:]
+
+    check("our current entry is gone", servers["cupertino-mail"] == nil)
+    check("our entry from a bundle that moved is gone too", servers["cupertino-notes"] == nil)
+    check("our pre-rename key is gone", servers["apple-safari"] == nil)
+    check("a leftover for a switched-off surface is gone", servers["cupertino-maps"] == nil)
+    check(
+      "a third-party server under one of OUR key names survives",
+      deepEqual(servers["cupertino-squatter"], before["cupertino-squatter"]))
+    check("their own servers survive byte-identical", deepEqual(servers["other"], before["other"]))
+    check("and so does the one under our old prefix", deepEqual(servers["apple-notes"], npx))
+    check("exactly four went", servers.count == before.count - 4)
+    check("unrelated top-level keys survive", out["numStartups"] as? Int == 41)
+    check("credentials survive", deepEqual(out["oauthAccount"], root["oauthAccount"]))
+    check(
+      "the project blocks are untouched — this is user scope only",
+      deepEqual(out["projects"], root["projects"]))
+
+    // The round trip the button promises.
+    check(
+      "afterwards the client audits as never configured",
+      ClientWiringMerge.audit(
+        servers: servers, expectedCommand: bridge, expected: expected, unexpected: []) == .notConfigured)
+    check(
+      "running it twice changes nothing the second time",
+      deepEqual(ClientWiringMerge.unmerged(from: out, rootKey: "mcpServers"), out))
+
+    let onlyOurs: [String: Any] = ["mcpServers": ["cupertino-mail": ["command": bridge]]]
+    check(
+      "emptying the object leaves it present and empty",
+      (ClientWiringMerge.unmerged(from: onlyOurs, rootKey: "mcpServers")["mcpServers"]
+        as? [String: Any])?.isEmpty == true)
+    check(
+      "a file with no root key comes back unchanged",
+      deepEqual(
+        ClientWiringMerge.unmerged(from: ["numStartups": 1], rootKey: "mcpServers"),
+        ["numStartups": 1]))
+    check(
+      "and gains no empty one",
+      ClientWiringMerge.unmerged(from: ["numStartups": 1], rootKey: "mcpServers")["mcpServers"]
+        == nil)
+
+    // The folder half, which nothing had until now.
+    let folderOut = ClientWiringMerge.unmergedFromLocalScope(from: root, folder: "/Users/you/a")
+    let folder =
+      (folderOut["projects"] as? [String: Any])?["/Users/you/a"] as? [String: Any] ?? [:]
+    check(
+      "unwiring a folder empties its servers",
+      (folder["mcpServers"] as? [String: Any])?.isEmpty == true)
+    check("the folder's own keys survive", folder["history"] != nil)
+    check(
+      "and user scope is untouched", deepEqual(folderOut["mcpServers"], root["mcpServers"]))
+  }
 }

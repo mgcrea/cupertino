@@ -124,17 +124,26 @@ struct SurfaceDetail: View {
       .font(.callout)
       .fixedSize(horizontal: false, vertical: true)
 
-      if leftoverClients > 0 {
+      if let first = leftoverClients.first {
         Divider()
         HStack {
           Text(
-            "\(leftoverClients) client\(leftoverClients == 1 ? "" : "s") still list this server."
+            "\(leftoverClients.count) client\(leftoverClients.count == 1 ? "" : "s") still list "
+              + "this server."
           )
           .font(.callout)
           Spacer()
-          Button("Update clients…") { SettingsOpener.show(.clients) }
-            .buttonStyle(.glass)
-            .controlSize(.small)
+          // Straight to the pane that can fix it, rather than to a list of every
+          // client. When more than one is behind, the first is as good a place to
+          // start as any and the sidebar shows the rest with their dots already
+          // amber.
+          Button(
+            leftoverClients.count == 1 ? "Update \(first.displayName)…" : "Update clients…"
+          ) {
+            MainWindowController.show(.client(first.id))
+          }
+          .buttonStyle(.glass)
+          .controlSize(.small)
         }
       }
     }
@@ -142,14 +151,18 @@ struct SurfaceDetail: View {
 
   /// Configured clients whose config still holds this surface's key.
   ///
-  /// Read off the statuses the Clients pane already computes, so the two cannot
-  /// disagree about whether there is anything left to do.
-  private var leftoverClients: Int {
-    model.clients.values.filter { status in
-      if case .extra(let leftover) = status { return leftover.contains(surface.displayName) }
+  /// Read off the statuses `StatusModel` already computes, which is the same
+  /// verdict each client's own pane reaches from the same file — so this row and
+  /// the dot it sends you to cannot disagree about whether there is anything
+  /// left to do. The clients themselves rather than a count, because the button
+  /// beside this now names one.
+  private var leftoverClients: [ClientWiring.Client] {
+    ClientWiring.clients.filter { client in
+      if case .extra(let leftover) = model.clients[client] {
+        return leftover.contains(surface.displayName)
+      }
       return false
     }
-    .count
   }
 
   /// What the grant gating this store is called, in the words System Settings

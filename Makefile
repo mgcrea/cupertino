@@ -326,6 +326,14 @@ wiring-check: ## Assert the config merge leaves other people's files alone
 		apps/apple/Cupertino/ClientWiringMerge.swift scripts/wiring-check.swift
 	@apps/apple/.build/wiring-check
 
+wiring-check-real: wiring-check ## Prove the merge against the real client configs (read-only)
+	@apps/apple/.build/wiring-check \
+		"$(HOME)/.claude.json" \
+		"$(HOME)/Library/Application Support/Claude/claude_desktop_config.json" \
+		"$(HOME)/.cursor/mcp.json" \
+		"$(HOME)/.lmstudio/mcp.json" \
+		"$(HOME)/.codeium/windsurf/mcp_config.json"
+
 audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"
 

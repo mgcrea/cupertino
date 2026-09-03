@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 
 /// Writes Cupertino's servers into the MCP clients installed on this Mac.
 ///
@@ -11,6 +12,32 @@ import Foundation
 /// `~/Library/Application Support/Claude/claude_desktop_config.json` from inside
 /// its container". A Developer ID app is not sandboxed, so it can.
 ///
+/// Bumped every time this app writes a client config, so a view can notice.
+///
+/// Nothing in SwiftUI's dependency graph changes when a file on disk does, and
+/// the client detail pane reads a file rather than a model. Configure used to
+/// redraw it by luck — the result sentence it sets happens to be `@State` — and
+/// a write made from anywhere else redrew nothing at all.
+///
+/// A revision rather than the status itself. What is observable here is "the
+/// file changed"; every reader still goes to the file for what it now says,
+/// which is what makes a stale answer impossible rather than merely unlikely.
+///
+/// It counts THIS app's writes only. A config rewritten by the client that owns
+/// it does not bump anything, and the dot beside that client keeps its last
+/// answer until something else redraws it. That is the same limit
+/// `StatusModel.refresh` has always had, and the reason this is a revision to
+/// bump rather than a status to store.
+@MainActor
+@Observable
+final class ClientConfigRevision {
+  static let shared = ClientConfigRevision()
+
+  private(set) var value = 0
+
+  func bump() { value += 1 }
+}
+
 /// The merge itself lives in `ClientWiringMerge`, which imports nothing but
 /// Foundation so `make wiring-check` can compile and exercise it standalone.
 /// What stays here is policy: which clients exist, where they keep their
@@ -105,6 +132,10 @@ enum ClientWiring {
     let wiring: Wiring
 
     var isInstalled: Bool {
+      // Which editors this Mac happens to have is a fact about this Mac. Under a
+      // capture every row is shown, which is also what the Settings pane this
+      // replaced did — it filtered on a status demo mode seeded for all seven.
+      if DemoSeed.isEnabled { return true }
       let fm = FileManager.default
       if let bundleID,
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
@@ -263,7 +294,12 @@ enum ClientWiring {
   /// talk to. It also means this keeps working when the app moves to
   /// /Applications.
   static var bridgePath: String {
-    Bundle.main.bundleURL
+    // Seeded for a capture, and this one is not cosmetic: under screenshot mode
+    // the app runs out of a build directory, so the real answer is an absolute
+    // path through whoever built the image. It was invisible while the only
+    // consumer was a pasteboard; the entries card puts it on screen.
+    if DemoSeed.isEnabled { return DemoSeed.bridgePath }
+    return Bundle.main.bundleURL
       .appendingPathComponent("Contents/Helpers/cupertino-bridge")
       .path
   }
@@ -426,6 +462,28 @@ enum ClientWiring {
     /// is TOML or JSONC. Never gates the button; it only declines to claim a
     /// green check the app has not earned.
     case unknown
+
+    /// One line, for the header of the detail pane and the tooltip on the
+    /// sidebar dot.
+    ///
+    /// Written here rather than in the view so the two cannot drift, and so the
+    /// sentence sits next to the case it describes. What it must not do is name
+    /// a remedy: the buttons are two lines below it in the pane and nowhere near
+    /// it in the sidebar.
+    var summary: String {
+      switch self {
+      case .notInstalled: "Not installed on this Mac."
+      case .notConfigured: "No Cupertino servers in this client's config yet."
+      case .configured: "Every surface that is switched on is wired."
+      case .stale(let found): "Wired to another copy of Cupertino, at \(found)."
+      case .incomplete(let missing):
+        "Wired, but missing \(missing.joined(separator: ", "))."
+      case .extra(let leftover):
+        "Still wired for \(leftover.joined(separator: ", ")), which are switched off."
+      case .unreadable(let why): why
+      case .unknown: "Installed. This app does not read its config, so it cannot say."
+      }
+    }
   }
 
   private static func status(from audit: ClientWiringMerge.Audit) -> Status {
@@ -441,28 +499,44 @@ enum ClientWiring {
   private static func audit(path: URL, rootKey: String) throws -> Status {
     let root = try ClientWiringMerge.readJSON(path)
     let servers = root[rootKey] as? [String: Any] ?? [:]
-    return status(
+    return audit(servers: servers)
+  }
+
+  /// The whole-file verdict, from servers somebody has already read.
+  ///
+  /// Split out when the detail pane arrived: that pane reads the file once and
+  /// derives its rows AND its header from that one read, and it must reach this
+  /// verdict rather than a second one computed from a second read.
+  static func audit(servers: [String: Any]) -> Status {
+    status(
       from: ClientWiringMerge.audit(
         servers: servers, expectedCommand: bridgePath, expected: expected,
         unexpected: unexpected))
   }
 
+  /// Routed through `read` rather than opening the file itself, so there is one
+  /// door onto these configs — and so demo mode has one place to answer from.
   static func status(of client: Client) -> Status {
     guard client.isInstalled else { return .notInstalled }
     switch client.wiring {
-    case .json(let path, let rootKey):
-      guard FileManager.default.fileExists(atPath: path.path) else { return .notConfigured }
-      do { return try audit(path: path, rootKey: rootKey) } catch {
+    case .json:
+      do {
+        guard let config = try read(client) else { return .notConfigured }
+        return audit(servers: config.servers)
+      } catch {
         return .unreadable(error.localizedDescription)
       }
     case .command(_, let probe):
       // Read-only, always, and a failure here is silence rather than
       // `.unreadable`: the file is not ours, so nothing about it is a fault
       // this app should report. The worst case is the row it already drew.
-      guard let probe, let status = try? audit(path: probe.path, rootKey: probe.rootKey) else {
+      guard probe != nil else { return .unknown }
+      do {
+        guard let config = try read(client) else { return .unknown }
+        return audit(servers: config.servers)
+      } catch {
         return .unknown
       }
-      return status
     }
   }
 
@@ -476,10 +550,22 @@ enum ClientWiring {
     /// menu bar app is the worse outcome.
     case notWritable(String)
 
+    /// Somebody else's server is filed under a key `configure` was about to
+    /// claim. Nothing was written.
+    ///
+    /// Recoverable, and the recovery is a decision rather than a retry: the pane
+    /// names the keys and offers to overwrite them. See `collisions(of:)`.
+    case collision(client: String, keys: [String])
+
     var errorDescription: String? {
       switch self {
       case .notWritable(let name):
         return "\(name) is configured with a command, not a file this app writes"
+      case .collision(let name, let keys):
+        let list = keys.joined(separator: ", ")
+        let verb = keys.count == 1 ? "was" : "were"
+        return
+          "\(list) in \(name)'s config \(verb) not written by Cupertino. Nothing was changed."
       }
     }
   }
@@ -498,10 +584,23 @@ enum ClientWiring {
   /// DIFFERENT copy of Cupertino, a beta in `~/Downloads` say, counts as ours
   /// and will be removed. That was already the established reading, and
   /// `wiring-check` has asserted it since before this could delete anything.
+  /// `force` is the answer to `WriteError.collision` and nothing else. It skips
+  /// the collision check and no other guard: the stamp, the retry, the backup
+  /// and the atomic swap all still apply, and `isOurs` still decides what may be
+  /// pruned.
   @discardableResult
-  static func configure(_ client: Client) throws -> URL? {
+  static func configure(_ client: Client, force: Bool = false) throws -> URL? {
     guard case .json(let path, let rootKey) = client.wiring else {
       throw WriteError.notWritable(client.displayName)
+    }
+    // Before the read the merge is computed from, so a refusal is never a
+    // partial write. It costs one extra read of a file this is about to read
+    // anyway, which is the cheapest part of the operation.
+    if !force {
+      let taken = collisions(of: client)
+      guard taken.isEmpty else {
+        throw WriteError.collision(client: client.displayName, keys: taken)
+      }
     }
     let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
       ClientWiringMerge.merged(
@@ -537,14 +636,159 @@ enum ClientWiring {
       var root: [String: Any] = [:]
       if case .present = stamp { root = try ClientWiringMerge.readJSON(path) }
       do {
-        return try ClientWiringMerge.write(
+        let backup = try ClientWiringMerge.write(
           merge(root), to: path, backupSuffix: "cupertino-backup",
           expecting: stamp, newFileMode: newFileMode)
+        // Hopped to the main actor rather than called: this enum is not isolated
+        // and its callers are not all on the main thread. One runloop later is
+        // soon enough for a redraw, and it is the only thing the revision drives.
+        Task { @MainActor in ClientConfigRevision.shared.bump() }
+        return backup
       } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
         continue
       }
     }
     throw ClientWiringMerge.WriteError.changedUnderneath(path)
+  }
+
+  // MARK: - Reading the whole file
+
+  /// One read of a client's config, feeding a whole pane.
+  ///
+  /// The status, the per-entry badges, the other servers in the file and the
+  /// per-folder blocks are four questions about one file, and they used to be
+  /// four separate reads — each opening a 130 KB JSON file on every redraw, and
+  /// each free to disagree with the others about what was in it.
+  struct Config {
+    /// The servers under this client's own root key.
+    let servers: [String: Any]
+    /// The whole file, for the one card that needs a key beside `mcpServers`:
+    /// Claude Code's per-folder blocks. See `hasLocalScope`.
+    let root: [String: Any]
+  }
+
+  /// The file this app reads for a client, and the key servers live under.
+  ///
+  /// A `.command` client answers with its `probe` — a file we read and never
+  /// write — and nil where it has none, which is the same refusal `status(of:)`
+  /// turns into `.unknown`.
+  /// Display and reading only. Every WRITE reaches for `client.wiring` itself —
+  /// `configure`, `unwire`, `removeEntry` and `collisions` all pattern-match it
+  /// — which is what makes the demo-mode rewrite below safe: nothing can be
+  /// written to a path that came out of here.
+  static func configFile(of client: Client) -> (path: URL, rootKey: String)? {
+    let file: (path: URL, rootKey: String)?
+    switch client.wiring {
+    case .json(let path, let rootKey): file = (path, rootKey)
+    case .command(_, let probe): file = probe.map { ($0.path, $0.rootKey) }
+    }
+    guard let file else { return nil }
+    // The pane prints this path, and all seven of them start at the real home
+    // directory. See `DemoSeed.anonymised`.
+    guard DemoSeed.isEnabled else { return file }
+    return (DemoSeed.anonymised(file.path), file.rootKey)
+  }
+
+  /// nil when there is nothing to read — no file this app opens for this client,
+  /// or none there yet. Throws when there IS a file and it will not parse, which
+  /// is a fault worth reporting rather than an absence.
+  static func read(_ client: Client) throws -> Config? {
+    // The pane's whole subject is a file this Mac owns. A capture of it is a
+    // capture of the developer's own servers, their project folders and their
+    // home directory — so demo mode answers from a table, like every other fact
+    // in these images. See `DemoSeed.clientConfig`.
+    if DemoSeed.isEnabled { return DemoSeed.clientConfig(for: client) }
+    guard let file = configFile(of: client),
+      FileManager.default.fileExists(atPath: file.path.path)
+    else { return nil }
+    let root = try ClientWiringMerge.readJSON(file.path)
+    return Config(servers: root[file.rootKey] as? [String: Any] ?? [:], root: root)
+  }
+
+  /// Whether this client's config is the one file that also holds per-folder
+  /// servers.
+  ///
+  /// Claude Code's, and only Claude Code's. A `projects` key in anybody else's
+  /// config is not an MCP scope, and drawing a card from it would be a
+  /// straightforward lie about what the file says. Matched on the PATH rather
+  /// than on the client id, because the id is a label and the path is the fact.
+  static func hasLocalScope(_ client: Client) -> Bool {
+    guard case .json(let path, _) = client.wiring else { return false }
+    return path.standardizedFileURL == claudeCodeConfig.standardizedFileURL
+  }
+
+  /// The keys `configure` would claim that somebody else's entry is under.
+  ///
+  /// Empty against every file nobody has hand-edited: `serverKey` reserves the
+  /// `cupertino-` namespace precisely so this cannot happen by accident. For as
+  /// long as nothing checked, though, the accident that could not happen was
+  /// also the one that would be silently overwritten — and the asymmetry is what
+  /// makes it worth a refusal rather than a comment. Writing our entry over
+  /// theirs costs them a server; refusing costs us a second press.
+  static func collisions(of client: Client) -> [String] {
+    // Never a refusal in a capture: the answer would be read off a real file,
+    // and a staged alert is not what these images are for.
+    if DemoSeed.isEnabled { return [] }
+    guard case .json(let path, let rootKey) = client.wiring,
+      let root = try? ClientWiringMerge.readJSON(path),
+      let servers = root[rootKey] as? [String: Any]
+    else { return [] }
+    return SurfaceSettings.enabledSurfaces
+      .map { serverKey(for: $0) }
+      .filter { servers[$0] != nil && !ClientWiringMerge.isOurs(servers[$0]) }
+      .sorted()
+  }
+
+  // MARK: - Taking things back out
+
+  /// Every entry this app wrote, out of one client's config.
+  ///
+  /// The other direction of `configure`, and deliberately not reachable from it:
+  /// one button adds what is switched on, the other removes everything of ours,
+  /// and neither can do the other's job. `isOurs` is what keeps the second one
+  /// from being a way to delete somebody's config — see `ClientWiringMerge.unmerged`.
+  ///
+  /// A file that does not exist is nothing to do rather than a file to create.
+  @discardableResult
+  static func unwire(_ client: Client) throws -> URL? {
+    guard case .json(let path, let rootKey) = client.wiring else {
+      throw WriteError.notWritable(client.displayName)
+    }
+    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      ClientWiringMerge.unmerged(from: root, rootKey: rootKey)
+    }
+    hostLog("cupertino", .info, "removed our entries from \(client.displayName) at \(path.path)")
+    return backup
+  }
+
+  /// One named entry that this app did NOT write, out of one client's config.
+  ///
+  /// The last step of moving a hand-configured server over: it is running
+  /// through Cupertino now, and the entry that starts its own copy is still
+  /// there. `ClientWiringMerge.removing` refuses a key `isOurs` claims, so this
+  /// cannot become a second route to `unwire`.
+  ///
+  /// `folder` names a Claude Code per-folder block, or nil for the user scope.
+  @discardableResult
+  static func removeEntry(
+    _ key: String, from client: Client, inLocalScope folder: String? = nil
+  ) throws -> URL? {
+    guard case .json(let path, let rootKey) = client.wiring else {
+      throw WriteError.notWritable(client.displayName)
+    }
+    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      if let folder {
+        return ClientWiringMerge.removing(key: key, inLocalScope: folder, from: root)
+      }
+      return ClientWiringMerge.removing(key: key, from: root, rootKey: rootKey)
+    }
+    hostLog(
+      "cupertino", .info,
+      "removed '\(key)' from \(client.displayName)"
+        + (folder.map { " in \($0)" } ?? ""))
+    return backup
   }
 
   // MARK: - Project folders
@@ -646,6 +890,30 @@ enum ClientWiring {
     switch scope {
     case .local: return try configureLocal(folder)
     case .project: return try configureProject(folder)
+    }
+  }
+
+  /// Our entries out of one folder, whichever file they landed in.
+  ///
+  /// `forget` only ever dropped the folder from `UserDefaults`, which left the
+  /// entries where they were: a folder "removed" from the list went on giving
+  /// every session opened there a tool list nobody had asked for. Forgetting a
+  /// folder and unwiring it are still two things — the list is a convenience and
+  /// the file is the fact — but now both are possible.
+  @discardableResult
+  static func unwire(folder: URL, scope: ProjectScope) throws -> URL? {
+    switch scope {
+    case .project:
+      let path = projectConfig(in: folder)
+      guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+      return try mergeWrite(into: path, newFileMode: nil) { root in
+        ClientWiringMerge.unmerged(from: root, rootKey: "mcpServers")
+      }
+    case .local:
+      guard FileManager.default.fileExists(atPath: claudeCodeConfig.path) else { return nil }
+      return try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
+        ClientWiringMerge.unmergedFromLocalScope(from: root, folder: folder.path)
+      }
     }
   }
 

@@ -87,11 +87,11 @@
       "subtitle": "See exactly what is connected, and what it has asked for."
     },
     {
-      "//": "Not the main window. DemoSeed orders the main window out before the shutter, because appshot photographs the largest ordinary window and would otherwise capture that instead — at the right size, showing a real screen, silently. This is the CLIENTS pane. It used to be the Permissions form, and `writes` used to be that same form scrolled to its Writes section; both the automation rows and the write toggles moved to the surface detail pane in the main window, which left Permissions at three rows and nothing to scroll to. The stage ids did not follow — renaming them would touch SHOT_SCREENS, three golden filenames, two appstore prefixes and an Astro import, and mixing that with a UI change makes the golden diff unreadable.",
+      "//": "Claude Code's CLIENT pane, in the main window. This has now been three different screens under one stage id: the Permissions form, then the Clients settings pane, now a client detail pane in the sidebar. The id has never followed, and for the reason it did not follow the last time — renaming a stage touches SHOT_SCREENS, three golden filenames, two appstore prefixes and an Astro import, and mixing that with a UI change makes the golden diff unreadable. DemoSeed no longer orders the main window out for this stage, since this IS the main window; `Subject.settings` is kept for the next pane that outgrows a form. What is on screen is read from DemoSeed.clientConfig rather than from the capturing Mac, because the real file is full of the developer's own servers and folders.",
       "id": "settings",
       "website": "settings",
       "title": "Wired into your editor, not inside it.",
-      "subtitle": "One click for the clients Cupertino can configure, one line to paste for the ones it will not rewrite — and a command to take a surface back out."
+      "subtitle": "One click to configure a client — and the file it writes, shown in full: every key, where it points, and what Cupertino leaves alone."
     },
     {
       "//": "Deliberately the same window and layout as `surface`, and the pair is the point: `surface` is Mail with writes ON and its full tool list, this is Notes with writes OFF and a visibly shorter one. The write gate used to be photographed as a row of toggles in Settings, which pictured the control; this pictures the consequence, which is what the caption claims. The numbers are read off the real server by CapabilitiesCard rather than seeded, so if writes-off ever stopped shrinking the list this plate would say so.",

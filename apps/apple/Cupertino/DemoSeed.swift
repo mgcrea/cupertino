@@ -63,10 +63,20 @@ enum DemoSeed {
     /// stops it — the main window is simply never opened on these stages — and
     /// `ReadySource` is what stops the shutter firing before the Settings window
     /// is up.
+    /// Every stage is the main window now. `settings` kept its NAME when the
+    /// clients list moved out of Settings and into the sidebar, for the reason
+    /// screenshots.config.json already gives about the last such move: renaming
+    /// a stage touches SHOT_SCREENS, three golden filenames, two appstore
+    /// prefixes and an Astro import, and mixing that with a UI change makes the
+    /// golden diff unreadable.
+    ///
+    /// `Subject.settings` is kept rather than deleted. It carries the machinery
+    /// that stops appshot photographing the wrong window — it photographs the
+    /// largest ordinary window, so a Settings stage has to order the main window
+    /// out — and the next pane that outgrows a form will want it back.
     var subject: Subject {
       switch self {
-      case .settings: .settings(.clients)
-      case .surface, .writes, .prompt, .activity, .connections: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections: .main
       }
     }
 
@@ -107,8 +117,7 @@ enum DemoSeed {
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings: .settings
-      case .surface, .writes, .prompt, .activity, .connections: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections: .main
       }
     }
 
@@ -132,9 +141,10 @@ enum DemoSeed {
       case .writes: .surface("notes")
       case .prompt, .activity: .log
       case .connections: .connections
-      // Never seen: `openStagedWindow()` never builds `MainView` on this stage
-      // at all, so this value exists only because the switch must be exhaustive.
-      case .settings: .log
+      // Claude Code, because it is the client with something to show: the only
+      // one of the seven whose config also holds per-folder servers, so it is
+      // the only pane that draws every card this screen has.
+      case .settings: .client("claude-code")
       }
     }
 
@@ -470,6 +480,80 @@ enum DemoSeed {
     URL(fileURLWithPath: "/Users/you/Projects/weekly-report"),
   ]
 
+  /// Where the bridge appears to live.
+  ///
+  /// The real answer under a capture is the build directory the staged app ran
+  /// out of, which is an absolute path through whoever built the image. It only
+  /// started mattering when the client pane began printing the command it
+  /// writes rather than merely copying it to a pasteboard.
+  nonisolated static let bridgePath =
+    "/Applications/Cupertino.app" + ClientWiringMerge.bridgeSuffix
+
+  /// The same stand-in the store rows and the wired folders use.
+  nonisolated static let home = "/Users/you"
+
+  /// A path with this Mac's home directory swapped for the stand-in.
+  ///
+  /// The client pane prints the config path in full, which is the right thing to
+  /// show somebody about to let an app write to it — and every one of those paths
+  /// begins with whoever built the image. Rewriting the prefix keeps the shape of
+  /// the real answer, which matters: `~/.claude.json` and
+  /// `~/Library/Application Support/Claude/…` are not interchangeable, and a
+  /// blanked-out path would tell a reader nothing.
+  nonisolated static func anonymised(_ url: URL) -> URL {
+    let real = FileManager.default.homeDirectoryForCurrentUser.path
+    guard url.path.hasPrefix(real) else { return url }
+    return URL(fileURLWithPath: home + String(url.path.dropFirst(real.count)))
+  }
+
+  /// A client config, instead of the one on this Mac.
+  ///
+  /// `ClientDetail` re-reads the real file on every redraw and shows what is in
+  /// it: every server name, every project folder, and the home directory they
+  /// all sit under. That is the right behaviour in the product and a privacy
+  /// leak in a marketing image, so this is the table it reads instead.
+  ///
+  /// Shaped to audit as `.configured`, because `StatusModel.refresh` seeds every
+  /// client's dot to `.configured` in demo mode and a pane disagreeing with the
+  /// dot beside it is worse than either answer alone.
+  ///
+  /// The foreign entries are the point of the card that lists them — a real
+  /// config has other people's servers in it, and "these go around Cupertino"
+  /// only lands with something under it. Claude Code is the only one given any,
+  /// which is also true of the machine this was written against.
+  nonisolated static func clientConfig(for client: ClientWiring.Client)
+    -> ClientWiring.Config?
+  {
+    var servers: [String: Any] = [:]
+    for surface in SurfaceSettings.enabledSurfaces {
+      servers[ClientWiring.serverKey(for: surface)] = [
+        "command": bridgePath, "args": ["--server=\(surface.id)"],
+      ]
+    }
+    guard ClientWiring.hasLocalScope(client) else {
+      return ClientWiring.Config(servers: servers, root: ["mcpServers": servers])
+    }
+
+    servers["linear"] = ["command": "npx", "args": ["-y", "linear-mcp-server"]]
+    servers["postgres"] = [
+      "command": "uvx", "args": ["mcp-server-postgres", "--dsn", "postgres://localhost/acme"],
+    ]
+    servers["sentry"] = ["type": "http", "url": "https://mcp.sentry.dev/mcp"]
+
+    let root: [String: Any] = [
+      "mcpServers": servers,
+      "projects": [
+        "/Users/you/Projects/acme-api": [
+          "mcpServers": ["playwright": ["command": "npx", "args": ["-y", "@playwright/mcp"]]]
+        ],
+        "/Users/you/Projects/weekly-report": [
+          "mcpServers": ["figma": ["type": "http", "url": "https://mcp.figma.com/mcp"]]
+        ],
+      ],
+    ]
+    return ClientWiring.Config(servers: servers, root: root)
+  }
+
   nonisolated static func storePath(for surface: Surface) -> String? {
     guard let relative = surface.storePath else { return nil }
     return "/Users/you/" + relative.replacingOccurrences(of: "V*", with: "V10")
@@ -544,17 +628,18 @@ enum DemoSeed {
   /// Taller than the main window on purpose, and sized to the content rather
   /// than to a round number — the same rule `contentSize` above is chosen by.
   ///
-  /// Retuned when the `settings` stage moved from Permissions to Clients. The
-  /// old 740 was measured against the Permissions form back when it carried
-  /// Automation and Writes; both moved to the surface detail pane, which left
-  /// Permissions at three rows and two thirds of the window empty — the "product
-  /// nobody uses" this number exists to avoid, in the other direction.
+  /// Unused by any current stage: the clients list left Settings for the main
+  /// window's sidebar, and every stage is `.main` now. Kept rather than deleted,
+  /// with `Subject.settings`, for the next pane that outgrows a form — the
+  /// retuning below is the part that would be redone from scratch, and the
+  /// retry loop `pin` needs is the non-obvious half.
   ///
-  /// Clients is now the longest pane: seven client rows, three footer
-  /// paragraphs, then Project folders with its scope picker and one row per
-  /// remembered folder. 840 ends just under the section's own footer; 780 cropped it, and 740
-  /// cropped a folder row. The fixture has two folders on purpose, so the
-  /// section reads as a list rather than as a single example.
+  /// It has been retuned twice. 740 was measured against the Permissions form
+  /// when it still carried Automation and Writes; both moved to the surface
+  /// detail pane, which left Permissions at three rows and two thirds of the
+  /// window empty. 840 was measured against the Clients form — seven client
+  /// rows, three footer paragraphs, then Project folders with its scope picker
+  /// and a row per remembered folder.
   nonisolated static let settingsContentSize = NSSize(width: 1000, height: 840)
 
   @MainActor private static func pin(_ window: NSWindow) {

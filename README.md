@@ -392,7 +392,7 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 | Full Disk Access     | granted or not, with the button that opens the right Settings pane                                                         |
 | One pane per surface | whether the surface is on at all, Automation status per app, the consent prompt, and the writes toggle                     |
 | Connections          | which client is talking to which server right now, and how many tools it has called                                        |
-| MCP clients          | one-click wiring for Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for Claude Code, VS Code and Codex |
+| MCP clients          | a pane per client: what would be written, what is under those keys now, and the servers in that file Cupertino did not write. One-click wiring for Claude Code, Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for VS Code and Codex. See [docs/clients.md](docs/clients.md) |
 | Activity…            | opens a window listing every tool call, live                                                                               |
 
 The **Activity** window records tool names and the arguments each was called with. Message
@@ -422,14 +422,15 @@ is left out of the clients Cupertino configures and pruned from the ones it has 
 its running servers are stopped, and the bridge refuses the connection if an older config still
 asks for it. That is the lever for the tool definitions you never use — eight servers wired
 everywhere is a cost every session pays. Clients configured before the change keep the entry until
-you press Update in **Settings › Clients**, which names the ones that still hold it. Claude Code
-and Codex get a copyable removal command; Visual Studio Code has no command that removes a server,
-so that one has to be edited by hand.
+you press Update in that client's own pane, which names the surfaces it still holds — and the dot
+beside it in the sidebar turns amber until you do. Codex gets a copyable removal command; Visual
+Studio Code has no command that removes a server, so that one has to be edited by hand.
 
 Everything that is true of one surface lives in that surface's pane: whether it is on, its
-Automation grant, its writes toggle, its store, and what its server actually exposes. Settings
-keeps only what has no surface — Full Disk Access, Accessibility and System Events — plus client
-wiring and the licence.
+Automation grant, its writes toggle, its store, and what its server actually exposes. Everything
+true of one client lives in that client's pane, the same way — the file, the entries, and what else
+is in it. Settings keeps only what belongs to neither: Full Disk Access, Accessibility and System
+Events, the audit log, updates and the licence.
 
 ## Why a single app
 

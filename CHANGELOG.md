@@ -12,6 +12,61 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **A pane per MCP client, in the main window.** The seven clients Cupertino knows about were seven
+  rows in a Settings form — a name, a glyph and one button each. They are a sidebar section now,
+  and selecting one opens the file: its full path, the entry that would be written for every
+  switched-on surface, what is under each of those keys right now, and the servers in that same
+  file Cupertino did not write. The dot beside a client in the sidebar and the sentence at the top
+  of its pane are the same computation over the same read, so they cannot disagree.
+
+  The reason it is a pane rather than a bigger row: this feature writes files somebody else owns —
+  `~/.claude.json` on the machine it was built against holds twelve servers and a hundred project
+  blocks — and a form row had space to summarise that in one sentence and nowhere to show it. Ported
+  from Bastion, which solved the same problem one repo over.
+
+- **Remove Cupertino's entries.** The other direction of Configure, and deliberately not reachable
+  from it: one button writes what is switched on, the other takes out everything `isOurs` claims,
+  including an entry left by a copy of the app that has since moved and a key from before the
+  `apple-*` rename. Until now nothing removed them at all.
+
+- **Remove… on a server Cupertino did not write.** The last step of moving a hand-configured Apple
+  server over: it is running through Cupertino now, and the entry that starts its own copy is still
+  there. It refuses a key `isOurs` claims, so it cannot become a second route to the button above,
+  and it names the key, the file and the backup before it writes anything.
+
+- **Unwiring a project folder.** Forgetting a folder only ever dropped it from a list in this app
+  and left its entries in Claude Code's config, where they went on giving every session opened there
+  a tool list nobody had asked for. Forget and Unwire are two buttons now, because they were always
+  two acts.
+
+- **`make wiring-check-real`.** The same merge assertions, run read-only against the real client
+  configs on this Mac. Fixtures are written by whoever is asserting things about them; the shapes
+  that break a merge are the ones nobody thought to fixture.
+
+### Changed
+
+- **Configure refuses to overwrite a server it did not write.** `cupertino-<surface>` reserves a
+  namespace precisely so a collision cannot happen by accident — and for as long as nothing checked,
+  the accident that could not happen was also the one that would be silently overwritten. The pane
+  names the keys and offers to overwrite them anyway; the refusal is the default. Nothing else about
+  the write changed: same stamp, same backup, same atomic swap.
+
+- **Settings has no Clients section.** Everything true of one client now lives in that client's pane,
+  the way everything true of one surface already lived in its own. The project-folder controls moved
+  with it, into Claude Code's pane, since both files they write are Claude Code's.
+
+- **The sidebar puts Activity above Clients**, and is slightly wider. Clients is the only section
+  whose length is a property of the machine rather than of this app, and a variable-length list above
+  two fixed rows is how Log and Connections end up below the fold on somebody else's computer. They
+  did: the first version of this pushed Activity off every window and every marketing plate.
+
+- **A surface's "still listed by N clients" button goes to the client that lists it** rather than to
+  a settings pane listing all of them.
+
 ## [1.11.0] - 2026-09-03
 
 ### Added
