@@ -5,6 +5,15 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2023"],
     "strict": true,
+    // The same set the workspace root turns on. This tsconfig deliberately does
+    // not extend that one — the site is Node-shaped and this is workerd-shaped,
+    // see AGENTS.md — which had quietly meant the Worker was held to a looser
+    // standard than the servers. It passes all of them as written.
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "skipLibCheck": true,

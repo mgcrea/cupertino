@@ -615,7 +615,11 @@ export class AppleNotesClient {
 
   // ─── writes ────────────────────────────────────────────────────────────────
 
-  async createNote(opts: { title?: string; body?: string; folderId?: string }): Promise<unknown> {
+  async createNote(opts: {
+    title?: string | undefined;
+    body?: string | undefined;
+    folderId?: string | undefined;
+  }): Promise<unknown> {
     this.#bodies = null;
     return withBusyRetry(() => this.runner.run(CREATE_NOTE, opts));
   }

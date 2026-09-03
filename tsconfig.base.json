@@ -6,6 +6,19 @@
     "lib": ["ES2023"],
     "types": ["node"],
     "strict": true,
+    // Beyond `strict`, and nearly free: the tree satisfied all five but for
+    // four call sites. `exactOptionalPropertyTypes` is the load-bearing one — the
+    // option types here are written `logger?: Logger | undefined` and every
+    // construction site spreads `...(x ? { x } : {})` to honour it, a discipline
+    // that was decorative until now because nothing checked it.
+    // `noPropertyAccessFromIndexSignature` is deliberately not here: the
+    // servers read decoded plists and SQLite rows through index signatures in
+    // some five hundred places, and bracket notation there buys nothing.
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "esModuleInterop": true,

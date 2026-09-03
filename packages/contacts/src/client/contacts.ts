@@ -47,17 +47,17 @@ export type CreateClientOptions = {
 
 /** The scalar fields a write may set. Absent means "leave alone". */
 export type ContactFields = {
-  firstName?: string | null;
-  lastName?: string | null;
-  nickname?: string | null;
-  organization?: string | null;
-  jobTitle?: string | null;
-  department?: string | null;
-  note?: string | null;
-  company?: boolean;
+  firstName?: string | null | undefined;
+  lastName?: string | null | undefined;
+  nickname?: string | null | undefined;
+  organization?: string | null | undefined;
+  jobTitle?: string | null | undefined;
+  department?: string | null | undefined;
+  note?: string | null | undefined;
+  company?: boolean | undefined;
 };
 
-export type LabelledValue = { label?: string; value: string };
+export type LabelledValue = { label?: string | undefined; value: string };
 
 /** What a write reports: what Contacts stored, re-read after the save. */
 export type WriteResult = {

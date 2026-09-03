@@ -932,7 +932,11 @@ export class AppleMailClient {
         continue;
       }
       if (!index) {
-        results.push({ ...base, status: "not-probed" as const, reason: noIndex ?? undefined });
+        results.push({
+          ...base,
+          status: "not-probed" as const,
+          ...(noIndex ? { reason: noIndex } : {}),
+        });
         continue;
       }
 

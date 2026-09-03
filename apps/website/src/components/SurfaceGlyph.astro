@@ -46,7 +46,7 @@ const { id, size = 18, class: className } = Astro.props;
   stroke-linecap="round"
   stroke-linejoin="round"
   aria-hidden="true"
-  class:list={className}
+  class:list={[className]}
   style={`width:${size}px;height:${size}px`}
 >
   {
