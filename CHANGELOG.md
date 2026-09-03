@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.11.0`,
-`notes-v1.11.0`, `reminders-v1.11.0`, `core-v1.11.0` for the npm packages, and `app-v1.11.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.12.0`,
+`notes-v1.12.0`, `reminders-v1.12.0`, `core-v1.12.0` for the npm packages, and `app-v1.12.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.12.0] - 2026-09-03
 
 ### Added
 
@@ -66,6 +66,17 @@ summary.
 
 - **A surface's "still listed by N clients" button goes to the client that lists it** rather than to
   a settings pane listing all of them.
+
+### Fixed
+
+- **Every update dialog since 1.1.0 showed literal `###` headings and `- ` bullets.** Sparkle renders
+  an appcast item's `<description>` as HTML, and `make appcast` sliced the raw markdown section
+  straight into the CDATA — so the release notes shown to someone deciding whether to replace an app
+  that holds Full Disk Access were the one piece of this release process nobody could see while
+  writing it. `scripts/changelog-notes.mjs` renders the section instead: headings, bullets with their
+  continuation paragraphs, bold, italic, code and links, with no dependency. It keeps the guard that
+  refuses a version whose CHANGELOG section is missing, and escapes `]]>` so a stray one cannot close
+  the CDATA early.
 
 ## [1.11.0] - 2026-09-03
 
@@ -1431,7 +1442,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...HEAD
+[1.12.0]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...app-v1.12.0
 [1.11.0]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...app-v1.11.0
 [1.10.0]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...app-v1.10.0
 [1.9.0]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...app-v1.9.0
