@@ -1,14 +1,5 @@
-import { defineConfig } from "tsdown";
+import { defineSurfaceConfig } from "../../tsdown.base.ts";
 
-export default defineConfig({
-  entry: ["src/index.ts"],
-  format: ["esm"],
-  target: "node24",
-  platform: "node",
-  // Match `main`/`exports`, which are .js — tsdown 0.22+ would default to .mjs.
-  fixedExtension: false,
-  dts: true,
-  clean: true,
-  sourcemap: true,
-  outDir: "dist",
-});
+// No CLI: core is a library. No git define either — it has no `build-info` of
+// its own to substitute into, and each server carries its own.
+export default defineSurfaceConfig({ entry: ["src/index.ts"], git: false });
