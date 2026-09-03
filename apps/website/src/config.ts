@@ -162,7 +162,7 @@ export const SHIPPED = true;
  * printed before there is a release names something nobody can download.
  */
 // <generated:version> generated from package.json by `make version` — do not edit by hand
-export const APP_VERSION = "1.10.0";
+export const APP_VERSION = "1.11.0";
 // </generated:version>
 
 /**

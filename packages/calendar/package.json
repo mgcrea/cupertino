@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-calendar",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Search, read and act on Apple Calendar — ranges, free-time lookup, writes off by default",
   "keywords": [
     "apple",

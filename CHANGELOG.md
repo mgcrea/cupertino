@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.10.0`,
-`notes-v1.10.0`, `reminders-v1.10.0`, `core-v1.10.0` for the npm packages, and `app-v1.10.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.11.0`,
+`notes-v1.11.0`, `reminders-v1.11.0`, `core-v1.11.0` for the npm packages, and `app-v1.11.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.11.0] - 2026-09-03
 
 ### Added
 
@@ -42,6 +42,15 @@ summary.
   buckets are LOCAL calendar dates — texting peaks after midnight, and a UTC bucket moves those
   messages into the previous day. Mail's buckets are still UTC; `docs/messages.md` lists aligning
   them as open.
+
+### Changed
+
+- **The footer's "More apps" column lists three siblings rather than one.** Bastion, DevPulse and
+  D1Explorer, each with a one-line blurb as its `title`. A single link beside four full columns read
+  as an unfinished list, and three is a short recommendation rather than a link farm: every one of
+  these is an `mgcrea.io` subdomain, and a full mesh between all nine would be the latter. The list
+  is its own `FOOTER_APPS` constant, kept apart from the `SIBLING_APP` that feeds the homepage card
+  — the two are sized for different places and were drifting toward one shape that fits neither.
 
 ### Fixed
 
@@ -1367,7 +1376,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...HEAD
+[1.11.0]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...app-v1.11.0
 [1.10.0]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...app-v1.10.0
 [1.9.0]: https://github.com/mgcrea/cupertino/compare/app-v1.8.0...app-v1.9.0
 [1.8.0]: https://github.com/mgcrea/cupertino/compare/app-v1.7.0...app-v1.8.0
