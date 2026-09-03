@@ -81,6 +81,23 @@ page shortly will also show it.</p>
 will be sorted out by hand.</p>`,
   );
 
+/**
+ * The page a `/thanks` link shows once it is older than a week.
+ *
+ * A session id in a URL outlives its usefulness by a long way — it sits in
+ * browser history and in Referer headers — so the key stops being served
+ * through it, and the two routes that do not depend on a guessable identifier
+ * take over: the email it was sent to, or a resend to that address.
+ */
+export const expiredPage = (email: string): string =>
+  shell(
+    "Your Cupertino licence",
+    `<h1>Your key was emailed.</h1>
+<p>This page shows a licence key for a week after the purchase, and that has passed.
+Your key was sent to ${escapeHtml(email)} — search for "Cupertino licence".</p>
+<p>If it is not there, reply to your Stripe receipt and it will be re-sent by hand.</p>`,
+  );
+
 export const notFoundPage = (): string =>
   shell(
     "Not found",

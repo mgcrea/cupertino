@@ -14,7 +14,7 @@ import { signingKeyProblem, webhookSecretProblem } from "./config";
 import { sendLicense } from "./email";
 import type { LicenseRow } from "./env";
 import { mint } from "./license";
-import { notFoundPage, pendingPage, revokedPage, thanksPage } from "./pages";
+import { expiredPage, notFoundPage, pendingPage, revokedPage, thanksPage } from "./pages";
 import {
   charge,
   checkoutSession,
@@ -28,8 +28,51 @@ import { priceIdFor, verifySignature } from "./stripe";
 /** Long enough to swallow a Stripe redelivery, short enough to be useful. */
 const SEND_COOLDOWN_MS = 5 * 60 * 1000;
 
+/**
+ * How long `/thanks` will show a key.
+ *
+ * The page is reached by a `session_id` in a URL, which lands in browser
+ * history, in a Referer header, and in whatever the buyer pasted it into. That
+ * is fine for the minute after paying, which is all the page is for; it is not
+ * fine forever. After this it says the key was emailed, and the email, or a
+ * resend to the address that bought it, is the way back to it.
+ */
+const THANKS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Ask a rate-limit binding, and let the route through if there is none.
+ *
+ * A binding is absent in `wrangler dev` without the section, and in the handler
+ * tests, which build `env` by hand. Refusing there would make the routes
+ * untestable and local development a puzzle; the limiter is a bound on abuse,
+ * not a correctness gate, so its absence must not change what a route means.
+ */
+const withinLimit = async (limiter: RateLimit | undefined, key: string): Promise<boolean> => {
+  if (!limiter) return true;
+  try {
+    return (await limiter.limit({ key })).success;
+  } catch {
+    // A limiter that failed must not take the route down with it.
+    return true;
+  }
+};
+
+/** Who is asking, for the limiter. Cloudflare sets this header on every request. */
+const callerKey = (request: Request): string =>
+  request.headers.get("cf-connecting-ip") ?? "unknown";
+
 /** A resend body is an address. Anything larger is not one. */
 const MAX_BODY_BYTES = 4096;
+
+/**
+ * The largest webhook Stripe will ever send us, with room to spare.
+ *
+ * The signature is computed over the whole body, so the body has to be buffered
+ * before it can be trusted, which means an unauthenticated caller decided how
+ * much this Worker allocated. A `checkout.session.completed` event is a few
+ * kilobytes; 256 KB is far above anything real and far below anything painful.
+ */
+const MAX_WEBHOOK_BYTES = 256 * 1024;
 
 /** Which field moved, in one line, for the log. */
 const explain = (error: { issues: { path: PropertyKey[]; message: string }[] }): string =>
@@ -105,7 +148,7 @@ const releaseSend = async (env: Env, row: LicenseRow, stamp: string): Promise<vo
 
 const findBySession = (env: Env, sessionId: string): Promise<LicenseRow | null> =>
   env.DB.prepare(
-    "SELECT id, email, key, last_sent_at, revoked_at, revoked_reason" +
+    "SELECT id, email, key, issued_at, last_sent_at, revoked_at, revoked_reason" +
       " FROM licenses WHERE stripe_session_id = ?",
   )
     .bind(sessionId)
@@ -131,8 +174,15 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
     return unactionable(`session: ${explain(parsed.error)}`);
   }
   const session = parsed.data;
-  if (session.payment_status && session.payment_status !== "paid") {
-    return new Response("not paid yet", { status: 200 });
+  // Fail CLOSED on a missing payment_status. It used to be `session.payment_status &&`,
+  // which read an absent field as paid, so a Stripe change that stopped sending it,
+  // or a mode where it is omitted, would mint a licence for an unpaid session. The
+  // field is documented as always present on a completed checkout session; if it ever
+  // is not, refusing is the failure worth having.
+  if (session.payment_status !== "paid") {
+    return new Response(`not paid (payment_status: ${session.payment_status ?? "absent"})`, {
+      status: 200,
+    });
   }
   const email = session.customer_details?.email?.trim().toLowerCase();
   // Paid, and nowhere to send the key. No retry will add an address, so this is
@@ -368,7 +418,14 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
     return new Response("not configured", { status: 500 });
   }
 
+  // Declared size first, before a byte is buffered, the same order the resend
+  // route uses and for the same reason: this route is unauthenticated until the
+  // signature has been checked, and the signature needs the whole body.
+  if (Number(request.headers.get("content-length") ?? "0") > MAX_WEBHOOK_BYTES) {
+    return new Response("body too large", { status: 413 });
+  }
   const raw = await request.text();
+  if (raw.length > MAX_WEBHOOK_BYTES) return new Response("body too large", { status: 413 });
   const verified = await verifySignature(
     raw,
     request.headers.get("stripe-signature"),
@@ -405,15 +462,23 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
   }
 };
 
-const handleThanks = async (url: URL, env: Env): Promise<Response> => {
+const handleThanks = async (request: Request, url: URL, env: Env): Promise<Response> => {
   const sessionId = url.searchParams.get("session_id");
   if (!sessionId) return html(notFoundPage(), 404);
+  // Before the database is touched: this route returns a licence key to whoever
+  // holds a session id, so the limit is what bounds how fast ids can be tried.
+  if (!(await withinLimit(env.THANKS_LIMIT, callerKey(request)))) {
+    return html(pendingPage(), 429);
+  }
   const row = await findBySession(env, sessionId);
   // The redirect can outrun the webhook. That is a wait, not an error.
   if (!row) return html(pendingPage(), 202);
   // Refunded or disputed: the page says so and shows no key, as the webhook
   // mails none and the resend route finds none.
   if (row.revoked_at) return html(revokedPage(row.revoked_reason), 410);
+  if (Date.now() - Date.parse(row.issued_at) > THANKS_TTL_MS) {
+    return html(expiredPage(row.email));
+  }
   return html(thanksPage(row.key, row.email));
 };
 
@@ -426,7 +491,7 @@ const handleThanks = async (url: URL, env: Env): Promise<Response> => {
 const resendTo = async (env: Env, email: string): Promise<void> => {
   try {
     const row = await env.DB.prepare(
-      `SELECT id, email, key, last_sent_at, revoked_at, revoked_reason FROM licenses
+      `SELECT id, email, key, issued_at, last_sent_at, revoked_at, revoked_reason FROM licenses
          WHERE email = ? AND revoked_at IS NULL
          ORDER BY issued_at DESC LIMIT 1`,
     )
@@ -485,6 +550,11 @@ const handleResend = async (
   // This route is public and nothing legitimate on it exceeds a few hundred bytes.
   if (Number(request.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return answer;
 
+  // The SAME answer when limited, so the reply stays the one this function's
+  // header promises whatever happened. The limit is what stops a stranger from
+  // costing a D1 read and a send attempt per request, as fast as they like.
+  if (!(await withinLimit(env.RESEND_LIMIT, callerKey(request)))) return answer;
+
   let email: string;
   try {
     const raw = await request.text();
@@ -511,7 +581,7 @@ export default {
         case "POST /stripe/webhook":
           return await handleWebhook(request, env);
         case "GET /thanks":
-          return await handleThanks(url, env);
+          return await handleThanks(request, url, env);
         case "POST /license/resend":
           return await handleResend(request, env, ctx);
         case "GET /health":

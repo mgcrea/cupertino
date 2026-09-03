@@ -13,6 +13,7 @@ export interface LicenseRow {
   id: string;
   email: string;
   key: string;
+  issued_at: string;
   last_sent_at: string | null;
   revoked_at: string | null;
   /** `refunded` or `disputed`; null when not revoked, or revoked before migration 0004. */

@@ -14,8 +14,11 @@
 
 export type Verified = { ok: true } | { ok: false; reason: string };
 
-/** Stripe's tolerance, and the one everyone uses: five minutes either way. */
+/** Stripe's tolerance, and the one everyone uses: five minutes old at most. */
 const TOLERANCE_SECONDS = 300;
+
+/** What two honest clocks may disagree by. Not a replay window. */
+const CLOCK_SKEW_SECONDS = 5;
 
 const hmacHex = async (secret: string, message: string): Promise<string> => {
   const encoder = new TextEncoder();
@@ -63,9 +66,18 @@ export const verifySignature = async (
 
   const seconds = Number(timestamp);
   if (!Number.isFinite(seconds)) return { ok: false, reason: "timestamp is not a number" };
-  const age = Math.abs(now / 1000 - seconds);
-  if (age > TOLERANCE_SECONDS) {
-    return { ok: false, reason: `timestamp is ${Math.round(age)}s away, tolerance is 300s` };
+  // One-sided, bar a few seconds of skew. `Math.abs` accepted a signature
+  // stamped up to five minutes AHEAD, which then stayed valid for ten, and
+  // nothing Stripe sends is ever stamped after it was sent. The timestamp is
+  // inside the signed bytes, so only the secret's holder can choose it; the
+  // allowance is there because this runtime's clock and Stripe's do differ by
+  // a second or two.
+  const skew = now / 1000 - seconds;
+  if (skew < -CLOCK_SKEW_SECONDS) {
+    return { ok: false, reason: `timestamp is ${Math.round(-skew)}s in the future` };
+  }
+  if (skew > TOLERANCE_SECONDS) {
+    return { ok: false, reason: `timestamp is ${Math.round(skew)}s old, tolerance is 300s` };
   }
 
   const expected = await hmacHex(secret, `${timestamp}.${rawBody}`);

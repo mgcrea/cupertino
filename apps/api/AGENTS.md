@@ -136,7 +136,9 @@ Changing the payload shape means changing all three. The field order in the obje
 - **Never hand out a revoked key.** A redelivered `checkout.session.completed` after a refund is not
   re-sent, and `/thanks` shows a revoked page instead of the key.
 - **Check `payment_status`.** A session completes for delayed payment methods before the money
-  lands.
+  lands. Only `paid` mints; an absent field is refused rather than read as paid.
+- **Cap the body before buffering it.** The signature needs the whole body, so until it holds the
+  sender decides how much is allocated; anything over 256 KB answers 413.
 
 ## Revocation is not enforced here
 
@@ -158,3 +160,9 @@ and is never transmitted. Any design that needs a not-paid list has smuggled a p
 else makes it an oracle for "did this person buy Cupertino". Identically includes the time taken: the
 lookup and the send run in `ctx.waitUntil` after the answer. It takes `application/json` only (415
 otherwise) and sends no CORS headers, so no page on another origin can make a browser call it.
+
+Both public routes are rate-limited per IP by the `ratelimits` bindings in wrangler.jsonc. A limited
+`/thanks` answers 429; a limited `/license/resend` gives the same `{ ok: true }` as everything else.
+An absent or failing limiter lets the request through, so `wrangler dev` and the tests need no
+binding. `/thanks` also stops showing the key a week after `issued_at`, because a `session_id` in a
+URL lives on in browser history and Referer headers; past that it points at the email instead.

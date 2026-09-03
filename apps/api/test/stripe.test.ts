@@ -89,6 +89,17 @@ describe("verifySignature", () => {
     expect(result.ok === false && result.reason).toMatch(/tolerance is 300s/);
   });
 
+  it("refuses a signature stamped in the future", async () => {
+    const result = await verifySignature(BODY, await sign(BODY, SECRET, NOW + 60_000), SECRET, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/in the future/);
+  });
+
+  it("accepts a couple of seconds of clock skew", async () => {
+    const result = await verifySignature(BODY, await sign(BODY, SECRET, NOW + 2_000), SECRET, NOW);
+    expect(result).toEqual({ ok: true });
+  });
+
   it("refuses a body edited after signing", async () => {
     const header = await sign(BODY, SECRET, NOW);
     const tampered = BODY.replace("evt_1", "evt_2");

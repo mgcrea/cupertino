@@ -180,6 +180,32 @@ describe("fulfilment", () => {
     expect(t.sent).toEqual([BUYER]);
   });
 
+  it("mints nothing for a session that is not paid yet", async () => {
+    const t = setup();
+    const response = await t.event(
+      "checkout.session.completed",
+      session({ payment_status: "unpaid" }),
+    );
+    expect(response.status).toBe(200);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
+  // Fails CLOSED. This read `session.payment_status && …`, so an absent field
+  // counted as paid, and a Stripe change that stopped sending it would have
+  // minted licences for unpaid sessions.
+  it("mints nothing for a session with no payment_status at all", async () => {
+    const t = setup();
+    const response = await t.event(
+      "checkout.session.completed",
+      session({ payment_status: undefined }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toMatch(/absent/);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
   it("ignores another product's sale without minting", async () => {
     const t = setup();
     const response = await t.event(
@@ -278,6 +304,27 @@ describe("signed payloads that no retry can fix answer 200", () => {
     });
   }
 
+  // The signature cannot be checked until the whole body is buffered, so the
+  // cap is the only thing between a stranger and how much this Worker allocates.
+  it("while a body declared too large is refused before it is read", async () => {
+    const t = setup();
+    const response = await t.call(
+      new Request("https://api.test/stripe/webhook", {
+        method: "POST",
+        headers: { "content-length": String(1024 * 1024) },
+        body: "x".repeat(1024),
+      }),
+    );
+    expect(response.status).toBe(413);
+  });
+
+  it("and so is one that is too large without declaring it", async () => {
+    const t = setup();
+    const response = await t.post("x".repeat(300 * 1024));
+    expect(response.status).toBe(413);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+  });
+
   it("while a bad signature is still a 400, and says nothing about why", async () => {
     const t = setup();
     const response = await t.post(JSON.stringify({ type: "x", data: { object: {} } }), "whsec_no");
@@ -348,6 +395,40 @@ describe("/thanks", () => {
     const page = await (await thanks(t)).text();
     expect(page).not.toContain(String(row?.key));
     expect(page).toMatch(/refunded/);
+  });
+
+  // A session id lands in browser history and in Referer headers, so the page
+  // stops serving the key a week after the purchase and points at the email.
+  it("stops showing the key a week after the purchase", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", session());
+    t.d1.sql(
+      "UPDATE licenses SET issued_at = ?",
+      new Date(Date.now() - 8 * 86_400_000).toISOString(),
+    );
+    const [row] = t.d1.sql("SELECT key FROM licenses");
+    const response = await thanks(t);
+    expect(response.status).toBe(200);
+    const page = await response.text();
+    expect(page).not.toContain(String(row?.key));
+    expect(page).toMatch(/emailed/);
+    expect(page).toContain(BUYER);
+  });
+
+  it("answers 429 when the caller is over the rate limit", async () => {
+    const t = setup({ THANKS_LIMIT: { limit: async () => ({ success: false }) } });
+    expect((await thanks(t)).status).toBe(429);
+  });
+
+  it("serves the page when the limiter itself fails", async () => {
+    const t = setup({
+      THANKS_LIMIT: {
+        limit: async () => {
+          throw new Error("limiter unavailable");
+        },
+      },
+    });
+    expect((await thanks(t)).status).toBe(202);
   });
 });
 
@@ -420,6 +501,21 @@ describe("/license/resend", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     await Promise.all(t.waiting);
+    expect(t.sent).toEqual([]);
+  });
+
+  // A limited caller gets the SAME answer, not a 429, and nothing is sent.
+  it("answers identically when the caller is rate limited", async () => {
+    const t = await customer();
+    const limited = setup({
+      DB: t.env.DB,
+      EMAIL: t.env.EMAIL,
+      RESEND_LIMIT: { limit: async () => ({ success: false }) },
+    });
+    const response = await resend(limited, BUYER);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    await Promise.all(limited.waiting);
     expect(t.sent).toEqual([]);
   });
 
