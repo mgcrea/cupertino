@@ -7,15 +7,15 @@ you about a file it does not own.
 
 ## The seven clients
 
-| Client             | Config                                                            | Root key     | Wiring          |
-| ------------------ | ----------------------------------------------------------------- | ------------ | --------------- |
-| Claude Code        | `~/.claude.json`                                                  | `mcpServers` | written         |
-| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` | written         |
-| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers` | written         |
-| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers` | written         |
-| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers` | written         |
+| Client             | Config                                                            | Root key     | Wiring           |
+| ------------------ | ----------------------------------------------------------------- | ------------ | ---------------- |
+| Claude Code        | `~/.claude.json`                                                  | `mcpServers` | written          |
+| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` | written          |
+| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers` | written          |
+| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers` | written          |
+| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers` | written          |
 | Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | —            | `code --add-mcp` |
-| Codex CLI          | `~/.codex/config.toml`                                            | —            | `codex mcp add` |
+| Codex CLI          | `~/.codex/config.toml`                                            | —            | `codex mcp add`  |
 
 `ClientWiring.clients` is the authority; `apps/website/src/config.ts` keeps a copy for the
 marketing page, and the two are kept in step by hand.
@@ -80,14 +80,14 @@ Deliberately **not** compared against the current bridge path. An entry left by 
 that has since moved is still ours, and it is also the entry most worth cleaning up — refusing to
 recognise it would leave a dead entry in somebody's config forever. One accepted consequence,
 asserted in `wiring-check` since before this could delete anything: an entry pointing at a
-*different* copy of Cupertino, a beta in `~/Downloads` say, counts as ours and will be rewritten or
+_different_ copy of Cupertino, a beta in `~/Downloads` say, counts as ours and will be rewritten or
 removed.
 
 Everything else in the file is somebody else's, permanently.
 
 `state(of:key:expectedCommand:)` is the finer partition the pane needs, and it asks a different
 question first: an entry already reaching the exact command we would write is `.matches` whatever
-its suffix, because `isOurs` exists to recognise entries from a bundle that has *moved* and there is
+its suffix, because `isOurs` exists to recognise entries from a bundle that has _moved_ and there is
 nothing to infer about one that has not. Only then does the suffix decide between "ours, pointing
 elsewhere" and "somebody else's".
 
@@ -114,7 +114,7 @@ by `make wiring-check`:
 The fourth narrows a risk without closing it, and the limit is worth naming: nothing here can win
 against a process holding its own snapshot of the whole file. Claude Code keeps one for the length
 of a session and writes it back on its own schedule, and `claude mcp add` takes no lock either. It
-is a narrower window, not a closed one — which is why the audit that *notices* a clobbered write
+is a narrower window, not a closed one — which is why the audit that _notices_ a clobbered write
 matters more than the stamp does.
 
 A config we create is 0600; one we replace keeps its own mode. A repo's `.mcp.json` is the exception
@@ -162,10 +162,10 @@ value is used for its answer; the status is always computed from the file.
 
 ### Per entry
 
-| Badge              | Means                                                    |
-| ------------------ | -------------------------------------------------------- |
-| `configured`       | ours, reaching the bridge in this bundle                 |
-| `not written`      | no entry under that key                                  |
+| Badge              | Means                                                     |
+| ------------------ | --------------------------------------------------------- |
+| `configured`       | ours, reaching the bridge in this bundle                  |
+| `not written`      | no entry under that key                                   |
 | `points elsewhere` | ours, reaching another copy of the app — Update fixes it  |
 | `taken`            | somebody else's entry under a key Configure wants         |
 | `surface off`      | in the file, correct, and the server behind it is stopped |
@@ -183,7 +183,7 @@ and grey would file it with "nothing to do here".
 - **A client that has silently dropped the config it just read.** Newer Claude Desktop builds are
   reported to respond to a config that fails validation by dropping the whole `mcpServers` map on
   load. Cupertino only ever writes valid stdio entries and so cannot cause it, and it also cannot
-  *detect* it: the file audits as configured while the client runs none of it. If a client shows no
+  _detect_ it: the file audits as configured while the client runs none of it. If a client shows no
   Cupertino tools against a green pane, this is the first thing to check, and the
   `.cupertino-backup` beside the file is the recovery path.
 - **Whether a server the client starts itself works.** The other-servers card says those go around
