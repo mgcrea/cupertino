@@ -28,6 +28,13 @@
  * compiled in at install time and argv is never consulted for what to execute.
  * The binary can do exactly one thing.
  *
+ * The ENVIRONMENT is locked down for the same reason. argv was, and the
+ * environment was passed through whole — and `NODE_OPTIONS=--require=/tmp/x.js`
+ * is a way to run arbitrary JavaScript inside the process holding Full Disk
+ * Access, from any local process that can exec this file. So node is started
+ * with PATH, HOME, TMPDIR and this server's own APPLE_MAIL_* settings, and
+ * nothing else: no NODE_OPTIONS, no NODE_PATH, no DYLD_*.
+ *
  * Built and installed by scripts/install-wrapper.sh.
  */
 
@@ -59,9 +66,41 @@ typedef int (*disclaim_fn)(posix_spawnattr_t *, int);
 static pid_t child_pid = 0;
 
 /* Claude terminates the server by signalling this process; pass it on so node
- * shuts down cleanly rather than being orphaned. */
+ * shuts down cleanly rather than being orphaned. Installed BEFORE the spawn:
+ * child_pid is 0 until then, so a signal that lands early is simply not
+ * forwarded, rather than one that lands in the window after the spawn and
+ * before the handler orphaning node. */
 static void forward_signal(int sig) {
   if (child_pid > 0) kill(child_pid, sig);
+}
+
+static void install_handlers(void) {
+  signal(SIGTERM, forward_signal);
+  signal(SIGINT, forward_signal);
+  signal(SIGHUP, forward_signal);
+}
+
+static int keeps(const char *entry) {
+  return strncmp(entry, "PATH=", 5) == 0 || strncmp(entry, "HOME=", 5) == 0 ||
+         strncmp(entry, "TMPDIR=", 7) == 0 || strncmp(entry, "APPLE_MAIL_", 11) == 0;
+}
+
+/* The environment node runs with: an allowlist over the one we were given.
+ * Entries are borrowed from environ, so the array is the only allocation, and
+ * an allocation failure degrades to an EMPTY environment rather than the
+ * inherited one — node still starts, with defaults, and the hole stays shut. */
+static char **child_env(void) {
+  static char *empty[] = {NULL};
+  size_t count = 0;
+  for (char **e = environ; *e; e++) count++;
+  char **out = calloc(count + 1, sizeof *out);
+  if (!out) return empty;
+  size_t n = 0;
+  for (char **e = environ; *e; e++) {
+    if (keeps(*e)) out[n++] = *e;
+  }
+  out[n] = NULL;
+  return out;
 }
 
 /* Run the server. stdio is inherited, so the MCP JSON-RPC stream flows through
@@ -73,15 +112,12 @@ static void forward_signal(int sig) {
 static int run_server(void) {
   char *argv[] = {(char *)NODE_PATH, (char *)SERVER_PATH, NULL};
 
-  int rc = posix_spawn(&child_pid, NODE_PATH, NULL, NULL, argv, environ);
+  install_handlers();
+  int rc = posix_spawn(&child_pid, NODE_PATH, NULL, NULL, argv, child_env());
   if (rc != 0) {
     fprintf(stderr, "[apple-mail-mcp] cannot start %s: %s\n", NODE_PATH, strerror(rc));
     return 127;
   }
-
-  signal(SIGTERM, forward_signal);
-  signal(SIGINT, forward_signal);
-  signal(SIGHUP, forward_signal);
 
   int status = 0;
   while (waitpid(child_pid, &status, 0) < 0) {
@@ -124,9 +160,13 @@ int main(int argc, char **argv) {
     return run_server();
   }
 
+  /* The inner copy re-derives its own environment from what it is given, so
+   * scrubbing here as well is belt and braces — and the only environment the
+   * disclaimed process, the one that actually holds the grant, ever sees. */
   char *inner_argv[] = {self, (char *)INNER_FLAG, NULL};
   pid_t pid;
-  int rc = posix_spawn(&pid, self, NULL, &attrs, inner_argv, environ);
+  install_handlers();
+  int rc = posix_spawn(&pid, self, NULL, &attrs, inner_argv, child_env());
   posix_spawnattr_destroy(&attrs);
   if (rc != 0) {
     fprintf(stderr, "[apple-mail-mcp] disclaimed spawn failed (%s); continuing without it.\n",
@@ -135,9 +175,6 @@ int main(int argc, char **argv) {
   }
 
   child_pid = pid;
-  signal(SIGTERM, forward_signal);
-  signal(SIGINT, forward_signal);
-  signal(SIGHUP, forward_signal);
 
   int status = 0;
   while (waitpid(pid, &status, 0) < 0) {
@@ -145,6 +182,4 @@ int main(int argc, char **argv) {
   }
   if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
-
-  (void)argc;
 }
