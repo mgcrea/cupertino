@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -199,7 +199,9 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-apple-mail-lane-"));
   accountDir = join(dir, "V10", GMAIL);
   dbPath = join(dir, "Envelope Index");
-  downloads = join(dir, "Downloads");
+  // Resolved, because a saved path is: the confinement check follows symlinks
+  // now, and the temp directory is under /var, which is one.
+  downloads = join(realpathSync(dir), "Downloads");
   mkdirSync(accountDir, { recursive: true });
   seedIndex();
 });

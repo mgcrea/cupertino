@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -124,7 +132,10 @@ const seedMedia = (
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-apple-notes-att-"));
   store = join(dir, "NoteStore.sqlite");
-  downloads = join(dir, "Downloads");
+  // Resolved, because a saved path is: the confinement follows symlinks now,
+  // and the temp directory sits under /var, which is one. A LEXICAL check is
+  // exactly the hole that resolution closes.
+  downloads = join(realpathSync(dir), "Downloads");
 });
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));

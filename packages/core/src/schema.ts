@@ -53,12 +53,27 @@ export const fingerprintSchema = (db: DatabaseSync): string => {
  * disagree about this for Mail, and hardcoding the wrong one puts every date 31
  * years out — a bug that looks like corruption rather than a unit mismatch.
  */
-export const detectEpoch = (
-  maxTimestamp: number | null,
-  now: number = Date.now(),
-): { offset: number; reason: string } => {
+export type Epoch = {
+  offset: number;
+  reason: string;
+  /**
+   * Whether the offset was MEASURED or fallen back to.
+   *
+   * The field that matters, and the reason it is returned here rather than
+   * derived by the caller. An offset of 0 means "measured as unix seconds" and
+   * also "nothing fitted, so unix was assumed", and rendering the second as
+   * though it were the first is the failure this whole module is built around.
+   *
+   * Two surfaces used to recover it by matching a REGEX against `reason` —
+   * prose, across a package boundary. Rewording a sentence here would have made
+   * both of them confidently wrong about an epoch nobody measured, silently.
+   */
+  confident: boolean;
+};
+
+export const detectEpoch = (maxTimestamp: number | null, now: number = Date.now()): Epoch => {
   if (maxTimestamp === null || !Number.isFinite(maxTimestamp) || maxTimestamp <= 0) {
-    return { offset: 0, reason: "no dated rows; assuming unix seconds" };
+    return { offset: 0, reason: "no dated rows; assuming unix seconds", confident: false };
   }
   const nowSec = now / 1000;
   const tenYears = 10 * 365.25 * 24 * 3600;
@@ -66,16 +81,18 @@ export const detectEpoch = (
   const asCoreData = Math.abs(nowSec - (maxTimestamp + CORE_DATA_EPOCH_OFFSET));
 
   if (asUnix < tenYears && asUnix <= asCoreData) {
-    return { offset: 0, reason: "raw value lands within 10 years of now" };
+    return { offset: 0, reason: "raw value lands within 10 years of now", confident: true };
   }
   if (asCoreData < tenYears) {
     return {
       offset: CORE_DATA_EPOCH_OFFSET,
       reason: "value + 978307200 lands within 10 years of now",
+      confident: true,
     };
   }
   return {
     offset: 0,
     reason: `neither epoch lands near now (max=${maxTimestamp}); assuming unix`,
+    confident: false,
   };
 };

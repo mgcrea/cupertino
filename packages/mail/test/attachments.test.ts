@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,7 +111,11 @@ const ref = encodeRef({ accountUuid: UUID, mailbox: "INBOX", id: ROWID });
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-apple-mail-att-"));
   accountDir = join(dir, "V10", UUID);
-  downloads = join(dir, "Downloads");
+  // `realpathSync` because the saved path is resolved before it is confined:
+  // on macOS the temp directory is under /var, which is a symlink to
+  // /private/var, and a LEXICAL confinement check is exactly the hole that
+  // resolution closes. So the path that comes back is the real one.
+  downloads = realpathSync(dir) + "/Downloads";
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

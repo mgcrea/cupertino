@@ -43,37 +43,28 @@
  * can report; a confident wrong one is not.
  */
 
-import { CORE_DATA_EPOCH_OFFSET, detectEpoch } from "@mgcrea/mcp-apple-core";
+import { CORE_DATA_EPOCH_OFFSET, detectEpoch, type Epoch } from "@mgcrea/mcp-apple-core";
 
 export { CORE_DATA_EPOCH_OFFSET };
 
 /**
  * How this store's timestamps map onto real time.
  *
- * `confident` is the field that matters. `detectEpoch` always returns an
- * offset — it falls back to unix when nothing fits — so the offset alone cannot
- * distinguish "measured as unix" from "gave up and assumed unix". Rendering the
- * second as though it were the first is the exact failure this module is built
- * around, so the two are kept apart.
+ * `confident` is the field that matters, and it now comes from `detectEpoch`
+ * itself — see the note on it in core. This module used to recover it by
+ * matching a regex against the detector's PROSE, which is a coupling to a
+ * sentence in another package: rewording it there would have left this
+ * confidently wrong about an epoch nobody measured.
  */
-export type Epoch = {
-  offset: number;
-  reason: string;
-  confident: boolean;
-};
-
-/** What `detectEpoch` says when it has matched nothing. */
-const GAVE_UP = /^(no dated rows|neither epoch)/;
+export type { Epoch };
 
 /**
  * Decide the epoch from the largest timestamp in the store.
  *
  * @param maxTimestamp The maximum `visit_time`, or null when there are no rows.
  */
-export const resolveEpoch = (maxTimestamp: number | null, now: number = Date.now()): Epoch => {
-  const { offset, reason } = detectEpoch(maxTimestamp, now);
-  return { offset, reason, confident: !GAVE_UP.test(reason) };
-};
+export const resolveEpoch = (maxTimestamp: number | null, now: number = Date.now()): Epoch =>
+  detectEpoch(maxTimestamp, now);
 
 /** The expectation docs/safari.md carries, used only where no store is open. */
 export const APPLE_SECONDS: Epoch = {

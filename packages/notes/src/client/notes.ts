@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 import {
   createOsascriptRunner,
   withBusyRetry,
+  writeConfinedFile,
   type Logger,
   type OsascriptRunner,
 } from "@mgcrea/mcp-apple-core";
@@ -525,31 +526,17 @@ export class AppleNotesClient {
       );
     }
 
-    // The configured directory is the confinement boundary, not a default that
-    // `targetDir` replaces: an override may only select a subdirectory of it.
-    // Resolving the override *against* the root means a relative path lands
-    // inside it and an absolute one is caught by the check below.
-    const root = resolve(this.config.attachmentDir);
-    const dir = targetDir ? resolve(root, targetDir) : root;
-    if (dir !== root && !dir.startsWith(root + sep)) {
-      throw new PreconditionError(
-        `Refusing to write outside ${root}. Set APPLE_NOTES_ATTACHMENT_DIR to change the destination.`,
-      );
-    }
-    // basename() first: the name comes from note content, which is
-    // attacker-controlled in exactly the way path traversal needs.
-    const name = basename(media.filename ?? meta.name ?? basename(source));
-    const target = resolve(join(dir, name));
-    if (target !== join(dir, name) || !target.startsWith(dir + sep)) {
-      throw new PreconditionError(`Refusing to write outside ${dir}.`);
-    }
-    if (existsSync(target) && !opts.overwrite) {
-      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
-    }
-    const bytes = readFileSync(source);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(target, bytes, { mode: 0o600 });
-    return { path: target, bytes: bytes.length };
+    // The confinement boundary, the subdirectory rule and the leaf name are all
+    // `writeConfinedFile`'s — see the note there on what the three hand-written
+    // copies of this had in common.
+    return writeConfinedFile({
+      root: this.config.attachmentDir,
+      directory: targetDir,
+      name: media.filename ?? meta.name ?? basename(source),
+      bytes: () => readFileSync(source),
+      overwrite: opts.overwrite ?? false,
+      settingName: "APPLE_NOTES_ATTACHMENT_DIR",
+    });
   }
 
   /**

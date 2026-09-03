@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -46,7 +53,10 @@ type Attachment = {
 };
 
 const build = (attachments: readonly Attachment[]): void => {
-  const dir = mkdtempSync(join(tmpdir(), "mcp-apple-messages-att-"));
+  // `realpathSync` because a saved path is resolved: the confinement follows
+  // symlinks now, and the temp directory is under /var, which is one. The
+  // lexical check that did not is exactly what that closes.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "mcp-apple-messages-att-")));
   home = join(dir, "home");
   downloads = join(dir, "Downloads");
   mkdirSync(join(home, "Library", "Messages"), { recursive: true });

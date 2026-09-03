@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 
@@ -15,6 +15,7 @@ import {
   IndexUnavailableError,
   resolveLimit,
   withBusyRetry,
+  writeConfinedFile,
   type Logger,
   type OsascriptRunner,
 } from "@mgcrea/mcp-apple-core";
@@ -505,29 +506,19 @@ export class AppleMessagesClient {
     opts: { directory?: string | undefined; overwrite?: boolean } = {},
   ): Promise<{ path: string; bytes: number; source: string; mimeType: string | null }> {
     const { source, meta } = this.#resolveStoreAttachment(attachmentId);
-    const dest = resolvePath(this.#config.attachmentDir);
-    const dir = opts.directory ? resolvePath(dest, opts.directory) : dest;
-    if (dir !== dest && !dir.startsWith(dest + sep)) {
-      throw new PreconditionError(
-        `Refusing to write outside ${dest}. Set APPLE_MESSAGES_ATTACHMENT_DIR to change the ` +
-          "destination.",
-      );
-    }
-    // The sender chose `transfer_name`, so it is basename'd before it is
-    // trusted — path traversal wants exactly that field.
-    const name = basename(meta.transferName ?? basename(source));
-    const target = resolvePath(join(dir, name));
-    if (target !== join(dir, name) || !target.startsWith(dir + sep)) {
-      throw new PreconditionError(`Refusing to write outside ${dir}.`);
-    }
-    if (existsSync(target) && !opts.overwrite) {
-      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
-    }
-
-    const bytes = readFileSync(source);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(target, bytes, { mode: 0o600 });
-    return { path: target, bytes: bytes.length, source, mimeType: meta.mimeType };
+    // The sender chose `transfer_name`, and `writeConfinedFile` basenames it —
+    // path traversal wants exactly that field. The confinement, the symlink
+    // resolution and the atomic create are all its too; this surface, Mail and
+    // Notes each had their own copy and their own holes.
+    const written = writeConfinedFile({
+      root: this.#config.attachmentDir,
+      directory: opts.directory,
+      name: meta.transferName ?? basename(source),
+      bytes: () => readFileSync(source),
+      overwrite: opts.overwrite ?? false,
+      settingName: "APPLE_MESSAGES_ATTACHMENT_DIR",
+    });
+    return { ...written, source, mimeType: meta.mimeType };
   }
 
   listChats(limit?: number): RenderedChat[] {

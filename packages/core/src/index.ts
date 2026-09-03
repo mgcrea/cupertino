@@ -16,6 +16,7 @@ export {
   type BaseDiagnosticsInput,
 } from "./diagnostics.js";
 export { extractCode, type CodeConfidence, type CodeMatch, type ExtractOptions } from "./codes.js";
+export { writeConfinedFile, type ConfinedWrite } from "./confine.js";
 export {
   BaseConfigSchema,
   parseBool,
@@ -90,6 +91,7 @@ export {
   columnsOf,
   CORE_DATA_EPOCH_OFFSET,
   detectEpoch,
+  type Epoch,
   fingerprintSchema,
   tableMap,
 } from "./schema.js";
