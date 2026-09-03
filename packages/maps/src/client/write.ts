@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { promisify } from "node:util";
 
 import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
 
@@ -83,13 +84,15 @@ export class MapsWriteError extends AppleAutomationError {
 }
 
 /** Injected so tests never launch an application. */
-export type OpenUrl = (url: string) => void;
+export type OpenUrl = (url: string) => void | Promise<void>;
 
-export const defaultOpenUrl: OpenUrl = (url) => {
+export const defaultOpenUrl: OpenUrl = async (url) => {
   // `-g` so the user's foreground app is not stolen. `timeout` because a wedged
   // LaunchServices would otherwise block forever, and this runs inside a tool
-  // call somebody is waiting on.
-  execFileSync("/usr/bin/open", ["-g", url], { timeout: 10_000, stdio: "ignore" });
+  // call somebody is waiting on. Asynchronous, like the poll below: this is a
+  // stdio server, and a synchronous wait here is a server that cannot read its
+  // stdin, answer another call or honour a cancellation for the duration.
+  await promisify(execFile)("/usr/bin/open", ["-g", url], { timeout: 10_000 });
 };
 
 export type AddFavoriteInput = {
@@ -419,7 +422,7 @@ export class MapsWriter {
        */
       const url = `maps://?q=${encodeURIComponent(input.query)}`;
       progress(`asking Maps to resolve ${JSON.stringify(input.query)}…`);
-      this.#openUrl(url);
+      await this.#openUrl(url);
       seeded = true;
       progress(`opened, waiting up to ${Math.round(this.#seedTimeoutMs / 1000)}s for a record`);
       const deadline = Date.now() + this.#seedTimeoutMs;

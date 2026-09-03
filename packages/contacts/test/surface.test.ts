@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
@@ -63,11 +65,12 @@ describe("contacts prompts", () => {
   });
 
   /*
-   * This surface registers no mutating tool at all, so enabling writes must
-   * change nothing here either — a write prompt with no write tool behind it
-   * would be an offer nothing can keep.
+   * This surface has two write tools but no write prompt yet, so enabling
+   * writes changes nothing here. (It used to say the surface registers no
+   * mutating tool at all — that stopped being true when the write tools
+   * shipped, and `tools.test.ts` pins the two that exist.)
    */
-  it("registers the same prompts with writes on, because this surface has none", async () => {
+  it("registers the same prompts with writes on, because this surface has no write prompt", async () => {
     expect(await promptNames(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }))).toEqual([
       "apple_contacts_who_is",
     ]);
@@ -114,5 +117,20 @@ describe("contacts exposePrompts", () => {
       .length;
     expect(off).toBe(on);
     expect(off).toBeGreaterThan(0);
+  });
+});
+
+/*
+ * The banner is the one line an operator reads at startup. Four servers printed
+ * `read-only` here while registering mutating tools behind the gate — the
+ * comment beside it claimed the surface had none — and nothing checked the
+ * claim against the tree. This does, against the source, because the banner is
+ * built inside the stdio entry point that no test can start.
+ */
+describe("startup banner", () => {
+  it("reports the write gate rather than claiming read-only", () => {
+    const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
+    expect(cli).not.toContain("read-only");
+    expect(cli).toContain('writes=${config.allowWrites ? "ENABLED" : "disabled"}');
   });
 });

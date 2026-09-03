@@ -26,7 +26,7 @@ const parseWorkdays = (raw: string[] | undefined): string[] | undefined =>
  * Configuration is environment-only — this server holds no secret at all, its
  * access is the macOS permission the user granted.
  *
- * `allowWrites`, `debug`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
+ * `allowWrites`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
  * come from `BaseConfigSchema`.
  *
  * Note what is deliberately ABSENT relative to `packages/reminders`: there is no
@@ -113,7 +113,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_CALENDAR_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_CALENDAR_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_CALENDAR_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_CALENDAR_DEBUG),
     accounts: parseList(env.APPLE_CALENDAR_ACCOUNTS),
     calendars: parseList(env.APPLE_CALENDAR_CALENDARS),
     storePath: trimmed(env.APPLE_CALENDAR_STORE),

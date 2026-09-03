@@ -73,13 +73,14 @@ If a listing comes back empty, that means you have saved nothing of that kind. R
 
 ## Configuration
 
-| Variable                    | Default    | What                                                   |
-| --------------------------- | ---------- | ------------------------------------------------------ |
-| `APPLE_MAPS_STORE`          | discovered | explicit store path, for tests and forensic copies     |
-| `APPLE_MAPS_INDEX_MODE`     | `auto`     | `auto` / `ro` / `immutable` / `off`                    |
-| `APPLE_MAPS_MAX_RESULTS`    | 50         | default result ceiling                                 |
-| `APPLE_MAPS_EXPOSE_PROMPTS` | on         | register the prompt and `cupertino://maps/*` resources |
-| `APPLE_MAPS_DEBUG`          | off        | verbose logging on stderr                              |
+| Variable                     | Default    | What                                                      |
+| ---------------------------- | ---------- | --------------------------------------------------------- |
+| `APPLE_MAPS_STORE`           | discovered | explicit store path, for tests and forensic copies        |
+| `APPLE_MAPS_INDEX_MODE`      | `auto`     | `auto` / `ro` / `immutable` / `off`                       |
+| `APPLE_MAPS_MAX_RESULTS`     | 50         | default result ceiling                                    |
+| `APPLE_MAPS_SEED_TIMEOUT_MS` | 30000      | how long `add_favorite` waits for Maps to resolve a place |
+| `APPLE_MAPS_EXPOSE_PROMPTS`  | on         | register the prompt and `cupertino://maps/*` resources    |
+| `APPLE_MAPS_DEBUG`           | off        | verbose logging on stderr                                 |
 
 `APPLE_MAPS_ALLOW_WRITES` (off) registers the tools under [What it writes](#what-it-writes).
 

@@ -4,6 +4,7 @@
  */
 export {
   compact,
+  confirmArg,
   fail,
   limitArg,
   ok,

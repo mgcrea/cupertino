@@ -34,7 +34,7 @@ export const buildDiagnostics = async (
       reads: "file lane (read-only SQLite)",
       writes: writes
         ? "apple_contacts_create_contact and apple_contacts_update_contact, over Apple " +
-          "Events. No delete: the Contacts dictionary offers one, and it is not exposed."
+          "Events. No delete: Contacts' scripting dictionary has no delete command of any kind."
         : "off — APPLE_CONTACTS_ALLOW_WRITES is not set, so neither mutating tool is " +
           "registered and this server sends no Apple Event at all.",
       appleEvents: writes
@@ -75,7 +75,8 @@ export const buildDiagnostics = async (
         "Contacts.app shows as one unified card. A contact with no link id is not folded.",
       writes
         ? "Writes are ON, so this server can create and edit contacts. It still cannot " +
-          "delete one: that is not exposed. Reads never send an Apple Event either way."
+          "delete one: Contacts' scripting dictionary has no delete command of any kind. " +
+          "Reads never send an Apple Event either way."
         : "Reads are all this server does right now. Setting APPLE_CONTACTS_ALLOW_WRITES " +
           "registers a create and an update tool, which do send Apple Events.",
     ],

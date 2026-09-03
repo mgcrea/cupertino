@@ -18,10 +18,8 @@ runStdioServer({
     const status = client.status();
     return {
       server,
-      // No writes= line: this surface has no mutating tool, and printing a flag
-      // that gates nothing would imply one exists.
       banner:
-        `read-only, ` +
+        `writes=${config.allowWrites ? "ENABLED" : "disabled"}, ` +
         `stores=${status.shards.length}/${status.located.candidates.length}, ` +
         `contacts=${status.totalContacts}, ` +
         `suffix=${config.phoneSuffixDigits}, ` +

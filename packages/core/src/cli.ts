@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import type { BuildInfo } from "./build-info.js";
+import { parseBool } from "./config.js";
 import type { SurfaceContext } from "./errors.js";
 import { withTrimmedListing } from "./listing.js";
 import type { Logger } from "./osascript.js";
@@ -28,7 +29,9 @@ export type StdioServerOptions = {
  */
 export const runStdioServer = async (opts: StdioServerOptions): Promise<void> => {
   const { build, surface, logPrefix } = opts;
-  const debugEnabled = Boolean(process.env[`${surface.envPrefix}_DEBUG`]);
+  // `parseBool`, like every other switch: `Boolean(env)` read `APPLE_X_DEBUG=0`
+  // as on, because any non-empty string is truthy.
+  const debugEnabled = parseBool(process.env[`${surface.envPrefix}_DEBUG`]) ?? false;
   const logger: Required<Logger> = {
     debug: (...args: unknown[]) => {
       if (debugEnabled) console.error(`[${logPrefix}]`, ...args);

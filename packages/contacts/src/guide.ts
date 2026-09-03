@@ -5,11 +5,15 @@
  */
 export const CONTACTS_GUIDE = `# Apple Contacts — how to drive this server
 
-## This server is read-only by construction
+## Writes are gated, and there is no delete
 
-It cannot create, edit or delete a contact, and enabling writes does not add a
-tool. If someone asks you to update a contact, say that plainly rather than
-looking for a tool that is not there.
+With \`APPLE_CONTACTS_ALLOW_WRITES\` off — the default — \`apple_contacts_create_contact\`
+and \`apple_contacts_update_contact\` are not registered at all. If someone asks
+you to change a contact and neither tool is listed, say that writes are off in
+this server rather than looking for a tool that is not there. With writes on,
+both go through Apple Events, and the first call prompts for permission to
+control Contacts. There is no delete in either mode: Contacts' scripting
+dictionary has no delete command of any kind.
 
 ## Which tool, under which constraint
 

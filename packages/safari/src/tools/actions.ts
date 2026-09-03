@@ -195,7 +195,10 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
       inputSchema: {
         url: urlArg,
         elementId: elementIdArg,
-        text: z.string().describe("The text to put in the field. An empty string clears it."),
+        text: z
+          .string()
+          .max(8_192)
+          .describe("The text to put in the field. An empty string clears it."),
       },
       annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
     },

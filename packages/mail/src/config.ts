@@ -19,7 +19,7 @@ import { z } from "zod";
  * machinery without a job.
  */
 /**
- * `allowWrites`, `debug`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
+ * `allowWrites`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
  * come from `BaseConfigSchema` — every Apple-app server has them, with the same
  * bounds and the same defaults.
  */
@@ -82,7 +82,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     allowWrites: parseBool(env.APPLE_MAIL_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_MAIL_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_MAIL_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_MAIL_DEBUG),
     accounts: parseList(env.APPLE_MAIL_ACCOUNTS),
     mailRoot: trimmed(env.APPLE_MAIL_ROOT),
     envelopeIndexPath: trimmed(env.APPLE_MAIL_ENVELOPE_INDEX),

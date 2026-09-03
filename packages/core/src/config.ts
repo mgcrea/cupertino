@@ -84,7 +84,6 @@ export const BaseConfigSchema = z.object({
    * into their config files at all.
    */
   lazyTools: z.boolean().default(false),
-  debug: z.boolean().default(false),
   osascriptPath: z.string().default("/usr/bin/osascript"),
   osascriptTimeoutMs: z.number().int().min(1_000).max(600_000).default(30_000),
   maxResults: z.number().int().min(1).max(1_000).default(200),

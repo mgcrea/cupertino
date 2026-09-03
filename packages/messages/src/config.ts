@@ -110,7 +110,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_MESSAGES_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_MESSAGES_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_MESSAGES_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_MESSAGES_DEBUG),
     storePath: trimmed(env.APPLE_MESSAGES_STORE),
     indexMode: trimmed(env.APPLE_MESSAGES_INDEX_MODE),
     resolveContacts: parseBool(env.APPLE_MESSAGES_RESOLVE_CONTACTS),

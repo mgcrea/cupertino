@@ -395,6 +395,13 @@ export class MessagesStore {
     //
     // The floor keeps the scan bounded: once pass 1 has filled the cap, nothing
     // older than its oldest hit can make the merged page anyway.
+    //
+    // Iterated rather than collected: every row here carries its typedstream
+    // blob, and `.all()` materialised the whole blob-only set before the loop
+    // below decoded any of it — on a larger archive, the whole heap per search
+    // call. Streaming keeps one row alive at a time without dropping any, which
+    // a LIMIT would have done to exactly the recent messages this pass exists
+    // to find.
     const floor = column.length >= cap ? (column.at(-1)?.sentAt ?? null) : null;
     const blobOnly = this.db
       .prepare(
@@ -406,13 +413,16 @@ export class MessagesStore {
             ${floor === null ? "" : `AND ${appleSecondsSql('m."date"')} >= ?`}
           ORDER BY m."date" DESC`,
       )
-      .all(...(floor === null ? [] : [floor])) as Record<string, unknown>[];
+      .iterate(...(floor === null ? [] : [floor])) as Iterable<Record<string, unknown>>;
 
     const lowered = query.toLowerCase();
     const decoded: MessageRow[] = [];
     for (const raw of blobOnly) {
       const row = this.#toRow(raw);
       if (row.text && row.text.toLowerCase().includes(lowered)) decoded.push(row);
+      // Newest first, so once this pass alone has a page, every row still to
+      // come is older than all of it and cannot make the merged page either.
+      if (decoded.length >= cap) break;
     }
     if (decoded.length === 0) return column.slice(0, cap);
 

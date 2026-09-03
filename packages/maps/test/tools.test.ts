@@ -123,3 +123,43 @@ describe("with no readable store", () => {
     expect(JSON.stringify(res.content)).toMatch(/not a place ref/);
   });
 });
+
+/*
+ * Diagnostics said this server registers no mutating tool, long after two had
+ * shipped — from the one tool whose whole job is to not lie. It now derives
+ * the answer from the gate, and reports the seed timeout that bounds the
+ * longest call it makes.
+ */
+describe("diagnostics and the write gate", () => {
+  type Report = {
+    settings: { seedTimeoutMs: number };
+    lanes: { writes: { enabled: boolean; tools: string[] } };
+  };
+  const report = async (env: NodeJS.ProcessEnv = {}) => {
+    const res = (await (
+      await connect(env)
+    ).callTool({ name: "apple_maps_diagnostics", arguments: {} })) as {
+      content: { text: string }[];
+    };
+    return JSON.parse(res.content.map((c) => c.text).join("")) as Report;
+  };
+
+  it("reports the write gate it was started with", async () => {
+    const off = await report();
+    expect(off.lanes.writes.enabled).toBe(false);
+    expect(off.lanes.writes.tools).toEqual([]);
+    const on = await report({ APPLE_MAPS_ALLOW_WRITES: "1" });
+    expect(on.lanes.writes.enabled).toBe(true);
+    expect(on.lanes.writes.tools).toContain("apple_maps_remove_favorite");
+  });
+
+  it("reports the seed timeout, which is now a setting", async () => {
+    expect((await report()).settings.seedTimeoutMs).toBe(30_000);
+    const slow = await report({ APPLE_MAPS_SEED_TIMEOUT_MS: "90000" });
+    expect(slow.settings.seedTimeoutMs).toBe(90_000);
+  });
+
+  it("never claims to register no mutating tool", async () => {
+    expect(JSON.stringify(await report())).not.toContain("registers no mutating tool");
+  });
+});

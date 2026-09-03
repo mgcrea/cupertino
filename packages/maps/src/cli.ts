@@ -20,12 +20,11 @@ runStdioServer({
     const rows = (k: string): number => caps?.entities?.[k]?.rows ?? 0;
     return {
       server,
-      // No writes= line: this surface has no mutating tool, and printing a flag
-      // that gates nothing would imply one exists. The counts are named because
-      // "store=open" alone cannot distinguish a working server from one pointed
-      // at an empty replica — which is exactly what the device-local cache is.
+      // The counts are named because "store=open" alone cannot distinguish a
+      // working server from one pointed at an empty replica — which is exactly
+      // what the device-local cache is.
       banner:
-        `read-only, ` +
+        `writes=${config.allowWrites ? "ENABLED" : "disabled"}, ` +
         `store=${status.store.opened ? (status.store.mode ?? "open") : "UNREADABLE"}, ` +
         `favorites=${rows("favorites")}, ` +
         `collections=${rows("collections")}, ` +

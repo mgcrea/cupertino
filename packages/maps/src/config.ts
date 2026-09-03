@@ -23,6 +23,12 @@ const ConfigSchema = BaseConfigSchema.extend({
   /** Explicit store path. Bypasses discovery — for tests and forensic copies. */
   storePath: z.string().optional(),
   indexMode: z.enum(["auto", "ro", "immutable", "off"]).default("auto"),
+  /**
+   * How long `add_favorite` waits for Maps to resolve a place it does not know.
+   * Tens of seconds is normal — Maps goes to the network — and a slow link
+   * needs more; this is the one timeout in the bundle that was not a setting.
+   */
+  seedTimeoutMs: z.number().int().min(1_000).max(600_000).default(30_000),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -32,10 +38,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_MAPS_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_MAPS_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_MAPS_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_MAPS_DEBUG),
     storePath: trimmed(env.APPLE_MAPS_STORE),
     indexMode: trimmed(env.APPLE_MAPS_INDEX_MODE),
     osascriptPath: trimmed(env.APPLE_MAPS_OSASCRIPT_PATH),
     osascriptTimeoutMs: parseIntOpt(env.APPLE_MAPS_OSASCRIPT_TIMEOUT_MS),
     maxResults: parseIntOpt(env.APPLE_MAPS_MAX_RESULTS),
+    seedTimeoutMs: parseIntOpt(env.APPLE_MAPS_SEED_TIMEOUT_MS),
   });

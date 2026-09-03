@@ -149,6 +149,7 @@ export class AppleMapsClient {
     }
     return new MapsWriter({
       storePath: located.storePath,
+      seedTimeoutMs: this.#config.seedTimeoutMs,
       ...(openUrl ? { openUrl } : {}),
     });
   }

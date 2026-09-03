@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { AppleMapsClient } from "../client/maps.js";
 import { decodePlaceRef } from "../client/ref.js";
-import { compact, fail, ok, placeRefArg, wrapResult } from "./util.js";
+import { compact, confirmArg, fail, ok, placeRefArg, wrapResult } from "./util.js";
 
 /**
  * The mutating tools.
@@ -85,8 +85,11 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
         "Remove a place from Maps' favourites, by a ref from apple_maps_list_favorites. This " +
         "deletes the favourite on the user's other Apple devices too, through iCloud. It does " +
         "not affect Guides, Recents, or anything else that references the same place. Needs " +
-        "Full Disk Access.",
-      inputSchema: { ref: placeRefArg },
+        "Full Disk Access, and an explicit confirm: the deletion is not undoable from here.",
+      // `confirm`, like the destructive store writes on every other surface.
+      // This one had none — and its blast radius is every device on the
+      // account.
+      inputSchema: { ref: placeRefArg, confirm: confirmArg },
       annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true },
     },
     async ({ ref }) =>

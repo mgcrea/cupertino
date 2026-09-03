@@ -19,11 +19,9 @@ runStdioServer({
     return {
       server,
       // Both lanes are named, because half-working is the normal degraded state
-      // here and a banner reporting one number would hide it. No writes= line:
-      // this surface has no mutating tool, and printing a flag that gates
-      // nothing would imply one exists.
+      // here and a banner reporting one number would hide it.
       banner:
-        `read-only, ` +
+        `writes=${config.allowWrites ? "ENABLED" : "disabled"}, ` +
         `history=${status.store.opened ? "open" : "UNREADABLE"}, ` +
         `items=${(status.capabilities?.counts as { items?: number } | undefined)?.items ?? 0}, ` +
         `bookmarks=${status.located.bookmarks.readable ? "readable" : "UNREADABLE"}, ` +

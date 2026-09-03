@@ -19,7 +19,10 @@ export const buildDiagnostics = async (
   const located = status.located;
   return {
     server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
-    settings: { exposePrompts: client.config.exposePrompts },
+    settings: {
+      exposePrompts: client.config.exposePrompts,
+      seedTimeoutMs: client.config.seedTimeoutMs,
+    },
     lanes: {
       summary:
         "Maps has ONE lane. Maps.app ships no scripting dictionary — there is no .sdef in the " +

@@ -16,13 +16,13 @@ import { z } from "zod";
  * - **`allowWrites` gates two tools, and nothing else.** Set it and this server
  *   registers `apple_contacts_create_contact` and `apple_contacts_update_contact`,
  *   which are the only things here that send an Apple Event. There is no delete:
- *   the dictionary offers one and it is deliberately not exposed. (This comment
- *   used to say the flag was ignored entirely, which stopped being true when
- *   those tools landed — and `diagnostics` repeated the claim, which is the one
- *   file that must never say something untrue about what this server can do.)
- * - **No `osascript` settings in use.** Also inherited, also unused — there is
- *   no Apple Events lane here at all, which is what lets this server run without
- *   an Automation grant.
+ *   Contacts' scripting dictionary has no delete command of any kind. (This
+ *   comment used to say the flag was ignored entirely, which stopped being true
+ *   when those tools landed — and `diagnostics` repeated the claim, which is the
+ *   one file that must never say something untrue about what this server can do.)
+ * - **`osascript` settings are used by the write tools only.** Every read is
+ *   on the file lane, which is what lets a writes-off server run without an
+ *   Automation grant.
  * - **No account allowlist.** Contacts are unioned across accounts precisely so
  *   that a handle resolves wherever its owner lives; scoping that by account
  *   would reintroduce the bug this surface exists to avoid.
@@ -55,7 +55,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_CONTACTS_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_CONTACTS_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_CONTACTS_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_CONTACTS_DEBUG),
     storePath: trimmed(env.APPLE_CONTACTS_STORE),
     indexMode: trimmed(env.APPLE_CONTACTS_INDEX_MODE),
     phoneSuffixDigits: parseIntOpt(env.APPLE_CONTACTS_PHONE_SUFFIX_DIGITS),

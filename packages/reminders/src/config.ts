@@ -15,7 +15,7 @@ import { z } from "zod";
  * Configuration is environment-only — this server holds no secret at all, its
  * access is the macOS permission the user granted.
  *
- * `allowWrites`, `debug`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
+ * `allowWrites`, `osascriptPath`, `osascriptTimeoutMs` and `maxResults`
  * come from `BaseConfigSchema`.
  */
 const ConfigSchema = BaseConfigSchema.extend({
@@ -67,7 +67,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_REMINDERS_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_REMINDERS_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_REMINDERS_LAZY_TOOLS),
-    debug: parseBool(env.APPLE_REMINDERS_DEBUG),
     accounts: parseList(env.APPLE_REMINDERS_ACCOUNTS),
     lists: parseList(env.APPLE_REMINDERS_LISTS),
     storePath: trimmed(env.APPLE_REMINDERS_STORE),
