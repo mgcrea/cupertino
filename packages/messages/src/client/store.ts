@@ -10,7 +10,7 @@ import {
   type ReadOnlyMode,
 } from "@mgcrea/mcp-apple-core";
 
-import { appleSecondsSql } from "./dates.js";
+import { appleDateBucketSql, appleSecondsSql } from "./dates.js";
 import { decodeAttributedBody } from "./typedstream.js";
 
 /**
@@ -131,6 +131,52 @@ export type RangeQuery = {
   toApple?: number | undefined;
   includeReactions?: boolean | undefined;
   limit: number;
+};
+
+/**
+ * What `countMessages` can group on.
+ *
+ * Metadata only, and that is the design rather than a first cut. Anything
+ * derived from message TEXT is unavailable to SQL here: from March 2026 onward
+ * the body lives only in `attributedBody`, which is why `search` carries a
+ * second decode pass. A `GROUP BY` over `text LIKE ?` would return a number
+ * shaped exactly like a correct one while missing every recent message, so this
+ * lane never offers one.
+ */
+export const COUNT_GROUP_FIELDS = ["day", "month", "chat", "handle", "direction"] as const;
+
+export type CountGroupField = (typeof COUNT_GROUP_FIELDS)[number];
+
+export type CountQuery = {
+  chatGuid?: string | undefined;
+  /** Substring of a handle — a phone number or an email address. */
+  handle?: string | undefined;
+  direction?: "sent" | "received" | undefined;
+  fromApple?: number | undefined;
+  toApple?: number | undefined;
+  includeReactions?: boolean | undefined;
+  /** Caps the number of GROUPS, never the messages counted. */
+  limit: number;
+};
+
+export type CountTotals = {
+  total: number;
+  /** Null when the store has no `is_from_me` column to split on. */
+  sent: number | null;
+  received: number | null;
+  firstAt: number | null;
+  lastAt: number | null;
+};
+
+export type CountBucket = CountTotals & {
+  key: string | null;
+  label: string | null;
+};
+
+export type CountGroups = {
+  groups: CountBucket[];
+  totalGroups: number;
+  totalRows: number;
 };
 
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
@@ -601,6 +647,188 @@ export class MessagesStore {
       chats: one(`SELECT COUNT(*) AS c FROM "chat"`),
       handles: one(`SELECT COUNT(*) AS c FROM "handle"`),
       attachments: this.caps.hasAttachments ? one(`SELECT COUNT(*) AS c FROM "attachment"`) : 0,
+    };
+  }
+
+  /**
+   * Count messages, optionally per group, over every match rather than a page.
+   *
+   * `limit` caps the number of GROUPS returned, never the messages counted —
+   * the same rule Mail's query lane is built on. An aggregate computed over a
+   * truncated page is not so much a wrong answer as a confidently wrong one:
+   * "my three busiest conversations" and "the three busiest among the twenty
+   * rows we happened to read" are the same shape, and nothing marks which you
+   * got. `totalRows` is therefore always reported.
+   *
+   * Every count is `COUNT(DISTINCT m."ROWID")`. The chat join is one row per
+   * (chat, message) pair, so a message filed in two chats would otherwise be
+   * counted twice in a total that is not itself per-chat.
+   */
+  countMessages(q: CountQuery, field?: CountGroupField): CountTotals | CountGroups {
+    const params: unknown[] = [];
+    const from = this.#countFrom(q, field);
+    const where = this.#countPredicate(q, params);
+    const totals = this.#countExprs();
+
+    if (!field) {
+      const row = this.db
+        .prepare(`SELECT ${totals} FROM "message" m ${from} WHERE ${where}`)
+        .get(...(params as never[])) as Record<string, unknown>;
+      return this.#toTotals(row);
+    }
+
+    const { key, label } = this.#countGroupExpr(field);
+
+    // COUNT(DISTINCT) skips NULL, so a group with no key — a message in no
+    // chat, an unknown handle — would appear in `groups` while going unreported
+    // in `totalGroups`, and `truncated` is derived from that number.
+    const countParams: unknown[] = [];
+    const countWhere = this.#countPredicate(q, countParams);
+    const totalsRow = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT m."ROWID") AS totalRows,
+                COUNT(DISTINCT ${key}) + MAX(CASE WHEN ${key} IS NULL THEN 1 ELSE 0 END)
+                  AS totalGroups
+           FROM "message" m ${from}
+          WHERE ${countWhere}`,
+      )
+      .get(...(countParams as never[])) as { totalRows: number; totalGroups: number | null };
+
+    const rows = this.db
+      .prepare(
+        `SELECT ${key} AS key, ${label} AS label, ${totals}
+           FROM "message" m ${from}
+          WHERE ${where}
+          GROUP BY ${key}
+          -- Count first so \`limit\` yields a top-N; the key breaks ties, so
+          -- running the same question twice cannot reshuffle equal groups.
+          ORDER BY total DESC, key ASC
+          LIMIT ${Math.max(1, Math.trunc(q.limit))}`,
+      )
+      .all(...(params as never[])) as Record<string, unknown>[];
+
+    return {
+      groups: rows.map((r) => ({
+        key: r.key === null ? null : String(r.key),
+        label: text(r.label),
+        ...this.#toTotals(r),
+      })),
+      totalRows: Number(totalsRow.totalRows ?? 0),
+      // MAX() over zero rows is NULL, which is the empty-store case.
+      totalGroups: Number(totalsRow.totalGroups ?? 0),
+    };
+  }
+
+  /**
+   * Join only what the question needs.
+   *
+   * Not an optimisation — a correctness choice. The chat join multiplies a
+   * message by the chats it belongs to, so it is absent unless a chat is being
+   * filtered on or grouped by.
+   */
+  #countFrom(q: CountQuery, field?: CountGroupField): string {
+    const parts: string[] = [];
+    if (q.handle || field === "handle") {
+      parts.push(`LEFT JOIN "handle" h ON h."ROWID" = m."handle_id"`);
+    }
+    if (q.chatGuid || field === "chat") {
+      parts.push(
+        `LEFT JOIN "chat_message_join" cmj ON cmj."message_id" = m."ROWID"`,
+        `LEFT JOIN "chat" c ON c."ROWID" = cmj."chat_id"`,
+      );
+    }
+    return parts.join("\n           ");
+  }
+
+  /**
+   * Shared by the totals and the grouped statement so the two cannot drift: a
+   * filter that narrowed the listing but not its aggregate would make "sent to
+   * this chat in August" quietly count the whole store.
+   */
+  #countPredicate(q: CountQuery, params: unknown[]): string {
+    const m = this.caps.messageColumns;
+    const where: string[] = [];
+
+    if (q.chatGuid) {
+      where.push(`c."guid" = ?`);
+      params.push(q.chatGuid);
+    }
+    if (q.handle) {
+      where.push(`h."id" LIKE ? ESCAPE '\\'`);
+      params.push(`%${escapeLike(q.handle)}%`);
+    }
+    if (q.direction && m.has("is_from_me")) {
+      where.push(`m."is_from_me" = ?`);
+      params.push(q.direction === "sent" ? 1 : 0);
+    }
+    if (q.fromApple !== undefined && m.has("date")) {
+      where.push(`${appleSecondsSql('m."date"')} >= ?`);
+      params.push(q.fromApple);
+    }
+    if (q.toApple !== undefined && m.has("date")) {
+      where.push(`${appleSecondsSql('m."date"')} < ?`);
+      params.push(q.toApple);
+    }
+    // Tapbacks are rows in this table. Counting them is the same error as
+    // rendering them: 2,788 of them on the probed store would inflate every
+    // number here by something nobody typed.
+    if (!q.includeReactions && m.has("associated_message_type")) {
+      where.push(`(m."associated_message_type" IS NULL OR m."associated_message_type" = 0)`);
+    }
+
+    return where.length ? where.join(" AND ") : "1 = 1";
+  }
+
+  /** The count columns every shape of this query selects. */
+  #countExprs(): string {
+    const m = this.caps.messageColumns;
+    const split = m.has("is_from_me");
+    return `COUNT(DISTINCT m."ROWID") AS total,
+              ${split ? `COUNT(DISTINCT CASE WHEN m."is_from_me" = 1 THEN m."ROWID" END)` : "NULL"} AS sent,
+              ${split ? `COUNT(DISTINCT CASE WHEN m."is_from_me" = 0 THEN m."ROWID" END)` : "NULL"} AS received,
+              ${m.has("date") ? appleSecondsSql('MIN(m."date")') : "NULL"} AS firstAt,
+              ${m.has("date") ? appleSecondsSql('MAX(m."date")') : "NULL"} AS lastAt`;
+  }
+
+  /**
+   * The column expression each groupable field aggregates on.
+   *
+   * A key here is the ONLY thing that reaches the statement — the tool matches
+   * the caller's string against `COUNT_GROUP_FIELDS` and passes the matched
+   * literal, so no caller-controlled text is ever interpolated. `label` goes
+   * through MAX() because everything outside GROUP BY has to be aggregated, and
+   * it is constant within a group anyway.
+   */
+  #countGroupExpr(field: CountGroupField): { key: string; label: string } {
+    switch (field) {
+      case "day":
+        return { key: appleDateBucketSql('m."date"', "%Y-%m-%d"), label: "NULL" };
+      case "month":
+        return { key: appleDateBucketSql('m."date"', "%Y-%m"), label: "NULL" };
+      // Keyed on the guid rather than the rowid so the caller can hand it
+      // straight back as a chat ref, the way every other result works.
+      case "chat":
+        return {
+          key: `c."guid"`,
+          label: `MAX(COALESCE(NULLIF(c."display_name", ''), c."chat_identifier"))`,
+        };
+      case "handle":
+        return { key: `h."id"`, label: "NULL" };
+      case "direction":
+        return {
+          key: `CASE WHEN m."is_from_me" = 1 THEN 'sent' ELSE 'received' END`,
+          label: "NULL",
+        };
+    }
+  }
+
+  #toTotals(r: Record<string, unknown>): CountTotals {
+    return {
+      total: Number(r.total ?? 0),
+      sent: num(r.sent),
+      received: num(r.received),
+      firstAt: num(r.firstAt),
+      lastAt: num(r.lastAt),
     };
   }
 

@@ -47,6 +47,21 @@ export const appleSecondsSql = (column: string): string =>
   ` WHEN ABS(CAST(${column} AS REAL)) > ${NANOSECOND_FLOOR} THEN CAST(${column} AS REAL) / 1000000000.0` +
   ` ELSE CAST(${column} AS REAL) END`;
 
+/**
+ * SQL that buckets an apple-date column into a LOCAL calendar day or month.
+ *
+ * Local, not UTC, and that is a deliberate divergence from Mail's equivalent in
+ * `packages/mail/src/client/envelope.ts`. "How many messages on the 3rd" is a
+ * question about the calendar the person was living in, and texting peaks late:
+ * with a UTC bucket, every message a user in CEST sends after 02:00 lands in the
+ * previous day. Mail's buckets are UTC and answering that is a separate call.
+ *
+ * `format` is a literal from this module's callers, never caller text.
+ */
+export const appleDateBucketSql = (column: string, format: "%Y-%m-%d" | "%Y-%m"): string =>
+  `strftime('${format}', datetime(${appleSecondsSql(column)} + ${CORE_DATA_EPOCH_OFFSET}, ` +
+  `'unixepoch', 'localtime'))`;
+
 /** Apple-seconds to a JS Date. Null in, null out. */
 export const fromAppleSeconds = (value: number | null): Date | null => {
   if (value === null || !Number.isFinite(value) || value === 0) return null;

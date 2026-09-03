@@ -66,7 +66,16 @@ That is a capability downgrade reported through `diagnostics`, never a throw.
 
 ## Tools
 
-Read: `diagnostics`, `list_chats`, `list_messages`, `search_messages`, `get_message`.
+Read: `diagnostics`, `list_chats`, `list_messages`, `search_messages`, `get_message`,
+`count_messages`.
+
+`count_messages` is the arithmetic lane: totals with a sent/received split, and `groupBy` for counts
+per day, month, chat, handle or direction. It aggregates in SQL over every match, so "who do I
+message most" costs one small result rather than a page of conversations tallied by hand — and
+grouping by **handle** spans the several chats one person can occupy, which the per-chat totals on
+`list_chats` cannot add together. Metadata only, deliberately: message bodies from 2026 onward live
+in an archived blob that SQL cannot read, so a text filter here would return a number that looks
+right and silently omits the recent half of the store.
 
 Opt-in read: `find_codes`, behind `APPLE_MESSAGES_ALLOW_CODES` — see [Configuration](#configuration).
 Off by default, and not covered by the write gate.

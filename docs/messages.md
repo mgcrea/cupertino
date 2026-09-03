@@ -434,6 +434,75 @@ phone number. The worst it can do is launch Messages and prompt for an Automatio
 The remaining question needs a real send, and the honest first one is a message to **your own
 handle** — Messages lets you do that, and it is the only send whose recipient consented in advance.
 
+## The count lane
+
+**Implemented** — `apple_messages_count_messages`, in
+[`packages/messages/src/tools/counts.ts`](../packages/messages/src/tools/counts.ts), with the SQL in
+`store.ts`. Registered always; it is read-only and touches nothing but the store.
+
+This surface got the counting half of Mail's [query lane](mail-query.md) and not the projection
+half, after checking what each would actually buy here.
+
+**What projection would have bought: little.** On Mail, `select` is 2.6x on a listing because a mail
+row is mostly metadata wrapped around a small payload. A Messages row's bulk _is_ its text, and a
+message listing without the text is rarely the question anyone asked.
+
+**What `list_chats` already answers.** Per-chat totals, including the ordering, come back from
+`chats()` as a `COUNT(cmj."message_id")` — so "which conversation is busiest" was never the gap, and
+porting Mail's tool wholesale would have added a second way to ask a question already answered in one
+call. What it could not do is add two chats together.
+
+So the lane is deliberately narrow, and each grouping is a question `list_chats` cannot answer:
+
+| `groupBy`     | The question                               | Why not `list_chats`                              |
+| ------------- | ------------------------------------------ | ------------------------------------------------- |
+| `handle`      | who do I talk to most, as a PERSON         | one person, several chats — it cannot sum them    |
+| `direction`   | how much do I send versus receive          | no `is_from_me` split anywhere else               |
+| `day`/`month` | when am I busiest, did this month change   | no per-period counts anywhere else                |
+| `chat`        | the same totals, but filtered and windowed | `list_chats` counts the whole history, unfiltered |
+
+### Measured
+
+Against a synthetic 800-message archive (40 correspondents over six months), through a real MCP
+client, asking "who do I message most, and how much of it did I send?":
+
+|                                                        | bytes   | ~tokens | calls |
+| ------------------------------------------------------ | ------- | ------- | ----- |
+| `apple_messages_count_messages {groupBy: "handle"}`    | 5,794   | 1,449   | 1     |
+| the same answer by paging `list_messages` and tallying | 275,594 | 68,899  | 9     |
+
+**47.6x**, in the same shape Mail's query lane measured 64x — lower, and expected to be: the
+per-group row here carries a sent/received split and a first/last date that Mail's does not, and the
+messages it replaces are shorter than mail summaries. The tool's own listing cost is 2,690 B (~670
+tokens), so one grouped question repays it many times over. That was the condition for shipping it.
+
+The by-hand column is also the optimistic version of that path: it assumes the model pages perfectly
+and tallies 800 rows without error. Past the first page it is not merely more expensive, it is a
+number nobody can check.
+
+### Why there is no text filter, and never will be
+
+The obvious next parameter is `query`, counting matches of a word per month. It cannot be offered.
+Message bodies from March 2026 onward are blob-only (see
+[3.1% of messages have no `text` at all](#31-of-messages-have-no-text-at-all)), and no `GROUP BY`
+reaches inside `attributedBody` — the decode that makes `search_messages` complete happens in
+JavaScript, one row at a time.
+
+A counting tool with a text filter would therefore return a number that is right for 2016-2025 and
+increasingly wrong for everything after, with nothing on the result to say so. That is precisely the
+failure the aggregate envelope exists to prevent, so the boundary is drawn at metadata: what this
+lane counts, it counts completely.
+
+Three smaller consequences of the same care:
+
+- **Tapbacks are excluded by default.** 2,788 of them sit in `message`. Counting them is the same
+  error as rendering them: they inflate every total with something nobody typed.
+- **Every count is `COUNT(DISTINCT m."ROWID")`.** The chat join is one row per (chat, message) pair,
+  so a message filed in two chats would otherwise be counted twice in a total that is not per-chat.
+- **Day and month buckets are LOCAL calendar dates**, unlike Mail's, which are UTC. Texting peaks
+  late at night, and a UTC bucket moves every message a CEST user sends after 02:00 into the previous
+  day. Mail's buckets should probably follow; that is a separate change and is listed below.
+
 ## Still open
 
 - **`date_retracted` / `date_recovered`** — no rows here, so their epoch is assumed, not measured.
@@ -445,3 +514,7 @@ handle** — Messages lets you do that, and it is the only send whose recipient 
   reader should skip them or render them.
 - **The send path is still untested against a live Messages** — see the section above for exactly
   what that leaves open and for the one safe way to measure it.
+- **Mail's day and month buckets are UTC while Messages' are local**, and only one of them can be
+  right for "how many on the 3rd". Messages made the local call because texting peaks after
+  midnight; Mail predates the question. Aligning them is a one-line change in `envelope.ts` plus a
+  test, and it changes answers people may have written down.

@@ -26,6 +26,16 @@ an empty message history.
 - **\`apple_messages_search_messages\`** searches across them.
 - **\`apple_messages_get_message\`** returns one message with its tapbacks and
   attachments.
+- **Anything that is a NUMBER** — how many, how many did I send, who do I write
+  to most, which month was busiest — is \`apple_messages_count_messages\`, with
+  \`groupBy\` for a breakdown by day, month, chat, handle or direction. It
+  counts every match rather than a page, so never tally a listing by hand: past
+  the first \`limit\` that answer is simply wrong. Group by **handle** rather
+  than chat when the question is about a PERSON — one person can hold several
+  conversations, and \`list_chats\` counts each separately.
+- It counts metadata only, and there is no text filter on it. "How many times
+  did we say X" is not a question this surface can answer by counting: see the
+  blob below.
 
 ## Handles are not names
 

@@ -5,6 +5,7 @@ import { registerActionTools } from "./actions.js";
 import { registerAttachmentTools } from "./attachments.js";
 import { registerChatTools } from "./chats.js";
 import { registerCodeTools } from "./codes.js";
+import { registerCountTools } from "./counts.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
 
@@ -42,7 +43,7 @@ export type ToolContext = {
 /**
  * Register the Apple Messages tools.
  *
- * Five reads, always. Two writes, only when `allowWrites` is on — and on this
+ * Six reads, always. Two writes, only when `allowWrites` is on — and on this
  * surface the flag carries a permission claim as well as a safety one: with it
  * off no Apple Event is ever sent, so no Automation grant is ever requested.
  * What is needed either way is Full Disk Access, absolutely — see `diagnostics`.
@@ -69,6 +70,7 @@ export const registerTools = (
   registerDiagnosticsTools(server, client);
   registerChatTools(server, client);
   registerMessageTools(server, client);
+  registerCountTools(server, client);
   if (ctx.allowCodes) registerCodeTools(server, client);
   if (!ctx.allowWrites) return;
   registerActionTools(server, client, ctx);

@@ -91,3 +91,25 @@ surface.
 The measurement that decides whether it spreads to the other surfaces: run the same question both
 ways — `groupBy: "sender"` versus paging `search_messages` — and compare total tokens. If it does
 not clearly win on mail, the richest index of the eight, it will not win anywhere.
+
+## Where it spread, and in what shape
+
+**Messages, as counting only** — `apple_messages_count_messages`, see
+[messages.md](messages.md#the-count-lane). Asking the question above of that surface answered it
+differently rather than yes or no, and the difference is worth recording before the next surface
+asks:
+
+- **Projection did not carry over.** `select` earns its 2.6x on mail because a mail row is metadata
+  around a small payload. A message row's bulk is its text, and a listing without the text is not a
+  question anyone asks.
+- **Half the aggregate was already there.** `apple_messages_list_chats` returns per-chat counts from
+  a `COUNT()` in SQL, so "which conversation is busiest" needed nothing new. What it cannot do is add
+  one person's several chats together, which is what the new tool is for.
+- **The filters could not carry over either.** This lane was cheap on mail because `groupBy` reuses
+  a thirteen-filter WHERE clause that already existed. Messages had two filters, so its count lane
+  had to bring its own — and stops at metadata, because a text filter over a store whose recent
+  bodies live in a blob would return a confidently wrong number.
+
+The general rule the two together suggest: **port the aggregate, not the tool.** Check what the
+surface's existing reads already aggregate, and what its store can filter completely, before
+assuming the shape that won on mail is the shape that wins.

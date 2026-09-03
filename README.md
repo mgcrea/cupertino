@@ -39,7 +39,7 @@ off cannot see that they exist.
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 8 tools, chats/search/decoded text + gated send and codes                        |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 9 tools, chats/search/counts/decoded text + gated send and codes                 |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes          |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package                         |

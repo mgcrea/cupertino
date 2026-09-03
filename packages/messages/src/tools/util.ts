@@ -5,7 +5,9 @@
 export {
   compact,
   confirmArg,
+  describeAggregation,
   fail,
+  groupByArg,
   limitArg,
   ok,
   okText,

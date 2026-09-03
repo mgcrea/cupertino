@@ -35,8 +35,9 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
 };
 
 describe("tool registration", () => {
-  it("registers five read tools", async () => {
+  it("registers six read tools", async () => {
     expect(await toolNames(await connect())).toEqual([
+      "apple_messages_count_messages",
       "apple_messages_diagnostics",
       "apple_messages_get_message",
       "apple_messages_list_chats",

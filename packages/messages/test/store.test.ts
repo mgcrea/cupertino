@@ -357,3 +357,130 @@ describe("counts", () => {
     expect(counts.handles).toBe(2);
   });
 });
+
+/** Narrow the union the way a caller who passed a `groupBy` already has. */
+const grouped = (result: ReturnType<MessagesStore["countMessages"]>) => {
+  if (!("groups" in result)) throw new Error("expected a grouped result");
+  return result;
+};
+
+const totals = (result: ReturnType<MessagesStore["countMessages"]>) => {
+  if ("groups" in result) throw new Error("expected a plain total");
+  return result;
+};
+
+describe("countMessages", () => {
+  const seeded = (): MessagesStore =>
+    store((db) => {
+      addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "a", fromMe: 1 });
+      addMessage(db, { rowid: 2, guid: "B", chat: 1, text: "b", fromMe: 0 });
+      addMessage(db, { rowid: 3, guid: "C", chat: 2, text: "c", fromMe: 0, handle: 2 });
+      // A tapback: a row in the same table that nobody typed.
+      addMessage(db, {
+        rowid: 4,
+        guid: "D",
+        chat: 1,
+        text: null,
+        reactionType: 2000,
+        reactionTarget: "A",
+      });
+    });
+
+  it("counts every match and splits sent from received", () => {
+    const result = totals(seeded().countMessages({ limit: 25 }));
+    expect(result.total).toBe(3);
+    expect(result.sent).toBe(1);
+    expect(result.received).toBe(2);
+  });
+
+  /**
+   * Tapbacks inflate a count with something nobody wrote, and 2,788 of them sit
+   * in the probed store. Excluding them is the same call `list_messages` makes.
+   */
+  it("excludes tapbacks unless asked for them", () => {
+    const s = seeded();
+    expect(totals(s.countMessages({ limit: 25 })).total).toBe(3);
+    expect(totals(s.countMessages({ limit: 25, includeReactions: true })).total).toBe(4);
+  });
+
+  it("narrows by direction, chat and handle", () => {
+    const s = seeded();
+    expect(totals(s.countMessages({ limit: 25, direction: "sent" })).total).toBe(1);
+    expect(totals(s.countMessages({ limit: 25, chatGuid: "iMessage;+;chat9001" })).total).toBe(1);
+    expect(totals(s.countMessages({ limit: 25, handle: "friend@" })).total).toBe(1);
+  });
+
+  it("groups by chat, labelled with the chat's name", () => {
+    const groups = grouped(seeded().countMessages({ limit: 25 }, "chat")).groups;
+    expect(groups.map((g) => [g.key, g.total])).toEqual([
+      ["iMessage;-;+15551234567", 2],
+      ["iMessage;+;chat9001", 1],
+    ]);
+    expect(groups[1]?.label).toBe("Book club");
+  });
+
+  /**
+   * The question the tool exists for: one person across several conversations.
+   * `list_chats` reports per-CHAT totals and cannot add these two together.
+   */
+  it("groups by handle across chats", () => {
+    const s = store((db) => {
+      addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "a", handle: 1 });
+      addMessage(db, { rowid: 2, guid: "B", chat: 2, text: "b", handle: 1 });
+      addMessage(db, { rowid: 3, guid: "C", chat: 2, text: "c", handle: 2 });
+    });
+    const groups = grouped(s.countMessages({ limit: 25 }, "handle")).groups;
+    expect(groups[0]).toMatchObject({ key: "+15551234567", total: 2 });
+    expect(groups[1]).toMatchObject({ key: "friend@example.com", total: 1 });
+  });
+
+  /**
+   * THE RULE, same as Mail's query lane: `limit` caps the GROUPS, never what was
+   * counted. A top-N over a truncated page is shaped exactly like a real top-N.
+   */
+  it("caps the number of groups without capping what was counted", () => {
+    const s = store((db) => {
+      addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "a", iso: "2026-08-01T12:00:00Z" });
+      addMessage(db, { rowid: 2, guid: "B", chat: 1, text: "b", iso: "2026-08-02T12:00:00Z" });
+      addMessage(db, { rowid: 3, guid: "C", chat: 1, text: "c", iso: "2026-08-03T12:00:00Z" });
+    });
+    const result = grouped(s.countMessages({ limit: 1 }, "day"));
+    expect(result.groups).toHaveLength(1);
+    expect(result.totalGroups).toBe(3);
+    expect(result.totalRows).toBe(3);
+  });
+
+  /**
+   * A message filed in two chats is one message. The chat join makes a row per
+   * (chat, message) pair, so a plain COUNT(*) would report two.
+   */
+  it("counts a message in two chats once", () => {
+    const s = store((db) => {
+      addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "a" });
+      db.prepare(
+        `INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (2, 1, 0)`,
+      ).run();
+    });
+    expect(totals(s.countMessages({ limit: 25, chatGuid: "iMessage;-;+15551234567" })).total).toBe(
+      1,
+    );
+    expect(grouped(s.countMessages({ limit: 25 }, "chat")).totalRows).toBe(1);
+  });
+
+  /**
+   * Buckets are LOCAL calendar days, which is what "how many on the 3rd" means.
+   * Asserted against the same instant formatted locally in JS, so this holds in
+   * whatever zone the suite runs in — including the zones where the UTC bucket
+   * would land on the previous day.
+   */
+  it("buckets days and months on the local calendar", () => {
+    const iso = "2026-08-03T23:30:00Z";
+    const local = new Date(iso);
+    const day = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(
+      local.getDate(),
+    ).padStart(2, "0")}`;
+    const s = store((db) => addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "a", iso }));
+    expect(grouped(s.countMessages({ limit: 25 }, "day")).groups[0]?.key).toBe(day);
+    expect(grouped(s.countMessages({ limit: 25 }, "month")).groups[0]?.key).toBe(day.slice(0, 7));
+  });
+});

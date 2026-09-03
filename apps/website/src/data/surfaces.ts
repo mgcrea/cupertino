@@ -186,6 +186,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_messages_list_chats",
       "apple_messages_list_messages",
       "apple_messages_search_messages",
+      "apple_messages_count_messages",
       "apple_messages_get_message",
       "apple_messages_diagnostics",
     ],

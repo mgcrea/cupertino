@@ -32,7 +32,17 @@ import {
 import { SEND_MESSAGE } from "./jxa/write.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { decodeChatRef, encodeChatRef, encodeMessageRef } from "./ref.js";
-import { openStore, type ChatRow, type MessageRow, type MessagesStore } from "./store.js";
+import {
+  openStore,
+  type ChatRow,
+  type CountBucket,
+  type CountGroupField,
+  type CountGroups,
+  type CountQuery,
+  type CountTotals,
+  type MessageRow,
+  type MessagesStore,
+} from "./store.js";
 
 /**
  * Messages' one lane, plus the resolver.
@@ -149,6 +159,32 @@ export type RenderedChat = {
   messages: number;
   lastMessageAt: string | null;
 };
+
+/** The counts every shape of `countMessages` reports, dates rendered. */
+export type RenderedCount = {
+  total: number;
+  sent: number | null;
+  received: number | null;
+  firstAt: string | null;
+  lastAt: string | null;
+};
+
+export type RenderedCountGroup = RenderedCount & {
+  key: string | null;
+  /** A display form of `key`: a chat's name, a handle's contact. */
+  label: string | null;
+  /** Present only on chat groups, so the group can be read straight back. */
+  ref?: string;
+};
+
+/** Apple-seconds to ISO on the two date fields every count carries. */
+const renderCount = (c: CountTotals): RenderedCount => ({
+  total: c.total,
+  sent: c.sent,
+  received: c.received,
+  firstAt: renderInstant(c.firstAt),
+  lastAt: renderInstant(c.lastAt),
+});
 
 export class AppleMessagesClient {
   readonly #config: Config;
@@ -510,6 +546,44 @@ export class AppleMessagesClient {
       messages: c.messages,
       lastMessageAt: renderInstant(c.lastMessageAt),
     }));
+  }
+
+  /**
+   * Count messages, optionally grouped — the cheap-answer lane on this surface.
+   *
+   * Deliberately metadata-only. The expensive questions here are "how many" and
+   * "how many per X", and the store answers both in SQL without a message body
+   * ever reaching the context window. Anything text-derived stays with
+   * `searchMessages`, which has the decode pass that makes it complete.
+   */
+  countMessages(
+    q: Omit<CountQuery, "limit"> & { limit?: number | undefined },
+    groupBy?: CountGroupField,
+  ): RenderedCount | { groups: RenderedCountGroup[]; totalGroups: number; totalRows: number } {
+    const store = this.#require();
+    const result = store.countMessages(
+      { ...q, limit: resolveLimit(q.limit, this.#config.maxResults) },
+      groupBy,
+    );
+
+    if (!("groups" in result)) return renderCount(result as CountTotals);
+
+    const groups = (result as CountGroups).groups;
+    // Handles resolve through Contacts exactly as they do on a listing: a
+    // per-handle count keyed on a bare phone number is a worse answer than the
+    // same count keyed on a name, and the resolver is already warm.
+    if (groupBy === "handle") this.#resolve(groups.map((g) => g.key));
+
+    return {
+      groups: groups.map((g: CountBucket) => ({
+        key: g.key,
+        label: groupBy === "handle" ? (this.#correspondent(g.key).name ?? g.label) : g.label,
+        ...(groupBy === "chat" && g.key ? { ref: encodeChatRef(g.key) } : {}),
+        ...renderCount(g),
+      })),
+      totalGroups: result.totalGroups,
+      totalRows: result.totalRows,
+    };
   }
 
   // ─── writes ────────────────────────────────────────────────────────────────

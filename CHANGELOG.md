@@ -14,6 +14,35 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **`apple_messages_count_messages` — counting, grouped, on the Messages surface.** Totals with a
+  sent/received split, and `groupBy` over day, month, chat, handle or direction. It aggregates in
+  SQL over every match, so "who do I message most" or "was August busier than July" costs one small
+  result rather than a page of conversations tallied by hand — and past the first `limit`, tallying
+  a listing does not merely cost more, it returns the wrong number.
+
+  It is the counting half of Mail's query lane and deliberately not the rest. Projection was
+  dropped: `select` pays on mail because a mail row is metadata around a small payload, while a
+  message row's bulk is its text. Per-chat totals were already there, from the `COUNT()` behind
+  `apple_messages_list_chats` — so the groupings that ship are the ones that tool cannot answer, of
+  which `handle` is the one worth having: a person can hold several conversations, and only this
+  adds them together.
+
+  **There is no text filter, and that is a boundary rather than an omission.** Message bodies from
+  March 2026 onward live only in `attributedBody`, which is why `search_messages` carries a
+  JavaScript decode pass. No `GROUP BY` reaches inside a blob, so a counted text filter would be
+  right for 2016-2025 and quietly wrong for everything since, with nothing on the result to say so.
+  What this lane counts, it counts completely; anything about what was said stays with the search
+  tool.
+
+  Two traps are pinned by tests: tapbacks are excluded by default (2,788 rows that nobody typed),
+  and every count is `COUNT(DISTINCT m."ROWID")`, because the chat join is one row per
+  (chat, message) pair and a message filed in two chats would otherwise count twice. Day and month
+  buckets are LOCAL calendar dates — texting peaks after midnight, and a UTC bucket moves those
+  messages into the previous day. Mail's buckets are still UTC; `docs/messages.md` lists aligning
+  them as open.
+
 ### Fixed
 
 - **The Sound pane advertised the Screen surface's tools.** The Capabilities card does not keep a
