@@ -566,15 +566,17 @@ appcast: ## Sign the release zip and write a one-item appcast
 		"$(RELEASE_APP)/Contents/Info.plist"); \
 	build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
 		"$(RELEASE_APP)/Contents/Info.plist"); \
-	notes=$$(sed -n "/^## \[$$version\]/,/^## \[/p" CHANGELOG.md | sed '1d;$$d'); \
-	: "# An empty description is not a cosmetic problem: it is the release notes"; \
-	: "# a user reads inside the update dialog before agreeing to replace an app"; \
-	: "# that holds Full Disk Access. Silently shipping nothing there because a"; \
-	: "# heading did not match — '## [1.1]' against '## [1.1.0]' — is exactly the"; \
-	: "# quiet pass the audit script's own counters exist to stop."; \
-	printf '%s' "$$notes" | grep -q '[^[:space:]]' \
-		|| { echo "no CHANGELOG.md section '## [$$version]' — the update dialog would show nothing" >&2; \
-		     rm -f apps/apple/.build/sparkle.key; exit 1; }; \
+	: "# Sparkle renders the description as HTML, so the section is RENDERED"; \
+	: "# rather than sliced: handed raw markdown it showed every reader literal"; \
+	: "# '###' headings and '- ' bullets in the update dialog."; \
+	: "# The script carries the empty-section guard with the slicing it guards —"; \
+	: "# an empty description is not cosmetic, it is the release notes a user"; \
+	: "# reads before agreeing to replace an app that holds Full Disk Access, and"; \
+	: "# a heading that did not match ('## [1.1]' against '## [1.1.0]') is exactly"; \
+	: "# the quiet pass the audit script's own counters exist to stop. There is no"; \
+	: "# fallback here on purpose: the failure has to stop the release."; \
+	notes=$$(node scripts/changelog-notes.mjs "$$version" CHANGELOG.md) \
+		|| { rm -f apps/apple/.build/sparkle.key; exit 1; }; \
 	printf '%s\n' \
 	'<?xml version="1.0" encoding="utf-8"?>' \
 	'<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">' \

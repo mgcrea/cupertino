@@ -212,6 +212,13 @@ off unless asked for, a static EdDSA-signed `appcast.xml` attached to each relea
 through `cupertino.mgcrea.io/appcast.xml`. No server: the signature is what makes the hosting
 untrusted, so a static file on GitHub is sufficient.
 
+The item's release notes are the `## [x.y.z]` CHANGELOG section rendered to HTML by
+`scripts/changelog-notes.mjs`, because Sparkle renders `<description>` as HTML and `make appcast`
+used to slice the raw markdown into it — every update dialog from 1.1.0 through 1.11.0 showed
+literal `###` headings and `- ` bullets. The renderer carries the guard that refuses a release whose
+version has no CHANGELOG section, since an empty description is the release notes somebody reads
+before replacing an app that holds Full Disk Access.
+
 **The Homebrew cask is built, since 1.1.0.** `mgcrea/homebrew-tap` exists and
 `brew install --cask mgcrea/tap/cupertino` — which `apps/website/src/config.ts` had been advertising
 against a tap that did not exist — now works. It mattered more than it looked: it is the only
