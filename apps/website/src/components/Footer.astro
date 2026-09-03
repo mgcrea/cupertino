@@ -1,5 +1,5 @@
 ---
-import { BUNDLE_ID, DOCS, ISSUES_URL, REPO_URL, SIBLING_APP } from "../config";
+import { BUNDLE_ID, DOCS, FOOTER_APPS, ISSUES_URL, REPO_URL } from "../config";
 import Logo from "./Logo.astro";
 import MagentaMark from "./MagentaMark.astro";
 
@@ -29,14 +29,18 @@ const columns = [
     ],
   },
   /**
-   * The sibling. A column of its own rather than a line inside "Source",
-   * because the three above all name parts of Cupertino and this does not —
+   * The siblings. A column of their own rather than lines inside "Source",
+   * because the three above all name parts of Cupertino and these do not —
    * and because this footer renders on every page, which is the whole reason
-   * the cross-link lives down here as well as on the homepage.
+   * the cross-links live down here as well as on the homepage.
    */
   {
     title: "More apps",
-    links: [{ label: `${SIBLING_APP.name} ↗`, href: SIBLING_APP.url }],
+    links: FOOTER_APPS.map((app) => ({
+      label: `${app.name} ↗`,
+      href: app.url,
+      title: app.blurb,
+    })),
   },
 ] as const;
 ---
@@ -76,6 +80,7 @@ const columns = [
               <li>
                 <a
                   href={l.href}
+                  title={"title" in l ? l.title : undefined}
                   target="_blank"
                   rel="noopener"
                   class="text-[13px] text-fg-dim transition-colors hover:text-accent-hi"

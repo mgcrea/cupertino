@@ -393,3 +393,30 @@ export const SIBLING_APP = {
    */
   icon: "/apps/bastion.svg",
 } as const;
+
+/**
+ * The "More apps" column in the footer.
+ *
+ * Three, not nine. Every one of these sites is a subdomain of `mgcrea.io`, and a
+ * full mesh between all of them would read as a link farm rather than a
+ * recommendation — so this is the short list a Cupertino reader plausibly
+ * also wants. Separate from `SIBLING_APP` above, which is the one app the
+ * homepage gives a card of its own.
+ */
+export const FOOTER_APPS = [
+  {
+    name: "Bastion",
+    url: "https://bastion.mgcrea.io",
+    blurb: "One supervised MCP process per profile, credentials in the Keychain.",
+  },
+  {
+    name: "DevPulse",
+    url: "https://dev-pulse.mgcrea.io",
+    blurb: "A release radar for the repos you depend on, grouped by risk.",
+  },
+  {
+    name: "BloatBuster",
+    url: "https://bloat-buster.mgcrea.io",
+    blurb: "Reclaim gigabytes of regenerable build artifacts across your projects.",
+  },
+] as const;
