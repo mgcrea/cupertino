@@ -415,8 +415,8 @@ export const FOOTER_APPS = [
     blurb: "A release radar for the repos you depend on, grouped by risk.",
   },
   {
-    name: "BloatBuster",
-    url: "https://bloat-buster.mgcrea.io",
-    blurb: "Reclaim gigabytes of regenerable build artifacts across your projects.",
+    name: "D1Explorer",
+    url: "https://d1-explorer.mgcrea.io",
+    blurb: "A native macOS client for Cloudflare D1 and SQLite.",
   },
 ] as const;
