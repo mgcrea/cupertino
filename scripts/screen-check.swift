@@ -55,7 +55,7 @@ struct ScreenCheck {
   /// One request in, the parsed reply out.
   static func ask(
     _ method: String, id: Int = 1, params: [String: Any]? = nil, gate: Bool = false,
-    anyApp: Bool = false
+    anyApp: Bool = false, enabled: @escaping (Surface) -> Bool = { _ in true }
   ) -> [String: Any]? {
     var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
     if let params { message["params"] = params }
@@ -63,7 +63,8 @@ struct ScreenCheck {
       data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
     guard
       let reply = ScreenServer.handle(
-        line, surface: surface, captureAllowed: gate, anyAppAllowed: anyApp),
+        line, surface: surface, captureAllowed: gate, anyAppAllowed: anyApp,
+        targetEnabled: enabled),
       let data = reply.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
@@ -107,7 +108,7 @@ struct ScreenCheck {
       "a notification draws no reply",
       ScreenServer.handle(
         #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, surface: surface,
-        captureAllowed: false, anyAppAllowed: false) == nil)
+        captureAllowed: false, anyAppAllowed: false, targetEnabled: { _ in true }) == nil)
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
@@ -301,6 +302,24 @@ struct ScreenCheck {
     check(
       "widened: a typo'd surface name is still a naming error, not a missing window",
       typoError && typo.contains("No surface named"))
+
+    // The enable switch outranks the capture gate. A surface switched off in
+    // Settings is one whose window the user said is not to be read, and Mail's
+    // own server is refused on that switch — so capture refuses on it too,
+    // BEFORE ScreenCaptureKit is reached: nothing here takes a picture. By
+    // surface id, and by bundle id with "any application" on.
+    for (wanted, anyApp) in [("mail", false), ("com.apple.mail", true)] {
+      let offReply = ask(
+        "tools/call",
+        params: ["name": "apple_screen_capture_surface", "arguments": ["surface": wanted]],
+        gate: true, anyApp: anyApp, enabled: { $0.id != "mail" })
+      let offResult = offReply?["result"] as? [String: Any]
+      let offText =
+        ((offResult?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+      check(
+        "capturing '\(wanted)' while Mail is switched off is refused, with the gate on",
+        (offResult?["isError"] as? Bool) == true && offText.contains("switched off"))
+    }
 
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }

@@ -925,6 +925,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
         line, surface: surface,
         allowWrites: SurfaceSettings.allowWrites(authority),
         gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
+        surfaceEnabled: SurfaceSettings.isEnabled,
         lentScope: lentScope, connection: session)
       {
       case .message(let response):
@@ -1068,7 +1069,14 @@ nonisolated final class ServerHost: @unchecked Sendable {
         if data.isEmpty { break }
         let text = String(decoding: data, as: UTF8.self)
           .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty { hostLog(surface.id, .info, text) }
+        // Ring buffer only, never the stderr mirror. A server's stderr is log
+        // output by its own contract, but what it logs is not under this
+        // host's control, and this is the one lane `CallCapture`'s redaction
+        // never sees: a subject line or a message body logged at any level
+        // would have landed outside Cupertino's directory, in a file that
+        // outlives the process — the exact thing `hostCall` keeps arguments
+        // away from.
+        if !text.isEmpty { hostLog(surface.id, .info, text, mirror: false) }
       }
     }
 

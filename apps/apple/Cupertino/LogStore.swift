@@ -210,10 +210,19 @@ nonisolated enum AppSupport {
 /// keeps open, so this end is far less exposed — but "usually" is the whole
 /// problem, and a logging call is not something that should be able to take the
 /// app down. A dropped line is the correct failure here.
-nonisolated func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
+///
+/// `mirror: false` keeps a line out of stderr and in the ring buffer only. It
+/// exists for one caller: the stderr a node server writes is relayed through
+/// here, and a server that logs a subject line or a message body at any level
+/// would otherwise land it in a file outside Cupertino's directory that outlives
+/// the process — the exact thing `hostCall` below keeps arguments away from,
+/// and the one lane the redaction in `CallCapture` never saw.
+nonisolated func hostLog(
+  _ surface: String, _ level: LogStore.Level, _ text: String, mirror: Bool = true
+) {
   let bytes = Array("[\(surface)] \(level.rawValue): \(text)\n".utf8)
   var offset = 0
-  while offset < bytes.count {
+  while mirror && offset < bytes.count {
     let written = bytes.withUnsafeBufferPointer {
       write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
     }

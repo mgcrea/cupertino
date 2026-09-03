@@ -68,8 +68,15 @@ nonisolated enum InProcessServers {
   /// `connection` is the session the request arrived on. Only Sound reads it,
   /// to tie a recording to the client that started it — see
   /// `SoundCapture.connectionClosed`. nil from a check or a capability probe.
+  ///
+  /// `surfaceEnabled` answers for ANOTHER surface: `screen` photographs the
+  /// windows of Mail, Notes and the rest, and a surface the user has switched
+  /// off must not be capturable just because the switch lives on a different
+  /// pane. A value for the same reason the gates are — a check pins both
+  /// answers without touching a preference.
   static func handle(
     _ line: String, surface: Surface, allowWrites: Bool, gateOn: (String) -> Bool,
+    surfaceEnabled: @escaping (Surface) -> Bool,
     lentScope: AccessibilityDriver.Scope? = nil, connection: UUID? = nil
   ) -> Reply {
     switch surface.id {
@@ -78,7 +85,8 @@ nonisolated enum InProcessServers {
         ScreenServer.handle(
           line, surface: surface,
           captureAllowed: gateOn("allowCapture"),
-          anyAppAllowed: gateOn("allowAnyApp")))
+          anyAppAllowed: gateOn("allowAnyApp"),
+          targetEnabled: surfaceEnabled))
     case "sound":
       return reply(
         SoundServer.handle(

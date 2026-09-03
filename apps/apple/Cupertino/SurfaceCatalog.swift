@@ -115,7 +115,7 @@ enum SurfaceCatalog {
     // client reaches through the bridge — rather than describing the tool list
     // a second time in Swift.
     if surface.runtime == .swift {
-      let caps = try inProcess(surface, allowWrites: allowWrites)
+      let caps = try inProcess(surface, allowWrites: allowWrites, gates: gates)
       let cacheKey = key(surface, allowWrites, gates)
       await MainActor.run { cache[cacheKey] = caps }
       return caps
@@ -151,7 +151,21 @@ enum SurfaceCatalog {
   /// invisible rather than loud. The card renders a perfectly plausible list
   /// that belongs to another surface, or to another setting, and looks right.
   /// It rendered `screen`'s on the Sound pane.
-  private static func inProcess(_ surface: Surface, allowWrites: Bool) throws -> Capabilities {
+  private static func inProcess(_ surface: Surface, allowWrites: Bool, gates: [String]) throws
+    -> Capabilities
+  {
+    // `gates` arrives as env suffixes — that is what `ServerLocator` hands a
+    // node server and what the cache key is built from — and the server asks
+    // by gate ID. The table maps one to the other; nothing here reads a
+    // preference, so the answer is for the setting the card was keyed on and
+    // not for the setting at the instant of the render, which is what the
+    // contract above promises and what reading `UserDefaults` inside the
+    // closure quietly broke.
+    let enabled = Set(gates)
+    func gateOn(_ id: String) -> Bool {
+      guard let gate = surface.gates.first(where: { $0.id == id }) else { return false }
+      return enabled.contains(gate.envSuffix)
+    }
     func ask(_ method: String) -> InProcessServers.Reply {
       InProcessServers.handle(
         #"{"jsonrpc":"2.0","id":1,"method":"\#(method)"}"#,
@@ -162,9 +176,8 @@ enum SurfaceCatalog {
         // execute. It arrived here and went nowhere, so the Sound pane could
         // not have shown a write tool even once the server was the right one.
         allowWrites: allowWrites,
-        // The cache key already includes the gates, so these are read once per
-        // distinct setting rather than once per render.
-        gateOn: { SurfaceSettings.isGateOn(surface, id: $0) })
+        gateOn: gateOn,
+        surfaceEnabled: SurfaceSettings.isEnabled)
     }
 
     // A surface whose runtime says swift and which no server claims would

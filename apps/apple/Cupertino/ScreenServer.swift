@@ -30,8 +30,13 @@ nonisolated enum ScreenServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
+  /// `targetEnabled` answers for the surface being photographed, not for this
+  /// one: a user who switched Mail off in Settings has said its window is not
+  /// to be read, and `ServerHost` refuses Mail's own server on that switch — so
+  /// capture has to refuse on it too, or the switch is only half a switch.
   static func handle(
-    _ line: String, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool
+    _ line: String, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool,
+    targetEnabled: @escaping (Surface) -> Bool
   ) -> String? {
     InProcessRPC.dispatch(
       line,
@@ -48,7 +53,7 @@ nonisolated enum ScreenServer {
       call: { name, args, id in
         call(
           name, args: args, id: id, surface: surface, captureAllowed: captureAllowed,
-          anyAppAllowed: anyAppAllowed)
+          anyAppAllowed: anyAppAllowed, targetEnabled: targetEnabled)
       })
   }
 
@@ -136,7 +141,7 @@ nonisolated enum ScreenServer {
 
   private static func call(
     _ name: String, args: [String: Any], id: Any?, surface: Surface, captureAllowed: Bool,
-    anyAppAllowed: Bool
+    anyAppAllowed: Bool, targetEnabled: (Surface) -> Bool
   ) -> String {
     switch name {
     case "apple_screen_list_targets":
@@ -186,6 +191,20 @@ nonisolated enum ScreenServer {
         // Not a surface and not shaped like a bundle id: almost certainly a
         // typo'd surface name, and saying so beats "no window found".
         return failure(id, ScreenCapture.Failure.unknownSurface(wanted).localizedDescription)
+      }
+      // The enable switch outranks both gates. `surfaces.json` records that
+      // capture supersedes the `allowCodes` gates on messages and safari — a
+      // photograph of a page shows what a tool would have redacted — but a
+      // surface switched OFF is a different decision: the user said its window
+      // is not to be read at all, and every other path honours that. By bundle
+      // id as well, or "Capture any application" would be the way around it.
+      if let owner = target ?? Surface.all.first(where: { $0.bundleID == wanted }),
+        !targetEnabled(owner)
+      {
+        return failure(
+          id,
+          "\(owner.displayName) is switched off in Cupertino, so its window is not captured. "
+            + "Turn it back on in the app to capture it.")
       }
       let directory = (args["directory"] as? String).map { URL(fileURLWithPath: $0) }
       let overwrite = args["overwrite"] as? Bool ?? false

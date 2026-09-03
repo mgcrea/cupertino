@@ -47,7 +47,7 @@ struct DispatchCheck {
       gateOn: {
         asked.append($0)
         return gates
-      })
+      }, surfaceEnabled: { _ in true })
     guard case .message(let text) = outcome,
       let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
     else { return (nil, asked, outcome) }
@@ -170,7 +170,8 @@ struct DispatchCheck {
       let notification = #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
       var replied = false
       if case .message = InProcessServers.handle(
-        notification, surface: surface, allowWrites: true, gateOn: { _ in true })
+        notification, surface: surface, allowWrites: true, gateOn: { _ in true },
+        surfaceEnabled: { _ in true })
       {
         replied = true
       }
@@ -183,7 +184,8 @@ struct DispatchCheck {
       // JSON-RPC's null id is for.
       var parseError: Int?
       if case .message(let reply) = InProcessServers.handle(
-        "{not json at all", surface: surface, allowWrites: true, gateOn: { _ in true }),
+        "{not json at all", surface: surface, allowWrites: true, gateOn: { _ in true },
+        surfaceEnabled: { _ in true }),
         let data = reply.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
       {
@@ -194,7 +196,7 @@ struct DispatchCheck {
       var missingMethod: Int?
       if case .message(let reply) = InProcessServers.handle(
         #"{"jsonrpc":"2.0","id":7}"#, surface: surface, allowWrites: true,
-        gateOn: { _ in true }),
+        gateOn: { _ in true }, surfaceEnabled: { _ in true }),
         let data = reply.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
       {
@@ -209,7 +211,7 @@ struct DispatchCheck {
     var noServer = false
     if case .noServer = InProcessServers.handle(
       #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#, surface: Surface.named("mail")!,
-      allowWrites: true, gateOn: { _ in true })
+      allowWrites: true, gateOn: { _ in true }, surfaceEnabled: { _ in true })
     {
       noServer = true
     }
@@ -235,7 +237,7 @@ struct DispatchCheck {
       guard
         case .message(let text) = InProcessServers.handle(
           line, surface: Surface.named("desktop")!, allowWrites: false,
-          gateOn: { _ in gates },
+          gateOn: { _ in gates }, surfaceEnabled: { _ in true },
           lentScope: .only(["com.apple.mail"])),
         let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
         let result = object["result"] as? [String: Any],
@@ -266,7 +268,7 @@ struct DispatchCheck {
       guard
         case .message(let text) = InProcessServers.handle(
           line, surface: Surface.named("simulator")!, allowWrites: false,
-          gateOn: { _ in gates }, lentScope: lent),
+          gateOn: { _ in gates }, surfaceEnabled: { _ in true }, lentScope: lent),
         let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
         let result = object["result"] as? [String: Any],
         let content = (result["content"] as? [[String: Any]])?.first,
