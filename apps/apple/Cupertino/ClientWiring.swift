@@ -193,7 +193,10 @@ enum ClientWiring {
     Client(
       id: "cursor",
       displayName: "Cursor",
-      symbol: "chevron.left.forwardslash.chevron.right",
+      // Only ever drawn where Cursor is not installed, and shared with
+      // Bastion's row for the same client. The angle brackets went to VS Code
+      // there, which is a code editor and nothing else.
+      symbol: "cursorarrow",
       bundleID: "com.todesktop.230313mzl4w4u92",
       evidence: [URL(fileURLWithPath: "/Applications/Cursor.app")],
       wiring: .json(
@@ -229,7 +232,10 @@ enum ClientWiring {
       // looking for a row that was already there.
       displayName: "ChatGPT & Codex",
       symbol: "terminal",
-      bundleID: nil,
+      // The ChatGPT app's, which is `com.openai.codex` — the desktop app took
+      // the CLI's name, and it is one row here for the same reason: they read
+      // one file. Somebody who has only the CLI gets the terminal glyph.
+      bundleID: "com.openai.codex",
       evidence: [
         home.appendingPathComponent(".codex"),
         URL(fileURLWithPath: "/Applications/ChatGPT.app"),

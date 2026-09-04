@@ -733,7 +733,9 @@ private struct ClientSidebarRow: View {
           .frame(width: 7, height: 7)
       }
     } icon: {
-      Image(systemName: client.symbol)
+      // The client's own app icon, the same as the surface rows above and for
+      // the same reason: a row a person picks is recognised before it is read.
+      ClientIconView(client: client)
     }
     .help(status.summary)
   }

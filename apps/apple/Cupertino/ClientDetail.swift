@@ -211,10 +211,7 @@ struct ClientDetail: View {
   private func header(_ snapshot: Snapshot) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 10) {
-        Image(systemName: client.symbol)
-          .font(.title2)
-          .foregroundStyle(.secondary)
-          .frame(width: 28)
+        ClientIconView(client: client, size: 28)
         Text(client.displayName).font(.title2).bold()
       }
 
