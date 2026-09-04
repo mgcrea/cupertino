@@ -220,11 +220,13 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     else { return nil }
     let dir = support.appendingPathComponent("pages", isDirectory: true)
     if !fm.fileExists(atPath: dir.path) {
-      try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [
-        // The container is already 0700, but a store of page content should not
-        // rely on the enclosing directory for that.
-        .posixPermissions: 0o700
-      ])
+      try? fm.createDirectory(
+        at: dir, withIntermediateDirectories: true,
+        attributes: [
+          // The container is already 0700, but a store of page content should not
+          // rely on the enclosing directory for that.
+          .posixPermissions: 0o700
+        ])
     }
     return dir
   }

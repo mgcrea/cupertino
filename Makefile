@@ -664,8 +664,8 @@ version-check: ## Fail if any copy of the version has drifted from package.json
 # only `// swift-format-ignore-file` comments in source -- so a recursive walk
 # from the parent reformats build products. CupertinoBridge and scripts are easy
 # to leave off this list, and leaving them off means they silently stop being
-# formatted.
-SWIFT_SRC := apps/apple/Cupertino apps/apple/CupertinoBridge scripts
+# formatted -- the Safari extension is one file and was missed on the first pass.
+SWIFT_SRC := apps/apple/Cupertino apps/apple/CupertinoBridge apps/apple/CupertinoSafariExtension scripts
 
 # swift-format's version follows whichever Xcode is selected, so a toolchain bump
 # can reformat the whole tree with no change to `.swift-format` and turn the gate
