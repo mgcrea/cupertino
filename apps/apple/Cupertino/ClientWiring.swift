@@ -58,7 +58,7 @@ enum ClientWiring {
   /// way to add them is a third case here rather than a snippet maintained blind.
   enum Wiring: Hashable {
     /// A strict-JSON file we merge into. `rootKey` is the object servers live
-    /// under: `mcpServers` for five of the six, `servers` for VS Code. A
+    /// under: `mcpServers` for five of the seven, `servers` for VS Code. A
     /// parameter rather than an assumption, because the previous version of this
     /// file hardcoded the string in two places and called the difference an enum
     /// with one case.
@@ -224,7 +224,26 @@ enum ClientWiring {
       wiring: .json(
         path: home.appendingPathComponent(".codeium/windsurf/mcp_config.json"),
         rootKey: "mcpServers")),
-
+    // The one client that keeps its servers under `servers`. Held back for two
+    // releases on a mix-up between two files: `settings.json` is the JSONC one
+    // people maintain by hand, but MCP servers live in `User/mcp.json`, which is
+    // strict JSON written by VS Code itself. Every write here begins with a read
+    // and `JSONSerialization` throws on a comment, so a file that somehow holds
+    // one fails closed rather than being silently stripped of it.
+    Client(
+      id: "vscode",
+      displayName: "Visual Studio Code",
+      // The angle brackets, per the note on Cursor above: this one is a code
+      // editor and nothing else. Only ever drawn where VS Code is not installed.
+      symbol: "chevron.left.forwardslash.chevron.right",
+      bundleID: "com.microsoft.VSCode",
+      evidence: [
+        URL(fileURLWithPath: "/Applications/Visual Studio Code.app"),
+        URL(fileURLWithPath: "/opt/homebrew/bin/code"),
+        URL(fileURLWithPath: "/usr/local/bin/code"),
+      ],
+      wiring: .json(
+        path: support.appendingPathComponent("Code/User/mcp.json"), rootKey: "servers")),
     Client(
       id: "codex",
       // Named for the file rather than for one of the three things that read

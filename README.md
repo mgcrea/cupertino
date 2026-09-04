@@ -110,10 +110,10 @@ can have both. The app only ever touches its own `cupertino-*` keys — an `appl
 belonging to some other server is left alone.
 
 Cupertino is machine configuration, not a project dependency, so it belongs in a per-user config:
-one file each for Claude Code, Claude Desktop, Cursor, LM Studio and Windsurf, and `--scope user`
-in the line Codex gets to paste. Deliberately **not** `--scope project`, which writes an `.mcp.json`
-meant to be committed — that entry is an absolute path into a bundle on one Mac, backed by one
-person's Full Disk Access grant, and it would be useless to a teammate and unwise to offer them.
+one file each, and the equivalent of `--scope user` everywhere. Deliberately **not** `--scope
+project`, which writes an `.mcp.json` meant to be committed — that entry is an absolute path into a
+bundle on one Mac, backed by one person's Full Disk Access grant, and it would be useless to a
+teammate and unwise to offer them.
 
 All seven are written by the app, and nothing has to be pasted into a terminal. Six keep strict JSON
 and are merged into as dictionaries — five under `mcpServers`, Visual Studio Code under `servers` in

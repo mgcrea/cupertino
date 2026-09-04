@@ -225,14 +225,17 @@ export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Termina
  * it. `ClientWiring.swift` is the authority on both the membership and the
  * split, and the split is not about how popular a client is.
  *
- * `automatic` is every client whose config is strict JSON with servers under a
- * top-level `mcpServers`: the app merges its four entries in, keeps a backup
- * and leaves every other key alone.
+ * `automatic` is all seven, which is the point: the app merges its entries into
+ * the config each client already has, keeps a backup and leaves every other key
+ * alone. Five keep their servers under a top-level `mcpServers`; Visual Studio
+ * Code uses `servers` in `User/mcp.json`, and Codex a spliced `[mcp_servers]`
+ * block in TOML.
  *
- * `command` is the clients whose config is not ours to rewrite, and the reason
- * is syntax rather than stakes: Visual Studio Code's is JSONC and Codex's is
- * TOML, and re-serialising either would delete the comments in a file the user
- * maintains by hand. Both get a line to paste instead — one their own CLI runs.
+ * `command` is empty, and kept for the day it is not. It held Visual Studio Code
+ * and Codex for two releases, on a reading of each file that turned out to be
+ * wrong in one case and merely expensive in the other. Zed and Goose are what
+ * would refill it: a `context_servers` entry and a YAML `extensions:` block,
+ * neither JSON nor TOML.
  *
  * Claude Code was on that list until its two reasons were checked. Its
  * `~/.claude.json` does hold credentials, but the swap preserves the file's
