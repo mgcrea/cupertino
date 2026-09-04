@@ -910,14 +910,19 @@ enum SurfaceSettings {
 
   /// Whether this surface is served at all.
   ///
-  /// **Absence means enabled**, which is the whole reason this is not written
-  /// the way `allowWrites` above is. `bool(forKey:)` alone returns false for a
-  /// missing key, so copying that one line would ship every surface off for
-  /// every existing install, and the first Update click would then strip all
-  /// eight keys out of somebody's `claude_desktop_config.json`. It is also what
-  /// keeps the NEXT surface on: a surface that ships in a later version has no
-  /// key on an existing Mac, reads enabled, and lands in `entries` and
-  /// `expected` exactly as adding a surface does today.
+  /// **Absence means `surface.defaultEnabled`**, which is the whole reason this
+  /// is not written the way `allowWrites` above is. `bool(forKey:)` alone
+  /// returns false for a missing key, so copying that one line would ship every
+  /// surface off for every existing install, and the first Update click would
+  /// then strip all eight keys out of somebody's `claude_desktop_config.json`.
+  /// The fallback is also what carries the NEXT surface: one that ships in a
+  /// later version has no key on an existing Mac, reads whatever the manifest
+  /// says it should be, and lands in `entries` and `expected` — or stays out of
+  /// both — exactly as it would on a fresh install.
+  ///
+  /// The default is per surface and comes from the manifest, not from a
+  /// constant here: Screen and Sound arrive off because their grants reach past
+  /// the surface being brokered, and every app surface arrives on.
   ///
   /// The two-step is not redundant either, and `as? Bool` is the trap.
   /// MEASURED, with `-surfaceEnabled.safari NO` on the command line:
@@ -935,7 +940,7 @@ enum SurfaceSettings {
   /// answer a handshake very early in launch.
   static func isEnabled(_ surface: Surface) -> Bool {
     let key = enabledKey(surface)
-    guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+    guard UserDefaults.standard.object(forKey: key) != nil else { return surface.defaultEnabled }
     return UserDefaults.standard.bool(forKey: key)
   }
 

@@ -37,7 +37,7 @@ struct SurfaceDetail: View {
   init(surface: Surface, model: StatusModel) {
     self.surface = surface
     self.model = model
-    _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
+    _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
   }
 
   var body: some View {

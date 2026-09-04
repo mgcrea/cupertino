@@ -901,9 +901,12 @@ struct GateToggle: View {
 /// checkbox; a stale copy of this one silently re-enables a surface AND writes
 /// its key back into somebody's client config on the next Update.
 ///
-/// `wrappedValue: true` agrees with `SurfaceSettings.isEnabled`'s absence-means-
-/// enabled by construction. Do not change one without the other; the app and the
-/// relay would then disagree about which surfaces exist.
+/// `wrappedValue: surface.defaultEnabled` agrees with
+/// `SurfaceSettings.isEnabled`'s fallback by construction. Do not change one
+/// without the other; the app and the relay would then disagree about which
+/// surfaces exist. Not a literal `true`: Screen and Sound default off, and a
+/// hardcoded `true` here would draw their switch on while the relay served
+/// nothing.
 struct SurfaceSwitch: View {
   enum Style {
     /// Under the surface it belongs to, in the main window's detail pane.
@@ -921,7 +924,7 @@ struct SurfaceSwitch: View {
     self.surface = surface
     self.style = style
     self.model = model
-    _enabled = AppStorage(wrappedValue: true, SurfaceSettings.enabledKey(surface))
+    _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
   }
 
   var body: some View {

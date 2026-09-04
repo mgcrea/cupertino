@@ -42,9 +42,14 @@ off cannot see that they exist.
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 9 tools, chats/search/counts/decoded text + gated send and codes                 |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes          |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
-| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package                         |
-| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; served in-app, no npm package |
+| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
+| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
+
+**Screen and Sound arrive switched off.** Every surface that brokers an Apple app is on when
+Cupertino is installed; those two are not, because Screen Recording and the microphone are
+per-process grants that reach past the surface being brokered. Switch them on in the surface list if
+you want them.
 
 Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
 an Apple app is also its own npm package; `screen` is not, and could not be — it brokers

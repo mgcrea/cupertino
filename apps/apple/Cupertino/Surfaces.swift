@@ -70,6 +70,20 @@ struct Surface: Identifiable, Hashable {
   /// False hides the toggle rather than showing one that changes nothing —
   /// Contacts registers no write tool at all, by construction.
   let supportsWrites: Bool
+  /// Whether this surface is served on a Mac where nobody has touched its
+  /// switch.
+  ///
+  /// True for every app surface: the surface list is the product, and a fresh
+  /// install that brokered nothing would be a blank app. False for a capability
+  /// whose grant reaches past the surface it is asked for — Screen Recording
+  /// sees every window on the display and the microphone hears the room, and
+  /// neither is scoped by macOS to the thing being brokered (see
+  /// docs/screen.md). Those two arrive off and are switched on by the person
+  /// who wants them.
+  ///
+  /// Read through `SurfaceSettings.isEnabled`, never directly: a switch that
+  /// has been moved wins over this, and only absence falls back here.
+  let defaultEnabled: Bool
   /// Where the file lane reads, relative to the home directory. `nil` for a
   /// surface that has no file lane yet.
   let storePath: String?
@@ -184,6 +198,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .always,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Mail/V*/MailData/Envelope Index",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MAIL_",
@@ -200,6 +215,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .always,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_NOTES_",
@@ -223,6 +239,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .always,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Group Containers/group.com.apple.reminders",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_REMINDERS_",
@@ -249,6 +266,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .always,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_CALENDAR_",
@@ -282,6 +300,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .writes,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Application Support/AddressBook",
       storePermission: .contacts,
       envPrefix: "APPLE_CONTACTS_",
@@ -343,6 +362,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .writes,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Messages/chat.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MESSAGES_",
@@ -443,6 +463,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: true,
       appleEventsScope: .always,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Safari/History.db",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_SAFARI_",
@@ -503,6 +524,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: false,
       appleEventsScope: nil,
       supportsWrites: true,
+      defaultEnabled: true,
       storePath: "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MAPS_",
@@ -576,6 +598,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: false,
       appleEventsScope: nil,
       supportsWrites: false,
+      defaultEnabled: false,
       storePath: nil,
       storePermission: .screenRecording,
       envPrefix: "APPLE_SCREEN_",
@@ -631,6 +654,7 @@ struct Surface: Identifiable, Hashable {
       usesAppleEvents: false,
       appleEventsScope: nil,
       supportsWrites: true,
+      defaultEnabled: false,
       storePath: nil,
       storePermission: .microphone,
       envPrefix: "APPLE_SOUND_",

@@ -301,6 +301,11 @@ are not recording, and they must be reachable without ever enabling the micropho
 behind its own gate, `allowRecording`, following the `allowCodes` precedent that a change of tier gets
 _"its own switch rather than `allowWrites`"_.
 
+`defaultEnabled` is **false**, the only `false` beside `screen`'s. Volume and speech are harmless,
+but the surface carries the microphone lane behind them, and the switch that decides whether an MCP
+client sees this surface at all should be moved by the person who wants it rather than by an
+install. A Mac nobody has asked serves no sound tools and has `cupertino-sound` in no client config.
+
 ## Still open
 
 - **Periodic re-consent.** Sequoia introduced a recurring prompt for some services. Two runs across one

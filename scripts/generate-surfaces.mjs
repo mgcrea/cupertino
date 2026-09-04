@@ -63,9 +63,13 @@ const validate = (surfaces) => {
     for (const key of ["displayName", "envPrefix"]) {
       if (typeof s[key] !== "string" || !s[key]) problems.push(`${at}: ${key} is required`);
     }
-    for (const key of ["usesAppleEvents", "supportsWrites"]) {
+    for (const key of ["usesAppleEvents", "supportsWrites", "defaultEnabled"]) {
       if (typeof s[key] !== "boolean") problems.push(`${at}: ${key} must be a boolean`);
     }
+    // Spelled out on every surface rather than defaulted to `true` when absent.
+    // A missing key here would read as "on for everyone" — the one answer that
+    // must never be given by omission, since it is what lands the surface in
+    // somebody's client config on their next Update click.
     // WHEN the events go out, not whether they may. Messages and Contacts read
     // through the file lane and script the app only to write, so on a Mac with
     // writes off they send nothing at all — and the status glyph used to nag
@@ -279,6 +283,7 @@ const swiftSurface = (s) => {
     `      usesAppleEvents: ${s.usesAppleEvents},`,
     `      appleEventsScope: ${s.appleEventsScope === null ? "nil" : `.${s.appleEventsScope}`},`,
     `      supportsWrites: ${s.supportsWrites},`,
+    `      defaultEnabled: ${s.defaultEnabled},`,
     `      storePath: ${s.storePath === null ? "nil" : swiftString(s.storePath)},`,
     `      storePermission: .${STORE_PERMISSION[s.storePermission]},`,
     `      envPrefix: ${swiftString(s.envPrefix)},`,

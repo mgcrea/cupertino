@@ -144,6 +144,12 @@ An npm package is not merely absent but impossible. The Screen Recording grant l
 a published `@mgcrea/mcp-apple-screen` could do nothing — publishing one would be an empty-handed
 claim.
 
+**The surface itself is off until somebody asks for it.** `defaultEnabled: false` in
+`surfaces.json`, which is the manifest's only `false` beside Sound's: Screen Recording is
+per-process and all-or-nothing, so a Mac that has never been asked serves none of the three tools
+below and `cupertino-screen` is written into no client config. Switching the surface on in the
+surface list is the ask; `allowCapture` is a second, narrower one.
+
 | Tool                           | Gated                              | Notes                                                     |
 | ------------------------------ | ---------------------------------- | --------------------------------------------------------- |
 | `apple_screen_list_targets`    | no                                 | Capturable surfaces and window counts. Never titles.      |

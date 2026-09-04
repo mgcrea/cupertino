@@ -215,6 +215,12 @@ smoke-swift: ## Handshake only the app-served surfaces through the bridge
 	@# Separate from `make smoke` because that one also handshakes the node
 	@# surfaces, which need either a bundle or `make dev-config` to resolve.
 	@# This needs neither: the app is the server.
+	@#
+	@# Both swift surfaces default OFF (`defaultEnabled: false` in
+	@# surfaces.json), and a switched-off surface is refused by design, so on
+	@# a Mac where nobody has moved those switches this FAILs and the app is
+	@# fine. Turn Screen and Sound on in the app, or pass
+	@# `-surfaceEnabled.screen YES` when launching it.
 	@for s in $(SWIFT_SURFACES); do \
 		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"make","version":"0"}}}' \
 			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"serverInfo"' \

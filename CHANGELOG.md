@@ -12,6 +12,29 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **Screen and Sound arrive switched off.** Every surface that brokers an Apple app is on when
+  Cupertino is installed; those two now are not. Their grants are the ones that do not stop at the
+  surface being brokered — `kTCCServiceScreenCapture` is per-process and sees every window on the
+  display, and the microphone hears the room, neither scoped by macOS to the thing Cupertino is
+  asked for. A capability that reaches that far past what it brokers should be switched on by the
+  person who wants it rather than found already on.
+
+  The default is per surface now, `defaultEnabled` in `surfaces.json` and generated into
+  `Surface.all`, rather than the constant `true` that `SurfaceSettings.isEnabled` and three
+  `@AppStorage` initialisers each spelled out on their own. A surface added later declares what it
+  should be in the same manifest entry that declares everything else about it, and the app and the
+  relay cannot drift into disagreeing about which surfaces exist.
+
+  **On a Mac where they are on today, they go off.** Neither ever wrote a `surfaceEnabled` key —
+  1.8.0 and 1.11.0 shipped them on by absence — so an untouched switch now reads the new default.
+  The entries already in a client's configuration stay there, flagged in that client's pane as
+  naming a switched-off surface, until the next Configure takes them out. Switching either surface
+  back on in the surface list restores it and rewrites the entry.
+
 ## [1.13.0] - 2026-09-04
 
 ### Changed
