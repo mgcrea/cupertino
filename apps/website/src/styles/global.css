@@ -1,55 +1,6 @@
+/* Tokens first, then Tailwind. The order is load-bearing — see tokens.css. */
+@import "./tokens.css";
 @import "tailwindcss";
-
-/* ── Tokens ──────────────────────────────────────────────────────────────────
-   Dark is the base, not an override. The design canvas
-   (`.idea/design/Cupertino Site v4.dc.html`) is drawn dark-first and has no
-   light artboard, so there is no light theme to be faithful to and none is
-   invented here. Everything below is a token rather than a literal, so adding
-   one later is a second block and no component edits.
-
-   The warm ramp is the icon's own sky gradient, from
-   `.idea/design/logo/colors.css`: #FFD08A at the top, #F2895C at the bottom.
-   Nothing else on the page is warm — the accent is load-bearing precisely
-   because it is rationed. */
-:root {
-  --color-bg: #0b0c0f;
-  --color-bg-2: #131419;
-  --color-bg-3: #191a1d;
-  --color-fg: #f4f2ef;
-  --color-fg-dim: #9b9a96;
-  --color-fg-muted: #6e7076;
-  --color-rule: #22242a;
-  --color-rule-2: #2e3037;
-
-  /* Sky bottom. Type-safe on ink at 4.8:1, so unlike Cadence's amber it needs
-     no separate deepened variant — one accent covers glyphs and fills alike. */
-  --color-accent: #f2895c;
-  /* Hover/link lift, one step up the same ramp. */
-  --color-accent-hi: #f2a07c;
-  /* Sits on top of an accent fill. The icon's ink, not the page background. */
-  --color-accent-ink: #1b1c1f;
-  /* Sky top. The second stop of the icon gradient — used only where the
-     gradient itself is being quoted, never as a second accent. */
-  --color-sky-top: #ffd08a;
-
-  /* Status, hue-matched to the palette in logo/colors.css and lifted for ink. */
-  /* One value per status, doing two jobs. Bastion splits each into a fill and
-     an ink — `--color-ok: #3e9e63` with `--color-ok-ink: #8fd9a9` — because
-     these three are ink values, so `bg-ok` on MenuBar's dot paints a fill in a
-     colour chosen for text. Not adopted here: it would mean rewiring a dozen
-     `!text-ok` call sites and dimming a dot that currently reads correctly,
-     which is more risk than the tidiness buys. Worth knowing the two palettes
-     disagree here, and that bastion's is the more capable of them. */
-  --color-ok: #8fd9a9;
-  --color-warn: #ffd08a;
-  --color-danger: #e4805c;
-
-  /* Backing behind a rendered macOS surface (the Settings pane, the menu-bar
-     strip) so it reads as a window sitting on the page rather than as a panel
-     of the page itself. */
-  --color-chrome: #1c1e23;
-  --color-chrome-2: #24262c;
-}
 
 @theme inline {
   --color-bg: var(--color-bg);

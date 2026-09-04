@@ -1,0 +1,7 @@
+# Everything under /_astro/ carries a content hash in its filename, so the URL
+# changes whenever the bytes do. Without this, Workers Assets serves them with
+# the same `max-age=0, must-revalidate` as the HTML, which puts a conditional
+# request on the render-blocking stylesheet on *every* refresh — the round-trip
+# that gave the buttons time to paint unstyled. See src/styles/tokens.css.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
