@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.13.0`,
-`notes-v1.13.0`, `reminders-v1.13.0`, `core-v1.13.0` for the npm packages, and `app-v1.13.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.14.0`,
+`notes-v1.14.0`, `reminders-v1.14.0`, `core-v1.14.0` for the npm packages, and `app-v1.14.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.14.0] - 2026-09-04
 
 ### Changed
 
@@ -34,6 +34,19 @@ summary.
   The entries already in a client's configuration stay there, flagged in that client's pane as
   naming a switched-off surface, until the next Configure takes them out. Switching either surface
   back on in the surface list restores it and rewrites the entry.
+
+### Fixed
+
+- **Visual Studio Code is actually wired now.** 1.13.0's notes announced it and the build did not
+  carry it: the `vscode` entry never reached `ClientWiring.swift` before that release commit, so the
+  client that had just been taken off the paste-a-command list was on no list at all. It is there
+  now, merged into `~/Library/Application Support/Code/User/mcp.json` — strict JSON under `servers`,
+  written by VS Code itself, and not the JSONC `settings.json` the two files were conflated as.
+
+- **The website's buttons no longer flash blue before the page finishes loading.** The design tokens
+  sat in the last 13% of a 33 KB stylesheet, and Safari paints from a partially parsed sheet at
+  around 250 ms, so on a cold load every colour var resolved invalid and the buttons rendered in the
+  browser's link blue. Tokens are their own file now, imported first.
 
 ## [1.13.0] - 2026-09-04
 
@@ -1537,7 +1550,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.13.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.14.0...HEAD
+[1.14.0]: https://github.com/mgcrea/cupertino/compare/app-v1.13.0...app-v1.14.0
 [1.13.0]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...app-v1.13.0
 [1.12.0]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...app-v1.12.0
 [1.11.0]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...app-v1.11.0

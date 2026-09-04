@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-messages",
   "title": "Apple Messages",
   "description": "Search and read Apple Messages — chats and decoded text, sending off by default",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-messages",
-      "version": "1.13.0",
+      "version": "1.14.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
