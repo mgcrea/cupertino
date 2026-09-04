@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.12.0`,
-`notes-v1.12.0`, `reminders-v1.12.0`, `core-v1.12.0` for the npm packages, and `app-v1.12.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.13.0`,
+`notes-v1.13.0`, `reminders-v1.13.0`, `core-v1.13.0` for the npm packages, and `app-v1.13.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.13.0] - 2026-09-04
 
 ### Changed
 
@@ -58,6 +58,22 @@ summary.
   reach a lane that reaches nothing but the index was to give up send, reply, move and delete for
   Mail across every client at once. Nobody makes that trade, which made the tool invisible to
   almost everyone — including the website, which has been listing it as a plain read tool.
+
+- **Client rows show the editor's real icon instead of an SF Symbol.** Cursor, VS Code and every
+  other row in the sidebar, the client detail header and Settings' automation table now draw the
+  installed app's own icon, looked up by bundle id or by path. `SurfaceIcon.swift` becomes
+  `AppIcon.swift` and the lookup is shared, so surface icons and client icons stop being two
+  unrelated pieces of code that happened to render the same size.
+
+  Two knock-on fixes. Cursor's fallback symbol moves from the chevron-brackets glyph to
+  `cursorarrow`, because the brackets now belong to VS Code and having both wear them was the
+  reason the fallbacks read as interchangeable; and ChatGPT & Codex gains a bundle id
+  (`com.openai.codex`) so its row can resolve to a real icon rather than being the one client that
+  could never have one.
+
+  Lookups are disabled under a screenshot capture. The goldens would otherwise depend on which
+  editors happen to be installed on the Mac doing the capturing, which is a gate that fails for a
+  reason that has nothing to do with the change under test.
 
 ### Removed
 
@@ -1498,7 +1514,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.13.0...HEAD
+[1.13.0]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...app-v1.13.0
 [1.12.0]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...app-v1.12.0
 [1.11.0]: https://github.com/mgcrea/cupertino/compare/app-v1.10.0...app-v1.11.0
 [1.10.0]: https://github.com/mgcrea/cupertino/compare/app-v1.9.0...app-v1.10.0
