@@ -1,6 +1,7 @@
 ---
 import { DOWNLOAD, PRICING, REPO_URL, SHIPPED, TRIAL } from "../config";
 import { HERO_TURN, surfaceName } from "../data/examples";
+import AppleGlyph from "./AppleGlyph.astro";
 import Button from "./Button.astro";
 import SurfaceGlyph from "./SurfaceGlyph.astro";
 
@@ -98,7 +99,10 @@ const CLAIMS = [
             <>
               {/* Not external: this is a download, and a tab that opens only to
                   close itself is worse than no tab. */}
-              <Button href={DOWNLOAD.href}>Download for macOS</Button>
+              <Button href={DOWNLOAD.href}>
+                <AppleGlyph size={16} />
+                Download for macOS
+              </Button>
               <Button href={PRICING.buy} variant="secondary">
                 Buy a licence <span class="text-fg-dim">·</span> {PRICING.price}
               </Button>
