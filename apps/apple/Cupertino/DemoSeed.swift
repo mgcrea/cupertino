@@ -300,7 +300,9 @@ enum DemoSeed {
   /// three levels appear, since they are tinted differently and a fixture that
   /// only exercises `.info` shows none of that.
   nonisolated private static let logLines: [(String, LogStore.Level, String)] = [
-    ("cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"),
+    (
+      "cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"
+    ),
     ("mail", .info, "initialize"),
     ("mail", .info, "tools/list"),
     ("mail", .info, "allowWrites=true"),
@@ -358,7 +360,9 @@ enum DemoSeed {
   /// shows — it fills perhaps half the pane, and padding it with calls the
   /// prompt did not make is the one fix that is not available.
   nonisolated private static let heroTurnLogLines: [(String, LogStore.Level, String)] = [
-    ("cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"),
+    (
+      "cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"
+    ),
     ("contacts", .info, "initialize"),
     ("contacts", .info, "tools/list"),
     ("mail", .info, "initialize"),

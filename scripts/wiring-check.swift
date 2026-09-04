@@ -78,12 +78,12 @@ struct WiringCheck {
   static func deepEqual(_ a: Any?, _ b: Any?) -> Bool {
     switch (a, b) {
     case (nil, nil): return true
-    case let (x as [String: Any], y as [String: Any]):
+    case (let x as [String: Any], let y as [String: Any]):
       return x.count == y.count && x.allSatisfy { deepEqual($0.value, y[$0.key]) }
-    case let (x as [Any], y as [Any]):
+    case (let x as [Any], let y as [Any]):
       return x.count == y.count && zip(x, y).allSatisfy { deepEqual($0, $1) }
     case (is NSNull, is NSNull): return true
-    case let (x as NSObject, y as NSObject): return x.isEqual(y)
+    case (let x as NSObject, let y as NSObject): return x.isEqual(y)
     default: return false
     }
   }
@@ -209,7 +209,8 @@ struct WiringCheck {
     // The nested write, which is the one with something to destroy: Claude
     // Code's per-folder blocks. The first folder in the file stands in for all
     // of them, and the assertion is about the other ninety-seven.
-    guard let projects = before["projects"] as? [String: Any], let folder = projects.keys.sorted().first
+    guard let projects = before["projects"] as? [String: Any],
+      let folder = projects.keys.sorted().first
     else { return }
     let nested = ClientWiringMerge.mergedIntoLocalScope(
       into: before, folder: folder, entries: entries(), legacy: legacy, remove: [])
@@ -315,7 +316,8 @@ struct WiringCheck {
     for (key, entry) in entries() { current[key] = entry }
     check(
       "matching command is .configured",
-      ClientWiringMerge.audit(servers: current, expectedCommand: bridge, expected: expected, unexpected: [])
+      ClientWiringMerge.audit(
+        servers: current, expectedCommand: bridge, expected: expected, unexpected: [])
         == .configured)
   }
 
@@ -327,16 +329,19 @@ struct WiringCheck {
     for (key, entry) in entries() where key != "cupertino-calendar" { three[key] = entry }
     check(
       "three of four names the missing one",
-      ClientWiringMerge.audit(servers: three, expectedCommand: bridge, expected: expected, unexpected: [])
+      ClientWiringMerge.audit(
+        servers: three, expectedCommand: bridge, expected: expected, unexpected: [])
         == .incomplete(["Calendar"]))
     check(
       "none is .notConfigured, not .incomplete",
-      ClientWiringMerge.audit(servers: [:], expectedCommand: bridge, expected: expected, unexpected: [])
+      ClientWiringMerge.audit(
+        servers: [:], expectedCommand: bridge, expected: expected, unexpected: [])
         == .notConfigured)
     check(
       "someone else's servers alone is still .notConfigured",
       ClientWiringMerge.audit(
-        servers: ["someone-else": ["command": "npx"]], expectedCommand: bridge, expected: expected, unexpected: [])
+        servers: ["someone-else": ["command": "npx"]], expectedCommand: bridge, expected: expected,
+        unexpected: [])
         == .notConfigured)
   }
 
@@ -556,7 +561,8 @@ struct WiringCheck {
     let audit = ClientWiringMerge.audit(
       servers: mine ?? [:], expectedCommand: "/A/bridge", expected: expected, unexpected: [])
     if case .incomplete(let missing) = audit {
-      check("audits the folder's servers, not the user-scope ones", missing.count == surfaces.count - 1)
+      check(
+        "audits the folder's servers, not the user-scope ones", missing.count == surfaces.count - 1)
     } else {
       check("audits the folder's servers, not the user-scope ones", false)
     }
@@ -592,7 +598,6 @@ struct WiringCheck {
     check("every surface was added", surfaces.allSatisfy { servers["cupertino-\($0.id)"] != nil })
     check("nothing else was invented", servers.count == surfaces.count + 1)
   }
-
 
   // MARK: - 12. A merge computed from bytes that have since changed is refused
 
@@ -793,7 +798,9 @@ struct WiringCheck {
     check(
       "a remote entry is .foreign, and names its url",
       state([key: remote]) == .foreign("https://mcp.example.com/x"))
-    check("an entry naming neither is .foreign with nothing to name", state([key: shapeless]) == .foreign(nil))
+    check(
+      "an entry naming neither is .foreign with nothing to name",
+      state([key: shapeless]) == .foreign(nil))
 
     // The reduction, against literals rather than against itself. One case per
     // `Audit` case, plus the two payload pins.
@@ -908,7 +915,9 @@ struct WiringCheck {
     let root: [String: Any] = [
       "numStartups": 41,
       "projects": [
-        "/Users/you/b": ["mcpServers": ["apple-notes": npx, "cupertino-mail": ["command": bridge]]],
+        "/Users/you/b": [
+          "mcpServers": ["apple-notes": npx, "cupertino-mail": ["command": bridge]]
+        ],
         "/Users/you/a": ["mcpServers": ["cupertino-mail": ["command": bridge]]],
         "/Users/you/c": ["mcpServers": [:] as [String: Any]],
         "/Users/you/d": ["allowedTools": []],
@@ -1014,7 +1023,8 @@ struct WiringCheck {
     out = ClientWiringMerge.removing(key: "apple-notes", inLocalScope: "/nope", from: root)
     check("a folder the file does not know changes nothing", deepEqual(out, root))
     let noServers: [String: Any] = ["projects": ["/Users/you/d": ["allowedTools": []]]]
-    out = ClientWiringMerge.removing(key: "apple-notes", inLocalScope: "/Users/you/d", from: noServers)
+    out = ClientWiringMerge.removing(
+      key: "apple-notes", inLocalScope: "/Users/you/d", from: noServers)
     check("a folder with no mcpServers changes nothing", deepEqual(out, noServers))
   }
 
@@ -1067,7 +1077,8 @@ struct WiringCheck {
     check(
       "afterwards the client audits as never configured",
       ClientWiringMerge.audit(
-        servers: servers, expectedCommand: bridge, expected: expected, unexpected: []) == .notConfigured)
+        servers: servers, expectedCommand: bridge, expected: expected, unexpected: [])
+        == .notConfigured)
     check(
       "running it twice changes nothing the second time",
       deepEqual(ClientWiringMerge.unmerged(from: out, rootKey: "mcpServers"), out))
@@ -1168,7 +1179,9 @@ struct WiringCheck {
 
     // Header through last-line-that-says-something, twice: the table and its
     // subtable, with the blank line between them belonging to neither.
-    check("the spans are exactly the lines that hold it", spans(doc, "node_repl") == [[18, 21], [23, 24]])
+    check(
+      "the spans are exactly the lines that hold it",
+      spans(doc, "node_repl") == [[18, 21], [23, 24]])
     check(
       "a subtable extends its server rather than starting a new one",
       spans(doc, "node_repl").count == 2)
@@ -1320,7 +1333,9 @@ struct WiringCheck {
       servers.allSatisfy { !ClientWiringMerge.isOurs($0.value) })
     check(
       "and a key we would write is refused rather than duplicated",
-      ClientWiringMerge.collisions(servers: servers, keys: ["cupertino-notes", "keycloak"]) == ["cupertino-notes"])
+      ClientWiringMerge.collisions(servers: servers, keys: ["cupertino-notes", "keycloak"]) == [
+        "cupertino-notes"
+      ])
     check(
       "an entry whose command is not a string names no identity",
       ClientWiringMerge.identity(of: doc.tables["inline"]?.value) == nil)
@@ -1434,10 +1449,12 @@ struct WiringCheck {
       }())
 
     // Line endings and whitespace on lines nobody touched.
-    let crlf = "model = \"x\"\r\n\r\n[mcp_servers.a]\r\nurl = \"http://a/\"\r\n\r\n[other]\r\nk = 1\r\n"
+    let crlf =
+      "model = \"x\"\r\n\r\n[mcp_servers.a]\r\nurl = \"http://a/\"\r\n\r\n[other]\r\nk = 1\r\n"
     guard let wiredCRLF = wire(crlf) else { return check("CRLF wires", false) }
     check("a CRLF file stays CRLF", !wiredCRLF.contains("\n\n") || wiredCRLF.contains("\r\n\r\n"))
-    check("our own blocks use its line ending", wiredCRLF.contains("[mcp_servers.cupertino-mail]\r\n"))
+    check(
+      "our own blocks use its line ending", wiredCRLF.contains("[mcp_servers.cupertino-mail]\r\n"))
     check("and it round-trips", unwire(wiredCRLF) == crlf)
 
     let ragged = "\u{FEFF}model\t=  \"x\"   \n\n[mcp_servers.a]\nurl = \"http://a/\"\n"
@@ -1496,7 +1513,10 @@ struct WiringCheck {
       ("an empty file", ""),
       ("a trailing blank line", "[other]\nk = 1\n\n"),
       ("servers last in the file", "[other]\nk = 1\n\n[mcp_servers.a]\nurl = \"http://a/\"\n"),
-      ("no blank line before the next table", "[mcp_servers.a]\nurl = \"http://a/\"\n[other]\nk = 1\n"),
+      (
+        "no blank line before the next table",
+        "[mcp_servers.a]\nurl = \"http://a/\"\n[other]\nk = 1\n"
+      ),
     ] {
       guard let once = wire(text), let twice = wire(once) else {
         check("\(label): it wires", false)
@@ -1540,19 +1560,23 @@ struct WiringCheck {
     let nextTable = lines.firstIndex(of: "[shell_environment_policy.set]") ?? -1
     check("our block goes after the servers already there", ours > lastForeign)
     check("and before the unrelated table below them", ours < nextTable)
-    check("with exactly one blank line above it", lines[ours - 1].isEmpty && !lines[ours - 2].isEmpty)
+    check(
+      "with exactly one blank line above it", lines[ours - 1].isEmpty && !lines[ours - 2].isEmpty)
     check(
       "and exactly one between two of our blocks",
       {
-        guard let second = lines.firstIndex(of: "[mcp_servers.cupertino-notes]") else { return false }
+        guard let second = lines.firstIndex(of: "[mcp_servers.cupertino-notes]") else {
+          return false
+        }
         return lines[second - 1].isEmpty && !lines[second - 2].isEmpty
       }())
 
     check(
       "a file with no servers gets them at the end",
-      wire("model = \"x\"\n")?.hasSuffix("[mcp_servers.cupertino-notes]\n"
-        + "command = \"\(bridge)\"\n"
-        + "args = [\"--server=notes\"]\n") == true)
+      wire("model = \"x\"\n")?.hasSuffix(
+        "[mcp_servers.cupertino-notes]\n"
+          + "command = \"\(bridge)\"\n"
+          + "args = [\"--server=notes\"]\n") == true)
     check(
       "an empty file gets them and nothing else",
       wire("")?.hasPrefix("[mcp_servers.cupertino-mail]\n") == true)
@@ -1580,15 +1604,18 @@ struct WiringCheck {
     let block = ClientWiringTOML.render(
       name: "cupertino-notes", entry: tomlEntry("notes"), newline: "\n")
     check("it is a table header for the server", block.hasPrefix("[mcp_servers.cupertino-notes]\n"))
-    check("the command comes first, because that is what a reader wants", {
-      let lines = block.split(separator: "\n")
-      return lines.count > 1 && lines[1].hasPrefix("command = ")
-    }())
+    check(
+      "the command comes first, because that is what a reader wants",
+      {
+        let lines = block.split(separator: "\n")
+        return lines.count > 1 && lines[1].hasPrefix("command = ")
+      }())
     check("the args are an array, not a string", block.contains("args = [\"--server="))
     check("and there is no type key, because Codex has none", !block.contains("type"))
     // The sentence the pane makes about every client, checked against the one
     // format that could most easily break it.
-    check("no token, no credential, no env block", !block.contains("env") && !block.contains("Bearer"))
+    check(
+      "no token, no credential, no env block", !block.contains("env") && !block.contains("Bearer"))
 
     // Re-reading our own output is the only round trip that has to hold.
     let doc = scanned(block)
@@ -1626,7 +1653,8 @@ struct WiringCheck {
     guard let doc = scanned(codexConfig) else { return check("it scans", false) }
     // One contiguous run of its lines: the table's own span. Its subtable is a
     // second span with a blank line between, checked separately below.
-    let foreign = (doc.tables["node_repl"]?.ranges.first.map { $0.map { line(doc, $0) }.joined() })
+    let foreign =
+      (doc.tables["node_repl"]?.ranges.first.map { $0.map { line(doc, $0) }.joined() })
       ?? ""
     check("there is something to preserve", foreign.contains("startup_timeout_sec = 120"))
 
@@ -1651,7 +1679,9 @@ struct WiringCheck {
     check("its subtable went with it", !removed.contains("[mcp_servers.node_repl.env]"))
     check("and its values with that", !removed.contains("CODEX_HOME"))
     check("the other server is untouched", removed.contains("[mcp_servers.computer-use]"))
-    check("and so is everything that is not a server", removed.contains("[shell_environment_policy.set]"))
+    check(
+      "and so is everything that is not a server",
+      removed.contains("[shell_environment_policy.set]"))
     check("including the prose above them", removed.contains("- A # here is prose, not a comment"))
   }
 
@@ -1750,7 +1780,9 @@ struct WiringCheck {
       Data(blocks.utf8), to: fresh, backupSuffix: "cupertino-backup")
     check("no backup for a file that did not exist", none == nil)
     check("parent directories created", fm.fileExists(atPath: fresh.path))
-    check("and the new file is exactly our blocks", names(try? ClientWiringTOML.read(fresh)) == ["cupertino-mail", "cupertino-notes"])
+    check(
+      "and the new file is exactly our blocks",
+      names(try? ClientWiringTOML.read(fresh)) == ["cupertino-mail", "cupertino-notes"])
   }
 
   /// The `wiring-check-real` half for a TOML config.

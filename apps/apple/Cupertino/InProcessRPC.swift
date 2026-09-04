@@ -53,7 +53,9 @@ enum InProcessRPC {
     for (k, v) in body { msg[k] = v }
     guard let data = try? JSONSerialization.data(withJSONObject: msg),
       let text = String(data: data, encoding: .utf8)
-    else { return #"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"encode failed"}}"# }
+    else {
+      return #"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"encode failed"}}"#
+    }
     return text
   }
 

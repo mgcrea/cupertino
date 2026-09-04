@@ -27,9 +27,9 @@ enum DiskAccessStatus: Equatable {
 /// one directly.
 enum AutomationStatus: Equatable {
   case granted
-  case denied           // -1743 errAEEventNotPermitted
-  case notDetermined    // -1744 errAEEventWouldRequireUserConsent
-  case appNotRunning    // -600  procNotFound
+  case denied  // -1743 errAEEventNotPermitted
+  case notDetermined  // -1744 errAEEventWouldRequireUserConsent
+  case appNotRunning  // -600  procNotFound
   case failed(OSStatus)
 }
 
@@ -247,7 +247,8 @@ enum Permissions {
   /// Full Disk Access never prompts — it can only be granted by hand.
   static func openDiskAccessSettings() {
     let url = URL(
-      string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!
+      string:
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!
     NSWorkspace.shared.open(url)
   }
 
@@ -307,7 +308,8 @@ enum Permissions {
 
   static func openAutomationSettings() {
     let url = URL(
-      string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation")!
+      string:
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation")!
     NSWorkspace.shared.open(url)
   }
 
@@ -387,7 +389,8 @@ enum Permissions {
   }
 
   private static func launchSafari() {
-    guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+    guard
+      let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
     else { return }
     NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
   }
@@ -617,7 +620,9 @@ enum Permissions {
 
   static func openAccessibilitySettings() {
     let url = URL(
-      string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility")!
+      string:
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+    )!
     NSWorkspace.shared.open(url)
   }
 

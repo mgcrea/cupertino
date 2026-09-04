@@ -171,7 +171,7 @@ struct ScreenCheck {
     // the property every node surface's own suite asserts.
     let guide =
       ((ask("resources/read", params: ["uri": "cupertino://screen/guide"])?["result"]
-        as? [String: Any])?["contents"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+      as? [String: Any])?["contents"] as? [[String: Any]])?.first?["text"] as? String ?? ""
     check("the guide is served and non-empty", guide.count > 200)
 
     // ─── diagnostics, and the finding it must not lose ──────────────────────
@@ -181,7 +181,8 @@ struct ScreenCheck {
         with: Data(diagnosticsText.utf8))) as? [String: Any] ?? [:]
     check("diagnostics answers whatever the grant is", !diagnostics.isEmpty)
     let permission = diagnostics["permission"] as? [String: Any]
-    check("diagnostics reports the flag and the capability separately",
+    check(
+      "diagnostics reports the flag and the capability separately",
       permission?["flag"] != nil && permission?["windowListReadable"] != nil)
 
     // ABSENT AND EPERM ARE DIFFERENT FINDINGS. An empty target list reads as
@@ -202,7 +203,9 @@ struct ScreenCheck {
 
     let seeing = ScreenServer.diagnostics(
       surface: surface, captureAllowed: false,
-      probe: { [ScreenCapture.Target(surface: "mail", displayName: "Mail", windows: 0, appRunning: false)] })
+      probe: {
+        [ScreenCapture.Target(surface: "mail", displayName: "Mail", windows: 0, appRunning: false)]
+      })
     let seen = seeing["targets"] as? [[String: Any]]
     check("a readable but empty machine renders targets as a list", seen?.isEmpty == false)
     check(

@@ -156,7 +156,8 @@ enum ScreenCapture {
     let surface: String
   }
 
-  static func capture(surface: Surface, into directory: URL?, overwrite: Bool) async throws -> Shot {
+  static func capture(surface: Surface, into directory: URL?, overwrite: Bool) async throws -> Shot
+  {
     guard let bundleID = surface.bundleID else { throw Failure.notCapturable(surface.id) }
     let content = try await shareableContent()
     let candidates = realWindows(content, bundleID: bundleID)
@@ -225,7 +226,8 @@ enum ScreenCapture {
 
     let stamp = ISO8601DateFormatter()
     stamp.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
-    let leaf = "cupertino-\(surface.id)-\(stamp.string(from: Date()).replacingOccurrences(of: ":", with: "")).png"
+    let leaf =
+      "cupertino-\(surface.id)-\(stamp.string(from: Date()).replacingOccurrences(of: ":", with: "")).png"
     let url = dir.appendingPathComponent(leaf)
     if FileManager.default.fileExists(atPath: url.path) && !overwrite {
       throw Failure.destinationRefused(url.path)

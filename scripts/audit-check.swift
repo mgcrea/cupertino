@@ -20,7 +20,7 @@ import Foundation
 /// crypto is — and an in-memory stub makes the round trip reproducible on a
 /// machine with no Keychain entry, which is every CI machine.
 enum KeyStore {
-  
+
   nonisolated(unsafe) static var items: [String: String] = [:]
   static func read(_ account: String) -> String? { items[account] }
   static func write(_ account: String, value: String) throws { items[account] = value }
@@ -51,7 +51,9 @@ struct AuditCheck {
 
     let signature = try AuditSigning.sign(manifest)
     let publicKey = try AuditSigning.publicKey()
-    check("a signed manifest verifies", AuditSigning.verify(manifest, signature: signature, publicKey: publicKey))
+    check(
+      "a signed manifest verifies",
+      AuditSigning.verify(manifest, signature: signature, publicKey: publicKey))
 
     // The whole point. One byte different is a different document.
     var tampered = manifest
@@ -75,11 +77,16 @@ struct AuditCheck {
 
     print("\nAudit signing: malformed input is refused, not crashed on")
 
-    check("a non-base64 signature", !AuditSigning.verify(manifest, signature: "not base64!", publicKey: publicKey))
-    check("a non-base64 key", !AuditSigning.verify(manifest, signature: signature, publicKey: "not base64!"))
+    check(
+      "a non-base64 signature",
+      !AuditSigning.verify(manifest, signature: "not base64!", publicKey: publicKey))
+    check(
+      "a non-base64 key",
+      !AuditSigning.verify(manifest, signature: signature, publicKey: "not base64!"))
     check(
       "a well-formed but wrong-length key",
-      !AuditSigning.verify(manifest, signature: signature, publicKey: Data("short".utf8).base64EncodedString()))
+      !AuditSigning.verify(
+        manifest, signature: signature, publicKey: Data("short".utf8).base64EncodedString()))
     check("an empty signature", !AuditSigning.verify(manifest, signature: "", publicKey: publicKey))
 
     print("\nAudit signing: the key")

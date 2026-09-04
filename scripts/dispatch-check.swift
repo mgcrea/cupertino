@@ -44,7 +44,10 @@ struct DispatchCheck {
     var asked: [String] = []
     let outcome = InProcessServers.handle(
       line, surface: surface, allowWrites: writes,
-      gateOn: { asked.append($0); return gates })
+      gateOn: {
+        asked.append($0)
+        return gates
+      })
     guard case .message(let text) = outcome,
       let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
     else { return (nil, asked, outcome) }
@@ -55,7 +58,8 @@ struct DispatchCheck {
     _ surface: Surface, _ method: String, _ key: String, _ field: String,
     writes: Bool = false, gates: Bool = false
   ) -> [String] {
-    let result = send(surface, method, writes: writes, gates: gates).reply?["result"]
+    let result =
+      send(surface, method, writes: writes, gates: gates).reply?["result"]
       as? [String: Any]
     let entries = result?[key] as? [[String: Any]] ?? []
     return entries.compactMap { $0[field] as? String }.sorted()
@@ -76,7 +80,8 @@ struct DispatchCheck {
 
       // The one assertion that would have caught the shipped bug on its own:
       // the server that answers has to be the one named after this surface.
-      let info = (send(surface, "initialize").reply?["result"] as? [String: Any])?["serverInfo"]
+      let info =
+        (send(surface, "initialize").reply?["result"] as? [String: Any])?["serverInfo"]
         as? [String: Any]
       check(
         "\(id): the server that answers is cupertino-\(id)",

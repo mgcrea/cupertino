@@ -49,11 +49,13 @@ enum SoundServer {
     case "initialize":
       return isNotification
         ? nil
-        : InProcessRPC.result(id, [
-          "protocolVersion": protocolVersion,
-          "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
-          "serverInfo": ["name": "cupertino-sound", "version": AppInfo.shortVersion],
-        ])
+        : InProcessRPC.result(
+          id,
+          [
+            "protocolVersion": protocolVersion,
+            "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
+            "serverInfo": ["name": "cupertino-sound", "version": AppInfo.shortVersion],
+          ])
 
     case "ping":
       return isNotification ? nil : InProcessRPC.result(id, [String: Any]())
@@ -363,9 +365,10 @@ enum SoundServer {
       } catch { return InProcessRPC.failure(id, String(describing: error)) }
 
     case "apple_sound_recording_status":
-      let status = (try? InProcessRPC.blocking {
-        await MainActor.run { SoundCapture.shared.status() }
-      })
+      let status =
+        (try? InProcessRPC.blocking {
+          await MainActor.run { SoundCapture.shared.status() }
+        })
       guard let status else { return InProcessRPC.failure(id, "Could not read the recorder.") }
       var out: [String: Any] = [
         "recording": status.recording,

@@ -87,7 +87,8 @@ struct UnitCheck {
 
     let opted = CallCapture.arguments(
       params: params(["body": "the private part"]), mode: .arguments, content: true)
-    check("content is recorded when the surface says so", opted?.contains("the private part") == true)
+    check(
+      "content is recorded when the surface says so", opted?.contains("the private part") == true)
 
     // A credential is blanked whichever way the content switch is set: it is
     // not content, and no surface should be able to opt into it.
@@ -136,7 +137,8 @@ struct UnitCheck {
       CallCapture.result(["result": ["ok": true]], mode: .arguments, content: true) == nil)
     check(
       "argumentsAndResults records one",
-      CallCapture.result(["result": ["ok": true]], mode: .argumentsAndResults, content: true) != nil)
+      CallCapture.result(["result": ["ok": true]], mode: .argumentsAndResults, content: true) != nil
+    )
 
     // A result is answered by the server, so all of it is content — a
     // get_message result IS the mail. With content off the row says a result
@@ -243,7 +245,8 @@ struct UnitCheck {
 
     // A directory that was never created is the same answer as an empty one:
     // nothing has been captured. The extension makes it on its first write.
-    check("a missing directory reads as nothing captured", SafariCaptures.read(directory: tmp) == .none)
+    check(
+      "a missing directory reads as nothing captured", SafariCaptures.read(directory: tmp) == .none)
 
     try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
     check("and so does an empty one", SafariCaptures.read(directory: tmp) == .none)
@@ -272,7 +275,8 @@ struct UnitCheck {
       [.modificationDate: now.addingTimeInterval(-30)], ofItemAtPath: junk.path)
     let withJunk = SafariCaptures.read(directory: tmp, now: now)
     check("an unreadable entry is still counted", withJunk.count == 3)
-    check("and falls back to its mtime rather than the epoch", withJunk.newestAge.map { Int($0) } == 30)
+    check(
+      "and falls back to its mtime rather than the epoch", withJunk.newestAge.map { Int($0) } == 30)
 
     // Only ours. The container holds other things.
     try? Data("{}".utf8).write(to: tmp.appendingPathComponent("notes.txt"))
@@ -315,8 +319,10 @@ struct UnitCheck {
     check("five records verify", cleanReport.isIntact)
     check("and are all counted", cleanReport.records == 5)
     check("the head is the last hash", cleanReport.head == clean[4].hash)
-    check("a blank line is skipped, not failed", AuditChain.verify(lines: cleanLines + [""]).isIntact)
-    check("an empty log verifies as genesis", AuditChain.verify(lines: []).head == AuditChain.genesis)
+    check(
+      "a blank line is skipped, not failed", AuditChain.verify(lines: cleanLines + [""]).isIntact)
+    check(
+      "an empty log verifies as genesis", AuditChain.verify(lines: []).head == AuditChain.genesis)
 
     print("\nAudit chain: tampering")
 
@@ -334,7 +340,9 @@ struct UnitCheck {
     deleted.remove(at: 2)
     let deletedReport = AuditChain.verify(lines: deleted)
     check("a deleted middle record is caught", !deletedReport.isIntact)
-    check("as a broken link on the record after it", deletedReport.failures.contains(.brokenLink(seq: 4)))
+    check(
+      "as a broken link on the record after it",
+      deletedReport.failures.contains(.brokenLink(seq: 4)))
     check("and as a gap in the sequence", deletedReport.failures.contains(.outOfOrder(seq: 4)))
 
     // Reordering. Hashes still match their bodies; the links do not.
@@ -365,7 +373,9 @@ struct UnitCheck {
     // it is a broken link on its first record, which is what stops a dropped
     // segment from passing as a complete log.
     let second = chain(3, from: clean[4].hash).map { AuditChain.line($0) }
-    check("a segment verifies from the previous head", AuditChain.verify(lines: second, from: clean[4].hash).isIntact)
+    check(
+      "a segment verifies from the previous head",
+      AuditChain.verify(lines: second, from: clean[4].hash).isIntact)
     check(
       "and fails from genesis",
       AuditChain.verify(lines: second).failures.contains(.brokenLink(seq: 1)))
@@ -383,7 +393,9 @@ struct UnitCheck {
       app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
       records: 8, segments: described, head: "c17b", intact: true)
 
-    check("the manifest parses as JSON", (try? JSONSerialization.jsonObject(with: Data(card.utf8))) != nil)
+    check(
+      "the manifest parses as JSON",
+      (try? JSONSerialization.jsonObject(with: Data(card.utf8))) != nil)
     let decoded =
       (try? JSONSerialization.jsonObject(with: Data(card.utf8))) as? [String: Any] ?? [:]
     check("it names the format", decoded["format"] as? String == "cupertino-audit")
@@ -414,14 +426,16 @@ struct UnitCheck {
       "a failed verification is recorded rather than hidden",
       AuditChain.manifest(
         app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
-        records: 8, segments: described, head: "c17b", intact: false).contains("\"intact\":false"))
+        records: 8, segments: described, head: "c17b", intact: false
+      ).contains("\"intact\":false"))
 
     print("\nAudit chain: the canonical form")
 
     // The hash is taken over bytes a verifier must be able to rebuild. These
     // are the inputs most likely to make two implementations disagree.
     let quoted = record(1, "tool", prev: AuditChain.genesis, args: #"{"q":"he said \"hi\""}"#)
-    check("quotes survive a round trip", AuditChain.verify(lines: [AuditChain.line(quoted)]).isIntact)
+    check(
+      "quotes survive a round trip", AuditChain.verify(lines: [AuditChain.line(quoted)]).isIntact)
     let newline = record(1, "tool", prev: AuditChain.genesis, args: "line1\nline2\ttab")
     check("newlines and tabs do", AuditChain.verify(lines: [AuditChain.line(newline)]).isIntact)
     let unicode = record(1, "tool", prev: AuditChain.genesis, args: #"{"note":"café 🔒 日本"}"#)
@@ -442,8 +456,10 @@ struct UnitCheck {
 
     print("\nLog search: what a query matches")
 
-    func row(_ text: String, surface: String = "mail", args: String? = nil,
-             result: String? = nil) -> LogStore.Entry {
+    func row(
+      _ text: String, surface: String = "mail", args: String? = nil,
+      result: String? = nil
+    ) -> LogStore.Entry {
       LogStore.Entry(
         at: Date(), surface: surface, level: .call, text: text, arguments: args, result: result)
     }

@@ -115,10 +115,11 @@ func connectOnce() -> Int32? {
 /// the bare executable out of a build directory.
 func containingApp() -> URL? {
   guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
-  let app = executable                    // …/Cupertino.app/Contents/Helpers/cupertino-bridge
-    .deletingLastPathComponent()          // …/Contents/Helpers
-    .deletingLastPathComponent()          // …/Contents
-    .deletingLastPathComponent()          // …/Cupertino.app
+  let app =
+    executable  // …/Cupertino.app/Contents/Helpers/cupertino-bridge
+    .deletingLastPathComponent()  // …/Contents/Helpers
+    .deletingLastPathComponent()  // …/Contents
+    .deletingLastPathComponent()  // …/Cupertino.app
   return app.pathExtension == "app" ? app : nil
 }
 
@@ -149,7 +150,10 @@ func launchApp() {
       "-g", "-b", BridgeProtocol.appIdentifier, "--args", BridgeProtocol.backgroundFlag,
     ]
   }
-  do { try open.run(); open.waitUntilExit() } catch {
+  do {
+    try open.run()
+    open.waitUntilExit()
+  } catch {
     warn("could not launch Cupertino: \(error.localizedDescription)")
   }
 }
@@ -167,7 +171,8 @@ if socketFD == nil {
   }
 }
 guard let sock = socketFD else {
-  die("""
+  die(
+    """
     could not reach Cupertino at \(path).
     Tried to launch \(containingApp()?.path ?? BridgeProtocol.appIdentifier).
     Open Cupertino once by hand, then retry.
@@ -242,7 +247,8 @@ while true {
 let statusLine = String(decoding: statusBytes, as: UTF8.self)
 
 if statusLine != BridgeProtocol.ok {
-  let detail = statusLine.hasPrefix(BridgeProtocol.errorPrefix)
+  let detail =
+    statusLine.hasPrefix(BridgeProtocol.errorPrefix)
     ? String(statusLine.dropFirst(BridgeProtocol.errorPrefix.count))
     : statusLine
   die("Cupertino refused the connection: \(detail)")

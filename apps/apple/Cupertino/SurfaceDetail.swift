@@ -70,7 +70,8 @@ struct SurfaceDetail: View {
     .task(id: surface.id) {
       await resolveStore()
       await resolveExtension()
-      grant = DemoSeed.isEnabled
+      grant =
+        DemoSeed.isEnabled
         ? DemoSeed.storeGrant
         : Permissions.storeGrant(for: surface, diskAccess: model.diskAccess)
     }
@@ -479,7 +480,8 @@ struct SurfaceDetail: View {
           Text(
             "Step 2 is per website and there is no way to grant it for all of them — which is "
               + "the point. The alternative macOS offers, \"Allow JavaScript from Apple Events\", "
-              + "is one switch that opens every tab to every app that can send an Apple Event.")
+              + "is one switch that opens every tab to every app that can send an Apple Event."
+          )
           .foregroundStyle(.secondary)
         }
         .font(.caption)
@@ -596,7 +598,6 @@ struct SurfaceDetail: View {
     store = resolved
   }
 }
-
 
 /// What this surface's server exposes, read from the server rather than listed
 /// here — see `SurfaceCatalog` for why nothing is written down.
@@ -763,7 +764,6 @@ struct Card<Content: View>: View {
     }
   }
 }
-
 
 /// What this surface records, for this surface alone.
 ///

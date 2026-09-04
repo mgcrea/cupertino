@@ -79,7 +79,8 @@ enum SettingsWindowController {
     // number rather than a resize later on: `HostedWindow` pins the frame the
     // window was created with against SwiftUI's own layout pass, and anything
     // set after `show()` loses to that pass. See `DemoSeed.settingsContentSize`.
-    contentSize: DemoSeed.isEnabled ? DemoSeed.settingsContentSize : NSSize(width: 720, height: 520),
+    contentSize: DemoSeed.isEnabled
+      ? DemoSeed.settingsContentSize : NSSize(width: 720, height: 520),
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
@@ -326,7 +327,6 @@ struct PermissionsPane: View {
           Text(StatusStyle.diskAccessHint(model.diskAccess))
         }
       }
-
 
       // Its own section because these two are not per-surface and not
       // interchangeable with the rows above. They gate ONE thing — filling a
@@ -643,7 +643,8 @@ enum StatusStyle {
     // composer the servers could not reach — several stale entries under one
     // bundle identifier, each check matching a different one. Promising the
     // composer here is what made that failure so hard to place.
-    case .granted: "Granted to Cupertino. Replies also need it to reach the servers — check diagnostics."
+    case .granted:
+      "Granted to Cupertino. Replies also need it to reach the servers — check diagnostics."
     // Not "denied": `AXIsProcessTrusted` cannot tell a refusal from a question
     // never asked, so the wording has to cover both without claiming either.
     case .denied: "Not granted. Replies and forwards will fail until it is."
@@ -759,9 +760,10 @@ private struct AuditPane: View {
         }
         Text(
           "What every surface records unless it says otherwise. The Activity window keeps this in "
-            + "memory.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "memory."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
 
         Toggle(isOn: $content) {
           Text("Include contents")
@@ -783,9 +785,10 @@ private struct AuditPane: View {
         Text(
           keepFile
             ? "Records survive a quit, in \(AuditLog.directory.path), readable only by you."
-            : "Off. The Activity window is a ring in memory and nothing outlives the app.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            : "Off. The Activity window is a ring in memory and nothing outlives the app."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
 
         Toggle("Include arguments and results in the file", isOn: $filePayloads)
           .disabled(!keepFile)
@@ -812,9 +815,10 @@ private struct AuditPane: View {
         }
         Text(
           "Whichever runs out first. The log is written in segments and a whole segment is "
-            + "dropped at a time — a chain cannot lose a record from the middle and still verify.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "dropped at a time — a chain cannot lose a record from the middle and still verify."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       } header: {
         Text("On disk")
       }
@@ -834,10 +838,11 @@ private struct AuditPane: View {
                 + "segment\(summary.segments == 1 ? "" : "s"), \(bytes(summary.bytes)). "
                 + "The chain verifies."
               : "\(summary.records) records, and the chain does NOT verify: "
-                + describe(summary.report.failures))
-            .font(.caption)
-            .foregroundStyle(summary.report.isIntact ? Color.secondary : .red)
-            .fixedSize(horizontal: false, vertical: true)
+                + describe(summary.report.failures)
+          )
+          .font(.caption)
+          .foregroundStyle(summary.report.isIntact ? Color.secondary : .red)
+          .fixedSize(horizontal: false, vertical: true)
         }
         if let note {
           Text(note).font(.caption).foregroundStyle(.secondary)
@@ -847,9 +852,10 @@ private struct AuditPane: View {
           "Each record carries a hash of the one before it, so an edited field, a deleted record "
             + "or a truncated file can be detected. That is the whole claim: it catches tampering "
             + "by something that does not know it is a chain. It is not proof against anyone who "
-            + "can write the file, because they can recompute it.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "can write the file, because they can recompute it."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       } header: {
         Text("The chain")
       }
@@ -859,7 +865,8 @@ private struct AuditPane: View {
           LabeledContent {
             Button {
               NSPasteboard.general.clearContents()
-              NSPasteboard.general.setString((try? AuditSigning.publicKey()) ?? "", forType: .string)
+              NSPasteboard.general.setString(
+                (try? AuditSigning.publicKey()) ?? "", forType: .string)
               copied = true
             } label: {
               Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -884,13 +891,15 @@ private struct AuditPane: View {
             + "does not prove the log was not curated before it was signed — you control this "
             + "machine. And it only means anything to someone who already has the key above, "
             + "sent to them some other way: a key that travels only inside the export proves "
-            + "nothing, because a forger would include their own.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "nothing, because a forger would include their own."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
         Text(
-          "A new Mac makes a new key. Exports already signed keep verifying against the old one.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+          "A new Mac makes a new key. Exports already signed keep verifying against the old one."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       } header: {
         Text("Signing")
       }

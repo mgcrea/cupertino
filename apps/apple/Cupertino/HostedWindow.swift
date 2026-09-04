@@ -101,7 +101,8 @@ final class HostedWindow {
       // frame and writes one. This is the key AppKit stores it under, and the
       // question it answers is the only one that matters here: has anybody ever
       // sized this window themselves?
-      let remembered = !DemoSeed.isEnabled
+      let remembered =
+        !DemoSeed.isEnabled
         && UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
       // SwiftUI's own fitting size, read before the autosave overwrites it. It
       // is the fallback for a remembered frame that turns out to be unusable,
@@ -213,7 +214,6 @@ final class HostedWindow {
     DockPresence.update()
   }
 }
-
 
 /// Holds a window at the size it was opened at, for as long as it takes SwiftUI
 /// to stop arguing — and not one moment longer.

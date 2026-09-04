@@ -42,11 +42,15 @@ enum ScreenServer {
 
     switch method {
     case "initialize":
-      return isNotification ? nil : result(id, [
-        "protocolVersion": protocolVersion,
-        "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
-        "serverInfo": ["name": "cupertino-screen", "version": AppInfo.shortVersion],
-      ])
+      return isNotification
+        ? nil
+        : result(
+          id,
+          [
+            "protocolVersion": protocolVersion,
+            "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
+            "serverInfo": ["name": "cupertino-screen", "version": AppInfo.shortVersion],
+          ])
 
     case "ping":
       return isNotification ? nil : result(id, [String: Any]())
@@ -88,7 +92,9 @@ enum ScreenServer {
   /// property `allowWrites` has on every other surface, and docs/alternatives.md
   /// claims it as a differentiator, so it has to hold here too.
   private static func tools(surface: Surface, captureAllowed: Bool) -> [[String: Any]] {
-    let empty: [String: Any] = ["type": "object", "properties": [String: Any](), "required": [Any]()]
+    let empty: [String: Any] = [
+      "type": "object", "properties": [String: Any](), "required": [Any](),
+    ]
     var list: [[String: Any]] = [
       [
         "name": "apple_screen_list_targets",
@@ -152,15 +158,17 @@ enum ScreenServer {
     case "apple_screen_list_targets":
       do {
         let targets = try blocking { try await ScreenCapture.targets() }
-        return ok(id, [
-          "targets": targets.map {
-            [
-              "surface": $0.surface, "displayName": $0.displayName,
-              "windows": $0.windows, "appRunning": $0.appRunning,
-            ]
-          },
-          "note": "Window titles are withheld deliberately — see docs/screen.md.",
-        ])
+        return ok(
+          id,
+          [
+            "targets": targets.map {
+              [
+                "surface": $0.surface, "displayName": $0.displayName,
+                "windows": $0.windows, "appRunning": $0.appRunning,
+              ]
+            },
+            "note": "Window titles are withheld deliberately — see docs/screen.md.",
+          ])
       } catch { return failed(id, error) }
 
     case "apple_screen_diagnostics":
@@ -169,7 +177,10 @@ enum ScreenServer {
     case "apple_screen_capture_surface":
       guard captureAllowed else {
         // Unreachable through a compliant client, since the tool is not listed.
-        return failure(id, "Screen capture is switched off. Turn on \"\(surface.gates.first?.label ?? "capture")\" in Cupertino.")
+        return failure(
+          id,
+          "Screen capture is switched off. Turn on \"\(surface.gates.first?.label ?? "capture")\" in Cupertino."
+        )
       }
       guard let wanted = args["surface"] as? String else {
         return failure(id, "The 'surface' argument is required.")
@@ -184,10 +195,12 @@ enum ScreenServer {
           try await ScreenCapture.capture(
             surface: target, into: directory, overwrite: overwrite)
         }
-        return ok(id, [
-          "path": shot.path, "bytes": shot.bytes,
-          "width": shot.width, "height": shot.height, "surface": shot.surface,
-        ])
+        return ok(
+          id,
+          [
+            "path": shot.path, "bytes": shot.bytes,
+            "width": shot.width, "height": shot.height, "surface": shot.surface,
+          ])
       } catch { return failed(id, error) }
 
     default:
@@ -217,14 +230,18 @@ enum ScreenServer {
   ) -> String {
     switch uri {
     case "cupertino://screen/guide":
-      return result(id, [
-        "contents": [["uri": uri, "mimeType": "text/markdown", "text": guide]]
-      ])
+      return result(
+        id,
+        [
+          "contents": [["uri": uri, "mimeType": "text/markdown", "text": guide]]
+        ])
     case "cupertino://screen/diagnostics":
       let text = jsonText(diagnostics(surface: surface, captureAllowed: captureAllowed))
-      return result(id, [
-        "contents": [["uri": uri, "mimeType": "application/json", "text": text]]
-      ])
+      return result(
+        id,
+        [
+          "contents": [["uri": uri, "mimeType": "application/json", "text": text]]
+        ])
     default:
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
     }

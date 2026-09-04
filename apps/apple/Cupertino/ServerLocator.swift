@@ -42,7 +42,8 @@ enum ServerLocator {
       throw LocateError.notBundled(surface: surface.id, expected: "Contents/Resources")
     }
     let node = resources.appendingPathComponent("node")
-    let script = resources
+    let script =
+      resources
       .appendingPathComponent("servers")
       .appendingPathComponent(surface.id)
       .appendingPathComponent("dist/cli.js")

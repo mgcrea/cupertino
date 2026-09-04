@@ -279,11 +279,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
   func stop() {
     socketWatch?.cancel()
     socketWatch = nil
-    if listenFD >= 0 { close(listenFD); listenFD = -1 }
+    if listenFD >= 0 {
+      close(listenFD)
+      listenFD = -1
+    }
     unlink(BridgeProtocol.socketPath)
     // Closing releases the flock. The file itself stays: unlinking a lock file
     // is how two processes end up locking two different inodes and both winning.
-    if lockFD >= 0 { close(lockFD); lockFD = -1 }
+    if lockFD >= 0 {
+      close(lockFD)
+      lockFD = -1
+    }
   }
 
   // MARK: - Noticing eviction
@@ -594,7 +600,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-
   private func run(surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool) {
     let process = Process()
     process.executableURL = binaries.node
@@ -609,7 +614,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
     }
 
-    let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
+    let toChild = Pipe()
+    let fromChild = Pipe()
+    let childErr = Pipe()
     process.standardInput = toChild
     process.standardOutput = fromChild
     process.standardError = childErr

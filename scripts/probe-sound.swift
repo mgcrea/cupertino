@@ -196,7 +196,9 @@ func stringProperty(
 func channelCount(_ id: AudioObjectID, scope: AudioObjectPropertyScope) -> Int {
   var addr = address(kAudioDevicePropertyStreamConfiguration, scope)
   var size: UInt32 = 0
-  guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
+  guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else {
+    return 0
+  }
   let raw = UnsafeMutableRawPointer.allocate(
     byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
   defer { raw.deallocate() }

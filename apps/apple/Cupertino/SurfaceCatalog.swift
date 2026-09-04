@@ -203,7 +203,9 @@ enum SurfaceCatalog {
     process.environment = ServerLocator.environment(
       for: surface, allowWrites: allowWrites, gates: gates)
 
-    let toChild = Pipe(), fromChild = Pipe(), childErr = Pipe()
+    let toChild = Pipe()
+    let fromChild = Pipe()
+    let childErr = Pipe()
     process.standardInput = toChild
     process.standardOutput = fromChild
     process.standardError = childErr

@@ -89,7 +89,9 @@ enum AppInfo {
 
     var information: CFDictionary?
     let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
-    guard SecCodeCopySigningInformation(unsafeBitCast(code, to: SecStaticCode.self), flags, &information) == errSecSuccess,
+    guard
+      SecCodeCopySigningInformation(
+        unsafeBitCast(code, to: SecStaticCode.self), flags, &information) == errSecSuccess,
       let dictionary = information as? [String: Any]
     else { return nil }
 

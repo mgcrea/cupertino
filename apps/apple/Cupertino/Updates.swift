@@ -87,8 +87,9 @@ extension UpdateController: SPUUpdaterDelegate {
   /// absent. It is present and false, so this never fires — but the plist is a
   /// build input and this is code, and only one of the two survives somebody
   /// deleting a key they did not recognise.
-  nonisolated func updaterShouldPromptForPermissionToCheck(forUpdates updater: SPUUpdater) -> Bool
-  { false }
+  nonisolated func updaterShouldPromptForPermissionToCheck(forUpdates updater: SPUUpdater) -> Bool {
+    false
+  }
 
   /// Never postpone the relaunch.
   ///

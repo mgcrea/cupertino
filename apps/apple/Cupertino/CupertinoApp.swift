@@ -354,7 +354,8 @@ final class StatusModel {
     // IPCs saved per refresh, and — the reason it was changed — two rows that
     // no longer nag for a grant nothing on the Mac would ever spend.
     let surfaces = SurfaceSettings.enabledSurfaces
-    let targets = surfaces
+    let targets =
+      surfaces
       .filter { $0.needsAutomation(allowWrites: SurfaceSettings.allowWrites($0)) }
       .compactMap { surface in surface.bundleID.map { (surface.id, $0) } }
     // System Events goes through the same door and must ride the same detached
@@ -768,10 +769,12 @@ struct TrialBanner: View {
       Label("Trial · \(Trial.remainingText)", systemImage: "clock")
         .foregroundStyle(.blue)
         .font(.caption)
-      Text("Every surface is running. When the window closes the servers stop, and your assistant will report the connection dropped.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      Text(
+        "Every surface is running. When the window closes the servers stop, and your assistant will report the connection dropped."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
       Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
         .buttonStyle(.glassProminent)
         .controlSize(.small)
@@ -845,7 +848,6 @@ struct WritesToggle: View {
     }
   }
 }
-
 
 /// One extra opt-in switch, for a tool the write gate is the wrong flag for.
 ///
@@ -958,7 +960,6 @@ struct SurfaceSwitch: View {
     }
   }
 }
-
 
 /// What is talking to Cupertino right now.
 ///

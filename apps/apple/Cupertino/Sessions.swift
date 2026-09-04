@@ -36,7 +36,8 @@ final class Sessions {
   private(set) var live: [Session] = []
 
   func opened(id: UUID, surface: String, pid: Int32) {
-    live.append(Session(id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0))
+    live.append(
+      Session(id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0))
   }
 
   /// Seed a fully-formed session at a fixed instant, for `DemoSeed` only.

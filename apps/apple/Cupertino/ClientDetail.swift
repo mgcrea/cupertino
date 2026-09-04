@@ -227,11 +227,11 @@ struct ClientDetail: View {
       HStack(spacing: 8) {
         Button(configureLabel(snapshot.status)) { configure() }
           .disabled(!client.isInstalled)
-          // Named, because it is no longer the only Remove on this screen: every
-          // foreign entry below carries one that takes out exactly that entry.
-          // Offered only when there is something of ours to take out — a Remove
-          // that rewrites somebody's config to make no change is a write for
-          // nothing.
+        // Named, because it is no longer the only Remove on this screen: every
+        // foreign entry below carries one that takes out exactly that entry.
+        // Offered only when there is something of ours to take out — a Remove
+        // that rewrites somebody's config to make no change is a write for
+        // nothing.
         Button("Remove Cupertino's entries") { unwire() }
           .disabled(!snapshot.hasOurEntries)
         Button("Reveal in Finder") { ClientWiring.reveal(client) }
@@ -266,9 +266,10 @@ struct ClientDetail: View {
       Text(
         "Cupertino writes only the entries below, under the '\(rootKey)' key. Everything else in "
           + "the file is left alone, and the previous version is saved beside it as \(backupName) "
-          + "first.")
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+          + "first."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
     }
   }
 
@@ -299,9 +300,10 @@ struct ClientDetail: View {
         // Settings.
         Text(
           "Each entry names the bridge inside this app and one surface. No credential, no token "
-            + "and no permission is written into the file.")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "and no permission is written into the file."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
@@ -333,16 +335,19 @@ struct ClientDetail: View {
       // on a pane that already has a lot to say.
       switch row.state {
       case .stale(let found):
-        Text("Points at \(found) right now. \(row.isOff ? "Switching the surface back on and updating rewrites it." : "Update rewrites it.")")
-          .font(.caption2)
-          .foregroundStyle(row.isOff ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          "Points at \(found) right now. \(row.isOff ? "Switching the surface back on and updating rewrites it." : "Update rewrites it.")"
+        )
+        .font(.caption2)
+        .foregroundStyle(row.isOff ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+        .fixedSize(horizontal: false, vertical: true)
       case .foreign(let what):
         Text(
           "Already taken by \(what ?? "an entry Cupertino did not write"). Configure refuses "
-            + "rather than replacing it.")
-          .font(.caption2).foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
+            + "rather than replacing it."
+        )
+        .font(.caption2).foregroundStyle(.red)
+        .fixedSize(horizontal: false, vertical: true)
       case .matches, .missing:
         EmptyView()
       }
@@ -352,16 +357,18 @@ struct ClientDetail: View {
       if row.isDisabled, !row.isOff {
         Text(
           "\(client.displayName) has this entry switched off. Configure rewrites the block "
-            + "without it, which turns it back on.")
-          .font(.caption2).foregroundStyle(.orange)
-          .fixedSize(horizontal: false, vertical: true)
+            + "without it, which turns it back on."
+        )
+        .font(.caption2).foregroundStyle(.orange)
+        .fixedSize(horizontal: false, vertical: true)
       }
       if row.isOff {
         Text(
           "\(row.surface.displayName) is switched off, so this server is never started. Update "
-            + "takes the entry out.")
-          .font(.caption2).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+            + "takes the entry out."
+        )
+        .font(.caption2).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       }
     }
     // Dimmed the way the sidebar dims a switched-off surface, so the two screens
@@ -405,9 +412,10 @@ struct ClientDetail: View {
         "\(client.displayName) starts \(count == 1 ? "this one" : "these") itself. "
           + "\(count == 1 ? "It runs" : "They run") outside Cupertino, so nothing "
           + "\(count == 1 ? "it does" : "they do") is gated by the write switches or reaches the "
-          + "log. Remove one once the same job is being done through Cupertino.")
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+          + "log. Remove one once the same job is being done through Cupertino."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
 
       ForEach(snapshot.others, id: \.key) { entry in
         Divider()
@@ -432,9 +440,10 @@ struct ClientDetail: View {
     ) {
       Text(
         "\(client.displayName) also keeps servers per project folder. These go around Cupertino "
-          + "the same way, and only apply inside the folder they are filed under.")
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+          + "the same way, and only apply inside the folder they are filed under."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
 
       // Only once there are enough folders for scrolling to be worse than
       // typing. Below that the field is a control with nothing to do.
@@ -502,9 +511,11 @@ struct ClientDetail: View {
           .lineLimit(2).truncationMode(.middle)
           .textSelection(.enabled)
         if colliding {
-          Text("This is the entry standing in the way of Cupertino's own \u{2018}\(entry.key)\u{2019}.")
-            .font(.caption2).foregroundStyle(.red)
-            .fixedSize(horizontal: false, vertical: true)
+          Text(
+            "This is the entry standing in the way of Cupertino's own \u{2018}\(entry.key)\u{2019}."
+          )
+          .font(.caption2).foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
         }
       }
       Spacer(minLength: 8)
@@ -549,7 +560,8 @@ struct ClientDetail: View {
   private var removalMessage: String {
     guard let pending else { return "" }
     let scope =
-      pending.folder.map { "the block for \(abbreviate($0))" } ?? "the \u{2018}\(rootKey)\u{2019} key"
+      pending.folder.map { "the block for \(abbreviate($0))" }
+      ?? "the \u{2018}\(rootKey)\u{2019} key"
     return
       "\u{2018}\(pending.key)\u{2019} is taken out of \(scope) in "
       + "\(ClientWiring.configFile(of: client).path.path). Nothing else in the file "
@@ -681,9 +693,10 @@ struct ProjectFoldersCard: View {
       Text(
         "Wire a folder when you want these servers in one project rather than everywhere. A "
           + "Claude Code session started in that folder gets them; every other session stays as "
-          + "it was.")
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+          + "it was."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
 
       Picker("Write to", selection: Binding(get: { scope }, set: { scopeRaw = $0.rawValue })) {
         ForEach(ClientWiring.ProjectScope.allCases) { option in

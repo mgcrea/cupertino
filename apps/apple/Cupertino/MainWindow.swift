@@ -246,13 +246,13 @@ struct MainView: View {
     .safeAreaInset(edge: .bottom) { sidebarStatus }
   }
 
-/// One sidebar row, owning its own `@AppStorage` so it redraws when the switch
-/// moves.
-///
-/// A view rather than a branch inside the `ForEach`: `SurfaceSettings.isEnabled`
-/// is a plain `UserDefaults` read and does not publish, so a row that consulted
-/// it directly would keep its old appearance until something else invalidated
-/// the list. `WritesToggle` makes the same move for the same reason.
+  /// One sidebar row, owning its own `@AppStorage` so it redraws when the switch
+  /// moves.
+  ///
+  /// A view rather than a branch inside the `ForEach`: `SurfaceSettings.isEnabled`
+  /// is a plain `UserDefaults` read and does not publish, so a row that consulted
+  /// it directly would keep its old appearance until something else invalidated
+  /// the list. `WritesToggle` makes the same move for the same reason.
   /// The two facts that are true of the whole app rather than of one surface.
   /// Full Disk Access belongs here and nowhere else — `DiskAccessStatus` is
   /// deliberately app-wide, and a copy of it per surface would imply a
@@ -272,7 +272,9 @@ struct MainView: View {
     VStack(alignment: .leading, spacing: 6) {
       Divider()
       licenceLine
-      Button { SettingsOpener.show(.permissions) } label: {
+      Button {
+        SettingsOpener.show(.permissions)
+      } label: {
         HStack(spacing: 6) {
           Circle()
             .fill(
@@ -288,7 +290,9 @@ struct MainView: View {
       // and this one never does. Opens Settings, where the build number, the
       // commit and the copy button are.
       HStack(spacing: 6) {
-        Button { SettingsOpener.show(.general) } label: {
+        Button {
+          SettingsOpener.show(.general)
+        } label: {
           Text("Version \(AppInfo.shortVersion)")
             .font(.caption)
             .foregroundStyle(.tertiary)
@@ -308,7 +312,9 @@ struct MainView: View {
         // others that are always present, and a permanent zero is a row that
         // only ever says nothing is happening.
         if clientCount > 0 {
-          Button { selection = Pane.connections.rawValue } label: {
+          Button {
+            selection = Pane.connections.rawValue
+          } label: {
             Text(clientCount == 1 ? "1 client" : "\(clientCount) clients")
               .font(.caption)
               .foregroundStyle(.tertiary)
@@ -324,7 +330,9 @@ struct MainView: View {
         // buttons. The app menu carrying ⌘, is not the answer either: it exists
         // only while a window is open, which is a rule nobody should have to
         // learn about a menu bar app.
-        Button { SettingsOpener.show() } label: {
+        Button {
+          SettingsOpener.show()
+        } label: {
           Image(systemName: "gearshape")
             .font(.caption)
             .foregroundStyle(.tertiary)
@@ -361,7 +369,9 @@ struct MainView: View {
     TimelineView(.periodic(from: .now, by: 15)) { _ in
       switch Entitlement.current {
       case .licensed(let license):
-        Button { SettingsOpener.show(.licence) } label: {
+        Button {
+          SettingsOpener.show(.licence)
+        } label: {
           HStack(spacing: 6) {
             Circle().fill(Color.green).frame(width: 7, height: 7)
             Text("Licensed").font(.caption)
@@ -371,7 +381,9 @@ struct MainView: View {
         .buttonStyle(.plain)
         .help(license.email)
       case .trial:
-        Button { SettingsOpener.show(.licence) } label: {
+        Button {
+          SettingsOpener.show(.licence)
+        } label: {
           HStack(spacing: 6) {
             Circle().fill(Color.blue).frame(width: 7, height: 7)
             Text("Trial · \(Trial.remainingText)").font(.caption)
@@ -381,7 +393,9 @@ struct MainView: View {
         .buttonStyle(.plain)
         .help("Every surface is running, exactly as a licensed copy would")
       case .refused:
-        Button { SettingsOpener.show(.licence) } label: {
+        Button {
+          SettingsOpener.show(.licence)
+        } label: {
           Label("Unlicensed", systemImage: "exclamationmark.triangle.fill")
             .font(.caption)
             .foregroundStyle(.orange)
@@ -452,7 +466,9 @@ struct MainView: View {
           .textFieldStyle(.plain)
           .frame(minWidth: 90, idealWidth: 150)
         if !query.isEmpty {
-          Button { query = "" } label: {
+          Button {
+            query = ""
+          } label: {
             Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
           }
           .buttonStyle(.plain)
@@ -568,7 +584,6 @@ struct MainView: View {
     .font(.system(.caption, design: .monospaced))
   }
 
-
   private func row(_ entry: LogStore.Entry) -> some View {
     LogRow(entry: entry, tint: tint(entry.level), clock: Self.clock, highlight: needle)
   }
@@ -610,29 +625,30 @@ struct MainView: View {
           + "contents and results are per-surface and off unless you turn them on. "
           + (AuditLog.isEnabled
             ? "An audit log is being kept on disk — see Settings › Activity."
-            : "Nothing here is written to disk."))
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        // Bounded, and it has to be. `fixedSize(horizontal: false, vertical:
-        // true)` asks for the height this text needs at whatever width it is
-        // proposed, and inside this HStack that proposal is near zero — so the
-        // caption wrapped into a column 2060pt tall, the split view took that as
-        // its ideal height, and a 572pt window laid its entire contents out at
-        // y = -587. Nothing painted: sidebar, log and footer all existed in the
-        // accessibility tree and none of them was on screen. The `activity` and
-        // `prompt` plates photographed an empty window.
-        //
-        // It was latent under the one-line caption, which wrapped tall enough to
-        // be wrong and short enough to fit; the second sentence is what pushed
-        // it past the window. `layoutPriority` and a flexible `frame` were both
-        // tried and neither reaches it — the fix is not to ask for an unbounded
-        // height in the first place.
-        //
-        // Three rather than two: two is what it takes at the size the plates are
-        // captured, but this window goes down to 780pt wide and the sentence is
-        // load-bearing — truncating a privacy claim with an ellipsis is the one
-        // way this footer must not fail.
-        .lineLimit(3)
+            : "Nothing here is written to disk.")
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      // Bounded, and it has to be. `fixedSize(horizontal: false, vertical:
+      // true)` asks for the height this text needs at whatever width it is
+      // proposed, and inside this HStack that proposal is near zero — so the
+      // caption wrapped into a column 2060pt tall, the split view took that as
+      // its ideal height, and a 572pt window laid its entire contents out at
+      // y = -587. Nothing painted: sidebar, log and footer all existed in the
+      // accessibility tree and none of them was on screen. The `activity` and
+      // `prompt` plates photographed an empty window.
+      //
+      // It was latent under the one-line caption, which wrapped tall enough to
+      // be wrong and short enough to fit; the second sentence is what pushed
+      // it past the window. `layoutPriority` and a flexible `frame` were both
+      // tried and neither reaches it — the fix is not to ask for an unbounded
+      // height in the first place.
+      //
+      // Three rather than two: two is what it takes at the size the plates are
+      // captured, but this window goes down to 780pt wide and the sentence is
+      // load-bearing — truncating a privacy claim with an ellipsis is the one
+      // way this footer must not fail.
+      .lineLimit(3)
       Spacer()
       if let exported {
         Text(exported)
@@ -650,7 +666,6 @@ struct MainView: View {
     .padding(.vertical, 8)
   }
 }
-
 
 private struct SurfaceSidebarRow: View {
   let surface: Surface
@@ -704,7 +719,6 @@ private struct SurfaceSidebarRow: View {
     }
   }
 }
-
 
 /// One client in the sidebar, with the same dot its own pane leads with.
 ///
@@ -831,7 +845,6 @@ struct UpdateConsentCard: View {
     answered = true
   }
 }
-
 
 /// One line of the log, with whatever payload it carries.
 ///

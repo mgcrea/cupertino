@@ -241,7 +241,6 @@ enum ClientWiringTOML {
       tables: tables, anchor: anchor)
   }
 
-
   // MARK: - Writing
 
   /// One `[mcp_servers.<name>]` block.
@@ -272,9 +271,11 @@ enum ClientWiringTOML {
   /// handed, and "always right in practice" is not a property the renderer can
   /// check for itself.
   private static func key(_ name: String) -> String {
-    let bare = !name.isEmpty && name.allSatisfy {
-      $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-")
-    }
+    let bare =
+      !name.isEmpty
+      && name.allSatisfy {
+        $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-")
+      }
     return bare ? name : quoted(name)
   }
 
@@ -386,7 +387,6 @@ enum ClientWiringTOML {
     document.text[document.lines[index]]
       .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
-
 
   // MARK: - Lines
 

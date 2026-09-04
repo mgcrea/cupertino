@@ -292,8 +292,7 @@ enum ClientWiringMerge {
   /// anybody: no path through this app produces that pair, so the check would
   /// only ever fire on a file somebody edited themselves — and it has no remedy
   /// to offer them that Configure does not already offer.
-  static func state(of servers: [String: Any], key: String, expectedCommand: String) -> EntryState
-  {
+  static func state(of servers: [String: Any], key: String, expectedCommand: String) -> EntryState {
     guard let entry = servers[key] as? [String: Any] else { return .missing }
     let found = identity(of: entry)
     // Equality with the command we would write comes FIRST, and decides on its

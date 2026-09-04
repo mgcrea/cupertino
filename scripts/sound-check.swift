@@ -57,9 +57,10 @@ struct SoundCheck {
   }
 
   /// The text a tool call came back with, whatever its shape.
-  static func callText(_ name: String, _ args: [String: Any] = [:], writes: Bool = false,
-    recording: Bool = false) -> (text: String, isError: Bool)?
-  {
+  static func callText(
+    _ name: String, _ args: [String: Any] = [:], writes: Bool = false,
+    recording: Bool = false
+  ) -> (text: String, isError: Bool)? {
     let reply = ask(
       "tools/call", params: ["name": name, "arguments": args], writes: writes,
       recording: recording)
@@ -91,8 +92,10 @@ struct SoundCheck {
         notification, surface: surface, writesAllowed: true, recordingAllowed: true) == nil)
 
     check("an unknown method is a JSON-RPC error", ask("nope")?["error"] != nil)
-    check("an unknown resource is an error", ask(
-      "resources/read", params: ["uri": "cupertino://sound/nope"])?["error"] != nil)
+    check(
+      "an unknown resource is an error",
+      ask(
+        "resources/read", params: ["uri": "cupertino://sound/nope"])?["error"] != nil)
 
     // ─── the gates are independent, which is the whole design ───────────────
 
@@ -117,9 +120,11 @@ struct SoundCheck {
       recordingOnly.contains("apple_sound_start_recording")
         && recordingOnly.contains("apple_sound_stop_recording"))
     check("the two gates are independent", Set(writesOnly).union(recordingOnly) == Set(both))
-    check("every gate combination keeps the ungated three", [
-      writesOnly, recordingOnly, both,
-    ].allSatisfy { Set($0).isSuperset(of: ungated) })
+    check(
+      "every gate combination keeps the ungated three",
+      [
+        writesOnly, recordingOnly, both,
+      ].allSatisfy { Set($0).isSuperset(of: ungated) })
 
     // Not registered, not refused — the property docs/alternatives.md claims.
     check(
@@ -128,8 +133,9 @@ struct SoundCheck {
 
     // ─── annotations ────────────────────────────────────────────────────────
 
-    let all = (ask("tools/list", writes: true, recording: true)?["result"] as? [String: Any])?[
-      "tools"] as? [[String: Any]] ?? []
+    let all =
+      (ask("tools/list", writes: true, recording: true)?["result"] as? [String: Any])?[
+        "tools"] as? [[String: Any]] ?? []
     let readOnly = all.filter {
       (($0["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool) == true
     }.compactMap { $0["name"] as? String }
@@ -137,9 +143,11 @@ struct SoundCheck {
       "the three ungated tools and recording_status are the read-only ones",
       Set(readOnly) == Set(ungated + ["apple_sound_recording_status"]))
     check("every tool declares an inputSchema", all.allSatisfy { $0["inputSchema"] != nil })
-    check("every tool declares a description", all.allSatisfy {
-      (($0["description"] as? String) ?? "").count > 20
-    })
+    check(
+      "every tool declares a description",
+      all.allSatisfy {
+        (($0["description"] as? String) ?? "").count > 20
+      })
 
     // ─── the free half really is free ───────────────────────────────────────
     // No grant of any kind is held here, and these still have to answer.
@@ -159,8 +167,10 @@ struct SoundCheck {
         rows.allSatisfy { $0["volume"] != nil })
     }
 
-    check("diagnostics answers whatever the grant is", callText("apple_sound_diagnostics")?
-      .isError == false)
+    check(
+      "diagnostics answers whatever the grant is",
+      callText("apple_sound_diagnostics")?
+        .isError == false)
     let diag =
       callText("apple_sound_diagnostics").flatMap {
         try? JSONSerialization.jsonObject(with: Data($0.text.utf8))
@@ -180,7 +190,8 @@ struct SoundCheck {
 
     // ─── resources ──────────────────────────────────────────────────────────
 
-    let list = (ask("resources/list")?["result"] as? [String: Any])?["resources"]
+    let list =
+      (ask("resources/list")?["result"] as? [String: Any])?["resources"]
       as? [[String: Any]] ?? []
     check(
       "both resources are advertised",

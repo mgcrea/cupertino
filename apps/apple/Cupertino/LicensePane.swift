@@ -141,8 +141,12 @@ struct LicensePane: View {
   /// suddenly lost its tools would be a worse way to learn it.
   private var trialExplanation: some View {
     VStack(alignment: .leading, spacing: 3) {
-      row("Every surface is running, writes still obey their own switches, and nothing is held back. This is the app, not a demo.")
-      row("When the window closes the servers stop, including any your assistant is already connected to. It will report the connection dropped.")
+      row(
+        "Every surface is running, writes still obey their own switches, and nothing is held back. This is the app, not a demo."
+      )
+      row(
+        "When the window closes the servers stop, including any your assistant is already connected to. It will report the connection dropped."
+      )
     }
     .font(.caption)
     .foregroundStyle(.secondary)
@@ -161,8 +165,10 @@ struct LicensePane: View {
     if Trial.hasRun {
       VStack(alignment: .leading, spacing: 3) {
         Text("The trial window has closed.")
-        Text("Buying comes with thirty days to change your mind, refunded in full, no reason needed.")
-          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          "Buying comes with thirty days to change your mind, refunded in full, no reason needed."
+        )
+        .fixedSize(horizontal: false, vertical: true)
       }
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -175,10 +181,12 @@ struct LicensePane: View {
         }
         .buttonStyle(.glassProminent)
         .controlSize(.small)
-        Text("Full function, every surface, no key — enough to see it working against your own \(trialSubject).")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          "Full function, every surface, no key — enough to see it working against your own \(trialSubject)."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       }
       .padding(.top, 6)
     }
@@ -189,9 +197,14 @@ struct LicensePane: View {
   private var explanation: some View {
     VStack(alignment: .leading, spacing: 3) {
       row(unavailableLine)
-      row("Everything else works: permissions stay granted, your settings are untouched, and no data has moved.")
-      row("The write controls are a safety feature, not a paid one. They behave the same either way.")
-      row("A key takes effect at once. Nothing needs restarting — the next time your assistant connects, the servers start.")
+      row(
+        "Everything else works: permissions stay granted, your settings are untouched, and no data has moved."
+      )
+      row(
+        "The write controls are a safety feature, not a paid one. They behave the same either way.")
+      row(
+        "A key takes effect at once. Nothing needs restarting — the next time your assistant connects, the servers start."
+      )
     }
     .font(.caption)
     .foregroundStyle(.secondary)
@@ -213,10 +226,12 @@ struct LicensePane: View {
   private var unavailableLine: String {
     let count = SurfaceSettings.enabledSurfaces.count
     if count == 0 {
-      return "Cupertino will not start the MCP servers, so no surface is available to your assistant."
+      return
+        "Cupertino will not start the MCP servers, so no surface is available to your assistant."
     }
     let verb = count == 1 ? "is" : "are"
-    return "Cupertino will not start the MCP servers, so \(surfaceList) \(verb) unavailable to your assistant."
+    return
+      "Cupertino will not start the MCP servers, so \(surfaceList) \(verb) unavailable to your assistant."
   }
 
   /// "Mail, Notes, Reminders and Calendar", read off the closed table rather

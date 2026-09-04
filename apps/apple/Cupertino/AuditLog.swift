@@ -193,7 +193,8 @@ final class AuditLog {
   nonisolated static func segments() -> [URL] {
     let found =
       (try? FileManager.default.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
+        at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]))
+      ?? []
     return found.filter { $0.lastPathComponent.hasSuffix(".jsonl") }.sorted {
       $0.lastPathComponent < $1.lastPathComponent
     }
@@ -364,7 +365,8 @@ final class AuditLog {
       guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
       let report = Self.verify(text: text, from: head)
       try? FileManager.default.removeItem(at: folder.appendingPathComponent(url.lastPathComponent))
-      try FileManager.default.copyItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
+      try FileManager.default.copyItem(
+        at: url, to: folder.appendingPathComponent(url.lastPathComponent))
       described.append(
         AuditChain.SegmentEntry(
           name: url.lastPathComponent, records: report.records,
