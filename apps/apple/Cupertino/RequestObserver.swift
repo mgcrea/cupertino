@@ -103,20 +103,19 @@ final class RequestObserver {
 
     let params = object["params"] as? [String: Any]
 
-    /*
-     * The three ways a client asks a server to DO something, each identified by
-     * the one param that names what was asked for.
-     *
-     * Reading that param is not a widening of what this records. The claim on
-     * screen is "method and tool names, and the arguments each was called with",
-     * and a prompt name and a resource URI are identities in exactly the way a
-     * tool name is: `apple_mail_draft_reply` and `cupertino://mail/inventory`
-     * say WHICH capability was reached, never what was passed to it or what
-     * came back. The alternative is worse than verbose — before this, expanding
-     * a prompt logged a bare `prompts/get` and counted as nothing, so the
-     * Activity window under-reported an agent that had just been handed a
-     * write workflow.
-     */
+    // The three ways a client asks a server to DO something, each identified by
+    // the one param that names what was asked for.
+    //
+    // Reading that param is not a widening of what this records. The claim on
+    // screen is "method and tool names, and the arguments each was called with",
+    // and a prompt name and a resource URI are identities in exactly the way a
+    // tool name is: `apple_mail_draft_reply` and `cupertino://mail/inventory`
+    // say WHICH capability was reached, never what was passed to it or what
+    // came back. The alternative is worse than verbose — before this, expanding
+    // a prompt logged a bare `prompts/get` and counted as nothing, so the
+    // Activity window under-reported an agent that had just been handed a
+    // write workflow.
+    //
     let identifier: String? =
       switch method {
       case "tools/call": params?["name"] as? String

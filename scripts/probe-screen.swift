@@ -1,55 +1,54 @@
-/*
- * Phase-0 probe: can Cupertino capture a surface's window, and at what cost?
- *
- * docs/surfaces.md: "Start with a probe, not a package." This is that probe for
- * the proposed `screen` surface. It is Swift rather than .mjs because
- * ScreenCaptureKit is unreachable from node — which is itself one of the
- * findings that decides the architecture.
- *
- * ## Read the two identities separately
- *
- * TCC attributes screen capture to the RESPONSIBLE PROCESS, so this binary
- * answers a different question depending on who runs it:
- *
- *   swift scripts/probe-screen.swift        responsible = your terminal
- *   scripts/spike-app-tcc/build.sh run      responsible = the signed .app
- *
- * The second is the one the design depends on. scripts/spike-app-tcc/README.md
- * measured exactly this inheritance for Full Disk Access and Apple Events, the
- * codebase generalised it to every TCC service, and it was WRONG for
- * Accessibility — a day was lost to it. So Screen Recording is measured here
- * rather than inherited from that verdict.
- *
- * ## Two answers that are allowed to disagree
- *
- * Same shape as `trusted` vs `uiRead` in the accessibility lane of
- * spike.sh.in. `CGPreflightScreenCaptureAccess()` is a CLAIM about an identity;
- * enumerating windows is the thing the feature actually does. A green flag over
- * a blind enumeration is a real state on a machine that has run the app from
- * two paths (README: "One identifier, four grants"), and reporting only the
- * flag would hide it.
- *
- * ## Titles are the data
- *
- * docs/surfaces.md: "A filename can be the data." Window titles are worse — a
- * mail subject, a chat participant, a document name. So the default output
- * reports STATISTICS about titles and never a title. `--unsafe-titles` prints
- * them, and exists so the leak can be inspected deliberately rather than by
- * accident.
- *
- * ## It refuses to report a negative it cannot stand behind
- *
- * scripts/probe-maps.mjs exits 3 rather than printing a result it cannot
- * support, after "no file lane" was declared three times about a store that was
- * there. Same rule: exit 3 for UNDETERMINED, 4 for a measured NO-GO, 0 for GO.
- *
- * Usage:
- *   swift scripts/probe-screen.swift [--surfaces=PATH] [--out=DIR] [--unsafe-titles] [--force]
- *
- * Without a grant it STOPS rather than prompt: the prompt would be attributed to
- * whatever launched it, and granting Screen Recording to a terminal is the
- * misattribution the whole project exists to avoid. --force overrides.
- */
+// Phase-0 probe: can Cupertino capture a surface's window, and at what cost?
+//
+// docs/surfaces.md: "Start with a probe, not a package." This is that probe for
+// the proposed `screen` surface. It is Swift rather than .mjs because
+// ScreenCaptureKit is unreachable from node — which is itself one of the
+// findings that decides the architecture.
+//
+// ## Read the two identities separately
+//
+// TCC attributes screen capture to the RESPONSIBLE PROCESS, so this binary
+// answers a different question depending on who runs it:
+//
+//   swift scripts/probe-screen.swift        responsible = your terminal
+//   scripts/spike-app-tcc/build.sh run      responsible = the signed .app
+//
+// The second is the one the design depends on. scripts/spike-app-tcc/README.md
+// measured exactly this inheritance for Full Disk Access and Apple Events, the
+// codebase generalised it to every TCC service, and it was WRONG for
+// Accessibility — a day was lost to it. So Screen Recording is measured here
+// rather than inherited from that verdict.
+//
+// ## Two answers that are allowed to disagree
+//
+// Same shape as `trusted` vs `uiRead` in the accessibility lane of
+// spike.sh.in. `CGPreflightScreenCaptureAccess()` is a CLAIM about an identity;
+// enumerating windows is the thing the feature actually does. A green flag over
+// a blind enumeration is a real state on a machine that has run the app from
+// two paths (README: "One identifier, four grants"), and reporting only the
+// flag would hide it.
+//
+// ## Titles are the data
+//
+// docs/surfaces.md: "A filename can be the data." Window titles are worse — a
+// mail subject, a chat participant, a document name. So the default output
+// reports STATISTICS about titles and never a title. `--unsafe-titles` prints
+// them, and exists so the leak can be inspected deliberately rather than by
+// accident.
+//
+// ## It refuses to report a negative it cannot stand behind
+//
+// scripts/probe-maps.mjs exits 3 rather than printing a result it cannot
+// support, after "no file lane" was declared three times about a store that was
+// there. Same rule: exit 3 for UNDETERMINED, 4 for a measured NO-GO, 0 for GO.
+//
+// Usage:
+//   swift scripts/probe-screen.swift [--surfaces=PATH] [--out=DIR] [--unsafe-titles] [--force]
+//
+// Without a grant it STOPS rather than prompt: the prompt would be attributed to
+// whatever launched it, and granting Screen Recording to a terminal is the
+// misattribution the whole project exists to avoid. --force overrides.
+//
 
 import AppKit
 import CoreGraphics
@@ -73,8 +72,15 @@ let outDir = URL(
   fileURLWithPath: option("out") ?? NSTemporaryDirectory() + "cupertino-probe-screen")
 
 // Exit codes, mirroring scripts/probe-maps.mjs.
+// The names are SCREAMING_CASE to match the .mjs probes they mirror, which is
+// the whole point of them -- a reader comparing the two files should not have to
+// translate. lowerCamelCase here would break that correspondence, so the rule is
+// off for these three and on everywhere else.
+// swift-format-ignore
 let GO: Int32 = 0
+// swift-format-ignore
 let UNDETERMINED: Int32 = 3
+// swift-format-ignore
 let NO_GO: Int32 = 4
 
 func section(_ title: String) {

@@ -1,76 +1,75 @@
-/*
- * Phase-0 probe: what can Cupertino do with the speakers and the microphone,
- * and what does each half cost?
- *
- * docs/surfaces.md: "Start with a probe, not a package." This is that probe for
- * the proposed `sound` surface. Swift rather than .mjs because CoreAudio,
- * AVFoundation and Speech are all unreachable from node — which is itself one
- * of the findings that decides the architecture, exactly as ScreenCaptureKit
- * was for `screen`.
- *
- * ## The surface splits in two by permission, and the probe is built that way
- *
- * Measured from a shell before this file existed:
- *
- *   osascript -e 'get volume settings'   answers with NO TCC grant, ~127 ms
- *   system_profiler -json SPAudioDataType  4 devices, ~115 ms
- *   /usr/bin/af*  ->  afclip afconvert afhash afida afinfo afktool afplay
- *                     afscexpand.  THERE IS NO afrecord.
- *
- * So the output half is free and the input half is not, and the interesting
- * question is not "can we record" but "what does the recording half drag in
- * that the free half would otherwise never need". Sections A and B answer the
- * free half; C and D answer the microphone; E answers transcription.
- *
- * ## Read the two identities separately
- *
- * TCC attributes the microphone to the RESPONSIBLE PROCESS, so this binary
- * answers a different question depending on who runs it:
- *
- *   swift scripts/probe-sound.swift          responsible = your terminal
- *   scripts/spike-app-tcc/build.sh run       responsible = the signed .app
- *
- * The second is the one the design depends on. spike-app-tcc measured that
- * inheritance for Full Disk Access and Apple Events, the codebase generalised
- * it to every TCC service, and it was WRONG for Accessibility — a day was lost
- * to it. probe-screen.swift re-measured rather than inherit; so does this.
- *
- * ## Two answers that are allowed to disagree
- *
- * `AVCaptureDevice.authorizationStatus(for: .audio)` is a CLAIM about an
- * identity; getting non-silent samples out of a recorder is the thing the
- * feature actually does. A green flag over a silent buffer is a real state —
- * a muted or in-use device, or a grant belonging to a different copy of the
- * bundle — and reporting only the flag would hide it.
- *
- * ## A DEVICE NAME IS THE DATA
- *
- * docs/surfaces.md: "A filename can be the data." A device name is worse.
- * AirPods are named after their owner by default, so this list is a personal
- * name plus a hardware inventory of the room. The default output reports
- * COUNTS, TRANSPORTS and ROLES and never a device name. `--unsafe-names`
- * prints them, and exists so the leak can be inspected deliberately rather
- * than by accident — the same escape hatch probe-screen.swift gives window
- * titles.
- *
- * Nothing recorded is kept. Section D writes ~1 s to a temp file, reports its
- * duration, its byte count and whether it is non-silent, and deletes it. It
- * never plays back, never transcribes, and never prints a sample.
- *
- * ## It refuses to report a negative it cannot stand behind
- *
- * probe-maps.mjs exits 3 rather than print a result it cannot support, after
- * "no file lane" was declared three times about a store that was there. Same
- * ladder: 3 for UNDETERMINED, 4 for a measured NO-GO, 0 for GO.
- *
- * Usage:
- *   swift scripts/probe-sound.swift [--unsafe-names] [--force] [--seconds=N]
- *
- * Without a microphone grant section D STOPS rather than prompt: the prompt
- * would be attributed to whatever launched it, and granting the microphone to
- * a terminal is the misattribution the whole project exists to avoid.
- * --force overrides.
- */
+// Phase-0 probe: what can Cupertino do with the speakers and the microphone,
+// and what does each half cost?
+//
+// docs/surfaces.md: "Start with a probe, not a package." This is that probe for
+// the proposed `sound` surface. Swift rather than .mjs because CoreAudio,
+// AVFoundation and Speech are all unreachable from node — which is itself one
+// of the findings that decides the architecture, exactly as ScreenCaptureKit
+// was for `screen`.
+//
+// ## The surface splits in two by permission, and the probe is built that way
+//
+// Measured from a shell before this file existed:
+//
+//   osascript -e 'get volume settings'   answers with NO TCC grant, ~127 ms
+//   system_profiler -json SPAudioDataType  4 devices, ~115 ms
+//   /usr/bin/af*  ->  afclip afconvert afhash afida afinfo afktool afplay
+//                     afscexpand.  THERE IS NO afrecord.
+//
+// So the output half is free and the input half is not, and the interesting
+// question is not "can we record" but "what does the recording half drag in
+// that the free half would otherwise never need". Sections A and B answer the
+// free half; C and D answer the microphone; E answers transcription.
+//
+// ## Read the two identities separately
+//
+// TCC attributes the microphone to the RESPONSIBLE PROCESS, so this binary
+// answers a different question depending on who runs it:
+//
+//   swift scripts/probe-sound.swift          responsible = your terminal
+//   scripts/spike-app-tcc/build.sh run       responsible = the signed .app
+//
+// The second is the one the design depends on. spike-app-tcc measured that
+// inheritance for Full Disk Access and Apple Events, the codebase generalised
+// it to every TCC service, and it was WRONG for Accessibility — a day was lost
+// to it. probe-screen.swift re-measured rather than inherit; so does this.
+//
+// ## Two answers that are allowed to disagree
+//
+// `AVCaptureDevice.authorizationStatus(for: .audio)` is a CLAIM about an
+// identity; getting non-silent samples out of a recorder is the thing the
+// feature actually does. A green flag over a silent buffer is a real state —
+// a muted or in-use device, or a grant belonging to a different copy of the
+// bundle — and reporting only the flag would hide it.
+//
+// ## A DEVICE NAME IS THE DATA
+//
+// docs/surfaces.md: "A filename can be the data." A device name is worse.
+// AirPods are named after their owner by default, so this list is a personal
+// name plus a hardware inventory of the room. The default output reports
+// COUNTS, TRANSPORTS and ROLES and never a device name. `--unsafe-names`
+// prints them, and exists so the leak can be inspected deliberately rather
+// than by accident — the same escape hatch probe-screen.swift gives window
+// titles.
+//
+// Nothing recorded is kept. Section D writes ~1 s to a temp file, reports its
+// duration, its byte count and whether it is non-silent, and deletes it. It
+// never plays back, never transcribes, and never prints a sample.
+//
+// ## It refuses to report a negative it cannot stand behind
+//
+// probe-maps.mjs exits 3 rather than print a result it cannot support, after
+// "no file lane" was declared three times about a store that was there. Same
+// ladder: 3 for UNDETERMINED, 4 for a measured NO-GO, 0 for GO.
+//
+// Usage:
+//   swift scripts/probe-sound.swift [--unsafe-names] [--force] [--seconds=N]
+//
+// Without a microphone grant section D STOPS rather than prompt: the prompt
+// would be attributed to whatever launched it, and granting the microphone to
+// a terminal is the misattribution the whole project exists to avoid.
+// --force overrides.
+//
 
 import AVFoundation
 import CoreAudio
@@ -90,8 +89,15 @@ let force = flag("force")
 let captureSeconds = Double(option("seconds") ?? "") ?? 1.0
 
 // Exit codes, mirroring scripts/probe-maps.mjs and scripts/probe-screen.swift.
+// The names are SCREAMING_CASE to match the .mjs probes they mirror, which is
+// the whole point of them -- a reader comparing the two files should not have to
+// translate. lowerCamelCase here would break that correspondence, so the rule is
+// off for these three and on everywhere else.
+// swift-format-ignore
 let GO: Int32 = 0
+// swift-format-ignore
 let UNDETERMINED: Int32 = 3
+// swift-format-ignore
 let NO_GO: Int32 = 4
 
 func section(_ title: String) {

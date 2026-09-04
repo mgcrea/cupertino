@@ -95,6 +95,13 @@ jobs:
       # either fail or, worse, pass for the wrong reason.
       - name: Test 🧪
         run: pnpm run test
+      # swift-format ships inside Xcode, so it exists on the macos leg of this
+      # matrix and nowhere else -- unguarded, this step fails on ubuntu with
+      # "xcrun: command not found", which reads like a broken runner rather than
+      # a misplaced check.
+      - name: Format (swift) 🔍
+        if: runner.os == 'macOS'
+        run: make format-swift-check
       # The launcher is what gives the server its own Full Disk Access identity,
       # so a compile break in it would only surface at install time otherwise.
       - name: Launcher compiles 🔨

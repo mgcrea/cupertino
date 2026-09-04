@@ -1,0 +1,10 @@
+# Commits that changed formatting and nothing else. Listed here so `git blame`
+# attributes lines to whoever wrote them rather than to the reformat.
+#
+# GitHub reads this file automatically. Locally it needs one setup step, which
+# `make blame-setup` does:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: swift-format the Swift half
+36c5f6c718dbbcd643014e4e6124999da0c72c33
