@@ -323,7 +323,9 @@ audit-check: ## Prove an export signature survives a round trip, with no app and
 wiring-check: ## Assert the config merge leaves other people's files alone
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/wiring-check \
-		apps/apple/Cupertino/ClientWiringMerge.swift scripts/wiring-check.swift
+		apps/apple/Cupertino/ClientWiringMerge.swift \
+		apps/apple/Cupertino/ClientWiringTOML.swift \
+		scripts/wiring-check.swift
 	@apps/apple/.build/wiring-check
 
 wiring-check-real: wiring-check ## Prove the merge against the real client configs (read-only)
@@ -332,7 +334,9 @@ wiring-check-real: wiring-check ## Prove the merge against the real client confi
 		"$(HOME)/Library/Application Support/Claude/claude_desktop_config.json" \
 		"$(HOME)/.cursor/mcp.json" \
 		"$(HOME)/.lmstudio/mcp.json" \
-		"$(HOME)/.codeium/windsurf/mcp_config.json"
+		"$(HOME)/.codeium/windsurf/mcp_config.json" \
+		"$(HOME)/Library/Application Support/Code/User/mcp.json" \
+		"$(HOME)/.codex/config.toml"
 
 audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"

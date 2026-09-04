@@ -119,7 +119,9 @@ const calls = [
 
           A subset, via WIRING.mockRows — the real popover lists only the
           clients you have installed, so all seven rows would be less honest
-          than three, not more. */}
+          than three, not more. `command` is empty now that every client is
+          written; the branch stays because the shape of that list is not this
+          file's decision. */}
       <ul class="m-0 list-none p-0 text-[12.5px] text-fg-dim">
         {
           WIRING.automatic.slice(0, WIRING.mockRows.automatic).map((client) => (

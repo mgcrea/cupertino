@@ -43,73 +43,48 @@ final class ClientConfigRevision {
 /// What stays here is policy: which clients exist, where they keep their
 /// config, and what we are willing to write.
 enum ClientWiring {
-  /// How a client is wired, and whether we are the one doing it.
+  /// Where a client keeps its servers, and what the file is written in.
+  ///
+  /// Both cases are written by this app. There used to be a third — a shell line
+  /// for the user to paste — and it held VS Code and Codex for two releases, on
+  /// a reading of each file that turned out to be wrong in one case and merely
+  /// expensive in the other. VS Code's `mcp.json` is strict JSON and always was;
+  /// Codex's `config.toml` needed a splicer, which `ClientWiringTOML` now is.
+  /// Nothing is left that needs pasting, so nothing here offers it.
+  ///
+  /// **Zed** and **Goose** are the reason to remember it existed. Zed wants a
+  /// `context_servers` entry whose shape has moved between versions and Goose a
+  /// YAML `extensions:` block; neither is JSON, neither is TOML, and the honest
+  /// way to add them is a third case here rather than a snippet maintained blind.
   enum Wiring: Hashable {
     /// A strict-JSON file we merge into. `rootKey` is the object servers live
-    /// under — `mcpServers` for everything so far, `servers` if VS Code's own
-    /// file ever becomes safe to write. A parameter rather than an assumption,
-    /// because the previous version of this file hardcoded the string in two
-    /// places and called the difference an enum with one case.
+    /// under: `mcpServers` for five of the six, `servers` for VS Code. A
+    /// parameter rather than an assumption, because the previous version of this
+    /// file hardcoded the string in two places and called the difference an enum
+    /// with one case.
     case json(path: URL, rootKey: String)
 
-    /// A command to paste, for clients whose config is not ours to rewrite.
+    /// `~/.codex/config.toml`, spliced in place.
     ///
-    /// One refusal now, and it is about syntax rather than about stakes. VS
-    /// Code, Zed and Goose keep their config in JSONC or YAML and Codex in
-    /// TOML; re-serialising any of them through `JSONSerialization` would
-    /// delete every comment in a file the user maintains by hand.
-    ///
-    /// Claude Code used to be here too, on the grounds that `~/.claude.json`
-    /// holds credentials and that running sessions write to it concurrently.
-    /// Neither survived being checked. The mode is preserved across the swap,
-    /// so a 0600 file stays 0600; and the concurrency is the same
-    /// read-modify-write `claude mcp add` performs from a second process, so
-    /// handing over the command relocated the race rather than avoiding it —
-    /// while giving up the one advantage this app has, which is that it already
-    /// reads that file and can say when a write has been clobbered.
-    ///
-    /// `probe` is a strict-JSON file we may *read* to report status, and never
-    /// write. nil where the config is not JSON at all.
-    case command(recipe: Recipe, probe: Probe?)
-  }
+    /// No rootKey: TOML's is `mcp_servers` and it is `ClientWiringTOML`'s to
+    /// know, because unlike the JSON clients the key is part of the table header
+    /// syntax rather than a lookup.
+    case toml(path: URL)
 
-  /// One shell line per surface, built by substitution.
-  ///
-  /// A template rather than an enum of per-client styles, so a new command
-  /// client stays what a new drop-in client already is: one row in the table
-  /// below and no new code.
-  ///
-  /// Placeholders, all of which expand **already quoted**. A template must not
-  /// add quotes of its own: Cupertino can legally live at a path with a space
-  /// or an apostrophe in it, and a table full of hand-placed quotes is where
-  /// that bug would live.
-  ///
-  ///   `{key}`    the server key, e.g. `cupertino-mail`
-  ///   `{id}`     the surface id, e.g. `mail`
-  ///   `{bridge}` the absolute bridge path
-  ///   `{json}`   the entry `configure` writes, on one line, plus its name
-  struct Recipe: Hashable {
-    let template: String
-    /// The line that undoes `template`, or nil where the client has no removal
-    /// verb at all.
-    ///
-    /// VS Code is the nil: `code --help` offers `--add-mcp` and nothing that
-    /// takes it back. The row explains rather than emitting a command that does
-    /// not exist, which is the same refusal `probe: nil` already makes for a
-    /// config this app cannot read.
-    let removeTemplate: String?
-
-    init(template: String, removeTemplate: String? = nil) {
-      self.template = template
-      self.removeTemplate = removeTemplate
+    var path: URL {
+      switch self {
+      case .json(let path, _), .toml(let path): return path
+      }
     }
-  }
 
-  /// A file we read and never write, to say something true about a client we
-  /// do not configure.
-  struct Probe: Hashable {
-    let path: URL
-    let rootKey: String
+    /// What the pane calls the key servers live under, for the sentence that
+    /// promises everything else in the file is left alone.
+    var rootKey: String {
+      switch self {
+      case .json(_, let rootKey): return rootKey
+      case .toml: return ClientWiringTOML.rootKey
+      }
+    }
   }
 
   struct Client: Identifiable, Hashable {
@@ -143,22 +118,16 @@ enum ClientWiring {
         return true
       }
       if evidence.contains(where: { fm.fileExists(atPath: $0.path) }) { return true }
-      // A config file is evidence too, but only for a client we write one for.
-      // A command client's probe may be a file every install of the tool has.
-      if case .json(let path, _) = wiring { return fm.fileExists(atPath: path.path) }
-      return false
+      // A config file is evidence too: nothing but the client itself writes one.
+      return fm.fileExists(atPath: wiring.path.path)
     }
 
-    /// nil for command clients: there is no file this app wrote to show, and
-    /// pointing Finder at one it only pastes lines for would be a claim it has
-    /// not earned.
-    var revealTarget: URL? {
-      if case .json(let path, _) = wiring { return path }
-      return nil
-    }
+    var revealTarget: URL? { wiring.path }
   }
 
   private static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
+  /// Two clients keep their config here rather than in a dotfile.
+  private static var support: URL { home.appendingPathComponent("Library/Application Support") }
 
   /// Claude Code's per-user config, named once rather than spelled out at the
   /// four places that touch it: the client row writes its top-level
@@ -170,10 +139,19 @@ enum ClientWiring {
   /// client is. It is about whether its config is a file we can rewrite
   /// without destroying something the user put there.
   ///
-  /// Absent entirely: **ChatGPT desktop**, which takes remote HTTP connectors
-  /// only and cannot spawn a local stdio server at all. Absence is the whole
-  /// implementation — a greyed-out row explaining why would be a support
-  /// burden with no action attached.
+  /// **ChatGPT desktop** has no row of its own, and the reason written here used
+  /// to be that it "takes remote HTTP connectors only and cannot spawn a local
+  /// stdio server at all". That is wrong, and the file disproves it: the ChatGPT
+  /// app writes three stdio servers into `~/.codex/config.toml` itself —
+  /// `node_repl`, `computer-use` and `cua_repl`, all `command` entries pointing
+  /// into `/Applications/ChatGPT.app` — and sets `CODEX_CLI_PATH` to the Codex
+  /// binary bundled inside its own app bundle. Remote-only is true of the
+  /// Connectors feature and of nothing else.
+  ///
+  /// It is still one row, for the better reason: the ChatGPT app, the Codex CLI
+  /// and the Codex IDE extension all read that **same file**, so a second row
+  /// would write the same keys to the same path twice, and removing either would
+  /// take the other out.
   ///
   /// **Zed** and **Goose** are absent for now rather than on principle. Zed
   /// wants a `context_servers` entry whose shape has moved between versions
@@ -210,8 +188,7 @@ enum ClientWiring {
       bundleID: "com.anthropic.claudefordesktop",
       evidence: [URL(fileURLWithPath: "/Applications/Claude.app")],
       wiring: .json(
-        path: home.appendingPathComponent(
-          "Library/Application Support/Claude/claude_desktop_config.json"),
+        path: support.appendingPathComponent("Claude/claude_desktop_config.json"),
         rootKey: "mcpServers")),
     Client(
       id: "cursor",
@@ -245,44 +222,25 @@ enum ClientWiring {
         path: home.appendingPathComponent(".codeium/windsurf/mcp_config.json"),
         rootKey: "mcpServers")),
 
-    // Copy-a-command: their config is not JSON, so it is not ours to rewrite.
-    Client(
-      id: "vscode",
-      displayName: "Visual Studio Code",
-      symbol: "chevron.left.slash.chevron.right",
-      bundleID: "com.microsoft.VSCode",
-      evidence: [
-        URL(fileURLWithPath: "/Applications/Visual Studio Code.app"),
-        URL(fileURLWithPath: "/opt/homebrew/bin/code"),
-        URL(fileURLWithPath: "/usr/local/bin/code"),
-      ],
-      // `--add-mcp` rather than writing `Code/User/mcp.json` ourselves, which
-      // is JSONC: JSONSerialization would either throw on the comments or,
-      // worse, succeed on a file that has none today and delete them the day
-      // the user adds one.
-      wiring: .command(recipe: Recipe(template: "code --add-mcp {json}"), probe: nil)),
     Client(
       id: "codex",
-      displayName: "Codex CLI",
+      // Named for the file rather than for one of the three things that read
+      // it. "Codex CLI" sent somebody who had installed only the ChatGPT app
+      // looking for a row that was already there.
+      displayName: "ChatGPT & Codex",
       symbol: "terminal",
       bundleID: nil,
       evidence: [
         home.appendingPathComponent(".codex"),
+        URL(fileURLWithPath: "/Applications/ChatGPT.app"),
         URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
         URL(fileURLWithPath: "/usr/local/bin/codex"),
       ],
-      // `~/.codex/config.toml` is TOML. Same refusal as VS Code, different
-      // syntax. No probe: reading it would need a TOML parser, and the
-      // shortcut — grepping the file for the bridge path — cannot tell a stale
-      // entry from a missing one, so it would let the app claim "configured"
-      // from a substring match.
-      wiring: .command(
-        recipe: Recipe(
-          template: "codex mcp add {key} -- {bridge} --server={id}",
-          // Documented upstream alongside `codex mcp add`. UNVERIFIED here —
-          // `codex` is not installed on the machine this was written on, so
-          // unlike the Claude Code line above nobody has watched this one run.
-          removeTemplate: "codex mcp remove {key}"), probe: nil)),
+      // The one file this app does not serialise. See `ClientWiringTOML`: it
+      // splices the `[mcp_servers]` blocks and quotes every other byte verbatim,
+      // because this config is somebody's hand-written prose and structure and a
+      // round trip through any serialiser would reformat and de-comment it.
+      wiring: .toml(path: home.appendingPathComponent(".codex/config.toml"))),
   ]
 
   // MARK: - What we write
@@ -363,85 +321,6 @@ enum ClientWiring {
       .map { (key: serverKey(for: $0), label: $0.displayName) }
   }
 
-  // MARK: - Commands
-
-  /// POSIX single-quoting, `'\''` dance included.
-  ///
-  /// One helper so no template in the table has to think about it, and so a
-  /// path containing a space, a quote or a `$` produces a line that pastes.
-  private static func shellQuoted(_ value: String) -> String {
-    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-  }
-
-  /// The entry `configure` writes, plus the `name` key and on one line, which
-  /// is the shape `code --add-mcp` takes.
-  private static func entryJSON(for surface: Surface) -> String {
-    var object = entry(for: surface)
-    object["name"] = serverKey(for: surface)
-    // `.withoutEscapingSlashes` matters here in a way it does not in a file:
-    // this string is pasted into a terminal and read by a person, and every
-    // path in it would otherwise arrive as `\/Applications\/Cupertino.app`.
-    guard
-      let data = try? JSONSerialization.data(
-        withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]),
-      let string = String(data: data, encoding: .utf8)
-    else { return "" }
-    return string
-  }
-
-  /// One line per surface, ready to paste.
-  static func commands(for recipe: Recipe) -> String {
-    SurfaceSettings.enabledSurfaces.map { surface in
-      recipe.template
-        .replacingOccurrences(of: "{key}", with: serverKey(for: surface))
-        .replacingOccurrences(of: "{id}", with: surface.id)
-        .replacingOccurrences(of: "{bridge}", with: shellQuoted(bridgePath))
-        .replacingOccurrences(of: "{json}", with: shellQuoted(entryJSON(for: surface)))
-    }
-    .joined(separator: "\n")
-  }
-
-  /// nil for clients we configure ourselves.
-  static func commands(for client: Client) -> String? {
-    guard case .command(let recipe, _) = client.wiring else { return nil }
-    return commands(for: recipe)
-  }
-
-  /// One line per surface that has been switched off, or nil when there is
-  /// nothing to remove or no verb to remove it with.
-  ///
-  /// Its own copy action rather than appended to `commands`, and that is not a
-  /// layout preference: a `codex mcp remove` for a name that was never there
-  /// exits non-zero, so pasting one block would report a failure for the half
-  /// that had nothing to do. Deletion is also the half somebody should read
-  /// before pasting.
-  static func removalCommands(for recipe: Recipe) -> String? {
-    guard let template = recipe.removeTemplate else { return nil }
-    let disabled = Surface.all.filter { !SurfaceSettings.isEnabled($0) }
-    guard !disabled.isEmpty else { return nil }
-    return disabled.map { surface in
-      template
-        .replacingOccurrences(of: "{key}", with: serverKey(for: surface))
-        .replacingOccurrences(of: "{id}", with: surface.id)
-        .replacingOccurrences(of: "{bridge}", with: shellQuoted(bridgePath))
-    }
-    .joined(separator: "\n")
-  }
-
-  static func removalCommands(for client: Client) -> String? {
-    guard case .command(let recipe, _) = client.wiring else { return nil }
-    return removalCommands(for: recipe)
-  }
-
-  /// Whether this client holds keys for switched-off surfaces that the app can
-  /// neither remove nor name a command for — VS Code, and only VS Code.
-  static func needsManualRemoval(_ client: Client) -> Bool {
-    guard case .command(let recipe, _) = client.wiring, recipe.removeTemplate == nil else {
-      return false
-    }
-    return Surface.all.contains { !SurfaceSettings.isEnabled($0) }
-  }
-
   // MARK: - Status
 
   enum Status: Equatable {
@@ -458,10 +337,6 @@ enum ClientWiring {
     /// paying for. The same Update button clears it.
     case extra([String])
     case unreadable(String)
-    /// Installed, and we have no way to tell — a command client whose config
-    /// is TOML or JSONC. Never gates the button; it only declines to claim a
-    /// green check the app has not earned.
-    case unknown
 
     /// One line, for the header of the detail pane and the tooltip on the
     /// sidebar dot.
@@ -481,7 +356,6 @@ enum ClientWiring {
       case .extra(let leftover):
         "Still wired for \(leftover.joined(separator: ", ")), which are switched off."
       case .unreadable(let why): why
-      case .unknown: "Installed. This app does not read its config, so it cannot say."
       }
     }
   }
@@ -516,40 +390,23 @@ enum ClientWiring {
 
   /// Routed through `read` rather than opening the file itself, so there is one
   /// door onto these configs — and so demo mode has one place to answer from.
+  ///
+  /// One path for both formats. There used to be a second, for the clients whose
+  /// config this app would only paste a line for: it could report nothing, so it
+  /// reported `.unknown`. Both of those clients are written now.
   static func status(of client: Client) -> Status {
     guard client.isInstalled else { return .notInstalled }
-    switch client.wiring {
-    case .json:
-      do {
-        guard let config = try read(client) else { return .notConfigured }
-        return audit(servers: config.servers)
-      } catch {
-        return .unreadable(error.localizedDescription)
-      }
-    case .command(_, let probe):
-      // Read-only, always, and a failure here is silence rather than
-      // `.unreadable`: the file is not ours, so nothing about it is a fault
-      // this app should report. The worst case is the row it already drew.
-      guard probe != nil else { return .unknown }
-      do {
-        guard let config = try read(client) else { return .unknown }
-        return audit(servers: config.servers)
-      } catch {
-        return .unknown
-      }
+    do {
+      guard let config = try read(client) else { return .notConfigured }
+      return audit(servers: config.servers)
+    } catch {
+      return .unreadable(error.localizedDescription)
     }
   }
 
   // MARK: - Writing
 
   enum WriteError: LocalizedError {
-    /// A `.command` client reached `configure`. The UI never offers the
-    /// button, so this is the guard for the day someone adds a row wrong — a
-    /// throw rather than a precondition, because `StatusModel.configure`
-    /// already routes errors to a red line of text and a trap in a shipping
-    /// menu bar app is the worse outcome.
-    case notWritable(String)
-
     /// Somebody else's server is filed under a key `configure` was about to
     /// claim. Nothing was written.
     ///
@@ -559,8 +416,6 @@ enum ClientWiring {
 
     var errorDescription: String? {
       switch self {
-      case .notWritable(let name):
-        return "\(name) is configured with a command, not a file this app writes"
       case .collision(let name, let keys):
         let list = keys.joined(separator: ", ")
         let verb = keys.count == 1 ? "was" : "were"
@@ -590,9 +445,6 @@ enum ClientWiring {
   /// pruned.
   @discardableResult
   static func configure(_ client: Client, force: Bool = false) throws -> URL? {
-    guard case .json(let path, let rootKey) = client.wiring else {
-      throw WriteError.notWritable(client.displayName)
-    }
     // Before the read the merge is computed from, so a refusal is never a
     // partial write. It costs one extra read of a file this is about to read
     // anyway, which is the cheapest part of the operation.
@@ -602,11 +454,23 @@ enum ClientWiring {
         throw WriteError.collision(client: client.displayName, keys: taken)
       }
     }
-    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
-      ClientWiringMerge.merged(
-        into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
+    let backup: URL?
+    switch client.wiring {
+    case .json(let path, let rootKey):
+      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+        ClientWiringMerge.merged(
+          into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
+      }
+    case .toml(let path):
+      // The legacy `apple-*` keys and the switched-off ones are removed by name
+      // here rather than by the merge, because a splice deletes line ranges and
+      // has no dictionary to diff. `spliceWrite` still refuses to delete a span
+      // whose entry is not ours — see its `removing` argument.
+      backup = try spliceWrite(
+        into: path, upserting: entries,
+        removing: Set(legacyKeys.values).union(disabledKeys))
     }
-    hostLog("cupertino", .info, "configured \(client.displayName) at \(path.path)")
+    hostLog("cupertino", .info, "configured \(client.displayName) at \(client.wiring.path.path)")
     return backup
   }
 
@@ -663,8 +527,18 @@ enum ClientWiring {
     /// The servers under this client's own root key.
     let servers: [String: Any]
     /// The whole file, for the one card that needs a key beside `mcpServers`:
-    /// Claude Code's per-folder blocks. See `hasLocalScope`.
+    /// Claude Code's per-folder blocks. See `hasLocalScope`. For a TOML config
+    /// this is the servers object and nothing else — the rest of that file is
+    /// never decoded, only quoted.
     let root: [String: Any]
+    /// Entries the client has switched off with `enabled = false`.
+    ///
+    /// Codex only; no JSON client has such a key. Worth carrying separately
+    /// because it is the one way a config can audit as `configured` while the
+    /// client runs none of it — and unlike the equivalent blind spot in Claude
+    /// Desktop, this one is a fact written in the file rather than a decision
+    /// taken quietly at load.
+    var disabled: Set<String> = []
   }
 
   /// The file this app reads for a client, and the key servers live under.
@@ -676,13 +550,8 @@ enum ClientWiring {
   /// `configure`, `unwire`, `removeEntry` and `collisions` all pattern-match it
   /// — which is what makes the demo-mode rewrite below safe: nothing can be
   /// written to a path that came out of here.
-  static func configFile(of client: Client) -> (path: URL, rootKey: String)? {
-    let file: (path: URL, rootKey: String)?
-    switch client.wiring {
-    case .json(let path, let rootKey): file = (path, rootKey)
-    case .command(_, let probe): file = probe.map { ($0.path, $0.rootKey) }
-    }
-    guard let file else { return nil }
+  static func configFile(of client: Client) -> (path: URL, rootKey: String) {
+    let file = (path: client.wiring.path, rootKey: client.wiring.rootKey)
     // The pane prints this path, and all seven of them start at the real home
     // directory. See `DemoSeed.anonymised`.
     guard DemoSeed.isEnabled else { return file }
@@ -698,11 +567,22 @@ enum ClientWiring {
     // home directory — so demo mode answers from a table, like every other fact
     // in these images. See `DemoSeed.clientConfig`.
     if DemoSeed.isEnabled { return DemoSeed.clientConfig(for: client) }
-    guard let file = configFile(of: client),
-      FileManager.default.fileExists(atPath: file.path.path)
-    else { return nil }
-    let root = try ClientWiringMerge.readJSON(file.path)
-    return Config(servers: root[file.rootKey] as? [String: Any] ?? [:], root: root)
+    let path = client.wiring.path
+    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+    switch client.wiring {
+    case .json(_, let rootKey):
+      let root = try ClientWiringMerge.readJSON(path)
+      return Config(servers: root[rootKey] as? [String: Any] ?? [:], root: root)
+    case .toml:
+      // The only place in the app that learns this file is TOML. Everything
+      // downstream — `isOurs`, `state`, `audit`, `collisions`, `foreignEntries`
+      // — takes the servers object and cannot tell.
+      let document = try ClientWiringTOML.read(path)
+      let servers = document.servers
+      return Config(
+        servers: servers, root: [ClientWiringTOML.rootKey: servers],
+        disabled: document.disabled)
+    }
   }
 
   /// Whether this client's config is the one file that also holds per-folder
@@ -713,8 +593,7 @@ enum ClientWiring {
   /// straightforward lie about what the file says. Matched on the PATH rather
   /// than on the client id, because the id is a label and the path is the fact.
   static func hasLocalScope(_ client: Client) -> Bool {
-    guard case .json(let path, _) = client.wiring else { return false }
-    return path.standardizedFileURL == claudeCodeConfig.standardizedFileURL
+    client.wiring.path.standardizedFileURL == claudeCodeConfig.standardizedFileURL
   }
 
   /// The keys `configure` would claim that somebody else's entry is under.
@@ -729,14 +608,9 @@ enum ClientWiring {
     // Never a refusal in a capture: the answer would be read off a real file,
     // and a staged alert is not what these images are for.
     if DemoSeed.isEnabled { return [] }
-    guard case .json(let path, let rootKey) = client.wiring,
-      let root = try? ClientWiringMerge.readJSON(path),
-      let servers = root[rootKey] as? [String: Any]
-    else { return [] }
-    return SurfaceSettings.enabledSurfaces
-      .map { serverKey(for: $0) }
-      .filter { servers[$0] != nil && !ClientWiringMerge.isOurs(servers[$0]) }
-      .sorted()
+    guard let config = try? read(client) else { return [] }
+    return ClientWiringMerge.collisions(
+      servers: config.servers, keys: SurfaceSettings.enabledSurfaces.map { serverKey(for: $0) })
   }
 
   // MARK: - Taking things back out
@@ -751,12 +625,21 @@ enum ClientWiring {
   /// A file that does not exist is nothing to do rather than a file to create.
   @discardableResult
   static func unwire(_ client: Client) throws -> URL? {
-    guard case .json(let path, let rootKey) = client.wiring else {
-      throw WriteError.notWritable(client.displayName)
-    }
+    let path = client.wiring.path
     guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
-      ClientWiringMerge.unmerged(from: root, rootKey: rootKey)
+    let backup: URL?
+    switch client.wiring {
+    case .json(_, let rootKey):
+      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+        ClientWiringMerge.unmerged(from: root, rootKey: rootKey)
+      }
+    case .toml:
+      // Every key the file holds that `isOurs` claims — including one for a
+      // surface this build has never heard of, which is exactly the entry worth
+      // being able to clear.
+      let servers = (try? read(client))?.servers ?? [:]
+      let ours = servers.filter { ClientWiringMerge.isOurs($0.value) }.keys
+      backup = try spliceWrite(into: path, upserting: [:], removing: Set(ours))
     }
     hostLog("cupertino", .info, "removed our entries from \(client.displayName) at \(path.path)")
     return backup
@@ -774,21 +657,71 @@ enum ClientWiring {
   static func removeEntry(
     _ key: String, from client: Client, inLocalScope folder: String? = nil
   ) throws -> URL? {
-    guard case .json(let path, let rootKey) = client.wiring else {
-      throw WriteError.notWritable(client.displayName)
-    }
+    let path = client.wiring.path
     guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-    let backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
-      if let folder {
-        return ClientWiringMerge.removing(key: key, inLocalScope: folder, from: root)
+    let backup: URL?
+    switch client.wiring {
+    case .json(_, let rootKey):
+      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+        if let folder {
+          return ClientWiringMerge.removing(key: key, inLocalScope: folder, from: root)
+        }
+        return ClientWiringMerge.removing(key: key, from: root, rootKey: rootKey)
       }
-      return ClientWiringMerge.removing(key: key, from: root, rootKey: rootKey)
+    case .toml:
+      // No local scope here: Codex keeps its project servers in a
+      // `.codex/config.toml` inside each repository rather than a block in this
+      // file, so there is nothing per-folder to remove. `hasLocalScope` is false
+      // for this client and the pane draws no such rows.
+      backup = try spliceWrite(into: path, upserting: [:], removing: [key])
     }
     hostLog(
       "cupertino", .info,
       "removed '\(key)' from \(client.displayName)"
         + (folder.map { " in \($0)" } ?? ""))
     return backup
+  }
+
+  /// Read, splice, write — the TOML counterpart to `mergeWrite`, with the same
+  /// stamp, the same one retry, the same backup and the same atomic swap.
+  ///
+  /// Two things it does that the JSON path does not need to. It refuses to
+  /// delete a span whose entry is not ours, because a splice removes lines by
+  /// name and has no `isOurs` gate built into a dictionary merge the way
+  /// `ClientWiringMerge.merged` does. And it skips the write entirely when the
+  /// spliced text is identical to what is already there — which is what makes a
+  /// second Configure a no-op rather than a fresh backup of an unchanged file.
+  @discardableResult
+  private static func spliceWrite(
+    into path: URL,
+    upserting: [String: [String: Any]],
+    removing: Set<String>
+  ) throws -> URL? {
+    let attempts = 2
+    for attempt in 1...attempts {
+      let stamp = ClientWiringMerge.stamp(of: path)
+      var document = ClientWiringTOML.empty
+      if case .present = stamp { document = try ClientWiringTOML.read(path) }
+      // Ours only, and decided from the document just read rather than from the
+      // caller's list. A key somebody else owns is left where it is.
+      let ours = removing.filter { name in
+        guard let table = document.tables[name] else { return false }
+        return ClientWiringMerge.isOurs(table.value)
+      }
+      let text = ClientWiringTOML.spliced(
+        document, removing: Set(ours), upserting: upserting)
+      guard text != document.text else { return nil }
+      guard let data = text.data(using: .utf8) else { return nil }
+      do {
+        let backup = try ClientWiringMerge.write(
+          data, to: path, backupSuffix: "cupertino-backup", expecting: stamp, newFileMode: 0o600)
+        Task { @MainActor in ClientConfigRevision.shared.bump() }
+        return backup
+      } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
+        continue
+      }
+    }
+    throw ClientWiringMerge.WriteError.changedUnderneath(path)
   }
 
   // MARK: - Project folders

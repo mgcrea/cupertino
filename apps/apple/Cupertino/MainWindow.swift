@@ -228,10 +228,9 @@ struct MainView: View {
       // surfaces, and the first version of this section pushed Activity off every
       // window and every marketing plate.
       //
-      // Installed only, which is also the entire implementation of "Cupertino
-      // does not support ChatGPT desktop": it is not in `ClientWiring.clients`,
-      // so there is no row and no explanation to maintain. A client nobody has
-      // is not a client to nag anybody about.
+      // Installed only. A client nobody has is not a client to nag anybody
+      // about, and a row that cannot be acted on is a support burden with no
+      // action attached.
       //
       // Absent rather than empty when there are none, for the same reason
       // Capabilities is.

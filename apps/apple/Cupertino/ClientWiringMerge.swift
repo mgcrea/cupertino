@@ -224,6 +224,20 @@ enum ClientWiringMerge {
     return root
   }
 
+  /// The keys among `keys` that somebody else's entry already occupies.
+  ///
+  /// The predicate behind Configure's refusal, here rather than beside the
+  /// policy that calls it for one reason: this file is the half `make
+  /// wiring-check` can reach. A refusal that has never been exercised is a
+  /// refusal that fires for the first time on somebody's real config.
+  ///
+  /// An absent key is not a collision, and neither is one of ours — including
+  /// one written by a copy of the app that has since moved, which Configure is
+  /// about to rewrite in place.
+  static func collisions(servers: [String: Any], keys: [String]) -> [String] {
+    keys.filter { servers[$0] != nil && !isOurs(servers[$0]) }.sorted()
+  }
+
   // MARK: - Auditing
 
   /// What a status check concludes from a servers object alone.
@@ -443,6 +457,28 @@ enum ClientWiringMerge {
     expecting: Stamp? = nil,
     newFileMode: Int? = nil
   ) throws -> URL? {
+    try write(
+      JSONSerialization.data(
+        withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+      to: url, backupSuffix: backupSuffix, expecting: expecting, newFileMode: newFileMode)
+  }
+
+  /// The same write, given bytes somebody else produced.
+  ///
+  /// Split out when the TOML client landed. A spliced `config.toml` is not
+  /// serialised from a dictionary — the whole point of `ClientWiringTOML` is that
+  /// it never re-encodes the file — so it arrives here as text. Everything below
+  /// this line is identical for both, which is what stops the format from
+  /// reaching any further into the app than the two functions that open and
+  /// close a file.
+  @discardableResult
+  static func write(
+    _ data: Data,
+    to url: URL,
+    backupSuffix: String,
+    expecting: Stamp? = nil,
+    newFileMode: Int? = nil
+  ) throws -> URL? {
     let fm = FileManager.default
     var backup: URL?
 
@@ -457,9 +493,6 @@ enum ClientWiringMerge {
       try fm.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
-
-    let data = try JSONSerialization.data(
-      withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
 
     // Write beside the target, then swap: a config half-written because the
     // machine slept is worse than one not written at all.

@@ -545,9 +545,9 @@ enum StatusStyle {
     case .configured: .green
     case .incomplete, .extra: .orange
     case .stale, .unreadable: .red
-    // Grey covers three different absences on purpose. None of them is a fault,
-    // and none of them is something this app can fix without being asked.
-    case .notInstalled, .notConfigured, .unknown: .secondary
+    // Grey covers two different absences on purpose. Neither is a fault, and
+    // neither is something this app can fix without being asked.
+    case .notInstalled, .notConfigured: .secondary
     }
   }
 

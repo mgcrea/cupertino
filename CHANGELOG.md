@@ -12,6 +12,52 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **Visual Studio Code is configured with one click, not a pasted command.** It was held back on
+  the grounds that its config is JSONC and re-serialising it would delete somebody's comments. That
+  was a mix-up between two files: `settings.json` is the JSONC one, and `User/mcp.json` — where VS
+  Code actually keeps MCP servers, under a `servers` key rather than `mcpServers` — is strict JSON,
+  written by VS Code itself.
+
+  The residual worry does not survive being looked at either. Every write begins with a read and
+  `JSONSerialization` throws on a comment, so a file somebody has commented reads as unreadable and
+  the write refuses. It fails closed: it cannot strip a comment it cannot parse.
+
+- **ChatGPT & Codex is configured with one click too, and `~/.codex/config.toml` is spliced rather
+  than re-serialised.** That file is the one config here that is genuinely not safe to round-trip —
+  twenty-nine `[projects."…"]` tables, a `[features]` block and a multi-line string full of
+  markdown on the machine this was written against. `ClientWiringTOML`, ported from Bastion,
+  replaces the lines that hold MCP servers and quotes every other byte verbatim, so a wire produces
+  a diff with one hunk in it and an unwire gives the file back exactly.
+
+  It also gets what a pasted command could never give it: a real status. The row now reports
+  `configured`, `incomplete` or `points elsewhere` like every other client, and it reports the one
+  thing no JSON client can — `enabled = false`, which Codex honours and which the ChatGPT app is
+  reported to set on servers it did not expect. An entry in that state still points where it
+  should, so it audits as configured while Codex runs none of it; the row says so.
+
+- **The row is called "ChatGPT & Codex" rather than "Codex CLI"**, because the ChatGPT app, the
+  Codex CLI and the Codex IDE extension all read that one file — the ChatGPT app bundles the Codex
+  binary and names it in `CODEX_CLI_PATH`. The old name sent somebody who had installed only
+  ChatGPT looking for a row that was already there.
+
+  The reason recorded for ChatGPT having no row of its own was also wrong, and is corrected: it did
+  not "take remote HTTP connectors only and cannot spawn a local stdio server at all". Connectors
+  are remote-only; the Codex lane inside the same app runs local stdio servers and ships three of
+  its own in that file. It has no row because it is not a separate client.
+
+### Removed
+
+- **Nothing has to be pasted into a terminal any more.** With both remaining clients written, the
+  copy-a-command lane had no users: the `Recipe` templates, the shell quoting, the two copy
+  buttons, the "VS Code has no command that removes a server" paragraph and the `unknown` status
+  that existed only because a pasted client could never report one are all gone. Zed and Goose are
+  still the reason to remember it existed, and neither is JSON or TOML, so the honest way to add
+  them is a third `Wiring` case rather than a snippet maintained blind.
+
 ## [1.12.0] - 2026-09-03
 
 ### Added

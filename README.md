@@ -115,11 +115,14 @@ in the line Codex gets to paste. Deliberately **not** `--scope project`, which w
 meant to be committed — that entry is an absolute path into a bundle on one Mac, backed by one
 person's Full Disk Access grant, and it would be useless to a teammate and unwise to offer them.
 
-Which clients get written and which get a command is not about popularity, and it is not about how
-much the file matters. The app merges into a config when it is strict JSON with servers under
-`mcpServers`; Visual Studio Code's is JSONC and Codex's is TOML, and re-serialising either would
-delete the comments in a file maintained by hand. Those two get a line to paste. ChatGPT is absent
-entirely: it takes remote HTTP connectors and cannot spawn a local stdio server at all.
+All seven are written by the app, and nothing has to be pasted into a terminal. Six keep strict JSON
+and are merged into as dictionaries — five under `mcpServers`, Visual Studio Code under `servers` in
+`User/mcp.json`, which is a different file from the JSONC `settings.json` it was confused with for
+two releases. The seventh, `~/.codex/config.toml`, is TOML full of hand-written prose and structure,
+so it is never re-serialised: `ClientWiringTOML` replaces the lines that hold MCP servers and quotes
+every other byte verbatim. ChatGPT has no row of its own because it is not a separate client — the
+ChatGPT app, the Codex CLI and the Codex IDE extension all read that same file, which is the row
+called "ChatGPT & Codex".
 
 Claude Code's `~/.claude.json` is written directly, and it is the one config where that deserves a
 paragraph: it holds this machine's credentials beside ninety-odd project blocks, and Claude Code
@@ -392,7 +395,7 @@ The menu bar is Cupertino's whole surface — there is no Dock icon and no main 
 | Full Disk Access     | granted or not, with the button that opens the right Settings pane                                                                                                                                                                                                                               |
 | One pane per surface | whether the surface is on at all, Automation status per app, the consent prompt, and the writes toggle                                                                                                                                                                                           |
 | Connections          | which client is talking to which server right now, and how many tools it has called                                                                                                                                                                                                              |
-| MCP clients          | a pane per client: what would be written, what is under those keys now, and the servers in that file Cupertino did not write. One-click wiring for Claude Code, Claude Desktop, Cursor, LM Studio and Windsurf; a copyable command for VS Code and Codex. See [docs/clients.md](docs/clients.md) |
+| MCP clients          | a pane per client: what would be written, what is under those keys now, and the servers in that file Cupertino did not write. One-click wiring for all seven, `~/.codex/config.toml` spliced in place rather than re-serialised. See [docs/clients.md](docs/clients.md) |
 | Activity…            | opens a window listing every tool call, live                                                                                                                                                                                                                                                     |
 
 The **Activity** window records tool names and the arguments each was called with. Message
@@ -423,8 +426,8 @@ its running servers are stopped, and the bridge refuses the connection if an old
 asks for it. That is the lever for the tool definitions you never use — eight servers wired
 everywhere is a cost every session pays. Clients configured before the change keep the entry until
 you press Update in that client's own pane, which names the surfaces it still holds — and the dot
-beside it in the sidebar turns amber until you do. Codex gets a copyable removal command; Visual
-Studio Code has no command that removes a server, so that one has to be edited by hand.
+beside it in the sidebar turns amber until you do. The same button prunes the entry from every
+client, including the TOML one.
 
 Everything that is true of one surface lives in that surface's pane: whether it is on, its
 Automation grant, its writes toggle, its store, and what its server actually exposes. Everything

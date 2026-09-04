@@ -7,34 +7,116 @@ you about a file it does not own.
 
 ## The seven clients
 
-| Client             | Config                                                            | Root key     | Wiring           |
-| ------------------ | ----------------------------------------------------------------- | ------------ | ---------------- |
-| Claude Code        | `~/.claude.json`                                                  | `mcpServers` | written          |
-| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` | written          |
-| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers` | written          |
-| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers` | written          |
-| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers` | written          |
-| Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | —            | `code --add-mcp` |
-| Codex CLI          | `~/.codex/config.toml`                                            | —            | `codex mcp add`  |
+| Client             | Config                                                            | Root key      | Format |
+| ------------------ | ----------------------------------------------------------------- | ------------- | ------ |
+| Claude Code        | `~/.claude.json`                                                  | `mcpServers`  | JSON   |
+| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers`  | JSON   |
+| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers`  | JSON   |
+| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers`  | JSON   |
+| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers`  | JSON   |
+| Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | `servers`     | JSON   |
+| ChatGPT & Codex    | `~/.codex/config.toml`                                            | `mcp_servers` | TOML   |
+
+Every one of them is written by the app. Three disagreements shape the design and none is
+Cupertino's to fix: clients disagree about **where servers live** in the file — `mcpServers` here,
+`servers` there, `mcp_servers` in a third — about **what the file is written in**, and about
+whether the app may rewrite it wholesale.
 
 `ClientWiring.clients` is the authority; `apps/website/src/config.ts` keeps a copy for the
 marketing page, and the two are kept in step by hand.
 
-The split is not about how popular a client is. It is about **whether its config is a file we can
-rewrite without destroying something the user put there.** Five are strict JSON holding nothing but
-data, so they are serialised from a dictionary. VS Code's `mcp.json` is JSONC and Codex's
-`config.toml` is TOML: round-tripping either through `JSONSerialization` would either throw on the
-comments or, worse, succeed on a file that has none today and delete them the day one is added. So
-those two are handed the lines to paste instead.
+Six are strict JSON holding nothing but data, so they are serialised from a dictionary. The seventh
+is not, and `ClientWiringTOML` is the answer: it locates the lines that hold MCP servers, replaces
+those, and quotes every other byte of the file verbatim. A wire against the real config produces a
+`diff` with one hunk in it, and that hunk is a pure addition.
 
-Two absences are deliberate. **ChatGPT desktop** takes remote HTTP connectors only and cannot spawn
-a local stdio server at all, so it is not in the list — absence is the whole implementation, and a
-greyed-out row explaining itself would be a support burden with no action attached. **Zed** and
-**Goose** are absent for now rather than on principle: Zed wants a `context_servers` entry whose
+**Two of these rows used to be a shell line to paste**, and both corrections are worth recording
+because one was a mistake and the other was only expensive.
+
+VS Code was refused on the grounds that its config is JSONC. It is not: `settings.json` is JSONC,
+and `User/mcp.json` — a different file, which is where VS Code actually keeps MCP servers — is
+strict JSON with servers under `servers`, written by VS Code itself. The residual worry, that VS
+Code might tolerate a comment somebody adds later, does not survive looking at what would happen:
+every write begins with a read, and `JSONSerialization` throws on a comment, so such a file reads as
+`unreadable` and the write refuses. It fails closed. It cannot strip a comment it cannot parse.
+
+Codex was refused for a real reason — it is TOML, and no serialiser can round-trip it safely — and
+the answer was a paste for as long as nobody had written a splicer. Bastion had; see
+[the TOML client](#the-one-toml-client).
+
+The last row is one client rather than three. The ChatGPT desktop app, the Codex CLI and the Codex
+IDE extension all read that same file — the ChatGPT app even bundles the Codex binary, at
+`/Applications/ChatGPT.app/Contents/Resources/codex`, and names it in `CODEX_CLI_PATH`. Three rows
+would write the same keys to the same path three times, and removing any one of them would take the
+other two out.
+
+It is worth stating what that row is **not** absent for, because the code said so for a while and it
+was wrong: ChatGPT does not "take remote HTTP connectors only". Connectors are remote-only; the
+Codex lane inside the same app runs local stdio servers, and ships three of its own in that file —
+`node_repl`, `computer-use` and `cua_repl`, every one a `command` pointing into
+`/Applications/ChatGPT.app`.
+
+**Zed** and **Goose** are absent for now rather than on principle: Zed wants a `context_servers` entry whose
 shape has moved between versions, Goose a YAML `extensions:` block, and neither has a CLI to hide
 behind. `.command` accommodates them the day somebody asks.
 
-Claude Code is written rather than pasted, and that changed once. The objection was that
+## The one TOML client
+
+`~/.codex/config.toml` is not like the other six. On the machine this was ported against it carries
+twenty-nine `[projects."…"]` tables, a `[features]` block, a `[shell_environment_policy.set]` table
+and a multi-line string full of markdown — hand-written structure and prose, with the MCP servers a
+small part of it. So there is no TOML library here, and that is the same objection that keeps VS
+Code on `mcp.json` rather than `settings.json`: **round-tripping somebody's hand-written file
+through any serialiser reformats it and deletes its comments.**
+
+### The invariant
+
+> The scanner may fail to **describe** a server. It must never fail to **name** one.
+
+A server it could see but not parse still appears in the servers dictionary, which makes `isOurs`
+false, which makes `collisions` refuse to write over it. If it were dropped instead, `collisions`
+would see nothing in the way, a wire would append a second `[mcp_servers.<name>]`, and **a duplicate
+key does not cost one entry — it makes the whole file fail to parse**, taking every server and every
+project trust level with it. That is a read bug with a catastrophic write consequence, and it is why
+extents and values are two different jobs: the lexer decides where a table starts and stops and may
+refuse, and the value parser is best effort and never refuses.
+
+### What a span is
+
+A server's lines run from its `[mcp_servers.<name>]` header to the last line under it that says
+something, **not** to the next header. The blank line and the comment above the next table belong to
+the next table, which is what stops an unwire eating somebody's section separator. A server can own
+more than one span — `[mcp_servers.node_repl.env]` is a second one — and removing the server takes
+both. New blocks land just past the last `mcp_servers` span in the file, counting the ones about to
+be deleted, which is what puts a second wire in the same place as the first.
+
+One case cannot round-trip exactly, and it is worth stating rather than glossing: a file with **no
+final newline** has to gain one before anything can be appended, and an unwire has no way to know
+that newline was Cupertino's.
+
+### What the ChatGPT app does to this file
+
+It **rewrites `config.toml` on launch**, and is reported to set `enabled = false` on a server it did
+not expect ([openai/codex#34807](https://github.com/openai/codex/issues/34807)). Three consequences,
+none fatal. Formatting: Cupertino's guarantee is one-directional — *Cupertino* does not reformat
+this file, and if the ChatGPT app serialises and rewrites it, that is not Cupertino's doing, though
+`config.toml.cupertino-backup` is then a stale snapshot. Spans moving: harmless, every read
+rescans. And `enabled = false` landing on one of ours: the entry still points where it should, so
+the audit says `configured` while Codex runs none of it — the Claude Desktop blind spot below,
+**except detectable**, because the fact is a key in the file rather than something done quietly at
+load. The row says so, and Configure re-renders the block without it.
+
+### Per-project `.codex/config.toml` is deferred
+
+Codex also reads a `.codex/config.toml` inside a repository, above the global file. Cupertino does
+not touch it. Its `[projects."…"]` tables carry `trust_level`, **not servers**, so reading them as
+an MCP project scope would be a straightforward lie — which is why the pane renders no project card
+for this client rather than an empty one — and finding the per-repo files would mean crawling the
+filesystem for them.
+
+## Why Claude Code is written rather than pasted
+
+The objection was that
 `~/.claude.json` holds credentials and that running sessions write to it concurrently. Neither
 survived being checked: the file mode is preserved across the swap, so a 0600 file stays 0600, and
 the concurrency is the same read-modify-write `claude mcp add` performs from a second process — so
@@ -170,11 +252,14 @@ value is used for its answer; the status is always computed from the file.
 | `taken`            | somebody else's entry under a key Configure wants         |
 | `surface off`      | in the file, correct, and the server behind it is stopped |
 
+Plus one line no badge covers, on Codex only: `enabled = false`, which the client honours and no
+JSON client has.
+
 ### The whole file
 
 `configured`, `not configured`, `stale`, `incomplete` (wired before a surface shipped), `extra`
-(still wired for a surface since switched off), `unreadable`, and `unknown` for a `.command` client
-whose config this app does not read. `extra` is amber rather than green: nothing is broken, and the
+(still wired for a surface since switched off) and `unreadable`. There used to be an `unknown`, for
+the clients whose config the app would only paste a line for; there are none. `extra` is amber rather than green: nothing is broken, and the
 entry only costs an assistant definitions it will never use — but it is a state a button can finish,
 and grey would file it with "nothing to do here".
 
@@ -188,9 +273,8 @@ and grey would file it with "nothing to do here".
   `.cupertino-backup` beside the file is the recovery path.
 - **Whether a server the client starts itself works.** The other-servers card says those go around
   Cupertino, which is a fact about wiring, not a health check.
-- **Anything in a `.command` client's config.** VS Code and Codex report `unknown` rather than
-  claiming a green check the app has not earned. Grepping the TOML for the bridge path was
-  considered and rejected: a substring match cannot tell a stale entry from a missing one.
+- **Whether a client has actually reloaded.** Every write ends with "restart it to pick this up",
+  and nothing here can tell whether that happened.
 
 ## Project folders
 
@@ -221,11 +305,12 @@ writing there would name an absolute path into an app bundle that differs per ma
 
 ## Tests
 
-`make wiring-check` compiles `ClientWiringMerge.swift` beside `scripts/wiring-check.swift` with one
-`swiftc` invocation and runs the result — 150 assertions against fixtures. `make wiring-check-real`
-runs the same binary over the real configs on this Mac, read-only, and asserts the same guarantees
-against shapes nobody thought to fixture: 77 unrelated top-level keys, 101 project blocks, an entry
-that is a bare string. A file that is not on this Mac is skipped rather than failed, so it is a
+`make wiring-check` compiles `ClientWiringMerge.swift` and `ClientWiringTOML.swift` beside
+`scripts/wiring-check.swift` with one `swiftc` invocation and runs the result — 314 assertions
+against fixtures. `make wiring-check-real` runs the same binary over the real configs on this Mac,
+read-only, and asserts the same guarantees against shapes nobody thought to fixture: 77 unrelated
+top-level keys, 101 project blocks, an entry that is a bare string, and a 248-line `config.toml`
+that a wire and an unwire have to give back byte-for-byte. A file that is not on this Mac is skipped rather than failed, so it is a
 developer target and not a CI one. That subtraction is the point:
 `ClientWiringMerge` imports nothing but Foundation, no AppKit, no `Surface`, no `Bundle`, no
 logging, so the half that touches somebody else's file is testable in a project with no test target.

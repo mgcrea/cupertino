@@ -241,19 +241,28 @@ export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Termina
  * the race rather than avoiding it, so the app writes the file — with a backup,
  * an atomic swap, and a refusal if anything touched it in between.
  *
- * ChatGPT is on neither list: it takes remote HTTP connectors and cannot spawn
- * a local stdio server at all.
+ * ChatGPT is not a row of its own because it is not a separate client: the
+ * ChatGPT app, the Codex CLI and the Codex IDE extension all read the same
+ * `~/.codex/config.toml`, which is what "ChatGPT & Codex" names.
  */
 export const WIRING = {
-  automatic: ["Claude Code", "Claude Desktop", "Cursor", "LM Studio", "Windsurf"],
-  command: ["Visual Studio Code", "Codex CLI"],
+  automatic: [
+    "Claude Code",
+    "Claude Desktop",
+    "Cursor",
+    "LM Studio",
+    "Windsurf",
+    "Visual Studio Code",
+    "ChatGPT & Codex",
+  ],
+  command: [] as string[],
   /**
    * How many of each `MenuBar.astro` draws. It is a fixed-height mock of a
    * 320pt popover, and the real one only ever lists the clients you actually
    * have installed — usually two or three. Drawing all seven would make the
    * mock less honest, not more.
    */
-  mockRows: { automatic: 2, command: 1 },
+  mockRows: { automatic: 3, command: 0 },
 } as const;
 
 /**

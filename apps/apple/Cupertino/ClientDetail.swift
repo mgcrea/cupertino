@@ -34,8 +34,6 @@ struct ClientDetail: View {
   @State private var pending: Removal?
   /// Narrows the project list. Claude Code has ninety-eight folders in it.
   @State private var projectFilter = ""
-  @State private var copiedAdds = false
-  @State private var copiedRemovals = false
 
   /// One entry Cupertino would write — or one it wrote and no longer would — and
   /// what is under its key right now.
@@ -47,6 +45,15 @@ struct ClientDetail: View {
     /// points at the right bridge, so it audits as fine; the server it names is
     /// never started. Kept out of what Configure writes.
     var isOff = false
+    /// The CLIENT has switched this entry off — `enabled = false`, a key only
+    /// Codex has.
+    ///
+    /// Not an `EntryState` case: adding it would make six JSON clients carry a
+    /// state describing something their files cannot say. It is the same blind
+    /// spot as a client silently dropping a config, except visible, because the
+    /// fact is written in the file rather than decided quietly at load. The
+    /// ChatGPT app is reported to set it on servers it did not expect.
+    var isDisabled = false
 
     var id: String { surface.id }
   }
@@ -110,20 +117,16 @@ struct ClientDetail: View {
     } catch {
       return unread(.unreadable(error.localizedDescription))
     }
-    guard let config else {
-      // Two different absences, and the status enum already tells them apart:
-      // a client whose config this app does not read at all, and one whose
-      // config is not there yet.
-      return unread(ClientWiring.configFile(of: client) == nil ? .unknown : .notConfigured)
-    }
+    guard let config else { return unread(.notConfigured) }
 
     let servers = config.servers
     var rows = enabled.map { surface in
-      Row(
-        surface: surface, key: ClientWiring.serverKey(for: surface),
+      let key = ClientWiring.serverKey(for: surface)
+      return Row(
+        surface: surface, key: key,
         state: ClientWiringMerge.state(
-          of: servers, key: ClientWiring.serverKey(for: surface),
-          expectedCommand: ClientWiring.bridgePath))
+          of: servers, key: key, expectedCommand: ClientWiring.bridgePath),
+        isDisabled: config.disabled.contains(key))
     }
     // A switched-off surface earns a row only for an entry of ours that is
     // really in this file — the one thing about it worth showing, since the
@@ -169,16 +172,11 @@ struct ClientDetail: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
         header(snapshot)
-        switch client.wiring {
-        case .json:
-          fileCard
-          entriesCard(snapshot)
-          if !snapshot.others.isEmpty { othersCard(snapshot) }
-          if ClientWiring.hasLocalScope(client) { ProjectFoldersCard() }
-          if !snapshot.projects.isEmpty { projectsCard(snapshot) }
-        case .command(let recipe, _):
-          commandCard(recipe)
-        }
+        fileCard
+        entriesCard(snapshot)
+        if !snapshot.others.isEmpty { othersCard(snapshot) }
+        if ClientWiring.hasLocalScope(client) { ProjectFoldersCard() }
+        if !snapshot.projects.isEmpty { projectsCard(snapshot) }
         if let result {
           Text(result)
             .font(.caption).foregroundStyle(.secondary)
@@ -229,21 +227,18 @@ struct ClientDetail: View {
       }
       .fixedSize(horizontal: false, vertical: true)
 
-      if case .json = client.wiring {
-        HStack(spacing: 8) {
-          Button(configureLabel(snapshot.status)) { configure() }
-            .disabled(!client.isInstalled)
+      HStack(spacing: 8) {
+        Button(configureLabel(snapshot.status)) { configure() }
+          .disabled(!client.isInstalled)
           // Named, because it is no longer the only Remove on this screen: every
           // foreign entry below carries one that takes out exactly that entry.
           // Offered only when there is something of ours to take out — a Remove
           // that rewrites somebody's config to make no change is a write for
           // nothing.
-          Button("Remove Cupertino's entries") { unwire() }
-            .disabled(!snapshot.hasOurEntries)
-          Button("Reveal in Finder") { ClientWiring.reveal(client) }
-            .disabled(client.revealTarget == nil)
-          Spacer()
-        }
+        Button("Remove Cupertino's entries") { unwire() }
+          .disabled(!snapshot.hasOurEntries)
+        Button("Reveal in Finder") { ClientWiring.reveal(client) }
+        Spacer()
       }
     }
   }
@@ -266,7 +261,7 @@ struct ClientDetail: View {
     Card("Config file") {
       // The path, always. Someone about to let an app write to a config is owed
       // the name of the file.
-      Text(ClientWiring.configFile(of: client)?.path.path ?? "")
+      Text(ClientWiring.configFile(of: client).path.path)
         .font(.system(.caption, design: .monospaced))
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
@@ -280,10 +275,10 @@ struct ClientDetail: View {
     }
   }
 
-  private var rootKey: String { ClientWiring.configFile(of: client)?.rootKey ?? "mcpServers" }
+  private var rootKey: String { ClientWiring.configFile(of: client).rootKey }
 
   private var backupName: String {
-    (ClientWiring.configFile(of: client)?.path.lastPathComponent ?? "") + ".cupertino-backup"
+    ClientWiring.configFile(of: client).path.lastPathComponent + ".cupertino-backup"
   }
 
   // MARK: - What gets written
@@ -354,6 +349,16 @@ struct ClientDetail: View {
       case .matches, .missing:
         EmptyView()
       }
+      // The blind spot this pane CAN see. The entry still points where it should,
+      // so it audits as configured while the client runs none of it — but unlike
+      // a silently dropped config, the fact is a key in the file.
+      if row.isDisabled, !row.isOff {
+        Text(
+          "\(client.displayName) has this entry switched off. Configure rewrites the block "
+            + "without it, which turns it back on.")
+          .font(.caption2).foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       if row.isOff {
         Text(
           "\(row.surface.displayName) is switched off, so this server is never started. Update "
@@ -381,82 +386,6 @@ struct ClientDetail: View {
 
   private func reachLine(for surface: Surface) -> String {
     "\(ClientWiring.bridgePath) --server=\(surface.id)"
-  }
-
-  // MARK: - The clients this app will not rewrite
-
-  /// A `.command` client has no file to card.
-  ///
-  /// Their configs are JSONC and TOML, and re-serialising either would delete
-  /// comments somebody wrote by hand — see `ClientWiring.Wiring`. So the pane
-  /// hands over the lines instead, which is what the Settings row did, with the
-  /// room to explain why.
-  private func commandCard(_ recipe: ClientWiring.Recipe) -> some View {
-    Card("Commands to paste") {
-      Text(
-        "\(client.displayName) keeps its servers in a format this app will not rewrite: "
-          + "re-serialising it would delete any comment in it. These lines do the same job, and "
-          + "they are yours to read before you run them.")
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
-      if let commands = ClientWiring.commands(for: client) {
-        Text(commands)
-          .font(.system(.caption2, design: .monospaced))
-          .textSelection(.enabled)
-          .fixedSize(horizontal: false, vertical: true)
-        HStack(spacing: 8) {
-          Button(copiedAdds ? "Copied" : "Copy") { copy(commands, into: $copiedAdds) }
-          Spacer()
-        }
-      }
-
-      // Its own block, never appended to the adds: a remove for a name that was
-      // never there exits non-zero, so one pasted block would report a failure
-      // for the half with nothing to do. Deletion is also the half worth reading
-      // first. See `ClientWiring.removalCommands`.
-      if let removals = ClientWiring.removalCommands(for: client) {
-        Divider()
-        Text("Surfaces you have switched off are taken back out with:")
-          .font(.caption).foregroundStyle(.secondary)
-        Text(removals)
-          .font(.system(.caption2, design: .monospaced))
-          .textSelection(.enabled)
-          .fixedSize(horizontal: false, vertical: true)
-        HStack(spacing: 8) {
-          Button(copiedRemovals ? "Copied" : "Copy removals") {
-            copy(removals, into: $copiedRemovals)
-          }
-          Spacer()
-        }
-      }
-
-      // Only VS Code reaches this, and only once something is switched off. It
-      // is the one client with an add verb and no removal verb, so naming the
-      // file to edit beats a button that would paste a command that does not
-      // exist.
-      if ClientWiring.needsManualRemoval(client) {
-        Divider()
-        Text(
-          "\(client.displayName) has no command that removes a server, so a surface you turn off "
-            + "has to be taken out by hand — run \"MCP: List Servers\" in it, or edit its "
-            + "mcp.json.")
-          .font(.caption).foregroundStyle(.orange)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-    }
-  }
-
-  private func copy(_ text: String, into flag: Binding<Bool>) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
-    flag.wrappedValue = true
-    // Confirmation, not a permanent state: the button has to invite a second
-    // copy after the app has moved and the paths changed.
-    Task {
-      try? await Task.sleep(for: .seconds(2))
-      flag.wrappedValue = false
-    }
   }
 
   // MARK: - What Cupertino did not write
@@ -597,7 +526,7 @@ struct ClientDetail: View {
 
   private var collisionTitle: String {
     let what = collision.count == 1 ? "an entry" : "\(collision.count) entries"
-    return "Overwrite \(what) in \(ClientWiring.configFile(of: client)?.path.lastPathComponent ?? "this config")?"
+    return "Overwrite \(what) in \(ClientWiring.configFile(of: client).path.lastPathComponent)?"
   }
 
   /// Written out rather than inlined into the alert: it names what is about to
@@ -614,7 +543,7 @@ struct ClientDetail: View {
   // MARK: - The removal
 
   private var removalTitle: String {
-    "Remove \u{2018}\(pending?.key ?? "")\u{2019} from \(ClientWiring.configFile(of: client)?.path.lastPathComponent ?? "this config")?"
+    "Remove \u{2018}\(pending?.key ?? "")\u{2019} from \(ClientWiring.configFile(of: client).path.lastPathComponent)?"
   }
 
   /// Names the one key, where it lives, and what survives. The same care the
@@ -626,7 +555,7 @@ struct ClientDetail: View {
       pending.folder.map { "the block for \(abbreviate($0))" } ?? "the \u{2018}\(rootKey)\u{2019} key"
     return
       "\u{2018}\(pending.key)\u{2019} is taken out of \(scope) in "
-      + "\(ClientWiring.configFile(of: client)?.path.path ?? ""). Nothing else in the file "
+      + "\(ClientWiring.configFile(of: client).path.path). Nothing else in the file "
       + "changes, and the previous version is kept as \(backupName). Restart "
       + "\(client.displayName) afterwards."
   }
@@ -640,7 +569,7 @@ struct ClientDetail: View {
       let count = SurfaceSettings.enabledSurfaces.count
       result =
         "Wrote \(count) entr\(count == 1 ? "y" : "ies") to "
-        + "\(ClientWiring.configFile(of: client)?.path.path ?? "")."
+        + "\(ClientWiring.configFile(of: client).path.path)."
         + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick them up."
     } catch ClientWiring.WriteError.collision(let name, let keys) {
@@ -657,7 +586,7 @@ struct ClientDetail: View {
     do {
       let backup = try ClientWiring.unwire(client)
       result =
-        "Removed Cupertino's entries from \(ClientWiring.configFile(of: client)?.path.path ?? "")."
+        "Removed Cupertino's entries from \(ClientWiring.configFile(of: client).path.path)."
         + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick it up."
     } catch {
@@ -672,7 +601,7 @@ struct ClientDetail: View {
       let scope = removal.folder.map { " in \(abbreviate($0))" } ?? ""
       result =
         "Removed \u{2018}\(removal.key)\u{2019}\(scope) from "
-        + "\(ClientWiring.configFile(of: client)?.path.path ?? "")."
+        + "\(ClientWiring.configFile(of: client).path.path)."
         + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick it up."
     } catch {
