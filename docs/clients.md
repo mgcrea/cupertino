@@ -98,7 +98,7 @@ that newline was Cupertino's.
 
 It **rewrites `config.toml` on launch**, and is reported to set `enabled = false` on a server it did
 not expect ([openai/codex#34807](https://github.com/openai/codex/issues/34807)). Three consequences,
-none fatal. Formatting: Cupertino's guarantee is one-directional — *Cupertino* does not reformat
+none fatal. Formatting: Cupertino's guarantee is one-directional — _Cupertino_ does not reformat
 this file, and if the ChatGPT app serialises and rewrites it, that is not Cupertino's doing, though
 `config.toml.cupertino-backup` is then a stale snapshot. Spans moving: harmless, every read
 rescans. And `enabled = false` landing on one of ours: the entry still points where it should, so
