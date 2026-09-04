@@ -648,6 +648,55 @@ version: ## Propagate the root package.json version into every copy of it
 version-check: ## Fail if any copy of the version has drifted from package.json
 	@node scripts/generate-version.mjs --check
 
+# ─── formatting ──────────────────────────────────────────────────────────────
+
+# The Swift half. The JavaScript half stays where it already lives, in
+# `pnpm format` / `pnpm format:check` -- this Makefile is the app's, and there is
+# no combined target to hang these off.
+#
+# `xcrun swift-format`, not Homebrew's SwiftFormat: it ships inside the toolchain,
+# so every machine that can build the app already has it. Config is the committed
+# `.swift-format`, which swift-format finds by walking up from each file, so no
+# `--configuration` belongs here or in CI.
+#
+# The paths are spelled out rather than pointing `-r` at `apps/apple`, and that is
+# not tidiness: `.build/` lives under there and swift-format has no ignore file --
+# only `// swift-format-ignore-file` comments in source -- so a recursive walk
+# from the parent reformats build products. CupertinoBridge and scripts are easy
+# to leave off this list, and leaving them off means they silently stop being
+# formatted.
+SWIFT_SRC := apps/apple/Cupertino apps/apple/CupertinoBridge scripts
+
+# swift-format's version follows whichever Xcode is selected, so a toolchain bump
+# can reformat the whole tree with no change to `.swift-format` and turn the gate
+# red on code nobody edited. Assert it, so that day arrives as a sentence rather
+# than a mystery diff.
+SWIFT_FORMAT_VERSION := 6.3
+
+swift-format-version:
+	@v="$$(xcrun swift-format --version)"; \
+	case "$$v" in \
+	  $(SWIFT_FORMAT_VERSION).*) ;; \
+	  *) echo "swift-format $$v, expected $(SWIFT_FORMAT_VERSION).x — the toolchain moved."; \
+	     echo "Reformat deliberately and bump SWIFT_FORMAT_VERSION, or select the matching Xcode."; \
+	     exit 1;; \
+	esac
+
+format-swift: swift-format-version ## swift-format the Swift half
+	@xcrun swift-format format --in-place --recursive --parallel $(SWIFT_SRC)
+
+# `--strict` is what makes this a gate: without it lint prints its findings and
+# still exits 0, so CI would pass while reporting every violation it found.
+format-swift-check: swift-format-version ## Fail on unformatted Swift
+	@xcrun swift-format lint --recursive --parallel --strict $(SWIFT_SRC)
+
+# `git blame` walks straight into the reformat commit unless it is told not to,
+# and the file that says so is per-clone config the repo cannot set for you.
+# GitHub honours .git-blame-ignore-revs on its own; your terminal does not.
+blame-setup: ## Teach git blame to skip the formatting-only commits
+	@git config blame.ignoreRevsFile .git-blame-ignore-revs
+	@echo "git blame will skip the commits in .git-blame-ignore-revs"
+
 icon: ## Regenerate Cupertino.icon and the web SVG from design/cupertino-mark.svg
 	@appshot icon build --from $(ICON_MARK) \
 		--plate-gradient '$(ICON_SKY)' --plate-angle 90 --mark-fraction 1.0 \
@@ -892,4 +941,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check dispatch-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check dispatch-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean

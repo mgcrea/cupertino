@@ -26,6 +26,9 @@ struct WiringCheck {
   }
 
   /// The surfaces, as `ClientWiring` hands them over. Generated — see surfaces.json.
+  // Generated, and asserted byte for byte by `make surfaces-check`. Outside the
+  // marker so regenerating keeps it.
+  // swift-format-ignore
   // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
   static let surfaces = [
     (id: "mail", label: "Mail"),

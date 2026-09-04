@@ -72,6 +72,10 @@ func die(_ message: String, code: Int32 = 1) -> Never {
 // what it was told because a launcher that does is a way for any local process
 // to read the whole disk with a permission granted for mail. The app validates
 // this against its own table too; this check is here so a typo fails fast.
+// Generated, and asserted byte for byte by `make surfaces-check` -- so the line
+// stays long rather than being wrapped to 100 columns. Outside the marker, so
+// regenerating keeps it.
+// swift-format-ignore
 // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
 let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "safari", "maps", "screen", "sound"]
 // </generated:surfaces>
