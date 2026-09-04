@@ -1,8 +1,8 @@
 # The mail query lane — projection and aggregation
 
 **Implemented** — `apple_mail_query`, in
-[`packages/mail/src/tools/query.ts`](../packages/mail/src/tools/query.ts), on read-only servers
-only. The SQL lives beside the search lane in
+[`packages/mail/src/tools/query.ts`](../packages/mail/src/tools/query.ts), on every server. The
+SQL lives beside the search lane in
 [`envelope.ts`](../packages/mail/src/client/envelope.ts).
 
 ## The question
@@ -80,13 +80,17 @@ groups they fall into. Projection alone, with no grouping, is **2.6x** on a 50-r
 The tool's own listing cost is 2,864 B (~716 tokens), so it repays itself several times over on a
 single grouped question. That was the condition for keeping it.
 
-## Why read-only servers only
+## Why it was read-only servers only, and why it no longer is
 
-Not safety — the lane reaches nothing but the index, and is `readOnlyHint: true`. Budget. Every
-tool costs listing tokens on every connect, so this one has to demonstrate it saves more than the
-~400 tokens it adds before it goes on the surface most clients see. `registerTools` puts it behind
-the `!allowWrites` branch, and `test/tools.test.ts` pins that it stays off the write-enabled
-surface.
+Never safety — the lane reaches nothing but the index, and is `readOnlyHint: true`. Budget. Every
+tool costs listing tokens on every connect, so this one had to demonstrate it saves more than the
+~716 tokens it adds before it went on the surface most clients see. The numbers above are that
+demonstration, so `registerTools` now registers it unconditionally and `test/tools.test.ts` pins
+that it stays on the write-enabled surface.
+
+The gate had a cost the budget argument missed: `allowWrites` is a per-surface switch, so the only
+way to reach the query lane was to give up send, reply, move and delete for Mail across every
+client at once. A read-only tool that a write toggle takes away is a tool most users never see.
 
 The measurement that decides whether it spreads to the other surfaces: run the same question both
 ways — `groupBy: "sender"` versus paging `search_messages` — and compare total tokens. If it does

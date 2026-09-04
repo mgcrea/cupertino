@@ -64,17 +64,9 @@ const READ_TOOLS = [
   "apple_mail_list_attachments",
   "apple_mail_list_mailboxes",
   "apple_mail_list_messages",
+  "apple_mail_query",
   "apple_mail_search_messages",
 ];
-
-/**
- * Read-only servers get one tool the write-enabled ones do not.
- *
- * Not a safety gate — the query lane touches nothing but the index — but a
- * budget one: every tool costs listing tokens on every connect, so it earns its
- * place on the default surface only once it has proven it saves more than that.
- */
-const READ_ONLY_EXTRA = ["apple_mail_query"];
 
 describe("tool registration", () => {
   let readOnly: string[];
@@ -86,12 +78,17 @@ describe("tool registration", () => {
   });
 
   it("registers the read tools in both modes", () => {
-    expect(readOnly).toEqual([...READ_TOOLS, ...READ_ONLY_EXTRA].toSorted());
+    expect(readOnly).toEqual(READ_TOOLS.toSorted());
     for (const name of READ_TOOLS) expect(withWrites).toContain(name);
   });
 
-  it("keeps the read-only extras off the write-enabled surface", () => {
-    for (const name of READ_ONLY_EXTRA) expect(withWrites).not.toContain(name);
+  /**
+   * The query lane was held to read-only servers while it proved it saves more
+   * listing tokens than it costs — never a safety gate, it touches nothing but
+   * the index. It proved it, so turning writes on no longer takes it away.
+   */
+  it("keeps the query lane on the write-enabled surface", () => {
+    expect(withWrites).toContain("apple_mail_query");
   });
 
   it("marks every read tool readOnly", async () => {

@@ -36,17 +36,17 @@ export const registerTools = (
   registerAccountTools(server, client);
   registerSearchTools(server, client);
   registerMessageTools(server, client, ctx.allowWrites);
+  /*
+   * On every server, write-enabled ones included. It was held to read-only ones
+   * at first — not because it is unsafe with writes on, it reaches nothing but
+   * the index, but because every tool costs listing tokens on every connect and
+   * this one had to prove it saves more than it costs. It has: one grouped
+   * question repays the ~716 tokens it lists for several times over, measured in
+   * docs/mail-query.md.
+   */
+  registerQueryTools(server, client);
 
-  if (!ctx.allowWrites) {
-    /*
-     * Read-only servers only, for now. Not because the tool is unsafe with
-     * writes on — it reaches nothing but the index — but because every tool
-     * costs listing tokens on every connect, and this one has to prove it saves
-     * more than it costs before it goes on the surface most clients see.
-     */
-    registerQueryTools(server, client);
-    return;
-  }
+  if (!ctx.allowWrites) return;
 
   registerActionTools(server, client);
   registerComposeTools(server, client);

@@ -32,8 +32,8 @@ const SELECTABLE = [
  * return less than a whole row, or a count instead of the rows.
  *
  * Read-only by construction — it reaches nothing but the index — and registered
- * only on servers with writes off, so the surface a write-enabled client sees is
- * unchanged while this is proven out.
+ * on every server, write-enabled ones included, since it repays its own listing
+ * cost on a single grouped question (see docs/mail-query.md).
  */
 export const registerQueryTools = (server: McpServer, client: AppleMailClient): void => {
   server.registerTool(

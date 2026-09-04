@@ -49,6 +49,16 @@ summary.
   are remote-only; the Codex lane inside the same app runs local stdio servers and ships three of
   its own in that file. It has no row because it is not a separate client.
 
+- **`apple_mail_query` is on every mail server now, not only the read-only ones.** It was held back
+  on budget grounds — a tool costs listing tokens on every connect, and this one had to prove it
+  saves more than it costs — and the measurement in [mail-query.md](docs/mail-query.md) settled
+  that a while ago: 64x on a grouped question, against a ~716-token listing.
+
+  What the budget argument missed is that `allowWrites` is a per-surface switch, so the only way to
+  reach a lane that reaches nothing but the index was to give up send, reply, move and delete for
+  Mail across every client at once. Nobody makes that trade, which made the tool invisible to
+  almost everyone — including the website, which has been listing it as a plain read tool.
+
 ### Removed
 
 - **Nothing has to be pasted into a terminal any more.** With both remaining clients written, the
