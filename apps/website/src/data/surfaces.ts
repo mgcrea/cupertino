@@ -8,8 +8,13 @@
  * wrong here is a claim the servers do not honour — check the tree, not the
  * README, which has drifted before.
  *
- * NOTE: promoting a surface into this list is a commercial act as well as a
- * technical one — docs/licensing.md ties a price rise to each surface shipping.
+ * NOTE: promoting a surface into this list is still a commercial act, though no
+ * longer a pricing one. It USED to be: the retired ladder tied a price rise to
+ * each surface shipping, and this note was the reminder. The price is flat for
+ * the whole 1.x line now — Screen, Sound and Desktop all landed inside it — so
+ * what listing a surface commits to is SUPPORT rather than a rung: it is a
+ * promise the thing works, at a price already paid.
+ *
  * A surface belongs here once it has both halves of the read/write split the
  * write gate draws, and not before.
  */
@@ -356,6 +361,42 @@ export const SURFACES: readonly Surface[] = [
       "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says, plus clicking and typing on it. Opens a URL or saves one for later behind the write gate.",
     withoutGrant:
       "Live tabs and page contents — the only things in the whole bundle that work with no Full Disk Access at all. Tabs need an Automation grant; page contents need the extension, allowed per website.",
+  },
+  {
+    id: "desktop",
+    name: "Desktop",
+    // No npm package, and the reason is sharper here than for Screen or Sound.
+    // Accessibility attaches to the RESPONSIBLE GUI ANCESTOR, not to the binary
+    // that calls it — measured: an unsigned script inherited the editor that
+    // started the chain. A published package would therefore ask someone to
+    // grant their editor the right to drive every application on the Mac, which
+    // is the misattribution docs/alternatives.md names as the thing no
+    // competitor solves.
+    pkg: "\u2014",
+    read: [
+      "apple_desktop_list_apps",
+      "apple_desktop_list_windows",
+      "apple_desktop_ui_tree",
+      "apple_desktop_expand",
+      "apple_desktop_find_elements",
+      "apple_desktop_diagnostics",
+    ],
+    write: [
+      "apple_desktop_press",
+      "apple_desktop_set_value",
+      "apple_desktop_click",
+      "apple_desktop_type",
+      "apple_desktop_key",
+      "apple_desktop_raise_window",
+    ],
+    // `allowAnyApp` is deliberately NOT listed here. This column is for tools
+    // registered only under their own flag, and the scope gate registers none:
+    // it changes how far the same twelve tools reach, never which of them
+    // exist. Listing it would misdescribe both the gate and the column.
+    pitch:
+      "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
+    withoutGrant:
+      "Which apps are running, and nothing else. Accessibility is the grant that matters here rather than Full Disk Access, and every read past the app list refuses by name until it is given.",
   },
 ] as const;
 

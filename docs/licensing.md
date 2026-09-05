@@ -69,7 +69,7 @@ you, the writes toggle, the log pane.
 
 |            |                                                                          |
 | ---------- | ------------------------------------------------------------------------ |
-| Price      | $14.99 at launch (€14.99 in the EU), rising with the surface count       |
+| Price      | $14.99 (€14.99 in the EU), flat for the whole 1.x line                   |
 | Model      | one-time, per major version — 1.x is free forever, 2.0 is a new purchase |
 | Collection | Stripe, with Stripe Tax on; VAT filed directly through OSS — see below   |
 | Validation | offline, signed licence key, verified locally, no phone-home             |
@@ -348,8 +348,16 @@ has to be loud, and a loud cap mid-conversation demos worse than a clean refusal
 
 ### Price
 
-**$14.99 / €14.99, once, for all eight surfaces.** One purchase covers every 1.x release; 2.0 is a
-separate purchase. Nothing lapses and nothing renews.
+**$14.99 / €14.99, once, for every surface in the 1.x line.** One purchase covers every 1.x
+release; 2.0 is a separate purchase. Nothing lapses and nothing renews.
+
+**The price does not move with the surface count, and the table above no longer says it does.** It
+said "rising with the surface count" while the section below already described the ladder as
+retired, which is a promise and its retraction in one document. Surfaces have kept arriving since —
+Screen, Sound and Desktop are the ninth, tenth and eleventh — and every one of them landed inside a
+price that did not move. That is the shape now: **1.x gets whatever ships, at the price it was
+bought at.** A rise, if there is one, is 2.0, and 2.0 is a separate purchase anyway — which is the
+only honest way left to charge for growth once the ladder is gone.
 
 There is no price ladder any more. There was one, it is retired, and the record of it is below —
 deleting it would leave the site looking like it had never promised anything.
