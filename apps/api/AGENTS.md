@@ -12,7 +12,7 @@ pnpm test                # vitest
 pnpm typecheck           # tsc --noEmit
 pnpm migrate:local       # apply migrations to the local D1
 pnpm migrate             # …to the real one. Deliberately separate commands.
-pnpm deploy              # wrangler deploy, by hand or from the api-v* tag in CI
+pnpm release             # wrangler deploy, by hand or from the api-v* tag in CI
 ```
 
 Two secret files, and only one of them is a wrangler convention. `.dev.vars` is read automatically by
