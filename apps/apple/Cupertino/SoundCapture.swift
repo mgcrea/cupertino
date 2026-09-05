@@ -11,8 +11,8 @@ import Foundation
 ///
 /// Every other tool is request/response. A recording outlives the call that
 /// started it, which is only possible because a swift-hosted surface is served
-/// in-process by a host that does not respawn between requests. Three
-/// consequences, and all three are load-bearing:
+/// in-process by a host that does not respawn between requests. Four
+/// consequences, and all four are load-bearing:
 ///
 /// - `status()` reads the live recorder rather than a cached struct, so a
 ///   recording that died on its own is reported as stopped rather than as
@@ -22,6 +22,9 @@ import Foundation
 ///   analogue of the stranded screenshot instance that strands a bundle id.
 /// - `finishForTermination()` must run when the app quits. See below; this is
 ///   the difference between a file and nothing.
+/// - An idle-sleep assertion is held for as long as the recording is, because a
+///   call nobody is waiting on is a call the Mac is free to sleep through. See
+///   `takeSleepAssertion`.
 ///
 /// ## CAF, never m4a, and it is not a style preference
 ///
@@ -101,6 +104,8 @@ final class SoundCapture: NSObject {
   /// whatever the last moment happened to be.
   private var peak: Float = -160
   private var meterTimer: Timer?
+  /// Held for exactly as long as a recording is live. See `takeSleepAssertion`.
+  private var sleepAssertion: (any NSObjectProtocol)?
 
   // ─── destination ──────────────────────────────────────────────────────────
 
@@ -188,12 +193,23 @@ final class SoundCapture: NSObject {
     }
     RunLoop.main.add(timer, forMode: .common)
     meterTimer = timer
+    takeSleepAssertion()
 
     return url.path
   }
 
   private func sampleMeter() {
-    guard let recorder, recorder.isRecording else { return }
+    guard let recorder else { return }
+    // A recording that stopped on its own — device unplugged, session
+    // interrupted — is the one path where nothing will call `stop()`. The
+    // assertion has to come off here or it outlives what it was taken for,
+    // and the timer sampling a dead recorder has nothing left to read.
+    guard recorder.isRecording else {
+      releaseSleepAssertion()
+      meterTimer?.invalidate()
+      meterTimer = nil
+      return
+    }
     recorder.updateMeters()
     peak = max(peak, recorder.peakPower(forChannel: 0))
   }
@@ -214,6 +230,7 @@ final class SoundCapture: NSObject {
     // `stop()` is what finalises the container. Everything after this line is
     // reporting; everything before it is a file that does not exist yet.
     recorder.stop()
+    releaseSleepAssertion()
     meterTimer?.invalidate()
     meterTimer = nil
     self.recorder = nil
@@ -251,9 +268,50 @@ final class SoundCapture: NSObject {
   /// project deliberately does NOT use, that would be a total loss rather than
   /// a truncated one. CAF survives it; finalising properly is still correct.
   func finishForTermination() {
+    releaseSleepAssertion()
     guard let recorder, recorder.isRecording else { return }
     recorder.stop()
     meterTimer?.invalidate()
     meterTimer = nil
+  }
+
+  // ─── idle sleep ───────────────────────────────────────────────────────────
+
+  /// Idle sleep, held off for the length of a recording and not one second
+  /// longer.
+  ///
+  /// This is the only place in the project that touches the Mac's power
+  /// behaviour, and the narrowness is the point. Every other tool is
+  /// request/response and finishes in the time a caller is waiting on it;
+  /// a recording is the one thing that runs for an hour with nobody at the
+  /// keyboard, which is precisely the condition idle sleep waits for. Sleeping
+  /// mid-recording is the same interruption class the CAF container was chosen
+  /// to survive — this stops it happening in the first place, and the container
+  /// still covers the cases it cannot (a crash, a forced quit, no power).
+  ///
+  /// `.idleSystemSleepDisabled` registers as `PreventUserIdleSystemSleep`,
+  /// measured with `pmset -g assertions`: the assertion `caffeinate -i` takes,
+  /// which holds on battery. `PreventSystemSleep` — `caffeinate -s`, ignored on
+  /// battery — is deliberately not taken: a closed lid should still sleep, and
+  /// a recording is not a reason to override an explicit instruction to sleep.
+  ///
+  /// `coreaudiod` takes an assertion of its own for the audio-out device, so it
+  /// may well cover audio-in too. Nothing documents that it does, the resource
+  /// it names is the device rather than this recording, and the cost of being
+  /// wrong is an hour of meeting with its tail missing.
+  ///
+  /// The reason string is user-visible: it is what `pmset -g assertions` prints
+  /// beside Cupertino when somebody asks their Mac why it will not sleep.
+  private func takeSleepAssertion() {
+    guard sleepAssertion == nil else { return }
+    sleepAssertion = ProcessInfo.processInfo.beginActivity(
+      options: .idleSystemSleepDisabled,
+      reason: "Cupertino is recording audio")
+  }
+
+  private func releaseSleepAssertion() {
+    guard let sleepAssertion else { return }
+    ProcessInfo.processInfo.endActivity(sleepAssertion)
+    self.sleepAssertion = nil
   }
 }
