@@ -1,3 +1,10 @@
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
 # Everything under /_astro/ carries a content hash in its filename, so the URL
 # changes whenever the bytes do. Without this, Workers Assets serves them with
 # the same `max-age=0, must-revalidate` as the HTML, which puts a conditional

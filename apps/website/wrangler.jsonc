@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "account_id": "0121e8859874c6fc0d674676e17d9f18",
   "name": "cupertino-website",
-  "compatibility_date": "2026-03-31",
+  "compatibility_date": "2026-09-05",
   "assets": {
     "directory": "./dist/",
     "not_found_handling": "404-page"
@@ -10,5 +10,7 @@
   "routes": [{ "pattern": "cupertino.mgcrea.io", "custom_domain": true }],
   "send_metrics": false,
   "workers_dev": false,
-  "preview_urls": true
+  // A preview hostname is a live duplicate of the site on *.workers.dev that nobody
+  // watches, under a robots.txt that allows everything.
+  "preview_urls": false
 }

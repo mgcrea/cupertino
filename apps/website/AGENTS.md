@@ -10,7 +10,7 @@ their one Full Disk Access grant. Static Astro build, deployed to Cloudflare at
 pnpm dev          # astro dev
 pnpm check        # astro check
 pnpm build        # static build into dist/
-pnpm deploy       # build + wrangler deploy, by hand
+pnpm release      # build + wrangler deploy, by hand
 ```
 
 Before committing: `pnpm check` and `pnpm build` from here, then `pnpm lint` and
