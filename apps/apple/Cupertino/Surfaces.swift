@@ -712,6 +712,19 @@ struct Surface: Identifiable, Hashable {
       // misattribution docs/alternatives.md names as the thing no competitor
       // solves. Homebrew's node is ad-hoc signed, so such a grant would also die
       // at the next upgrade.
+      //
+      // TWO independent gates, and they bound different things. allowWrites
+      // decides whether it can ACT; allowAnyApp decides how far it can REACH.
+      // Both default off, so the shipped surface reads the structure of the
+      // eight brokered apps and nothing else -- the same remit screen has, by
+      // the same closed table.
+      //
+      // The scope gate exists because Accessibility does not scope to a target.
+      // The grant that lets this read a Maps place card is the grant that lets
+      // it read anything, so the bound has to come from this table rather than
+      // from the system -- the argument docs/screen.md makes for its own closed
+      // table, and it applies here with more force because this surface can
+      // also press.
       bundleID: nil,
       kind: .capability,
       iconPath: "/System/Library/CoreServices/Finder.app",
@@ -724,7 +737,9 @@ struct Surface: Identifiable, Hashable {
       storePermission: .accessibility,
       envPrefix: "APPLE_DESKTOP_",
       runtime: .swift,
-      gates: []
+      gates: [
+        Surface.Gate(id: "allowAnyApp", envSuffix: "ALLOW_ANY_APP", label: "Reach any application", description: "Lets this surface read and drive ANY running application rather than only the Apple apps Cupertino brokers. Off by default: Accessibility does not scope to a target, so this is the difference between a surface that stays inside its own remit and one that reaches the whole Mac."),
+      ]
     ),
   ]
   // </generated:surfaces>

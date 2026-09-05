@@ -72,14 +72,21 @@ enum InProcessServers {
           line, surface: surface,
           writesAllowed: allowWrites,
           recordingAllowed: gateOn("allowRecording")))
-    // `desktop` has a write flag and NO gate, which is a third shape again --
-    // and the reason it needs none is that Accessibility does not scope. Screen
-    // Recording gates `capture_surface` because capture is a tier past reading a
-    // window list; here the grant that lets the surface READ a control is the
-    // same grant that lets it PRESS one, so a second switch would suggest a
-    // boundary the system does not have. `allowWrites` alone decides.
+    // `desktop` has a write flag AND a gate, and the two are orthogonal in a way
+    // neither other surface's are: `allowWrites` bounds what it can DO,
+    // `allowAnyApp` bounds how far it can REACH. Sound's two gates are both
+    // about capability tiers; these are capability and scope, and either alone
+    // is a different surface.
+    //
+    // Scope needs its own switch precisely BECAUSE Accessibility does not scope:
+    // the grant that reads a Maps place card reads anything, so the bound comes
+    // from the closed table or from nowhere.
     case "desktop":
-      return reply(DesktopServer.handle(line, surface: surface, writesAllowed: allowWrites))
+      return reply(
+        DesktopServer.handle(
+          line, surface: surface,
+          writesAllowed: allowWrites,
+          anyAppAllowed: gateOn("allowAnyApp")))
     default:
       return .noServer
     }

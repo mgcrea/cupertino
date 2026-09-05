@@ -45,6 +45,7 @@ enum AccessibilityDriver {
   /// look broken, so they never reach this type.
   enum Failure: LocalizedError {
     case notTrusted
+    case outOfScope(String)
     case appNotRunning(String)
     case noWindows(String)
     case staleHandle(String)
@@ -59,6 +60,11 @@ enum AccessibilityDriver {
           + "Accessibility. If Cupertino is already listed and switched on, the grant is a stale "
           + "duplicate: run `tccutil reset Accessibility io.mgcrea.cupertino` and grant it once "
           + "from the running copy."
+      case .outOfScope(let bundleId):
+        return
+          "'\(bundleId)' is not one of the applications Cupertino brokers, and this surface is "
+          + "scoped to those. Switch on \"Reach any application\" for Desktop in Cupertino to "
+          + "address it."
       case .appNotRunning(let name):
         return "\(name) is not running."
       case .noWindows(let name):
@@ -102,7 +108,15 @@ enum AccessibilityDriver {
   /// lock is the invariant, stated rather than shrugged at. `AXUIElement` is a
   /// CFType and safe to hold across threads; what is not safe is the dictionary.
   final class HandleStore: @unchecked Sendable {
-    private var elements: [String: AXUIElement] = [:]
+    /// The element AND which application it came from.
+    ///
+    /// The bundle id is not bookkeeping: a handle minted while the scope gate
+    /// was ON must not keep working after it is switched off, or the gate is a
+    /// suggestion. Every read of a handle re-checks scope against this, so
+    /// turning the switch off takes effect on the next call rather than at the
+    /// next restart — the same guarantee `ServerHost` gives by re-reading
+    /// `isEnabled` per request.
+    private var elements: [String: (element: AXUIElement, bundleId: String)] = [:]
     private var next = 0
     private let lock = NSLock()
 
@@ -111,17 +125,17 @@ enum AccessibilityDriver {
     /// tree, which is the same contract a WebDriver element id has.
     private let capacity = 20000
 
-    func put(_ element: AXUIElement) -> String {
+    func put(_ element: AXUIElement, bundleId: String) -> String {
       lock.lock()
       defer { lock.unlock() }
       if elements.count >= capacity { elements.removeAll() }
       next += 1
       let handle = "e\(next)"
-      elements[handle] = element
+      elements[handle] = (element, bundleId)
       return handle
     }
 
-    func get(_ handle: String) -> AXUIElement? {
+    func get(_ handle: String) -> (element: AXUIElement, bundleId: String)? {
       lock.lock()
       defer { lock.unlock() }
       return elements[handle]
@@ -135,6 +149,17 @@ enum AccessibilityDriver {
   }
 
   static let handles = HandleStore()
+
+  /// Resolve a handle, refusing one whose application is now out of scope.
+  /// Every verb that takes a handle goes through here rather than touching the
+  /// store, so a new verb cannot forget the check.
+  private static func resolve(_ handle: String, anyApp: Bool) throws -> AXUIElement {
+    guard let entry = handles.get(handle) else { throw Failure.staleHandle(handle) }
+    guard inScope(entry.bundleId, anyApp: anyApp) else {
+      throw Failure.outOfScope(entry.bundleId)
+    }
+    return entry.element
+  }
 
   // ─── raw reads ─────────────────────────────────────────────────────────────
 
@@ -202,9 +227,22 @@ enum AccessibilityDriver {
   /// services list. So this answers even with no Accessibility grant at all,
   /// which is what lets the surface say "here is what is running, and here is
   /// why I cannot read it" instead of failing blank.
-  static func runningApps() -> [RunningApp] {
+  /// The brokered set, when the scope gate is off.
+  ///
+  /// Read from `Surface.all` rather than restated, for the reason
+  /// docs/distribution.md gives about every other closed table: "a caller names
+  /// a surface, never a path". `desktop` itself has no bundleId — it is a
+  /// capability — so it cannot address itself, which is correct.
+  static let brokeredBundleIds: Set<String> = Set(Surface.all.compactMap(\.bundleID))
+
+  static func inScope(_ bundleId: String, anyApp: Bool) -> Bool {
+    anyApp || brokeredBundleIds.contains(bundleId)
+  }
+
+  static func runningApps(anyApp: Bool) -> [RunningApp] {
     NSWorkspace.shared.runningApplications
       .filter { $0.activationPolicy == .regular }
+      .filter { anyApp || brokeredBundleIds.contains($0.bundleIdentifier ?? "") }
       .compactMap { app in
         guard let bundleId = app.bundleIdentifier else { return nil }
         return RunningApp(
@@ -238,8 +276,19 @@ enum AccessibilityDriver {
   /// docs/maps.md: a place card's overflow control opens a POPOVER, and AppKit
   /// models a popover as its own `AXWindow`. A spike that walked `windows[0]`
   /// reported a confident zero pressable controls where there were 236.
-  static func windows(bundleId: String) throws -> [WindowRef] {
+  ///
+  /// **And no filter, deliberately.** docs/screen.md had to derive one —
+  /// `windowLayer == 0`, at least 100x100, `isOnScreen || title != nil` —
+  /// because "a raw enumeration is not a target list": `CGWindowListCopyWindowInfo`
+  /// hands back shadows, toolbars and helper layers, and Mail enumerated 16
+  /// windows while having 3. Carrying that filter over here looked obviously
+  /// right and is not: `kAXWindowsAttribute` is already curated by the
+  /// application. Measured across six surface apps, the AX count and the
+  /// FILTERED CGWindowList count agree on every one. A filter here would only be
+  /// able to drop real windows.
+  static func windows(bundleId: String, anyApp: Bool) throws -> [WindowRef] {
     guard isTrusted() else { throw Failure.notTrusted }
+    guard inScope(bundleId, anyApp: anyApp) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
     let appElement = element(for: running.processIdentifier)
 
@@ -253,7 +302,7 @@ enum AccessibilityDriver {
 
     return list.enumerated().map { index, window in
       WindowRef(
-        handle: handles.put(window),
+        handle: handles.put(window, bundleId: bundleId),
         index: index,
         title: string(window, kAXTitleAttribute as String),
         role: string(window, kAXRoleAttribute as String) ?? "AXWindow",
@@ -323,9 +372,9 @@ enum AccessibilityDriver {
   }
 
   static func tree(
-    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds
+    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, anyApp: Bool
   ) throws -> Tree {
-    let all = try windows(bundleId: bundleId)
+    let all = try windows(bundleId: bundleId, anyApp: anyApp)
     let chosen: [WindowRef]
     if let windowIndex {
       guard windowIndex >= 0, windowIndex < all.count else {
@@ -336,8 +385,8 @@ enum AccessibilityDriver {
     } else {
       chosen = all
     }
-    let roots = chosen.compactMap { handles.get($0.handle) }
-    return walk(roots: roots, detail: detail, bounds: bounds)
+    let roots = chosen.compactMap { handles.get($0.handle)?.element }
+    return walk(roots: roots, detail: detail, bounds: bounds, bundleId: bundleId)
   }
 
   /// Children of one already-resolved element — the lazy half.
@@ -345,13 +394,16 @@ enum AccessibilityDriver {
   /// This is what makes a 9770-node window usable: docs/desktop.md measured
   /// Notes at 37 s for a full walk, and depth 3 for its first 500 nodes. A
   /// default tree plus this verb is not a degraded whole tree; it is the product.
-  static func expand(handle: String, detail: Detail, bounds: Bounds) throws -> Tree {
+  static func expand(handle: String, detail: Detail, bounds: Bounds, anyApp: Bool) throws -> Tree {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let element = handles.get(handle) else { throw Failure.staleHandle(handle) }
-    return walk(roots: children(element), detail: detail, bounds: bounds)
+    let owner = handles.get(handle)?.bundleId ?? ""
+    let element = try resolve(handle, anyApp: anyApp)
+    return walk(roots: children(element), detail: detail, bounds: bounds, bundleId: owner)
   }
 
-  private static func walk(roots: [AXUIElement], detail: Detail, bounds: Bounds) -> Tree {
+  private static func walk(
+    roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String
+  ) -> Tree {
     var out: [Element] = []
     var visited = 0
     var stoppedBy: String?
@@ -394,7 +446,7 @@ enum AccessibilityDriver {
         let rect = frame(el)
         out.append(
           Element(
-            handle: handles.put(el),
+            handle: handles.put(el, bundleId: bundleId),
             role: role,
             subrole: string(el, kAXSubroleAttribute as String),
             identifier: identifier,
@@ -430,9 +482,9 @@ enum AccessibilityDriver {
   /// developer-set identifiers (`FavoriteButton`, `AddButton`). A verb built on
   /// position breaks on every layout change and every non-English Mac; this one
   /// does not.
-  static func press(handle: String) throws {
+  static func press(handle: String, anyApp: Bool) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let element = handles.get(handle) else { throw Failure.staleHandle(handle) }
+    let element = try resolve(handle, anyApp: anyApp)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
@@ -447,9 +499,9 @@ enum AccessibilityDriver {
   /// returned true on the first text field of all seven apps probed, which proves
   /// the write path is PERMITTED and not that any given app honours it. So this
   /// reads the value back and tells the caller when it did not take.
-  static func setValue(handle: String, value: String) throws -> Bool {
+  static func setValue(handle: String, value: String, anyApp: Bool) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let element = handles.get(handle) else { throw Failure.staleHandle(handle) }
+    let element = try resolve(handle, anyApp: anyApp)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -466,9 +518,9 @@ enum AccessibilityDriver {
     return string(element, kAXValueAttribute as String) == value
   }
 
-  static func raise(handle: String) throws {
+  static func raise(handle: String, anyApp: Bool) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let element = handles.get(handle) else { throw Failure.staleHandle(handle) }
+    let element = try resolve(handle, anyApp: anyApp)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
   }

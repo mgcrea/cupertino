@@ -26,7 +26,9 @@ enum DesktopServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
-  static func handle(_ line: String, surface: Surface, writesAllowed: Bool) -> String? {
+  static func handle(
+    _ line: String, surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
+  ) -> String? {
     guard let data = line.data(using: .utf8),
       let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let method = msg["method"] as? String
@@ -52,7 +54,9 @@ enum DesktopServer {
       return isNotification ? nil : result(id, [String: Any]())
 
     case "tools/list":
-      return isNotification ? nil : result(id, ["tools": tools(writesAllowed: writesAllowed)])
+      return isNotification
+        ? nil
+        : result(id, ["tools": tools(writesAllowed: writesAllowed, anyAppAllowed: anyAppAllowed)])
 
     case "resources/list":
       return isNotification ? nil : result(id, ["resources": resources()])
@@ -60,7 +64,9 @@ enum DesktopServer {
     case "resources/read":
       guard !isNotification else { return nil }
       let uri = ((msg["params"] as? [String: Any])?["uri"] as? String) ?? ""
-      return readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed)
+      return readResource(
+        uri, id: id, surface: surface, writesAllowed: writesAllowed,
+        anyAppAllowed: anyAppAllowed)
 
     case "prompts/list":
       return isNotification ? nil : result(id, ["prompts": [Any]()])
@@ -70,7 +76,9 @@ enum DesktopServer {
       let params = msg["params"] as? [String: Any] ?? [:]
       let name = params["name"] as? String ?? ""
       let args = params["arguments"] as? [String: Any] ?? [:]
-      return call(name, args: args, id: id, surface: surface, writesAllowed: writesAllowed)
+      return call(
+        name, args: args, id: id, surface: surface, writesAllowed: writesAllowed,
+        anyAppAllowed: anyAppAllowed)
 
     default:
       guard !isNotification else { return nil }
@@ -88,14 +96,22 @@ enum DesktopServer {
   /// than one whose tools vanished. Driving is registered only when writes are
   /// on, and then it is not merely refused but ABSENT from tools/list — a
   /// refusal still lets a model try, retry and reason about a way around it.
-  private static func tools(writesAllowed: Bool) -> [[String: Any]] {
+  private static func tools(writesAllowed: Bool, anyAppAllowed: Bool) -> [[String: Any]] {
     let empty: [String: Any] = [
       "type": "object", "properties": [String: Any](), "required": [Any](),
     ]
 
+    // Stated in the schema rather than left to a refusal. A model that reads
+    // "any running application" and gets refused will retry; one that is told
+    // the surface is scoped asks for something else, or tells the user which
+    // switch to flip.
     let bundleIdProperty: [String: Any] = [
       "type": "string",
-      "description": "Bundle identifier of a running application, from apple_desktop_list_apps.",
+      "description": anyAppAllowed
+        ? "Bundle identifier of any running application, from apple_desktop_list_apps."
+        : "Bundle identifier of one of the Apple applications Cupertino brokers, from "
+          + "apple_desktop_list_apps. This surface is scoped to those; \"Reach any application\" "
+          + "in Cupertino widens it.",
     ]
     let detailProperty: [String: Any] = [
       "type": "string",
@@ -125,9 +141,11 @@ enum DesktopServer {
     var list: [[String: Any]] = [
       [
         "name": "apple_desktop_list_apps",
-        "description":
-          "List the applications running with a normal user interface, with their bundle "
-          + "identifiers and process ids. Works with no Accessibility grant at all.",
+        "description": anyAppAllowed
+          ? "List every application running with a normal user interface, with their bundle "
+            + "identifiers and process ids. Works with no Accessibility grant at all."
+          : "List the Apple applications Cupertino brokers that are running now, with their "
+            + "bundle identifiers and process ids. Works with no Accessibility grant at all.",
         "inputSchema": empty,
         "annotations": ["readOnlyHint": true],
       ],
@@ -320,23 +338,73 @@ enum DesktopServer {
     AccessibilityDriver.Detail(rawValue: args["detail"] as? String ?? "") ?? .interactive
   }
 
+  /// The context-window bound, and the reason it is separate from the three
+  /// walk bounds.
+  ///
+  /// Depth, nodes and seconds bound the WALK. None of them bounds the ANSWER: a
+  /// caller that raises maxNodes gets every element serialised, and a real
+  /// measurement of Notes returned 9770 elements from one window. That is
+  /// megabytes of JSON into a model's context for a question about one button.
+  ///
+  /// `mcp-ios-core/src/ui-tree.ts` carries the same cap for the same reason and
+  /// states it plainly: passing a raw tree through "would not merely cost tokens
+  /// — it would make the model walk a tree to find a tappable rect".
+  ///
+  /// MEASURED AGAINST WHAT IS EMITTED, not against compact JSON, and the first
+  /// version of this got that wrong. `InProcessRPC.jsonText` writes
+  /// `.prettyPrinted`, which puts every element of `rect` and `point` on its own
+  /// line — a 60,000-byte compact budget produced **129,420 characters** on the
+  /// wire, 2.2x over. Budgeting against a serialisation nobody sends is a cap
+  /// that does not cap.
+  private static let maxBytes = 40_000
+
   private static func treeBody(_ tree: AccessibilityDriver.Tree) -> [String: Any] {
+    var kept: [[String: Any]] = []
+    var bytes = 0
+    for element in tree.elements {
+      let json = element.json
+      // Measured rather than estimated: an element with a long name and a rect
+      // is several times the size of a bare button, so a per-element budget
+      // would be wrong in both directions. Serialised with the SAME options
+      // `InProcessRPC.jsonText` will use, so the number counted is the number
+      // sent.
+      let size =
+        (try? JSONSerialization.data(
+          withJSONObject: json, options: [.prettyPrinted, .sortedKeys]))?.count ?? 400
+      if bytes + size > maxBytes { break }
+      bytes += size
+      kept.append(json)
+    }
+
     var body: [String: Any] = [
-      "elements": tree.elements.map(\.json),
-      "returned": tree.elements.count,
+      "elements": kept,
+      "returned": kept.count,
+      // What MATCHED, so a truncated answer is obviously partial rather than
+      // looking like a small window.
+      "matched": tree.elements.count,
       "visited": tree.visited,
       "seconds": (tree.seconds * 1000).rounded() / 1000,
       "coordinateSpace": "screen points, top-left origin",
     ]
+
     // Named rather than implied. A truncated answer that does not say so is
     // worse than a slow one, and which bound stopped it tells the caller what to
-    // raise.
-    if let stoppedBy = tree.stoppedBy { body["stoppedBy"] = stoppedBy }
+    // raise — or, for this one, that raising a bound is not the answer.
+    var stops: [String] = []
+    if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
+    if kept.count < tree.elements.count {
+      stops.append("bytes(\(maxBytes))")
+      body["truncated"] =
+        "Returned \(kept.count) of \(tree.elements.count) matching elements. Narrow the query "
+        + "with find_elements, or walk down with expand — raising maxNodes will not return more."
+    }
+    if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
     return body
   }
 
   private static func call(
-    _ name: String, args: [String: Any], id: Any?, surface: Surface, writesAllowed: Bool
+    _ name: String, args: [String: Any], id: Any?, surface: Surface, writesAllowed: Bool,
+    anyAppAllowed: Bool
   ) -> String {
     // Every driving tool goes through here. Unreachable through a compliant
     // client, since none of them is listed with writes off — but a server must
@@ -355,7 +423,7 @@ enum DesktopServer {
     do {
       switch name {
       case "apple_desktop_list_apps":
-        let apps = AccessibilityDriver.runningApps()
+        let apps = AccessibilityDriver.runningApps(anyApp: anyAppAllowed)
         return ok(
           id,
           [
@@ -370,7 +438,7 @@ enum DesktopServer {
           return failure(id, "The 'bundleId' argument is required.")
         }
         let includeTitles = args["includeTitles"] as? Bool ?? false
-        let windows = try AccessibilityDriver.windows(bundleId: bundleId)
+        let windows = try AccessibilityDriver.windows(bundleId: bundleId, anyApp: anyAppAllowed)
         return ok(
           id,
           [
@@ -394,7 +462,7 @@ enum DesktopServer {
         }
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
-          detail: detail(args), bounds: bounds(args))
+          detail: detail(args), bounds: bounds(args), anyApp: anyAppAllowed)
         return ok(id, treeBody(tree))
 
       case "apple_desktop_expand":
@@ -402,7 +470,7 @@ enum DesktopServer {
           return failure(id, "The 'handle' argument is required.")
         }
         let tree = try AccessibilityDriver.expand(
-          handle: handle, detail: detail(args), bounds: bounds(args))
+          handle: handle, detail: detail(args), bounds: bounds(args), anyApp: anyAppAllowed)
         return ok(id, treeBody(tree))
 
       case "apple_desktop_find_elements":
@@ -421,7 +489,7 @@ enum DesktopServer {
         // before matching would hide it.
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
-          detail: .all, bounds: bounds(args))
+          detail: .all, bounds: bounds(args), anyApp: anyAppAllowed)
         let matched = tree.elements.filter { element in
           if pressableOnly && !element.pressable { return false }
           if let wantedId, element.identifier != wantedId { return false }
@@ -439,20 +507,24 @@ enum DesktopServer {
         return ok(id, body)
 
       case "apple_desktop_diagnostics":
-        return ok(id, diagnostics(surface: surface, writesAllowed: writesAllowed))
+        return ok(
+          id,
+          diagnostics(
+            surface: surface, writesAllowed: writesAllowed, anyAppAllowed: anyAppAllowed))
 
       case "apple_desktop_press":
         guard let handle = args["handle"] as? String else {
           return failure(id, "The 'handle' argument is required.")
         }
-        try AccessibilityDriver.press(handle: handle)
+        try AccessibilityDriver.press(handle: handle, anyApp: anyAppAllowed)
         return ok(id, ["pressed": handle])
 
       case "apple_desktop_set_value":
         guard let handle = args["handle"] as? String, let value = args["value"] as? String else {
           return failure(id, "Both 'handle' and 'value' are required.")
         }
-        let landed = try AccessibilityDriver.setValue(handle: handle, value: value)
+        let landed = try AccessibilityDriver.setValue(
+          handle: handle, value: value, anyApp: anyAppAllowed)
         return ok(
           id,
           [
@@ -489,7 +561,7 @@ enum DesktopServer {
         guard let handle = args["handle"] as? String else {
           return failure(id, "The 'handle' argument is required.")
         }
-        try AccessibilityDriver.raise(handle: handle)
+        try AccessibilityDriver.raise(handle: handle, anyApp: anyAppAllowed)
         return ok(id, ["raised": handle])
 
       default:
@@ -509,14 +581,17 @@ enum DesktopServer {
   /// disagreement is the diagnosis — Permissions.swift:449 records a day lost to
   /// a green row over a blind read, caused by four duplicate TCC entries under
   /// one bundle identifier.
-  private static func diagnostics(surface: Surface, writesAllowed: Bool) -> [String: Any] {
+  private static func diagnostics(
+    surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
+  ) -> [String: Any] {
     let trusted = AccessibilityDriver.isTrusted()
-    let apps = AccessibilityDriver.runningApps()
+    let apps = AccessibilityDriver.runningApps(anyApp: anyAppAllowed)
 
     var probe = "not attempted"
     if trusted, let first = apps.first(where: { $0.bundleId != Bundle.main.bundleIdentifier }) {
       do {
-        let windows = try AccessibilityDriver.windows(bundleId: first.bundleId)
+        let windows = try AccessibilityDriver.windows(
+          bundleId: first.bundleId, anyApp: anyAppAllowed)
         probe = "read \(windows.count) window(s) from \(first.name)"
       } catch {
         probe = "FAILED against \(first.name): \(error.localizedDescription)"
@@ -528,6 +603,10 @@ enum DesktopServer {
       "windowRead": probe,
       "runningApps": apps.count,
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",
+      "reach": anyAppAllowed
+        ? "any running application"
+        : "the \(AccessibilityDriver.brokeredBundleIds.count) applications Cupertino brokers — "
+          + "switch on \"Reach any application\" for Desktop to widen it",
       // The RUNNING bundle id, never a literal. A Debug build is
       // io.mgcrea.cupertino.debug and holds a TCC identity of its own, so a
       // hardcoded release identifier sends someone to reset a grant that is not
@@ -554,7 +633,7 @@ enum DesktopServer {
   }
 
   private static func readResource(
-    _ uri: String, id: Any?, surface: Surface, writesAllowed: Bool
+    _ uri: String, id: Any?, surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
   ) -> String {
     guard uri == "cupertino://desktop/guide" else {
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
@@ -596,9 +675,15 @@ enum DesktopServer {
       They point at elements in the window as it was. If a press returns a stale-handle
       error, take a fresh tree rather than retrying.
 
+      ## Two switches, and they bound different things
+
       \(writesAllowed
         ? "Writes are ON: press, set_value, click, type, key and raise_window are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
+
+      \(anyAppAllowed
+        ? "Reach is ANY running application."
+        : "Reach is limited to the Apple applications Cupertino brokers. Another application is refused by name, not by silence — widen it in Cupertino if you meant to address one.")
       """
     return result(
       id,

@@ -47,29 +47,35 @@ struct DesktopCheck {
   static let surface = Surface.named("desktop")!
 
   static func ask(
-    _ method: String, id: Int = 1, params: [String: Any]? = nil, writes: Bool = false
+    _ method: String, id: Int = 1, params: [String: Any]? = nil, writes: Bool = false,
+    anyApp: Bool = false
   ) -> [String: Any]? {
     var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
     if let params { message["params"] = params }
     let line = String(
       data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
-    guard let reply = DesktopServer.handle(line, surface: surface, writesAllowed: writes),
+    guard
+      let reply = DesktopServer.handle(
+        line, surface: surface, writesAllowed: writes, anyAppAllowed: anyApp),
       let data = reply.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
     return object
   }
 
-  static func toolNames(writes: Bool) -> [String] {
-    let reply = ask("tools/list", writes: writes)
+  static func toolNames(writes: Bool, anyApp: Bool = false) -> [String] {
+    let reply = ask("tools/list", writes: writes, anyApp: anyApp)
     let result = reply?["result"] as? [String: Any]
     let tools = result?["tools"] as? [[String: Any]] ?? []
     return tools.compactMap { $0["name"] as? String }.sorted()
   }
 
   /// The text of a tool result, which is where a refusal explains itself.
-  static func callText(_ name: String, _ args: [String: Any], writes: Bool) -> (String, Bool) {
-    let reply = ask("tools/call", params: ["name": name, "arguments": args], writes: writes)
+  static func callText(
+    _ name: String, _ args: [String: Any], writes: Bool, anyApp: Bool = false
+  ) -> (String, Bool) {
+    let reply = ask(
+      "tools/call", params: ["name": name, "arguments": args], writes: writes, anyApp: anyApp)
     let result = reply?["result"] as? [String: Any]
     let content = result?["content"] as? [[String: Any]] ?? []
     let text = content.first?["text"] as? String ?? ""
@@ -103,7 +109,7 @@ struct DesktopCheck {
       "a notification draws no reply",
       DesktopServer.handle(
         #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, surface: surface,
-        writesAllowed: false) == nil)
+        writesAllowed: false, anyAppAllowed: false) == nil)
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
@@ -213,13 +219,56 @@ struct DesktopCheck {
       ((ask("resources/read", params: ["uri": "cupertino://desktop/nope"])?["error"]
         as? [String: Any])?["code"] as? Int) == -32602)
 
+    // ─── the scope gate bounds REACH, independently of writes ───────────────
+    //
+    // Accessibility does not scope to a target: the grant that reads a Maps
+    // place card reads anything. So the bound comes from the closed table or
+    // from nowhere, and these assertions are that bound.
+    let scopedTools = toolNames(writes: false, anyApp: false)
+    let wideTools = toolNames(writes: false, anyApp: true)
+    check(
+      "the scope gate does not change WHICH tools exist — only what they reach",
+      scopedTools == wideTools)
+
+    // Cupertino itself is a brokered app; a code editor is not.
+    let (scoped, scopedError) = callText(
+      "apple_desktop_list_windows", ["bundleId": "com.microsoft.VSCode"], writes: false,
+      anyApp: false)
+    check(
+      "an unbrokered application is refused when the scope gate is off",
+      scopedError && scoped.contains("scoped to those"))
+    check(
+      "the refusal names the switch rather than just saying no",
+      scoped.contains("Reach any application"))
+
+    let (brokered, _) = callText(
+      "apple_desktop_list_windows", ["bundleId": "com.apple.Maps"], writes: false, anyApp: false)
+    check(
+      "a brokered application is NOT refused when the gate is off",
+      !brokered.contains("scoped to those"))
+
+    // A handle minted while the gate was on must not survive it being switched
+    // off, or the gate is a suggestion rather than a bound.
+    check(
+      "the driver binds scope to the handle, not only to the call",
+      AccessibilityDriver.inScope("com.apple.Maps", anyApp: false)
+        && !AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: false)
+        && AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: true))
+
+    let (scopedApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: false)
+    let (wideApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: true)
+    check(
+      "list_apps returns fewer applications when the gate is off",
+      scopedApps.count < wideApps.count)
+
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:
     // generate-surfaces.mjs refuses a swift surface with a non-null npmName, so
     // the two cannot drift apart and Surface does not carry the field.
     check("the table says this surface is served in-process", surface.runtime == .swift)
     check("the table gates it behind Accessibility", surface.storePermission == .accessibility)
-    check("the table declares no gate beyond writes", surface.gates.isEmpty)
+    check(
+      "the table declares exactly the scope gate", surface.gates.map(\.id) == ["allowAnyApp"])
     check("the table ships it switched off", !surface.defaultEnabled)
 
     print("\n\(checks - failures)/\(checks) passed")

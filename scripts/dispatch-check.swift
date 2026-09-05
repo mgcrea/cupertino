@@ -69,6 +69,16 @@ struct DispatchCheck {
     names(surface, "tools/list", "tools", "name", writes: writes, gates: gates)
   }
 
+  /// The whole `tools/list` reply, not just the names — a gate that changes a
+  /// DESCRIPTION rather than the tool set still has to be visible here.
+  static func payload(_ surface: Surface, writes: Bool, gates: Bool) -> String {
+    guard
+      case .message(let text) = send(surface, "tools/list", writes: writes, gates: gates)
+        .outcome
+    else { return "" }
+    return text
+  }
+
   static func main() {
     print("\nin-process dispatch\n")
 
@@ -124,12 +134,26 @@ struct DispatchCheck {
           : "\(id): no mutating tool, so allowWrites changes nothing",
         surface.supportsWrites ? onlyWrites.isStrictSuperset(of: off) : onlyWrites == off)
 
+      // A gate must make an OBSERVABLE difference, and "more tools" is too
+      // narrow a way to say so. It held while every gate was a capability tier
+      // — screen's allowCapture, sound's allowRecording — and `desktop` broke it
+      // honestly: `allowAnyApp` bounds how far the surface REACHES, not what it
+      // can do, so it must NOT add or remove a tool. Hiding tools there would
+      // misreport a surface that works perfectly for the apps it is scoped to.
+      //
+      // The general invariant is two-part: the payload changes at all, and no
+      // gate ever takes a tool AWAY.
       let onlyGates = Set(tools(surface, writes: false, gates: true))
+      let offPayload = payload(surface, writes: false, gates: false)
+      let onPayload = payload(surface, writes: false, gates: true)
       check(
         surface.gates.isEmpty
           ? "\(id): no gate, so a gate changes nothing"
-          : "\(id): a gate reaches the server and registers more",
-        surface.gates.isEmpty ? onlyGates == off : onlyGates.isStrictSuperset(of: off))
+          : "\(id): a gate reaches the server and changes what it advertises",
+        surface.gates.isEmpty ? onPayload == offPayload : onPayload != offPayload)
+      check(
+        "\(id): no gate ever removes a tool",
+        onlyGates.isSuperset(of: off))
 
       // A notification draws no reply, and that is a DIFFERENT fact from "no
       // server for this surface". Collapsing them into one nil is what made

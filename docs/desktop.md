@@ -78,6 +78,57 @@ Where a depth cap would have to sit to keep a default response near 500 nodes:
 | ------- | -------- | ------- | -------- | --------------------------- |
 | depth 3 | depth 4  | depth 9 | depth 10 | whole tree is under 500     |
 
+## Against osascript, measured head to head
+
+The numbers above compare native AX against figures this repo recorded earlier. This section
+compares it against `osascript` run **today, on the same machine, against the same Maps place card**,
+because "27x" was inherited and the honest question is what an agent actually gains.
+
+The task is the one an agent really performs: _find the Favorite control and be ready to press it._
+
+| Approach                                                      | Time        | Outcome                               |
+| ------------------------------------------------------------- | ----------- | ------------------------------------- |
+| JXA + System Events, per-node walk                            | **91.2 s**  | 323 nodes, 164 pressable              |
+| JXA + System Events, targeted search                          | **24.9 s**  | **returned `null` — did not find it** |
+| JXA + System Events, `entireContents` then one attribute each | **15.6 s**  | found it, index 79 of 322             |
+| **`apple_desktop_find_elements`**                             | **0.148 s** | found it, with handle and click point |
+
+**~105x against the best osascript approach**, ~600x against the naive one. Two runs of each, within
+1% of one another.
+
+Normalised per attribute read, which is the transport-independent number:
+
+|                                        | per read                                                    |
+| -------------------------------------- | ----------------------------------------------------------- |
+| System Events                          | **47.4 ms** (15.27 s over 322 reads, bulk fetch subtracted) |
+| Native `AXUIElementCopyAttributeValue` | **0.202 ms** (140 nodes x 6 attributes in 0.170 s)          |
+
+**234x**, and it independently corroborates the 33.6 ms this repo measured years earlier by a
+different route.
+
+### "No bulk fetch" was wrong, and it does not matter
+
+`docs/safari.md` blamed the cost partly on there being "no bulk fetch". There is:
+`entireContents()` returned 322 element references in **0.33 s**. What it does not do is return their
+attributes — every `AXIdentifier` is still its own Apple Event, which is where 15 of those 15.6
+seconds go. The conclusion held; the stated reason did not.
+
+### The reliability difference is not a speed difference
+
+The targeted script — the one an agent would actually write, walking down looking for an
+`AXIdentifier` — spent 24.9 seconds and **found nothing**. System Events enumerates a different tree
+from the raw API: 322 elements where the native walk sees 140, and the identifier the native walk
+reads off 102 of them is not reachable the same way down that path. An agent on `osascript` does not
+get a slower right answer here; it gets a confident wrong one, and then writes another script.
+
+### Context cost, which for an agent may matter more than latency
+
+`find_elements` returned **474 characters** — one element carrying its handle, identifier, name,
+role, rect and precomputed click point. The osascript path costs the script the agent has to author
+before it can ask, plus whatever the script prints back, plus a retry when the tree is not shaped the
+way it guessed. The byte cap above bounds the worst case at ~55,000 characters; the common case is
+this.
+
 ## What this overturns elsewhere
 
 ### `docs/safari.md` — the page IS reachable, and this is the bigger correction
@@ -248,9 +299,165 @@ Maps' own Guides picker lists a **"Favorites" guide with 3 places**.
 `apple_maps_list_collections` does not return it. Not this surface's bug, but this surface is how it
 was found.
 
+## Two switches: what it can do, and how far it reaches
+
+`allowWrites` and `allowAnyApp` are orthogonal, and neither other in-process surface has a pair
+shaped this way — Sound's two gates are both capability tiers, these are **capability and scope**.
+
+|               | off (shipped)                                             | on                              |
+| ------------- | --------------------------------------------------------- | ------------------------------- |
+| `allowWrites` | reads structure; the six driving tools are not registered | can press, type, click, raise   |
+| `allowAnyApp` | reaches the 8 applications Cupertino brokers              | reaches any running application |
+
+**Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
+Maps place card reads anything on the Mac, so the bound comes from the closed table or from nowhere —
+the argument docs/screen.md makes for its own table, and it applies here with more force because this
+surface can also press.
+
+Three properties the check pins:
+
+- **The gate changes what tools REACH, never which tools exist.** Unlike `allowWrites`, the tool list
+  is identical either way. Scope is not a capability tier, and hiding tools would misreport a surface
+  that works fine for the apps it is meant for.
+- **The refusal names the switch.** `'com.microsoft.VSCode' is not one of the applications Cupertino
+brokers … Switch on "Reach any application"`. A model that is merely refused retries; one that is
+  told which switch to flip stops.
+- **Scope binds to the HANDLE, not only to the call.** Every handle records the application it came
+  from, and every verb re-checks it, so a handle minted while the gate was on stops working the
+  moment it is switched off. Without that the gate would be a suggestion — the same reasoning
+  `ServerHost` uses when it re-reads `isEnabled` per request rather than per session.
+
+## Overlap with `screen`
+
+Two surfaces now enumerate windows, and the question of whether that is duplication is worth
+answering with numbers rather than by inspection.
+
+**Where they overlap: window enumeration, and they agree.** `screen` counts through
+`CGWindowListCopyWindowInfo` with the filter docs/screen.md derived; `desktop` reads
+`kAXWindowsAttribute`. Measured the same minute:
+
+|                          | notes | safari | maps | calendar | contacts | reminders |
+| ------------------------ | ----- | ------ | ---- | -------- | -------- | --------- |
+| `CGWindowList`, filtered | 1     | 2      | 1    | 1        | 1        | 1         |
+| `kAXWindowsAttribute`    | 1     | 2      | 1    | 1        | 1        | 1         |
+
+Which settles a question the plan got wrong. Carrying screen.md's filter into this surface looked
+obviously right — "a raw enumeration is not a target list", Mail enumerating 16 windows and having 3
+— and would have been a mistake. That noise is a property of `CGWindowListCopyWindowInfo`, which
+returns shadows and helper layers. The AX window list is already curated by the application, so a
+filter here could only drop real windows. There is none, and the reason is now in the code.
+
+**Where they do not overlap, which is most of it:**
+
+|                         | `screen`                    | `desktop`                            |
+| ----------------------- | --------------------------- | ------------------------------------ |
+| Grant                   | Screen Recording            | Accessibility                        |
+| Reach                   | the 8 brokered surface apps | **any running application**          |
+| Answers                 | pixels                      | structure, and it can act            |
+| Sees an occluded window | yes, composited             | yes, irrelevant — no pixels involved |
+
+They are two different questions about the same window: _what does it look like_ and _what is on it_.
+No tool name collides, and `desktop` deliberately ships **no capture verb** — capture stays behind
+one grant and one implementation in `ScreenCapture.swift`.
+
+### The seam this leaves
+
+`desktop` reaches every running application. `screen` reaches eight, and is scoped at three levels
+rather than by convention:
+
+1. `capture_surface`'s schema declares `surface` as an **enum of surface ids** — verified live:
+   `['mail','notes','reminders','calendar','contacts','messages','safari','maps']`. An agent cannot
+   express "capture Xcode".
+2. `Surface.named(wanted)` resolves through the closed table; anything else is `unknownSurface`.
+3. `targets()` walks `Surface.all` and skips every entry without a `bundleID`.
+
+So **driving a non-surface application is blind**. There is no supported way to see what was just
+clicked in Xcode or an editor, and `desktop` cannot close that itself: the Accessibility API yields
+structure and never pixels. Any capture path — `SCScreenshotManager` or `CGWindowListCreateImage` —
+needs **Screen Recording**, a second TCC grant this surface does not hold. Demonstrated by accident
+while measuring: the Debug bundle holds Accessibility and `screen` still refused, because Screen
+Recording is a separate grant on the same identity.
+
+**CLOSED 2026-09-05, by the second option below.** `screen` gained the same `allowAnyApp` gate this
+surface has: off by default, and when on, `capture_surface` accepts a bundle identifier and the
+schema's enum comes off. So drive-and-see now works for any application, behind two deliberate
+flips on two surfaces, and capture stays in one implementation behind one grant. docs/screen.md is
+amended where its scoping claim is now conditional.
+
+The two options as they were weighed:
+
+|                                 | Code        | What it costs                                                                                                                                   |
+| ------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Widen `screen` to any bundle id | a few lines | **the argument docs/screen.md rests on.** Its claim is that scoping buys auditability over an all-or-nothing grant; an open table retracts that |
+| Give `desktop` a capture verb   | moderate    | a **second grant** on the surface with the widest reach, plus a second capture implementation beside `ScreenCapture.swift`                      |
+
+The first was taken, and the concern about it was met by making it a gate rather than a widening:
+the auditability claim is not retracted, it is made conditional on a switch that ships off. What
+made it the right one is that the alternative needed a **second TCC grant on the widest-reach
+surface** and a second capture implementation, and `Surface` models one `storePermission` per
+surface, so it was a structural change as well as a policy one.
+
 ## Still open
 
-- **The hosted case — half answered.** Every number above was taken from a terminal. The surface has
+- ~~**The hosted case.**~~ **CLOSED 2026-09-05.** Accessibility was granted to
+  `io.mgcrea.cupertino.debug` and the surface was re-measured through the bridge, as the app:
+
+  ```
+  accessibility : granted
+  windowRead    : read 2 window(s) from Bastion
+  ```
+
+  Both answers agree, which is what `diagnostics` exists to check. Hosted walks land in the same
+  place as the terminal ones — Notes 9770 nodes in 66 s, Contacts 2401 in 59 s, Safari 897 in
+  0.237 s, Calendar 222 in 0.177 s — so nothing about being served in-process changes the cost.
+
+  **Notarization is not required and was never the question.** The Debug bundle is signed
+  `Apple Development: Olivier Louvignes` with the hardened runtime; TCC keys on the designated
+  requirement — identifier plus certificate — while notarization governs Gatekeeper. A stable
+  certificate is what makes a grant survive rebuilds, and an ad-hoc binary is the case that does not:
+  Homebrew's `node` reports `flags=0x2(adhoc)` with no team identifier. `spctl` does reject the Debug
+  bundle, but for the Safari extension the `app:` target deliberately deletes, which is a Gatekeeper
+  assessment and not what TCC consults.
+
+  Two identities now hold the grant, `io.mgcrea.cupertino` and `io.mgcrea.cupertino.debug`. That is
+  correct and is not the duplicate-row trap — that trap is several rows for ONE identifier.
+
+### The cap that was missing, and the cap that did not cap
+
+Closing the hosted case exposed a real defect. The walk carried three bounds — depth, nodes,
+seconds — and **none of them bounds the ANSWER**. A caller raising `maxNodes` got every element
+serialised: one `ui_tree` of Notes returned **9770 elements**, megabytes of JSON, for a question
+about one button. `mcp-ios-core/src/ui-tree.ts` carries a byte cap for exactly this and the port took
+its shape without it.
+
+The first fix was also wrong, and in an instructive way. Budgeting 60,000 bytes of _compact_ JSON
+emitted **129,420 characters** on the wire, because `InProcessRPC.jsonText` writes `.prettyPrinted`
+and puts every element of `rect` and `point` on its own line. A budget measured against a
+serialisation nobody sends is not a budget. Measured against what is actually emitted:
+
+|                       | elements returned | characters |
+| --------------------- | ----------------- | ---------- |
+| no cap                | 9770              | ~megabytes |
+| 60,000 compact        | 506               | 129,420    |
+| **40,000 as emitted** | **214**           | **54,815** |
+
+`matched` reports the full count beside `returned`, and `truncated` says that raising `maxNodes`
+will not return more — the fix is `find_elements` or `expand`, not a bigger walk.
+
+### A test artefact worth writing down, because it looked exactly like a bug
+
+Piping a fixed string into `cupertino-bridge` makes fast calls succeed and slow ones fail with
+`app->stdout: read failed: Bad file descriptor` at **2.014 s**. That is not a timeout in this surface
+and not the AX messaging timeout it coincidentally matches. It is the bridge's own shutdown grace:
+
+    hostGone.wait()                        // stdin hit EOF
+    _ = appGone.wait(timeout: .now() + 2)  // then two seconds for the app
+
+`printf | bridge` closes stdin immediately, so any call slower than two seconds is cut off. Safari
+and Maps beat it; Notes and Contacts do not. A real client holds stdin open. Anything measuring a
+slow tool through the bridge has to as well — the number to suspect first is 2.0 s, not the app.
+
+- **The earlier half-answer, kept for the record.** Every number above was taken from a terminal. The surface has
   since been built and handshaken through the bridge from the Debug bundle, which confirmed the part
   that needs no grant: `apple_desktop_list_apps` returned all 23 running applications and
   `apple_desktop_diagnostics` reported `accessibility: not granted` rather than failing blank. That
