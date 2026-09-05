@@ -120,6 +120,18 @@ got its numbers, and is itself the problem stated as a fact.
 
 ## What the allowlist is doing
 
+> **AMENDED 2026-09-05.** Everything below describes the surface **as it ships**, and it is still
+> what happens with the switches where they are. What changed is that the closed table is now a
+> DEFAULT rather than the only possibility: a second gate, `allowAnyApp`, widens capture to any
+> running application. It is off unless someone turns it on, and the paragraphs below hold exactly
+> while it is. With it on, the bound is the surface being enabled at all — the same bound `desktop`
+> has. See [desktop.md](desktop.md) for why: `desktop` can drive any application and `screen` could
+> photograph eight, so seeing what had just been clicked was impossible for anything outside the
+> table, which is the wrong shape for driving an app under development.
+>
+> The sentence that must not be quoted without this note is "not by policy, by construction". With
+> the scope gate on it is by policy.
+
 Also running at capture time, with windows open: **Passwords.app** and **Keychain Access**. Neither
 is in the closed table, so neither is reachable — not by policy, by construction.
 
@@ -163,7 +175,12 @@ Verified: `tools/list` returns two tools with the gate off and three with it on.
 
 **A caller names a surface, never a window.** `Surface.named` resolves the argument against the
 closed table before anything reaches `SCContentFilter`, and the tool's own schema enumerates the
-allowed ids. Measured against a machine with Passwords.app open:
+allowed ids — **while `allowAnyApp` is off**, which is how it ships. With that gate on the argument
+also accepts a bundle identifier and the schema's `enum` comes off, because a constraint a model
+cannot express past is the scope: leaving the enum in place while widening the surface would have
+changed nothing anyone could ask for. A name that is neither a surface nor shaped like a bundle
+identifier is still a naming error rather than a missing window, so a typo does not silently become
+a search. Measured against a machine with Passwords.app open:
 
 ```
 surface: "passwords" → No surface named 'passwords'. Capture is limited to the surfaces Cupertino brokers.

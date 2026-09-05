@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The MCP server for the `screen` surface, served by the app itself.
@@ -29,7 +30,9 @@ enum ScreenServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
-  static func handle(_ line: String, surface: Surface, captureAllowed: Bool) -> String? {
+  static func handle(
+    _ line: String, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool
+  ) -> String? {
     guard let data = line.data(using: .utf8),
       let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let method = msg["method"] as? String
@@ -57,7 +60,13 @@ enum ScreenServer {
 
     case "tools/list":
       return isNotification
-        ? nil : result(id, ["tools": tools(surface: surface, captureAllowed: captureAllowed)])
+        ? nil
+        : result(
+          id,
+          [
+            "tools": tools(
+              surface: surface, captureAllowed: captureAllowed, anyAppAllowed: anyAppAllowed)
+          ])
 
     case "resources/list":
       return isNotification ? nil : result(id, ["resources": resources()])
@@ -65,7 +74,9 @@ enum ScreenServer {
     case "resources/read":
       guard !isNotification else { return nil }
       let uri = ((msg["params"] as? [String: Any])?["uri"] as? String) ?? ""
-      return readResource(uri, id: id, surface: surface, captureAllowed: captureAllowed)
+      return readResource(
+        uri, id: id, surface: surface, captureAllowed: captureAllowed,
+        anyAppAllowed: anyAppAllowed)
 
     case "prompts/list":
       return isNotification ? nil : result(id, ["prompts": [Any]()])
@@ -75,7 +86,9 @@ enum ScreenServer {
       let params = msg["params"] as? [String: Any] ?? [:]
       let name = params["name"] as? String ?? ""
       let args = params["arguments"] as? [String: Any] ?? [:]
-      return call(name, args: args, id: id, surface: surface, captureAllowed: captureAllowed)
+      return call(
+        name, args: args, id: id, surface: surface, captureAllowed: captureAllowed,
+        anyAppAllowed: anyAppAllowed)
 
     default:
       guard !isNotification else { return nil }
@@ -91,7 +104,9 @@ enum ScreenServer {
   /// — invisible to the model rather than refused when called. That is the same
   /// property `allowWrites` has on every other surface, and docs/alternatives.md
   /// claims it as a differentiator, so it has to hold here too.
-  private static func tools(surface: Surface, captureAllowed: Bool) -> [[String: Any]] {
+  private static func tools(
+    surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool
+  ) -> [[String: Any]] {
     let empty: [String: Any] = [
       "type": "object", "properties": [String: Any](), "required": [Any](),
     ]
@@ -127,7 +142,12 @@ enum ScreenServer {
         "properties": [
           "surface": [
             "type": "string",
-            "enum": Surface.all.filter { $0.bundleID != nil }.map(\.id),
+            // The enum IS the scope. With the gate off a caller cannot even
+            // express a target outside the table; with it on the constraint has
+            // to come off, or widening the surface would change nothing a model
+            // is able to ask for.
+            "enum": anyAppAllowed
+              ? nil : Surface.all.filter { $0.bundleID != nil }.map(\.id),
             "description": "Which surface's window to capture.",
           ],
           "directory": [
@@ -152,12 +172,13 @@ enum ScreenServer {
   }
 
   private static func call(
-    _ name: String, args: [String: Any], id: Any?, surface: Surface, captureAllowed: Bool
+    _ name: String, args: [String: Any], id: Any?, surface: Surface, captureAllowed: Bool,
+    anyAppAllowed: Bool
   ) -> String {
     switch name {
     case "apple_screen_list_targets":
       do {
-        let targets = try blocking { try await ScreenCapture.targets() }
+        let targets = try blocking { try await ScreenCapture.targets(anyApp: anyAppAllowed) }
         return ok(
           id,
           [
@@ -167,7 +188,12 @@ enum ScreenServer {
                 "windows": $0.windows, "appRunning": $0.appRunning,
               ]
             },
-            "note": "Window titles are withheld deliberately — see docs/screen.md.",
+            "note": anyAppAllowed
+              ? "Window titles are withheld deliberately — see docs/screen.md. Reach is any "
+                + "running application; surfaces are named by id, everything else by bundle "
+                + "identifier."
+              : "Window titles are withheld deliberately — see docs/screen.md. Capture is scoped "
+                + "to the applications Cupertino brokers; \"Capture any application\" widens it.",
           ])
       } catch { return failed(id, error) }
 
@@ -185,15 +211,32 @@ enum ScreenServer {
       guard let wanted = args["surface"] as? String else {
         return failure(id, "The 'surface' argument is required.")
       }
-      guard let target = Surface.named(wanted) else {
+      // A surface id first, a bundle identifier second. One argument rather
+      // than two: a caller that names `maps` and a caller that names
+      // `com.apple.Maps` want the same picture, and a second parameter would
+      // make them look like different requests.
+      let target = Surface.named(wanted)
+      if target == nil && !anyAppAllowed {
+        return failure(id, ScreenCapture.Failure.unknownSurface(wanted).localizedDescription)
+      }
+      if target == nil && !wanted.contains(".") {
+        // Not a surface and not shaped like a bundle id: almost certainly a
+        // typo'd surface name, and saying so beats "no window found".
         return failure(id, ScreenCapture.Failure.unknownSurface(wanted).localizedDescription)
       }
       let directory = (args["directory"] as? String).map { URL(fileURLWithPath: $0) }
       let overwrite = args["overwrite"] as? Bool ?? false
       do {
         let shot = try blocking {
-          try await ScreenCapture.capture(
-            surface: target, into: directory, overwrite: overwrite)
+          if let target {
+            return try await ScreenCapture.capture(
+              surface: target, into: directory, overwrite: overwrite)
+          }
+          let app = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == wanted }
+          return try await ScreenCapture.capture(
+            bundleID: wanted, displayName: app?.localizedName ?? wanted, label: wanted,
+            into: directory, overwrite: overwrite)
         }
         return ok(
           id,
@@ -226,7 +269,7 @@ enum ScreenServer {
   }
 
   private static func readResource(
-    _ uri: String, id: Any?, surface: Surface, captureAllowed: Bool
+    _ uri: String, id: Any?, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool
   ) -> String {
     switch uri {
     case "cupertino://screen/guide":

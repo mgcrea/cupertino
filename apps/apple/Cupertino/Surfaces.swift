@@ -600,6 +600,18 @@ struct Surface: Identifiable, Hashable {
       // No display capture and no region capture in v1. Those are the
       // general-vision feature, and shipping them means the allowlist never
       // existed. Widening later is deleting a check.
+      //
+      // SCOPING IS NOW CONDITIONAL, and the note above must be read with
+      // this one. The closed table still bounds capture by default, and
+      // allowAnyApp widens it to any running application. The auditability
+      // claim holds exactly while that switch is off, which is how it
+      // ships; with it on, the bound is the surface being enabled at all.
+      //
+      // The switch exists because the table was the wrong shape for driving
+      // an app under development: desktop can address any application and
+      // screen could photograph eight, so seeing what was just clicked was
+      // impossible for anything outside the table. Two gates, same default,
+      // and neither surface widens without a deliberate flip.
       bundleID: nil,
       kind: .capability,
       iconPath: "/System/Library/ExtensionKit/Extensions/DisplaysExt.appex",
@@ -614,6 +626,7 @@ struct Surface: Identifiable, Hashable {
       runtime: .swift,
       gates: [
         Surface.Gate(id: "allowCapture", envSuffix: "ALLOW_CAPTURE", label: "Allow screen capture", description: "Lets apple_screen_capture_surface take a picture of a surface app's window. Needs Screen Recording, supersedes the one-time-code gates, and is off by default."),
+        Surface.Gate(id: "allowAnyApp", envSuffix: "ALLOW_ANY_APP", label: "Capture any application", description: "Lets capture reach any running application rather than only the Apple apps Cupertino brokers. Off by default. Screen Recording is per-process and all-or-nothing, so this switch -- not the system -- is what bounds which windows can be photographed."),
       ]
     ),
     Surface(

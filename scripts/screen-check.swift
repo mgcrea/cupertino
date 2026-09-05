@@ -53,30 +53,36 @@ struct ScreenCheck {
   static let surface = Surface.named("screen")!
 
   /// One request in, the parsed reply out.
-  static func ask(_ method: String, id: Int = 1, params: [String: Any]? = nil, gate: Bool = false)
-    -> [String: Any]?
-  {
+  static func ask(
+    _ method: String, id: Int = 1, params: [String: Any]? = nil, gate: Bool = false,
+    anyApp: Bool = false
+  ) -> [String: Any]? {
     var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
     if let params { message["params"] = params }
     let line = String(
       data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
-    guard let reply = ScreenServer.handle(line, surface: surface, captureAllowed: gate),
+    guard
+      let reply = ScreenServer.handle(
+        line, surface: surface, captureAllowed: gate, anyAppAllowed: anyApp),
       let data = reply.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
     return object
   }
 
-  static func toolNames(gate: Bool) -> [String] {
-    let reply = ask("tools/list", gate: gate)
+  static func toolNames(gate: Bool, anyApp: Bool = false) -> [String] {
+    let reply = ask("tools/list", gate: gate, anyApp: anyApp)
     let result = reply?["result"] as? [String: Any]
     let tools = result?["tools"] as? [[String: Any]] ?? []
     return tools.compactMap { $0["name"] as? String }.sorted()
   }
 
   /// The text of a tool result, which is where a refusal explains itself.
-  static func callText(_ name: String, _ args: [String: Any], gate: Bool) -> (String, Bool) {
-    let reply = ask("tools/call", params: ["name": name, "arguments": args], gate: gate)
+  static func callText(
+    _ name: String, _ args: [String: Any], gate: Bool, anyApp: Bool = false
+  ) -> (String, Bool) {
+    let reply = ask(
+      "tools/call", params: ["name": name, "arguments": args], gate: gate, anyApp: anyApp)
     let result = reply?["result"] as? [String: Any]
     let content = result?["content"] as? [[String: Any]] ?? []
     let text = content.first?["text"] as? String ?? ""
@@ -101,7 +107,7 @@ struct ScreenCheck {
       "a notification draws no reply",
       ScreenServer.handle(
         #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, surface: surface,
-        captureAllowed: false) == nil)
+        captureAllowed: false, anyAppAllowed: false) == nil)
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
@@ -234,6 +240,46 @@ struct ScreenCheck {
           FileManager.default.fileExists(atPath: path))
       }
     }
+
+    // ─── the scope gate, which is NOT the capture gate ──────────────────────
+    //
+    // Two gates now, bounding different things: allowCapture decides whether a
+    // picture may be taken at all, allowAnyApp decides of what. Independent on
+    // purpose — the reason sound-check gives for its own pair — and read by id
+    // rather than position, which is the bug InProcessServers' header records.
+    func captureSchemaEnum(anyApp: Bool) -> [String]? {
+      let reply = ask("tools/list", gate: true, anyApp: anyApp)
+      let tools = (reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
+      let capture = tools.first { ($0["name"] as? String) == "apple_screen_capture_surface" }
+      let schema = capture?["inputSchema"] as? [String: Any]
+      let properties = schema?["properties"] as? [String: Any]
+      let surface = properties?["surface"] as? [String: Any]
+      return surface?["enum"] as? [String]
+    }
+    check(
+      "scoped: the capture schema offers only brokered surfaces",
+      captureSchemaEnum(anyApp: false)?.isEmpty == false)
+    check(
+      "widened: the enum comes OFF, so a bundle id can be asked for at all",
+      captureSchemaEnum(anyApp: true) == nil)
+    check(
+      "the scope gate does not change WHICH tools exist",
+      toolNames(gate: true, anyApp: false) == toolNames(gate: true, anyApp: true))
+
+    let (scoped, scopedError) = callText(
+      "apple_screen_capture_surface", ["surface": "com.microsoft.VSCode"], gate: true,
+      anyApp: false)
+    check(
+      "scoped: a bundle id outside the table is refused",
+      scopedError && scoped.contains("No surface named"))
+
+    // A typo must not be mistaken for a bundle id even when widened, or
+    // `mapz` reports "no window" instead of "no such surface".
+    let (typo, typoError) = callText(
+      "apple_screen_capture_surface", ["surface": "mapz"], gate: true, anyApp: true)
+    check(
+      "widened: a typo'd surface name is still a naming error, not a missing window",
+      typoError && typo.contains("No surface named"))
 
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }

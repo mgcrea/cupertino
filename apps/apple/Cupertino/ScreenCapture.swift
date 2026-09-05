@@ -5,7 +5,8 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
-/// Capture of a surface app's window, bounded by the closed table.
+/// Capture of an application's window, bounded by the closed table unless the
+/// scope gate is on.
 ///
 /// The fifth lane, and the first that is not Apple Events, a file, or the
 /// Safari extension. It exists in Swift because it cannot exist anywhere else:
@@ -33,6 +34,7 @@ enum ScreenCapture {
   enum Failure: LocalizedError {
     case notGranted
     case unknownSurface(String)
+    case outOfScope(String)
     case notCapturable(String)
     case noWindow(String, appRunning: Bool)
     case captureFailed(String, code: Int)
@@ -49,6 +51,10 @@ enum ScreenCapture {
           + "the grant only takes effect on relaunch."
       case .unknownSurface(let id):
         return "No surface named '\(id)'. Capture is limited to the surfaces Cupertino brokers."
+      case .outOfScope(let id):
+        return
+          "'\(id)' is not one of the applications Cupertino brokers, and capture is scoped to "
+          + "those. Switch on \"Capture any application\" for Screen in Cupertino to widen it."
       case .notCapturable(let id):
         return "The '\(id)' surface cannot be captured — it has no app behind it."
       case .noWindow(let name, let appRunning):
@@ -133,10 +139,10 @@ enum ScreenCapture {
   }
 
   /// Every capturable surface. Titles are deliberately absent — see `Target`.
-  static func targets() async throws -> [Target] {
+  static func targets(anyApp: Bool = false) async throws -> [Target] {
     let content = try await shareableContent()
     let running = Set(content.applications.map(\.bundleIdentifier))
-    return Surface.all.compactMap { surface in
+    var out = Surface.all.compactMap { surface -> Target? in
       guard let bundleID = surface.bundleID else { return nil }
       return Target(
         surface: surface.id,
@@ -144,6 +150,26 @@ enum ScreenCapture {
         windows: realWindows(content, bundleID: bundleID).count,
         appRunning: running.contains(bundleID))
     }
+    guard anyApp else { return out }
+
+    // Everything else that is RUNNING and has a window worth naming. Not every
+    // installed application: a list of what someone has installed is a
+    // different disclosure from a list of what is open, and only the second is
+    // needed to pick a capture target.
+    let brokered = Set(Surface.all.compactMap(\.bundleID))
+    for app in NSWorkspace.shared.runningApplications
+    where app.activationPolicy == .regular {
+      guard let bundleID = app.bundleIdentifier, !brokered.contains(bundleID) else { continue }
+      let windows = realWindows(content, bundleID: bundleID).count
+      guard windows > 0 else { continue }
+      out.append(
+        Target(
+          surface: bundleID,
+          displayName: app.localizedName ?? bundleID,
+          windows: windows,
+          appRunning: true))
+    }
+    return out
   }
 
   // ─── capture ───────────────────────────────────────────────────────────────
@@ -159,6 +185,21 @@ enum ScreenCapture {
   static func capture(surface: Surface, into directory: URL?, overwrite: Bool) async throws -> Shot
   {
     guard let bundleID = surface.bundleID else { throw Failure.notCapturable(surface.id) }
+    return try await capture(
+      bundleID: bundleID, displayName: surface.displayName, label: surface.id,
+      into: directory, overwrite: overwrite)
+  }
+
+  /// The core, addressed by bundle identifier.
+  ///
+  /// Split out so a scoped call and a widened one take the SAME path: the gate
+  /// decides which identifiers may reach here, and nothing below this line
+  /// knows or cares whether the caller named a surface or an application. A
+  /// second capture implementation for arbitrary apps is exactly the duplication
+  /// this avoids.
+  static func capture(
+    bundleID: String, displayName: String, label: String, into directory: URL?, overwrite: Bool
+  ) async throws -> Shot {
     let content = try await shareableContent()
     let candidates = realWindows(content, bundleID: bundleID)
     guard
@@ -167,7 +208,7 @@ enum ScreenCapture {
       })
     else {
       let running = content.applications.contains { $0.bundleIdentifier == bundleID }
-      throw Failure.noWindow(surface.displayName, appRunning: running)
+      throw Failure.noWindow(displayName, appRunning: running)
     }
 
     let config = SCStreamConfiguration()
@@ -186,17 +227,17 @@ enum ScreenCapture {
         contentFilter: SCContentFilter(desktopIndependentWindow: window),
         configuration: config)
     } catch {
-      throw Failure.captureFailed(surface.displayName, code: (error as NSError).code)
+      throw Failure.captureFailed(displayName, code: (error as NSError).code)
     }
 
     // A failed grab does not throw, it returns flat pixels. Without this the
     // tool reports success and hands back an empty image.
-    guard distinctColours(image) > 2 else { throw Failure.blank(surface.displayName) }
+    guard distinctColours(image) > 2 else { throw Failure.blank(displayName) }
 
-    let url = try destination(for: surface, in: directory, overwrite: overwrite)
+    let url = try destination(for: label, in: directory, overwrite: overwrite)
     guard let bytes = writePNG(image, to: url) else { throw Failure.writeFailed(url.path) }
     return Shot(
-      path: url.path, bytes: bytes, width: image.width, height: image.height, surface: surface.id)
+      path: url.path, bytes: bytes, width: image.width, height: image.height, surface: label)
   }
 
   // ─── destination ───────────────────────────────────────────────────────────
@@ -207,7 +248,11 @@ enum ScreenCapture {
     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
   }
 
-  private static func destination(for surface: Surface, in directory: URL?, overwrite: Bool) throws
+  /// `label` is a surface id when one was named and a bundle identifier
+  /// otherwise, so it can carry dots. Kept as-is rather than sanitised: a dot is
+  /// legal in a filename and `com.apple.Maps` is more use in ~/Downloads than a
+  /// flattened version of it.
+  private static func destination(for label: String, in directory: URL?, overwrite: Bool) throws
     -> URL
   {
     let base = root.resolvingSymlinksInPath()
@@ -227,7 +272,7 @@ enum ScreenCapture {
     let stamp = ISO8601DateFormatter()
     stamp.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
     let leaf =
-      "cupertino-\(surface.id)-\(stamp.string(from: Date()).replacingOccurrences(of: ":", with: "")).png"
+      "cupertino-\(label)-\(stamp.string(from: Date()).replacingOccurrences(of: ":", with: "")).png"
     let url = dir.appendingPathComponent(leaf)
     if FileManager.default.fileExists(atPath: url.path) && !overwrite {
       throw Failure.destinationRefused(url.path)

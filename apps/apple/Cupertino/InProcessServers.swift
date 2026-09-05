@@ -65,7 +65,8 @@ enum InProcessServers {
       return reply(
         ScreenServer.handle(
           line, surface: surface,
-          captureAllowed: gateOn("allowCapture")))
+          captureAllowed: gateOn("allowCapture"),
+          anyAppAllowed: gateOn("allowAnyApp")))
     case "sound":
       return reply(
         SoundServer.handle(
