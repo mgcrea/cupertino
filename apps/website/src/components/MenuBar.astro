@@ -27,15 +27,35 @@
  * to search. Numbers here come from docs/ or they do not go here.
  */
 import { WIRING } from "../config";
-import { SURFACES } from "../data/surfaces";
+import { KIND, SUPPORTS_WRITES, SURFACES, USES_APPLE_EVENTS } from "../data/surfaces";
 import Logo from "./Logo.astro";
 
 /**
  * One row per surface: the app builds this menu from `Surface.all`, and each
  * row's trailing caption is its Automation status — `StatusStyle.caption` in
  * SettingsWindow.swift. It is NOT a lane label; the app does not show one here.
+ *
+ * Every row used to read "automation allowed", which was a claim about FOUR
+ * surfaces that send no Apple Event at all: Maps has no scripting dictionary,
+ * and the three capabilities have no app to script. This file's own header says
+ * numbers come from docs or they do not go here, and a permission caption is a
+ * number by another name.
+ *
+ * The ladder below is `StatusStyle.automationCaption`, transcribed. The mock
+ * shows the everything-granted state, so the one branch that varies at runtime
+ * collapses to "automation allowed" and the rest are exact.
  */
-const items = SURFACES.map((s) => ({ name: s.name, status: "automation allowed" }));
+const caption = (id: (typeof SURFACES)[number]["id"]) => {
+  if (!USES_APPLE_EVENTS[id]) {
+    if (KIND[id] === "capability") return "not needed — there is no app to script";
+    return SUPPORTS_WRITES[id]
+      ? "not needed — this surface never scripts the app"
+      : "not needed — this surface reads only";
+  }
+  return "automation allowed";
+};
+
+const items = SURFACES.map((s) => ({ name: s.name, status: caption(s.id) }));
 
 const calls = [
   { tool: "apple_mail_search_messages", ms: 97, lane: "index" },

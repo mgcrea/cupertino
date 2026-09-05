@@ -1,28 +1,46 @@
 ---
 import { SPELLED } from "../config";
-import { SURFACES, toolCount } from "../data/surfaces";
+import { isCapability, SURFACES, toolCount } from "../data/surfaces";
 import SectionHeader from "./SectionHeader.astro";
 import SurfaceGlyph from "./SurfaceGlyph.astro";
+
+/**
+ * Two groups, because the difference is total rather than cosmetic and the page
+ * used to flatten it.
+ *
+ * Eleven cards under one heading said "each surface is its own npm package",
+ * which was true of eight of them. `screen`, `sound` and `desktop` broker a
+ * framework rather than an app: they ship OFF, they each need their OWN TCC
+ * grant, and none of them can be an npm package at all. That last point is the
+ * clearest argument on the page for why the app exists rather than only the
+ * packages, and while the list was flat it was invisible.
+ *
+ * The split is read from `KIND`, which is generated from `surfaces.json`, so a
+ * card cannot end up under the wrong heading by hand.
+ */
+const apps = SURFACES.filter((s) => !isCapability(s));
+const capabilities = SURFACES.filter(isCapability);
 
 /**
  * Counted from the data. This heading used to hard-code "Four" — and note the
  * capital: `SPELLED` is lower-case because its other callers use it mid-sentence,
  * so a heading has to capitalise it rather than render "five surfaces."
  */
-const spelled = SPELLED[SURFACES.length] ?? String(SURFACES.length);
+const spelled = SPELLED[apps.length] ?? String(apps.length);
 const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />One bundle.`;
+const capSpelled = SPELLED[capabilities.length] ?? String(capabilities.length);
 ---
 
 <section id="surfaces" class="wrap scroll-mt-20 py-[96px]">
   <SectionHeader eyebrow="Surfaces" heading={heading}>
-    Each surface is its own npm package, so a host loads only the tools it wants — and write tools
-    against Mail and against Reminders are not the same risk. They share one bundle and one grant,
-    which is the whole reason they live together.
+    Each of these brokers one Apple app, and each is its own npm package, so a host loads only the
+    tools it wants — and write tools against Mail and against Reminders are not the same risk. They
+    share one bundle and one grant, which is the whole reason they live together.
   </SectionHeader>
 
   <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
     {
-      SURFACES.map((s) => (
+      apps.map((s) => (
         <article class="flex flex-col gap-4 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-7">
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
@@ -60,12 +78,65 @@ const heading = `${spelled[0]?.toUpperCase()}${spelled.slice(1)} surfaces.<br />
 
   <div class="reveal mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
     {
-      SURFACES.map((s) => (
+      apps.map((s) => (
         <p class="m-0 text-[13px] leading-[1.6] text-fg-muted">
           <span class="text-fg-dim">{s.name} without the grant — </span>
           {s.withoutGrant}
         </p>
       ))
     }
+  </div>
+
+  <div class="mt-[96px]">
+    <SectionHeader
+      eyebrow="Capabilities"
+      heading={`${capSpelled[0]?.toUpperCase()}${capSpelled.slice(1)} more,<br />switched off.`}
+    >
+      These broker the system rather than an app, and the contract is different in every way that
+      matters. Each arrives <strong class="font-semibold text-fg-dim">off</strong> until you switch
+      it on, each needs its <strong class="font-semibold text-fg-dim">own</strong> permission rather
+      than the shared one, and none of them is an npm package — nor could be. The grant lives in the
+      app, so a published package would hold nothing.
+    </SectionHeader>
+
+    <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+      {
+        capabilities.map((s) => (
+          <article class="flex flex-col gap-4 rounded-[16px] border border-dashed border-rule bg-bg-2 p-6 sm:p-7">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2.5">
+                <span class="flex size-8 shrink-0 items-center justify-center rounded-[9px] border border-rule-2 bg-bg text-fg-dim">
+                  <SurfaceGlyph id={s.id} />
+                </span>
+                <h3 class="m-0 font-display text-[22px] font-semibold tracking-[-0.03em] text-fg">
+                  {s.name}
+                </h3>
+              </div>
+              <span class="mono !text-accent">{toolCount(s)} tools</span>
+            </div>
+
+            <p class="m-0 text-[14px] leading-[1.6] text-pretty text-fg-dim">{s.pitch}</p>
+
+            <div class="mt-auto flex flex-col gap-2.5 pt-2">
+              <div class="flex items-center gap-2 text-[12.5px] text-fg-muted">
+                <span class="font-mono text-fg-dim">{s.read.length}</span> always registered
+                <span class="text-rule-2">·</span>
+                <span class="font-mono text-fg-dim">{s.write.length}</span> write-gated
+                {s.gated && s.gated.length > 0 && (
+                  <Fragment>
+                    <span class="text-rule-2">·</span>
+                    <span class="font-mono text-fg-dim">{s.gated.length}</span> opt-in
+                  </Fragment>
+                )}
+              </div>
+              <p class="m-0 text-[13px] leading-[1.6] text-fg-muted">
+                <span class="text-fg-dim">Without the grant — </span>
+                {s.withoutGrant}
+              </p>
+            </div>
+          </article>
+        ))
+      }
+    </div>
   </div>
 </section>

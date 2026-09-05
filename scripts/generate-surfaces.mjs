@@ -465,6 +465,36 @@ target("apps/website/src/data/surfaces.ts", (src) =>
   ),
 );
 
+// ─── 10b. The website's app/capability split ─────────────────────────────────
+
+/**
+ * The things about a surface the manifest DOES know, so the site cannot file a
+ * card under the wrong heading or caption a row with a permission that surface
+ * never spends.
+ *
+ * `surfaces.ts` renders eleven cards and used to render them as one list under
+ * the words "each surface is its own npm package" — true of eight of them. The
+ * distinction was modelled here, validated by `kind`, and rendered by the app
+ * itself, and the website was the one place it was dropped.
+ */
+target("apps/website/src/data/surfaces.ts", (src) =>
+  region(
+    src,
+    `// <generated:kind> ${BANNER}\n`,
+    `// </generated:kind>`,
+    `export const KIND: Record<Surface["id"], "app" | "capability"> = {\n` +
+      surfaces.map((s) => `  ${s.id}: ${swiftString(s.kind)},`).join("\n") +
+      `\n};\n\n` +
+      `export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {\n` +
+      surfaces.map((s) => `  ${s.id}: ${s.usesAppleEvents},`).join("\n") +
+      `\n};\n\n` +
+      `export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {\n` +
+      surfaces.map((s) => `  ${s.id}: ${s.supportsWrites},`).join("\n") +
+      `\n};\n`,
+    "website surfaces.ts kind",
+  ),
+);
+
 // ─── 11. .mcp.json ───────────────────────────────────────────────────────────
 
 /**

@@ -57,6 +57,67 @@ export interface Surface {
   withoutGrant: string;
 }
 
+/**
+ * Which surfaces broker an APP and which broker the system.
+ *
+ * Generated, unlike the entries below, and that split is deliberate: the tool
+ * names are transcribed and checked against the tree because the manifest does
+ * not know them, but this it does know, and a card filed under the wrong heading
+ * is a claim about what a licence gets you.
+ *
+ * The difference is total rather than cosmetic. An app surface ships ON, shares
+ * one Full Disk Access grant with the other seven, and is also an npm package
+ * that runs without Cupertino at all. A capability ships OFF, needs its own TCC
+ * grant — Screen Recording, Microphone, Accessibility, one each — and can never
+ * be an npm package, because the grant lives in the app and a published package
+ * would hold nothing.
+ */
+// <generated:kind> generated from surfaces.json by `make surfaces` — do not edit by hand
+export const KIND: Record<Surface["id"], "app" | "capability"> = {
+  mail: "app",
+  notes: "app",
+  reminders: "app",
+  calendar: "app",
+  contacts: "app",
+  messages: "app",
+  safari: "app",
+  maps: "app",
+  screen: "capability",
+  sound: "capability",
+  desktop: "capability",
+};
+
+export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
+  mail: true,
+  notes: true,
+  reminders: true,
+  calendar: true,
+  contacts: true,
+  messages: true,
+  safari: true,
+  maps: false,
+  screen: false,
+  sound: false,
+  desktop: false,
+};
+
+export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
+  mail: true,
+  notes: true,
+  reminders: true,
+  calendar: true,
+  contacts: true,
+  messages: true,
+  safari: true,
+  maps: true,
+  screen: false,
+  sound: true,
+  desktop: true,
+};
+// </generated:kind>
+
+export const isCapability = (s: Surface) => KIND[s.id] === "capability";
+
 export const SURFACES: readonly Surface[] = [
   {
     id: "mail",
