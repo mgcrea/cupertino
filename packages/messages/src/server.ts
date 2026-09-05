@@ -1,7 +1,8 @@
 import {
-  registerSurfaceResources,
   type Logger,
   type OsascriptRunner,
+  registerSurfaceResources,
+  withLazyTools,
 } from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -49,11 +50,21 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.contacts === undefined ? {} : { contacts: opts.contacts }),
   });
 
-  registerTools(server, client, {
-    allowWrites: config.allowWrites,
-    allowCodes: config.allowCodes,
-    allowFileSend: config.allowFileSend,
-  });
+  withLazyTools(
+    server,
+    {
+      surface: "messages",
+      displayName: "Messages",
+      lazy: config.lazyTools,
+      allowWrites: config.allowWrites,
+    },
+    (target, allowWrites) =>
+      registerTools(target, client, {
+        allowWrites,
+        allowCodes: config.allowCodes,
+        allowFileSend: config.allowFileSend,
+      }),
+  );
   /*
    * One flag, both primitives — see `exposePrompts` in core's config. A prompt
    * embeds its surface guide, so registering prompts without the resources

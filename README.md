@@ -380,6 +380,7 @@ is `APPLE_MAIL_`, `APPLE_NOTES_`, `APPLE_REMINDERS_`, `APPLE_CALENDAR_`, `APPLE_
 | ------------------------ | ------------- | -------------------------------------------------------------- |
 | `*_ALLOW_WRITES`         | `false`       | register the mutating tools at all                             |
 | `*_EXPOSE_PROMPTS`       | `true`        | register the workflow prompts and `cupertino://` resources     |
+| `*_LAZY_TOOLS`           | `false`       | serve a search tool and a dispatcher instead of the tool list  |
 | `*_ACCOUNTS`             | all           | account allowlist (names or UUIDs) — the **read**-side control |
 | `*_ATTACHMENT_DIR`       | `~/Downloads` | the only directory attachments may be written into             |
 | `*_MAX_RESULTS`          | `200`         | cap on any listing                                             |
@@ -393,10 +394,18 @@ it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_
 `*_BODY_SCAN_MAX`, `*_BODY_SCAN_BYTES` and `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
 
 `*_EXPOSE_PROMPTS` is a cost knob, not a safety gate — which is why it defaults **on** while
-writes default off. Measured across all seven servers with writes enabled, the prompt and resource
-listings come to ~3.4k tokens against ~18.5k for the tool definitions, so about 18% on top of a
-bill that tools dominate either way; resource _contents_ cost nothing until something reads one. If
-context is the problem, running fewer servers is the far bigger lever.
+writes default off. Measured across all eight servers with writes enabled, the prompt and resource
+listings come to ~3.4k tokens against ~26.5k for the tool definitions, so about 13% on top of a
+bill that tools dominate either way; resource _contents_ cost nothing until something reads one.
+
+`*_LAZY_TOOLS` is the knob for that ~26.5k. With it on, a server lists its diagnostics tool plus
+`apple_<surface>_search_tools`, `_describe_tool` and `_call_tool` — and `_call_write_tool` when
+writes are on — instead of every tool up front: ~5.8k tokens across the eight servers rather than
+~25.4k, a 4.4× cut. It is off by default because it **trades** rather than tightens. The server
+refuses exactly what it refused before, and a write tool is still absent rather than merely hidden
+when `*_ALLOW_WRITES` is off, but your client's per-tool permission prompt collapses into two: one
+for this surface's reads, one for its writes. Leave it off for Claude Code and Claude Desktop,
+which already fetch tool schemas only when a task needs them and so pay the cost for nothing.
 
 Calendar takes `APPLE_CALENDAR_WORKDAY_START`, `APPLE_CALENDAR_WORKDAY_END` and
 `APPLE_CALENDAR_WORKDAYS` (`mon,tue,wed,thu,fri`), which set the working day

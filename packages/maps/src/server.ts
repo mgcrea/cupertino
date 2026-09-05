@@ -1,4 +1,4 @@
-import { registerSurfaceResources, type Logger } from "@mgcrea/mcp-apple-core";
+import { type Logger, registerSurfaceResources, withLazyTools } from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "./build-info.js";
@@ -43,7 +43,16 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.home ? { home: opts.home } : {}),
   });
 
-  registerTools(server, client, { allowWrites: config.allowWrites });
+  withLazyTools(
+    server,
+    {
+      surface: "maps",
+      displayName: "Maps",
+      lazy: config.lazyTools,
+      allowWrites: config.allowWrites,
+    },
+    (target, allowWrites) => registerTools(target, client, { allowWrites }),
+  );
   /*
    * One flag, both primitives — see `exposePrompts` in core's config. A prompt
    * embeds its surface guide, so registering prompts without the resources

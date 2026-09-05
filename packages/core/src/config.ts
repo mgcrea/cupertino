@@ -64,6 +64,26 @@ export const BaseConfigSchema = z.object({
    * nothing serves would be a dangling reference by configuration.
    */
   exposePrompts: z.boolean().default(true),
+  /**
+   * Serve a searchable index and a dispatcher instead of the full tool list.
+   *
+   * OFF by default, and a COST knob like `exposePrompts` above rather than a
+   * safety gate — but unlike that one it is a knob that TRADES. See
+   * `facade.ts` for the mechanism; the trade is that a host's permission rule
+   * stops naming the individual tool and starts naming a direction: one rule
+   * for this surface's reads, one for its writes.
+   *
+   * What it buys, measured with writes on: ~26.5k tokens of tool definitions
+   * across the eight servers becomes a handful per surface. What it costs
+   * besides the permission granularity is a round trip — a model must search
+   * before it can call.
+   *
+   * Worth switching on only for a client that does not already defer tool
+   * schemas itself. Claude Code and Claude Desktop do, and gain nothing here
+   * while paying both costs, which is why the app declines to write the flag
+   * into their config files at all.
+   */
+  lazyTools: z.boolean().default(false),
   debug: z.boolean().default(false),
   osascriptPath: z.string().default("/usr/bin/osascript"),
   osascriptTimeoutMs: z.number().int().min(1_000).max(600_000).default(30_000),

@@ -109,6 +109,40 @@ enum CallCapture {
 
   // MARK: - Capture
 
+  /// The dispatcher names a surface exposes when it loads its tools on demand.
+  ///
+  /// Kept as suffixes rather than full names because the prefix is the surface
+  /// id, and this file is surface-agnostic.
+  static let facadeDispatchers = ["_call_tool", "_call_write_tool"]
+
+  /// The real tool behind a facade dispatch, or nil for an ordinary call.
+  ///
+  /// With `APPLE_<SURFACE>_LAZY_TOOLS=1` a surface lists a search tool and a
+  /// dispatcher instead of its tools, so the wire carries
+  /// `apple_mail_call_write_tool` with the real name nested one level down. The
+  /// Activity window has to keep saying `apple_mail_send_message`, because a
+  /// log that names the dispatcher records that *something* was written and
+  /// nothing about what — which is the whole value of the row.
+  ///
+  /// Bastion solves this by rewriting the frame before it is logged. Cupertino
+  /// cannot: this observer is deliberately non-blocking and never edits the
+  /// pump. It does not have to. Unwrapping is a property of READING the frame,
+  /// and reading is all this does.
+  ///
+  /// **The suffix check is not decoration.** `apple_mail_create_mailbox` takes
+  /// an argument called `name`, so recognising a dispatch by "the arguments
+  /// contain a name" alone would read that call as a dispatch to a mailbox
+  /// called Archive. The outer tool name has to look like a dispatcher first.
+  static func unwrapFacade(name: String, params: [String: Any]?) -> (
+    name: String, params: [String: Any]
+  )? {
+    guard facadeDispatchers.contains(where: { name.hasSuffix($0) }) else { return nil }
+    guard let inner = params?["arguments"] as? [String: Any],
+      let real = inner["name"] as? String, !real.isEmpty
+    else { return nil }
+    return (real, inner)
+  }
+
   /// What a `tools/call` was called with, or nil if nothing should be kept.
   static func arguments(params: [String: Any]?, mode: Mode, content: Bool) -> String? {
     guard mode >= .arguments, let params else { return nil }

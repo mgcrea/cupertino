@@ -104,12 +104,20 @@ enum ServerLocator {
   ///   today. Passing the enabled set rather than reading `UserDefaults` here
   ///   keeps this function pure, which is what lets `SurfaceCatalog` ask it for
   ///   a hypothetical configuration when it builds its capability cache.
-  static func environment(for surface: Surface, allowWrites: Bool, gates: [String] = [])
+  /// - Parameter lazyTools: whether this surface should serve a searchable index
+  ///   and a dispatcher instead of its tools. Defaults to OFF, and the default
+  ///   is load-bearing for `SurfaceCatalog`: the capability cache exists to
+  ///   report what a surface can actually do, and a probe that asked a lazy
+  ///   server would answer "four tools" for every surface in the app.
+  static func environment(
+    for surface: Surface, allowWrites: Bool, gates: [String] = [], lazyTools: Bool = false
+  )
     -> [String: String]
   {
     var env = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()]
     if allowWrites { env["\(surface.envPrefix)ALLOW_WRITES"] = "1" }
     for suffix in gates { env["\(surface.envPrefix)\(suffix)"] = "1" }
+    if lazyTools { env["\(surface.envPrefix)LAZY_TOOLS"] = "1" }
     return env
   }
 }

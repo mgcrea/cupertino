@@ -204,6 +204,51 @@ struct UnitCheck {
       params: params(["note": long]), mode: .arguments, content: true)
     check("a captured argument is capped", (big?.utf8.count ?? 0) < 4200)
 
+    print("\nLazy tools: the log still names the real tool")
+
+    // The claim on screen is that Activity records which capability was
+    // reached. Under APPLE_<SURFACE>_LAZY_TOOLS the wire says
+    // `apple_mail_call_write_tool` and the real name sits one level down, so
+    // without unwrapping every write on a lazy surface logs as the same row.
+    let dispatch: [String: Any] = [
+      "name": "apple_mail_call_write_tool",
+      "arguments": [
+        "name": "apple_mail_send_message",
+        "arguments": ["to": "+15551234", "text": "meet me at eight"],
+      ],
+    ]
+    let unwrapped = CallCapture.unwrapFacade(
+      name: "apple_mail_call_write_tool", params: dispatch)
+    check("a dispatch resolves to the real tool", unwrapped?.name == "apple_mail_send_message")
+
+    let dispatched = CallCapture.arguments(
+      params: unwrapped?.params, mode: .arguments, content: false)
+    check("the real arguments are what get recorded", dispatched?.contains("+15551234") == true)
+    check("and content is blanked as usual", dispatched?.contains("meet me at eight") == false)
+    check(
+      "the dispatcher's own wrapper is not recorded",
+      dispatched?.contains("apple_mail_send_message") == false)
+
+    check(
+      "the read dispatcher unwraps too",
+      CallCapture.unwrapFacade(
+        name: "apple_mail_call_tool",
+        params: ["name": "apple_mail_call_tool", "arguments": ["name": "apple_mail_list_messages"]]
+      )?.name == "apple_mail_list_messages")
+
+    // The trap. `create_mailbox` takes an argument called `name`, so a rule
+    // that recognised a dispatch by "the arguments carry a name" would read
+    // this as a dispatch to a tool called Archive and log that instead.
+    check(
+      "an ordinary call with a name argument is left alone",
+      CallCapture.unwrapFacade(
+        name: "apple_mail_create_mailbox",
+        params: params(["name": "Archive"])) == nil)
+    check(
+      "a dispatcher with nothing nested is left alone",
+      CallCapture.unwrapFacade(
+        name: "apple_mail_call_tool", params: ["name": "apple_mail_call_tool"]) == nil)
+
     print("\nFrame splitting: the chunk boundary")
 
     // The bug this exists to hold still: reads arrive in 64 KiB chunks with no

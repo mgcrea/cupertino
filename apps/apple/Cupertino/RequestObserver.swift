@@ -116,9 +116,22 @@ final class RequestObserver {
     // Activity window under-reported an agent that had just been handed a
     // write workflow.
     //
+    // A surface serving its tools lazily wraps the real call one level down.
+    // Both the identity below and the arguments further down have to be read
+    // from the inner frame, or the row names the dispatcher and carries the
+    // dispatcher's own two fields as if they were what was sent.
+    var callParams = params
+    if method == "tools/call", let outer = params?["name"] as? String,
+      let unwrapped = CallCapture.unwrapFacade(name: outer, params: params)
+    {
+      // The inner frame already carries the real name under the same key, so
+      // everything below reads it exactly as it reads an ordinary call.
+      callParams = unwrapped.params
+    }
+
     let identifier: String? =
       switch method {
-      case "tools/call": params?["name"] as? String
+      case "tools/call": callParams?["name"] as? String
       case "prompts/get": (params?["name"] as? String).map { "prompt: \($0)" }
       case "resources/read": (params?["uri"] as? String).map { "read: \($0)" }
       default: nil
@@ -130,7 +143,7 @@ final class RequestObserver {
 
       let arguments =
         method == "tools/call"
-        ? CallCapture.arguments(params: params, mode: mode, content: content)
+        ? CallCapture.arguments(params: callParams, mode: mode, content: content)
         : nil
       let row = hostCall(surface.id, identifier, arguments: arguments)
 

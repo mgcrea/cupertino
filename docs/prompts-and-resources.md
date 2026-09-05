@@ -126,25 +126,33 @@ for a bug in this repo, and the fix belongs upstream.
 
 ## What it costs
 
-Measured against the built servers, all seven with writes on, `JSON.stringify` length of each
+Measured against the built servers, all eight with writes on, `JSON.stringify` length of each
 listing at ~4 chars per token:
 
 | Surface   | tools       | prompts    | resources  | one expansion |
 | --------- | ----------- | ---------- | ---------- | ------------- |
-| mail      | 19 · ~5,243 | 3 · ~437   | 3 · ~279   | ~966          |
-| notes     | 12 · ~1,906 | 2 · ~232   | 3 · ~281   | ~706          |
-| reminders | 11 · ~2,788 | 2 · ~293   | 3 · ~292   | ~694          |
-| calendar  | 10 · ~3,471 | 2 · ~269   | 3 · ~291   | ~864          |
-| contacts  | 7 · ~1,921  | 1 · ~90    | 2 · ~191   | ~884          |
-| messages  | 7 · ~1,868  | 2 · ~241   | 2 · ~191   | ~964          |
-| safari    | 6 · ~1,258  | 1 · ~124   | 2 · ~187   | ~944          |
-| **total** | **~18,453** | **~1,684** | **~1,710** | —             |
+| mail      | 21 · ~6,266 | 3 · ~437   | 3 · ~279   | ~988          |
+| notes     | 13 · ~1,936 | 2 · ~232   | 3 · ~281   | n/a           |
+| reminders | 11 · ~2,674 | 2 · ~293   | 3 · ~292   | ~694          |
+| calendar  | 10 · ~3,384 | 2 · ~269   | 3 · ~291   | ~864          |
+| contacts  | 7 · ~1,859  | 1 · ~90    | 2 · ~191   | n/a           |
+| messages  | 8 · ~2,749  | 2 · ~241   | 2 · ~191   | ~1,275        |
+| safari    | 13 · ~4,605 | 1 · ~124   | 2 · ~187   | ~2,018        |
+| maps      | 10 · ~1,859 | 1 · ~89    | 2 · ~183   | ~1,051        |
+| **total** | **~25,330** | **~1,773** | **~1,893** | —             |
+
+Re-measured 2026-09-05, and the previous figures were stale by roughly half: the table said
+~18,453 tokens for seven servers while Mail had grown 19 → 21 tools and Maps had shipped. The
+expansion column is the largest prompt that expands with no arguments; Notes and Contacts declare
+arguments on every prompt, which is the upstream sharp edge described above rather than an
+omission.
 
 Three things follow, and they are why `exposePrompts` defaults on:
 
-**The listings are ~3.4k tokens, about 18% on top of tools.** Not free, and not where the context
-goes: Mail's tool list alone outweighs every prompt and resource on all seven servers combined. The
-lever that matters for context is running fewer servers.
+**The listings are ~3.7k tokens, about 14% on top of tools.** Not free, and not where the context
+goes: Mail's tool list alone outweighs every prompt and resource on all eight servers combined. The
+levers that matter for context are running fewer servers and `*_LAZY_TOOLS`, which addresses the
+~25k directly — see the README's configuration table.
 
 **Resource contents cost nothing until read.** A listing carries name, URI, description and
 mimeType. The 2.6 KB Mail guide enters context only when something reads it.

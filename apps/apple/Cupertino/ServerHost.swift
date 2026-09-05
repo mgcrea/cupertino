@@ -605,14 +605,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
     let gates = SurfaceSettings.enabledGates(surface)
+    let lazyTools = SurfaceSettings.lazyTools(surface)
     process.environment = ServerLocator.environment(
-      for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates)
+      for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates,
+      lazyTools: lazyTools)
 
     let writes = SurfaceSettings.allowWrites(surface)
     hostLog(surface.id, .info, "allowWrites=\(writes)")
     if !surface.gates.isEmpty {
       hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
     }
+    if lazyTools { hostLog(surface.id, .info, "lazyTools=true") }
 
     let toChild = Pipe()
     let fromChild = Pipe()
@@ -869,6 +872,42 @@ enum SurfaceSettings {
       return UserDefaults.standard.bool(forKey: contentKey(surface))
     }
     return UserDefaults.standard.bool(forKey: appContentKey)
+  }
+
+  static func lazyToolsKey(_ surface: Surface) -> String { "lazyTools.\(surface.id)" }
+  static let appLazyToolsKey = "lazyTools"
+
+  /// Whether this surface serves a searchable index and a dispatcher instead of
+  /// its tools.
+  ///
+  /// Written the way `captureMode` is and NOT the way `allowWrites` is: absence
+  /// means "follow the app-wide default", which is itself absent-means-off. The
+  /// tri-state is the point — "no preference" has to stay distinguishable from
+  /// "off", or switching the app-wide default would skip every surface a person
+  /// had ever opened the detail pane for.
+  ///
+  /// A COST knob, not a gate. `allowWrites` decides what a surface can be asked
+  /// to do; this decides only how the same set is presented, and the server
+  /// still refuses through the facade exactly what it would refuse without it.
+  /// It is not free, though, which is why it is off by default: a host's
+  /// permission rule stops naming the individual tool and starts naming a
+  /// direction. See `packages/core/src/facade.ts`.
+  /// Values: `on`, `off`, or absent/empty for "follow the app-wide default".
+  ///
+  /// A STRING rather than a Bool, for the same reason `captureMode` is one: a
+  /// `Picker` needs a concrete tag for the third position, and `bool(forKey:)`
+  /// cannot tell "off" from "never set". The app-wide key next to it IS a Bool,
+  /// because it has only the two positions and nothing below it to defer to.
+  static func lazyTools(_ surface: Surface) -> Bool {
+    if let raw = UserDefaults.standard.string(forKey: lazyToolsKey(surface)), !raw.isEmpty {
+      return raw == "on"
+    }
+    return appLazyTools
+  }
+
+  /// The app-wide default, for every surface that has not been told otherwise.
+  static var appLazyTools: Bool {
+    UserDefaults.standard.bool(forKey: appLazyToolsKey)
   }
 
   static func gateKey(_ surface: Surface, _ gate: Surface.Gate) -> String {

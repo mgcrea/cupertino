@@ -112,6 +112,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_CALENDAR_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_CALENDAR_EXPOSE_PROMPTS),
+    lazyTools: parseBool(env.APPLE_CALENDAR_LAZY_TOOLS),
     debug: parseBool(env.APPLE_CALENDAR_DEBUG),
     accounts: parseList(env.APPLE_CALENDAR_ACCOUNTS),
     calendars: parseList(env.APPLE_CALENDAR_CALENDARS),

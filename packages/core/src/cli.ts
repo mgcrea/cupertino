@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import type { BuildInfo } from "./build-info.js";
 import type { SurfaceContext } from "./errors.js";
+import { withTrimmedListing } from "./listing.js";
 import type { Logger } from "./osascript.js";
 
 export type StdioServerOptions = {
@@ -48,7 +49,7 @@ export const runStdioServer = async (opts: StdioServerOptions): Promise<void> =>
   }
 
   const { server, banner } = await opts.start(logger);
-  await server.connect(new StdioServerTransport());
+  await server.connect(withTrimmedListing(new StdioServerTransport()));
   logger.warn(`${logPrefix} connected (${banner})`);
 
   const shutdown = (signal: string): void => {

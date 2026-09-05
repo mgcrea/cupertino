@@ -323,6 +323,9 @@ struct SurfaceDetail: View {
           GateToggle(surface: surface, gate: gate)
         }
       }
+
+      Divider()
+      LazyToolsControl(surface: surface)
     }
   }
 
@@ -787,6 +790,47 @@ struct Card<Content: View>: View {
 /// resolves both settings once when a connection opens — a `UserDefaults` read
 /// per line on a pump thread is a cost with no payoff — and the write gate has
 /// the same behaviour for the same reason.
+/// How this surface presents its tools, overriding the app-wide default.
+///
+/// In the Access card rather than beside the capture controls, because it is a
+/// decision about what a client is shown rather than about what gets logged —
+/// and directly under the write gate, because the two interact: with writes on,
+/// a lazy surface exposes a second dispatcher, and a host's permission rule
+/// then names "this surface's writes" instead of `send_message`.
+///
+/// A change applies to the NEXT connection, the same rule the write gate and
+/// the capture mode already follow.
+private struct LazyToolsControl: View {
+  private let surface: Surface
+  /// Empty means "follow the app-wide default" — see `SurfaceSettings.lazyTools`.
+  @AppStorage private var choice: String
+
+  init(surface: Surface) {
+    self.surface = surface
+    _choice = AppStorage(wrappedValue: "", SurfaceSettings.lazyToolsKey(surface))
+  }
+
+  var body: some View {
+    Picker("Load tools on demand", selection: $choice) {
+      Text("Default (\(SurfaceSettings.appLazyTools ? "on" : "off"))").tag("")
+      Text("On").tag("on")
+      Text("Off").tag("off")
+    }
+    .font(.callout)
+
+    Text(
+      SurfaceSettings.lazyTools(surface)
+        ? "\(surface.displayName) serves a search tool and a dispatcher. Clients read far less on "
+          + "connect, and ask permission once for reads and once for writes rather than per tool."
+        : "\(surface.displayName) lists every tool up front, so your client can ask about each one "
+          + "by name."
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
 private struct CaptureControls: View {
   private let surface: Surface
   /// Empty means "follow the app-wide default", which is what absence means in

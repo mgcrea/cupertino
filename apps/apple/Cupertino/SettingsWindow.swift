@@ -217,6 +217,7 @@ struct GeneralPane: View {
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
   @State private var copied = false
+  @AppStorage(SurfaceSettings.appLazyToolsKey) private var lazyTools = false
 
   var body: some View {
     Form {
@@ -244,6 +245,23 @@ struct GeneralPane: View {
           Text(AppInfo.identityLine)
         }
         .textSelection(.enabled)
+      }
+
+      Section {
+        Toggle(isOn: $lazyTools) {
+          Text("Load tools on demand")
+          Text(
+            "Serve a search tool and a dispatcher instead of listing every tool up front. "
+              + "Cuts what a client reads on connect by about four fifths, at the cost of a "
+              + "coarser permission prompt: your client asks once per surface for reads and "
+              + "once for writes, rather than naming each tool. Leave it off for Claude Code "
+              + "and Claude Desktop, which already load tool schemas only when they are needed."
+          )
+        }
+      } header: {
+        Text("Context")
+      } footer: {
+        Text("Applies the next time a client connects. Each surface can override this.")
       }
 
       Section {

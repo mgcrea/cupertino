@@ -66,6 +66,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_REMINDERS_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_REMINDERS_EXPOSE_PROMPTS),
+    lazyTools: parseBool(env.APPLE_REMINDERS_LAZY_TOOLS),
     debug: parseBool(env.APPLE_REMINDERS_DEBUG),
     accounts: parseList(env.APPLE_REMINDERS_ACCOUNTS),
     lists: parseList(env.APPLE_REMINDERS_LISTS),

@@ -133,7 +133,7 @@ silent cap reported as an absence. See [mail-body.md](mail-body.md).
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why
 Terminal, Script Editor and System Settings are excluded on purpose — but "ten" loses a feature
 comparison to "188" and will keep doing so. The tool counts are much closer than the scope counts
-suggest — 107 here against their 188 — which is why the honest argument is about what a tool may
+suggest — 120 here against their 188 — which is why the honest argument is about what a tool may
 reach rather than how many there are.
 
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a

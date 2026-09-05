@@ -200,6 +200,11 @@ enum SurfaceCatalog {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
+    // No `lazyTools:` here, deliberately. This probe exists to record what a
+    // surface can actually do, and a lazy server answers `tools/list` with a
+    // search tool and a dispatcher — so passing the user's setting through
+    // would make every surface in the app report four capabilities. Bastion
+    // carves its own callers out of the facade for the same reason.
     process.environment = ServerLocator.environment(
       for: surface, allowWrites: allowWrites, gates: gates)
 

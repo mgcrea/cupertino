@@ -23,7 +23,9 @@ export {
   WritesDisabledError,
   type SurfaceContext,
 } from "./errors.js";
+export { withLazyTools, type LazyToolsOptions } from "./facade.js";
 export { describeStore, inspectFile, type FileFacts, type StoreFacts } from "./fs.js";
+export { trimToolListing, withTrimmedListing } from "./listing.js";
 export {
   assertStaticScript,
   createOsascriptRunner,

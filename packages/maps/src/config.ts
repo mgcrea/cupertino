@@ -31,6 +31,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_MAPS_ALLOW_WRITES),
     exposePrompts: parseBool(env.APPLE_MAPS_EXPOSE_PROMPTS),
+    lazyTools: parseBool(env.APPLE_MAPS_LAZY_TOOLS),
     debug: parseBool(env.APPLE_MAPS_DEBUG),
     storePath: trimmed(env.APPLE_MAPS_STORE),
     indexMode: trimmed(env.APPLE_MAPS_INDEX_MODE),

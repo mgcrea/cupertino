@@ -119,6 +119,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_SAFARI_ALLOW_WRITES),
     allowCodes: parseBool(env.APPLE_SAFARI_ALLOW_CODES),
     exposePrompts: parseBool(env.APPLE_SAFARI_EXPOSE_PROMPTS),
+    lazyTools: parseBool(env.APPLE_SAFARI_LAZY_TOOLS),
     debug: parseBool(env.APPLE_SAFARI_DEBUG),
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),
