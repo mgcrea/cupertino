@@ -41,6 +41,7 @@ struct WiringCheck {
     (id: "maps", label: "Maps"),
     (id: "screen", label: "Screen"),
     (id: "sound", label: "Sound"),
+    (id: "desktop", label: "Desktop"),
   ]
   // </generated:surfaces>
   static let bridge = "/Applications/Cupertino.app" + ClientWiringMerge.bridgeSuffix

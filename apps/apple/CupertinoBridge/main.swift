@@ -77,7 +77,7 @@ func die(_ message: String, code: Int32 = 1) -> Never {
 // regenerating keeps it.
 // swift-format-ignore
 // <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "safari", "maps", "screen", "sound"]
+let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "safari", "maps", "screen", "sound", "desktop"]
 // </generated:surfaces>
 
 var requested: String?

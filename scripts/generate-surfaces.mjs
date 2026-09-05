@@ -141,13 +141,13 @@ const validate = (surfaces) => {
       problems.push(`${at}: storePath must be a string or null`);
     }
     if (
-      !["full-disk-access", "contacts", "screen-recording", "microphone"].includes(
+      !["full-disk-access", "contacts", "screen-recording", "microphone", "accessibility"].includes(
         s.storePermission,
       )
     ) {
       problems.push(
-        `${at}: storePermission must be "full-disk-access", "contacts", "screen-recording" ` +
-          `or "microphone"`,
+        `${at}: storePermission must be "full-disk-access", "contacts", "screen-recording", ` +
+          `"microphone" or "accessibility"`,
       );
     }
     if (s.envPrefix !== `APPLE_${s.id?.toUpperCase().replaceAll("-", "_")}_`) {
@@ -260,6 +260,7 @@ const STORE_PERMISSION = {
   "full-disk-access": "fullDiskAccess",
   contacts: "contacts",
   "screen-recording": "screenRecording",
+  accessibility: "accessibility",
   microphone: "microphone",
 };
 

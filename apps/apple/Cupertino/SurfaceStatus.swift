@@ -124,6 +124,7 @@ struct SurfaceStatus {
     case .contacts: "Contacts access"
     case .screenRecording: "Screen Recording"
     case .microphone: "Microphone"
+    case .accessibility: "Accessibility"
     }
   }
 
@@ -185,6 +186,18 @@ struct SurfaceStatus {
           }
         }
         return Action(label: "Allow…") { Permissions.openMicrophoneSettings() }
+      case .accessibility:
+        // Both calls, in this order, and the request is not the dead end the
+        // comment above warns about. `AXIsProcessTrustedWithOptions` does not
+        // grant anything — it only makes the app APPEAR in the pane, which
+        // Permissions.swift:615 records as the part people get stuck on: the
+        // list has a `+` and a file picker, and an app that has never asked is
+        // simply absent from it. So ask first, then open the pane it now
+        // appears in.
+        return Action(label: "Allow…") {
+          Permissions.requestAccessibility()
+          Permissions.openAccessibilitySettings()
+        }
       case .fullDiskAccess:
         return nil  // unreachable: `grantIsPerSurface` excludes it.
       }

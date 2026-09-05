@@ -174,6 +174,7 @@ struct SurfaceDetail: View {
     case .contacts: "Contacts"
     case .screenRecording: "Screen Recording"
     case .microphone: "Microphone"
+    case .accessibility: "Accessibility"
     }
   }
 
@@ -201,6 +202,7 @@ struct SurfaceDetail: View {
     // Only recording refuses. Devices and volume need no grant at all, which is
     // the whole shape of this surface and would be misreported by "every tool".
     case .microphone: "not granted — recording will refuse, devices and volume still work"
+    case .accessibility: "not granted — every read and every press will refuse"
     }
   }
 
@@ -269,6 +271,13 @@ struct SurfaceDetail: View {
               case .contacts: Permissions.openContactsSettings()
               case .screenRecording: Permissions.openScreenRecordingSettings()
               case .fullDiskAccess: Permissions.openDiskAccessSettings()
+              // requestAccessibility() first, so the app is LISTED in the pane.
+              // Permissions.swift:615: an app that has never asked is simply
+              // absent from that list, and the `+` and file picker is the part
+              // people get stuck on.
+              case .accessibility:
+                Permissions.requestAccessibility()
+                Permissions.openAccessibilitySettings()
               // The microphone is the one grant whose prompt is still live
               // while nobody has been asked, so the comment above does not
               // apply to it — see SurfaceStatus.action.

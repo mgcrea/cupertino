@@ -601,6 +601,7 @@ enum Permissions {
     case .contacts: contacts()
     case .screenRecording: screenRecording() == .granted ? .granted : .missing
     case .microphone: microphone() == .granted ? .granted : .missing
+    case .accessibility: accessibility() == .granted ? .granted : .missing
     }
   }
 

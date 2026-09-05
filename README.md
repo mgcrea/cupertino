@@ -44,17 +44,28 @@ off cannot see that they exist.
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
+| Desktop   | —                                          | implemented — 12 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
-**Screen and Sound arrive switched off.** Every surface that brokers an Apple app is on when
-Cupertino is installed; those two are not, because Screen Recording and the microphone are
-per-process grants that reach past the surface being brokered. Switch them on in the surface list if
-you want them.
+**Screen, Sound and Desktop arrive switched off.** Every surface that brokers an Apple app is on when
+Cupertino is installed; those three are not, because Screen Recording, the microphone and
+Accessibility are per-process grants that reach past the surface being brokered. Desktop reaches
+furthest of the three — Accessibility does not scope to a target at all, so the right to press a
+button in Maps is the right to press one in anything, and it additionally arrives with writes off, so
+it can only look until you say otherwise. Switch them on in the surface list if you want them.
 
 Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
-an Apple app is also its own npm package; `screen` is not, and could not be — it brokers
-ScreenCaptureKit rather than an app, the Screen Recording grant lives in the app, so the app serves
-it in-process and a published package could do nothing. See [docs/screen.md](docs/screen.md).
+an Apple app is also its own npm package; `screen`, `sound` and `desktop` are not, and could not be —
+they broker a framework rather than an app, the grant lives in the app, so the app serves them
+in-process and a published package could do nothing. See [docs/screen.md](docs/screen.md) and
+[docs/desktop.md](docs/desktop.md).
+
+`desktop` is the one surface that drives an interface rather than reading a store, and it does it
+through `AXUIElement` **natively** rather than through `osascript`. That distinction is the whole
+surface: every Accessibility measurement this project took before 2026-09-05 went through System
+Events, one Apple Event per attribute, which is where "33.6 ms a round trip" and "~14 s for a place
+card" came from. Natively the same walks cost 1.24 ms a round trip and the same place card 0.177 s.
+The transport was the cost, not the API — see [docs/desktop.md](docs/desktop.md).
 
 They share one bundle and one Full Disk Access grant, which is the whole reason they live together
 — see [docs/distribution.md](docs/distribution.md).

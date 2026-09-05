@@ -27,7 +27,8 @@ export interface Surface {
     | "safari"
     | "maps"
     | "screen"
-    | "sound";
+    | "sound"
+    | "desktop";
   // </generated:surfaces>
   name: string;
   pkg: string;

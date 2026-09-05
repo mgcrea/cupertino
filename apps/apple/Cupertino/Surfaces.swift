@@ -142,6 +142,15 @@ struct Surface: Identifiable, Hashable {
     /// window costs the same grant as capturing the display. What bounds it is
     /// this table, not the system: see docs/screen.md.
     case screenRecording
+    /// `kTCCServiceAccessibility`. Per-process and all-or-nothing like Full
+    /// Disk Access, and the widest reach of any grant here: it does not scope to
+    /// a target, so the right to press a button in Maps is the right to press
+    /// one in anything. Never prompts into place -- the system offers to open
+    /// System Settings and the switch is flipped by hand. Its trap is duplicate
+    /// rows: one bundle id can hold several entries, one per path and signature
+    /// it has been granted at, and the app's own check can match a different row
+    /// from the checks made on its behalf. See Permissions.accessibility().
+    case accessibility
     /// `kTCCServiceMicrophone`. Unlike every other grant here it PROMPTS rather
     /// than needing a trip to System Settings — and unlike every other grant,
     /// its usage description is mandatory: macOS terminates a process that
@@ -662,6 +671,60 @@ struct Surface: Identifiable, Hashable {
       gates: [
         Surface.Gate(id: "allowRecording", envSuffix: "ALLOW_RECORDING", label: "Allow microphone recording", description: "Lets apple_sound_start_recording capture from the microphone to a file. Needs the Microphone permission, shows the system's orange indicator while it runs, and is off by default."),
       ]
+    ),
+    Surface(
+      id: "desktop",
+      displayName: "Desktop",
+      // The THIRD capability, and the first that reaches every application on the
+      // Mac rather than one the project brokers. bundleId is null because there is
+      // no target: the surface addresses whatever is running.
+      //
+      // A SIXTH lane. Not Apple Events, not the file lane, not ScreenCaptureKit --
+      // AXUIElement, called natively. That distinction is the whole surface, and it
+      // is why this exists at all: every Accessibility measurement this project
+      // took before 2026-09-05 went through osascript + JXA + System Events, one
+      // Apple Event per attribute. docs/safari.md priced that at 33.6 ms a round
+      // trip and docs/maps.md at ~14 s for a place card, and both numbers were
+      // measuring the transport rather than the API.
+      //
+      // MEASURED, macOS 26.6, see docs/desktop.md. 13,960 nodes across seven apps
+      // at 1.24 ms a round trip -- 27x cheaper -- and the same Maps place card in
+      // 0.177 s. 86% of pressable elements carry an identifier, title or
+      // description, so controls are addressable by NAME rather than by position,
+      // which is what separates a driver from a screen-scraper.
+      //
+      // Cost per round trip varies 206x BETWEEN APPS (Safari 0.022 ms, Contacts
+      // 4.537 ms), so a node cap does not bound time: Contacts' 2401 nodes cost
+      // 65 s while Notes' 9770 cost 37 s. Every walk carries a wall-clock budget
+      // and names the bound that stopped it.
+      //
+      // supportsWrites is TRUE and defaultEnabled is FALSE, like screen and sound.
+      // The reach is the reason: Accessibility is per-process and all-or-nothing,
+      // so a grant that lets this press a button in Maps lets it press one in
+      // anything. What bounds it is this table and the write gate, never the
+      // system.
+      //
+      // npmName is null and could not be otherwise. The grant lands on the
+      // RESPONSIBLE GUI ANCESTOR -- measured: an unsigned main.swift in
+      // /var/folders answered AXIsProcessTrusted() true by inheriting the editor
+      // that started the chain. A published package would ask a person to grant
+      // their editor the right to drive every app on the Mac, which is the
+      // misattribution docs/alternatives.md names as the thing no competitor
+      // solves. Homebrew's node is ad-hoc signed, so such a grant would also die
+      // at the next upgrade.
+      bundleID: nil,
+      kind: .capability,
+      iconPath: "/System/Library/CoreServices/Finder.app",
+      symbol: "macwindow.on.rectangle",
+      usesAppleEvents: false,
+      appleEventsScope: nil,
+      supportsWrites: true,
+      defaultEnabled: false,
+      storePath: nil,
+      storePermission: .accessibility,
+      envPrefix: "APPLE_DESKTOP_",
+      runtime: .swift,
+      gates: []
     ),
   ]
   // </generated:surfaces>
