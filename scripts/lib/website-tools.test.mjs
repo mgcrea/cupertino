@@ -68,6 +68,7 @@ const SITE = join(ROOT, "apps", "website", "src", "data", "surfaces.ts");
  * regex note above: a literal is what carries the name.
  */
 const SWIFT_SERVERS = [
+  ["desktop", join(ROOT, "apps", "apple", "Cupertino", "DesktopServer.swift")],
   ["screen", join(ROOT, "apps", "apple", "Cupertino", "ScreenServer.swift")],
   ["sound", join(ROOT, "apps", "apple", "Cupertino", "SoundServer.swift")],
 ];
