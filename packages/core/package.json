@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-core",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "description": "Shared machinery for the Apple-app MCP servers: the osascript boundary, TCC-aware errors, and read-only SQLite access",
   "keywords": [
     "apple",

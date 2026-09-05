@@ -6,11 +6,41 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.14.0`,
-`notes-v1.14.0`, `reminders-v1.14.0`, `core-v1.14.0` for the npm packages, and `app-v1.14.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.15.0`,
+`notes-v1.15.0`, `reminders-v1.15.0`, `core-v1.15.0` for the npm packages, and `app-v1.15.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.15.0] - 2026-09-05
+
+### Added
+
+- **Cupertino can drive any app on the Mac now, not only the seven it brokers.** The new Desktop
+  surface reads and operates interfaces through the Accessibility API: list what is running, walk a
+  window's element tree, find a control by name, press it, expand a disclosure. It is a capability
+  rather than a broker — there is no target app, and it reaches whatever is in front of you.
+
+  This lane had been closed three times here, on numbers that were measuring something else. Every
+  Accessibility measurement this project took before it went through `osascript` and System Events,
+  one Apple Event per attribute, so the 33.6 ms round trip in the Safari notes and the ~14 s place
+  card in the Maps notes were the price of the transport rather than of the API. Called natively the
+  same Maps card walks in 0.177 s, and 13,960 nodes across seven apps average 1.24 ms a round trip.
+  86% of pressable elements carry an identifier, title or description, so a control is addressed by
+  name rather than by guessing at coordinates.
+
+  **It arrives switched off, with its writes gated,** the way Screen and Sound do. The Accessibility
+  grant is per-process and all-or-nothing: it hands over every window on the machine, far past
+  anything Cupertino is asked to broker, so it is switched on by the person who wants it rather than
+  found already on.
+
+### Fixed
+
+- **The Maps notes no longer describe a favourite that never got written.** Four claims there had
+  been read off read-only dumps of the interface; pressing the control for real falsifies all four.
+  It opens a naming sheet instead of writing a favourite, what lands is an unfiled saved place
+  rather than a favourites row, the control is not a toggle, and the state bit lives on the sibling
+  button beside it. Only the addressing claim survived.
 
 ## [1.14.0] - 2026-09-04
 
@@ -1550,7 +1580,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.14.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.15.0...HEAD
+[1.15.0]: https://github.com/mgcrea/cupertino/compare/app-v1.14.0...app-v1.15.0
 [1.14.0]: https://github.com/mgcrea/cupertino/compare/app-v1.13.0...app-v1.14.0
 [1.13.0]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...app-v1.13.0
 [1.12.0]: https://github.com/mgcrea/cupertino/compare/app-v1.11.0...app-v1.12.0

@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/cupertino",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "private": true,
   "description": "MCP servers for the Apple apps on your Mac, and the signed app that grants them one permission",
   "license": "MIT",
@@ -41,8 +41,8 @@
     "version:check": "node scripts/generate-version.mjs --check"
   },
   "devDependencies": {
-    "oxfmt": "^0.62.0",
-    "oxlint": "^1.77.0",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
     "tsdown": "^0.22.14"
   },
   "engines": {
