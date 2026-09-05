@@ -456,6 +456,25 @@ not.
 
 ### There is no favourite-state bit in the Accessibility tree
 
+> **CORRECTED 2026-09-05 by a real write.** Everything in this section and the one above it was
+> reasoned from read-only dumps, and pressing the control falsified four of its claims at once. See
+> [desktop.md](desktop.md#the-write-lane-proven--and-four-things-it-falsified) for the run.
+>
+> - **`FavoriteButton` does not write a favourite.** It opens a "Name This Location" sheet; Save
+>   creates an unfiled **saved place**. `ZFAVORITEITEM` did not change — `list_favorites` returned 26
+>   before and 26 after. So the three-step design below presses the right control and then verifies
+>   against the wrong table.
+> - **It is not a toggle.** A second press on an already-saved place opens no sheet and removes
+>   nothing; it only bumps `modified`. Removal is `MoreButton` → `delete_from_places`.
+> - **The state bit exists**, on the sibling control: `AddButton` is named `"Add"` when the place is
+>   not saved and `"Added"` when it is. Observed in both directions. This section is right about
+>   `FavoriteButton` and wrong about the tree.
+> - **`AXIdentifier` addressing holds**, which is the one claim that survived intact.
+>
+> The rest of this section is left as written, because the reasoning is sound and only the premise
+> was wrong — and because "assertions about Maps have been wrong every time" is this file's own
+> warning, now including the assertions added to correct it.
+
 This is the finding that constrains the whole write half, and it is the bad one of the four
 outcomes that were possible.
 
