@@ -12,7 +12,7 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
-## [1.15.0] - 2026-09-05
+## [1.15.0] - 2026-09-06
 
 ### Added
 
@@ -34,6 +34,24 @@ summary.
   anything Cupertino is asked to broker, so it is switched on by the person who wants it rather than
   found already on.
 
+- **A tool list can be traded for a searchable index now.** Listing every tool across the eight
+  servers with writes on costs ~106 KB — roughly 26.5k tokens, paid by every client on every
+  connect, whether or not one tool is ever called. `*_LAZY_TOOLS`, off by default, swaps the list
+  for `search_tools`, `describe_tool` and `call_tool`, plus a separate `call_write_tool` when writes
+  are on, so a host's read/write permission boundary survives the facade rather than collapsing into
+  one anonymous name. `diagnostics` stays eagerly listed, since it is what every surface guide
+  points at first on a refusal.
+
+  In the app it is a per-surface **Load tools on demand** control, defaulted app-wide in General and
+  overridable in each surface's Access card. Activity still names the tool that actually ran —
+  `apple_mail_send_message`, not the dispatcher that carried it.
+
+### Changed
+
+- **Every tool listing is 4.6% smaller, on every server and without opting in to anything.** The MCP
+  SDK stamps a generated `"$schema"` key onto every `inputSchema` and `outputSchema` it emits, and
+  nothing in the protocol ever reads it back. It is dropped from the outgoing listing now.
+
 ### Fixed
 
 - **The Maps notes no longer describe a favourite that never got written.** Four claims there had
@@ -41,6 +59,19 @@ summary.
   It opens a naming sheet instead of writing a favourite, what lands is an unfiled saved place
   rather than a favourites row, the control is not a toggle, and the state bit lives on the sibling
   button beside it. Only the addressing claim survived.
+
+- **The website describes what actually ships now.** Desktop was missing from the surface list
+  entirely; the whole list sat under "each surface is its own npm package", true of only eight of
+  the eleven; and the menu-bar mock captioned every row "automation allowed", including Maps and the
+  three capabilities, which send no Apple Event at all. The site reads `KIND`, `USES_APPLE_EVENTS`
+  and `SUPPORTS_WRITES` generated from `surfaces.json` now, so a card or a caption cannot drift from
+  the manifest again.
+
+- **The pricing note no longer promises a ladder that was retired.** The surface list claimed that
+  adding a surface raises the price, and `docs/licensing.md` carried the promise and its retraction
+  in one document — a table still saying "rising with the surface count" above a section describing
+  the ladder as retired. The price stayed flat across the whole 1.x line through three new surfaces,
+  and listing one commits to support at the price already paid.
 
 ## [1.14.0] - 2026-09-04
 
