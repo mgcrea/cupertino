@@ -247,6 +247,22 @@ export class AppleMailClient {
     }
   }
 
+  /**
+   * Can the NATIVE lane actually read Mail's windows, right now?
+   *
+   * The same principle `composerAccess` states for the System Events path, for
+   * the same reason: `composerLane` above says which lane is configured, and
+   * configured is a claim. This is the functional read, and when the two
+   * disagree this is the one to believe.
+   *
+   * Null when there is no native lane, which is not a failure — see `#ax`.
+   */
+  async composerAxReach(): Promise<{ ok: boolean; windows: string[] | null } | null> {
+    if (!this.#ax) return null;
+    const reach = await this.#ax.reach();
+    return { ok: reach.ok, windows: reach.windows };
+  }
+
   async lanes(): Promise<LaneStatus> {
     /**
      * Probe twice before declaring the lane dead.

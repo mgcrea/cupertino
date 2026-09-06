@@ -30,6 +30,7 @@ export const buildDiagnostics = async (
   const messageFile = await client.probeMessageFile();
   // Cheap, and the two permissions nothing else in this report would reveal.
   const composer = await client.composerAccess();
+  const axReach = await client.composerAxReach();
 
   let accounts: unknown[] = [];
   let accountsError: string | null = null;
@@ -105,6 +106,16 @@ export const buildDiagnostics = async (
       // `system-events` is the fallback for a server nobody is hosting — a
       // package installed from npm and run by hand — and needs both.
       composerLane: client.composerLane,
+      // The functional read on the native lane, and the same rule as
+      // `composerUiRead`: `composerLane` says which lane is configured, which is
+      // a claim about the environment. This is whether it can actually see
+      // Mail's windows.
+      ...(axReach
+        ? {
+            composerAxRead: axReach.ok ? "granted" : "denied",
+            ...(axReach.windows ? { composerAxWindowsSeen: axReach.windows } : {}),
+          }
+        : {}),
       ...(client.composerLane === "accessibility"
         ? {
             composerLaneNote:
