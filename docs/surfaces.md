@@ -108,6 +108,15 @@ caller arbitrary execution using a permission granted for reading mail, which is
 closed table in `Surfaces.swift` exists to prevent. The rest of the non-scriptable set (Freeform,
 Journal, Books, Podcasts, Weather, News) is where the grant is the _only_ way in —
 the most differentiated value and the highest maintenance risk, since there is no fallback lane.
+
+**That last clause is retired — see [ax-lane.md](ax-lane.md).** The `desktop` surface IS a
+fallback lane for this set, and two of the six were measured through it on 2026-09-06: Weather
+answers its whole forecast in 0.121 s, and Home answers something the file lane was measured to
+be INCAPABLE of — `home.md` found the store carries a value range rather than a current value,
+so it "cannot say whether a light is on", and the accessibility tree carries a live `On`/`Off`
+per accessory. Journal, Books and Podcasts came back with small trees and are recorded as NOT
+MEASURED rather than thin, because an empty library produces an empty tree whatever the API
+does — this document's own "absent and EPERM are different findings", in its fourth costume.
 `group.com.apple.Journal` and a 33 MB `group.com.apple.freeform` both exist if revisited.
 
 **Passwords has left that set too, and did not survive its probe** — see [passwords.md](passwords.md).
