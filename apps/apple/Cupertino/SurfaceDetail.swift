@@ -324,8 +324,18 @@ struct SurfaceDetail: View {
         }
       }
 
-      Divider()
-      LazyToolsControl(surface: surface)
+      // Node surfaces only. The facade and the `$schema` trim both live in
+      // `packages/core` and reach a surface through `ServerLocator.environment`,
+      // which is read on the spawn path in `ServerHost.run`. A swift surface is
+      // answered by `serveInProcess`, which never consults `lazyTools` — it
+      // hand-builds a small tool array and generates no `$schema` to trim. The
+      // control was drawn for every surface and did nothing on three of them,
+      // which is worse than its absence: a preference that visibly moves and
+      // changes nothing reads as a bug in the facade rather than in the card.
+      if surface.runtime == .node {
+        Divider()
+        LazyToolsControl(surface: surface)
+      }
     }
   }
 

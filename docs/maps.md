@@ -246,16 +246,19 @@ favourite either.
 
 ### Where each lane stands
 
-| Lane               | Verdict                                   | Why                                                                |
-| ------------------ | ----------------------------------------- | ------------------------------------------------------------------ |
-| Apple Events       | absent                                    | no scripting dictionary, checked directly                          |
-| App Intents        | absent on macOS                           | strings ship, actions are not registered                           |
-| SQL into the store | **works, for any place**                  | Maps mints the record via a URL scheme; the insert is three tables |
-| Accessibility      | **open — controls exist, grant inherits** | named, pressable `Favorite` and `Add`; see below                   |
+| Lane               | Verdict                             | Why                                                                |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------ |
+| Apple Events       | absent                              | no scripting dictionary, checked directly                          |
+| App Intents        | absent on macOS                     | strings ship, actions are not registered                           |
+| SQL into the store | **works, for any place**            | Maps mints the record via a URL scheme; the insert is three tables |
+| Accessibility      | **built, as the `desktop` surface** | named, pressable `Favorite` and `Add`; see below                   |
 
-`supportsWrites: false` in `surfaces.json` stays true FOR NOW, and `APPLE_MAPS_ALLOW_WRITES`
-stays accepted-and-ignored so a config that sets it does not look broken. But the fourth row
-is no longer a closed door.
+Both write rows have since shipped, and `surfaces.json` now carries `supportsWrites: true` with
+`APPLE_MAPS_ALLOW_WRITES` gating the two mutating tools for real. The paragraph that stood here said
+the flag was "accepted-and-ignored so a config that sets it does not look broken"; that is no longer
+the case and was left standing after the write lane landed. The fourth row shipped as the `desktop`
+surface rather than inside this package — the Accessibility grant lands on the responsible GUI
+ancestor, so it cannot belong to an npm package. See [desktop.md](desktop.md).
 
 ### SQL into the store works, and the earlier verdict was wrong
 

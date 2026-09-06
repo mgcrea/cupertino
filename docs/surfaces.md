@@ -43,27 +43,37 @@ rather than about capability.
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status                                                 |
-| --------- | -------------------------------------------- | ------------------------------------------------------ |
-| Mail      | file lane required — 74 s search             | implemented                                            |
-| Notes     | Apple Events usable below ~5k notes          | implemented                                            |
-| Reminders | dictionary complete for the core model       | implemented                                            |
-| Messages  | **file lane mandatory** — no read API exists | implemented                                            |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented                                            |
-| Safari    | two lanes see disjoint things                | implemented                                            |
-| Maps      | **file lane only** — no `.sdef` exists       | implemented, and writes without an Apple Event         |
-| Contacts  | file-lane reads, 0 ms; store is plural       | implemented                                            |
-| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms  | implemented, in the app: the first with no npm package |
+| Surface   | Lane verdict                                     | Status                                                 |
+| --------- | ------------------------------------------------ | ------------------------------------------------------ |
+| Mail      | file lane required — 74 s search                 | implemented                                            |
+| Notes     | Apple Events usable below ~5k notes              | implemented                                            |
+| Reminders | dictionary complete for the core model           | implemented                                            |
+| Messages  | **file lane mandatory** — no read API exists     | implemented                                            |
+| Calendar  | **file lane mandatory** — 3.4 s range query      | implemented                                            |
+| Safari    | two lanes see disjoint things                    | implemented                                            |
+| Maps      | **file lane only** — no `.sdef` exists           | implemented, and writes without an Apple Event         |
+| Contacts  | file-lane reads, 0 ms; store is plural           | implemented                                            |
+| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms      | implemented, in the app: the first with no npm package |
+| Sound     | CoreAudio — 4 devices in 28 ms                   | implemented, in the app; two independent gates         |
+| Desktop   | **sixth lane** — native AX, 1.24 ms a round trip | implemented, in the app; reaches any running app       |
 
 Every probed surface now has a server, though **Screen no longer means a package** — it is served
 in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
 holds no `screencapture`. `surfaces.json` carries a `runtime` field for exactly that split, so the
 targets that mean "has a node package" (the bundler's entry map, the CI handshake, `make servers`)
-say so, while the bridge, the closed table and the settings UI take every surface. **Safari is the
-only read-only one**, and that is recorded
-as a decision rather than left as an omission: `surfaces.json` carries the reasoning, and its
-`tools.test.ts` asserts the tool list is IDENTICAL with writes enabled, so a mutating tool cannot
-appear there without that decision being taken again.
+say so, while the bridge, the closed table and the settings UI take every surface — which is now
+three of them, `screen`, `sound` and `desktop`, so "served in the app" is the rule for a capability
+rather than the exception `screen` looked like.
+
+**Safari was the only read-only one and no longer is**, which is worth recording rather than quietly
+editing: `supportsWrites` was false for v0.1 on the grounds that a write here navigates a real,
+visible browser. That was true of opening a URL and false of adding a Reading List item, which opens
+and loads nothing — so that became the write to build first. Clicking, typing and scrolling then went
+to the **extension** lane rather than to Apple Events, because Safari gates an extension one website
+at a time where an Automation grant is all-or-nothing and permanent. `surfaces.json` carries the
+reasoning in full. **Every node surface now supports writes**; what still varies is the lane each one
+writes through, and `packages/*/test/tools.test.ts` pins the registered set against `allowWrites` on
+each, so a mutating tool cannot appear without that decision being taken again.
 
 Messages was the other one until its send lane landed, and the shape it ended up with is worth
 keeping in view, because it is the one this table's "no read API exists" verdict seemed to rule out.
@@ -179,7 +189,15 @@ Rejected as a READ lane, not as a lane. Maps has no scripting dictionary and no 
 registered on macOS, so Accessibility is the only way a write could ever reach it — and with a place
 card open it exposes named, pressable `Favorite` and `Add` controls. A write is a handful of round
 trips rather than a walk of the tree, so the ~14 s that disqualifies it for reading does not apply.
-That lane is open and unbuilt; [maps.md](maps.md) carries the measurement and the costs.
+
+**Both halves of that paragraph have since been overtaken, and in opposite directions — see
+[desktop.md](desktop.md).** The ~14 s was the price of `osascript` + System Events, not of the API:
+called natively the same card walks in **0.177 s**, so the read lane was never disqualified on cost
+and this document's own figure was measuring the transport. The write lane is no longer "open and
+unbuilt" either — it is built, and building it falsified four things `maps.md` had recorded from
+read-only dumps of the same tree. The lane now ships as the `desktop` surface rather than inside
+`packages/maps`, because the Accessibility grant lands on the responsible GUI ancestor and so cannot
+belong to an npm package.
 
 ## What a new surface costs
 
