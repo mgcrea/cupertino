@@ -525,6 +525,7 @@ enum AccessibilityDriver {
   static func press(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
+    announce(handle)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
@@ -542,6 +543,7 @@ enum AccessibilityDriver {
   static func setValue(handle: String, value: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
+    announce(handle)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -561,6 +563,7 @@ enum AccessibilityDriver {
   static func raise(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
+    announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
   }
@@ -579,6 +582,7 @@ enum AccessibilityDriver {
   static func focus(handle: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
+    announce(handle)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -611,6 +615,7 @@ enum AccessibilityDriver {
   /// deliberately does something narrower.
   static func activate(bundleId: String, scope: Scope) throws {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    DriveActivity.record(bundleId)
     let running = try app(forBundleId: bundleId)
     // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
     // and refusing it for want of a grant it does not use would be a confusing
@@ -653,6 +658,50 @@ enum AccessibilityDriver {
     case .some(let other): return "<\(Swift.type(of: other))>"
     case nil: return nil
     }
+  }
+
+  /// Tell the app that something on somebody's screen is being driven.
+  ///
+  /// Here rather than in `DesktopServer` so a driving verb added later cannot
+  /// forget to do it, and keyed off the HANDLE because that is what every verb
+  /// already has — the handle store knows which application it came from, so
+  /// nothing has to be threaded through.
+  ///
+  /// Fire-and-forget onto the main actor: this sits on the path of a press, and
+  /// a press that waited for a menu bar icon to redraw would be a worse trade
+  /// than no icon at all.
+  private static func announce(_ handle: String) {
+    guard let bundleId = handles.get(handle)?.bundleId else { return }
+    DriveActivity.record(bundleId)
+  }
+
+  // ─── the other direction: what the PERSON is doing ─────────────────────────
+
+  /// Seconds since a human last touched this machine.
+  ///
+  /// The counterpart to the synthetic input below: that is what this app posts,
+  /// this is what somebody else did. Needed because driving an interface is the
+  /// one thing here that COMPETES with the user — a keystroke goes to whatever
+  /// is frontmost and a click goes to a screen point, so a person typing during
+  /// a sequence does not slow it down, it corrupts it.
+  ///
+  /// The value is a duration rather than a flag so a caller can compare it
+  /// against how long its own sequence took: a sequence that ran for five
+  /// seconds and finds two seconds since the last input knows the input landed
+  /// INSIDE it. That comparison is the whole point — an absolute "is the user
+  /// active" reading cannot distinguish before from during.
+  ///
+  /// `combinedSessionState` rather than `hidSystemState`, so events synthesised
+  /// by other software count too: something else driving the machine disturbs a
+  /// sequence exactly as a person does.
+  ///
+  /// **Needs no permission.** It reports WHEN, never what — no key, no
+  /// position, no content — which is why it can be read on a machine that has
+  /// granted nothing, and why it is registered as a read rather than gated.
+  static func secondsSinceUserInput() -> Double {
+    // `~0` is the documented "any event type" wildcard for this call.
+    guard let any = CGEventType(rawValue: ~0) else { return .infinity }
+    return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any)
   }
 
   // ─── synthetic input, for what AX cannot express ───────────────────────────

@@ -269,6 +269,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/AppInfo.swift \
 		apps/apple/Cupertino/LogStore.swift \
@@ -321,6 +322,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/Permissions.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/Surfaces.swift \

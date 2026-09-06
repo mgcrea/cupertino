@@ -1,4 +1,13 @@
-export { AxChannelError, openAxChannel, type AxCall, type AxChannel } from "./ax.js";
+export {
+  AxChannelError,
+  interferenceNote,
+  openAxChannel,
+  watchInterference,
+  type AxCall,
+  type AxChannel,
+  type Interference,
+  type InterferenceWatch,
+} from "./ax.js";
 export { readPackageIdentity, type BuildInfo, type PackageIdentity } from "./build-info.js";
 export { runStdioServer, type StdioServerOptions } from "./cli.js";
 export { extractCode, type CodeConfidence, type CodeMatch, type ExtractOptions } from "./codes.js";

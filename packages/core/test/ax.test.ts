@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AxChannelError, openAxChannel } from "../src/ax.js";
+import { AxChannelError, interferenceNote, openAxChannel, watchInterference } from "../src/ax.js";
 import type { SurfaceContext } from "../src/errors.js";
 
 const SURFACE: SurfaceContext = { appName: "Mail", envPrefix: "APPLE_MAIL" };
@@ -260,5 +260,71 @@ describe("a refused tool", () => {
     await expect(channel?.call({ tool: "apple_desktop_press", args: {} })).rejects.toThrow(
       /switched off/,
     );
+  });
+});
+
+describe("watchInterference", () => {
+  /*
+   * The comparison is the whole mechanism. `secondsSinceInput` alone cannot
+   * tell "they typed just before we started" from "they typed into the middle
+   * of it"; measured against how long the sequence actually took, it can.
+   */
+  it("is disturbed when the last input is more recent than the sequence", async () => {
+    // 0.01s since input, against a sequence that ran for ~0.06s: the input
+    // landed inside it.
+    const { path, server } = await hostStub({
+      reply: (m) => okReply(m.id, { secondsSinceInput: 0.01 }),
+    });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path))!;
+    const watch = watchInterference(channel);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const found = await watch.check();
+    expect(found?.disturbed).toBe(true);
+    channel.close();
+  });
+
+  it("is undisturbed when nobody has touched it since well before the start", async () => {
+    const { path, server } = await hostStub({
+      reply: (m) => okReply(m.id, { secondsSinceInput: 600 }),
+    });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path))!;
+    const watch = watchInterference(channel);
+    const found = await watch.check();
+    expect(found?.disturbed).toBe(false);
+    channel.close();
+  });
+
+  /*
+   * "Could not ask" is not "undisturbed", and collapsing them would let a
+   * failure claim the machine was quiet when nothing ever answered.
+   */
+  it("is null, not undisturbed, when the question cannot be asked", async () => {
+    const { path, server } = await hostStub({ reply: () => null });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path))!;
+    const watch = watchInterference(channel);
+    await expect(watch.check()).resolves.toBeNull();
+  });
+});
+
+describe("interferenceNote", () => {
+  it("says nothing when the machine was quiet", () => {
+    expect(interferenceNote(null)).toBe("");
+    expect(interferenceNote({ disturbed: false, secondsSinceInput: 600, elapsedSeconds: 3 })).toBe(
+      "",
+    );
+  });
+
+  /*
+   * Silence on a quiet machine is deliberate. A failure that reads "nobody
+   * touched it" invites the reader to stop looking, and the point of this is to
+   * send them to the right place rather than to reassure them.
+   */
+  it("names the timing when it was not", () => {
+    const note = interferenceNote({ disturbed: true, secondsSinceInput: 1.2, elapsedSeconds: 5.4 });
+    expect(note).toContain("1.2s ago");
+    expect(note).toContain("5.4s");
   });
 });

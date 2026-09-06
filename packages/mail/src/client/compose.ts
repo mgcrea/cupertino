@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import { interferenceNote, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 
 import { containsText, MailAxLane, type ComposerRef } from "./ax.js";
 import { OPEN_COMPOSER } from "./jxa/write.js";
@@ -170,6 +170,10 @@ export const replyOrForwardNatively = async (
   // established: the failure this tool was best known for left an empty reply
   // window on screen on every attempt, and nothing about the check needs the
   // window to exist.
+  // Watched from before anything is opened, so a disturbed run says so instead
+  // of blaming Mail. Every refusal below appends the finding when there is one.
+  const watch = lane.watch();
+
   const reach = await lane.reach();
   if (!reach.ok) throw new Error(MailAxLane.grantMessage(params.mode));
 
@@ -190,7 +194,8 @@ export const replyOrForwardNatively = async (
         `fine — so this is not a permission. Nothing was written. The window may still be on ` +
         `screen: look for an empty ${params.mode} in Mail before retrying, because a retry ` +
         `would leave a second one behind. Windows visible at the time: ` +
-        `${JSON.stringify(reach.windows)}.`,
+        `${JSON.stringify(reach.windows)}.` +
+        interferenceNote(await watch.check()),
     };
   }
 
@@ -216,7 +221,8 @@ export const replyOrForwardNatively = async (
               "retrying, because a retry would paste the reply in twice."
             : "Nothing landed in it. It was left open rather than discarded, because closing an " +
               "unsaved composer raises a save sheet whose buttons are localised. Close it in " +
-              "Mail, then retry."),
+              "Mail, then retry.") +
+          interferenceNote(await watch.check()),
       };
     }
   }

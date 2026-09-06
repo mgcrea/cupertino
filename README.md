@@ -41,10 +41,10 @@ off cannot see that they exist.
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 9 tools, chats/search/counts/decoded text + gated send and codes                 |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes          |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
-| Desktop   | —                                          | implemented — 15 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
+| Desktop   | —                                          | implemented — 16 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
 **Screen, Sound and Desktop arrive switched off.** Every surface that brokers an Apple app is on when

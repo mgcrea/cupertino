@@ -1,6 +1,11 @@
 import { execFileSync } from "node:child_process";
 
-import { openAxChannel, type AxChannel } from "@mgcrea/mcp-apple-core";
+import {
+  openAxChannel,
+  watchInterference,
+  type AxChannel,
+  type InterferenceWatch,
+} from "@mgcrea/mcp-apple-core";
 
 import { MAPS_SURFACE } from "./errors.js";
 
@@ -118,6 +123,11 @@ export class MapsAxLane {
 
   close(): void {
     this.#channel.close();
+  }
+
+  /** Start watching for someone using the Mac during a sequence. */
+  watch(): InterferenceWatch {
+    return watchInterference(this.#channel);
   }
 
   #call(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {

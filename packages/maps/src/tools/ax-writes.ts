@@ -1,3 +1,4 @@
+import { interferenceNote } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -31,11 +32,12 @@ import { fail, ok, wrapResult } from "./util.js";
  * **It moves the user's screen.** Unlike a SQL write, this brings a window
  * forward and presses things in it. That is worth stating plainly.
  */
-const noCard = (query: string) =>
+const noCard = (query: string, disturbed: string) =>
   fail(
     `Maps did not show a place card for "${query}" within 10s. Nothing was changed. The ` +
       `coordinates may not resolve to a place Maps recognises, or Maps may not have finished ` +
-      `loading it.`,
+      `loading it.` +
+      disturbed,
   );
 
 export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void => {
@@ -65,14 +67,21 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
     },
     async (args) =>
       wrapResult(async () => {
-        if (!(await openCard(args))) return noCard(args.query);
+        // Watched from before Maps is even asked to open, so a disturbed run
+        // says so rather than blaming the app. This is the lane where that
+        // actually happened: three separate failures were attributed to Maps
+        // and two of them were somebody typing.
+        const watch = lane.watch();
+        const disturbed = async () => interferenceNote(await watch.check());
+        if (!(await openCard(args))) return noCard(args.query, await disturbed());
         if ((await lane.isSaved()) === true) {
           return ok({ saved: true, alreadySaved: true, query: args.query });
         }
         if (!(await lane.savePlace())) {
           return fail(
             `The card for "${args.query}" opened but the naming sheet did not, so nothing was ` +
-              `saved. The card may still be on screen.`,
+              `saved. The card may still be on screen.` +
+              (await disturbed()),
           );
         }
         // Read the state bit back rather than trusting the press, which is the
@@ -87,7 +96,8 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
           ? ok({ saved: true, alreadySaved: false, query: args.query })
           : fail(
               `"${args.query}" was pressed through the save sheet but its card does not report it ` +
-                `as saved, so this MUST NOT be reported as done. Check Maps.`,
+                `as saved, so this MUST NOT be reported as done. Check Maps.` +
+                (await disturbed()),
             );
       }),
   );
@@ -105,7 +115,13 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
     },
     async (args) =>
       wrapResult(async () => {
-        if (!(await openCard(args))) return noCard(args.query);
+        // Watched from before Maps is even asked to open, so a disturbed run
+        // says so rather than blaming the app. This is the lane where that
+        // actually happened: three separate failures were attributed to Maps
+        // and two of them were somebody typing.
+        const watch = lane.watch();
+        const disturbed = async () => interferenceNote(await watch.check());
+        if (!(await openCard(args))) return noCard(args.query, await disturbed());
         const outcome = await lane.removePlace();
         if (outcome === "not-saved") {
           return ok({ removed: false, wasSaved: false, query: args.query });
@@ -113,7 +129,8 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
         if (outcome === "no-menu") {
           return fail(
             `The card for "${args.query}" opened but its overflow menu did not, so nothing was ` +
-              `removed.`,
+              `removed.` +
+              (await disturbed()),
           );
         }
         const saved = await lane.verifySaved({
@@ -125,7 +142,8 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
           ? ok({ removed: true, wasSaved: true, query: args.query })
           : fail(
               `"${args.query}" was pressed through Delete from Places but its card still reports ` +
-                `it as saved, so this MUST NOT be reported as done. Check Maps.`,
+                `it as saved, so this MUST NOT be reported as done. Check Maps.` +
+                (await disturbed()),
             );
       }),
   );
@@ -151,12 +169,19 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
     },
     async (args) =>
       wrapResult(async () => {
-        if (!(await openCard(args))) return noCard(args.query);
+        // Watched from before Maps is even asked to open, so a disturbed run
+        // says so rather than blaming the app. This is the lane where that
+        // actually happened: three separate failures were attributed to Maps
+        // and two of them were somebody typing.
+        const watch = lane.watch();
+        const disturbed = async () => interferenceNote(await watch.check());
+        if (!(await openCard(args))) return noCard(args.query, await disturbed());
         const guides = await lane.openGuidePicker();
         if (guides === null) {
           return fail(
             `The card for "${args.query}" opened but its Add to Guides picker did not, so nothing ` +
-              `was filed.`,
+              `was filed.` +
+              (await disturbed()),
           );
         }
         if (!(await lane.chooseGuide(args.guide))) {

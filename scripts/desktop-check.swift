@@ -107,7 +107,7 @@ struct DesktopCheck {
   static let observing = [
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
     "apple_desktop_get_attribute", "apple_desktop_list_apps", "apple_desktop_list_windows",
-    "apple_desktop_ui_tree",
+    "apple_desktop_ui_tree", "apple_desktop_user_activity",
   ]
 
   static func main() {
@@ -335,6 +335,29 @@ struct DesktopCheck {
         "find_elements reports matched for the FILTERED set, not the whole walk",
         "Maps is not running, or Accessibility is not granted")
     }
+
+    // Reads WHEN, never what, and needs no grant — so unlike every other read
+    // here it must answer on a machine that has granted nothing.
+    let (activityText, _) = callText("apple_desktop_user_activity", [:], writes: false)
+    let activity = activityText.data(using: .utf8).flatMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+    }
+    check(
+      "user activity answers with no Accessibility grant",
+      (activity?["secondsSinceInput"] as? Double) != nil)
+    check(
+      "user activity is a duration, not a flag",
+      (activity?["secondsSinceInput"] as? Double).map { $0 >= 0 } ?? false)
+
+    // The indicator is state, so it has to lapse on its own. There is no "the
+    // agent has finished" signal — a driving sequence is a burst of calls with
+    // gaps — so an explicit end would leave it lit forever the first time a
+    // client disconnected mid-sequence.
+    DriveActivity.record("com.apple.Maps")
+    check("driving is reported while it is happening", DriveActivity.current() == "com.apple.Maps")
+    check(
+      "diagnostics says what is being driven",
+      callText("apple_desktop_diagnostics", [:], writes: false).0.contains("com.apple.Maps"))
 
     check(
       "the driver binds scope to the handle, not only to the call",

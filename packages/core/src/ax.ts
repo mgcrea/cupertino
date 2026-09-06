@@ -248,3 +248,73 @@ export const openAxChannel = (
     },
   };
 };
+
+/**
+ * Whether a person touched the machine while a sequence was running.
+ *
+ * Driving an interface is the one capability here that COMPETES with whoever is
+ * using the Mac: a keystroke goes to whatever is frontmost and a click goes to a
+ * screen point, so somebody typing during a paste does not slow it down, it
+ * corrupts it.
+ *
+ * The comparison is what makes this work. `secondsSinceInput` on its own cannot
+ * tell "they typed just before we started" from "they typed into the middle of
+ * it" — but a sequence that ran for five seconds and ends with two seconds since
+ * the last input knows the input landed inside it.
+ *
+ * **This exists because of a misdiagnosis, not a theory.** Two runs of the Maps
+ * lane were blamed on interference and turned out to be bugs in the lane; one
+ * was blamed on the lane and turned out to be interference. Neither could be
+ * told apart from the outside, and a failure that names the wrong cause sends
+ * the next hour in the wrong direction.
+ */
+export type Interference = {
+  /** True when input arrived after the sequence began. */
+  disturbed: boolean;
+  secondsSinceInput: number;
+  elapsedSeconds: number;
+};
+
+export type InterferenceWatch = { check(): Promise<Interference | null> };
+
+/**
+ * Start watching. `check()` answers for the span since this call.
+ *
+ * Returns null from `check()` when the question could not be asked at all,
+ * which is not the same as "undisturbed" and must not be reported as it.
+ */
+export const watchInterference = (channel: AxChannel): InterferenceWatch => {
+  const started = Date.now();
+  return {
+    async check() {
+      const elapsedSeconds = (Date.now() - started) / 1000;
+      try {
+        const answer = (await channel.call({
+          tool: "apple_desktop_user_activity",
+          args: {},
+        })) as { secondsSinceInput?: number };
+        const secondsSinceInput = answer.secondsSinceInput;
+        if (typeof secondsSinceInput !== "number") return null;
+        return { disturbed: secondsSinceInput < elapsedSeconds, secondsSinceInput, elapsedSeconds };
+      } catch {
+        return null;
+      }
+    },
+  };
+};
+
+/**
+ * The sentence to append to a failure, or "" when nothing useful can be said.
+ *
+ * Deliberately says nothing when the machine was quiet: a failure that reads
+ * "nobody touched it" invites the reader to stop looking, and the point of this
+ * is to send them to the RIGHT place rather than to reassure them.
+ */
+export const interferenceNote = (found: Interference | null): string => {
+  if (!found?.disturbed) return "";
+  return (
+    ` Someone used this Mac ${found.secondsSinceInput.toFixed(1)}s ago, during the ` +
+    `${found.elapsedSeconds.toFixed(1)}s this took — a keystroke or click lands wherever the ` +
+    `focus is, so that alone can explain this. Retry with the machine idle before looking further.`
+  );
+};

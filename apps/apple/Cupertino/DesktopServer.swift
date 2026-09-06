@@ -267,6 +267,18 @@ enum DesktopServer {
         "annotations": ["readOnlyHint": true],
       ],
       [
+        "name": "apple_desktop_user_activity",
+        "description":
+          "Seconds since a person last touched this machine — keyboard, mouse, trackpad or "
+          + "scroll. Reports WHEN, never what: no key, no position, no content. Driving an "
+          + "interface competes with whoever is using it, because a keystroke goes to whatever "
+          + "is frontmost, so read this before and after a sequence: if the seconds since input "
+          + "are LESS than the time your sequence took, somebody typed into the middle of it and "
+          + "the result cannot be trusted.",
+        "inputSchema": empty,
+        "annotations": ["readOnlyHint": true],
+      ],
+      [
         "name": "apple_desktop_diagnostics",
         "description":
           "Report whether Accessibility is granted, whether a real window can actually be read, "
@@ -579,6 +591,17 @@ enum DesktopServer {
         }
         return ok(id, treeBody(tree, elements: matched))
 
+      case "apple_desktop_user_activity":
+        // Not gated on `isTrusted`: this is CoreGraphics rather than
+        // Accessibility, and refusing it for want of a grant it does not use
+        // would be a lie — the same reasoning `activate` carries.
+        return ok(
+          id,
+          [
+            "secondsSinceInput": (AccessibilityDriver.secondsSinceUserInput() * 1000).rounded()
+              / 1000
+          ])
+
       case "apple_desktop_diagnostics":
         return ok(
           id,
@@ -708,6 +731,11 @@ enum DesktopServer {
 
     return [
       "accessibility": trusted ? "granted" : "not granted",
+      // What the menu bar is showing right now. Reported because it is the one
+      // state in this app that asks something OF the user — a synthetic
+      // keystroke goes wherever the focus is — and a caller that can read it can
+      // also tell a person why their typing went somewhere unexpected.
+      "driving": DriveActivity.current() ?? "nothing",
       "windowRead": probe,
       "runningApps": apps.count,
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",

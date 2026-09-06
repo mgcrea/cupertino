@@ -204,15 +204,36 @@ struct CupertinoApp: App {
 /// what the popover is for.
 struct MenuBarLabel: View {
   private var sessions = Sessions.shared
+  private var driving = DriveActivity.shared
 
   var body: some View {
-    Image(sessions.live.isEmpty ? "MenuBarIcon" : "MenuBarIconActive")
+    Image(sessions.live.isEmpty && !driving.isDriving ? "MenuBarIcon" : "MenuBarIconActive")
       // The asset carries template-rendering-intent, but SwiftUI resolves an
       // Image by name without consulting it, so a plain Image ships black-on-
       // black in a dark menu bar. AppKit does the tinting; this only says it may.
       .renderingMode(.template)
-      .accessibilityLabel(
-        sessions.live.isEmpty ? "Cupertino" : "Cupertino — a client is connected")
+      // A badge while something is being driven, and the MARK is kept underneath
+      // it — the comment on the Scene says the menu bar carries the mark rather
+      // than an SF Symbol, and a transient alert is not a reason to retire it.
+      // This is the one state in the app where the icon is asking for something
+      // rather than reporting: a synthetic keystroke goes wherever the focus is,
+      // so somebody typing now will corrupt what is running.
+      .overlay(alignment: .topTrailing) {
+        if driving.isDriving {
+          Circle()
+            .fill(.orange)
+            .frame(width: 5, height: 5)
+            .offset(x: 1, y: -1)
+        }
+      }
+      .accessibilityLabel(accessibilityLabel)
+  }
+
+  private var accessibilityLabel: String {
+    if let name = driving.displayName {
+      return "Cupertino — driving \(name), do not use the keyboard or mouse"
+    }
+    return sessions.live.isEmpty ? "Cupertino" : "Cupertino — a client is connected"
   }
 }
 
@@ -503,9 +524,15 @@ struct StatusMenu: View {
         Spacer()
       }
 
-      // First, and in the popover rather than behind a tab. This is the one
-      // state where nothing works at all, and whoever is reading it has just
-      // been told by their assistant that a server failed to start.
+      // Above the entitlement notice, and it is the only thing here that outranks
+      // it. That one explains why nothing works; this one is asking the reader
+      // to take their hands off the keyboard, and it stops being true a few
+      // seconds after they read it.
+      DrivingNotice()
+
+      // First otherwise, and in the popover rather than behind a tab. This is
+      // the one state where nothing works at all, and whoever is reading it has
+      // just been told by their assistant that a server failed to start.
       EntitlementNotice()
 
       // Not about the grant — that follows the signature and survives a move.
@@ -1049,5 +1076,31 @@ struct ConnectionsSection: View {
   /// the connection list and delivering the log.
   private func openActivity() {
     MainWindowController.show(.connections)
+  }
+}
+
+/// The banner that asks somebody to stop typing.
+///
+/// Worth stating plainly rather than hinting: this is the only capability in
+/// the app that COMPETES with the person using the Mac, and the only one macOS
+/// supplies no indicator for. `docs/desktop.md` measured what happens without
+/// one — three failures blamed on the application that were somebody at the
+/// keyboard, and two blamed on the keyboard that were bugs.
+struct DrivingNotice: View {
+  private var driving = DriveActivity.shared
+
+  var body: some View {
+    if let name = driving.displayName {
+      VStack(alignment: .leading, spacing: 4) {
+        Label("Driving \(name)", systemImage: "cursorarrow.rays")
+          .foregroundStyle(.orange)
+          .font(.callout.weight(.medium))
+        Text("Please don't use the keyboard or mouse until this finishes.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Divider()
+    }
   }
 }

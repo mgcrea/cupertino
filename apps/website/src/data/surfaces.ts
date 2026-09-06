@@ -304,9 +304,19 @@ export const SURFACES: readonly Surface[] = [
     // record is never fabricated — Maps is asked to mint one through the maps://
     // URL scheme and it is copied — which is why this took four measured lanes
     // to arrive at. See docs/maps.md.
-    write: ["apple_maps_add_favorite", "apple_maps_remove_favorite"],
+    // The last three go through Maps' own interface rather than its store, and
+    // reach a different set: the Places library and guide membership, neither of
+    // which the SQL lane offers. They are registered only when Cupertino is
+    // hosting the server, because the Accessibility grant belongs to the app.
+    write: [
+      "apple_maps_add_favorite",
+      "apple_maps_remove_favorite",
+      "apple_maps_save_place",
+      "apple_maps_remove_saved_place",
+      "apple_maps_add_place_to_guide",
+    ],
     pitch:
-      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Saves and removes favourites behind the write gate.",
+      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Saves and removes favourites behind the write gate, and — when Cupertino is hosting it — saves places and files them into Guides through the app's own interface.",
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {
@@ -441,6 +451,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_desktop_expand",
       "apple_desktop_find_elements",
       "apple_desktop_get_attribute",
+      "apple_desktop_user_activity",
       "apple_desktop_diagnostics",
     ],
     write: [
@@ -455,7 +466,7 @@ export const SURFACES: readonly Surface[] = [
     ],
     // `allowAnyApp` is deliberately NOT listed here. This column is for tools
     // registered only under their own flag, and the scope gate registers none:
-    // it changes how far the same fifteen tools reach, never which of them
+    // it changes how far the same sixteen tools reach, never which of them
     // exist. Listing it would misdescribe both the gate and the column.
     pitch:
       "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",

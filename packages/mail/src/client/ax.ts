@@ -1,4 +1,9 @@
-import { openAxChannel, type AxChannel } from "@mgcrea/mcp-apple-core";
+import {
+  openAxChannel,
+  watchInterference,
+  type AxChannel,
+  type InterferenceWatch,
+} from "@mgcrea/mcp-apple-core";
 
 import { MAIL_SURFACE } from "./errors.js";
 
@@ -88,6 +93,11 @@ export class MailAxLane {
 
   close(): void {
     this.#channel.close();
+  }
+
+  /** Start watching for someone using the Mac during a sequence. */
+  watch(): InterferenceWatch {
+    return watchInterference(this.#channel);
   }
 
   #call(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
