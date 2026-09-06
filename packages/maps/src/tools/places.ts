@@ -134,11 +134,20 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
     async ({ ref, limit }) =>
       wrapResult(async () => {
         const collectionId = client.collectionRowId(decodeCollectionRef(ref));
+        // A ref that resolves to no row is a REFUSAL, not "no filter".
+        //
+        // `null ?? undefined` dropped the membership clause entirely, and
+        // `places()` only applies it when the id is defined — so a stale or
+        // mistyped ref listed every place from every guide as though they all
+        // belonged to this one.
+        if (collectionId === null) {
+          return fail(
+            `No collection matches ${ref}. Refs come from apple_maps_list_collections and go ` +
+              "stale when a guide is deleted or renamed away.",
+          );
+        }
         const capped = resolveLimit(limit, client.config.maxResults);
-        const result = client.places("collection-item", {
-          limit: capped,
-          collectionId: collectionId ?? undefined,
-        });
+        const result = client.places("collection-item", { limit: capped, collectionId });
         const collections = client.collections({ limit: 1_000 });
         if (!collections.itemsEnumerable) {
           return fail(

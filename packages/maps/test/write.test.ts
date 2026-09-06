@@ -60,11 +60,18 @@ const storeWithDonor = (): string => {
       VALUES (1, 25, 1, 48.8600, 2.3266, X'0a0b48656c6c6f20776f726c64');
     INSERT INTO ZCOLLECTIONITEM
       (Z_PK, Z_ENT, Z_OPT, ZMAPITEM, ZLATITUDE, ZLONGITUDE, ZMAPITEMNAME, ZMAPITEMADDRESS, ZMUID)
-      VALUES (1, 7, 1, 1, 48.8600, 2.3266, 'Musée d''Orsay', '1 Rue de la Légion', 4242);
+      VALUES (1, 7, 1, 1, 48.8600, 2.3266, 'Musée d''Orsay', '1 Rue de la Légion', ${REAL_MUID});
   `);
   db.close();
   return path;
 };
+
+/**
+ * A real ZMUID, from `store.test.ts` — past Number.MAX_SAFE_INTEGER, which is
+ * the whole point. The fixture used to seed 4242, so it could not see a write
+ * lane that rounded the value on the way in.
+ */
+const REAL_MUID = -2_679_868_148_951_248_105n;
 
 const read = (path: string) => {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -126,6 +133,30 @@ describe("addFavorite", () => {
     db.close();
     expect(rows).toHaveLength(2);
     expect(rows[1]?.hex).toBe(rows[0]?.hex);
+  });
+
+  /**
+   * The regression that reached iCloud.
+   *
+   * `#donorNear` reads ZMUID with `CAST(... AS TEXT)` precisely because a real
+   * one does not fit in a double. The write lane then put it back through
+   * `Number()`, and node:sqlite binds a JS number with sqlite3_bind_double — so
+   * the id landed in the INTEGER column rounded to the nearest representable
+   * value, 233 away, and synced there.
+   */
+  it("copies a 64-bit ZMUID exactly, rather than through a double", () => {
+    const path = storeWithDonor();
+    new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
+      query: "Musée d'Orsay",
+      latitude: 48.86,
+      longitude: 2.3266,
+    });
+    const db = new DatabaseSync(path, { readOnly: true });
+    const row = db
+      .prepare(`SELECT CAST(ZMUID AS TEXT) AS muid FROM ZFAVORITEITEM LIMIT 1`)
+      .get() as { muid: string };
+    db.close();
+    expect(row.muid).toBe(String(REAL_MUID));
   });
 
   it("bumps Z_MAX for both entities", () => {

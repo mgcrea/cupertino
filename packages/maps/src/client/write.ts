@@ -489,19 +489,27 @@ export class MapsWriter {
     progress("writing the favourite");
     const db = this.#open();
     try {
-      const favEnt = this.#entity(db, "FavoriteItem");
-      const mixEnt = this.#entity(db, "MixinMapItem");
-      const favPk = this.#nextPk(db, "FavoriteItem", "ZFAVORITEITEM");
-      const mixPk = this.#nextPk(db, "MixinMapItem", "ZMIXINMAPITEM");
       const now = Date.now() / 1000 - CORE_DATA_EPOCH_OFFSET;
       const id = uuidBytes();
       const label = input.name ?? donor.name ?? input.query;
-      const position = Number(
-        (db.prepare(`SELECT COUNT(*) AS c FROM ZFAVORITEITEM`).get() as { c: number | bigint }).c,
-      );
 
+      // The primary keys and the position are READ UNDER THE WRITE LOCK.
+      //
+      // They used to be read on the autocommit connection, before BEGIN — and
+      // the header of this file makes a point of the writes happening with Maps
+      // RUNNING, which is exactly when mapssyncd can commit an insert into that
+      // gap and leave the Z_PK we just picked already taken.
+      // Declared out here only so the result below can name it.
+      let favPk = 0;
       db.exec("BEGIN IMMEDIATE");
       try {
+        const favEnt = this.#entity(db, "FavoriteItem");
+        const mixEnt = this.#entity(db, "MixinMapItem");
+        favPk = this.#nextPk(db, "FavoriteItem", "ZFAVORITEITEM");
+        const mixPk = this.#nextPk(db, "MixinMapItem", "ZMIXINMAPITEM");
+        const position = Number(
+          (db.prepare(`SELECT COUNT(*) AS c FROM ZFAVORITEITEM`).get() as { c: number | bigint }).c,
+        );
         db.prepare(
           `INSERT INTO "ZFAVORITEITEM"
              (Z_PK, Z_ENT, Z_OPT, ZHIDDEN, ZPOSITIONINDEX, ZSOURCE, ZTYPE, ZVERSION,
@@ -514,7 +522,13 @@ export class MapsWriter {
           favEnt,
           position,
           mixPk,
-          donor.muid === null ? null : Number(donor.muid),
+          // BigInt, NOT Number. `#donorNear` reads this as TEXT precisely
+          // because a real ZMUID (-2679868148951248105, measured) is past
+          // MAX_SAFE_INTEGER, and node:sqlite binds a JS number as a double —
+          // so Number() here silently wrote -2679868148951247872 into an
+          // INTEGER column and iCloud carried the wrong Apple place id to
+          // every device.
+          donor.muid === null ? null : BigInt(donor.muid),
           now,
           now,
           now,

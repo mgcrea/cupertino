@@ -430,6 +430,25 @@ describe("stable identifiers", () => {
     expect(store.collectionRowId({ uuid: uuidOf(first!.id) })).toBe(first!.id);
     expect(store.collectionRowId({ uuid: uuidOf(200) })).toBeNull();
   });
+
+  /**
+   * And an unresolved id must NARROW to nothing rather than widen.
+   *
+   * `apple_maps_list_collection_places` used to pass `collectionId ?? undefined`
+   * into `places()`, which only applies the membership clause when the id is
+   * defined — so a stale ref dropped the filter and listed every place from
+   * every guide as if they all belonged to the one asked for. The tool refuses
+   * on null now; this pins the shape underneath it.
+   */
+  it("filters to nothing for a collection id that exists in no row", () => {
+    const db = build();
+    seed(db);
+    const store = open(db);
+    const real = store.places("collection-item", { limit: 100, collectionId: 1 }).rows;
+    expect(real.length).toBeGreaterThan(0);
+    const missing = store.places("collection-item", { limit: 100, collectionId: 9999 }).rows;
+    expect(missing).toEqual([]);
+  });
 });
 
 describe("collections", () => {
