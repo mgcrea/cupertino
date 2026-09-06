@@ -34,6 +34,8 @@ struct DesktopCheck {
   static var failures = 0
   static var checks = 0
 
+  static var skipped = 0
+
   static func check(_ label: String, _ condition: @autoclosure () -> Bool) {
     checks += 1
     if condition() {
@@ -42,6 +44,18 @@ struct DesktopCheck {
       print("  FAIL \(label)")
       failures += 1
     }
+  }
+
+  /// A check that could not run, counted and named rather than omitted.
+  ///
+  /// Its absence is the thing worth reporting: a check wrapped in `if let` does
+  /// not fail on a machine where its subject is missing, it disappears, and the
+  /// total quietly drops while the suite still says "passed". The count is the
+  /// only line most people read.
+  static func skip(_ label: String, _ reason: String) {
+    checks += 1
+    skipped += 1
+    print("  SKIP \(label) — \(reason)")
   }
 
   static let surface = Surface.named("desktop")!
@@ -294,16 +308,32 @@ struct DesktopCheck {
     // confusion the field exists to prevent. Checked without a grant by driving
     // a refusal-free path: with Accessibility denied the call fails, so this
     // only asserts when it answered.
+    //
+    // Asserted unconditionally. The first version of this wrapped the whole
+    // check in `if let`, so on a machine where Maps was not running it did not
+    // fail — it VANISHED, and the suite went from 51 checks to 50 while still
+    // printing "passed". A check that disappears when its subject is absent is
+    // worse than no check, because the count is the only thing anyone reads.
+    //
+    // So the two cases are separated: when the call answered, `matched` must
+    // equal `returned`; when it could not (no grant, Maps not running), that is
+    // reported as a SKIP with a reason rather than folded into a pass.
     let (findText, _) = callText(
       "apple_desktop_find_elements", ["bundleId": "com.apple.Maps", "id": "AddButton"],
       writes: false)
-    if let data = findText.data(using: .utf8),
-      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let returned = body["returned"] as? Int, let matched = body["matched"] as? Int
+    let findBody = findText.data(using: .utf8).flatMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+    }
+    if let findBody, let returned = findBody["returned"] as? Int,
+      let matched = findBody["matched"] as? Int
     {
       check(
         "find_elements reports matched for the FILTERED set, not the whole walk",
         matched == returned)
+    } else {
+      skip(
+        "find_elements reports matched for the FILTERED set, not the whole walk",
+        "Maps is not running, or Accessibility is not granted")
     }
 
     check(
@@ -337,7 +367,8 @@ struct DesktopCheck {
       "the table declares exactly the scope gate", surface.gates.map(\.id) == ["allowAnyApp"])
     check("the table ships it switched off", !surface.defaultEnabled)
 
-    print("\n\(checks - failures)/\(checks) passed")
+    let summary = "\(checks - failures - skipped)/\(checks) passed"
+    print("\n" + (skipped > 0 ? "\(summary), \(skipped) skipped" : summary))
     if failures > 0 { exit(1) }
   }
 }

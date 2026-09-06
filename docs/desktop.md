@@ -400,15 +400,56 @@ surface, so it was a structural change as well as a policy one.
 ## Driven for real, 2026-09-06: what a second session corrected
 
 The write lane above was proven once. Driving it again end to end — save a place, read the state
-bit, delete it, twice — corrected three things and found one defect.
+bit, delete it, twice — corrected two things, found one defect, and produced one finding that was
+wrong and had to be retracted by a second experiment. The retraction is kept in full below rather
+than quietly deleted, because how it was got wrong is more useful than the answer.
 
-**A background application's menus do not open.** `AXPress` on `MoreButton` returned success and
-nothing appeared: one window before, one window after, and `find_elements` for
-`delete_from_places` found nothing. The same press with Maps ACTIVATED opens the menu every time.
-So a press can succeed and do nothing at all when the app is not frontmost, which is not a failure
-mode this document had, and it makes `apple_desktop_activate` a prerequisite for menu work rather
-than only for keystrokes. **After any press, look at what is on screen** — the general rule this
-document already states — is what catches it.
+**A menu does not survive the session that opened it**, and getting to that took retracting a wrong
+answer first.
+
+The first reading of this was **"a background application's menus do not open"** — `AXPress` on
+`MoreButton` in the background found nothing, the same press with Maps activated found
+`delete_from_places`, and that was written up as a finding. It is false. Re-run as a controlled
+experiment, alternating six trials and recording the frontmost application at each press, the menu
+opened **every time in both conditions**, in ~600 ms, with twelve items:
+
+| trial | activated | frontmost at press | menu opened |
+| ----- | --------- | ------------------ | ----------- |
+| 1     | no        | Code               | yes, 12     |
+| 1     | yes       | Maps               | yes, 12     |
+| 2     | no        | Code               | yes, 12     |
+| 2     | yes       | Maps               | yes, 12     |
+| 3     | no        | Code               | yes, 12     |
+| 3     | yes       | Maps               | yes, 12     |
+
+The original comparison changed three things at once and credited the wrong one. What actually
+governs it, isolated:
+
+    same session, immediately        -> 12 menu items
+    same session, after a full walk  -> 12 menu items
+    NEW connection after the press   ->  0 menu items
+
+So a full `ui_tree` walk does not disturb an open menu, and **closing the connection dismisses it**.
+The first attempt pressed in one script and queried from a second; the "activated" attempt happened
+to do both in one. The variable was the session boundary, and activation was along for the ride.
+
+**The rule for a driver: open a menu and act on it within one session.** `apple_desktop_activate` is
+still required for `type` and `key`, because a synthetic keystroke is posted to the session and
+lands in whatever is frontmost — that argument is untouched and independent. It is not required to
+open a menu.
+
+Two things this cost are worth stating, because both are rules this document already had. **One
+trial is not a measurement**: the claim came from a single A/B with no repetition and no control.
+And **the query was conflated with the state** — the first probe searched for `delete_from_places`
+specifically, which is only in this menu when the place is SAVED, so "the menu did not open" and
+"the menu opened without that item" were indistinguishable. Measured directly, still in the
+background:
+
+    unsaved -> 12 items, ids include `add_to_places`,    no `delete_from_places`
+    saved   -> 12 items, ids include `delete_from_places`, no `add_to_places`
+
+**Menu contents are state-dependent, and that IS a real finding** — the same slot carries the
+opposite verb. A driver must look at what the menu holds rather than assume an item is there.
 
 **The naming sheet is on `AddButton` too.** This document attributes "Name This Location" to
 `FavoriteButton`. Pressing `AddButton` raises the same sheet, the tree collapses from 138 elements
