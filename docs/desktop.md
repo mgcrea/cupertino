@@ -397,6 +397,44 @@ made it the right one is that the alternative needed a **second TCC grant on the
 surface** and a second capture implementation, and `Surface` models one `storePermission` per
 surface, so it was a structural change as well as a policy one.
 
+## Driven for real, 2026-09-06: what a second session corrected
+
+The write lane above was proven once. Driving it again end to end — save a place, read the state
+bit, delete it, twice — corrected three things and found one defect.
+
+**A background application's menus do not open.** `AXPress` on `MoreButton` returned success and
+nothing appeared: one window before, one window after, and `find_elements` for
+`delete_from_places` found nothing. The same press with Maps ACTIVATED opens the menu every time.
+So a press can succeed and do nothing at all when the app is not frontmost, which is not a failure
+mode this document had, and it makes `apple_desktop_activate` a prerequisite for menu work rather
+than only for keystrokes. **After any press, look at what is on screen** — the general rule this
+document already states — is what catches it.
+
+**The naming sheet is on `AddButton` too.** This document attributes "Name This Location" to
+`FavoriteButton`. Pressing `AddButton` raises the same sheet, the tree collapses from 138 elements
+to **19** exactly as recorded, and `Save` still carries no `AXIdentifier` — so name remains the only
+handle for it, which is the second independent confirmation of that argument.
+
+**The delete did NOT alternate.** This document records the first deletion taking effect
+immediately and the second raising an alert. Two full add-and-delete cycles in one session both
+deleted immediately, with no `AXSheet` at any point. The alert shape is real and was observed once;
+what is not supported is that it alternates, so a driver must handle both because either can happen
+— not because they take turns.
+
+The rest held exactly. `AddButton` reads `"Add"` before and `"Added"` after, the card walks in
+0.172 s against the 0.177 s recorded here, and the store finished where it started.
+
+### The defect that found: `matched` answered for the wrong set
+
+`find_elements` walked the tree, filtered it, and then reported `matched` from the WALK:
+
+    find_elements id=AddButton  ->  returned: 1, matched: 136
+
+One control was found and the answer said 136 matched — which reads as a truncated result and is
+precisely the confusion the field was added to prevent. The byte cap was wrong the same way,
+measured against elements that were never going to be sent. `treeBody` now takes the elements being
+answered rather than the tree, and `desktop-check` pins `matched == returned` for a filtered search.
+
 ## Still open
 
 - ~~**The hosted case.**~~ **CLOSED 2026-09-05.** Accessibility was granted to

@@ -391,7 +391,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
     let parts = line.split(separator: " ").map(String.init)
-    guard parts.count == 2, parts[0] == BridgeProtocol.version else {
+    guard parts.count == 2 || parts.count == 3, parts[0] == BridgeProtocol.version else {
       reply(client, "err unsupported protocol '\(line)'")
       return
     }
@@ -404,6 +404,62 @@ nonisolated final class ServerHost: @unchecked Sendable {
       reply(client, "err unknown server '\(parts[1])'")
       return
     }
+
+    // ─── the internal channel ────────────────────────────────────────────────
+    //
+    // `cupertino/1 desktop for=mail` — a node server this app spawned asking to
+    // borrow an in-process surface for its OWN application. Mail's composer is
+    // the case it exists for: it needs Accessibility, and reaching it through
+    // System Events costs a SECOND grant (Automation to System Events) and
+    // 47 ms per attribute read against the native driver's 0.2 ms.
+    //
+    // Three things make this safe to serve, and none of them is the handshake
+    // line, which is just a claim by whoever opened the socket:
+    //
+    //   1. The peer pid must be a server THIS host spawned, and `serverPIDs`
+    //      already records which surface each pid is. So the claim is checked
+    //      against the process rather than believed: a mail server can only ever
+    //      say `for=mail`, and anything else on the machine — including a
+    //      genuine MCP client — is not in that map at all. Without this the
+    //      channel would be a way for any same-user process to borrow the app's
+    //      Accessibility grant, which is the whole thing the app's identity is
+    //      supposed to hold on the user's behalf.
+    //   2. The gates answered to are the BORROWER's. Mail's composer must not
+    //      require somebody to switch on Desktop — the consent that governs
+    //      reaching Mail's own window is Mail's — and equally it must not
+    //      escape Mail being switched off.
+    //   3. The reach is pinned to the borrower's own bundle id, and `.only`
+    //      is not widened by `allowAnyApp`. A capability has no bundleID, so it
+    //      cannot borrow: there is no app it would be borrowing FOR.
+    var lentTo: Surface?
+    if parts.count == 3 {
+      guard parts[2].hasPrefix(BridgeProtocol.onBehalfOfPrefix) else {
+        reply(client, "err malformed handshake '\(line)'")
+        return
+      }
+      let borrowerId = String(parts[2].dropFirst(BridgeProtocol.onBehalfOfPrefix.count))
+      guard surface.runtime == .swift else {
+        reply(client, "err '\(surface.id)' is not served in-process and cannot be lent")
+        return
+      }
+      guard let borrower = Surface.named(borrowerId), borrower.bundleID != nil else {
+        reply(client, "err unknown or app-less borrower '\(borrowerId)'")
+        return
+      }
+      guard let peer = peerPID(client), serverPIDs.withLock({ $0[peer] }) == borrower.id else {
+        hostLog(
+          surface.id, .error,
+          "refused a lend to '\(borrowerId)': the caller is not a \(borrowerId) server")
+        reply(client, "err this connection is not a \(borrowerId) server")
+        return
+      }
+      lentTo = borrower
+    }
+
+    // Every gate below answers for the borrower when there is one. `authority`
+    // is the surface whose switches govern this connection; `surface` stays the
+    // one being served.
+    let authority = lentTo ?? surface
 
     // The backstop for a config entry we could not remove. Command clients keep
     // their config in files this app refuses to write — see `ClientWiring.Wiring`
@@ -421,11 +477,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // `Surface.named` above is deliberately NOT filtered to the enabled set.
     // Narrowing it would collapse "switched off" into "unknown server", which is
     // a different sentence, logged against a different surface id — namely none.
-    guard SurfaceSettings.isEnabled(surface) else {
-      hostLog(surface.id, .error, "refused: \(surface.id) is off")
+    guard SurfaceSettings.isEnabled(authority) else {
+      hostLog(surface.id, .error, "refused: \(authority.id) is off")
       reply(
         client,
-        "err \(surface.displayName) is switched off in Cupertino — turn it back on "
+        "err \(authority.displayName) is switched off in Cupertino — turn it back on "
           + "in the app, or remove this server from your client's configuration")
       return
     }
@@ -477,7 +533,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // arrives by exactly the path `--server=mail` does.
     if surface.runtime == .swift {
       reply(client, BridgeProtocol.ok)
-      serveInProcess(surface: surface, client: client)
+      serveInProcess(surface: surface, client: client, lentTo: lentTo)
       return
     }
 
@@ -540,22 +596,41 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-  private func serveInProcess(surface: Surface, client: Int32) {
+  /// `lentTo` non-nil means the internal channel — see `serve`.
+  ///
+  /// The surface being SERVED and the surface whose switches GOVERN are then
+  /// two different things, which is why they are two parameters rather than
+  /// one. Everything read per request below reads the governing one.
+  private func serveInProcess(surface: Surface, client: Int32, lentTo: Surface? = nil) {
+    let authority = lentTo ?? surface
+    // The reach a borrower gets, fixed for the life of the connection because
+    // it is a property of WHO is asking rather than of a preference. `.only`
+    // is not widened by `allowAnyApp`; a lend that could be widened by flipping
+    // a switch on another surface would not be a bound at all.
+    let lentScope = lentTo?.bundleID.map { AccessibilityDriver.Scope.only([$0]) }
     let session = UUID()
     let pid = ProcessInfo.processInfo.processIdentifier
+    // Filed against the BORROWER, not the surface being served. A lend is work
+    // done for Mail; showing it in Activity as a Desktop session would put a
+    // live Desktop row in front of somebody who has Desktop switched off, which
+    // reads as the gate having failed. The log line below names what was lent,
+    // so nothing is hidden by attributing it this way.
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+      Sessions.shared.opened(id: session, surface: authority.id, pid: pid)
     }
     defer {
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
-      hostLog(surface.id, .info, "server stopped")
+      hostLog(authority.id, .info, "server stopped")
     }
 
-    let gates = SurfaceSettings.enabledGates(surface)
+    let gates = SurfaceSettings.enabledGates(authority)
     hostLog(
-      surface.id, .info,
-      "server started (in-process) allowWrites=\(SurfaceSettings.allowWrites(surface)) "
-        + "gates=[\(gates.joined(separator: ","))]")
+      authority.id, .info,
+      "server started (in-process) allowWrites=\(SurfaceSettings.allowWrites(authority)) "
+        + "gates=[\(gates.joined(separator: ","))]"
+        + (lentTo.map { _ in
+          " — borrowed \(surface.id), scoped to \(authority.bundleID ?? "?")"
+        } ?? ""))
 
     while let line = InProcessRPC.nextLine(client) {
       if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
@@ -566,8 +641,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // for display only, and signalling it would kill Cupertino — so the check
       // lives here, on the request, which is the same guarantee by a different
       // route.
-      guard SurfaceSettings.isEnabled(surface) else {
-        hostLog(surface.id, .info, "switched off — closing session")
+      guard SurfaceSettings.isEnabled(authority) else {
+        hostLog(authority.id, .info, "switched off — closing session")
         return
       }
 
@@ -581,8 +656,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // surface to `ScreenServer`.
       switch InProcessServers.handle(
         line, surface: surface,
-        allowWrites: SurfaceSettings.allowWrites(surface),
-        gateOn: { SurfaceSettings.isGateOn(surface, id: $0) })
+        allowWrites: SurfaceSettings.allowWrites(authority),
+        gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
+        lentScope: lentScope)
       {
       case .message(let response):
         _ = writeAll(client, Data("\(response)\n".utf8))
@@ -776,6 +852,26 @@ func writeAll(_ fd: Int32, _ data: Data) -> Bool {
 }
 
 func errnoText() -> String { String(cString: strerror(errno)) }
+
+/// The pid on the other end of a unix domain socket, as the kernel sees it.
+///
+/// The whole basis of the internal channel's safety, so it is worth saying why
+/// this particular question is trustworthy where the handshake line is not. The
+/// line is a claim by whoever opened the socket; `LOCAL_PEERPID` is answered by
+/// the kernel about the process that actually connected, and cannot be spoofed
+/// by the peer. Matching it against `serverPIDs` — which the host filled in
+/// itself when it spawned the process — turns "I am the mail server" from an
+/// assertion into a check.
+///
+/// nil rather than a fatal error: a peer that has already exited has no pid to
+/// report, and that is a refusal like any other rather than something to crash
+/// the host over.
+func peerPID(_ fd: Int32) -> Int32? {
+  var pid: pid_t = 0
+  var len = socklen_t(MemoryLayout<pid_t>.size)
+  guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) == 0 else { return nil }
+  return pid
+}
 
 /// Run `body` on a thread of its own, off libdispatch's global pools.
 ///

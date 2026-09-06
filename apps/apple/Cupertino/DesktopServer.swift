@@ -27,7 +27,7 @@ enum DesktopServer {
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
   static func handle(
-    _ line: String, surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
+    _ line: String, surface: Surface, writesAllowed: Bool, scope: AccessibilityDriver.Scope
   ) -> String? {
     guard let data = line.data(using: .utf8),
       let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -56,7 +56,7 @@ enum DesktopServer {
     case "tools/list":
       return isNotification
         ? nil
-        : result(id, ["tools": tools(writesAllowed: writesAllowed, anyAppAllowed: anyAppAllowed)])
+        : result(id, ["tools": tools(writesAllowed: writesAllowed, scope: scope)])
 
     case "resources/list":
       return isNotification ? nil : result(id, ["resources": resources()])
@@ -66,7 +66,7 @@ enum DesktopServer {
       let uri = ((msg["params"] as? [String: Any])?["uri"] as? String) ?? ""
       return readResource(
         uri, id: id, surface: surface, writesAllowed: writesAllowed,
-        anyAppAllowed: anyAppAllowed)
+        scope: scope)
 
     case "prompts/list":
       return isNotification ? nil : result(id, ["prompts": [Any]()])
@@ -78,7 +78,7 @@ enum DesktopServer {
       let args = params["arguments"] as? [String: Any] ?? [:]
       return call(
         name, args: args, id: id, surface: surface, writesAllowed: writesAllowed,
-        anyAppAllowed: anyAppAllowed)
+        scope: scope)
 
     default:
       guard !isNotification else { return nil }
@@ -96,7 +96,9 @@ enum DesktopServer {
   /// than one whose tools vanished. Driving is registered only when writes are
   /// on, and then it is not merely refused but ABSENT from tools/list — a
   /// refusal still lets a model try, retry and reason about a way around it.
-  private static func tools(writesAllowed: Bool, anyAppAllowed: Bool) -> [[String: Any]] {
+  private static func tools(writesAllowed: Bool, scope: AccessibilityDriver.Scope)
+    -> [[String: Any]]
+  {
     let empty: [String: Any] = [
       "type": "object", "properties": [String: Any](), "required": [Any](),
     ]
@@ -105,13 +107,28 @@ enum DesktopServer {
     // "any running application" and gets refused will retry; one that is told
     // the surface is scoped asks for something else, or tells the user which
     // switch to flip.
+    let bundleIdDescription: String
+    switch scope {
+    case .any:
+      bundleIdDescription =
+        "Bundle identifier of any running application, from apple_desktop_list_apps."
+    case .brokered:
+      bundleIdDescription =
+        "Bundle identifier of one of the Apple applications Cupertino brokers, from "
+        + "apple_desktop_list_apps. This surface is scoped to those; \"Reach any application\" "
+        + "in Cupertino widens it."
+    case .only(let ids):
+      // The internal channel. Naming the one app it may address is not a
+      // nicety: this driver was lent to a surface for ITS app, and a
+      // description promising the brokered set would be an invitation to try
+      // the other seven and collect a refusal each time.
+      bundleIdDescription =
+        "Bundle identifier of \(ids.sorted().joined(separator: " or ")). This driver was lent "
+        + "for that application alone and reaches nothing else."
+    }
     let bundleIdProperty: [String: Any] = [
       "type": "string",
-      "description": anyAppAllowed
-        ? "Bundle identifier of any running application, from apple_desktop_list_apps."
-        : "Bundle identifier of one of the Apple applications Cupertino brokers, from "
-          + "apple_desktop_list_apps. This surface is scoped to those; \"Reach any application\" "
-          + "in Cupertino widens it.",
+      "description": bundleIdDescription,
     ]
     let detailProperty: [String: Any] = [
       "type": "string",
@@ -141,11 +158,9 @@ enum DesktopServer {
     var list: [[String: Any]] = [
       [
         "name": "apple_desktop_list_apps",
-        "description": anyAppAllowed
-          ? "List every application running with a normal user interface, with their bundle "
-            + "identifiers and process ids. Works with no Accessibility grant at all."
-          : "List the Apple applications Cupertino brokers that are running now, with their "
-            + "bundle identifiers and process ids. Works with no Accessibility grant at all.",
+        "description":
+          "List the applications in reach that are running now — \(scope.described) — with their "
+          + "bundle identifiers and process ids. Works with no Accessibility grant at all.",
         "inputSchema": empty,
         "annotations": ["readOnlyHint": true],
       ],
@@ -231,6 +246,27 @@ enum DesktopServer {
         "annotations": ["readOnlyHint": true],
       ],
       [
+        "name": "apple_desktop_get_attribute",
+        "description":
+          "Read one named Accessibility attribute off an element — AXBlockQuoteLevel, "
+          + "AXFocused, anything the application publishes. The tree carries a fixed field set "
+          + "chosen for addressing controls; this is how you verify a write that changed "
+          + "something else. An element that does not carry the attribute answers null, which "
+          + "is an answer rather than a failure.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "handle": ["type": "string"],
+            "attribute": [
+              "type": "string",
+              "description": "The attribute name, e.g. AXBlockQuoteLevel.",
+            ],
+          ],
+          "required": ["handle", "attribute"],
+        ],
+        "annotations": ["readOnlyHint": true],
+      ],
+      [
         "name": "apple_desktop_diagnostics",
         "description":
           "Report whether Accessibility is granted, whether a real window can actually be read, "
@@ -311,6 +347,33 @@ enum DesktopServer {
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
       [
+        "name": "apple_desktop_focus",
+        "description":
+          "Give an element the keyboard focus, and report whether it took. Raising a window is "
+          + "NOT this: a raise orders a window forward inside its application, while a "
+          + "keystroke goes wherever the focus actually is. Focus the field before you type "
+          + "into it.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["handle": ["type": "string"]],
+          "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_activate",
+        "description":
+          "Bring an application to the front. Synthetic keystrokes land in whatever is "
+          + "frontmost, so apple_desktop_type and apple_desktop_key need this first or they "
+          + "type into someone else's window.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["bundleId": bundleIdProperty],
+          "required": ["bundleId"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
         "name": "apple_desktop_raise_window",
         "description": "Bring a window to the front by its handle.",
         "inputSchema": [
@@ -358,10 +421,22 @@ enum DesktopServer {
   /// that does not cap.
   private static let maxBytes = 40_000
 
-  private static func treeBody(_ tree: AccessibilityDriver.Tree) -> [String: Any] {
+  /// `elements` is what the caller asked for, which is NOT always the whole
+  /// walk.
+  ///
+  /// `find_elements` walks everything and returns a filtered set, and passing
+  /// the walk here was a real defect: `matched` came from the tree, so a search
+  /// that found ONE control reported `returned: 1, matched: 136` — which reads
+  /// exactly like a truncated answer and is the confusion this field exists to
+  /// prevent. The byte cap was wrong the same way, measured against elements
+  /// that were never going to be sent.
+  private static func treeBody(
+    _ tree: AccessibilityDriver.Tree, elements: [AccessibilityDriver.Element]? = nil
+  ) -> [String: Any] {
+    let answering = elements ?? tree.elements
     var kept: [[String: Any]] = []
     var bytes = 0
-    for element in tree.elements {
+    for element in answering {
       let json = element.json
       // Measured rather than estimated: an element with a long name and a rect
       // is several times the size of a bare button, so a per-element budget
@@ -381,7 +456,7 @@ enum DesktopServer {
       "returned": kept.count,
       // What MATCHED, so a truncated answer is obviously partial rather than
       // looking like a small window.
-      "matched": tree.elements.count,
+      "matched": answering.count,
       "visited": tree.visited,
       "seconds": (tree.seconds * 1000).rounded() / 1000,
       "coordinateSpace": "screen points, top-left origin",
@@ -392,10 +467,10 @@ enum DesktopServer {
     // raise — or, for this one, that raising a bound is not the answer.
     var stops: [String] = []
     if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
-    if kept.count < tree.elements.count {
+    if kept.count < answering.count {
       stops.append("bytes(\(maxBytes))")
       body["truncated"] =
-        "Returned \(kept.count) of \(tree.elements.count) matching elements. Narrow the query "
+        "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
         + "with find_elements, or walk down with expand — raising maxNodes will not return more."
     }
     if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
@@ -404,7 +479,7 @@ enum DesktopServer {
 
   private static func call(
     _ name: String, args: [String: Any], id: Any?, surface: Surface, writesAllowed: Bool,
-    anyAppAllowed: Bool
+    scope: AccessibilityDriver.Scope
   ) -> String {
     // Every driving tool goes through here. Unreachable through a compliant
     // client, since none of them is listed with writes off — but a server must
@@ -412,6 +487,7 @@ enum DesktopServer {
     let driving = [
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
+      "apple_desktop_focus", "apple_desktop_activate",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -423,7 +499,7 @@ enum DesktopServer {
     do {
       switch name {
       case "apple_desktop_list_apps":
-        let apps = AccessibilityDriver.runningApps(anyApp: anyAppAllowed)
+        let apps = AccessibilityDriver.runningApps(scope: scope)
         return ok(
           id,
           [
@@ -438,7 +514,7 @@ enum DesktopServer {
           return failure(id, "The 'bundleId' argument is required.")
         }
         let includeTitles = args["includeTitles"] as? Bool ?? false
-        let windows = try AccessibilityDriver.windows(bundleId: bundleId, anyApp: anyAppAllowed)
+        let windows = try AccessibilityDriver.windows(bundleId: bundleId, scope: scope)
         return ok(
           id,
           [
@@ -462,7 +538,7 @@ enum DesktopServer {
         }
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
-          detail: detail(args), bounds: bounds(args), anyApp: anyAppAllowed)
+          detail: detail(args), bounds: bounds(args), scope: scope)
         return ok(id, treeBody(tree))
 
       case "apple_desktop_expand":
@@ -470,7 +546,7 @@ enum DesktopServer {
           return failure(id, "The 'handle' argument is required.")
         }
         let tree = try AccessibilityDriver.expand(
-          handle: handle, detail: detail(args), bounds: bounds(args), anyApp: anyAppAllowed)
+          handle: handle, detail: detail(args), bounds: bounds(args), scope: scope)
         return ok(id, treeBody(tree))
 
       case "apple_desktop_find_elements":
@@ -489,7 +565,7 @@ enum DesktopServer {
         // before matching would hide it.
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
-          detail: .all, bounds: bounds(args), anyApp: anyAppAllowed)
+          detail: .all, bounds: bounds(args), scope: scope)
         let matched = tree.elements.filter { element in
           if pressableOnly && !element.pressable { return false }
           if let wantedId, element.identifier != wantedId { return false }
@@ -501,22 +577,19 @@ enum DesktopServer {
           }
           return true
         }
-        var body = treeBody(tree)
-        body["elements"] = matched.map(\.json)
-        body["returned"] = matched.count
-        return ok(id, body)
+        return ok(id, treeBody(tree, elements: matched))
 
       case "apple_desktop_diagnostics":
         return ok(
           id,
           diagnostics(
-            surface: surface, writesAllowed: writesAllowed, anyAppAllowed: anyAppAllowed))
+            surface: surface, writesAllowed: writesAllowed, scope: scope))
 
       case "apple_desktop_press":
         guard let handle = args["handle"] as? String else {
           return failure(id, "The 'handle' argument is required.")
         }
-        try AccessibilityDriver.press(handle: handle, anyApp: anyAppAllowed)
+        try AccessibilityDriver.press(handle: handle, scope: scope)
         return ok(id, ["pressed": handle])
 
       case "apple_desktop_set_value":
@@ -524,7 +597,7 @@ enum DesktopServer {
           return failure(id, "Both 'handle' and 'value' are required.")
         }
         let landed = try AccessibilityDriver.setValue(
-          handle: handle, value: value, anyApp: anyAppAllowed)
+          handle: handle, value: value, scope: scope)
         return ok(
           id,
           [
@@ -561,8 +634,43 @@ enum DesktopServer {
         guard let handle = args["handle"] as? String else {
           return failure(id, "The 'handle' argument is required.")
         }
-        try AccessibilityDriver.raise(handle: handle, anyApp: anyAppAllowed)
+        try AccessibilityDriver.raise(handle: handle, scope: scope)
         return ok(id, ["raised": handle])
+
+      case "apple_desktop_focus":
+        guard let handle = args["handle"] as? String else {
+          return failure(id, "The 'handle' argument is required.")
+        }
+        let took = try AccessibilityDriver.focus(handle: handle, scope: scope)
+        // Reported rather than thrown, exactly as set_value does: the write was
+        // permitted and the application did not honour it, which is a different
+        // fact from a refusal and the caller has to be able to tell them apart.
+        return ok(id, ["handle": handle, "focused": took])
+
+      case "apple_desktop_activate":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        try AccessibilityDriver.activate(bundleId: bundleId, scope: scope)
+        return ok(id, ["activated": bundleId])
+
+      case "apple_desktop_get_attribute":
+        guard let handle = args["handle"] as? String,
+          let attribute = args["attribute"] as? String
+        else {
+          return failure(id, "Both 'handle' and 'attribute' are required.")
+        }
+        let value = try AccessibilityDriver.attribute(
+          handle: handle, name: attribute, scope: scope)
+        return ok(
+          id,
+          [
+            "handle": handle, "attribute": attribute,
+            // NSNull rather than omitting the key: absent and null are the same
+            // in JSON only if the reader is careful, and "this element does not
+            // carry that attribute" is an answer worth stating.
+            "value": value ?? NSNull(),
+          ])
 
       default:
         return failure(id, "unknown tool '\(name)'")
@@ -582,16 +690,16 @@ enum DesktopServer {
   /// a green row over a blind read, caused by four duplicate TCC entries under
   /// one bundle identifier.
   private static func diagnostics(
-    surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
+    surface: Surface, writesAllowed: Bool, scope: AccessibilityDriver.Scope
   ) -> [String: Any] {
     let trusted = AccessibilityDriver.isTrusted()
-    let apps = AccessibilityDriver.runningApps(anyApp: anyAppAllowed)
+    let apps = AccessibilityDriver.runningApps(scope: scope)
 
     var probe = "not attempted"
     if trusted, let first = apps.first(where: { $0.bundleId != Bundle.main.bundleIdentifier }) {
       do {
         let windows = try AccessibilityDriver.windows(
-          bundleId: first.bundleId, anyApp: anyAppAllowed)
+          bundleId: first.bundleId, scope: scope)
         probe = "read \(windows.count) window(s) from \(first.name)"
       } catch {
         probe = "FAILED against \(first.name): \(error.localizedDescription)"
@@ -603,10 +711,16 @@ enum DesktopServer {
       "windowRead": probe,
       "runningApps": apps.count,
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",
-      "reach": anyAppAllowed
-        ? "any running application"
-        : "the \(AccessibilityDriver.brokeredBundleIds.count) applications Cupertino brokers — "
-          + "switch on \"Reach any application\" for Desktop to widen it",
+      "reach": {
+        switch scope {
+        case .any: return "any running application"
+        case .brokered:
+          return
+            "\(scope.described) — switch on \"Reach any application\" for Desktop to widen it"
+        case .only:
+          return "\(scope.described) — this driver was lent for that application alone"
+        }
+      }() as String,
       // The RUNNING bundle id, never a literal. A Debug build is
       // io.mgcrea.cupertino.debug and holds a TCC identity of its own, so a
       // hardcoded release identifier sends someone to reset a grant that is not
@@ -633,7 +747,8 @@ enum DesktopServer {
   }
 
   private static func readResource(
-    _ uri: String, id: Any?, surface: Surface, writesAllowed: Bool, anyAppAllowed: Bool
+    _ uri: String, id: Any?, surface: Surface, writesAllowed: Bool,
+    scope: AccessibilityDriver.Scope
   ) -> String {
     guard uri == "cupertino://desktop/guide" else {
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
@@ -681,9 +796,9 @@ enum DesktopServer {
         ? "Writes are ON: press, set_value, click, type, key and raise_window are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
-      \(anyAppAllowed
+      \(scope == .any
         ? "Reach is ANY running application."
-        : "Reach is limited to the Apple applications Cupertino brokers. Another application is refused by name, not by silence — widen it in Cupertino if you meant to address one.")
+        : "Reach is limited to \(scope.described). Another application is refused by name, not by silence — widen it in Cupertino if you meant to address one.")
       """
     return result(
       id,

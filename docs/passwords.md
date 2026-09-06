@@ -151,6 +151,21 @@ It does **not** reopen on a new TCC grant, because no grant is relevant. Anyone 
   grant, and sits squarely in the "scriptable and dangerous" category
   [surfaces.md](surfaces.md) already rejects for Terminal and System Settings.
 
+  **Still rejected after the `desktop` surface shipped, and the reason is worth being precise
+  about.** [desktop.md](desktop.md) overturned three earlier rejections of the Accessibility lane,
+  so it is fair to ask whether it overturns this one. It does not: those three were rejected on
+  **cost**, on numbers that turned out to be measuring `osascript` rather than the API, and this one
+  was rejected on **policy**. A lane being cheap does not make it appropriate, and the native driver
+  is if anything the argument for keeping the refusal — it is fast enough that "fragile" is no
+  longer the load-bearing objection, which leaves only the objection that always mattered.
+
+  What now keeps it out of reach is concrete rather than a decision nobody wrote down.
+  `Passwords.app` is not a surface, so its bundle id is not in `Surface.all`, so it is not in
+  `AccessibilityDriver.brokeredBundleIds` — and `desktop` ships scoped to that set. Reaching it
+  requires switching on **Reach any application**, deliberately, in Cupertino. That gate is the
+  enforcement of this paragraph, and `desktop-check` asserts an unbrokered application is refused
+  by name while the gate is off.
+
 ## The fifth lane: the Safari extension, and what it does not reach
 
 **This document was written against four lanes and there is now a fifth.** It changes nothing above

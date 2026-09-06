@@ -109,6 +109,23 @@ enum ServerLocator {
   ///   is load-bearing for `SurfaceCatalog`: the capability cache exists to
   ///   report what a surface can actually do, and a probe that asked a lazy
   ///   server would answer "four tools" for every surface in the app.
+  /// The socket a server may call back on, and who it may say it is.
+  ///
+  /// Host plumbing rather than user configuration, which is why these two are
+  /// `CUPERTINO_` and not `APPLE_<SURFACE>_`: nothing a person sets in a client
+  /// config should be able to name them, and a server that finds them absent is
+  /// simply not hosted by the app. That absence is the fallback signal — the npm
+  /// packages are published artifacts and have to keep working with no app on
+  /// the machine at all — so it is deliberately load-bearing rather than an
+  /// error case.
+  ///
+  /// Handed to every node surface that HAS an app. A capability has no bundleID,
+  /// so there would be nothing to scope a lend to. Presence is not permission:
+  /// `ServerHost` still proves the caller with `LOCAL_PEERPID` and still answers
+  /// to the borrower's own gates.
+  static let axSocketVar = "CUPERTINO_AX_SOCKET"
+  static let axIdentityVar = "CUPERTINO_AX_FOR"
+
   static func environment(
     for surface: Surface, allowWrites: Bool, gates: [String] = [], lazyTools: Bool = false
   )
@@ -118,6 +135,12 @@ enum ServerLocator {
     if allowWrites { env["\(surface.envPrefix)ALLOW_WRITES"] = "1" }
     for suffix in gates { env["\(surface.envPrefix)\(suffix)"] = "1" }
     if lazyTools { env["\(surface.envPrefix)LAZY_TOOLS"] = "1" }
+    if surface.runtime == .node, surface.bundleID != nil,
+      BridgeProtocol.isAddressable(BridgeProtocol.socketPath)
+    {
+      env[axSocketVar] = BridgeProtocol.socketPath
+      env[axIdentityVar] = surface.id
+    }
     return env
   }
 }

@@ -32,10 +32,26 @@ export const buildDiagnostics = async (
         working: status.store.opened,
       },
       appleEvents: "none — Maps is not scriptable",
-      writes:
-        "none — this server registers no mutating tool. The store is mirrored to iCloud by " +
-        "NSPersistentCloudKitContainer, so a write is an edit to one replica of a " +
-        "synchronising graph underneath a running app. That was never probed.",
+      writes: {
+        enabled: client.config.allowWrites,
+        lane:
+          "SQL, directly into the Core Data store. Maps ships no scripting dictionary and " +
+          "registers no App Intents on macOS, so there is no lane where the app performs the " +
+          "write on our behalf — this is the only surface here that writes its own store.",
+        seeding:
+          "A place is only real to Maps if it carries a ZMAPITEMSTORAGE blob, which this repo " +
+          "cannot generate. Opening maps://?q=<name>&ll=<lat>,<lon> through LaunchServices makes " +
+          "Maps mint one, and that record is copied. The place is therefore left in Recents " +
+          "whether or not the favourite is kept, and resolving it can take tens of seconds.",
+        blastRadius:
+          "The store is mirrored by NSPersistentCloudKitContainer, and mirroring does not wait " +
+          "to be told. A malformed row is not a local mistake: it reaches every device on the " +
+          "account as soon as Maps next runs. Hence the rule in client/write.ts — never " +
+          "fabricate a place record, only ever copy one Maps wrote.",
+        tools: client.config.allowWrites
+          ? ["apple_maps_add_favorite", "apple_maps_remove_favorite"]
+          : [],
+      },
     },
     store: {
       path: located.storePath,

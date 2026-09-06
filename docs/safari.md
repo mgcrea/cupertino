@@ -205,6 +205,40 @@ finding below stands for whenever that verb is wanted; it is no longer a blocker
 
 ## Page text is unreachable, and it is an absence rather than a price
 
+**RETRACTED 2026-09-06 — the absence was an artefact of System Events.** The section is kept in full
+below because the shape of the error is worth more than the conclusion was, and because it is quoted
+elsewhere. What it got wrong, measured natively against the same Safari by
+[`scripts/probe-desktop.swift`](../scripts/probe-desktop.swift) — see [`desktop.md`](desktop.md):
+
+```
+AXWebArea               1        <- this document measured 0
+AXLink                  26
+AXHeading               17
+AXStaticText with text  343 nodes, 10735 chars
+total nodes             694
+max depth               12
+```
+
+Sixty-nine times more elements than System Events exposed, and ten kilobytes of readable text. The
+census below did not measure Safari; it measured what System Events forwards, which bottoms out at
+the window chrome. The paragraph headed "It does not generalise from Mail" reasoned from that census
+to a process boundary that is not where the limit sat — Safari's page is out of process, and the
+native `AXUIElement` API reaches into it anyway.
+
+**This is the expensive kind of error, by this document's own argument.** It says below that "a cost
+can be engineered around; an absence cannot" — which is exactly why stating a false absence closes a
+lane harder than quoting a slow number does. The same document was right that the content exists and
+named the wrong door: the door is `AXUIElement`, not `AXManualAccessibility`.
+
+**It changes the record rather than the product.** Page reading and page acting shipped over the
+Safari extension (`apple_safari_read_page`, `apple_safari_page_elements`,
+[`tools/actions.ts`](../packages/safari/src/tools/actions.ts)), which needs no TCC grant at all and is
+consented per site — a better lane than either of the two weighed here. What the correction buys is a
+**fallback for when the extension is not installed or not enabled on a site**, and the removal of a
+false absence from the record.
+
+---
+
 The surface cannot read a word of any page, which is the most common thing to expect of it. Measured
 2026-08-30 on macOS 26.6 by `scripts/spike-safari-page-text.mjs` and
 `scripts/spike-safari-ax-census.mjs`, against a real Safari with 2 windows and 64 tabs.
@@ -242,6 +276,10 @@ accessibility API — just not through this door. WebKit builds that tree lazily
 as assistive, which some tools trigger by setting `AXManualAccessibility` or
 `AXEnhancedUserInterface` on the application element. That is undocumented and app-specific, which
 is the same class of unmodellable dependency as the toggle below — so it was not tried.
+
+> **Closed 2026-09-06.** The premise was right and the door was wrong. No undocumented attribute was
+> needed: calling `AXUIElementCopyAttributeValue` directly reaches the `AXWebArea` and everything
+> under it. Nothing was triggered, and nothing app-specific was relied on.
 
 ### The `do JavaScript` refusal is loud, and the received rationale overstated it
 

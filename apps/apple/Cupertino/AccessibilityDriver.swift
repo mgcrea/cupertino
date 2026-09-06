@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// The Accessibility layer for the `desktop` surface: read a window's element
 /// tree, address a control, press it.
@@ -153,9 +154,9 @@ enum AccessibilityDriver {
   /// Resolve a handle, refusing one whose application is now out of scope.
   /// Every verb that takes a handle goes through here rather than touching the
   /// store, so a new verb cannot forget the check.
-  private static func resolve(_ handle: String, anyApp: Bool) throws -> AXUIElement {
+  private static func resolve(_ handle: String, scope: Scope) throws -> AXUIElement {
     guard let entry = handles.get(handle) else { throw Failure.staleHandle(handle) }
-    guard inScope(entry.bundleId, anyApp: anyApp) else {
+    guard inScope(entry.bundleId, scope: scope) else {
       throw Failure.outOfScope(entry.bundleId)
     }
     return entry.element
@@ -235,14 +236,53 @@ enum AccessibilityDriver {
   /// capability — so it cannot address itself, which is correct.
   static let brokeredBundleIds: Set<String> = Set(Surface.all.compactMap(\.bundleID))
 
-  static func inScope(_ bundleId: String, anyApp: Bool) -> Bool {
-    anyApp || brokeredBundleIds.contains(bundleId)
+  /// How far a caller may reach.
+  ///
+  /// A value rather than the `anyApp` boolean this started as, because a third
+  /// reach appeared that is neither of the two the gate expresses. The internal
+  /// channel (`ServerHost`, `for=<surface>`) lends this driver to a node surface
+  /// that needs Accessibility for its own app — Mail's composer — and what that
+  /// caller may touch is ONE bundle id, narrower than either user-facing
+  /// setting and unaffected by them. A boolean could only have widened.
+  ///
+  /// Kept as a closed enum rather than a set with a `nil` meaning "all", so the
+  /// widest reach has to be written down at the call site. `.any` is greppable;
+  /// an empty optional is not.
+  enum Scope: Hashable {
+    /// The applications Cupertino brokers. What the surface reaches with its
+    /// scope gate off.
+    case brokered
+    /// Every running application. What `allowAnyApp` widens to.
+    case any
+    /// Exactly these, and nothing else. Never widened by a gate.
+    case only(Set<String>)
+
+    func admits(_ bundleId: String) -> Bool {
+      switch self {
+      case .brokered: return AccessibilityDriver.brokeredBundleIds.contains(bundleId)
+      case .any: return true
+      case .only(let ids): return ids.contains(bundleId)
+      }
+    }
+
+    /// The phrase a refusal and the guide both use, so they cannot drift.
+    var described: String {
+      switch self {
+      case .brokered:
+        return
+          "the \(AccessibilityDriver.brokeredBundleIds.count) applications Cupertino brokers"
+      case .any: return "any running application"
+      case .only(let ids): return ids.sorted().joined(separator: ", ")
+      }
+    }
   }
 
-  static func runningApps(anyApp: Bool) -> [RunningApp] {
+  static func inScope(_ bundleId: String, scope: Scope) -> Bool { scope.admits(bundleId) }
+
+  static func runningApps(scope: Scope) -> [RunningApp] {
     NSWorkspace.shared.runningApplications
       .filter { $0.activationPolicy == .regular }
-      .filter { anyApp || brokeredBundleIds.contains($0.bundleIdentifier ?? "") }
+      .filter { scope.admits($0.bundleIdentifier ?? "") }
       .compactMap { app in
         guard let bundleId = app.bundleIdentifier else { return nil }
         return RunningApp(
@@ -286,9 +326,9 @@ enum AccessibilityDriver {
   /// application. Measured across six surface apps, the AX count and the
   /// FILTERED CGWindowList count agree on every one. A filter here would only be
   /// able to drop real windows.
-  static func windows(bundleId: String, anyApp: Bool) throws -> [WindowRef] {
+  static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard inScope(bundleId, anyApp: anyApp) else { throw Failure.outOfScope(bundleId) }
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
     let appElement = element(for: running.processIdentifier)
 
@@ -372,9 +412,9 @@ enum AccessibilityDriver {
   }
 
   static func tree(
-    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, anyApp: Bool
+    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope
   ) throws -> Tree {
-    let all = try windows(bundleId: bundleId, anyApp: anyApp)
+    let all = try windows(bundleId: bundleId, scope: scope)
     let chosen: [WindowRef]
     if let windowIndex {
       guard windowIndex >= 0, windowIndex < all.count else {
@@ -394,10 +434,10 @@ enum AccessibilityDriver {
   /// This is what makes a 9770-node window usable: docs/desktop.md measured
   /// Notes at 37 s for a full walk, and depth 3 for its first 500 nodes. A
   /// default tree plus this verb is not a degraded whole tree; it is the product.
-  static func expand(handle: String, detail: Detail, bounds: Bounds, anyApp: Bool) throws -> Tree {
+  static func expand(handle: String, detail: Detail, bounds: Bounds, scope: Scope) throws -> Tree {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     return walk(roots: children(element), detail: detail, bounds: bounds, bundleId: owner)
   }
 
@@ -482,9 +522,9 @@ enum AccessibilityDriver {
   /// developer-set identifiers (`FavoriteButton`, `AddButton`). A verb built on
   /// position breaks on every layout change and every non-English Mac; this one
   /// does not.
-  static func press(handle: String, anyApp: Bool) throws {
+  static func press(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
@@ -499,9 +539,9 @@ enum AccessibilityDriver {
   /// returned true on the first text field of all seven apps probed, which proves
   /// the write path is PERMITTED and not that any given app honours it. So this
   /// reads the value back and tells the caller when it did not take.
-  static func setValue(handle: String, value: String, anyApp: Bool) throws -> Bool {
+  static func setValue(handle: String, value: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -518,11 +558,101 @@ enum AccessibilityDriver {
     return string(element, kAXValueAttribute as String) == value
   }
 
-  static func raise(handle: String, anyApp: Bool) throws {
+  static func raise(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
+  }
+
+  /// Give an element the keyboard focus, and read it back.
+  ///
+  /// Raising a window is NOT this, and the difference is what makes a paste land
+  /// somewhere else. `kAXRaiseAction` orders a window forward inside its
+  /// application; the keystroke that follows goes wherever the focus actually
+  /// is. `packages/mail` sets `focused` on the composer's web area for exactly
+  /// this reason before pressing command-V.
+  ///
+  /// Read back for the same reason `setValue` is: settable is a claim about the
+  /// API, not about the app. Returns whether the focus took, and never reports
+  /// success on the strength of the write having been accepted.
+  static func focus(handle: String, scope: Scope) throws -> Bool {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+
+    var settable: DarwinBoolean = false
+    let check = AXUIElementIsAttributeSettable(
+      element, kAXFocusedAttribute as CFString, &settable)
+    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'") { throw problem }
+    guard settable.boolValue else {
+      throw Failure.refused("That element cannot take the keyboard focus.")
+    }
+
+    let err = AXUIElementSetAttributeValue(
+      element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    if let problem = failure(for: err, doing: "Focusing '\(handle)'") { throw problem }
+
+    var raw: AnyObject?
+    let read = AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &raw)
+    if read != .success { return false }
+    return (raw as? Bool) ?? false
+  }
+
+  /// Make an application frontmost.
+  ///
+  /// Synthetic keyboard events are posted to the session and land in whatever is
+  /// frontmost, so every `type` and `key` against a specific app has to be
+  /// preceded by this or it types into someone else's window. It is a write in
+  /// the sense that matters — it rearranges the user's screen — which is why it
+  /// sits behind `allowWrites` with the rest of the driving verbs.
+  ///
+  /// `NSRunningApplication.activate()` rather than an AX action: there is no
+  /// `AXRaise` on an application element, and the window-level raise above
+  /// deliberately does something narrower.
+  static func activate(bundleId: String, scope: Scope) throws {
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    let running = try app(forBundleId: bundleId)
+    // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
+    // and refusing it for want of a grant it does not use would be a confusing
+    // lie. Scope still applies — it is this surface's bound, not the system's.
+    guard running.activate() else {
+      throw Failure.refused("\(bundleId) refused to come to the front.")
+    }
+  }
+
+  /// Read ONE named attribute off an element.
+  ///
+  /// The tree carries a fixed field set, chosen because it is what a driver
+  /// needs to address a control. Verifying a write often needs one more:
+  /// `packages/mail` confirms its quote strip by reading `AXBlockQuoteLevel`,
+  /// which is meaningless to every other caller and would be dead weight on
+  /// every node of every walk.
+  ///
+  /// **`attributeUnsupported` and `noValue` return nil rather than throwing**,
+  /// which is the rule the census in docs/desktop.md established: a healthy
+  /// 13,960-node walk produced 19,903 of the first and 12,893 of the second, so
+  /// they outnumber the nodes and are structural rather than failures. An
+  /// element that does not carry the attribute is an answer.
+  static func attribute(handle: String, name: String, scope: Scope) throws -> Any? {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+
+    var raw: AnyObject?
+    let err = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
+    if err == .attributeUnsupported || err == .noValue { return nil }
+    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'") { throw problem }
+
+    // Only the scalars a caller can act on. An `AXUIElement` answer would need a
+    // handle minted for it, and returning one from here would make this a second
+    // and undocumented way to walk the tree — `expand` is that, and it carries
+    // the bounds this does not.
+    switch raw {
+    case let value as String: return value
+    case let value as NSNumber: return value
+    case let value as [Any]: return "<\(value.count) values>"
+    case .some(let other): return "<\(Swift.type(of: other))>"
+    case nil: return nil
+    }
   }
 
   // ─── synthetic input, for what AX cannot express ───────────────────────────
@@ -577,9 +707,9 @@ enum AccessibilityDriver {
   /// A named key with modifiers — what `type` cannot express.
   static func key(_ name: String, modifiers: [String]) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let code = keyCodes[name.lowercased()] else {
+    guard let code = keyCode(for: name) else {
       throw Failure.refused(
-        "Unknown key '\(name)'. Known: \(keyCodes.keys.sorted().joined(separator: ", ")).")
+        "Unknown key '\(name)'. Known: \(knownKeys().joined(separator: ", ")).")
     }
     var flags: CGEventFlags = []
     for modifier in modifiers.map({ $0.lowercased() }) {
@@ -605,12 +735,93 @@ enum AccessibilityDriver {
   /// Deliberately small. These are the keys a driver needs to get unstuck —
   /// dismiss a sheet, commit a field, move a selection. Anything typeable goes
   /// through `type` instead, which needs no table and gets accents right.
+  /// Keys whose code is a position rather than a character, so a layout cannot
+  /// move them. Return is 36 on every Mac ever sold.
   private static let keyCodes: [String: CGKeyCode] = [
     "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "esc": 53,
     "left": 123, "right": 124, "down": 125, "up": 126,
     "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
     "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
   ]
+
+  /// Which key produces this character on the layout the user is ACTUALLY typing
+  /// on, asked of the system rather than assumed.
+  ///
+  /// **This is a correctness fix, not a completeness one, and the failure it
+  /// prevents is destructive.** A `CGKeyCode` names a physical position, not a
+  /// letter. The table above was letter-free, so a caller could not express
+  /// command-V at all; the obvious repair — pasting in the US table, where `a`
+  /// is 0 and `v` is 9 — is wrong on any layout that moves them. On a French
+  /// AZERTY Mac the key at US-`a` is **Q**, so "select all before pasting a
+  /// reply" would have sent **command-Q** and quit Mail with an unsaved
+  /// composer open. Silently, and only for people not typing on a US layout.
+  ///
+  /// So the map is built by asking `UCKeyTranslate` what each of the 128 codes
+  /// produces on the current input source, and inverting that. Cached, because
+  /// it costs 128 translations and the layout rarely changes — and keyed on the
+  /// input source id so switching layouts rebuilds it rather than serving a map
+  /// for the previous one.
+  /// `NSLock` rather than `OSAllocatedUnfairLock`, matching `HandleStore` above:
+  /// this file guards its own state and does not import `os` for it.
+  private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
+  private static let layoutLock = NSLock()
+
+  private static func layoutKeyCodes() -> [String: CGKeyCode] {
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return [:] }
+    let idPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+    let id =
+      idPointer.map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
+
+    layoutLock.lock()
+    let cached = layoutCache
+    layoutLock.unlock()
+    if let cached, cached.id == id { return cached.map }
+
+    var map: [String: CGKeyCode] = [:]
+    if let layoutPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) {
+      let data = Unmanaged<CFData>.fromOpaque(layoutPointer).takeUnretainedValue() as Data
+      data.withUnsafeBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+        for code in 0..<128 as Range<UInt16> {
+          // Reset per key. `UCKeyTranslate` carries dead-key state forward in
+          // this variable, and sharing it across the scan means a dead key
+          // swallows whatever is translated next: on the AZERTY layout this was
+          // written against, the circumflex key ate `i`, which then had no code
+          // and could not be typed. Each key is asked in isolation.
+          var deadKeys: UInt32 = 0
+          var chars = [UniChar](repeating: 0, count: 4)
+          var length = 0
+          let err = UCKeyTranslate(
+            layout, code, UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, 4, &length, &chars)
+          guard err == noErr, length > 0 else { continue }
+          let produced = String(utf16CodeUnits: chars, count: length).lowercased()
+          // First code wins. A character reachable from two keys — the numeric
+          // keypad — should resolve to the main one, which comes first.
+          if produced.count == 1, map[produced] == nil { map[produced] = CGKeyCode(code) }
+        }
+      }
+    }
+    layoutLock.lock()
+    layoutCache = (id: id, map: map)
+    layoutLock.unlock()
+    return map
+  }
+
+  /// The code for a named key, position-keyed first and layout-resolved second.
+  static func keyCode(for name: String) -> CGKeyCode? {
+    let wanted = name.lowercased()
+    if let fixed = keyCodes[wanted] { return fixed }
+    guard wanted.count == 1 else { return nil }
+    return layoutKeyCodes()[wanted]
+  }
+
+  /// Every key this driver can name right now, for a refusal that is worth
+  /// reading. Layout-dependent, which is the point.
+  static func knownKeys() -> [String] {
+    (Set(keyCodes.keys).union(layoutKeyCodes().keys)).sorted()
+  }
 }
 
 extension String {

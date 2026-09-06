@@ -56,7 +56,7 @@ struct DesktopCheck {
       data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
     guard
       let reply = DesktopServer.handle(
-        line, surface: surface, writesAllowed: writes, anyAppAllowed: anyApp),
+        line, surface: surface, writesAllowed: writes, scope: anyApp ? .any : .brokered),
       let data = reply.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
@@ -85,13 +85,15 @@ struct DesktopCheck {
   /// The verbs that can change the machine. Named once so the two directions of
   /// the gate below are asserted against the same list.
   static let driving = [
-    "apple_desktop_click", "apple_desktop_key", "apple_desktop_press",
-    "apple_desktop_raise_window", "apple_desktop_set_value", "apple_desktop_type",
+    "apple_desktop_activate", "apple_desktop_click", "apple_desktop_focus",
+    "apple_desktop_key", "apple_desktop_press", "apple_desktop_raise_window",
+    "apple_desktop_set_value", "apple_desktop_type",
   ]
 
   static let observing = [
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
-    "apple_desktop_list_apps", "apple_desktop_list_windows", "apple_desktop_ui_tree",
+    "apple_desktop_get_attribute", "apple_desktop_list_apps", "apple_desktop_list_windows",
+    "apple_desktop_ui_tree",
   ]
 
   static func main() {
@@ -109,7 +111,7 @@ struct DesktopCheck {
       "a notification draws no reply",
       DesktopServer.handle(
         #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, surface: surface,
-        writesAllowed: false, anyAppAllowed: false) == nil)
+        writesAllowed: false, scope: .brokered) == nil)
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
@@ -249,11 +251,75 @@ struct DesktopCheck {
 
     // A handle minted while the gate was on must not survive it being switched
     // off, or the gate is a suggestion rather than a bound.
+    // `activate` is the one driving verb that does not resolve a handle, so its
+    // refusal path is separate code and has to be exercised separately.
+    check(
+      "apple_desktop_activate is refused when called with writes off",
+      callText("apple_desktop_activate", ["bundleId": "com.apple.Maps"], writes: false).0
+        .contains("switched off"))
+    check(
+      "apple_desktop_focus is refused when called with writes off",
+      callText("apple_desktop_focus", ["handle": "e1"], writes: false).0.contains("switched off"))
+
+    // ─── keys resolve against the layout, not a US table ────────────────────
+    //
+    // The table shipped letter-free, so command-V could not be expressed. The
+    // obvious repair is a US map where `a` is 0 — and it is destructive on any
+    // layout that moves the letters. MEASURED on an AZERTY Mac: `a` resolves to
+    // 12, which in the US table is `q`, so "select all before pasting" would
+    // have sent COMMAND-Q and quit the app with an unsaved composer open.
+    //
+    // Asserted without naming a layout, because this must hold on all of them:
+    // every letter resolves to something, and the position-keyed names keep
+    // their fixed codes.
+    let alphabet = "abcdefghijklmnopqrstuvwxyz".map(String.init)
+    check(
+      "every letter resolves to a key on this layout",
+      alphabet.allSatisfy { AccessibilityDriver.keyCode(for: $0) != nil })
+    check(
+      "a key that is a position, not a character, keeps its fixed code",
+      AccessibilityDriver.keyCode(for: "return") == 36
+        && AccessibilityDriver.keyCode(for: "escape") == 53)
+    check(
+      "an unknown key name is still unknown",
+      AccessibilityDriver.keyCode(for: "zzz") == nil)
+    check(
+      "the refusal lists the keys this layout actually offers",
+      AccessibilityDriver.knownKeys().contains("v")
+        && AccessibilityDriver.knownKeys().contains("return"))
+
+    // `matched` answers for what was ASKED FOR, not for what was walked. It
+    // reported the whole tree for a filtered search — `returned: 1,
+    // matched: 136` — which reads as a truncated answer and is exactly the
+    // confusion the field exists to prevent. Checked without a grant by driving
+    // a refusal-free path: with Accessibility denied the call fails, so this
+    // only asserts when it answered.
+    let (findText, _) = callText(
+      "apple_desktop_find_elements", ["bundleId": "com.apple.Maps", "id": "AddButton"],
+      writes: false)
+    if let data = findText.data(using: .utf8),
+      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let returned = body["returned"] as? Int, let matched = body["matched"] as? Int
+    {
+      check(
+        "find_elements reports matched for the FILTERED set, not the whole walk",
+        matched == returned)
+    }
+
     check(
       "the driver binds scope to the handle, not only to the call",
-      AccessibilityDriver.inScope("com.apple.Maps", anyApp: false)
-        && !AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: false)
-        && AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: true))
+      AccessibilityDriver.inScope("com.apple.Maps", scope: .brokered)
+        && !AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .brokered)
+        && AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .any))
+
+    // The third reach, which no gate can widen. A lent scope names one bundle
+    // id and admits nothing else — not the brokered set it is drawn from, and
+    // not whatever `allowAnyApp` is set to, because it never consults it.
+    check(
+      "a lent scope admits its own app and nothing else",
+      AccessibilityDriver.inScope("com.apple.mail", scope: .only(["com.apple.mail"]))
+        && !AccessibilityDriver.inScope("com.apple.Maps", scope: .only(["com.apple.mail"]))
+        && !AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .only(["com.apple.mail"])))
 
     let (scopedApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: false)
     let (wideApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: true)

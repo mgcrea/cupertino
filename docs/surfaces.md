@@ -43,27 +43,37 @@ rather than about capability.
 
 ## State of play
 
-| Surface   | Lane verdict                                 | Status                                                 |
-| --------- | -------------------------------------------- | ------------------------------------------------------ |
-| Mail      | file lane required — 74 s search             | implemented                                            |
-| Notes     | Apple Events usable below ~5k notes          | implemented                                            |
-| Reminders | dictionary complete for the core model       | implemented                                            |
-| Messages  | **file lane mandatory** — no read API exists | implemented                                            |
-| Calendar  | **file lane mandatory** — 3.4 s range query  | implemented                                            |
-| Safari    | two lanes see disjoint things                | implemented                                            |
-| Maps      | **file lane only** — no `.sdef` exists       | implemented, and writes without an Apple Event         |
-| Contacts  | file-lane reads, 0 ms; store is plural       | implemented                                            |
-| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms  | implemented, in the app: the first with no npm package |
+| Surface   | Lane verdict                                     | Status                                                 |
+| --------- | ------------------------------------------------ | ------------------------------------------------------ |
+| Mail      | file lane required — 74 s search                 | implemented                                            |
+| Notes     | Apple Events usable below ~5k notes              | implemented                                            |
+| Reminders | dictionary complete for the core model           | implemented                                            |
+| Messages  | **file lane mandatory** — no read API exists     | implemented                                            |
+| Calendar  | **file lane mandatory** — 3.4 s range query      | implemented                                            |
+| Safari    | two lanes see disjoint things                    | implemented                                            |
+| Maps      | **file lane only** — no `.sdef` exists           | implemented, and writes without an Apple Event         |
+| Contacts  | file-lane reads, 0 ms; store is plural           | implemented                                            |
+| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms      | implemented, in the app: the first with no npm package |
+| Sound     | CoreAudio — 4 devices in 28 ms                   | implemented, in the app; two independent gates         |
+| Desktop   | **sixth lane** — native AX, 1.24 ms a round trip | implemented, in the app; reaches any running app       |
 
 Every probed surface now has a server, though **Screen no longer means a package** — it is served
 in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
 holds no `screencapture`. `surfaces.json` carries a `runtime` field for exactly that split, so the
 targets that mean "has a node package" (the bundler's entry map, the CI handshake, `make servers`)
-say so, while the bridge, the closed table and the settings UI take every surface. **Safari is the
-only read-only one**, and that is recorded
-as a decision rather than left as an omission: `surfaces.json` carries the reasoning, and its
-`tools.test.ts` asserts the tool list is IDENTICAL with writes enabled, so a mutating tool cannot
-appear there without that decision being taken again.
+say so, while the bridge, the closed table and the settings UI take every surface — which is now
+three of them, `screen`, `sound` and `desktop`, so "served in the app" is the rule for a capability
+rather than the exception `screen` looked like.
+
+**Safari was the only read-only one and no longer is**, which is worth recording rather than quietly
+editing: `supportsWrites` was false for v0.1 on the grounds that a write here navigates a real,
+visible browser. That was true of opening a URL and false of adding a Reading List item, which opens
+and loads nothing — so that became the write to build first. Clicking, typing and scrolling then went
+to the **extension** lane rather than to Apple Events, because Safari gates an extension one website
+at a time where an Automation grant is all-or-nothing and permanent. `surfaces.json` carries the
+reasoning in full. **Every node surface now supports writes**; what still varies is the lane each one
+writes through, and `packages/*/test/tools.test.ts` pins the registered set against `allowWrites` on
+each, so a mutating tool cannot appear without that decision being taken again.
 
 Messages was the other one until its send lane landed, and the shape it ended up with is worth
 keeping in view, because it is the one this table's "no read API exists" verdict seemed to rule out.
@@ -98,6 +108,15 @@ caller arbitrary execution using a permission granted for reading mail, which is
 closed table in `Surfaces.swift` exists to prevent. The rest of the non-scriptable set (Freeform,
 Journal, Books, Podcasts, Weather, News) is where the grant is the _only_ way in —
 the most differentiated value and the highest maintenance risk, since there is no fallback lane.
+
+**That last clause is retired — see [ax-lane.md](ax-lane.md).** The `desktop` surface IS a
+fallback lane for this set, and two of the six were measured through it on 2026-09-06: Weather
+answers its whole forecast in 0.121 s, and Home answers something the file lane was measured to
+be INCAPABLE of — `home.md` found the store carries a value range rather than a current value,
+so it "cannot say whether a light is on", and the accessibility tree carries a live `On`/`Off`
+per accessory. Journal, Books and Podcasts came back with small trees and are recorded as NOT
+MEASURED rather than thin, because an empty library produces an empty tree whatever the API
+does — this document's own "absent and EPERM are different findings", in its fourth costume.
 `group.com.apple.Journal` and a 33 MB `group.com.apple.freeform` both exist if revisited.
 
 **Passwords has left that set too, and did not survive its probe** — see [passwords.md](passwords.md).
@@ -179,7 +198,15 @@ Rejected as a READ lane, not as a lane. Maps has no scripting dictionary and no 
 registered on macOS, so Accessibility is the only way a write could ever reach it — and with a place
 card open it exposes named, pressable `Favorite` and `Add` controls. A write is a handful of round
 trips rather than a walk of the tree, so the ~14 s that disqualifies it for reading does not apply.
-That lane is open and unbuilt; [maps.md](maps.md) carries the measurement and the costs.
+
+**Both halves of that paragraph have since been overtaken, and in opposite directions — see
+[desktop.md](desktop.md).** The ~14 s was the price of `osascript` + System Events, not of the API:
+called natively the same card walks in **0.177 s**, so the read lane was never disqualified on cost
+and this document's own figure was measuring the transport. The write lane is no longer "open and
+unbuilt" either — it is built, and building it falsified four things `maps.md` had recorded from
+read-only dumps of the same tree. The lane now ships as the `desktop` surface rather than inside
+`packages/maps`, because the Accessibility grant lands on the responsible GUI ancestor and so cannot
+belong to an npm package.
 
 ## What a new surface costs
 

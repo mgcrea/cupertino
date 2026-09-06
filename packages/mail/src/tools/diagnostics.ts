@@ -30,6 +30,7 @@ export const buildDiagnostics = async (
   const messageFile = await client.probeMessageFile();
   // Cheap, and the two permissions nothing else in this report would reveal.
   const composer = await client.composerAccess();
+  const axReach = await client.composerAxReach();
 
   let accounts: unknown[] = [];
   let accountsError: string | null = null;
@@ -99,7 +100,32 @@ export const buildDiagnostics = async (
       // opposite — so when they conflict, this is the one to believe.
       composerUiRead: composer.uiRead,
       ...(composer.windows ? { composerWindowsSeen: composer.windows } : {}),
-      ...(composer.uiRead === "granted" && composer.systemEvents === "granted"
+      // WHICH lane fills a composer, which decides whether the two grants above
+      // are both needed. `accessibility` reaches Mail's composer through
+      // Cupertino's own native driver and needs Accessibility alone;
+      // `system-events` is the fallback for a server nobody is hosting — a
+      // package installed from npm and run by hand — and needs both.
+      composerLane: client.composerLane,
+      // The functional read on the native lane, and the same rule as
+      // `composerUiRead`: `composerLane` says which lane is configured, which is
+      // a claim about the environment. This is whether it can actually see
+      // Mail's windows.
+      ...(axReach
+        ? {
+            composerAxRead: axReach.ok ? "granted" : "denied",
+            ...(axReach.windows ? { composerAxWindowsSeen: axReach.windows } : {}),
+          }
+        : {}),
+      ...(client.composerLane === "accessibility"
+        ? {
+            composerLaneNote:
+              "This server is hosted by Cupertino, so a composer is driven through the app's " +
+              "own Accessibility driver. Automation to System Events is NOT required for it, " +
+              "and `automationSystemEvents` above can be denied without affecting a reply.",
+          }
+        : {}),
+      ...((composer.uiRead === "granted" && composer.systemEvents === "granted") ||
+      client.composerLane === "accessibility"
         ? {}
         : {
             composerNote:
