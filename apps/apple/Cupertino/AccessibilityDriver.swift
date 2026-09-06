@@ -155,11 +155,20 @@ enum AccessibilityDriver {
   /// Every verb that takes a handle goes through here rather than touching the
   /// store, so a new verb cannot forget the check.
   private static func resolve(_ handle: String, scope: Scope) throws -> AXUIElement {
+    try resolveEntry(handle, scope: scope).element
+  }
+
+  /// The same check, keeping the bundle id. `focus` needs it to ask the
+  /// APPLICATION which element holds the keyboard, which is the only honest
+  /// answer available — see the note there.
+  private static func resolveEntry(
+    _ handle: String, scope: Scope
+  ) throws -> (element: AXUIElement, bundleId: String) {
     guard let entry = handles.get(handle) else { throw Failure.staleHandle(handle) }
     guard inScope(entry.bundleId, scope: scope) else {
       throw Failure.outOfScope(entry.bundleId)
     }
-    return entry.element
+    return entry
   }
 
   // ─── raw reads ─────────────────────────────────────────────────────────────
@@ -579,27 +588,73 @@ enum AccessibilityDriver {
   /// Read back for the same reason `setValue` is: settable is a claim about the
   /// API, not about the app. Returns whether the focus took, and never reports
   /// success on the strength of the write having been accepted.
+  ///
+  /// ## Which read back, though — and the bug that answered it
+  ///
+  /// Asking the element `AXFocused` is the obvious check and it is WRONG on the
+  /// one control this verb was written for. MEASURED on Mail's composer web
+  /// area, macOS 26.6, French layout: after a set that returns `.success`, the
+  /// element's own `AXFocused` reads **false** for as long as it is polled — 24
+  /// samples over 1.2 s, never flipping — while the application's
+  /// `AXFocusedUIElement` is **that very element from the first read, +0 ms**.
+  /// A command-V posted in that state lands in the composer.
+  ///
+  /// So the element's own flag is not slow, it is untrue, in the same family as
+  /// the trap this file already records: reports itself settable and then does
+  /// nothing. Here it accepts the focus, holds it, takes the keystrokes, and
+  /// still answers no.
+  ///
+  /// The cost of believing it was not theoretical. `MailAxLane.paste` refuses to
+  /// press command-V unless this returns true, so every native reply and forward
+  /// came back `bodyVerified: false` — "Nothing landed in it" — while refusing
+  /// to paste a body that would have gone in. The tool was wrong in the safe
+  /// direction, which is why it survived a release: it under-reported a success
+  /// rather than inventing one.
+  ///
+  /// The application's answer is authoritative because it is the same one the
+  /// window server routes keystrokes by, so it cannot disagree with where a
+  /// keystroke will land. The element's flag is still consulted as a fallback,
+  /// for the case where the app element cannot be reached at all.
   static func focus(handle: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, scope: scope)
+    let entry = try resolveEntry(handle, scope: scope)
+    let target = entry.element
     announce(handle)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
-      element, kAXFocusedAttribute as CFString, &settable)
+      target, kAXFocusedAttribute as CFString, &settable)
     if let problem = failure(for: check, doing: "Checking focus on '\(handle)'") { throw problem }
     guard settable.boolValue else {
       throw Failure.refused("That element cannot take the keyboard focus.")
     }
 
     let err = AXUIElementSetAttributeValue(
-      element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+      target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     if let problem = failure(for: err, doing: "Focusing '\(handle)'") { throw problem }
 
+    if holdsFocus(target, in: entry.bundleId) { return true }
+
     var raw: AnyObject?
-    let read = AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &raw)
+    let read = AXUIElementCopyAttributeValue(target, kAXFocusedAttribute as CFString, &raw)
     if read != .success { return false }
     return (raw as? Bool) ?? false
+  }
+
+  /// Does the application say this element is the one holding the keyboard?
+  ///
+  /// `CFEqual` rather than `==`: two `AXUIElement`s naming the same control are
+  /// distinct objects, and reference equality answers no for a match.
+  ///
+  /// False when the application cannot be reached, which sends `focus` to the
+  /// element's own flag rather than reporting a failure it did not establish.
+  private static func holdsFocus(_ target: AXUIElement, in bundleId: String) -> Bool {
+    guard let running = try? app(forBundleId: bundleId) else { return false }
+    var raw: AnyObject?
+    let read = AXUIElementCopyAttributeValue(
+      element(for: running.processIdentifier), kAXFocusedUIElementAttribute as CFString, &raw)
+    guard read == .success, let focused = raw else { return false }
+    return CFEqual(focused, target)
   }
 
   /// Make an application frontmost.
