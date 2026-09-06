@@ -417,13 +417,48 @@ struct UnitCheck {
     // before it. Verified against the right head it is intact; against genesis
     // it is a broken link on its first record, which is what stops a dropped
     // segment from passing as a complete log.
-    let second = chain(3, from: clean[4].hash).map { AuditChain.line($0) }
+    let secondRecords = chain(3, from: clean[4].hash)
+    let second = secondRecords.map { AuditChain.line($0) }
     check(
       "a segment verifies from the previous head",
       AuditChain.verify(lines: second, from: clean[4].hash).isIntact)
     check(
-      "and fails from genesis",
+      "verified against the wrong head, it is a broken link on its first record",
       AuditChain.verify(lines: second).failures.contains(.brokenLink(seq: 1)))
+
+    // The contract the header promises: dropping the oldest segment is a
+    // DECLARED truncation — "intact from segment 4" — not corruption. Held to
+    // genesis, the first surviving record is always a broken link, so for years
+    // a pruned log read as tampered with.
+    let whole = AuditChain.verify(segments: [
+      AuditChain.Segment(number: 1, lines: cleanLines),
+      AuditChain.Segment(number: 2, lines: second),
+    ])
+    check("a whole log verifies from genesis", whole.isIntact)
+    check("and says so", whole.startsAtSegment == 1)
+    check("counting every record across the segments", whole.records == 8)
+    check("and ending on the last record's hash", whole.head == secondRecords[2].hash)
+
+    let pruned = AuditChain.verify(segments: [AuditChain.Segment(number: 2, lines: second)])
+    check("after retention drops segment 1, the survivor is intact", pruned.isIntact)
+    check("and declares where the guarantee begins", pruned.startsAtSegment == 2)
+    check("counting only what survives", pruned.records == 3)
+    check(
+      "the seed is the survivor's own opening link",
+      AuditChain.openingLink(of: second) == clean[4].hash)
+
+    // Two things the seeding must NOT swallow.
+    check(
+      "a file numbered 1 is still held to genesis",
+      AuditChain.verify(segments: [AuditChain.Segment(number: 1, lines: second)])
+        .failures.contains(.brokenLink(seq: 1)))
+    let third = chain(2, from: secondRecords[2].hash).map { AuditChain.line($0) }
+    let gapped = AuditChain.verify(segments: [
+      AuditChain.Segment(number: 1, lines: cleanLines),
+      AuditChain.Segment(number: 3, lines: third),
+    ])
+    check("a segment missing from the MIDDLE is still a break", !gapped.isIntact)
+    check("and is not excused as a truncation", gapped.startsAtSegment == 1)
 
     print("\nAudit chain: the export manifest")
 
@@ -450,6 +485,15 @@ struct UnitCheck {
     check("it carries the record count", decoded["records"] as? Int == 8)
     check("and the chain head", decoded["head"] as? String == "c17b")
     check("and every segment", (decoded["segments"] as? [Any])?.count == 2)
+    // Without this a reader cannot tell a whole log from a pruned one: both
+    // say "intact":true.
+    check("it declares where the chain starts", decoded["startsAtSegment"] as? Int == 1)
+    check(
+      "and says so when retention has cut into it",
+      AuditChain.manifest(
+        app: "Cupertino 1.0.0", exportedAt: Date(timeIntervalSince1970: 1_756_000_000),
+        records: 8, segments: described, head: "c17b", intact: true, startsAtSegment: 4
+      ).contains("\"startsAtSegment\":4"))
     check("with each segment's digest", card.contains("\"sha256\":\"aa\""))
     // Pinned to the exact instant, not just the shape: a formatter that
     // followed the machine's calendar or zone would write a manifest that

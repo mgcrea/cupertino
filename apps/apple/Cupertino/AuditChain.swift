@@ -195,9 +195,13 @@ enum AuditChain {
   /// cannot detect its own truncation, because lopping off the tail leaves a
   /// shorter, perfectly valid chain. The count is what makes a short export
   /// visible.
+  /// `startsAtSegment` qualifies `intact`: 1 means the chain was checked from
+  /// genesis, and anything higher means retention dropped earlier segments and
+  /// what follows is intact from there. Without it a reader cannot tell a whole
+  /// log from a pruned one, and both say `"intact":true`.
   static func manifest(
     app: String, exportedAt: Date, records: Int, segments: [SegmentEntry], head: String,
-    intact: Bool
+    intact: Bool, startsAtSegment: Int = 1
   ) -> String {
     let described = segments.map {
       "{\"name\":\(quote($0.name)),\"records\":\($0.records),\"sha256\":\(quote($0.sha256))}"
@@ -207,6 +211,7 @@ enum AuditChain {
       + "\"exportedAt\":\(quote(clock.string(from: exportedAt))),"
       + "\"records\":\(records),"
       + "\"segments\":[\(described.joined(separator: ","))],"
+      + "\"startsAtSegment\":\(startsAtSegment),"
       + "\"head\":\(quote(head)),\"intact\":\(intact)}"
   }
 
@@ -276,5 +281,78 @@ enum AuditChain {
       report.head = hash
     }
     return report
+  }
+
+  // MARK: - Verifying a log that retention has cut into
+
+  /// One segment file's contents, with the number out of its name.
+  struct Segment {
+    var number: Int
+    var lines: [String]
+  }
+
+  /// A whole log's verdict, across however many segments survive.
+  struct Verification: Equatable {
+    var reports: [Report] = []
+    /// 1 when the chain was checked from genesis. Higher when retention dropped
+    /// what came before, which is a DECLARED truncation rather than damage.
+    var startsAtSegment = 1
+    var records = 0
+    var failures: [Failure] = []
+    var head = genesis
+    var isIntact: Bool { failures.isEmpty }
+  }
+
+  /// The link a segment opens with — the hash the segment before it ended on.
+  static func openingLink(of lines: [String]) -> String? {
+    for raw in lines {
+      let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      if text.isEmpty { continue }
+      guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)),
+        let row = object as? [String: Any]
+      else { return nil }
+      return row["prev"] as? String
+    }
+    return nil
+  }
+
+  /// Verify a log whose oldest segments may have been deleted by retention.
+  ///
+  /// Append-only and retention are in direct conflict, and segments are how this
+  /// log holds both: dropping the oldest file is meant to read as "intact from
+  /// segment 4", not as corruption. That only works if the verifier stops
+  /// insisting the surviving chain reach back to genesis — every record after a
+  /// prune carries a `prev` the deleted file ended on, so held to genesis the
+  /// first survivor is always a broken link.
+  ///
+  /// So when the oldest surviving file is not segment 1, its own opening link
+  /// seeds the chain. That trusts a record about a file that is gone, which
+  /// gives away nothing: this chain never claimed to hold against whoever
+  /// controls the disk — it detects edits and gaps, and a reader is told where
+  /// the guarantee begins.
+  ///
+  /// Two things it deliberately does NOT accept. A file numbered 1 is still held
+  /// to genesis, so a mislabelled first segment is a failure rather than a
+  /// truncation. And a gap in the middle — 1 and 3 surviving, 2 deleted — is
+  /// still a broken link on 3, because the head carried forward is segment 1's.
+  static func verify(segments: [Segment]) -> Verification {
+    var out = Verification()
+    guard let first = segments.first else { return out }
+
+    var head = genesis
+    if first.number > 1, let opening = openingLink(of: first.lines) {
+      head = opening
+      out.startsAtSegment = first.number
+    }
+
+    for segment in segments {
+      let report = verify(lines: segment.lines, from: head)
+      out.reports.append(report)
+      out.records += report.records
+      out.failures.append(contentsOf: report.failures)
+      head = report.head
+    }
+    out.head = head
+    return out
   }
 }

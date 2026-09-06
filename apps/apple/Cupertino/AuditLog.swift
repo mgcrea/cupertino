@@ -93,6 +93,8 @@ final class AuditLog {
   /// Writes only. Serial, so bytes land in the order the main actor sealed
   /// them; `.utility` because a log line is never what a user is waiting for.
   private let writer = DispatchQueue(label: "io.mgcrea.cupertino.audit", qos: .utility)
+  /// Touched only on `writer`. See `SegmentSink`.
+  private let sink = SegmentSink()
 
   /// Call ids that have a `seq` on file, so a result can name the call it
   /// answers. Bounded: a reply that never comes would otherwise keep its entry
@@ -154,7 +156,8 @@ final class AuditLog {
     let bytes = Data(line.utf8)
     segmentSize += bytes.count
     let url = Self.url(for: segment)
-    writer.async { Self.write(bytes, to: url) }
+    let sink = self.sink
+    writer.async { sink.append(bytes, to: url) }
 
     // Rotate AFTER the write is queued, so the record that crossed the line is
     // the last one in the segment it was sealed against rather than the first
@@ -162,6 +165,10 @@ final class AuditLog {
     if segmentSize >= Self.segmentBytes {
       segment += 1
       segmentSize = 0
+      // Release the descriptor as soon as the last record has landed. The url
+      // comparison in `append` would catch it lazily anyway; this is so a log
+      // that goes quiet after a rotation does not hold the old file open.
+      writer.async { sink.close() }
       prune()
     }
     return seq
@@ -200,21 +207,68 @@ final class AuditLog {
     }
   }
 
-  /// Append, creating the file 0600 if it is not there.
+  /// The open segment file, and the one place writes to it can fail.
   ///
-  /// `FileHandle` rather than the `.atomic` idiom the JSON stores use, and that
-  /// is the point: `.atomic` replaces the file, which would rewrite history and
-  /// silently reset the mode to 0644. An append-only log is appended to.
-  nonisolated private static func write(_ bytes: Data, to url: URL) {
-    let path = url.path
-    if !FileManager.default.fileExists(atPath: path) {
-      FileManager.default.createFile(
-        atPath: path, contents: nil, attributes: [.posixPermissions: 0o600])
+  /// `@unchecked Sendable` on the same terms as `HandleStore`: the invariant is
+  /// stated rather than shrugged at — every method here runs on `writer` and
+  /// nowhere else, which is why it needs no lock.
+  ///
+  /// One handle per segment rather than one per record. `FileHandle` rather than
+  /// the `.atomic` idiom the JSON stores use, and that is the point: `.atomic`
+  /// replaces the file, which would rewrite history and silently reset the mode
+  /// to 0644. An append-only log is appended to.
+  ///
+  /// A failed write used to be `try?`, so a full disk advanced `seq` and `head`
+  /// in memory while nothing reached the file. The gap then surfaced later as
+  /// "a record before N was removed" — the log accusing the disk of tampering
+  /// when it had simply been unable to write. It is reported once per segment,
+  /// because a disk that is full stays full and one row per call would be its
+  /// own denial of service.
+  final class SegmentSink: @unchecked Sendable {
+    private var handle: FileHandle?
+    private var url: URL?
+    private var reported = false
+
+    func append(_ bytes: Data, to target: URL) {
+      if url != target { close() }
+      if handle == nil {
+        let path = target.path
+        if !FileManager.default.fileExists(atPath: path) {
+          FileManager.default.createFile(
+            atPath: path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        guard let opened = try? FileHandle(forWritingTo: target) else {
+          report(target, "could not open it for writing")
+          return
+        }
+        _ = try? opened.seekToEnd()
+        handle = opened
+        url = target
+        reported = false
+      }
+      do {
+        try handle?.write(contentsOf: bytes)
+      } catch {
+        report(target, error.localizedDescription)
+        // Drop the handle so the next record retries the open rather than
+        // writing into one the file system has already given up on.
+        close()
+      }
     }
-    guard let handle = try? FileHandle(forWritingTo: url) else { return }
-    defer { try? handle.close() }
-    _ = try? handle.seekToEnd()
-    try? handle.write(contentsOf: bytes)
+
+    func close() {
+      try? handle?.close()
+      handle = nil
+      url = nil
+    }
+
+    private func report(_ target: URL, _ reason: String) {
+      guard !reported else { return }
+      reported = true
+      hostLog(
+        "cupertino", .error,
+        "audit: could not write \(target.lastPathComponent): \(reason)")
+    }
   }
 
   /// Pick up where the last run left off.
@@ -226,6 +280,12 @@ final class AuditLog {
   private func open() {
     guard !opened else { return }
     opened = true
+    // Retention used to run only on rotation, so the age bound never bit on a
+    // Mac that logs a few hundred calls a day: 4 MB is a long time at that rate,
+    // and content sat on disk indefinitely while the setting said 30 days.
+    // Once per launch, on the way in — `prune` never touches the segment being
+    // written, which is the only file the writer queue appends to.
+    defer { prune() }
     try? FileManager.default.createDirectory(
       at: Self.directory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
@@ -304,6 +364,26 @@ final class AuditLog {
     var records = 0
     var bytes = 0
     var report = AuditChain.Report()
+    /// Where the chain's guarantee begins. 1 is a whole log; higher means
+    /// retention dropped the segments before it, which is a declared truncation
+    /// rather than a broken chain.
+    var startsAtSegment = 1
+  }
+
+  /// Every segment on disk, oldest first, with its number and contents.
+  nonisolated private static func load() -> [(url: URL, number: Int, text: String)] {
+    segments().compactMap { url in
+      guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+      return (url, number(of: url), text)
+    }
+  }
+
+  nonisolated private static func chainSegments(
+    _ loaded: [(url: URL, number: Int, text: String)]
+  ) -> [AuditChain.Segment] {
+    loaded.map {
+      AuditChain.Segment(number: $0.number, lines: $0.text.split(separator: "\n").map(String.init))
+    }
   }
 
   /// Verify every segment in order, carrying the head across.
@@ -312,24 +392,17 @@ final class AuditLog {
   /// when somebody presses a button, and a verifier racing the writer would
   /// report a torn last line as tampering.
   static func verifyAll() -> Summary {
+    let loaded = load()
+    let verification = AuditChain.verify(segments: chainSegments(loaded))
     var summary = Summary()
-    var head = AuditChain.genesis
-    for url in segments() {
-      guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-      let report = verify(text: text, from: head)
-      summary.segments += 1
-      summary.records += report.records
-      summary.bytes += size(of: url)
-      summary.report.failures += report.failures
-      head = report.head
-    }
-    summary.report.records = summary.records
-    summary.report.head = head
+    summary.segments = loaded.count
+    summary.bytes = loaded.reduce(0) { $0 + size(of: $1.url) }
+    summary.records = verification.records
+    summary.report.failures = verification.failures
+    summary.report.records = verification.records
+    summary.report.head = verification.head
+    summary.startsAtSegment = verification.startsAtSegment
     return summary
-  }
-
-  static func verify(text: String, from: String) -> AuditChain.Report {
-    AuditChain.verify(lines: text.split(separator: "\n").map(String.init), from: from)
   }
 
   // MARK: - Export
@@ -357,32 +430,33 @@ final class AuditLog {
       at: folder, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
 
-    var head = AuditChain.genesis
+    let loaded = Self.load()
+    let verification = AuditChain.verify(segments: Self.chainSegments(loaded))
     var described: [AuditChain.SegmentEntry] = []
     var summary = Summary()
 
-    for url in Self.segments() {
-      guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-      let report = Self.verify(text: text, from: head)
+    for (offset, segment) in loaded.enumerated() {
+      let url = segment.url
       try? FileManager.default.removeItem(at: folder.appendingPathComponent(url.lastPathComponent))
       try FileManager.default.copyItem(
         at: url, to: folder.appendingPathComponent(url.lastPathComponent))
       described.append(
         AuditChain.SegmentEntry(
-          name: url.lastPathComponent, records: report.records,
-          sha256: AuditChain.digest(text)))
-      head = report.head
+          name: url.lastPathComponent, records: verification.reports[offset].records,
+          sha256: AuditChain.digest(segment.text)))
       summary.segments += 1
-      summary.records += report.records
       summary.bytes += Self.size(of: url)
-      summary.report.failures += report.failures
     }
-    summary.report.records = summary.records
-    summary.report.head = head
+    summary.records = verification.records
+    summary.report.failures = verification.failures
+    summary.report.records = verification.records
+    summary.report.head = verification.head
+    summary.startsAtSegment = verification.startsAtSegment
 
     let manifest = AuditChain.manifest(
       app: "Cupertino \(AppInfo.version)", exportedAt: Date(), records: summary.records,
-      segments: described, head: head, intact: summary.report.isIntact)
+      segments: described, head: verification.head, intact: summary.report.isIntact,
+      startsAtSegment: verification.startsAtSegment)
     let bytes = Data(manifest.utf8)
     try bytes.write(to: folder.appendingPathComponent("manifest.json"))
 
@@ -397,6 +471,10 @@ final class AuditLog {
   }
 
   func clear() {
+    // Before the files go, and synchronously: a record already queued would
+    // otherwise land after the deletion and recreate audit-0001.jsonl holding
+    // one orphaned record from the log that was just cleared.
+    writer.sync { [sink] in sink.close() }
     for url in Self.segments() { try? FileManager.default.removeItem(at: url) }
     seq = 0
     head = AuditChain.genesis

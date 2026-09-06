@@ -854,7 +854,13 @@ private struct AuditPane: View {
             summary.report.isIntact
               ? "\(summary.records) records across \(summary.segments) "
                 + "segment\(summary.segments == 1 ? "" : "s"), \(bytes(summary.bytes)). "
-                + "The chain verifies."
+                + (summary.startsAtSegment > 1
+                  // Retention dropping the oldest segments is the designed
+                  // behaviour, not damage — but "the chain verifies" alone
+                  // would overclaim, since it verifies only what is left.
+                  ? "The chain verifies from segment \(summary.startsAtSegment); retention "
+                    + "dropped what came before it."
+                  : "The chain verifies.")
               : "\(summary.records) records, and the chain does NOT verify: "
                 + describe(summary.report.failures)
           )
