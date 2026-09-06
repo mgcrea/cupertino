@@ -39,6 +39,12 @@ most worth reading is the moment everything else is denied. The rule that keeps 
 contain nothing only a probe could know. No account names, no counts, no permission verdicts —
 those belong to the other two resources, which are allowed to fail.
 
+Desktop's guide is the one that varies, and only on the two switches: writes and reach. Both are
+settings this app owns, readable with every grant denied, so the rule above still holds — the guide
+never reports what a probe found, only what the caller is allowed to ask for. A paragraph about
+driving an iOS Simulator, which is not a brokered surface, would otherwise describe something the
+default scope refuses. See [`simulator.md`](simulator.md).
+
 **A failed read returns data, not a protocol error.** A tool that throws still returns its text
 under `isError`. A resource read that throws becomes a JSON-RPC error and keeps nothing, which
 would delete the diagnostics report at the one moment anyone wants it. So reads are wrapped: a

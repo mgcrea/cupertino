@@ -8,6 +8,10 @@ the macOS analogue of what WebDriverAgent gives `mcp-ios-device`. Measured on **
 elements carry a stable name, and two of the three documents that closed this lane were measuring
 something else.
 
+The sentence above turns out to run both ways: [`simulator.md`](simulator.md) measures what this
+surface reaches _inside_ an iOS Simulator window, which is an iOS app's own accessibility tree
+bridged into the Mac's.
+
 ## The finding: every rejection measured the transport, not the API
 
 This repo closed the Accessibility lane three times, on two different grounds:

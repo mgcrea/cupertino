@@ -354,11 +354,11 @@ after the confusing answer instead of before it.
 
 So each server also exposes **resources**:
 
-| URI                                 | What                                                               |
-| ----------------------------------- | ------------------------------------------------------------------ |
-| `cupertino://<surface>/guide`       | the operating manual — static, so it reads with every grant denied |
-| `cupertino://<surface>/diagnostics` | the live capability and permission report                          |
-| `cupertino://<surface>/inventory`   | accounts and mailboxes / folders / lists / calendars               |
+| URI                                 | What                                                 |
+| ----------------------------------- | ---------------------------------------------------- |
+| `cupertino://<surface>/guide`       | the operating manual — reads with every grant denied |
+| `cupertino://<surface>/diagnostics` | the live capability and permission report            |
+| `cupertino://<surface>/inventory`   | accounts and mailboxes / folders / lists / calendars |
 
 and **workflow prompts**, which hold the constraints a tool description cannot: not "what this call
 does" but what order the calls go in. `apple_mail_triage`, `apple_mail_find_thread`,
@@ -498,6 +498,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/calendar.md](docs/calendar.md)                           | Apple Calendar phase-0 measurements           |
 | [docs/safari.md](docs/safari.md)                               | Safari phase-0 measurements                   |
 | [docs/maps.md](docs/maps.md)                                   | Maps phase-0 measurements                     |
+| [docs/simulator.md](docs/simulator.md)                         | driving an iOS Simulator through `desktop`    |
 | [docs/envelope-index.md](docs/envelope-index.md)               | Mail's observed `Envelope Index` schema       |
 | [docs/prompts-and-resources.md](docs/prompts-and-resources.md) | what the servers expose beyond tools          |
 | [docs/verify.md](docs/verify.md)                               | checking the Mail server against a real index |

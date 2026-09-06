@@ -781,6 +781,28 @@ enum DesktopServer {
     guard uri == "cupertino://desktop/guide" else {
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
     }
+    // Only worth saying when the reach allows it: the Simulator is not a brokered
+    // surface, so under the default scope this paragraph would describe something
+    // the caller would be refused. See docs/simulator.md for the measurements.
+    //
+    // The blank lines belong to the paragraph rather than to the guide around it, so
+    // that leaving it out closes the gap instead of leaving a hole where it was.
+    let simulator =
+      scope == .any
+      ? """
+
+      ## An iOS Simulator is a window too
+
+      Simulator.app bridges the simulated device's accessibility tree into this one, so an
+      iOS app's own controls are readable and pressable here — no WebDriverAgent and no
+      runner process. The device screen is the `AXGroup` whose size equals the device's
+      point size, and frames are Mac-screen absolute: subtract that group's origin to get
+      the iOS point space. It reaches less than WebDriverAgent does — a tab bar can arrive
+      as an empty container — so it is a second opinion and a no-setup lane, not a
+      replacement.
+
+      """
+      : ""
     let text = """
       # Driving macOS applications
 
@@ -812,7 +834,7 @@ enum DesktopServer {
       Omitting `window` walks every one of them, which is usually what you want.
       Asking for window 0 is how a search for a control that lives in a popover finds
       nothing at all.
-
+      \(simulator)
       ## Handles go stale
 
       They point at elements in the window as it was. If a press returns a stale-handle

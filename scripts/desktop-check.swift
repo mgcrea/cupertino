@@ -212,9 +212,10 @@ struct DesktopCheck {
           ($0["uri"] as? String)?.hasPrefix("cupertino://desktop/") == true
         })
 
-    func guideText(writes: Bool) -> String {
+    func guideText(writes: Bool, anyApp: Bool = false) -> String {
       let reply = ask(
-        "resources/read", params: ["uri": "cupertino://desktop/guide"], writes: writes)
+        "resources/read", params: ["uri": "cupertino://desktop/guide"], writes: writes,
+        anyApp: anyApp)
       let contents = (reply?["result"] as? [String: Any])?["contents"] as? [[String: Any]] ?? []
       return contents.first?["text"] as? String ?? ""
     }
@@ -230,6 +231,16 @@ struct DesktopCheck {
     check(
       "the guide says writes are on when they are",
       guideText(writes: true).contains("Writes are ON"))
+    // The Simulator is not a brokered surface, so the paragraph about it describes
+    // something the default scope would refuse. It is worth saying only when the
+    // reach is there to act on it.
+    check(
+      "the guide mentions the Simulator only when the reach is any application",
+      guideText(writes: false, anyApp: true).contains("iOS Simulator")
+        && !guideText(writes: false, anyApp: false).contains("iOS Simulator"))
+    check(
+      "leaving the Simulator paragraph out closes the gap rather than leaving a hole",
+      !guideText(writes: false, anyApp: false).contains("\n\n\n"))
     check(
       "an unknown resource is a JSON-RPC error",
       ((ask("resources/read", params: ["uri": "cupertino://desktop/nope"])?["error"]
