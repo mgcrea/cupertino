@@ -164,7 +164,12 @@ export class EnvelopeIndex {
    * as 0 rows against 51,128 real messages.
    */
   #mailboxPredicate(rowids: number[] | undefined, params: unknown[]): string {
-    if (!rowids?.length) return "1=1";
+    // `undefined` means "no mailbox filter was asked for". An EMPTY ARRAY means
+    // one was asked for and matched nothing, which must narrow to nothing —
+    // `!rowids?.length` collapsed the two, and a scope that matched no rowid
+    // silently became a search of the whole archive.
+    if (rowids === undefined) return "1=1";
+    if (rowids.length === 0) return "1=0";
     const placeholders = rowids.map(() => "?").join(",");
     if (!this.caps.has.labels) {
       params.push(...rowids);
@@ -400,7 +405,14 @@ export class EnvelopeIndex {
     };
   }
 
-  count(filters: Omit<SearchFilters, "limit" | "offset">): { total: number; unread: number } {
+  /**
+   * Narrowed to the one filter this actually applies.
+   *
+   * It used to take the whole filter set, which promised a query/sender/date
+   * scope it silently dropped. No caller passed one, so the lie was free —
+   * until somebody added a caller that did.
+   */
+  count(filters: Pick<SearchFilters, "mailboxRowids">): { total: number; unread: number } {
     const params: unknown[] = [];
     const predicate = this.#mailboxPredicate(filters.mailboxRowids, params);
     const row = this.#db

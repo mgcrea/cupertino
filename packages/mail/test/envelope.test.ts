@@ -286,6 +286,32 @@ describe("the Gmail labels predicate", () => {
     expect(index.count({ mailboxRowids: [1] })).toEqual({ total: 3, unread: 1 });
     index.close();
   });
+
+  /**
+   * An empty scope narrows to NOTHING. It used to read the same as "no scope
+   * asked for", so a mailbox filter that resolved to no index rowid widened
+   * the query to the whole archive — a search of one mailbox answering with
+   * other accounts' mail, and a per-mailbox count reporting the archive total.
+   */
+  it("returns nothing for an empty mailbox scope, rather than everything", () => {
+    const index = open();
+    expect(index.search({ mailboxRowids: [], limit: 50, offset: 0 })).toEqual([]);
+    expect(index.count({ mailboxRowids: [] })).toEqual({ total: 0, unread: 0 });
+    index.close();
+  });
+
+  it("keeps meaning 'no filter' when the scope is absent entirely", () => {
+    const index = open();
+    expect(index.search({ limit: 50, offset: 0 }).length).toBeGreaterThan(0);
+    expect(index.count({}).total).toBeGreaterThan(0);
+    index.close();
+  });
+
+  it("narrows an aggregate the same way", () => {
+    const index = open();
+    expect(index.groupBy({ mailboxRowids: [], limit: 25 }, "sender").totalRows).toBe(0);
+    index.close();
+  });
 });
 
 describe("threads", () => {

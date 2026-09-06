@@ -209,6 +209,24 @@ describe("apple_mail_query over MCP", () => {
     expect(body.truncated).toBe(true);
   });
 
+  /**
+   * The end of the widening bug, through a real tool call. A mailbox that
+   * resolves to no index rowid used to answer with the WHOLE ARCHIVE — the
+   * caller asked to narrow and got the opposite, with nothing in the result
+   * saying so.
+   */
+  it("refuses a mailbox the index does not know, rather than widening", async () => {
+    const result = await (
+      await connect({})
+    ).callTool({
+      name: "apple_mail_query",
+      arguments: { mailbox: "NoSuchMailbox", account: "iCloud" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    expect(text).toMatch(/NoSuchMailbox/);
+  });
+
   it("projects rows down to the named fields", async () => {
     const body = await call(await connect({}), { select: ["ref", "subject"] });
     expect(body.messages.length).toBeGreaterThan(0);

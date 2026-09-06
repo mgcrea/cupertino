@@ -455,6 +455,29 @@ export class AppleMailClient {
       if (wanted && entry.mailbox.toLowerCase() !== wanted.toLowerCase()) continue;
       rowids.push(rowid);
     }
+
+    // An empty result is a REFUSAL, never a filter that quietly disappears.
+    //
+    // `#mailboxPredicate` used to read `[]` the same way it reads `undefined`,
+    // so a scope that matched no index rowid widened the query to the whole
+    // archive: a search of one mailbox returned other accounts' mail, and
+    // count_messages reported the archive total for a single mailbox. The
+    // trigger is ordinary — a `local://` mailbox the URL ladder could not
+    // resolve, or an account whose rows have not been indexed yet.
+    if (rowids.length === 0) {
+      const known = [...lookup.values()]
+        .filter((e) => !account || e.accountUuid === account.id)
+        .map((e) => e.mailbox);
+      const unique = [...new Set(known)].sort();
+      throw new PreconditionError(
+        `No mailbox matching ${JSON.stringify(opts.mailbox ?? "")}` +
+          `${account ? ` in account ${JSON.stringify(account.name)}` : ""} is present in ` +
+          `Mail's search index.` +
+          (unique.length
+            ? ` Indexed there: ${unique.slice(0, 20).join(", ")}.`
+            : " That account has no indexed mailboxes at all."),
+      );
+    }
     return rowids;
   }
 
