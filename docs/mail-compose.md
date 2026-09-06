@@ -37,7 +37,13 @@ in the quietest possible way:
 **Apple documents it as a no-op.** It is write-only, so nothing can be read back to notice, and it
 accepts every assignment. `vcard path` on the same class carries the identical description.
 
-So there is no edit path. There is only recreation.
+So there is no edit path **through the scripting interface**. There is only recreation.
+
+> **Amended 2026-09-06.** That sentence was written about Apple Events and is still true of them.
+> It is not true of the app: a composer's body CAN be edited in place through the Accessibility
+> lane, and the measurement is in
+> [Editing in place](#editing-in-place-works-the-missing-piece-is-the-way-in) below. What is
+> missing is not the edit — it is a route from a saved draft back to a composer.
 
 ## Two kinds of "draft", and only one of them is this
 
@@ -228,13 +234,67 @@ result carries both `confirmedId` and `newId` for that reason.
 **A ref to a freshly saved draft on a syncing account is short-lived.** Re-find it by subject rather
 than holding the ref across turns.
 
+## Editing in place works; the missing piece is the way in
+
+Measured 2026-09-06 against a live Mail on macOS 26.6, driving the composer through the native
+Accessibility lane rather than Apple Events.
+
+**Replacing a composer's body works, and it updates the SAME draft.** Focus the body's `AXWebArea`,
+command-A, command-V, command-S:
+
+    draft content before  ->  "ALPHA ORIGINAL TEXT"
+    draft content after   ->  "BRAVO REPLACEMENT TEXT — line one\nBRAVO line two"
+    drafts with that subject, after  ->  1
+
+One draft, not two. Read back through Apple Events from `draftsMailbox`, so this is the store's
+answer and not the window's. Command-S saves and leaves the window open, and the row id was rewritten
+twice across the sequence — 201457 → 201458 → 201459 — which is the sync renumbering this file
+already records, seen again.
+
+So every refusal `update_draft` carries exists because of **recreation**, not because of editing. A
+reply draft's `In-Reply-To` survives an in-place edit because nothing recreates the message;
+attachments survive for the same reason; and the subject is not needed as a handle because the
+replacement is never looked up.
+
+**And none of that is reachable, because Apple Events cannot open a saved draft into a composer.**
+
+| Route tried                                     | Result                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------- |
+| `M.open(draft)`                                 | Opens a **read-only viewer**, titled `"<subject> — All Drafts"`                    |
+| that window's accessibility tree                | No `AXWebArea`. Content is an `AXScrollArea` marked `message content`              |
+| that window's toolbar                           | Archive, Delete, Junk, Reply, Reply All, Forward, Summarize. No edit affordance     |
+| Mail's `Message` menu, with it frontmost        | No edit item exists, and every item present is disabled                            |
+
+This is the fifth dictionary fact, confirmed from the other side: `open` is not in the command list,
+and the `open` that AppleScript's Standard Suite supplies anyway does not do what the name suggests.
+
+What is left is the message list — select the draft in a viewer and open it the way a person does.
+That was not built, and the reason is scope rather than difficulty: reaching the row means changing
+which mailbox the user's window is showing. `make new message viewer` gives a private window to drive
+instead, and it was tried; it left the user's own viewer switched to Drafts and a ghost window that
+Apple Events reported and could not close.
+
+**An aside worth keeping.** Through that experiment, Mail's Apple Events window list disagreed with
+its accessibility tree — three windows named against one actually on screen:
+
+    Mail's own `name of every window`  ->  All Inboxes, iCloud Mail Cleanup, Drafts — iCloud
+    kAXWindowsAttribute                ->  All Inboxes  (one window, not minimized)
+
+`MailAxLane.findComposer` identifies windows through the accessibility lane already, which this says
+was the right choice for a reason nobody had measured: the Apple Events list is stale, and a composer
+found in it may not exist.
+
 ## Still open
 
-- **Whether an open composer can be re-found and rewritten.** `M.outgoingMessages` is an element of
-  the application and `SEND_MESSAGE` pushes onto it, so enumerating live composers looks possible.
-  Whether assigning `content` to one retrieved that way lands — as opposed to being swallowed the
-  way a reply composer's is — is unmeasured. If it works it is a cheaper path than recreation for
-  the composer case, and it would not help the saved-draft case at all.
+- ~~**Whether an open composer can be re-found and rewritten.**~~ **ANSWERED 2026-09-06, for the
+  half that matters.** An open composer's body can be rewritten — by select-all and paste through
+  the Accessibility lane, not by assigning `content` — and the save lands on the same draft. See
+  [Editing in place](#editing-in-place-works-the-missing-piece-is-the-way-in). Assigning `content`
+  to a composer retrieved from `M.outgoingMessages` is still unmeasured and now uninteresting: the
+  paste path is proven, and the open question was never the rewrite.
+- **A route from a saved draft to a composer.** The blocker for making `update_draft` an edit rather
+  than a recreation, and the only one left. `M.open` gives a viewer; driving the message list means
+  moving the user's window. Unbuilt, and it needs a design decision before it needs code.
 - **Bcc on a saved draft.** Read from `bccRecipients` and preserved, but a draft stored on an IMAP
   server may not carry Bcc at all. Not measured, and it would be silently dropped if so.
 - **How long the renumbering window lasts.** One observation, on iCloud, of a single rewrite.

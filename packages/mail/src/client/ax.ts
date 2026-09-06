@@ -257,6 +257,18 @@ export class MailAxLane {
    * keystroke goes wherever the focus actually is. Both are needed, and the
    * focus is read back because an element can report itself focusable and not
    * take it.
+   *
+   * **What "read back" has to mean here, learned the hard way.** Mail's composer
+   * web area answers `AXFocused: false` while holding the keyboard — measured
+   * over 1.2 s without ever flipping, with a command-V landing in it the whole
+   * time. `apple_desktop_focus` used to return that flag, so this guard refused
+   * to press command-V and every native reply came back "Nothing landed in it"
+   * for a body that would have gone in. The driver now answers from the
+   * APPLICATION's `AXFocusedUIElement`, which is what the window server routes
+   * keystrokes by and so cannot disagree with where one will land.
+   *
+   * The guard itself stays. Posting command-V without knowing where the focus is
+   * types into whatever happens to be in front, and that is the user's window.
    */
   async paste(ref: ComposerRef): Promise<boolean> {
     await this.#call("raise_window", { handle: ref.window });
