@@ -199,6 +199,8 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      // Short, or this test would sit through the real focus poll twice.
+      focusTimeoutMs: 30,
     });
     expect(result.bodyVerified).toBe(false);
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);

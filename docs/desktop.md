@@ -522,6 +522,28 @@ never about the system, and where the system holds the same fact it is the one t
 **The guard itself was right and stays.** Posting command-V without knowing where the focus is types
 into whatever happens to be in front, which is the user's window.
 
+### And a second one behind it: readable is not ready
+
+Fixing the flag exposed the defect it had been hiding. `findComposer` polls until the composer window
+and its web area can be READ, and `paste` then focuses **once**. Measured across three fresh
+composers, driving the real driver:
+
+| web area readable | first focus | focus takes |
+| ----------------- | ----------- | ----------- |
+| 395 ms            | false       | 560 ms      |
+| 637 ms            | false       | 812 ms      |
+| 640 ms            | false       | 805 ms      |
+
+The body is readable about 140 ms before it will take the keyboard, and the first attempt failed on
+every trial. Asking once made the whole lane a coin flip resting on how long the surrounding round
+trips happened to take — `compose.ts` retries the paste once for an unrelated reason, and that retry
+had been silently carrying this.
+
+So `MailAxLane.paste` polls, and a unit test pins it by answering `focused: false` twice before true
+(verified to fail when the poll is removed, which is the only reason to keep such a test). This is
+the trap named at the top of this file arriving one level down: it was written about a window's
+chrome appearing before its content, and here the content is there while the focus is not.
+
 **And the check that would have caught it now runs.** `scripts/verify-mail-ax.mjs --compose` used to
 print a three-line checklist for a person to carry out; it now forwards a real message to the user's
 own address through the hosted mail server and asserts the body was read back out of the composer.
