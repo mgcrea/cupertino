@@ -972,4 +972,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check dispatch-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean

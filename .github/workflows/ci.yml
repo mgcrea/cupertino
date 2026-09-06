@@ -145,6 +145,17 @@ jobs:
       - name: Sound server 🔍
         if: runner.os == 'macOS'
         run: make sound-check
+      # The third in-process surface, and the one with the most to be careful
+      # about, because it can click. It is CI-safe by construction and the check
+      # says so at length: every tools/call in it is either a refusal path that
+      # returns before the driver is reached, or a read of this process's own
+      # running-application list. Nothing is pressed and no synthetic event is
+      # posted. It also runs with no Accessibility grant on purpose, which is
+      # exactly what a runner has — and it is the only gate on the refusals that
+      # keep an unbrokered application out of reach.
+      - name: Desktop server 🔍
+        if: runner.os == 'macOS'
+        run: make desktop-check
       # The two steps above each drive ONE server. This one covers the code
       # that picks which, which had two copies and shipped with the second one
       # wrong — invisibly, because a list of the wrong surface's tools still
@@ -473,6 +484,17 @@ jobs:
             echo "::error::Bump the root version to $version, run \`make version\`, commit, and re-tag."
             exit 1
           fi
+
+          # The generated version block above proves the number was propagated.
+          # It says nothing about whether anyone wrote down what changed, and
+          # the CHANGELOG is what the release notes and the Sparkle item are
+          # written from. 1.16.0 shipped describing a menu bar badge that never
+          # rendered, which is the cheaper half of the same mistake.
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version]' entry."
+            echo "::error::Write the entry for what this release changes, commit, and re-tag."
+            exit 1
+          fi
       # macOS 26 is the deployment target, so a runner image without that SDK
       # fails deep inside xcodebuild with nothing pointing at the cause.
       - name: Check the SDK 🔍
@@ -508,8 +530,13 @@ jobs:
         env:
           AC_KEY_ID: ${{ secrets.AC_KEY_ID }}
           AC_ISSUER_ID: ${{ secrets.AC_ISSUER_ID }}
+          # Through the environment like its two siblings above, rather than
+          # interpolated into the script text: `${{ }}` in a `run:` block is
+          # substituted before the shell sees it, so the key would be a literal
+          # in the command being executed.
+          AC_KEY_P8_BASE64: ${{ secrets.AC_KEY_P8_BASE64 }}
         run: |
-          printf '%s' "${{ secrets.AC_KEY_P8_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/ac.p8"
+          printf '%s' "$AC_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/ac.p8"
           export AC_KEY_PATH="$RUNNER_TEMP/ac.p8"
           # CFBundleVersion is the commit count, not github.run_number, so that a
           # tag always produces the same number. docs/licensing.md sells
