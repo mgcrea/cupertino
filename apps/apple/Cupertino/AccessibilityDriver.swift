@@ -564,6 +564,96 @@ enum AccessibilityDriver {
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
   }
 
+  /// Give an element the keyboard focus, and read it back.
+  ///
+  /// Raising a window is NOT this, and the difference is what makes a paste land
+  /// somewhere else. `kAXRaiseAction` orders a window forward inside its
+  /// application; the keystroke that follows goes wherever the focus actually
+  /// is. `packages/mail` sets `focused` on the composer's web area for exactly
+  /// this reason before pressing command-V.
+  ///
+  /// Read back for the same reason `setValue` is: settable is a claim about the
+  /// API, not about the app. Returns whether the focus took, and never reports
+  /// success on the strength of the write having been accepted.
+  static func focus(handle: String, scope: Scope) throws -> Bool {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+
+    var settable: DarwinBoolean = false
+    let check = AXUIElementIsAttributeSettable(
+      element, kAXFocusedAttribute as CFString, &settable)
+    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'") { throw problem }
+    guard settable.boolValue else {
+      throw Failure.refused("That element cannot take the keyboard focus.")
+    }
+
+    let err = AXUIElementSetAttributeValue(
+      element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    if let problem = failure(for: err, doing: "Focusing '\(handle)'") { throw problem }
+
+    var raw: AnyObject?
+    let read = AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &raw)
+    if read != .success { return false }
+    return (raw as? Bool) ?? false
+  }
+
+  /// Make an application frontmost.
+  ///
+  /// Synthetic keyboard events are posted to the session and land in whatever is
+  /// frontmost, so every `type` and `key` against a specific app has to be
+  /// preceded by this or it types into someone else's window. It is a write in
+  /// the sense that matters — it rearranges the user's screen — which is why it
+  /// sits behind `allowWrites` with the rest of the driving verbs.
+  ///
+  /// `NSRunningApplication.activate()` rather than an AX action: there is no
+  /// `AXRaise` on an application element, and the window-level raise above
+  /// deliberately does something narrower.
+  static func activate(bundleId: String, scope: Scope) throws {
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    let running = try app(forBundleId: bundleId)
+    // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
+    // and refusing it for want of a grant it does not use would be a confusing
+    // lie. Scope still applies — it is this surface's bound, not the system's.
+    guard running.activate() else {
+      throw Failure.refused("\(bundleId) refused to come to the front.")
+    }
+  }
+
+  /// Read ONE named attribute off an element.
+  ///
+  /// The tree carries a fixed field set, chosen because it is what a driver
+  /// needs to address a control. Verifying a write often needs one more:
+  /// `packages/mail` confirms its quote strip by reading `AXBlockQuoteLevel`,
+  /// which is meaningless to every other caller and would be dead weight on
+  /// every node of every walk.
+  ///
+  /// **`attributeUnsupported` and `noValue` return nil rather than throwing**,
+  /// which is the rule the census in docs/desktop.md established: a healthy
+  /// 13,960-node walk produced 19,903 of the first and 12,893 of the second, so
+  /// they outnumber the nodes and are structural rather than failures. An
+  /// element that does not carry the attribute is an answer.
+  static func attribute(handle: String, name: String, scope: Scope) throws -> Any? {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+
+    var raw: AnyObject?
+    let err = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
+    if err == .attributeUnsupported || err == .noValue { return nil }
+    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'") { throw problem }
+
+    // Only the scalars a caller can act on. An `AXUIElement` answer would need a
+    // handle minted for it, and returning one from here would make this a second
+    // and undocumented way to walk the tree — `expand` is that, and it carries
+    // the bounds this does not.
+    switch raw {
+    case let value as String: return value
+    case let value as NSNumber: return value
+    case let value as [Any]: return "<\(value.count) values>"
+    case .some(let other): return "<\(Swift.type(of: other))>"
+    case nil: return nil
+    }
+  }
+
   // ─── synthetic input, for what AX cannot express ───────────────────────────
 
   /// `CGEvent` posting rides the SAME Accessibility grant as everything above —

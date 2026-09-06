@@ -44,7 +44,7 @@ off cannot see that they exist.
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 10 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
-| Desktop   | —                                          | implemented — 12 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
+| Desktop   | —                                          | implemented — 15 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
 **Screen, Sound and Desktop arrive switched off.** Every surface that brokers an Apple app is on when

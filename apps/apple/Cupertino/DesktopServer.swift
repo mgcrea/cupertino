@@ -246,6 +246,27 @@ enum DesktopServer {
         "annotations": ["readOnlyHint": true],
       ],
       [
+        "name": "apple_desktop_get_attribute",
+        "description":
+          "Read one named Accessibility attribute off an element — AXBlockQuoteLevel, "
+          + "AXFocused, anything the application publishes. The tree carries a fixed field set "
+          + "chosen for addressing controls; this is how you verify a write that changed "
+          + "something else. An element that does not carry the attribute answers null, which "
+          + "is an answer rather than a failure.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "handle": ["type": "string"],
+            "attribute": [
+              "type": "string",
+              "description": "The attribute name, e.g. AXBlockQuoteLevel.",
+            ],
+          ],
+          "required": ["handle", "attribute"],
+        ],
+        "annotations": ["readOnlyHint": true],
+      ],
+      [
         "name": "apple_desktop_diagnostics",
         "description":
           "Report whether Accessibility is granted, whether a real window can actually be read, "
@@ -324,6 +345,33 @@ enum DesktopServer {
           "required": ["key"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
+      ],
+      [
+        "name": "apple_desktop_focus",
+        "description":
+          "Give an element the keyboard focus, and report whether it took. Raising a window is "
+          + "NOT this: a raise orders a window forward inside its application, while a "
+          + "keystroke goes wherever the focus actually is. Focus the field before you type "
+          + "into it.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["handle": ["type": "string"]],
+          "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_activate",
+        "description":
+          "Bring an application to the front. Synthetic keystrokes land in whatever is "
+          + "frontmost, so apple_desktop_type and apple_desktop_key need this first or they "
+          + "type into someone else's window.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["bundleId": bundleIdProperty],
+          "required": ["bundleId"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
       [
         "name": "apple_desktop_raise_window",
@@ -427,6 +475,7 @@ enum DesktopServer {
     let driving = [
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
+      "apple_desktop_focus", "apple_desktop_activate",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -578,6 +627,41 @@ enum DesktopServer {
         }
         try AccessibilityDriver.raise(handle: handle, scope: scope)
         return ok(id, ["raised": handle])
+
+      case "apple_desktop_focus":
+        guard let handle = args["handle"] as? String else {
+          return failure(id, "The 'handle' argument is required.")
+        }
+        let took = try AccessibilityDriver.focus(handle: handle, scope: scope)
+        // Reported rather than thrown, exactly as set_value does: the write was
+        // permitted and the application did not honour it, which is a different
+        // fact from a refusal and the caller has to be able to tell them apart.
+        return ok(id, ["handle": handle, "focused": took])
+
+      case "apple_desktop_activate":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        try AccessibilityDriver.activate(bundleId: bundleId, scope: scope)
+        return ok(id, ["activated": bundleId])
+
+      case "apple_desktop_get_attribute":
+        guard let handle = args["handle"] as? String,
+          let attribute = args["attribute"] as? String
+        else {
+          return failure(id, "Both 'handle' and 'attribute' are required.")
+        }
+        let value = try AccessibilityDriver.attribute(
+          handle: handle, name: attribute, scope: scope)
+        return ok(
+          id,
+          [
+            "handle": handle, "attribute": attribute,
+            // NSNull rather than omitting the key: absent and null are the same
+            // in JSON only if the reader is careful, and "this element does not
+            // carry that attribute" is an answer worth stating.
+            "value": value ?? NSNull(),
+          ])
 
       default:
         return failure(id, "unknown tool '\(name)'")

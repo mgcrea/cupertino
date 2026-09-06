@@ -85,13 +85,15 @@ struct DesktopCheck {
   /// The verbs that can change the machine. Named once so the two directions of
   /// the gate below are asserted against the same list.
   static let driving = [
-    "apple_desktop_click", "apple_desktop_key", "apple_desktop_press",
-    "apple_desktop_raise_window", "apple_desktop_set_value", "apple_desktop_type",
+    "apple_desktop_activate", "apple_desktop_click", "apple_desktop_focus",
+    "apple_desktop_key", "apple_desktop_press", "apple_desktop_raise_window",
+    "apple_desktop_set_value", "apple_desktop_type",
   ]
 
   static let observing = [
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
-    "apple_desktop_list_apps", "apple_desktop_list_windows", "apple_desktop_ui_tree",
+    "apple_desktop_get_attribute", "apple_desktop_list_apps", "apple_desktop_list_windows",
+    "apple_desktop_ui_tree",
   ]
 
   static func main() {
@@ -249,6 +251,16 @@ struct DesktopCheck {
 
     // A handle minted while the gate was on must not survive it being switched
     // off, or the gate is a suggestion rather than a bound.
+    // `activate` is the one driving verb that does not resolve a handle, so its
+    // refusal path is separate code and has to be exercised separately.
+    check(
+      "apple_desktop_activate is refused when called with writes off",
+      callText("apple_desktop_activate", ["bundleId": "com.apple.Maps"], writes: false).0
+        .contains("switched off"))
+    check(
+      "apple_desktop_focus is refused when called with writes off",
+      callText("apple_desktop_focus", ["handle": "e1"], writes: false).0.contains("switched off"))
+
     check(
       "the driver binds scope to the handle, not only to the call",
       AccessibilityDriver.inScope("com.apple.Maps", scope: .brokered)
