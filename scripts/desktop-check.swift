@@ -288,6 +288,24 @@ struct DesktopCheck {
       AccessibilityDriver.knownKeys().contains("v")
         && AccessibilityDriver.knownKeys().contains("return"))
 
+    // `matched` answers for what was ASKED FOR, not for what was walked. It
+    // reported the whole tree for a filtered search — `returned: 1,
+    // matched: 136` — which reads as a truncated answer and is exactly the
+    // confusion the field exists to prevent. Checked without a grant by driving
+    // a refusal-free path: with Accessibility denied the call fails, so this
+    // only asserts when it answered.
+    let (findText, _) = callText(
+      "apple_desktop_find_elements", ["bundleId": "com.apple.Maps", "id": "AddButton"],
+      writes: false)
+    if let data = findText.data(using: .utf8),
+      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let returned = body["returned"] as? Int, let matched = body["matched"] as? Int
+    {
+      check(
+        "find_elements reports matched for the FILTERED set, not the whole walk",
+        matched == returned)
+    }
+
     check(
       "the driver binds scope to the handle, not only to the call",
       AccessibilityDriver.inScope("com.apple.Maps", scope: .brokered)

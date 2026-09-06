@@ -421,10 +421,22 @@ enum DesktopServer {
   /// that does not cap.
   private static let maxBytes = 40_000
 
-  private static func treeBody(_ tree: AccessibilityDriver.Tree) -> [String: Any] {
+  /// `elements` is what the caller asked for, which is NOT always the whole
+  /// walk.
+  ///
+  /// `find_elements` walks everything and returns a filtered set, and passing
+  /// the walk here was a real defect: `matched` came from the tree, so a search
+  /// that found ONE control reported `returned: 1, matched: 136` — which reads
+  /// exactly like a truncated answer and is the confusion this field exists to
+  /// prevent. The byte cap was wrong the same way, measured against elements
+  /// that were never going to be sent.
+  private static func treeBody(
+    _ tree: AccessibilityDriver.Tree, elements: [AccessibilityDriver.Element]? = nil
+  ) -> [String: Any] {
+    let answering = elements ?? tree.elements
     var kept: [[String: Any]] = []
     var bytes = 0
-    for element in tree.elements {
+    for element in answering {
       let json = element.json
       // Measured rather than estimated: an element with a long name and a rect
       // is several times the size of a bare button, so a per-element budget
@@ -444,7 +456,7 @@ enum DesktopServer {
       "returned": kept.count,
       // What MATCHED, so a truncated answer is obviously partial rather than
       // looking like a small window.
-      "matched": tree.elements.count,
+      "matched": answering.count,
       "visited": tree.visited,
       "seconds": (tree.seconds * 1000).rounded() / 1000,
       "coordinateSpace": "screen points, top-left origin",
@@ -455,10 +467,10 @@ enum DesktopServer {
     // raise — or, for this one, that raising a bound is not the answer.
     var stops: [String] = []
     if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
-    if kept.count < tree.elements.count {
+    if kept.count < answering.count {
       stops.append("bytes(\(maxBytes))")
       body["truncated"] =
-        "Returned \(kept.count) of \(tree.elements.count) matching elements. Narrow the query "
+        "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
         + "with find_elements, or walk down with expand — raising maxNodes will not return more."
     }
     if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
@@ -565,10 +577,7 @@ enum DesktopServer {
           }
           return true
         }
-        var body = treeBody(tree)
-        body["elements"] = matched.map(\.json)
-        body["returned"] = matched.count
-        return ok(id, body)
+        return ok(id, treeBody(tree, elements: matched))
 
       case "apple_desktop_diagnostics":
         return ok(
