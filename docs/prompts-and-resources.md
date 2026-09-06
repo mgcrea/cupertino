@@ -65,16 +65,16 @@ filter, that a ref is opaque. Prompts hold the ones that are about the **order o
 have nowhere else to live: no single tool description is the right place to say "search before you
 list", "read the thread before you answer it", or "check what exists before you create a duplicate".
 
-| Surface   | Read-only               | Write-gated                            |
-| --------- | ----------------------- | -------------------------------------- |
-| Mail      | `triage`, `find_thread` | `draft_reply`                          |
-| Notes     | `find`                  | `capture`                              |
-| Reminders | `whats_due`             | `capture_action_items`                 |
-| Calendar  | `whats_my_day`          | `schedule`                             |
-| Contacts  | `who_is`                | — (surface registers no mutating tool) |
-| Messages  | `catch_up`              | `send`                                 |
-| Safari    | `what_was_i_reading`    | — (read-only by construction)          |
-| Maps      | `where_was_that_place`  | — (no write prompt yet)                |
+| Surface   | Read-only               | Write-gated             |
+| --------- | ----------------------- | ----------------------- |
+| Mail      | `triage`, `find_thread` | `draft_reply`           |
+| Notes     | `find`                  | `capture`               |
+| Reminders | `whats_due`             | `capture_action_items`  |
+| Calendar  | `whats_my_day`          | `schedule`              |
+| Contacts  | `who_is`                | — (no write prompt yet) |
+| Messages  | `catch_up`              | `send`                  |
+| Safari    | `what_was_i_reading`    | — (no write prompt yet) |
+| Maps      | `where_was_that_place`  | — (no write prompt yet) |
 
 All are namespaced like the tools: `apple_mail_triage`, not `triage`.
 

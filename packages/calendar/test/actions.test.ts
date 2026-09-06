@@ -283,6 +283,44 @@ describe("apple_calendar_update_event", () => {
   });
 
   /**
+   * `end` and `durationMinutes` are independent arguments in the schema, and
+   * used to be dropped unless `start` came with them — so {ref, durationMinutes}
+   * reported success and changed nothing at all. The current start is read from
+   * the store and only the end moves.
+   */
+  it("moves the end when only durationMinutes is given", async () => {
+    const ref = await refFor("Design review");
+    const out = await call("apple_calendar_update_event", { ref, durationMinutes: 90 });
+    expect(out.isError).toBe(false);
+    const sent = out.run.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(sent.endDate).toBeDefined();
+    // Only the end: a start it was never given must not be rewritten.
+    expect(sent.startDate).toBeUndefined();
+    // Compared as an instant, because the fixture start is 09:00 UTC and the
+    // value comes back as local wall clock with its offset.
+    expect(new Date(String(sent.endDate)).getTime()).toBe(
+      Date.parse("2026-08-22T09:00:00Z") + 90 * 60_000,
+    );
+  });
+
+  it("moves the end when only end is given", async () => {
+    const ref = await refFor("Design review");
+    const out = await call("apple_calendar_update_event", { ref, end: "2026-08-22T23:00" });
+    expect(out.isError).toBe(false);
+    const sent = out.run.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(String(sent.endDate)).toMatch(/T23:00/);
+    expect(sent.startDate).toBeUndefined();
+  });
+
+  it("still refuses an end before the event's own start", async () => {
+    const ref = await refFor("Design review");
+    // 09:00Z is 11:00 in the fixture's zone, so 06:00 local is before the
+    // event's own start in any zone this suite plausibly runs in.
+    const out = await call("apple_calendar_update_event", { ref, end: "2026-08-22T06:00" });
+    expect(out.isError).toBe(true);
+  });
+
+  /**
    * THE REFUSAL THAT MATTERS. Calendar cannot detach one occurrence, so applying
    * the edit to the series would move every future standup because someone asked
    * to move one lunch — data loss wearing a success message.

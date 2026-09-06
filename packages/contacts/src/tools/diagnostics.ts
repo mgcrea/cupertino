@@ -18,17 +18,29 @@ export const buildDiagnostics = async (
   const status = client.status();
   const located = status.located;
 
+  // Whether the two mutating tools are registered on this server. Diagnostics
+  // is the one file that must never lie, and it did: it announced "no mutating
+  // tool" flatly, while apple_contacts_create_contact and
+  // apple_contacts_update_contact have been registered behind this flag.
+  const writes = client.config.allowWrites;
   return {
     server: { name: BUILD_INFO.name, version: BUILD_INFO.version },
     // Off means the prompts and the cupertino:// resources are not registered at
     // all. Reported here because this tool still is, so it stays the one place
     // that explains a capability the client cannot see.
-    settings: { exposePrompts: client.config.exposePrompts },
+    settings: { exposePrompts: client.config.exposePrompts, allowWrites: writes },
     lane: {
       // There is only one, and saying so is more useful than implying a choice.
       reads: "file lane (read-only SQLite)",
-      writes: "none — this server registers no mutating tool",
-      appleEvents: "not used at all, so no Automation grant is needed or requested",
+      writes: writes
+        ? "apple_contacts_create_contact and apple_contacts_update_contact, over Apple " +
+          "Events. No delete: the Contacts dictionary offers one, and it is not exposed."
+        : "off — APPLE_CONTACTS_ALLOW_WRITES is not set, so neither mutating tool is " +
+          "registered and this server sends no Apple Event at all.",
+      appleEvents: writes
+        ? "writes only. The read lane never sends one, so a server with writes off needs " +
+          "no Automation grant at all."
+        : "not used at all, so no Automation grant is needed or requested",
     },
     stores: {
       directory: located.dirPath,
@@ -61,8 +73,11 @@ export const buildDiagnostics = async (
         "putting none, because it does not look wrong.",
       "Contacts held in two accounts are folded together on their link id, matching what " +
         "Contacts.app shows as one unified card. A contact with no link id is not folded.",
-      "This server is read-only by construction. It cannot create, edit or delete a " +
-        "contact, and enabling writes does not add a tool.",
+      writes
+        ? "Writes are ON, so this server can create and edit contacts. It still cannot " +
+          "delete one: that is not exposed. Reads never send an Apple Event either way."
+        : "Reads are all this server does right now. Setting APPLE_CONTACTS_ALLOW_WRITES " +
+          "registers a create and an update tool, which do send Apple Events.",
     ],
   };
 };

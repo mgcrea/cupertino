@@ -1104,16 +1104,39 @@ export class AppleCalendarClient {
       );
     }
 
-    const window =
-      fields.start !== undefined
-        ? this.#resolveWindow(fields.start, fields.end, fields.durationMinutes)
-        : null;
+    // `end` and `durationMinutes` are independent arguments in the schema, and
+    // used to be silently dropped unless `start` came with them: an update of
+    // {ref, durationMinutes: 30} reported success and changed nothing. The
+    // current start is what they are relative to, so read it and move only the
+    // end. JXA's applyFields takes a new end without a new start.
+    let window: { startIso: string; endIso: string; allDayHint: boolean } | null = null;
+    let endOnly = false;
+    if (fields.start !== undefined) {
+      window = this.#resolveWindow(fields.start, fields.end, fields.durationMinutes);
+    } else if (fields.end !== undefined || fields.durationMinutes !== undefined) {
+      const store = this.#require();
+      const row = store.byUuid(ref.eventUid);
+      if (!row || row.startApple === null) {
+        throw new PreconditionError(
+          "Give start as well. Moving only the end needs the event's current start, and this " +
+            "store does not have one for that ref.",
+          { ref: fields.ref },
+        );
+      }
+      const startIso = toLocalIso(new Date((row.startApple + store.caps.epochOffset) * 1000));
+      window = this.#resolveWindow(startIso, fields.end, fields.durationMinutes);
+      endOnly = true;
+    }
 
     const data = await this.#run<Record<string, unknown>>(UPDATE_EVENT, {
       calendar: this.#nameForRefCalendar(ref.calendarUid) ?? null,
       uid: ref.eventUid,
       ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
-      ...(window ? { startDate: window.startIso, endDate: window.endIso } : {}),
+      ...(window
+        ? endOnly
+          ? { endDate: window.endIso }
+          : { startDate: window.startIso, endDate: window.endIso }
+        : {}),
       ...(fields.allDay !== undefined ? { allDay: fields.allDay } : {}),
       ...(fields.location !== undefined ? { location: fields.location } : {}),
       ...(fields.description !== undefined ? { description: fields.description } : {}),

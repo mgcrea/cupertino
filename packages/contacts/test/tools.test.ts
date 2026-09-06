@@ -137,6 +137,37 @@ describe("without a readable store", () => {
     expect(body.lane.appleEvents).toMatch(/no Automation grant/);
     expect(body.caveats.join(" ")).toMatch(/NOT by Full Disk Access/);
   });
+
+  /**
+   * The one file that must never say something untrue about this server.
+   *
+   * It announced "none — this server registers no mutating tool" flatly, while
+   * the suite above proves two of them are registered behind the flag. With
+   * writes on it was describing a different server than the one answering.
+   */
+  it("reports writes as off when they are, and names the tools when they are not", async () => {
+    const off = (await call(await connect(), "apple_contacts_diagnostics")).json() as {
+      lane: { writes: string };
+      settings: { allowWrites: boolean };
+    };
+    expect(off.lane.writes).toMatch(/^off/);
+    expect(off.settings.allowWrites).toBe(false);
+
+    const on = (
+      await call(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }), "apple_contacts_diagnostics")
+    ).json() as { lane: { writes: string }; settings: { allowWrites: boolean } };
+    expect(on.lane.writes).toContain("apple_contacts_create_contact");
+    expect(on.lane.writes).toContain("apple_contacts_update_contact");
+    expect(on.settings.allowWrites).toBe(true);
+  });
+
+  it("stops claiming to be read-only by construction once writes are on", async () => {
+    const on = (
+      await call(await connect({ APPLE_CONTACTS_ALLOW_WRITES: "1" }), "apple_contacts_diagnostics")
+    ).json() as { caveats: string[] };
+    expect(on.caveats.join(" ")).not.toMatch(/registers no mutating tool/);
+    expect(on.caveats.join(" ")).toMatch(/Writes are ON/);
+  });
 });
 
 describe("resolve_handles", () => {

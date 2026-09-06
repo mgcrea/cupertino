@@ -13,10 +13,13 @@ import { z } from "zod";
  *
  * Note what is ABSENT, and why:
  *
- * - **No `allowWrites` behaviour.** It is inherited from `BaseConfigSchema` and
- *   deliberately ignored: this surface registers no mutating tool, so there is
- *   nothing for the flag to gate. Editing someone's address book from a tool
- *   call was never part of what Contacts was probed for.
+ * - **`allowWrites` gates two tools, and nothing else.** Set it and this server
+ *   registers `apple_contacts_create_contact` and `apple_contacts_update_contact`,
+ *   which are the only things here that send an Apple Event. There is no delete:
+ *   the dictionary offers one and it is deliberately not exposed. (This comment
+ *   used to say the flag was ignored entirely, which stopped being true when
+ *   those tools landed — and `diagnostics` repeated the claim, which is the one
+ *   file that must never say something untrue about what this server can do.)
  * - **No `osascript` settings in use.** Also inherited, also unused — there is
  *   no Apple Events lane here at all, which is what lets this server run without
  *   an Automation grant.
