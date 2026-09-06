@@ -709,7 +709,11 @@ export class AppleCalendarClient {
         "the requested window runs past the range this store has expanded, where repeating " +
         "events are missing entirely; it was cut back rather than reporting that time as free";
       if (windowTo.getTime() > covTo.getTime()) {
-        truncated = { reason, requestedTo: toLocalIso(range.to) };
+        // The LAST INSTANT INSIDE the window, not the exclusive bound itself.
+        // This field echoes what the caller asked for, and a caller who wrote
+        // "2027-01-15" reading back "2027-01-16T00:00" would reasonably think
+        // the request had been misunderstood.
+        truncated = { reason, requestedTo: toLocalIso(new Date(range.to.getTime() - 1)) };
         windowTo = covTo;
       }
       if (windowFrom.getTime() < covFrom.getTime()) {

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import { escapeLike, openReadOnly, toFileUri } from "@mgcrea/mcp-apple-core";
+import { escapeLike, openReadOnly, parseBound, toFileUri } from "@mgcrea/mcp-apple-core";
 
 import { SchemaDriftError } from "./errors.js";
 import type { Logger } from "./osascript.js";
@@ -182,8 +182,17 @@ export class EnvelopeIndex {
     return new Date((value + this.caps.epochOffset) * 1000).toISOString();
   }
 
-  #toEpoch(iso: string): number {
-    return Math.floor(Date.parse(iso) / 1000) - this.caps.epochOffset;
+  /**
+   * A resolved instant to this store's own units.
+   *
+   * Takes a Date rather than a string, which is the whole point: it used to do
+   * `Date.parse(iso)`, and `Date.parse("last week")` is NaN. node:sqlite binds
+   * NaN as NULL, `date_received >= NULL` matches nothing, and the caller got
+   * zero results with no error. Parsing now happens once, in core's grammar,
+   * which refuses what it cannot read.
+   */
+  #toEpoch(when: Date): number {
+    return Math.floor(when.getTime() / 1000) - this.caps.epochOffset;
   }
 
   /**
@@ -232,11 +241,14 @@ export class EnvelopeIndex {
     }
     if (filters.dateFrom) {
       where.push("m.date_received >= ?");
-      params.push(this.#toEpoch(filters.dateFrom));
+      params.push(this.#toEpoch(parseBound("dateFrom", filters.dateFrom, "start")));
     }
     if (filters.dateTo) {
-      where.push("m.date_received <= ?");
-      params.push(this.#toEpoch(filters.dateTo));
+      // Exclusive, because a bare `dateTo` resolves to the NEXT day's midnight.
+      // With `<=` and the old same-day midnight, `dateTo: "2026-08-07"` excluded
+      // every message received on the 7th — the day the caller named.
+      where.push("m.date_received < ?");
+      params.push(this.#toEpoch(parseBound("dateTo", filters.dateTo, "end")));
     }
 
     return where.join(" AND ");

@@ -110,22 +110,9 @@ export class UndatableStoreError extends AppleAutomationError {
 }
 
 /**
- * A date argument did not parse.
+ * A date argument could not be read.
  *
- * Carries the whole accepted grammar in the message rather than a terse
- * rejection: the caller is usually a model, and a model that is told which
- * forms exist retries correctly on the next turn instead of guessing again.
+ * Re-exported from core, which owns the grammar every surface parses dates
+ * with — this surface's superset of it, in fact.
  */
-export class InvalidDateError extends AppleAutomationError {
-  override readonly name = "InvalidDateError";
-
-  constructor(field: string, raw: string, why: string) {
-    super(
-      `${field}: "${raw}" could not be read as a date — ${why}. Accepted forms: an ISO date ` +
-        `("2026-08-20"), an ISO date-time ("2026-08-20T09:00", optionally with an offset), a ` +
-        `signed offset from now ("-7d", "-3h", "+1w"), "today", "yesterday", "tomorrow", or ` +
-        `"last monday" / "next monday".`,
-      { field, raw },
-    );
-  }
-}
+export { InvalidDateError } from "@mgcrea/mcp-apple-core";

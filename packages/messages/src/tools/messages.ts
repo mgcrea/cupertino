@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AppleMessagesClient } from "../client/messages.js";
 import { decodeChatRef, decodeMessageRef } from "../client/ref.js";
 import {
+  bound,
   chatRefArg,
   fail,
   fromArg,
@@ -15,19 +16,6 @@ import {
   wrap,
   wrapResult,
 } from "./util.js";
-
-/** ISO-8601 in, or a clear refusal. No relative grammar on this surface yet. */
-const parseBound = (raw: string | undefined, field: string): Date | undefined => {
-  if (raw === undefined) return undefined;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(
-      `Could not read ${field} from ${JSON.stringify(raw)}. Use ISO-8601: "2026-08-01" or ` +
-        `"2026-08-01T09:00".`,
-    );
-  }
-  return d;
-};
 
 /**
  * Close a range that named only a start.
@@ -73,10 +61,10 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
     },
     async ({ chatRef, from, to, includeReactions, limit }) =>
       wrap(async () => {
-        const fromDate = parseBound(from, "from");
+        const fromDate = bound(from, "from", "start");
         const window = client.window(
           fromDate,
-          closeRange(fromDate, parseBound(to, "to"), client.config.defaultRangeDays),
+          closeRange(fromDate, bound(to, "to", "end"), client.config.defaultRangeDays),
         );
         return client.listMessages({
           ...(chatRef ? { chatRef: decodeChatRef(chatRef) } : {}),

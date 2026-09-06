@@ -5,6 +5,7 @@ import type { AppleMessagesClient } from "../client/messages.js";
 import { decodeChatRef } from "../client/ref.js";
 import { COUNT_GROUP_FIELDS } from "../client/store.js";
 import {
+  bound,
   chatRefArg,
   describeAggregation,
   fromArg,
@@ -13,19 +14,6 @@ import {
   limitArg,
   wrap,
 } from "./util.js";
-
-/** ISO-8601 in, or a clear refusal. Same grammar as `list_messages`. */
-const parseBound = (raw: string | undefined, field: string): Date | undefined => {
-  if (raw === undefined) return undefined;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(
-      `Could not read ${field} from ${JSON.stringify(raw)}. Use ISO-8601: "2026-08-01" or ` +
-        `"2026-08-01T09:00".`,
-    );
-  }
-  return d;
-};
 
 /**
  * The cheap-answer lane on this surface: counts, and counts per group.
@@ -86,7 +74,7 @@ export const registerCountTools = (server: McpServer, client: AppleMessagesClien
     },
     async ({ chatRef, handle, direction, from, to, includeReactions, groupBy, limit }) =>
       wrap(async () => {
-        const window = client.window(parseBound(from, "from"), parseBound(to, "to"));
+        const window = client.window(bound(from, "from", "start"), bound(to, "to", "end"));
         const result = client.countMessages(
           {
             ...(chatRef ? { chatGuid: decodeChatRef(chatRef) } : {}),

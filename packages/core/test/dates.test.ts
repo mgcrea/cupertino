@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBound, parseDate, toLocalIso } from "../src/client/dates.js";
-import { InvalidDateError } from "../src/client/errors.js";
+import { addLocalDays, parseBound, parseDate, startOfLocalDay, toLocalIso } from "../src/dates.js";
+import { InvalidDateError } from "../src/errors.js";
 
 /**
  * A fixed clock. Every test passes it explicitly rather than freezing a global,
@@ -61,6 +61,73 @@ describe("parseDate — ISO", () => {
    */
   it("rejects a day that does not exist in its month", () => {
     expect(() => parseDate("dueDate", "2026-02-30", NOW)).toThrow(InvalidDateError);
+  });
+
+  /**
+   * The guard above existed only on the date-only branch, so every impossible
+   * DATE-TIME rolled over silently: "2026-02-30T09:00" became 2 March at 09:00
+   * and "2026-08-20T25:00" became the 21st at 01:00.
+   */
+  it.each([
+    ["2026-02-30T09:00", /no day 30 in month 02/],
+    ["2026-08-20T25:00", /25:00 is not a time/],
+    ["2026-08-20T09:60", /09:60 is not a time/],
+  ])("rejects the impossible date-time %s", (raw, why) => {
+    expect(() => parseDate("dueDate", raw, NOW)).toThrow(InvalidDateError);
+    expect(() => parseDate("dueDate", raw, NOW)).toThrow(why);
+  });
+
+  it("rejects an impossible zoned date-time rather than rolling it over", () => {
+    expect(() => parseDate("dueDate", "2026-02-30T09:00Z", NOW)).toThrow(InvalidDateError);
+  });
+
+  /** The field is named so a caller with several date arguments knows which. */
+  it("names the field and the raw value it could not read", () => {
+    try {
+      parseDate("dueBefore", "sometime soon", NOW);
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvalidDateError);
+      expect((err as InvalidDateError).message).toMatch(/Could not read dueBefore/);
+      expect((err as InvalidDateError).message).toMatch(/ISO-8601/);
+      expect((err as { details?: unknown }).details).toMatchObject({
+        field: "dueBefore",
+        raw: "sometime soon",
+      });
+    }
+  });
+});
+
+/**
+ * Safari's copy added these because history only ever points backwards. Every
+ * surface gets them now: refusing "-7d" in one server while accepting it in
+ * another is exactly the drift the shared grammar replaces.
+ */
+describe("parseDate — the backward forms", () => {
+  it("reads a negative offset", () => {
+    expect(fields(parseDate("from", "-7d", NOW).at)).toEqual({
+      y: 2026,
+      mo: 8,
+      d: 13,
+      h: 14,
+      mi: 30,
+    });
+  });
+
+  it("reads yesterday as a whole day", () => {
+    const got = parseDate("from", "yesterday", NOW);
+    expect(got.kind).toBe("allDay");
+    expect(fields(got.at)).toEqual({ y: 2026, mo: 8, d: 19, h: 0, mi: 0 });
+  });
+
+  /** NOW is a Thursday, so "last monday" is three days back. */
+  it("reads last <weekday> strictly backwards", () => {
+    expect(fields(parseDate("from", "last monday", NOW).at).d).toBe(17);
+  });
+
+  it("reads last <weekday> on that same weekday as a full week back", () => {
+    const thursday = parseDate("from", "last thursday", NOW);
+    expect(fields(thursday.at).d).toBe(13);
   });
 });
 
@@ -167,7 +234,11 @@ describe("parseDate — next weekday", () => {
 });
 
 describe("parseDate — rejection", () => {
-  it.each(["", "   ", "soon", "2026/08/20", "+2", "+2y", "25:00", "yesterday"])(
+  /**
+   * "yesterday" is NOT in this list any more: the shared grammar is Safari's
+   * superset, so the backward forms are accepted everywhere.
+   */
+  it.each(["", "   ", "soon", "2026/08/20", "+2", "+2y", "25:00", "last week"])(
     "rejects %o",
     (raw) => {
       expect(() => parseDate("dueDate", raw, NOW)).toThrow(InvalidDateError);
@@ -187,9 +258,16 @@ describe("parseDate — rejection", () => {
  * quietly exclude everything on the day the caller asked about.
  */
 describe("parseBound", () => {
-  it("takes the end of the day for an upper bound", () => {
+  /**
+   * The NEXT day's midnight, not this day's 23:59:59.999. Callers compare with
+   * `<`, so the named day is fully included and nothing of the next one is.
+   * Two of the three copies this replaced used the end of the same day, which
+   * drops the final millisecond and invites the `<=` that then drops the whole
+   * day when somebody writes midnight instead.
+   */
+  it("takes the START OF THE NEXT DAY for an upper bound", () => {
     const got = parseBound("dueBefore", "2026-08-20", "end", NOW);
-    expect(fields(got)).toEqual({ y: 2026, mo: 8, d: 20, h: 23, mi: 59 });
+    expect(fields(got)).toEqual({ y: 2026, mo: 8, d: 21, h: 0, mi: 0 });
   });
 
   it("takes the start of the day for a lower bound", () => {
@@ -202,10 +280,52 @@ describe("parseBound", () => {
     });
   });
 
+  it("brackets exactly the named day, with an exclusive upper edge", () => {
+    const from = parseBound("from", "2026-08-20", "start", NOW).getTime();
+    const to = parseBound("to", "2026-08-20", "end", NOW).getTime();
+    const onTheDay = new Date(2026, 7, 20, 23, 59, 59, 999).getTime();
+    const nextMidnight = new Date(2026, 7, 21, 0, 0, 0, 0).getTime();
+    expect(onTheDay >= from && onTheDay < to).toBe(true);
+    expect(nextMidnight < to).toBe(false);
+  });
+
+  /**
+   * `new Date("2026-08-20")` is UTC midnight while `new Date("2026-08-20T00:00")`
+   * is local midnight. Mail and Messages both parsed bare days the first way and
+   * bucketed results the second, so a query was off by the zone offset.
+   */
+  it("reads a bare day as LOCAL midnight, never UTC", () => {
+    expect(parseBound("from", "2026-08-20", "start", NOW).getTime()).toBe(
+      new Date(2026, 7, 20).getTime(),
+    );
+  });
+
   it("leaves an explicit time alone at either edge", () => {
     for (const edge of ["start", "end"] as const) {
       expect(fields(parseBound("dueBefore", "2026-08-20T09:15", edge, NOW)).h).toBe(9);
     }
+  });
+});
+
+describe("the day helpers", () => {
+  it("addLocalDays keeps the wall-clock time", () => {
+    expect(fields(addLocalDays(new Date(2026, 7, 20, 9, 15), 2))).toEqual({
+      y: 2026,
+      mo: 8,
+      d: 22,
+      h: 9,
+      mi: 15,
+    });
+  });
+
+  it("startOfLocalDay drops the time", () => {
+    expect(fields(startOfLocalDay(new Date(2026, 7, 20, 9, 15)))).toEqual({
+      y: 2026,
+      mo: 8,
+      d: 20,
+      h: 0,
+      mi: 0,
+    });
   });
 });
 

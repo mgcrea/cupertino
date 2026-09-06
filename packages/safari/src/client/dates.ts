@@ -45,8 +45,6 @@
 
 import { CORE_DATA_EPOCH_OFFSET, detectEpoch } from "@mgcrea/mcp-apple-core";
 
-import { InvalidDateError } from "./errors.js";
-
 export { CORE_DATA_EPOCH_OFFSET };
 
 /**
@@ -105,207 +103,35 @@ export const renderInstant = (value: number | null, epoch: Epoch): string | null
 // Input grammar
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type DateKind = "allDay" | "timed";
-
-export type ParsedDate = {
-  kind: DateKind;
-  /** The absolute instant, for comparisons and for range bounds. */
-  at: Date;
-  /**
-   * ISO-8601 **with an explicit offset**, e.g. `2026-08-20T09:00:00+02:00`.
-   *
-   * Always carries the offset so the value is unambiguous once it leaves this
-   * process — a bare local string reinterpreted in another zone is the silent
-   * failure this module exists to prevent.
-   */
-  iso: string;
-  /** Echoed back in tool results so a caller can see how its input was read. */
-  raw: string;
-};
-
-const DAY_NAMES = [
-  "sunday",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-] as const;
-
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const ISO_DATETIME =
-  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
-/** Signed, unlike the forward-only surfaces: `-7d` is the common case here. */
-const OFFSET =
-  /^([+-])(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)$/;
-const DAY_WORD = /^(today|tomorrow|yesterday)(?:\s+(\d{1,2}):(\d{2}))?$/;
-const RELATIVE_DAY = /^(next|last)\s+([a-z]+)(?:\s+(\d{1,2}):(\d{2}))?$/;
-
-/** `+02:00` / `-05:00` / `Z` for a given instant, in the system zone. */
-const offsetOf = (d: Date): string => {
-  const mins = -d.getTimezoneOffset();
-  if (mins === 0) return "Z";
-  const sign = mins < 0 ? "-" : "+";
-  const abs = Math.abs(mins);
-  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
-};
-
-const pad = (n: number, w = 2): string => String(n).padStart(w, "0");
-
 /**
- * Local wall-clock time rendered with its offset.
+ * The input grammar comes from core now.
  *
- * Deliberately not `toISOString()`, which converts to UTC and would report a
- * 09:00 bound as `07:00Z` — correct as an instant, but unreadable in a tool
- * result whose purpose is confirming what the caller asked for.
- */
-export const toLocalIso = (d: Date): string =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-  `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offsetOf(d)}`;
-
-/** Local midnight on the given calendar day. */
-export const startOfDay = (d: Date): Date =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-
-/** The last representable instant of the given calendar day, local. */
-export const endOfDay = (d: Date): Date =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-
-/** Calendar-aware day arithmetic: same wall-clock time, n days later. */
-export const addDays = (d: Date, n: number): Date => {
-  const out = new Date(d.getTime());
-  out.setDate(out.getDate() + n);
-  return out;
-};
-
-const at = (day: Date, hours: number, minutes: number): Date =>
-  new Date(day.getFullYear(), day.getMonth(), day.getDate(), hours, minutes, 0, 0);
-
-const result = (kind: DateKind, when: Date, raw: string): ParsedDate => ({
-  kind,
-  at: when,
-  iso: toLocalIso(when),
-  raw,
-});
-
-/**
- * Parse one date argument.
+ * This file's own header used to say the hoist was overdue and declined to do
+ * it — "refactoring two shipped surfaces is not part of adding a third". It has
+ * since been done, and this surface's superset (signed offsets, `yesterday`,
+ * `last monday`) is what core adopted, because history only ever points
+ * backwards and a grammar that differs per surface is the drift being removed.
  *
- * @param field Named in the error, so a failure says *which* argument was bad.
- * @param raw   The caller's string.
- * @param now   Injected for hermetic tests, mirroring `loadConfig(env)`.
+ * One change came back with it: a bare day used as an upper bound is the NEXT
+ * day's midnight, so `store.ts` compares `visit_time < ?` rather than `<=`.
  */
-export const parseDate = (field: string, raw: string, now: Date = new Date()): ParsedDate => {
-  const text = String(raw ?? "").trim();
-  if (!text) throw new InvalidDateError(field, String(raw), "it is empty");
-  const lower = text.toLowerCase();
+export {
+  addLocalDays,
+  parseBound,
+  parseDate,
+  startOfLocalDay,
+  toLocalIso,
+  type DateKind,
+  type ParsedDate,
+} from "@mgcrea/mcp-apple-core";
 
-  // ── ISO date-time. An explicit offset means the caller named an instant. ──
-  const dt = ISO_DATETIME.exec(text);
-  if (dt) {
-    const [, y, mo, d, hh, mm, ss, zone] = dt;
-    const when = zone
-      ? new Date(text.replace(" ", "T"))
-      : new Date(
-          Number(y),
-          Number(mo) - 1,
-          Number(d),
-          Number(hh),
-          Number(mm),
-          Number(ss ?? "0"),
-          0,
-        );
-    if (Number.isNaN(when.getTime())) {
-      throw new InvalidDateError(field, text, "it is not a real date");
-    }
-    return result("timed", when, text);
-  }
-
-  // ── ISO date. Names a day, so it is all-day. ──
-  const only = ISO_DATE.exec(text);
-  if (only) {
-    const [, y, mo, d] = only;
-    const when = new Date(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
-    if (Number.isNaN(when.getTime())) {
-      throw new InvalidDateError(field, text, "it is not a real date");
-    }
-    // Guard against JS's silent rollover: new Date(2026, 1, 30) is 2 March.
-    if (when.getMonth() !== Number(mo) - 1 || when.getDate() !== Number(d)) {
-      throw new InvalidDateError(field, text, `there is no day ${d} in month ${mo}`);
-    }
-    return result("allDay", when, text);
-  }
-
-  // ── Signed offset. Names a duration, so it is timed. ──
-  const off = OFFSET.exec(lower);
-  if (off) {
-    const sign = off[1] === "-" ? -1 : 1;
-    const n = Number(off[2]) * sign;
-    const unit = String(off[3]);
-    if (!Number.isFinite(n)) throw new InvalidDateError(field, text, "the amount is not a number");
-    // Days and weeks are calendar arithmetic; hours and minutes are elapsed time.
-    if (unit.startsWith("d")) return result("timed", addDays(now, n), text);
-    if (unit.startsWith("w")) return result("timed", addDays(now, n * 7), text);
-    const ms = unit.startsWith("h") ? n * 3_600_000 : n * 60_000;
-    return result("timed", new Date(now.getTime() + ms), text);
-  }
-
-  // ── today / yesterday / tomorrow, an optional time promoting it to timed. ──
-  const word = DAY_WORD.exec(lower);
-  if (word) {
-    const shift = word[1] === "tomorrow" ? 1 : word[1] === "yesterday" ? -1 : 0;
-    const day = addDays(now, shift);
-    if (word[2] === undefined) return result("allDay", startOfDay(day), text);
-    const [hh, mm] = [Number(word[2]), Number(word[3])];
-    if (hh > 23 || mm > 59) {
-      throw new InvalidDateError(field, text, `${hh}:${word[3]} is not a time`);
-    }
-    return result("timed", at(day, hh, mm), text);
-  }
-
-  // ── next/last <weekday>, strictly in that direction: "last monday" on a
-  //    Monday is -7, matching "next monday" on a Monday being +7. ──
-  const rel = RELATIVE_DAY.exec(lower);
-  if (rel) {
-    const idx = DAY_NAMES.findIndex((n) => n === rel[2] || n.slice(0, 3) === rel[2]);
-    if (idx === -1) {
-      throw new InvalidDateError(field, text, `"${rel[2]}" is not a day of the week`);
-    }
-    const forward = rel[1] === "next";
-    const delta = forward
-      ? (idx - now.getDay() + 7) % 7 || 7
-      : -((now.getDay() - idx + 7) % 7 || 7);
-    const day = addDays(now, delta);
-    if (rel[3] === undefined) return result("allDay", startOfDay(day), text);
-    const [hh, mm] = [Number(rel[3]), Number(rel[4])];
-    if (hh > 23 || mm > 59) {
-      throw new InvalidDateError(field, text, `${hh}:${rel[4]} is not a time`);
-    }
-    return result("timed", at(day, hh, mm), text);
-  }
-
-  throw new InvalidDateError(field, text, "it matches none of the accepted forms");
-};
-
-/**
- * Parse a bound for a range filter.
- *
- * A bare day means the whole day, so the edge it resolves to depends on which
- * side of the range it is: `to: "2026-08-20"` includes everything up to that
- * evening, and `from: "2026-08-20"` everything from that morning. Resolving
- * both to midnight would make `to` quietly exclude the day the caller named.
- */
-export const parseBound = (
-  field: string,
-  raw: string,
-  edge: "start" | "end",
-  now: Date = new Date(),
-): Date => {
-  const parsed = parseDate(field, raw, now);
-  if (parsed.kind !== "allDay") return parsed.at;
-  return edge === "end" ? endOfDay(parsed.at) : startOfDay(parsed.at);
-};
+import {
+  addLocalDays,
+  InvalidDateError,
+  parseBound,
+  startOfLocalDay,
+  toLocalIso,
+} from "@mgcrea/mcp-apple-core";
 
 export type Range = { from: Date; to: Date; clamped: boolean };
 
@@ -334,7 +160,7 @@ export const parseRange = (
   const to = opts.to ? parseBound("to", opts.to, "end", now) : now;
   const from = opts.from
     ? parseBound("from", opts.from, "start", now)
-    : startOfDay(addDays(to, -(opts.defaultRangeDays - 1)));
+    : startOfLocalDay(addLocalDays(to, -(opts.defaultRangeDays - 1)));
 
   if (to.getTime() < from.getTime()) {
     throw new InvalidDateError(

@@ -127,3 +127,27 @@ export class ProtocolError extends AppleAutomationError {
 export class PreconditionError extends AppleAutomationError {
   override readonly name: string = "PreconditionError";
 }
+
+/**
+ * A date argument could not be read.
+ *
+ * Refusing is the whole point. The alternative — which is what Mail, Messages
+ * and Notes did — is `Date.parse` returning `NaN`, node:sqlite binding it as
+ * `NULL`, and the query matching nothing: an empty result that looks like an
+ * answer. The message lists the accepted forms because the caller is usually a
+ * model that guessed, and the fix is to show it the grammar.
+ */
+export class InvalidDateError extends AppleAutomationError {
+  override readonly name: string = "InvalidDateError";
+
+  constructor(field: string, raw: string, reason: string) {
+    super(
+      `Could not read ${field} from ${JSON.stringify(raw)}: ${reason}. ` +
+        `Accepted: an ISO-8601 date "2026-08-20" (a whole day, local) or date-time ` +
+        `"2026-08-20T09:00" (local unless it carries an offset), a signed offset like ` +
+        `"+2d", "-3h", "+45m", "+1w", "today", "yesterday", "tomorrow 09:00", ` +
+        `"next monday" or "last friday".`,
+      { field, raw },
+    );
+  }
+}

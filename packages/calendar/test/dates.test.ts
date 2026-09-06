@@ -86,14 +86,17 @@ describe("parseDate", () => {
 describe("parseBound", () => {
   /**
    * A bare day means the WHOLE day, so the two edges resolve differently.
-   * Resolving both to midnight makes an end bound exclude the day it names.
+   * Resolving both to the same midnight makes an end bound exclude the day it
+   * names. The upper edge is the NEXT day's midnight and `store.ts` compares
+   * `start_date < ?`, so the named day is fully in and the next one is out.
    */
   it("expands a bare day to the whole day, edge-aware", () => {
     const start = parseBound("from", "2026-08-20", "start", NOW);
     const end = parseBound("to", "2026-08-20", "end", NOW);
     expect(start.getHours()).toBe(0);
-    expect(end.getHours()).toBe(23);
-    expect(end.getTime()).toBeGreaterThan(start.getTime());
+    expect(end.getHours()).toBe(0);
+    expect(end.getDate()).toBe(21);
+    expect(end.getTime() - start.getTime()).toBe(86_400_000);
   });
 });
 
@@ -103,7 +106,10 @@ describe("parseRange", () => {
   it("defaults to a week starting today", () => {
     const r = parseRange({ ...opts }, NOW);
     expect(r.from.getDate()).toBe(21);
-    expect(r.to.getDate()).toBe(27);
+    // Seven whole days from the 21st ends at the start of the 28th, exclusive.
+    expect(r.to.getDate()).toBe(28);
+    expect(r.to.getHours()).toBe(0);
+    expect(r.to.getTime() - r.from.getTime()).toBe(7 * 86_400_000);
     expect(r.clamped).toBe(false);
   });
 

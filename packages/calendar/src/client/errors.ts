@@ -36,24 +36,13 @@ export {
 } from "@mgcrea/mcp-apple-core";
 
 /**
- * A date argument could not be understood.
+ * A date argument could not be read.
  *
- * Carries the accepted grammar rather than just rejecting, because the caller is
- * usually a model that will retry once and needs to know what shape to retry in.
+ * Re-exported from core, which owns the grammar every surface parses dates
+ * with. Kept as a name here so this module stays the one place to look for
+ * what this surface can throw.
  */
-export class InvalidDateError extends AppleAutomationError {
-  override readonly name = "InvalidDateError";
-
-  constructor(field: string, raw: string, reason: string) {
-    super(
-      `Could not read ${field} from ${JSON.stringify(raw)}: ${reason}. ` +
-        `Accepted: an ISO-8601 date "2026-08-20" (a whole day) or date-time ` +
-        `"2026-08-20T09:00" (an instant), or a relative offset like "+2d", "+3h", "+45m", "+1w", ` +
-        `"today", "tomorrow", "tomorrow 09:00", or "next monday".`,
-      { field, raw },
-    );
-  }
-}
+export { InvalidDateError } from "@mgcrea/mcp-apple-core";
 
 /** A CalendarRef no longer resolves — deleted, or moved to another calendar. */
 export class EventNotFoundError extends AppleAutomationError {

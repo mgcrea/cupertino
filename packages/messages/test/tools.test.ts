@@ -257,8 +257,10 @@ describe("argument handling", () => {
     const res = await call(
       await connect({ APPLE_MESSAGES_INDEX_MODE: "off" }),
       "apple_messages_list_messages",
+      // "last tuesday" USED to be the unreadable sample here. The shared
+      // grammar accepts it, so this needs something genuinely unparseable.
       {
-        from: "last tuesday",
+        from: "sometime last week",
       },
     );
     expect(res.isError).toBe(true);

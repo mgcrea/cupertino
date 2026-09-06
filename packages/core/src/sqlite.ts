@@ -76,15 +76,27 @@ export const openReadOnly = <T = undefined>(
 
   let lastError: unknown = null;
   for (const attempt of attempts) {
+    // Declared outside the try so the catch can close it. `validate` runs
+    // against an OPEN handle and every surface passes one — a schema drift or a
+    // locked store threw straight past the close, leaking a descriptor onto a
+    // file the Apple app itself holds open, on the `ro` attempt AND on the
+    // fatal path that rethrows.
+    let db: DatabaseSync | undefined;
     try {
       const uri = toFileUri(path, attempt === "ro" ? "mode=ro" : "immutable=1");
-      const db = new DatabaseSync(uri, { readOnly: true, allowExtension: false });
+      db = new DatabaseSync(uri, { readOnly: true, allowExtension: false });
       // Belt and braces: no caller can issue DML even by accident.
       db.exec("PRAGMA query_only = 1");
       const validated = opts.validate?.(db) as T;
       if (attempt === "immutable") opts.onFallback?.();
       return { db, mode: attempt, validated };
     } catch (err) {
+      try {
+        db?.close();
+      } catch {
+        // Already closed, or never opened. Nothing to salvage, and the original
+        // error is the one worth reporting.
+      }
       if (opts.fatal?.(err)) throw err;
       lastError = err;
     }

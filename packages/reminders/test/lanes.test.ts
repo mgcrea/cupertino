@@ -198,3 +198,58 @@ describe("lane selection", () => {
     expect(lanes.storeFingerprint).toHaveLength(12);
   });
 });
+
+/**
+ * Bounds are resolved once per request, before any row is looked at.
+ *
+ * They used to be parsed inside the per-row matcher, behind an early return for
+ * reminders with no due date — so an unreadable bound was reported only if some
+ * row happened to carry a date. Over an all-undated list, or an empty one, the
+ * answer was `[]`: an empty result presented as an answer.
+ */
+describe("date bounds", () => {
+  it.each(["index", "apple-events"] as const)(
+    "refuses an unreadable bound on the %s lane",
+    async (lane) => {
+      const env = lane === "index" ? {} : { APPLE_REMINDERS_ACCOUNTS: "iCloud" };
+      await expect(
+        client(env).listReminders({ dueBefore: "sometime soon", limit: 10 }),
+      ).rejects.toThrow(/Could not read dueBefore/);
+    },
+  );
+
+  it("refuses it even when no reminder carries a due date at all", async () => {
+    // `hasDueDate: false` cannot match the dated fixture rows, so nothing
+    // reaches the date comparison. The refusal has to come from before it.
+    await expect(
+      client().listReminders({ dueBefore: "sometime soon", hasDueDate: false, limit: 10 }),
+    ).rejects.toThrow(/Could not read dueBefore/);
+  });
+
+  /**
+   * The fixture reminder is due 21 August. A `dueBefore` naming that day has to
+   * include it: an upper bound is the next day's midnight and the comparison is
+   * exclusive, so the whole named day is in.
+   */
+  it("includes the day an upper bound names", async () => {
+    const out = await client().listReminders({ dueBefore: "2026-08-21", limit: 10 });
+    expect(out.map((r) => r.name)).toEqual(["From the index"]);
+  });
+
+  it("excludes it when the bound names the day before", async () => {
+    const out = await client().listReminders({ dueBefore: "2026-08-20", limit: 10 });
+    expect(out).toEqual([]);
+  });
+
+  /**
+   * The index renders an all-day reminder as a bare `"2026-08-21"`, and
+   * `new Date("2026-08-21")` is UTC midnight while every bound is local. West
+   * of Greenwich that put the reminder before its own day's lower bound.
+   */
+  it("reads an all-day due date as a local day on both edges", async () => {
+    const from = await client().listReminders({ dueAfter: "2026-08-21", limit: 10 });
+    expect(from.map((r) => r.name)).toEqual(["From the index"]);
+    const after = await client().listReminders({ dueAfter: "2026-08-22", limit: 10 });
+    expect(after).toEqual([]);
+  });
+});

@@ -18,6 +18,7 @@ export {
   type ToolResult,
 } from "@mgcrea/mcp-apple-core";
 
+import { parseBound } from "@mgcrea/mcp-apple-core";
 import { z } from "zod";
 
 export const chatRefArg = z
@@ -39,15 +40,33 @@ export const messageRefArg = z
 export const fromArg = z
   .string()
   .optional()
-  .describe('Start of the window, ISO-8601 — "2026-08-01" or "2026-08-01T09:00".');
+  .describe(
+    'Start of the window — "2026-08-01" (a whole day, local), "2026-08-01T09:00", or a ' +
+      'relative form like "-7d", "yesterday" or "last monday".',
+  );
 
 export const toArg = z
   .string()
   .optional()
   .describe(
-    "End of the window, ISO-8601. Defaults to 30 days after `from`, or to now when `from` is " +
-      "omitted too.",
+    "End of the window, same forms as `from`. A bare day includes ALL of that day. Defaults " +
+      "to 30 days after `from`, or to now when `from` is omitted too.",
   );
+
+/**
+ * One bound, through the grammar every surface shares.
+ *
+ * This replaced two copies of a local `new Date(raw)`, which had the bug that
+ * grammar exists to prevent: `new Date("2026-08-01")` is UTC midnight while
+ * `new Date("2026-08-01T00:00")` is LOCAL midnight, so the two spellings the
+ * descriptions above treat as equivalent bounded a query hours apart — and the
+ * day and month buckets these windows feed are local calendar dates.
+ */
+export const bound = (
+  raw: string | undefined,
+  field: string,
+  edge: "start" | "end",
+): Date | undefined => (raw === undefined ? undefined : parseBound(field, raw, edge));
 
 export const includeReactionsArg = z
   .boolean()

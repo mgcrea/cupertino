@@ -129,7 +129,9 @@ describe("apple_messages_count_messages over MCP", () => {
   });
 
   it("narrows to a window, and to one direction", async () => {
-    expect(await count({ from: "2026-08-02", to: "2026-08-04" })).toMatchObject({ total: 2 });
+    // B, C and D. A bare `to` names a whole day, so the 4th is IN — it used to
+    // parse as UTC midnight of the 4th and silently exclude the day asked for.
+    expect(await count({ from: "2026-08-02", to: "2026-08-04" })).toMatchObject({ total: 3 });
     expect(await count({ direction: "sent" })).toMatchObject({ total: 1, received: 0 });
   });
 
@@ -138,7 +140,7 @@ describe("apple_messages_count_messages over MCP", () => {
       await connect()
     ).callTool({
       name: "apple_messages_count_messages",
-      arguments: { from: "last tuesday" },
+      arguments: { from: "sometime last week" },
     })) as { content: { text: string }[]; isError?: boolean };
     expect(res.isError).toBe(true);
     expect(res.content.map((c) => c.text).join("")).toContain("ISO-8601");

@@ -31,201 +31,39 @@
 
 import { InvalidDateError } from "./errors.js";
 
-export type DateKind = "allDay" | "timed";
-
-export type ParsedDate = {
-  kind: DateKind;
-  /** The absolute instant, for comparisons and for handing to JXA. */
-  at: Date;
-  /** ISO-8601 with an explicit offset, so the value survives leaving this process. */
-  iso: string;
-  /** Echoed back in tool results so a caller can see how its input was read. */
-  raw: string;
-};
-
 /**
- * What a tool reports for an event's start or end.
+ * The input grammar comes from core, which is where the three copies of it were
+ * merged. This surface's own half is everything BELOW: rendering an instant in
+ * a calendar's zone, which is specific to a store that keeps floating dates.
  *
- * A union rather than one struct with an `allDay` flag: an all-day event names
- * a DAY and has no instant, and giving it an `iso` field would invite callers to
- * read one. The type makes that impossible instead of merely discouraged.
+ * One behaviour changed with the hoist, and the store SQL was already right for
+ * it: a bare day used as an upper bound resolves to the next day's midnight
+ * rather than to 23:59:59.999, and `store.ts` has always compared `start_date <
+ * ?`. `parseRange`'s default `to` follows suit below.
  */
-export type EventInstant =
-  | { allDay: true; day: string; timeZone: null }
-  | { allDay: false; iso: string; timeZone: string | null };
+export {
+  addLocalDays,
+  parseBound,
+  parseDate,
+  startOfLocalDay,
+  toLocalIso,
+  type DateKind,
+  type ParsedDate,
+} from "@mgcrea/mcp-apple-core";
 
-const DAY_NAMES = [
-  "sunday",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-] as const;
+import { addLocalDays, parseBound, startOfLocalDay, toLocalIso } from "@mgcrea/mcp-apple-core";
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const ISO_DATETIME =
-  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
-const OFFSET =
-  /^\+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)$/;
-const DAY_WORD = /^(today|tomorrow)(?:\s+(\d{1,2}):(\d{2}))?$/;
-const NEXT_DAY = /^next\s+([a-z]+)(?:\s+(\d{1,2}):(\d{2}))?$/;
+/** `90`, `"90"`, `"90m"`, `"2h"` — the duration half, which core has no view on. */
 const DURATION = /^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)?$/;
 
-/** `GMT+0200`, `UTC-05:00`. A definite zone that is simply not an IANA name. */
+/** `GMT+02:00` and friends, which Calendar stores alongside real IANA names. */
 const FIXED_OFFSET = /^(?:GMT|UTC)([+-])(\d{2}):?(\d{2})$/i;
 
 const pad = (n: number, w = 2): string => String(n).padStart(w, "0");
 
-/** `+02:00` / `-05:00` / `Z` for a given instant, in the system zone. */
-const offsetOf = (d: Date): string => {
-  const mins = -d.getTimezoneOffset();
-  if (mins === 0) return "Z";
-  const sign = mins < 0 ? "-" : "+";
-  const abs = Math.abs(mins);
-  return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-};
-
-/**
- * Local wall-clock time rendered with its offset.
- *
- * Deliberately not `toISOString()`, which converts to UTC and would report a
- * 09:00 meeting as `07:00Z` — correct as an instant, unreadable in a result
- * whose purpose is confirming what the caller asked for.
- */
-export const toLocalIso = (d: Date): string =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-  `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offsetOf(d)}`;
-
-const startOfDay = (d: Date): Date =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-
-const endOfDay = (d: Date): Date =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-
-/** Calendar-aware day arithmetic: same wall-clock time, n days later. */
-const addDays = (d: Date, n: number): Date => {
-  const out = new Date(d.getTime());
-  out.setDate(out.getDate() + n);
-  return out;
-};
-
-const at = (day: Date, hours: number, minutes: number): Date =>
-  new Date(day.getFullYear(), day.getMonth(), day.getDate(), hours, minutes, 0, 0);
-
-const result = (kind: DateKind, when: Date, raw: string): ParsedDate => ({
-  kind,
-  at: when,
-  iso: toLocalIso(when),
-  raw,
-});
-
-// ─── input ───────────────────────────────────────────────────────────────────
-
-/**
- * Parse one date argument.
- *
- * @param field Named in the error, so a failure says WHICH argument was bad.
- * @param raw   The caller's string.
- * @param now   Injected for hermetic tests.
- */
-export const parseDate = (field: string, raw: string, now: Date = new Date()): ParsedDate => {
-  const text = String(raw ?? "").trim();
-  if (!text) throw new InvalidDateError(field, String(raw), "it is empty");
-  const lower = text.toLowerCase();
-
-  const dt = ISO_DATETIME.exec(text);
-  if (dt) {
-    const [, y, mo, d, hh, mm, ss, zone] = dt;
-    const when = zone
-      ? new Date(text.replace(" ", "T"))
-      : new Date(
-          Number(y),
-          Number(mo) - 1,
-          Number(d),
-          Number(hh),
-          Number(mm),
-          Number(ss ?? "0"),
-          0,
-        );
-    if (Number.isNaN(when.getTime())) {
-      throw new InvalidDateError(field, text, "it is not a real date");
-    }
-    return result("timed", when, text);
-  }
-
-  const only = ISO_DATE.exec(text);
-  if (only) {
-    const [, y, mo, d] = only;
-    const when = new Date(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
-    if (Number.isNaN(when.getTime())) {
-      throw new InvalidDateError(field, text, "it is not a real date");
-    }
-    // Guard against JS's silent rollover: new Date(2026, 1, 30) is 2 March.
-    if (when.getMonth() !== Number(mo) - 1 || when.getDate() !== Number(d)) {
-      throw new InvalidDateError(field, text, `there is no day ${d} in month ${mo}`);
-    }
-    return result("allDay", when, text);
-  }
-
-  const off = OFFSET.exec(lower);
-  if (off) {
-    const n = Number(off[1]);
-    const unit = String(off[2]);
-    if (!Number.isFinite(n)) throw new InvalidDateError(field, text, "the amount is not a number");
-    if (unit.startsWith("d")) return result("timed", addDays(now, n), text);
-    if (unit.startsWith("w")) return result("timed", addDays(now, n * 7), text);
-    const ms = unit.startsWith("h") ? n * 3_600_000 : n * 60_000;
-    return result("timed", new Date(now.getTime() + ms), text);
-  }
-
-  const word = DAY_WORD.exec(lower);
-  if (word) {
-    const day = word[1] === "tomorrow" ? addDays(now, 1) : now;
-    if (word[2] === undefined) return result("allDay", startOfDay(day), text);
-    const [hh, mm] = [Number(word[2]), Number(word[3])];
-    if (hh > 23 || mm > 59)
-      throw new InvalidDateError(field, text, `${hh}:${word[3]} is not a time`);
-    return result("timed", at(day, hh, mm), text);
-  }
-
-  // "next monday" on a Monday is +7, never today.
-  const next = NEXT_DAY.exec(lower);
-  if (next) {
-    const idx = DAY_NAMES.findIndex((n) => n === next[1] || n.slice(0, 3) === next[1]);
-    if (idx === -1) {
-      throw new InvalidDateError(field, text, `"${next[1]}" is not a day of the week`);
-    }
-    const ahead = (idx - now.getDay() + 7) % 7 || 7;
-    const day = addDays(now, ahead);
-    if (next[2] === undefined) return result("allDay", startOfDay(day), text);
-    const [hh, mm] = [Number(next[2]), Number(next[3])];
-    if (hh > 23 || mm > 59)
-      throw new InvalidDateError(field, text, `${hh}:${next[3]} is not a time`);
-    return result("timed", at(day, hh, mm), text);
-  }
-
-  throw new InvalidDateError(field, text, "it matches none of the accepted forms");
-};
-
-/**
- * Parse a bound for a range filter.
- *
- * A bare day means the WHOLE day, so which edge it resolves to depends on which
- * side of the range it is. Resolving both to midnight would make an end bound
- * quietly exclude the day the caller named.
- */
-export const parseBound = (
-  field: string,
-  raw: string,
-  edge: "start" | "end",
-  now: Date = new Date(),
-): Date => {
-  const parsed = parseDate(field, raw, now);
-  if (parsed.kind !== "allDay") return parsed.at;
-  return edge === "end" ? endOfDay(parsed.at) : startOfDay(parsed.at);
-};
+export type EventInstant =
+  | { allDay: true; day: string; timeZone: null }
+  | { allDay: false; iso: string; timeZone: string | null };
 
 export type Range = { from: Date; to: Date; clamped: boolean };
 
@@ -246,10 +84,13 @@ export const parseRange = (
   },
   now: Date = new Date(),
 ): Range => {
-  const from = opts.from ? parseBound("from", opts.from, "start", now) : startOfDay(now);
+  const from = opts.from ? parseBound("from", opts.from, "start", now) : startOfLocalDay(now);
+  // The exclusive next-day midnight, matching what an explicit `to` resolves to.
+  // `defaultRangeDays` days starting at `from` ends at the start of the day
+  // after the last one, and store.ts compares `start_date < ?`.
   const to = opts.to
     ? parseBound("to", opts.to, "end", now)
-    : endOfDay(addDays(from, opts.defaultRangeDays - 1));
+    : startOfLocalDay(addLocalDays(from, opts.defaultRangeDays));
 
   if (to.getTime() < from.getTime()) {
     throw new InvalidDateError(

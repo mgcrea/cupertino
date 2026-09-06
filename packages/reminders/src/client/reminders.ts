@@ -366,7 +366,43 @@ export class AppleRemindersClient {
     };
   }
 
-  #matches(r: RawReminder, f: ReminderFilters, now: Date): boolean {
+  /**
+   * Both range bounds, resolved ONCE per request.
+   *
+   * They used to be parsed inside the per-row matcher, behind an early return
+   * for reminders with no due date. Two consequences, both silent: an invalid
+   * bound was only reported if some row happened to carry a date, so
+   * `dueBefore: "sometime"` over an all-undated list answered `[]` instead of
+   * refusing; and the same string was re-parsed once per reminder.
+   */
+  static #bounds(f: ReminderFilters, now: Date): { before?: number; after?: number } {
+    const out: { before?: number; after?: number } = {};
+    if (f.dueBefore) out.before = parseBound("dueBefore", f.dueBefore, "end", now).getTime();
+    if (f.dueAfter) out.after = parseBound("dueAfter", f.dueAfter, "start", now).getTime();
+    return out;
+  }
+
+  /**
+   * A due date as an instant, reading a bare day as LOCAL midnight.
+   *
+   * The index renders an all-day reminder as `"2026-08-20"`, and
+   * `new Date("2026-08-20")` is UTC midnight while every bound here is local.
+   * West of Greenwich that put an all-day reminder before its own day's lower
+   * bound, so it dropped out of a range that named it.
+   */
+  static #dueInstant(due: string): number {
+    const bare = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+    if (bare) {
+      return new Date(Number(bare[1]), Number(bare[2]) - 1, Number(bare[3])).getTime();
+    }
+    return new Date(due).getTime();
+  }
+
+  #matches(
+    r: RawReminder,
+    f: ReminderFilters,
+    bounds: { before?: number; after?: number },
+  ): boolean {
     if (!this.#allowedAccount(r.account) || !this.#allowedList(r.list)) return false;
 
     const includeCompleted = f.includeCompleted ?? this.config.includeCompleted;
@@ -384,15 +420,13 @@ export class AppleRemindersClient {
 
     // A range bound over reminders with no due date at all would be a silent
     // "no": excluding them explicitly is the same answer, arrived at on purpose.
-    if (f.dueBefore || f.dueAfter) {
+    if (bounds.before !== undefined || bounds.after !== undefined) {
       if (!due) return false;
-      const at = new Date(due).getTime();
-      if (f.dueBefore && at > parseBound("dueBefore", f.dueBefore, "end", now).getTime()) {
-        return false;
-      }
-      if (f.dueAfter && at < parseBound("dueAfter", f.dueAfter, "start", now).getTime()) {
-        return false;
-      }
+      const at = AppleRemindersClient.#dueInstant(String(due));
+      // `>=` rather than `>`: an upper bound is now the next day's midnight, so
+      // it is exclusive and the day it names is fully included.
+      if (bounds.before !== undefined && at >= bounds.before) return false;
+      if (bounds.after !== undefined && at < bounds.after) return false;
     }
     return true;
   }
@@ -437,20 +471,20 @@ export class AppleRemindersClient {
    * relative offsets, which have to be resolved against the same clock the rest
    * of the request uses.
    */
-  #matchesIndex(r: ReminderSummary, f: ReminderFilters, now: Date): boolean {
+  #matchesIndex(
+    r: ReminderSummary,
+    f: ReminderFilters,
+    bounds: { before?: number; after?: number },
+  ): boolean {
     if (!this.#allowedList(r.list)) return false;
     if (f.flagged !== undefined && r.flagged !== f.flagged) return false;
     if (f.priority && r.priority !== f.priority) return false;
     if (f.hasDueDate !== undefined && Boolean(r.due) !== f.hasDueDate) return false;
-    if (f.dueBefore || f.dueAfter) {
+    if (bounds.before !== undefined || bounds.after !== undefined) {
       if (!r.due) return false;
-      const at = new Date(r.due).getTime();
-      if (f.dueBefore && at > parseBound("dueBefore", f.dueBefore, "end", now).getTime()) {
-        return false;
-      }
-      if (f.dueAfter && at < parseBound("dueAfter", f.dueAfter, "start", now).getTime()) {
-        return false;
-      }
+      const at = AppleRemindersClient.#dueInstant(r.due);
+      if (bounds.before !== undefined && at >= bounds.before) return false;
+      if (bounds.after !== undefined && at < bounds.after) return false;
     }
     return true;
   }
@@ -470,6 +504,9 @@ export class AppleRemindersClient {
     scope: "title" | "full" | undefined,
     now: Date,
   ): ReminderSummary[] {
+    // Resolved before the query runs, so an unreadable bound is refused even
+    // when nothing would have matched it.
+    const bounds = AppleRemindersClient.#bounds(filters, now);
     const listPk = filters.list ? this.#listPk(store, filters.list) : undefined;
     // A named list that the index does not know would otherwise silently widen
     // the query to every list, which is worse than returning nothing.
@@ -484,7 +521,7 @@ export class AppleRemindersClient {
     });
     return rows
       .map((r) => this.#fromIndex(r))
-      .filter((r) => this.#matchesIndex(r, filters, now))
+      .filter((r) => this.#matchesIndex(r, filters, bounds))
       .slice(0, filters.limit);
   }
 
@@ -507,9 +544,12 @@ export class AppleRemindersClient {
     const store = this.#indexCanAnswer() ? this.index() : null;
     if (store) return this.#fromStore(store, filters, undefined, undefined, now);
 
+    // Before the bulk read, not inside the row filter: a bad bound should cost
+    // a refusal, not nine seconds of Apple Events followed by an empty list.
+    const bounds = AppleRemindersClient.#bounds(filters, now);
     const data = await this.#bulk();
     return data.reminders
-      .filter((r) => this.#matches(r, filters, now))
+      .filter((r) => this.#matches(r, filters, bounds))
       .map((r) => this.#summarise(r))
       .toSorted(AppleRemindersClient.#order)
       .slice(0, Math.min(filters.limit, this.config.degradedMaxReminders));
@@ -533,9 +573,10 @@ export class AppleRemindersClient {
     const store = this.#indexCanAnswer() ? this.index() : null;
     if (store) return this.#fromStore(store, opts, query.trim(), opts.scope ?? "full", now);
 
+    const bounds = AppleRemindersClient.#bounds(opts, now);
     const data = await this.#bulk();
     return data.reminders
-      .filter((r) => this.#matches(r, opts, now))
+      .filter((r) => this.#matches(r, opts, bounds))
       .filter((r) => {
         if (!needle) return true;
         if ((r.name ?? "").toLowerCase().includes(needle)) return true;

@@ -7,6 +7,7 @@ import {
   escapeLike,
   fingerprintSchema,
   openReadOnly,
+  parseBound,
   type Logger,
   type ReadOnlyMode,
 } from "@mgcrea/mcp-apple-core";
@@ -241,13 +242,24 @@ export class NoteStore {
       clauses.push("o.ZFOLDER = ?");
       params.push(filters.folderPk);
     }
+    // Through the shared grammar, which refuses what it cannot read. `Date.parse`
+    // answered NaN, node:sqlite bound NaN as NULL, and `>= NULL` matched nothing
+    // — an empty result presented as an answer. No tool reaches these today,
+    // which is exactly why it would have gone unnoticed when one did.
     if (filters.modifiedAfter) {
       clauses.push("o.ZMODIFICATIONDATE1 >= ?");
-      params.push(Date.parse(filters.modifiedAfter) / 1000 - CORE_DATA_EPOCH_OFFSET);
+      params.push(
+        parseBound("modifiedAfter", filters.modifiedAfter, "start").getTime() / 1000 -
+          CORE_DATA_EPOCH_OFFSET,
+      );
     }
     if (filters.modifiedBefore) {
-      clauses.push("o.ZMODIFICATIONDATE1 <= ?");
-      params.push(Date.parse(filters.modifiedBefore) / 1000 - CORE_DATA_EPOCH_OFFSET);
+      // Exclusive, matching the next-day midnight a bare day resolves to.
+      clauses.push("o.ZMODIFICATIONDATE1 < ?");
+      params.push(
+        parseBound("modifiedBefore", filters.modifiedBefore, "end").getTime() / 1000 -
+          CORE_DATA_EPOCH_OFFSET,
+      );
     }
 
     const sql = `${this.#select()} WHERE ${clauses.join(" AND ")}

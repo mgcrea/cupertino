@@ -77,9 +77,11 @@ describe("input grammar", () => {
     } catch (err) {
       expect((err as Error).message).toContain("from");
       // The whole grammar travels with the rejection, so a model retrying on
-      // the next turn has what it needs rather than guessing again.
-      expect((err as Error).message).toContain("-7d");
-      expect((err as Error).message).toContain("last monday");
+      // the next turn has what it needs rather than guessing again. Including
+      // the backward forms, which is what this surface needed it to carry.
+      expect((err as Error).message).toContain("-3h");
+      expect((err as Error).message).toContain("yesterday");
+      expect((err as Error).message).toContain("last friday");
     }
   });
 });
@@ -120,10 +122,17 @@ describe("parseRange", () => {
     expect(days).toBeLessThan(31);
   });
 
+  /**
+   * The upper edge is the start of the day AFTER the one named, and the store
+   * compares `visit_time < ?`. So "2026-08-02" includes all of the 2nd and
+   * nothing of the 3rd, and the window is a whole number of days wide.
+   */
   it("resolves a bare day to the whole day on each edge", () => {
     const r = parseRange({ ...OPTS, from: "2026-08-01", to: "2026-08-02" }, NOW);
     expect(r.from.getHours()).toBe(0);
-    expect(r.to.getHours()).toBe(23);
+    expect(r.to.getHours()).toBe(0);
+    expect(r.to.getDate()).toBe(3);
+    expect(r.to.getTime() - r.from.getTime()).toBe(2 * 86_400_000);
   });
 
   it("refuses a backwards range", () => {

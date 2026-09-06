@@ -20,10 +20,21 @@ export {
   trimmed,
 } from "./config.js";
 export {
+  addLocalDays,
+  endOfLocalDay,
+  parseBound,
+  parseDate,
+  startOfLocalDay,
+  toLocalIso,
+  type DateKind,
+  type ParsedDate,
+} from "./dates.js";
+export {
   AppBusyError,
   AppleAutomationError,
   AppNotRunningError,
   IndexUnavailableError,
+  InvalidDateError,
   OsascriptTimeoutError,
   PlatformError,
   PreconditionError,

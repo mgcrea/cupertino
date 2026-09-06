@@ -313,7 +313,10 @@ export class SafariStore {
       params.push(toStoreTime(q.from, this.caps.epoch));
     }
     if (canRange && q.to) {
-      where.push(`v."visit_time" <= ?`);
+      // Exclusive, because `parseBound` resolves a bare upper day to the NEXT
+      // day's midnight. `<=` here would let in the first instant of the day
+      // after the one the caller named.
+      where.push(`v."visit_time" < ?`);
       params.push(toStoreTime(q.to, this.caps.epoch));
     }
 
