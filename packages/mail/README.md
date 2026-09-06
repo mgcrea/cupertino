@@ -51,7 +51,7 @@ _reader_ that needs permission, not Mail.
 **Automation** is granted to the app that launches the server (Terminal, iTerm, VS Code, Claude…).
 macOS prompts for it on the first Apple Event, so usually you just click Allow.
 
-**Full Disk Access** is the awkward one, and the reason this package ships a launcher.
+**Full Disk Access** is the awkward one.
 
 ### Why you should not just grant it to your editor
 
@@ -70,43 +70,27 @@ defeats `APPLE_MAIL_ACCOUNTS`, which exists to bound exactly this.
 You cannot avoid it by granting the permission to `.mcp.json` (it is data, not code) or to `node`
 (it is not the responsible process, and it is shared by every node program on the machine).
 
-### The launcher
+### What to do instead
 
-`scripts/install-wrapper.sh` builds a small signed launcher that re-execs itself with
-`responsibility_spawnattrs_setdisclaim`, making it its own responsible process, and starts the
-server beneath it. Full Disk Access then goes to **that one binary** and nothing else.
+Install [**Cupertino.app**](https://cupertino.mgcrea.io), the signed menu bar app this package is
+developed in. It holds one Full Disk Access grant and serves this server beneath it, so the
+permission belongs to a notarized binary rather than to your editor:
 
 ```bash
-pnpm build
-./scripts/install-wrapper.sh
+brew install --cask mgcrea/tap/cupertino
 ```
 
-Grant Full Disk Access to the path it prints, and point `.mcp.json` at it instead of `node`:
+Measured: Full Disk Access and Automation granted to a signed `.app` are inherited two levels deep
+by the processes it spawns, so a `node` grandchild reads the Envelope Index and `tccd` resolves a
+grandchild `osascript` to the app rather than to whatever launched it.
 
-```json
-{
-  "mcpServers": {
-    "apple-mail": {
-      "command": "/Users/YOU/Library/Application Support/apple-mail-mcp/bin/apple-mail-mcp",
-      "env": { "APPLE_MAIL_ALLOW_WRITES": "1" }
-    }
-  }
-}
-```
+Earlier versions of this package described a small compiled launcher that made itself its own
+responsible process through a private API. It is no longer built or shipped — there is nothing left
+to escape — though `native/launcher.c` stays in the repository as the clearest statement of the
+problem.
 
-Verified on macOS 26.6: the launcher reads Mail's index while plain `node` in the same shell stays
-denied, so the grant really is scoped. `apple_mail_diagnostics` will confirm it.
-
-Three things worth knowing:
-
-- **It is not a general-purpose "run X with Full Disk Access" tool.** The node and server paths are
-  compiled in and `argv` is never consulted for what to execute. A launcher that ran whatever it was
-  told would let any local process read your whole disk using a permission you granted for mail.
-- **Install it once, outside the repo.** macOS ties the grant to a file path, so a launcher living in
-  `node_modules` or an `npx` cache would silently lose its permission on the next version bump.
-- **`responsibility_spawnattrs_setdisclaim` is a private API.** It has been stable since 10.14, and
-  if it ever disappears the launcher says so on stderr and starts the server anyway — you lose the
-  search and body lanes, not the server. The fallback is granting Full Disk Access to the host app.
+If you would rather not install the app, granting Full Disk Access to your editor does work. Read
+the paragraph above about what that grant actually covers before you do.
 
 Restart your MCP host after granting. `apple_mail_diagnostics` reports which permission is missing
 and what it is blocking.

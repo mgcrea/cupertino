@@ -12,6 +12,100 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **A message addressed to a group could be delivered privately to one person.** The send lane
+  passed a group chat's first participant as its handle, and the JXA ladder guesses a one-to-one
+  chat id from a handle whenever the chat lookup above it throws. Reconciliation then polled the
+  group and found nothing, so it reported `pending` — "do not send again" — for a message that had
+  been sent, to the wrong recipient. A group ref now carries no handle at all.
+
+- **Every Maps favourite carried a wrong Apple place id, and synced it.** The donor's `ZMUID` is a
+  64-bit integer read deliberately as text because a real one is past `MAX_SAFE_INTEGER`; the write
+  put it back through a JavaScript number, which SQLite binds as a double. The id landed rounded —
+  measured 233 away — in a CloudKit-mirrored store, so it reached every device on the account.
+
+- **A pruned audit log reported itself as tampered with.** Retention drops whole segments, and the
+  verifier started every run from genesis, so the oldest surviving record was always a broken link
+  and the Activity pane went red saying a record had been removed. It now seeds from the surviving
+  segment's own link and reports "verifies from segment N". A mislabelled first segment and a gap
+  in the middle are still failures. Retention's 30-day bound also never ran on a Mac that logs a
+  few hundred calls a day, because pruning only happened on a 4 MB rotation.
+
+- **A mailbox filter that matched nothing searched everything instead.** An empty set of index
+  rowids read the same as "no filter asked for", so a scoped Mail search could return other
+  accounts' messages and a per-mailbox count could report the whole archive. It refuses now, naming
+  the mailboxes the index actually holds.
+
+- **Notes ignored the account allowlist and the folder argument whenever it could read the store.**
+  Both failed open, and only on machines with Full Disk Access — which is exactly where they
+  matter. Both now take the slower Apple Events lane rather than answering with what was not asked
+  for.
+
+- **Date arguments were parsed six different ways, and three of them were wrong.** An unreadable
+  date became `NaN`, which SQLite binds as `NULL`, so Mail answered a date written in words with
+  zero results and no error. A bare day meant UTC midnight in some places and local midnight in
+  others. An upper bound naming a day excluded that whole day. `2026-02-30T09:00` silently became
+  2 March. There is one grammar now, in core, and it refuses what it cannot read.
+
+- **Mail's composer waited on the wrong signal, and asked the wrong object who had focus.** Two
+  fixes from before this release: the readable state is not ready when the window appears, so the
+  focus is polled; and focus is a property of the application, not of the element being addressed.
+
+- **`find_codes` could miss a code that was right there.** Its limit capped the messages scanned
+  before the user's own replies were filtered out, so an ordinary few minutes of conversation
+  pushed the code off the page. Direction is now a database predicate, and the limit applies to the
+  codes returned.
+
+- **Messages search returned nothing recent once older results filled the page**, because the text
+  column pass ran to the limit before the archived-blob pass got a look — and every message since
+  March 2026 lives only in a blob. The two passes are merged by date now.
+
+- **`update_event` ignored `end` and `durationMinutes` unless `start` came with them**, reporting
+  success and changing nothing.
+
+- **Contacts' diagnostics said the surface registers no mutating tool**, while two have been
+  registered behind its write flag.
+
+- **A search could invalidate the element handles it had just issued**, because the handle store
+  emptied itself at capacity while a search was still filling it.
+
+### Changed
+
+- **The driving notice is an on-screen panel, not a menu bar badge.** See the correction under
+  1.16.0: the badge could never render. The panel does not take focus and does not steal a
+  keystroke from the sequence it is reporting on.
+
+- **The Desktop guide describes driving an iOS Simulator**, when the reach allows it. Simulator.app
+  bridges a simulated device's accessibility tree into the Mac's, so an iOS app's own controls are
+  readable and pressable with no WebDriverAgent and no runner process. Measured in
+  [docs/simulator.md](docs/simulator.md): a strict subset of what WebDriverAgent reaches, entirely
+  named, and it contradicts WebDriverAgent on the one flag WebDriverAgent gets wrong.
+
+- **Walk bounds have a ceiling**, so a budget of an hour cannot hold a session thread for one.
+  `find_elements` also declares the `window` argument it has always honoured.
+
+- **The handshake has a deadline on the app's side too.** A process that connected and sent nothing
+  used to hold a thread and a descriptor until it exited.
+
+### Security
+
+- **The application support directory is 0700**, and an existing one is tightened rather than left
+  as it was found. The socket is created under a private umask rather than narrowed a moment later.
+
+- **A failed audit write is reported instead of swallowed**, so a full disk stops looking like
+  tampering after the fact.
+
+### Internal
+
+- CI runs the Desktop server's own check, which is the only gate on its refusal paths, and a
+  release is refused if the CHANGELOG has no entry for the tag.
+- The README check now reads the per-surface tool tables and the prose under them, not just the
+  Surfaces table. Eleven registered tools were missing, and Safari's section still called the
+  surface read-only while registering five write tools.
+
 ## [1.16.0] - 2026-09-06
 
 ### Added
@@ -82,6 +176,10 @@ summary.
   Accessibility, which is the wider grant. It expires rather than being switched off, because
   nothing tells the app an agent has finished and an explicit end would leave it lit forever the
   first time a client disconnected mid-sequence.
+
+  **Correction, added after release: the badge described above never appeared.** A menu bar item's
+  button cannot be recoloured while its window is closed, which is the only state it is ever in.
+  What actually shows the notice is an on-screen panel, added in Unreleased below.
 
 ### Changed
 

@@ -22,10 +22,26 @@
 //
 // ## What it checks
 //
-// Counts, not prose. The number in each row against the registrations in the
-// tree, every manifest surface having a row, and — the one that matters — that
-// no surface which `surfaces.json` says supports writes is described as
-// read-only.
+// Counts, prose, and NAMES.
+//
+// Three things. The number in each Surfaces row against the registrations in
+// the tree; every manifest surface having a row; and — the ones that matter —
+// that no surface which `surfaces.json` says supports writes is described as
+// read-only ANYWHERE in its own section, and that the per-surface
+// `### <Surface>` table names every tool the surface registers.
+//
+// The last two are here because the first version of this script checked only
+// the Surfaces table, and the exact claim it was written to kill survived 240
+// lines further down: Safari's own section still said "Read-only, and the write
+// column is empty on purpose" while the surface registered five write tools. A
+// safety claim in prose is still a safety claim. In the same drift eleven
+// registered tools were missing from the per-surface tables — Maps' three
+// writes among them, which were the 1.16.0 headline.
+//
+// Names come from `apps/website/src/data/surfaces.ts`, which is itself checked
+// against the `registerTool` calls in both directions by
+// `scripts/lib/website-tools.test.mjs`. So this does not re-derive the truth; it
+// borrows the copy that already has a test.
 //
 //   node scripts/readme-surfaces-check.mjs
 
@@ -140,6 +156,89 @@ for (const s of manifest.surfaces) {
 
 for (const [, row] of rows) {
   problems.push(`${row.name}: a row for a surface that is not in surfaces.json`);
+}
+
+// ─── the per-surface sections ────────────────────────────────────────────────
+//
+// Everything from `### <Surface>` to the next `###`, which is the table AND the
+// prose under it. Both are claims about the same surface, and the prose is
+// where the false one survived.
+
+/** The site's tool lists, already checked against the tree in both directions. */
+const site = read("apps/website/src/data/surfaces.ts");
+
+/** `read: [...]` / `write: [...]` for one surface id, as bare tool names. */
+const siteTools = (id) => {
+  const at = site.indexOf(`id: "${id}"`);
+  if (at === -1) return null;
+  const next = site.indexOf('\n    id: "', at + 1);
+  const block = site.slice(at, next === -1 ? site.length : next);
+  const listOf = (key) => {
+    const start = block.indexOf(`${key}: [`);
+    if (start === -1) return [];
+    const end = block.indexOf("],", start);
+    return [...block.slice(start, end).matchAll(/"(apple_[a-z0-9_]+)"/g)].map((m) => m[1]);
+  };
+  return { read: listOf("read"), write: listOf("write") };
+};
+
+const sectionFor = (displayName) => {
+  const heading = `\n### ${displayName}\n`;
+  const at = readme.indexOf(heading);
+  if (at === -1) return null;
+  // Bounded by the next heading of ANY depth. Stopping only at `###` let the
+  // last surface's section run to the end of the file and swallow prose about
+  // something else entirely.
+  const rest = readme.slice(at + heading.length);
+  const next = rest.search(/\n#{2,3} /);
+  return heading + (next === -1 ? rest : rest.slice(0, next));
+};
+
+/**
+ * A read-only claim about the SURFACE, not about something it reads.
+ *
+ * "its store is read-only by policy" is true and has to stay sayable — the
+ * store really is, which is why writes go through Apple Events. What must not
+ * survive is a claim that the surface itself cannot write.
+ */
+const READ_ONLY_CLAIMS = [
+  /\*\*Read-only[,.]/,
+  /read-only by construction/i,
+  /th(is|e) (surface|server) is read-only/i,
+  /the write column is empty/i,
+];
+
+for (const s of manifest.surfaces) {
+  const listed = siteTools(s.id);
+  const section = sectionFor(s.displayName);
+  // A surface with no section of its own is not a drift: `screen`, `sound` and
+  // `desktop` are described in prose elsewhere, having no npm package to list.
+  if (!listed || !section) continue;
+
+  /*
+   * A SAFETY claim, anywhere in the section rather than only in the status
+   * cell. Safari's said "Read-only, and the write column is empty on purpose"
+   * in a bold paragraph under a table that already had an empty write column,
+   * and it was false in both places.
+   */
+  if (s.supportsWrites && READ_ONLY_CLAIMS.some((re) => re.test(section))) {
+    problems.push(
+      `${s.displayName}: its section calls the surface read-only, but it registers ` +
+        `${listed.write.length} write tool(s) — this is a safety claim and it is false`,
+    );
+  }
+
+  // The table names tools without their `apple_<surface>_` prefix.
+  const named = new Set(
+    [...section.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => `apple_${s.id}_${m[1]}`),
+  );
+  const missing = [...listed.read, ...listed.write].filter((t) => !named.has(t));
+  if (missing.length > 0) {
+    problems.push(
+      `${s.displayName}: registered but absent from its README table — ` +
+        missing.map((t) => t.replace(`apple_${s.id}_`, "")).join(", "),
+    );
+  }
 }
 
 if (problems.length > 0) {

@@ -95,6 +95,10 @@ grant it to whatever launches them — your editor, your terminal — which is t
 [`Cupertino.app`](https://cupertino.mgcrea.io) exists to avoid: one Full Disk Access grant held by a
 notarized binary, instead of one per host. See [docs/licensing.md](docs/licensing.md).
 
+```bash
+brew install --cask mgcrea/tap/cupertino
+```
+
 Or run them from source:
 
 ```bash
@@ -116,8 +120,9 @@ make run      # build Cupertino.app, point it at packages/*/dist, launch it
 make smoke    # handshake every server through the bridge
 ```
 
-The repo's checked-in [`.mcp.json`](.mcp.json) is wired for that path. `make` on its own lists
-every target.
+`make surfaces` writes a gitignored `.mcp.json` at the repo root, wired for that path — it is a
+developer's local working config rather than something to commit, because every entry is an
+absolute path into one Mac's bundle. `make` on its own lists every target.
 
 Note the different server names. Wired by hand as above, a server is `apple-mail` and runs under
 whatever grant its host process has. Wired by Cupertino it is `cupertino-mail`, because that entry
@@ -151,7 +156,7 @@ line was never the safer option. The difference is that the app reads the file i
 clobbered entry shows up as **Not configured** the next time you open Settings, with a button that
 fixes it.
 
-This repo's own [`.mcp.json`](.mcp.json) is the exception, and it names its servers
+This repo's own gitignored `.mcp.json` is the exception, and it names its servers
 `cupertino-*-dev` on purpose: it points at `apps/apple/.build`, so working on the app means having
 the development build and the installed one side by side. Claude Code reports servers of the same
 name in two scopes as a conflict rather than picking one, so the suffix is what keeps both usable.
@@ -162,14 +167,21 @@ app does.
 
 ## Permissions
 
-Two separate macOS grants, and they land on **whatever process launched the server** — your
-editor, your terminal, or Cupertino — never on Mail, Notes or Reminders themselves.
+These land on **whatever process launched the server** — your editor, your terminal, or
+Cupertino — never on Mail, Notes or Reminders themselves.
 
 | Grant                                     | Needed for                                                      |
 | ----------------------------------------- | --------------------------------------------------------------- |
 | **Full Disk Access**                      | the index lane: Mail search, attachment bytes                   |
 | **Automation** (per target app, prompted) | the Apple Events lane: accounts, mailboxes, all writes          |
 | **Contacts** (prompted)                   | the Contacts surface — its store is not behind Full Disk Access |
+| **Screen Recording** (prompted)           | the Screen surface                                              |
+| **Microphone** (prompted)                 | Sound's recording tools only                                    |
+| **Accessibility** (prompted)              | the Desktop surface — see the note below on how far it reaches  |
+
+The last three are why Screen, Sound and Desktop arrive switched off: each is a per-process grant
+that reaches past the surface being brokered, and Accessibility does not scope to a target app at
+all.
 
 System Settings → Privacy & Security → Full Disk Access → add the launching app, then restart it.
 Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
@@ -199,18 +211,18 @@ merely refused.
 
 ### Mail
 
-| Always available                                                | Write-gated                                                                |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `search_messages` `list_messages` `count_messages` `get_thread` | `set_message_flags` `move_messages` `delete_messages` `check_for_new_mail` |
-| `get_message` `get_message_source` `list_attachments`           | `send_message` `reply_to_message` `forward_message`                        |
-| `list_accounts` `list_mailboxes` `diagnostics`                  | `save_attachment`                                                          |
+| Always available                                                        | Write-gated                                                                |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `search_messages` `list_messages` `count_messages` `get_thread` `query` | `set_message_flags` `move_messages` `delete_messages` `check_for_new_mail` |
+| `get_message` `get_message_source` `list_attachments`                   | `send_message` `reply_to_message` `forward_message` `update_draft`         |
+| `list_accounts` `list_mailboxes` `diagnostics`                          | `save_attachment` `create_mailbox`                                         |
 
 ### Notes
 
 | Always available                                          | Write-gated                                                              |
 | --------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `list_notes` `search_notes` `get_note` `list_attachments` | `create_note` `update_note` `move_note` `delete_notes` `save_attachment` |
-| `list_accounts` `list_folders` `diagnostics`              |                                                                          |
+| `list_accounts` `list_folders` `diagnostics`              | `add_attachment`                                                         |
 
 ### Reminders
 
@@ -224,7 +236,7 @@ merely refused.
 | Always available                                           | Write-gated                                   |
 | ---------------------------------------------------------- | --------------------------------------------- |
 | `list_events` `search_events` `get_event` `list_calendars` | `create_event` `update_event` `delete_events` |
-| `list_accounts` `diagnostics`                              |                                               |
+| `find_availability` `list_accounts` `diagnostics`          |                                               |
 
 `list_events` expands repeating events, so a weekly standup is returned once per week. Every result
 carries the window the expansion is known to cover, and sets `truncated` when a range runs past it
@@ -249,10 +261,14 @@ instead. See [docs/contacts.md](docs/contacts.md).
 
 ### Messages
 
-| Always available                               | Write-gated    |
-| ---------------------------------------------- | -------------- |
-| `list_chats` `list_messages` `search_messages` | `send_message` |
-| `get_message` `diagnostics`                    |                |
+| Always available                                                | Write-gated    |
+| --------------------------------------------------------------- | -------------- |
+| `list_chats` `list_messages` `search_messages` `count_messages` | `send_message` |
+| `get_message` `save_attachment` `diagnostics`                   |                |
+
+`find_codes` is registered too, behind its own `APPLE_MESSAGES_ALLOW_CODES` rather than the write
+gate — reading a one-time code is a read, and it is separated because it is the one read that hands
+over a credential.
 
 **One write tool, because the dictionary has one usable command.** `sdef` lists `send`, `login` and
 `logout`; the other two would sign the user out of iMessage on every device they own. There is no
@@ -276,17 +292,25 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 
 ### Safari
 
-| Always available                                   | Write-gated |
-| -------------------------------------------------- | ----------- |
-| `search_history` `get_page` `list_tabs`            | — none      |
-| `list_bookmarks` `list_reading_list` `diagnostics` |             |
+| Always available                                     | Write-gated                        |
+| ---------------------------------------------------- | ---------------------------------- |
+| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` |
+| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            |
+| `diagnostics`                                        |                                    |
 
-**Read-only, and the write column is empty on purpose.** Opening a URL or adding to the Reading
-List is an Apple Event that navigates a real, visible browser, and no write on this surface was
-ever probed.
+**The widest write set here, and it splits across two lanes that share nothing but the flag.**
+`open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser.
+`click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari
+consents to one website at a time — so their real gate is a per-site grant the user can see and
+revoke, and the write flag is the second lock rather than the only one. `find_codes` is registered
+separately behind `APPLE_SAFARI_ALLOW_CODES`, because reading a one-time code is a read.
 
-`list_tabs` is the only tool in the whole bundle that works without Full Disk Access — it needs an
-Automation grant instead, and Safari has to be running. Ask for the tab marked `frontmost` to get
+There is deliberately no `do JavaScript` tool: it needs a developer-menu toggle that is not a TCC
+grant and whose state cannot be read, so diagnostics could never say in advance whether it would
+work.
+
+`list_tabs` needs no Full Disk Access — it needs an Automation grant instead, and Safari has to be
+running. Ask for the tab marked `frontmost` to get
 the one the user is looking at: `active` means selected in its own window, so two open windows
 produce two active tabs. A tab's `history` field being null means **not found in history**, never
 "never visited": the match rate is a property of the tab set rather than of the surface, measured at
@@ -309,11 +333,11 @@ See [docs/safari.md](docs/safari.md).
 
 ### Maps
 
-| Always available                                                 | Write-gated                      |
-| ---------------------------------------------------------------- | -------------------------------- |
-| `list_favorites` `list_collections` `list_collection_places`     | `add_favorite` `remove_favorite` |
-| `list_unfiled_places` `list_recents` `search_places` `get_place` |                                  |
-| `diagnostics`                                                    |                                  |
+| Always available                                                 | Write-gated                       |
+| ---------------------------------------------------------------- | --------------------------------- |
+| `list_favorites` `list_collections` `list_collection_places`     | `add_favorite` `remove_favorite`  |
+| `list_unfiled_places` `list_recents` `search_places` `get_place` | `save_place` `remove_saved_place` |
+| `diagnostics`                                                    | `add_place_to_guide`              |
 
 Favourites, collections (Guides) and recents, from a Core Data store under Full Disk Access —
 with real coordinates and addresses, which is what makes it worth having.
@@ -477,7 +501,7 @@ under it rather than under an editor:
 | **Writes are off, per surface**        | and the toggle decides whether the mutating tools are registered at all                                |
 | **`*_ACCOUNTS` bounds reading**        | the blast radius on Mail is the archive, not the mutations                                             |
 | **Results say how much to trust them** | `indexAgeSeconds`, a WAL-blind warning, and a structured `degraded` result rather than a vanished tool |
-| **Four surfaces, one grant**           | which is the actual payoff of the indivisibility above                                                 |
+| **Eight app surfaces, one grant**      | which is the actual payoff of the indivisibility above                                                 |
 
 [docs/alternatives.md](docs/alternatives.md) is the honest version of that list: what else reads
 Apple Mail for an assistant, and where those tools are ahead.
@@ -502,6 +526,14 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/envelope-index.md](docs/envelope-index.md)               | Mail's observed `Envelope Index` schema       |
 | [docs/prompts-and-resources.md](docs/prompts-and-resources.md) | what the servers expose beyond tools          |
 | [docs/verify.md](docs/verify.md)                               | checking the Mail server against a real index |
+| [docs/mail-compose.md](docs/mail-compose.md)                   | the composer lane, driven natively            |
+| [docs/screen.md](docs/screen.md)                               | the Screen surface, served in-process         |
+| [docs/sound.md](docs/sound.md)                                 | the Sound surface, and its two gates          |
+| [docs/desktop.md](docs/desktop.md)                             | driving any app's interface natively          |
+| [docs/ax-lane.md](docs/ax-lane.md)                             | the rules a negative has to meet              |
+| [docs/contacts.md](docs/contacts.md)                           | Apple Contacts phase-0 measurements           |
+| [docs/clients.md](docs/clients.md)                             | wiring the servers into each MCP host         |
+| [docs/succession.md](docs/succession.md)                       | what happens to this if I stop                |
 
 ## Working on it
 
@@ -570,7 +602,7 @@ pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Fu
 pnpm probe:screen    # ScreenCaptureKit — Screen Recording, and it takes effect on relaunch
 ```
 
-Every probed surface now has a package except `screen`, which the app serves in-process. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface has a package except `screen`, `sound` and `desktop`, which the app serves in-process because their grants live in the app rather than in a package. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

@@ -102,8 +102,11 @@ jobs:
       - name: Format (swift) 🔍
         if: runner.os == 'macOS'
         run: make format-swift-check
-      # The launcher is what gives the server its own Full Disk Access identity,
-      # so a compile break in it would only surface at install time otherwise.
+      # `native/launcher.c` is NOT shipped — docs/distribution.md records that the
+      # app inherits its grants two levels deep, so there is nothing left to
+      # escape. It stays in the tree as the clearest statement of the
+      # responsible-process problem, and it is compiled here so that statement
+      # is a working program rather than a file nobody can build any more.
       - name: Launcher compiles 🔨
         if: runner.os == 'macOS'
         run: |
