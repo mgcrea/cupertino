@@ -6,11 +6,139 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.15.0`,
-`notes-v1.15.0`, `reminders-v1.15.0`, `core-v1.15.0` for the npm packages, and `app-v1.15.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.16.0`,
+`notes-v1.16.0`, `reminders-v1.16.0`, `core-v1.16.0` for the npm packages, and `app-v1.16.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.16.0] - 2026-09-06
+
+### Added
+
+- **Mail's composer runs on Cupertino's own Accessibility driver now, behind one grant instead of
+  two.** Reply and forward reached the composer through System Events, which costs a second TCC
+  grant — Automation to System Events — on top of Accessibility, and 47.4 ms per attribute read.
+  Driven natively the same reads cost 0.202 ms. Both grants always had to be given; only one of
+  them has to exist.
+
+  The split between the two halves is forced rather than chosen: a JXA object reference cannot
+  outlive the `osascript` process that made it, so opening and addressing the draft stays an Apple
+  Events call and returns the subject, which is what the native half finds the window by.
+  Everything after — the paste, the read-back, the send — is Accessibility. That makes the send
+  command-shift-D rather than the button named "Send", which is correctness rather than
+  convenience: a French Mail says "Envoyer" and the shortcut is not localised.
+
+  **System Events stays as the fallback**, because the npm packages are published artifacts that
+  have to keep working with no Cupertino on the machine.
+
+  One behaviour is deliberately given up and reported rather than hidden. The System Events path
+  discards a composer when a paste provably did not land, so a retry is safe. This one cannot:
+  closing an unsaved composer raises a save sheet whose buttons are localised, and pressing a
+  button by a name that is only right in English is worse than pressing none. A failed compose now
+  leaves the window on screen and says so — strictly safer, since nothing anybody wrote is
+  destroyed, and strictly less tidy.
+
+- **Maps can reach the objects its SQL lane cannot.** `apple_maps_save_place`,
+  `apple_maps_remove_saved_place` and `apple_maps_add_place_to_guide` drive the place card through
+  the same driver. They do not replace the store lane and could not — pressing Add lands an unfiled
+  saved place and never touches a favourites row — but they reach the Places library and guide
+  membership, the second of which was listed as unbuilt. Reading the guides beats the store's own
+  answer: eleven guides came back live where `apple_maps_list_collections` reports ten.
+
+  **Filing into a guide works and cannot be verified, so the tool refuses to claim it.** Pressing a
+  row does select it, and nothing in the tree says so — the label carries a stale count that reads
+  identically before and after. So it returns `filed: "unverified"` and says it must not be
+  reported as done.
+
+  Registered only when Cupertino is hosting the server, since the Accessibility grant belongs to
+  the app.
+
+- **Four more Desktop verbs, three of them the kind whose absence makes a write land somewhere
+  else.** `focus` — raising a window is not focusing a field, and the keystroke that follows goes
+  wherever the focus actually is, so it reads the focus back and reports whether it took.
+  `activate` — synthetic keystrokes are posted to the session and land in whatever is frontmost, so
+  `type` and `key` against a named app need this first. `get_attribute` — for the one field a
+  caller needs that the walk's fixed set does not carry. And `user_activity`, below.
+
+- **The Mac says when it is being driven, and notices when somebody else is using it.** Driving is
+  the one capability here that competes with the person at the keyboard: a synthetic keystroke goes
+  to whatever is frontmost and a click goes to a screen point, so somebody typing during a sequence
+  does not slow it down, it corrupts it.
+
+  `apple_desktop_user_activity` reports seconds since a person last touched the machine. It reports
+  _when_, never what — no key, no position, no content — which is why it needs no grant and
+  registers as a read. Measured against how long a sequence took, that figure separates "they typed
+  just before we started" from "they typed into the middle of it", and every refusal in the Mail
+  and Maps lanes now appends the finding when there is one. It stays silent when the machine was
+  quiet, deliberately: "nobody touched it" invites the reader to stop looking.
+
+  It exists because of a misdiagnosis rather than a theory. Three Maps failures were blamed on
+  interference and turned out to be bugs in the lane; one was blamed on the lane and turned out to
+  be interference.
+
+  A menu bar indicator lights while an interface is being driven, and the popover says which app.
+  macOS supplies an indicator for the microphone and the screen; it supplies none for
+  Accessibility, which is the wider grant. It expires rather than being switched off, because
+  nothing tells the app an agent has finished and an explicit end would leave it lit forever the
+  first time a client disconnected mid-sequence.
+
+### Changed
+
+- **A node server can borrow the app's Accessibility driver over the socket it already has.** This
+  is what lets Mail's composer run natively without anyone switching on the Desktop surface — the
+  consent governing Mail's own window is Mail's — while equally not escaping Mail being switched
+  off. The handshake line naming the borrower is a claim and nothing rests on it: `LOCAL_PEERPID`,
+  answered by the kernel and unspoofable by the peer, is what turns "I am the mail server" into a
+  check. Without it any same-user process could borrow the app's grant.
+
+- **Desktop's reach is a value now rather than a switch**, so it can be narrowed as well as
+  widened. A borrowed driver is pinned to one bundle id, and no user-facing gate can move it. The
+  tool descriptions get a real third branch rather than folding it into the brokered wording — a
+  description promising the brokered set to a caller that can reach one app is an invitation to try
+  the other seven and collect a refusal each time.
+
+### Fixed
+
+- **`apple_desktop_key` could have quit Mail with an unsaved composer open, silently, and only for
+  people not typing on a US layout.** It shipped with a table holding no letters at all, so
+  command-V could not be expressed. The obvious repair is the US map, and it is destructive: a
+  `CGKeyCode` names a physical position, not a letter. Measured on an AZERTY Mac, `a` resolves to
+  12 and `w` to 6, which in the US table are `q` and `z` — so "select all before pasting a reply"
+  would have sent command-Q. The map is built by asking the current input source what each of the
+  128 codes produces, and cached on the input source id so switching layout rebuilds it.
+
+- **`apple_desktop_find_elements` reported `matched` from the whole walk instead of the filtered
+  set** — one control found and an answer saying 136 matched, which reads as a truncated result and
+  is precisely the confusion the field was added to prevent. The byte cap was wrong the same way,
+  measured against elements that were never going to be sent.
+
+- **`apple_maps_diagnostics` reported that the server registers no mutating tool while it registers
+  two**, and had been wrong since the write lane shipped. Diagnostics is the one thing this repo
+  says must never lie. It now reports the real lane: URL-scheme seeding, raw SQL, the Recents side
+  effect and the CloudKit blast radius, keyed on whether writes are on.
+
+- **The "Load tools on demand" control was drawn on three surfaces where it did nothing.** Desktop,
+  Screen and Sound are served in process, and the facade reaches a server through the spawn path's
+  environment, which an in-process server never reads. Moving the picker changed nothing, which
+  reads as a bug in the facade rather than in the card. It is gated on the node runtime now.
+
+- **`make desktop-check` counted a check that had vanished.** A case added for `matched` was
+  written so that on a machine without Maps it did not fail — it disappeared, and the suite went 51
+  to 50 while still printing "passed". Skips are counted and named now. The count is the only line
+  most people read.
+
+- **Three findings this repo had published are retracted, having been measured wrong.** A
+  background application's menus _do_ open — the original write-up was a single A/B with no
+  repetition and no control; re-run as six alternating trials the menu opened every time in both
+  conditions. What actually governs it is the session boundary: closing the connection dismisses an
+  open menu. Safari's page text was called "an absence rather than a price" on a census that was
+  measuring System Events; natively the same Safari has one web area, 26 links and 10,735
+  characters. And a Maps delete does not alternate between taking effect and raising an alert —
+  both shapes are real and a driver must handle either, not expect them to take turns.
+
+  The retractions are kept in full rather than quietly deleted, because how each was got wrong is
+  more useful than the answer.
 
 ## [1.15.0] - 2026-09-06
 
@@ -1611,7 +1739,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.15.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.16.0...HEAD
+[1.16.0]: https://github.com/mgcrea/cupertino/compare/app-v1.15.0...app-v1.16.0
 [1.15.0]: https://github.com/mgcrea/cupertino/compare/app-v1.14.0...app-v1.15.0
 [1.14.0]: https://github.com/mgcrea/cupertino/compare/app-v1.13.0...app-v1.14.0
 [1.13.0]: https://github.com/mgcrea/cupertino/compare/app-v1.12.0...app-v1.13.0
