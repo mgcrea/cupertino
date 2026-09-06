@@ -58,6 +58,33 @@ const BODY_ROLE = "AXWebArea";
  */
 const BODY_DEPTH = 8;
 
+/**
+ * How long to keep asking the composer's body to take the focus.
+ *
+ * **Readable is not ready, and the gap is not zero.** `findComposer` returns as
+ * soon as the window and its web area can be READ; the body cannot take the
+ * keyboard for about another 140 ms after that. Measured over three fresh
+ * composers, driving the real driver:
+ *
+ *     web area readable at 395 ms   focus -> false at 421 ms, true at 560 ms
+ *     web area readable at 637 ms   focus -> false at 671 ms, true at 812 ms
+ *     web area readable at 640 ms   focus -> false at 665 ms, true at 805 ms
+ *
+ * The first attempt failed on every trial. Without a poll here that is a
+ * coin-flip resting on how long the surrounding round trips happen to take —
+ * `compose.ts` retries the whole paste once, for an unrelated reason, and that
+ * retry was silently carrying this.
+ *
+ * Which is `docs/desktop.md`'s most expensive lesson arriving in a new place:
+ * *the control must be polled for, not waited for*. It was written about a
+ * window's chrome appearing before its content; this is the same shape one level
+ * down, where the content is there and the focus is not.
+ */
+const FOCUS_TIMEOUT_MS = 2_000;
+
+/** Between focus attempts. Each one is a round trip, so this is not a spin. */
+const FOCUS_POLL_MS = 100;
+
 type Element = {
   handle: string;
   role: string;
@@ -270,11 +297,16 @@ export class MailAxLane {
    * The guard itself stays. Posting command-V without knowing where the focus is
    * types into whatever happens to be in front, and that is the user's window.
    */
-  async paste(ref: ComposerRef): Promise<boolean> {
+  async paste(ref: ComposerRef, focusTimeoutMs = FOCUS_TIMEOUT_MS): Promise<boolean> {
     await this.#call("raise_window", { handle: ref.window });
     await this.activate();
-    const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
-    if (focused.focused !== true) return false;
+    const deadline = Date.now() + focusTimeoutMs;
+    for (;;) {
+      const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
+      if (focused.focused === true) break;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
+    }
     await this.#call("key", { key: "v", modifiers: ["command"] });
     return true;
   }

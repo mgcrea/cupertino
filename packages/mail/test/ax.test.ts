@@ -256,8 +256,24 @@ describe("paste", () => {
   it("does not send the keystroke when the focus did not take", async () => {
     const { env, seen } = await hostStub({ focus: { focused: false } });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 })).resolves.toBe(false);
+    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 30)).resolves.toBe(false);
     expect(seen.map((c) => c.tool)).not.toContain("key");
+    lane.close();
+  });
+
+  /*
+   * MEASURED, three fresh composers: the body is readable ~140 ms before it will
+   * take the focus, and the FIRST attempt failed on every one. Asking once made
+   * this a coin flip that `compose.ts`'s unrelated retry happened to cover.
+   */
+  it("keeps asking for the focus, because readable is not ready", async () => {
+    const { env, seen } = await hostStub({
+      focus: (_args: unknown, nth: number) => ({ focused: nth > 2 }),
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 2_000)).resolves.toBe(true);
+    expect(seen.filter((c) => c.tool === "focus")).toHaveLength(3);
+    expect(seen.at(-1)?.tool).toBe("key");
     lane.close();
   });
 });

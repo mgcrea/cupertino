@@ -123,13 +123,14 @@ const paste = async (
   clipboard: Clipboard,
   ref: ComposerRef,
   text: string,
+  focusTimeoutMs: number | undefined,
 ): Promise<{ verified: boolean; landed: boolean }> => {
   const expected = text.length > VERIFY_CHARS ? text.slice(0, VERIFY_CHARS) : text;
   const sizeBefore = await lane.bodySize(ref.body);
 
   return withClipboard(clipboard, text, async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const focused = await lane.paste(ref);
+      const focused = await lane.paste(ref, focusTimeoutMs);
       if (focused) {
         const after = await lane.bodyText(ref.body);
         if (after !== null && containsText(after, expected))
@@ -161,6 +162,8 @@ export const replyOrForwardNatively = async (
     /** Overridable so a test can pin the unconfirmed-send path without waiting for it. */
     composerTimeoutMs?: number;
     sendTimeoutMs?: number;
+    /** Same, for the focus poll — see FOCUS_TIMEOUT_MS in `ax.ts`. */
+    focusTimeoutMs?: number;
   } = {},
 ): Promise<ComposeResult> => {
   const clipboard = opts.clipboard ?? systemClipboard;
@@ -202,7 +205,7 @@ export const replyOrForwardNatively = async (
   let bodyVerified: boolean | null = null;
   let verifiedChars = 0;
   if (params.body) {
-    const result = await paste(lane, clipboard, ref, params.body);
+    const result = await paste(lane, clipboard, ref, params.body, opts.focusTimeoutMs);
     bodyVerified = result.verified;
     verifiedChars = result.verified ? Math.min(params.body.length, VERIFY_CHARS) : 0;
     if (!result.verified) {
