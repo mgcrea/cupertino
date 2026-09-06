@@ -212,20 +212,15 @@ struct MenuBarLabel: View {
       // Image by name without consulting it, so a plain Image ships black-on-
       // black in a dark menu bar. AppKit does the tinting; this only says it may.
       .renderingMode(.template)
-      // A badge while something is being driven, and the MARK is kept underneath
-      // it — the comment on the Scene says the menu bar carries the mark rather
-      // than an SF Symbol, and a transient alert is not a reason to retire it.
-      // This is the one state in the app where the icon is asking for something
-      // rather than reporting: a synthetic keystroke goes wherever the focus is,
-      // so somebody typing now will corrupt what is running.
-      .overlay(alignment: .topTrailing) {
-        if driving.isDriving {
-          Circle()
-            .fill(.orange)
-            .frame(width: 5, height: 5)
-            .offset(x: 1, y: -1)
-        }
-      }
+      // NO BADGE HERE, and it is not an omission. A 5pt orange dot lived here
+      // and never once appeared: SwiftUI renders a `MenuBarExtra` label as a
+      // TEMPLATE image, so colour is discarded and a small overlay is not drawn
+      // at all. Measured with three extras side by side — plain, tinted orange,
+      // and badged — all three pixel-identical white. `DrivingOverlay` carries
+      // the measurement and is where the indicator went.
+      //
+      // What still works here is the ASSET SWAP above, because a different
+      // shape survives template rendering where a different colour does not.
       .accessibilityLabel(accessibilityLabel)
   }
 

@@ -552,6 +552,67 @@ believed:
 
     FAIL the body was read back OUT of the composer and matched
 
+## The indicator did not work, and the reason is `MenuBarExtra`, 2026-09-06
+
+The driving indicator shipped in 1.16.0 as a 5pt orange dot on the menu bar mark. It has never once
+appeared, and the cause is not the drawing:
+
+**SwiftUI renders a `MenuBarExtra` label as a template image.** Three extras run side by side — a
+plain templated `sun.max`, the same with `.foregroundStyle(.orange)`, and the same carrying that
+exact badge — came back **pixel-identical white**, with the badge not drawn at all. Colour is
+discarded and a small overlay is lost entirely.
+
+This is not a property of the menu bar. An `NSStatusItem` holding a non-template `NSImage` renders
+orange perfectly, checked the same way in the same menu bar. It is the SwiftUI label path
+specifically, so "mark the asset differently" does not fix it. What DOES survive template rendering
+is a change of **shape**, which is why the existing `MenuBarIcon` / `MenuBarIconActive` swap works
+and a change of colour never could.
+
+### How it was missed, which is the part worth keeping
+
+It was recorded as verified on this evidence:
+
+    before drive -> driving: "nothing"
+    during drive -> driving: "com.apple.Notes"
+    5s later     -> driving: "nothing"
+
+Every line of that is true and none of it is about the menu bar. It proves the STATE, read back
+through `apple_desktop_diagnostics`; the indicator is the VIEW, and nobody looked at it. The same
+shape as the `AXFocused` defect above — verifying the layer below the one that matters — and it is
+the second time in one day, which suggests the rule rather than the incident is what to write down:
+**a fact reported by the thing under test is not a check of the thing the user sees.**
+
+### The replacement: a window we own
+
+`DrivingOverlay` is a non-activating `NSPanel`, and the focus rule is the entire design constraint.
+The notice says _a synthetic keystroke may land at any moment_; a window that took the keyboard focus
+would make that keystroke land in **itself**. Four things prevent it:
+
+| Setting                                                      | Without it                                      |
+| ------------------------------------------------------------ | ----------------------------------------------- |
+| `.nonactivatingPanel` + `orderFrontRegardless()`             | the panel takes focus and eats the keystroke    |
+| `.screenSaver` level                                         | it hides behind the app being driven            |
+| `ignoresMouseEvents`                                         | it swallows clicks meant for what is underneath |
+| `.canJoinAllSpaces` / `.stationary` / `.fullScreenAuxiliary` | it vanishes when the user changes Space         |
+
+Measured with the shipping class linked into a harness, against a live frontmost application:
+
+    frontmost unchanged: true (Safari)   this process active: false
+    panel visible: true                  panel is key: false
+    excluded from capture: true
+
+It is placed on the display holding the driven application, found through `CGWindowListCopyWindowInfo`
+rather than the Accessibility API — this runs on the path of a press and must not wait on a grant, a
+handle, or an application answering an AX query. That list's known weakness, "shadows, toolbars and
+helper layers", is harmless when the only question is which display, and taking the largest window
+stops a helper layer winning.
+
+**`sharingType = .none` keeps it out of captures**, so `apple_screen_capture` and the screenshot
+pipeline never see it: the `screen` surface exists to show a model what the USER can see, and a frame
+with Cupertino's own banner across it is noise at best. The cost is real and worth stating — nobody
+can screenshot the indicator, including whoever next tries to verify it. The verification above is
+therefore the harness, not a picture.
+
 ## Still open
 
 - ~~**The hosted case.**~~ **CLOSED 2026-09-05.** Accessibility was granted to
