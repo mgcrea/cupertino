@@ -486,19 +486,19 @@ everywhere — settable is a claim about the API, not about the app, so read it 
 **The read-back was wrong on the one control the verb was written for.** Measured on Mail's composer
 web area, macOS 26.6:
 
-| Read, after a `.success` set                | Answer                          |
-| ------------------------------------------- | ------------------------------- |
-| the element's own `AXFocused`                | `false`, 24 samples over 1.2 s |
-| the application's `AXFocusedUIElement`       | that element, from +0 ms        |
-| a command-V posted in that state             | lands in the composer           |
+| Read, after a `.success` set           | Answer                         |
+| -------------------------------------- | ------------------------------ |
+| the element's own `AXFocused`          | `false`, 24 samples over 1.2 s |
+| the application's `AXFocusedUIElement` | that element, from +0 ms       |
+| a command-V posted in that state       | lands in the composer          |
 
 It never flips. This is not a settle time to poll through — the same element read `true` later in the
 session, after text had been pasted into it, so the flag appears to track a caret rather than the
 focus. Either way it is not the question being asked.
 
 **What it cost.** `MailAxLane.paste` refuses to press command-V unless `focus` returns true, so every
-native reply and forward returned `bodyVerified: false` — *"Nothing landed in it. It was left open
-rather than discarded"* — while declining to paste a body that would have gone in. Reproduced through
+native reply and forward returned `bodyVerified: false` — _"Nothing landed in it. It was left open
+rather than discarded"_ — while declining to paste a body that would have gone in. Reproduced through
 the shipped tool, then the same window driven by hand with only the guard removed:
 
     apple_mail_reply_to_message  ->  ok: false, "Nothing landed in it."
@@ -514,13 +514,21 @@ by, so it cannot disagree with where a keystroke will land, which is the only th
 to know. The element's own flag is still consulted as a fallback, for when the application element
 cannot be reached at all.
 
-This is the same family as the trap recorded above — *reports itself settable and then does nothing*
+This is the same family as the trap recorded above — _reports itself settable and then does nothing_
 — with a new member: **accepts the focus, holds it, takes the keystrokes, and still answers no.** The
 general rule both cases point at is that an element's self-report is evidence about the element,
 never about the system, and where the system holds the same fact it is the one to ask.
 
 **The guard itself was right and stays.** Posting command-V without knowing where the focus is types
 into whatever happens to be in front, which is the user's window.
+
+**And the check that would have caught it now runs.** `scripts/verify-mail-ax.mjs --compose` used to
+print a three-line checklist for a person to carry out; it now forwards a real message to the user's
+own address through the hosted mail server and asserts the body was read back out of the composer.
+Run against the broken 1.16.0 it fails on exactly that line, which is how a check earns being
+believed:
+
+    FAIL the body was read back OUT of the composer and matched
 
 ## Still open
 

@@ -9,6 +9,10 @@ see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-alwa
 **Implemented** — `apple_mail_update_draft` rewrites a standalone draft by recreating it, and
 refuses the cases recreation cannot carry across. See `packages/mail/src/client/jxa/write.ts`.
 
+**Checked live** — `node scripts/verify-mail-ax.mjs --compose` forwards a real message to your own
+address through the hosted mail server and asserts the body arrived in the composer. It sends
+nothing. Nothing else in the suite can tell you whether macOS still honours this lane.
+
 ## The question
 
 "Change the wording in that draft" is the most obvious request an agent gets about mail, and the
@@ -258,12 +262,12 @@ replacement is never looked up.
 
 **And none of that is reachable, because Apple Events cannot open a saved draft into a composer.**
 
-| Route tried                                     | Result                                                                            |
-| ----------------------------------------------- | --------------------------------------------------------------------------------- |
-| `M.open(draft)`                                 | Opens a **read-only viewer**, titled `"<subject> — All Drafts"`                    |
-| that window's accessibility tree                | No `AXWebArea`. Content is an `AXScrollArea` marked `message content`              |
-| that window's toolbar                           | Archive, Delete, Junk, Reply, Reply All, Forward, Summarize. No edit affordance     |
-| Mail's `Message` menu, with it frontmost        | No edit item exists, and every item present is disabled                            |
+| Route tried                              | Result                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `M.open(draft)`                          | Opens a **read-only viewer**, titled `"<subject> — All Drafts"`                 |
+| that window's accessibility tree         | No `AXWebArea`. Content is an `AXScrollArea` marked `message content`           |
+| that window's toolbar                    | Archive, Delete, Junk, Reply, Reply All, Forward, Summarize. No edit affordance |
+| Mail's `Message` menu, with it frontmost | No edit item exists, and every item present is disabled                         |
 
 This is the fifth dictionary fact, confirmed from the other side: `open` is not in the command list,
 and the `open` that AppleScript's Standard Suite supplies anyway does not do what the name suggests.

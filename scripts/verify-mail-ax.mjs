@@ -15,6 +15,27 @@
  *   node scripts/verify-mail-ax.mjs
  *   node scripts/verify-mail-ax.mjs --compose
  *
+ * ## `--compose` runs the check; it used to print one
+ *
+ * It printed a three-line checklist for a person to carry out by hand, and the
+ * cost of that is on the record: `apple_desktop_focus` shipped in 1.16.0
+ * returning the composer web area's own `AXFocused`, which is FALSE while the
+ * element holds the keyboard, so every reply and forward refused to paste a
+ * body that would have gone in. The unit tests stub `focus` and assert both
+ * branches happily. Nothing but a live compose could have caught it, and the
+ * checklist that would have was never run.
+ *
+ * So it forwards a real message and asserts the body arrived. **Forward rather
+ * than reply, deliberately**: a forward names its own recipients, so the draft
+ * is addressed to the user's own account and cannot reach a third party even if
+ * something goes wrong. A reply is addressed by Mail, to whoever wrote.
+ *
+ * It sends nothing — `sendNow` is false, and the tool needs `confirm: true` on
+ * top of that to send at all. It LEAVES the draft and its window in Mail rather
+ * than tidying up, which is not laziness: the draft is the evidence, and a
+ * person can look at it and see the words really are in there. The last lines
+ * of output say exactly what to delete.
+ *
  * What a failure means, in order of likelihood:
  *
  *   * `no socket`      — Cupertino is not running, or this shell is not one of
@@ -56,7 +77,7 @@ const check = (label, ok, detail = "") => {
  * Accessibility grant. To exercise the lane for real, run it through Mail:
  * `--compose` does that, via the mail server the app already hosts.
  */
-const rpc = (identity) =>
+const rpc = (handshake) =>
   new Promise((resolve, reject) => {
     const socket = connect(SOCKET);
     let buffer = "";
@@ -79,20 +100,17 @@ const rpc = (identity) =>
             reject(new Error(line.trim()));
             return;
           }
+          const request = (method, params) =>
+            new Promise((ok, no) => {
+              const id = nextId++;
+              waiting.set(id, { ok, no });
+              socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+            });
           resolve({
-            call: (tool, args = {}) =>
-              new Promise((ok, no) => {
-                const id = nextId++;
-                waiting.set(id, { ok, no });
-                socket.write(
-                  `${JSON.stringify({
-                    jsonrpc: "2.0",
-                    id,
-                    method: "tools/call",
-                    params: { name: `apple_desktop_${tool}`, arguments: args },
-                  })}\n`,
-                );
-              }),
+            request,
+            call: (tool, args = {}) => request("tools/call", { name: tool, arguments: args }),
+            notify: (method, params = {}) =>
+              socket.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`),
             close: () => socket.destroy(),
           });
           continue;
@@ -101,11 +119,33 @@ const rpc = (identity) =>
         const pending = waiting.get(message.id);
         if (!pending) continue;
         waiting.delete(message.id);
-        if (message.error) pending.no(new Error(message.error.message));
-        else pending.ok(JSON.parse(message.result.content[0].text));
+        if (message.error) {
+          pending.no(new Error(message.error.message));
+          continue;
+        }
+        // `initialize` answers with a plain result; a tool call answers with a
+        // content envelope. Anything without content is handed back as it came.
+        if (!message.result?.content) {
+          pending.ok(message.result);
+          continue;
+        }
+        const text = message.result.content[0]?.text ?? "";
+        // `isError` is a REFUSAL wearing a result's clothes, and reading past it
+        // is how `packages/core/src/ax.ts` spent an afternoon treating "no" as
+        // "yes". The text is prose in that case, not JSON, so parsing is not a
+        // way to notice either.
+        if (message.result?.isError === true) {
+          pending.no(new Error(text || "refused, with no reason given"));
+          continue;
+        }
+        try {
+          pending.ok(JSON.parse(text));
+        } catch {
+          pending.ok({ text });
+        }
       }
     });
-    socket.write(`cupertino/1 desktop for=${identity}\n`);
+    socket.write(`${handshake}\n`);
   });
 
 console.log(`\nmail accessibility lane (${BUNDLE})\n`);
@@ -114,7 +154,7 @@ console.log(`\nmail accessibility lane (${BUNDLE})\n`);
 let refusedFromTerminal = false;
 let refusal = "";
 try {
-  const channel = await rpc("mail");
+  const channel = await rpc(`cupertino/1 desktop for=mail`);
   channel.close();
 } catch (error) {
   refusedFromTerminal = true;
@@ -168,20 +208,138 @@ if (!refusedFromTerminal && !notRunning && !staleApp) {
 }
 
 // ─── the rest goes through the mail server, which IS a spawned peer ────────
-console.log(
-  "\nThe checks below need the mail server the app hosts. Run them from a client\n" +
-    "wired to Cupertino:\n\n" +
-    "  apple_mail_diagnostics   -> permissions.composerLane should be 'accessibility'\n" +
-    "                              and composerLaneNote should be present\n" +
-    (COMPOSE
-      ? "  apple_mail_reply_to_message with a short body and sendNow=false\n" +
-        "                           -> a composer opens, the body is IN it, and the\n" +
-        "                              tool reports bodyVerified true\n" +
-        "  Then, with Automation to System Events REVOKED, do it again: it must\n" +
-        "  still work. That is the whole point of the change and the only check\n" +
-        "  that proves the second grant is really gone.\n"
-      : "  re-run with --compose for the write-side checklist\n"),
-);
+//
+// A plain client handshake, the one `cupertino-bridge` sends. This script may
+// not borrow the driver — the check above exists to prove it cannot — but it
+// may talk to the mail server the same way any wired client does, and that
+// server holds the lend.
+console.log("");
+
+if (!COMPOSE) {
+  console.log(
+    "The write side is not checked. Re-run with --compose to forward a real\n" +
+      "message to your own address and assert the body arrived. It sends nothing.\n",
+  );
+} else if (notRunning) {
+  check("the compose check ran", false, "no app to run it against");
+} else {
+  await composeCheck();
+}
+
+async function composeCheck() {
+  let mail;
+  try {
+    mail = await rpc(`cupertino/1 mail`);
+  } catch (error) {
+    check("the mail server answered", false, error.message);
+    return;
+  }
+  try {
+    // MCP wants a handshake before a tool call, and a node server behind the
+    // socket is stricter about it than the in-process surfaces are.
+    await mail.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "verify-mail-ax", version: "0" },
+    });
+    mail.notify("notifications/initialized");
+
+    const diagnostics = await mail.call("apple_mail_diagnostics");
+    const lane = diagnostics?.permissions?.composerLane ?? null;
+    check(
+      "the mail server drives the composer through Accessibility",
+      lane === "accessibility",
+      lane === null ? "diagnostics reported no composerLane" : `composerLane: ${lane}`,
+    );
+
+    // The point of the whole lane: the SECOND grant is not needed. Reported
+    // rather than asserted — a machine that still has it granted is not broken,
+    // it just is not evidence.
+    const se = diagnostics?.permissions?.automationSystemEvents ?? "unknown";
+    console.log(
+      se === "granted"
+        ? `  note Automation to System Events is still granted, so this run does not\n` +
+            `       prove the second grant is unnecessary. Revoke it and run again.`
+        : `  ok   Automation to System Events is ${se}, so this run is the proof that\n` +
+            `       the second grant is gone and the composer still works`,
+    );
+
+    const address = diagnostics?.accounts?.find((a) => a.emailAddresses?.length)
+      ?.emailAddresses?.[0];
+    if (!address) {
+      check("an account with an address to forward to", false, "none reported");
+      return;
+    }
+
+    const listed = await mail.call("apple_mail_list_messages", { limit: 1 });
+    const target = listed?.messages?.[0];
+    if (!target?.ref) {
+      check("a message to forward", false, "the newest mailbox listing came back empty");
+      return;
+    }
+
+    // Long enough that a truncated or partial paste cannot pass by accident,
+    // and stamped so a leftover draft can be told from any other.
+    const stamp = new Date().toISOString();
+    const body =
+      `Cupertino verify-mail-ax ${stamp}. This draft was made by a check and was ` +
+      `never sent. Every word of this sentence had to arrive through the clipboard ` +
+      `and a synthetic command-V for the check to pass, which is the only way to ` +
+      `know the Accessibility lane still reaches Mail's composer.`;
+
+    console.log(`\n  forwarding "${target.subject ?? "(no subject)"}" to ${address}\n`);
+
+    let result;
+    try {
+      result = await mail.call("apple_mail_forward_message", {
+        ref: target.ref,
+        to: [address],
+        body,
+        sendNow: false,
+      });
+    } catch (error) {
+      // A refusal arrives here, including "this tool does not exist" when
+      // writes are off — which is a configuration, not a failure of the lane.
+      check(
+        "the forward was accepted",
+        false,
+        /unknown tool|not found/i.test(error.message)
+          ? `${error.message} — turn writes on for Mail in Cupertino`
+          : error.message,
+      );
+      return;
+    }
+
+    check("the forward composed without error", result?.ok === true, result?.note ?? "");
+    check(
+      "the body was read back OUT of the composer and matched",
+      result?.bodyVerified === true,
+      result?.bodyVerified === true
+        ? `${result.verifiedChars} characters verified`
+        : "this is the failure 1.16.0 shipped — apple_desktop_focus answering " +
+            "the element's own AXFocused instead of the app's AXFocusedUIElement",
+    );
+    check("nothing was sent", result?.sent === false, `sent: ${result?.sent}`);
+
+    // What is actually on screen differs by outcome, and saying "a draft" after
+    // a failure would send someone looking for one that was never saved: the
+    // compose path returns BEFORE the save when the body cannot be verified.
+    console.log(
+      result?.ok === true
+        ? `\n  Left in Mail, on purpose, as the evidence:\n` +
+            `    a saved draft "${result.subject}" addressed to ${address},\n` +
+            `    and its composer window.\n` +
+            `  Open it, read it, then delete both. Nothing here will.\n`
+        : `\n  Left in Mail: an EMPTY composer window "${result?.subject ?? "Fwd: …"}".\n` +
+            `  No draft was saved — the compose path stops before the save when it\n` +
+            `  cannot verify the body, and it does not close the window either,\n` +
+            `  because closing an unsaved composer raises a sheet whose buttons are\n` +
+            `  localised. Close it in Mail by hand.\n`,
+    );
+  } finally {
+    mail.close();
+  }
+}
 
 console.log(`${passed}/${passed + failed} automated checks passed\n`);
 process.exit(failed > 0 ? 1 : 0);
