@@ -164,6 +164,27 @@ export class AppleNotesClient {
     return Boolean(accountName && list.some((a) => a.toLowerCase() === accountName.toLowerCase()));
   }
 
+  /**
+   * Whether the index can answer this request FAITHFULLY.
+   *
+   * Two things it cannot do, and both used to be ignored rather than declined.
+   *
+   * The store has no readable account name on a note row — `#fromIndex` sets
+   * `account: null` — so an account allowlist cannot be applied to index rows.
+   * Answering from the index anyway ignored the one setting whose whole job is
+   * limiting what gets read, and did so ONLY on machines with Full Disk Access,
+   * which is exactly where it matters.
+   *
+   * And `folder` was accepted, resolved to `undefined` by a stub whose comment
+   * claimed the opposite, and dropped: `list_notes({folder: "Projects"})`
+   * returned the newest notes from every folder.
+   *
+   * Reminders reached the same conclusion first, in `#indexCanAnswer` there.
+   */
+  #indexCanAnswer(opts: { folder?: string | undefined } = {}): boolean {
+    return this.config.accounts.length === 0 && !opts.folder;
+  }
+
   async accounts(): Promise<NoteAccount[]> {
     const all = await withBusyRetry(() => this.runner.run<NoteAccount[]>(LIST_ACCOUNTS));
     return all.filter((a) => this.#allowed(a.name));
@@ -182,24 +203,12 @@ export class AppleNotesClient {
    * being instant.
    */
   async listNotes(opts: { folder?: string | undefined; limit: number }): Promise<NoteSummary[]> {
-    const store = this.index();
+    const store = this.#indexCanAnswer(opts) ? this.index() : null;
     if (store?.caps.storeUuid) {
-      const folderPk = opts.folder ? await this.#folderPk(opts.folder) : undefined;
-      const rows = store.search({
-        ...(folderPk === undefined ? {} : { folderPk }),
-        limit: opts.limit,
-        offset: 0,
-      });
+      const rows = store.search({ limit: opts.limit, offset: 0 });
       return rows.map((r) => this.#fromIndex(r, store.caps.storeUuid as string));
     }
     return this.#bulkNotes(opts);
-  }
-
-  async #folderPk(_name: string): Promise<number | undefined> {
-    // The index stores folders by primary key; resolving a name to one needs the
-    // folder table, which this version does not read. Filtering falls back to
-    // the Apple Events lane rather than silently ignoring the argument.
-    return undefined;
   }
 
   #fromIndex(row: NoteRow, storeUuid: string): NoteSummary {
@@ -260,7 +269,7 @@ export class AppleNotesClient {
     const now = Date.now();
     if (this.#bodies && now - this.#bodies.at < this.config.searchCacheTtlMs) return this.#bodies;
 
-    const store = this.index();
+    const store = this.#indexCanAnswer() ? this.index() : null;
     const texts = new Map<string, string>();
     if (store?.caps.storeUuid) {
       const uuid = store.caps.storeUuid;
@@ -298,7 +307,7 @@ export class AppleNotesClient {
     limit: number;
     offset: number;
   }): Promise<{ notes: NoteSummary[]; source: "index" | "apple-events"; scope: string }> {
-    const store = this.index();
+    const store = this.#indexCanAnswer() ? this.index() : null;
 
     if (opts.scope === "title" && store?.caps.storeUuid) {
       const rows = store.search({ query: opts.query, limit: opts.limit, offset: opts.offset });
@@ -330,7 +339,7 @@ export class AppleNotesClient {
     opts: { body?: boolean } = {},
   ): Promise<{ summary: NoteSummary; body: string | null; bodySource: string | null }> {
     const decoded = decodeRef(ref);
-    const store = this.index();
+    const store = this.#indexCanAnswer() ? this.index() : null;
 
     if (store?.caps.storeUuid) {
       const row = store.byPrimaryKey(decoded.primaryKey);
