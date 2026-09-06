@@ -77,6 +77,11 @@ final class DriveActivity {
   func began(_ bundleId: String) {
     target = bundleId
     expiry = Date().addingTimeInterval(Self.linger)
+    // The on-screen notice, which is the indicator that actually shows —
+    // `DrivingOverlay` records why the menu bar badge could not. Cheap on a
+    // repeat: it returns immediately when it is already naming this
+    // application, so a burst of presses does not rebuild a window per press.
+    DrivingOverlay.shared.show(bundleId: bundleId, name: displayName ?? bundleId)
     guard timer == nil else { return }
     timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.sweep() }
@@ -88,6 +93,7 @@ final class DriveActivity {
     if Date() >= expiry {
       target = nil
       self.expiry = nil
+      DrivingOverlay.shared.hide()
       timer?.invalidate()
       timer = nil
     }
