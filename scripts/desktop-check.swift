@@ -261,6 +261,33 @@ struct DesktopCheck {
       "apple_desktop_focus is refused when called with writes off",
       callText("apple_desktop_focus", ["handle": "e1"], writes: false).0.contains("switched off"))
 
+    // ─── keys resolve against the layout, not a US table ────────────────────
+    //
+    // The table shipped letter-free, so command-V could not be expressed. The
+    // obvious repair is a US map where `a` is 0 — and it is destructive on any
+    // layout that moves the letters. MEASURED on an AZERTY Mac: `a` resolves to
+    // 12, which in the US table is `q`, so "select all before pasting" would
+    // have sent COMMAND-Q and quit the app with an unsaved composer open.
+    //
+    // Asserted without naming a layout, because this must hold on all of them:
+    // every letter resolves to something, and the position-keyed names keep
+    // their fixed codes.
+    let alphabet = "abcdefghijklmnopqrstuvwxyz".map(String.init)
+    check(
+      "every letter resolves to a key on this layout",
+      alphabet.allSatisfy { AccessibilityDriver.keyCode(for: $0) != nil })
+    check(
+      "a key that is a position, not a character, keeps its fixed code",
+      AccessibilityDriver.keyCode(for: "return") == 36
+        && AccessibilityDriver.keyCode(for: "escape") == 53)
+    check(
+      "an unknown key name is still unknown",
+      AccessibilityDriver.keyCode(for: "zzz") == nil)
+    check(
+      "the refusal lists the keys this layout actually offers",
+      AccessibilityDriver.knownKeys().contains("v")
+        && AccessibilityDriver.knownKeys().contains("return"))
+
     check(
       "the driver binds scope to the handle, not only to the call",
       AccessibilityDriver.inScope("com.apple.Maps", scope: .brokered)

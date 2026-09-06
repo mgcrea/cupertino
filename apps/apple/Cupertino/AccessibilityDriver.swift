@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// The Accessibility layer for the `desktop` surface: read a window's element
 /// tree, address a control, press it.
@@ -706,9 +707,9 @@ enum AccessibilityDriver {
   /// A named key with modifiers — what `type` cannot express.
   static func key(_ name: String, modifiers: [String]) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard let code = keyCodes[name.lowercased()] else {
+    guard let code = keyCode(for: name) else {
       throw Failure.refused(
-        "Unknown key '\(name)'. Known: \(keyCodes.keys.sorted().joined(separator: ", ")).")
+        "Unknown key '\(name)'. Known: \(knownKeys().joined(separator: ", ")).")
     }
     var flags: CGEventFlags = []
     for modifier in modifiers.map({ $0.lowercased() }) {
@@ -734,12 +735,93 @@ enum AccessibilityDriver {
   /// Deliberately small. These are the keys a driver needs to get unstuck —
   /// dismiss a sheet, commit a field, move a selection. Anything typeable goes
   /// through `type` instead, which needs no table and gets accents right.
+  /// Keys whose code is a position rather than a character, so a layout cannot
+  /// move them. Return is 36 on every Mac ever sold.
   private static let keyCodes: [String: CGKeyCode] = [
     "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "esc": 53,
     "left": 123, "right": 124, "down": 125, "up": 126,
     "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
     "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
   ]
+
+  /// Which key produces this character on the layout the user is ACTUALLY typing
+  /// on, asked of the system rather than assumed.
+  ///
+  /// **This is a correctness fix, not a completeness one, and the failure it
+  /// prevents is destructive.** A `CGKeyCode` names a physical position, not a
+  /// letter. The table above was letter-free, so a caller could not express
+  /// command-V at all; the obvious repair — pasting in the US table, where `a`
+  /// is 0 and `v` is 9 — is wrong on any layout that moves them. On a French
+  /// AZERTY Mac the key at US-`a` is **Q**, so "select all before pasting a
+  /// reply" would have sent **command-Q** and quit Mail with an unsaved
+  /// composer open. Silently, and only for people not typing on a US layout.
+  ///
+  /// So the map is built by asking `UCKeyTranslate` what each of the 128 codes
+  /// produces on the current input source, and inverting that. Cached, because
+  /// it costs 128 translations and the layout rarely changes — and keyed on the
+  /// input source id so switching layouts rebuilds it rather than serving a map
+  /// for the previous one.
+  /// `NSLock` rather than `OSAllocatedUnfairLock`, matching `HandleStore` above:
+  /// this file guards its own state and does not import `os` for it.
+  private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
+  private static let layoutLock = NSLock()
+
+  private static func layoutKeyCodes() -> [String: CGKeyCode] {
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return [:] }
+    let idPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+    let id =
+      idPointer.map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
+
+    layoutLock.lock()
+    let cached = layoutCache
+    layoutLock.unlock()
+    if let cached, cached.id == id { return cached.map }
+
+    var map: [String: CGKeyCode] = [:]
+    if let layoutPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) {
+      let data = Unmanaged<CFData>.fromOpaque(layoutPointer).takeUnretainedValue() as Data
+      data.withUnsafeBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+        for code in 0..<128 as Range<UInt16> {
+          // Reset per key. `UCKeyTranslate` carries dead-key state forward in
+          // this variable, and sharing it across the scan means a dead key
+          // swallows whatever is translated next: on the AZERTY layout this was
+          // written against, the circumflex key ate `i`, which then had no code
+          // and could not be typed. Each key is asked in isolation.
+          var deadKeys: UInt32 = 0
+          var chars = [UniChar](repeating: 0, count: 4)
+          var length = 0
+          let err = UCKeyTranslate(
+            layout, code, UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, 4, &length, &chars)
+          guard err == noErr, length > 0 else { continue }
+          let produced = String(utf16CodeUnits: chars, count: length).lowercased()
+          // First code wins. A character reachable from two keys — the numeric
+          // keypad — should resolve to the main one, which comes first.
+          if produced.count == 1, map[produced] == nil { map[produced] = CGKeyCode(code) }
+        }
+      }
+    }
+    layoutLock.lock()
+    layoutCache = (id: id, map: map)
+    layoutLock.unlock()
+    return map
+  }
+
+  /// The code for a named key, position-keyed first and layout-resolved second.
+  static func keyCode(for name: String) -> CGKeyCode? {
+    let wanted = name.lowercased()
+    if let fixed = keyCodes[wanted] { return fixed }
+    guard wanted.count == 1 else { return nil }
+    return layoutKeyCodes()[wanted]
+  }
+
+  /// Every key this driver can name right now, for a refusal that is worth
+  /// reading. Layout-dependent, which is the point.
+  static func knownKeys() -> [String] {
+    (Set(keyCodes.keys).union(layoutKeyCodes().keys)).sorted()
+  }
 }
 
 extension String {
