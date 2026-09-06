@@ -210,7 +210,7 @@ func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
 // SO_RCVTIMEO rather than a watchdog thread: the handshake is the one phase
 // with a deadline, and this keeps the deadline on the read it applies to. It is
 // cleared before the pumps start, where blocking forever is correct.
-var handshakeTimeout = timeval(tv_sec: 15, tv_usec: 0)
+var handshakeTimeout = timeval(tv_sec: BridgeProtocol.handshakeTimeoutSeconds, tv_usec: 0)
 setsockopt(
   sock, SOL_SOCKET, SO_RCVTIMEO, &handshakeTimeout,
   socklen_t(MemoryLayout<timeval>.size))

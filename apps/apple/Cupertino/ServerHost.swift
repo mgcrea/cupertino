@@ -209,8 +209,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let path = BridgeProtocol.socketPath
     guard let address = unixAddress(path) else { throw HostError.pathTooLong(path) }
 
-    try FileManager.default.createDirectory(
-      atPath: BridgeProtocol.socketDirectory, withIntermediateDirectories: true)
+    // Through the helper, which sets 0700 and chmods an existing directory to
+    // match. This runs first at launch, so a bare createDirectory here is what
+    // decided the mode for everything else that lives beside the socket — the
+    // audit log included — and it was leaving the default 0755.
+    try AppSupport.ensureDirectory()
 
     // Exclusion first, and everything below is safe because of it.
     try claimHostLock()
@@ -244,7 +247,15 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw HostError.socketFailed(errnoText()) }
 
-    guard address.withSockaddr({ bind(fd, $0, $1) }) == 0 else {
+    // bind() creates the socket file with the process umask applied, so between
+    // it and the chmod below there is a window where the mode is whatever the
+    // launching environment happened to set. One syscall wide, and it brokers
+    // whole-disk access, so close it rather than reason about how narrow it is.
+    // Process-wide, briefly: everything this app writes is meant to be private.
+    let inheritedMask = umask(0o077)
+    let bindResult = address.withSockaddr({ bind(fd, $0, $1) })
+    umask(inheritedMask)
+    guard bindResult == 0 else {
       let detail = errnoText()
       close(fd)
       throw HostError.socketFailed(detail)
@@ -386,7 +397,40 @@ nonisolated final class ServerHost: @unchecked Sendable {
   private func serve(_ client: Int32) {
     defer { close(client) }
 
-    guard let line = readLine(client, max: 256) else {
+    // The bridge protects ITSELF with the same deadline on the same phase. This
+    // is the other end of it: any process running as this user can connect, and
+    // one that then sends nothing used to pin a session thread and a descriptor
+    // here until it exited.
+    var deadline = timeval(tv_sec: BridgeProtocol.handshakeTimeoutSeconds, tv_usec: 0)
+    setsockopt(
+      client, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+
+    let handshake = readLine(client, max: 256)
+
+    // Cleared before anything else reads this descriptor, and that is
+    // load-bearing rather than tidy: `InProcessRPC.nextLine` and `pump` both
+    // keep reading it and both treat a negative read as end of stream, so a
+    // deadline left in place would kill every session that idled 15 seconds —
+    // which is most of them. Past the handshake, blocking forever is correct.
+    var forever = timeval(tv_sec: 0, tv_usec: 0)
+    setsockopt(
+      client, SOL_SOCKET, SO_RCVTIMEO, &forever, socklen_t(MemoryLayout<timeval>.size))
+
+    let line: String
+    switch handshake {
+    case .line(let text):
+      line = text
+    case .timedOut:
+      hostLog(
+        "cupertino", .error,
+        "refused a connection that sent no handshake within "
+          + "\(BridgeProtocol.handshakeTimeoutSeconds)s")
+      reply(
+        client,
+        "err no handshake within \(BridgeProtocol.handshakeTimeoutSeconds)s — connected but "
+          + "sent nothing")
+      return
+    case .closed, .failed, .tooLong:
       reply(client, "err malformed handshake")
       return
     }
@@ -820,17 +864,33 @@ nonisolated final class ServerHost: @unchecked Sendable {
     _ = writeAll(fd, Data("\(line)\n".utf8))
   }
 
-  private func readLine(_ fd: Int32, max limit: Int) -> String? {
+  /// Why this is not `String?`: a timeout and a hang-up are the same `nil`, and
+  /// the handshake needs to tell a client that sent nothing from one that left.
+  enum LineRead {
+    case line(String)
+    case closed
+    case timedOut
+    case failed(Int32)
+    case tooLong
+  }
+
+  private func readLine(_ fd: Int32, max limit: Int) -> LineRead {
     var out = [UInt8]()
     while out.count < limit {
       var byte: UInt8 = 0
       let n = read(fd, &byte, 1)
-      if n < 0 { if errno == EINTR { continue } else { return nil } }
-      if n == 0 { return nil }
-      if byte == UInt8(ascii: "\n") { return String(decoding: out, as: UTF8.self) }
+      if n < 0 {
+        // Captured before anything else can overwrite it.
+        let failure = errno
+        if failure == EINTR { continue }
+        if failure == EAGAIN || failure == EWOULDBLOCK { return .timedOut }
+        return .failed(failure)
+      }
+      if n == 0 { return .closed }
+      if byte == UInt8(ascii: "\n") { return .line(String(decoding: out, as: UTF8.self)) }
       out.append(byte)
     }
-    return nil
+    return .tooLong
   }
 }
 

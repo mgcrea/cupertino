@@ -286,6 +286,12 @@ final class AuditLog {
     // Once per launch, on the way in — `prune` never touches the segment being
     // written, which is the only file the writer queue appends to.
     defer { prune() }
+    // The parent first, through the helper that also tightens an existing one.
+    // withIntermediateDirectories sets the attributes on the leaf only, so
+    // creating audit/ before its parent existed would leave the parent at the
+    // default mode — and on a machine where the log is switched on before the
+    // socket opens, this is what runs first.
+    try? AppSupport.ensureDirectory()
     try? FileManager.default.createDirectory(
       at: Self.directory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])

@@ -181,11 +181,19 @@ final class LogStore {
 enum AppSupport {
   static var directory: URL { URL(fileURLWithPath: BridgeProtocol.socketDirectory) }
 
+  /// The mode is 0700, and it is applied whether or not the directory is new.
+  ///
+  /// `createDirectory(attributes:)` sets the mode only on a directory it
+  /// actually creates, so a copy left at 0755 by an older build — which is what
+  /// was on disk, because the first thing to run at launch created it with no
+  /// attributes at all — would keep that mode forever. The chmod is the half
+  /// that fixes an existing install.
   @discardableResult
-  static func ensureDirectory() -> URL {
+  static func ensureDirectory() throws -> URL {
     let url = directory
-    try? FileManager.default.createDirectory(
+    try FileManager.default.createDirectory(
       at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    chmod(url.path, 0o700)
     return url
   }
 }

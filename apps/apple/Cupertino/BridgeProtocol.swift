@@ -74,6 +74,13 @@ enum BridgeProtocol {
   static let ok = "ok"
   static let errorPrefix = "err "
 
+  /// The one phase with a deadline, and BOTH ends set it on the same read.
+  /// The bridge protects itself from an app that accepted and then wedged; the
+  /// app protects itself from any process running as this user that connects
+  /// and sends nothing. Cleared once the handshake is through, where blocking
+  /// forever is the correct behaviour for both.
+  static let handshakeTimeoutSeconds = 15
+
   /// Passed to the app when the bridge cold-starts it, so it knows a tool call
   /// is waiting rather than a person. See `launchApp` in CupertinoBridge.
   static let backgroundFlag = "--background"
