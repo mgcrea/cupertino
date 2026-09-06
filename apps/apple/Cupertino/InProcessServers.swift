@@ -57,8 +57,16 @@ enum InProcessServers {
   /// is what lets a check pin every combination without touching a preference,
   /// and what lets the Capabilities card answer for the setting it was keyed on
   /// rather than for the setting at the instant of the render.
+  /// `lentScope` is the internal channel, and nil is the normal case.
+  ///
+  /// When a node surface borrows the Accessibility driver for its own app —
+  /// `ServerHost`'s `for=<surface>` handshake — the reach it gets is pinned to
+  /// that surface's bundle id and must not be widened by the Desktop surface's
+  /// own gate. Passed rather than derived here for the same reason gates are:
+  /// a check can then pin every combination without touching a preference.
   static func handle(
-    _ line: String, surface: Surface, allowWrites: Bool, gateOn: (String) -> Bool
+    _ line: String, surface: Surface, allowWrites: Bool, gateOn: (String) -> Bool,
+    lentScope: AccessibilityDriver.Scope? = nil
   ) -> Reply {
     switch surface.id {
     case "screen":
@@ -87,7 +95,7 @@ enum InProcessServers {
         DesktopServer.handle(
           line, surface: surface,
           writesAllowed: allowWrites,
-          anyAppAllowed: gateOn("allowAnyApp")))
+          scope: lentScope ?? (gateOn("allowAnyApp") ? .any : .brokered)))
     default:
       return .noServer
     }

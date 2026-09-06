@@ -153,9 +153,9 @@ enum AccessibilityDriver {
   /// Resolve a handle, refusing one whose application is now out of scope.
   /// Every verb that takes a handle goes through here rather than touching the
   /// store, so a new verb cannot forget the check.
-  private static func resolve(_ handle: String, anyApp: Bool) throws -> AXUIElement {
+  private static func resolve(_ handle: String, scope: Scope) throws -> AXUIElement {
     guard let entry = handles.get(handle) else { throw Failure.staleHandle(handle) }
-    guard inScope(entry.bundleId, anyApp: anyApp) else {
+    guard inScope(entry.bundleId, scope: scope) else {
       throw Failure.outOfScope(entry.bundleId)
     }
     return entry.element
@@ -235,14 +235,53 @@ enum AccessibilityDriver {
   /// capability — so it cannot address itself, which is correct.
   static let brokeredBundleIds: Set<String> = Set(Surface.all.compactMap(\.bundleID))
 
-  static func inScope(_ bundleId: String, anyApp: Bool) -> Bool {
-    anyApp || brokeredBundleIds.contains(bundleId)
+  /// How far a caller may reach.
+  ///
+  /// A value rather than the `anyApp` boolean this started as, because a third
+  /// reach appeared that is neither of the two the gate expresses. The internal
+  /// channel (`ServerHost`, `for=<surface>`) lends this driver to a node surface
+  /// that needs Accessibility for its own app — Mail's composer — and what that
+  /// caller may touch is ONE bundle id, narrower than either user-facing
+  /// setting and unaffected by them. A boolean could only have widened.
+  ///
+  /// Kept as a closed enum rather than a set with a `nil` meaning "all", so the
+  /// widest reach has to be written down at the call site. `.any` is greppable;
+  /// an empty optional is not.
+  enum Scope: Hashable {
+    /// The applications Cupertino brokers. What the surface reaches with its
+    /// scope gate off.
+    case brokered
+    /// Every running application. What `allowAnyApp` widens to.
+    case any
+    /// Exactly these, and nothing else. Never widened by a gate.
+    case only(Set<String>)
+
+    func admits(_ bundleId: String) -> Bool {
+      switch self {
+      case .brokered: return AccessibilityDriver.brokeredBundleIds.contains(bundleId)
+      case .any: return true
+      case .only(let ids): return ids.contains(bundleId)
+      }
+    }
+
+    /// The phrase a refusal and the guide both use, so they cannot drift.
+    var described: String {
+      switch self {
+      case .brokered:
+        return
+          "the \(AccessibilityDriver.brokeredBundleIds.count) applications Cupertino brokers"
+      case .any: return "any running application"
+      case .only(let ids): return ids.sorted().joined(separator: ", ")
+      }
+    }
   }
 
-  static func runningApps(anyApp: Bool) -> [RunningApp] {
+  static func inScope(_ bundleId: String, scope: Scope) -> Bool { scope.admits(bundleId) }
+
+  static func runningApps(scope: Scope) -> [RunningApp] {
     NSWorkspace.shared.runningApplications
       .filter { $0.activationPolicy == .regular }
-      .filter { anyApp || brokeredBundleIds.contains($0.bundleIdentifier ?? "") }
+      .filter { scope.admits($0.bundleIdentifier ?? "") }
       .compactMap { app in
         guard let bundleId = app.bundleIdentifier else { return nil }
         return RunningApp(
@@ -286,9 +325,9 @@ enum AccessibilityDriver {
   /// application. Measured across six surface apps, the AX count and the
   /// FILTERED CGWindowList count agree on every one. A filter here would only be
   /// able to drop real windows.
-  static func windows(bundleId: String, anyApp: Bool) throws -> [WindowRef] {
+  static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard inScope(bundleId, anyApp: anyApp) else { throw Failure.outOfScope(bundleId) }
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
     let appElement = element(for: running.processIdentifier)
 
@@ -372,9 +411,9 @@ enum AccessibilityDriver {
   }
 
   static func tree(
-    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, anyApp: Bool
+    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope
   ) throws -> Tree {
-    let all = try windows(bundleId: bundleId, anyApp: anyApp)
+    let all = try windows(bundleId: bundleId, scope: scope)
     let chosen: [WindowRef]
     if let windowIndex {
       guard windowIndex >= 0, windowIndex < all.count else {
@@ -394,10 +433,10 @@ enum AccessibilityDriver {
   /// This is what makes a 9770-node window usable: docs/desktop.md measured
   /// Notes at 37 s for a full walk, and depth 3 for its first 500 nodes. A
   /// default tree plus this verb is not a degraded whole tree; it is the product.
-  static func expand(handle: String, detail: Detail, bounds: Bounds, anyApp: Bool) throws -> Tree {
+  static func expand(handle: String, detail: Detail, bounds: Bounds, scope: Scope) throws -> Tree {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     return walk(roots: children(element), detail: detail, bounds: bounds, bundleId: owner)
   }
 
@@ -482,9 +521,9 @@ enum AccessibilityDriver {
   /// developer-set identifiers (`FavoriteButton`, `AddButton`). A verb built on
   /// position breaks on every layout change and every non-English Mac; this one
   /// does not.
-  static func press(handle: String, anyApp: Bool) throws {
+  static func press(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
@@ -499,9 +538,9 @@ enum AccessibilityDriver {
   /// returned true on the first text field of all seven apps probed, which proves
   /// the write path is PERMITTED and not that any given app honours it. So this
   /// reads the value back and tells the caller when it did not take.
-  static func setValue(handle: String, value: String, anyApp: Bool) throws -> Bool {
+  static func setValue(handle: String, value: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -518,9 +557,9 @@ enum AccessibilityDriver {
     return string(element, kAXValueAttribute as String) == value
   }
 
-  static func raise(handle: String, anyApp: Bool) throws {
+  static func raise(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    let element = try resolve(handle, anyApp: anyApp)
+    let element = try resolve(handle, scope: scope)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
   }

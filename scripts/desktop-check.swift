@@ -56,7 +56,7 @@ struct DesktopCheck {
       data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
     guard
       let reply = DesktopServer.handle(
-        line, surface: surface, writesAllowed: writes, anyAppAllowed: anyApp),
+        line, surface: surface, writesAllowed: writes, scope: anyApp ? .any : .brokered),
       let data = reply.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
@@ -109,7 +109,7 @@ struct DesktopCheck {
       "a notification draws no reply",
       DesktopServer.handle(
         #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, surface: surface,
-        writesAllowed: false, anyAppAllowed: false) == nil)
+        writesAllowed: false, scope: .brokered) == nil)
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
@@ -251,9 +251,18 @@ struct DesktopCheck {
     // off, or the gate is a suggestion rather than a bound.
     check(
       "the driver binds scope to the handle, not only to the call",
-      AccessibilityDriver.inScope("com.apple.Maps", anyApp: false)
-        && !AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: false)
-        && AccessibilityDriver.inScope("com.microsoft.VSCode", anyApp: true))
+      AccessibilityDriver.inScope("com.apple.Maps", scope: .brokered)
+        && !AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .brokered)
+        && AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .any))
+
+    // The third reach, which no gate can widen. A lent scope names one bundle
+    // id and admits nothing else — not the brokered set it is drawn from, and
+    // not whatever `allowAnyApp` is set to, because it never consults it.
+    check(
+      "a lent scope admits its own app and nothing else",
+      AccessibilityDriver.inScope("com.apple.mail", scope: .only(["com.apple.mail"]))
+        && !AccessibilityDriver.inScope("com.apple.Maps", scope: .only(["com.apple.mail"]))
+        && !AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .only(["com.apple.mail"])))
 
     let (scopedApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: false)
     let (wideApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: true)
