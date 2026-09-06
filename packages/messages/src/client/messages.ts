@@ -356,6 +356,7 @@ export class AppleMessagesClient {
     fromApple?: number | undefined;
     toApple?: number | undefined;
     includeReactions?: boolean | undefined;
+    direction?: "sent" | "received" | undefined;
     limit?: number | undefined;
   }): RenderedMessage[] {
     return this.#render(
@@ -364,6 +365,7 @@ export class AppleMessagesClient {
         ...(opts.fromApple === undefined ? {} : { fromApple: opts.fromApple }),
         ...(opts.toApple === undefined ? {} : { toApple: opts.toApple }),
         ...(opts.includeReactions === undefined ? {} : { includeReactions: opts.includeReactions }),
+        ...(opts.direction === undefined ? {} : { direction: opts.direction }),
         limit: resolveLimit(opts.limit, this.#config.maxResults),
       }),
     );
@@ -617,7 +619,13 @@ export class AppleMessagesClient {
       const guid = decodeChatRef(input.chatRef);
       const chat = store?.chatByGuid(guid) ?? null;
       if (store && !chat) throw new ChatNotFoundError(input.chatRef);
-      return { guid, chat, handle: chat?.participants[0] ?? null };
+      // NEVER a handle for a group. The JXA ladder falls back to guessing a
+      // one-to-one guid from `handle` when the chat lookup throws, so passing
+      // the first participant here meant a message addressed to a group could
+      // be delivered privately to one member instead — and reconciliation, which
+      // polls the GROUP guid, then found nothing and reported "pending, do not
+      // send again". Plausible, wrong, and silent.
+      return { guid, chat, handle: chat && !chat.isGroup ? (chat.participants[0] ?? null) : null };
     }
     const to = input.to?.trim();
     if (!to) return { guid: null, chat: null, handle: null };
@@ -681,9 +689,13 @@ export class AppleMessagesClient {
       const store = this.store();
       if (!store) return null;
       const rows = store.sentSince([guid], since, 10);
-      const hit =
-        (text === null ? undefined : rows.find((r) => r.text !== null && r.text === text)) ??
-        rows[0];
+      // While there is still time, ONLY a text match counts. The `?? rows[0]`
+      // that used to sit here fired on the first poll, before our row had been
+      // written, and matched whatever else the user had sent from another
+      // device in the same two-second window — reporting `matched` against a
+      // ref for somebody else's message. The docstring above already said text
+      // is what separates the two; now the code does.
+      const hit = text === null ? rows[0] : rows.find((r) => r.text === text);
       if (hit) return this.#render([hit])[0] ?? null;
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, 250));

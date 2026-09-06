@@ -316,6 +316,77 @@ describe("search", () => {
     expect(s.search("100%", 10).map((m) => m.guid)).toEqual(["A"]);
   });
 
+  /**
+   * The two passes are MERGED by date, not concatenated.
+   *
+   * The blob contains "Hello, world". Column hits either side of it in time
+   * have to come back in date order, or a listing that says newest-first is
+   * not one.
+   */
+  it("interleaves column and blob hits by date", () => {
+    const s = store((db) => {
+      addMessage(db, {
+        rowid: 1,
+        guid: "OLD",
+        chat: 1,
+        text: "hello world, older",
+        iso: "2026-08-01T12:00:00Z",
+      });
+      addMessage(db, {
+        rowid: 2,
+        guid: "BLOB",
+        chat: 1,
+        text: null,
+        blob: HELLO_BLOB,
+        iso: "2026-08-10T12:00:00Z",
+      });
+      addMessage(db, {
+        rowid: 3,
+        guid: "NEW",
+        chat: 1,
+        text: "hello world, newer",
+        iso: "2026-08-20T12:00:00Z",
+      });
+    });
+    expect(s.search("world", 10).map((m) => m.guid)).toEqual(["NEW", "BLOB", "OLD"]);
+  });
+
+  /**
+   * The bug this pass was silently failing at. Pass 1 used to run to the cap
+   * FIRST, and pass 2 only got whatever room was left — so with the cap filled
+   * by old column hits, a newer blob-only match could not appear at all. The
+   * store's own header says every message since March 2026 is blob-only, which
+   * makes that "no results from this year".
+   */
+  it("does not lose a recent blob hit to older column hits filling the cap", () => {
+    const s = store((db) => {
+      addMessage(db, {
+        rowid: 1,
+        guid: "OLD1",
+        chat: 1,
+        text: "hello world one",
+        iso: "2026-01-01T12:00:00Z",
+      });
+      addMessage(db, {
+        rowid: 2,
+        guid: "OLD2",
+        chat: 1,
+        text: "hello world two",
+        iso: "2026-01-02T12:00:00Z",
+      });
+      addMessage(db, {
+        rowid: 3,
+        guid: "RECENT",
+        chat: 1,
+        text: null,
+        blob: HELLO_BLOB,
+        iso: "2026-08-20T12:00:00Z",
+      });
+    });
+    const hits = s.search("world", 2);
+    expect(hits.map((m) => m.guid)).toEqual(["RECENT", "OLD2"]);
+  });
+
   it("excludes tapbacks from search too", () => {
     const s = store((db) => {
       addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "see you at 8" });

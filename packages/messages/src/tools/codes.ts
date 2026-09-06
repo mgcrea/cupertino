@@ -77,11 +77,25 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
         const { fromApple } = client.window(since);
 
         const needle = service?.trim().toLowerCase();
+        // `limit` bounds the CODES returned, not the messages scanned.
+        //
+        // Both filters below used to run after the fetch, so `limit` (25 by
+        // default) capped the rows looked at: a busy few minutes of the user's
+        // own replies, or of traffic from anyone but the sender named in
+        // `service`, pushed the code off a page that was never about it. The
+        // tool then answered `count: 0` — which its own description has to say
+        // does NOT mean the code was missed. Direction is a SQL predicate now,
+        // and a `service` filter widens the scan to the configured ceiling.
+        const scan = needle ? client.config.maxResults : limit;
         const codes = client
-          .listMessages({ ...(fromApple === undefined ? {} : { fromApple }), limit })
-          // Never a message the user sent. A code they forwarded to somebody is
-          // not a code they were issued, and returning it would be a small
-          // exfiltration dressed up as a feature.
+          .listMessages({
+            ...(fromApple === undefined ? {} : { fromApple }),
+            // Never a message the user sent. A code they forwarded to somebody
+            // is not a code they were issued, and returning it would be a small
+            // exfiltration dressed up as a feature.
+            direction: "received",
+            limit: scan,
+          })
           .filter((m) => !m.fromMe)
           .filter((m) => {
             if (!needle) return true;
@@ -112,7 +126,9 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
                 chat: m.chat,
               },
             ];
-          });
+          })
+          // And NOW the limit applies, to what the caller actually asked for.
+          .slice(0, limit);
 
         return {
           windowMinutes: minutes,

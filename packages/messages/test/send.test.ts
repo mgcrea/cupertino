@@ -230,6 +230,33 @@ describe("choosing the target", () => {
     expect(seen[0]?.params.chatGuid).toBe("iMessage;+;chat9001");
   });
 
+  /**
+   * And carries NO handle while doing it.
+   *
+   * The ladder's second rung guesses a one-to-one guid from `handle` whenever
+   * the chat lookup on rung 1 throws. Passing the group's first participant —
+   * which is what "the handle for this chat" used to resolve to — meant a
+   * message addressed to a group could be delivered privately to one member
+   * instead. Reconciliation polls the GROUP guid, so it would then find
+   * nothing and report "pending, do NOT send again": the message sent, to the
+   * wrong person, and reported as possibly not sent.
+   */
+  it("passes no handle for a group, so the ladder cannot fall back to a DM", async () => {
+    const seen: Sent[] = [];
+    await send(await connect(runner(seen)), { chatRef: "mc1:iMessage;+;chat9001", text: "hi" });
+    expect(seen[0]?.params.handle).toBeUndefined();
+  });
+
+  /** A one-to-one ref still carries one: there the guess is the right answer. */
+  it("still passes the handle for a one-to-one chat ref", async () => {
+    const seen: Sent[] = [];
+    await send(await connect(runner(seen)), {
+      chatRef: "mc1:iMessage;-;+33612345678",
+      text: "hi",
+    });
+    expect(seen[0]?.params.handle).toBe("+33612345678");
+  });
+
   it("still sends when the handle has no chat, leaving the ladder to guess", async () => {
     const seen: Sent[] = [];
     const res = await send(await connect(runner(seen)), { to: "+15550009999", text: "hi" });

@@ -130,6 +130,15 @@ export type RangeQuery = {
   fromApple?: number | undefined;
   toApple?: number | undefined;
   includeReactions?: boolean | undefined;
+  /**
+   * Narrow to one direction in SQL.
+   *
+   * `find_codes` wants received messages only, and used to get there by
+   * fetching `limit` rows and discarding the sent ones AFTERWARDS — so a busy
+   * few minutes of the user's own replies could push the code being looked for
+   * off the end of a page that was never about it.
+   */
+  direction?: "sent" | "received" | undefined;
   limit: number;
 };
 
@@ -310,6 +319,10 @@ export class MessagesStore {
     if (!q.includeReactions && m.has("associated_message_type")) {
       where.push(`(m."associated_message_type" IS NULL OR m."associated_message_type" = 0)`);
     }
+    if (q.direction && m.has("is_from_me")) {
+      where.push(`m."is_from_me" = ?`);
+      params.push(q.direction === "sent" ? 1 : 0);
+    }
 
     const sql = `
       SELECT ${this.#messageColumns()}
@@ -355,10 +368,24 @@ export class MessagesStore {
       )
       .all(needle) as Record<string, unknown>[];
 
-    const results = fromColumn.map((r) => this.#toRow(r));
-    if (results.length >= cap || !m.has("attributedBody")) return results;
+    const column = fromColumn.map((r) => this.#toRow(r));
+    if (!m.has("attributedBody")) return column.slice(0, cap);
 
-    // Only the blob-only rows: 3,051 of 97,416 on the probed store.
+    // The second pass runs even when the first FILLED the cap, and the two are
+    // merged by date rather than concatenated. Both halves matter, because the
+    // header above records that every message since March 2026 is blob-only:
+    //
+    //   - Capping pass 1 first meant a full page of old column hits left no
+    //     room at all for recent ones. A search returned 25 results from
+    //     2016-2025 and nothing from this year, while the tool description
+    //     promised it searched "ALL messages, including the roughly 3% whose
+    //     text lives only in an archived blob".
+    //   - Appending pass 2 after pass 1 put newer messages BELOW older ones in
+    //     a listing that says it is newest-first.
+    //
+    // The floor keeps the scan bounded: once pass 1 has filled the cap, nothing
+    // older than its oldest hit can make the merged page anyway.
+    const floor = column.length >= cap ? (column.at(-1)?.sentAt ?? null) : null;
     const blobOnly = this.db
       .prepare(
         `SELECT ${this.#messageColumns()}
@@ -366,17 +393,24 @@ export class MessagesStore {
            ${this.#joins()}
           WHERE (m."text" IS NULL OR m."text" = '')
             AND m."attributedBody" IS NOT NULL ${reactionFilter}
+            ${floor === null ? "" : `AND ${appleSecondsSql('m."date"')} >= ?`}
           ORDER BY m."date" DESC`,
       )
-      .all() as Record<string, unknown>[];
+      .all(...(floor === null ? [] : [floor])) as Record<string, unknown>[];
 
     const lowered = query.toLowerCase();
+    const decoded: MessageRow[] = [];
     for (const raw of blobOnly) {
-      if (results.length >= cap) break;
       const row = this.#toRow(raw);
-      if (row.text && row.text.toLowerCase().includes(lowered)) results.push(row);
+      if (row.text && row.text.toLowerCase().includes(lowered)) decoded.push(row);
     }
-    return results.slice(0, cap);
+    if (decoded.length === 0) return column.slice(0, cap);
+
+    // Stable sort, so a column hit and a blob hit at the same instant keep the
+    // order the cheaper lane found them in.
+    return [...column, ...decoded]
+      .sort((a, b) => (b.sentAt ?? -Infinity) - (a.sentAt ?? -Infinity))
+      .slice(0, cap);
   }
 
   byGuid(guid: string): MessageRow | null {
