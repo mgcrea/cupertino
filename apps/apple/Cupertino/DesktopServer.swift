@@ -130,6 +130,14 @@ enum DesktopServer {
       "type": "string",
       "description": bundleIdDescription,
     ]
+    // One definition, because both the walk and the search honour it. Declaring
+    // it on one and not the other is how a caller learns an argument exists by
+    // having it silently ignored.
+    let windowProperty: [String: Any] = [
+      "type": "integer",
+      "description": "Index from apple_desktop_list_windows. Omitted means every window, "
+        + "which is usually what you want: a popover is its own window.",
+    ]
     let detailProperty: [String: Any] = [
       "type": "string",
       "enum": ["interactive", "labelled", "all"],
@@ -144,14 +152,14 @@ enum DesktopServer {
       ],
       "maxNodes": [
         "type": "integer",
-        "description": "How many elements to visit. Default 4000.",
+        "description": "How many elements to visit. Default 4000, at most 50000.",
       ],
       "budgetSeconds": [
         "type": "number",
         "description":
-          "Wall-clock budget for the walk. Default 5. This is the bound that actually protects "
-          + "you: cost per element varies 200x between applications, so a node count does not "
-          + "predict how long a walk takes.",
+          "Wall-clock budget for the walk. Default 5, at most 60. This is the bound that actually "
+          + "protects you: cost per element varies 200x between applications, so a node count "
+          + "does not predict how long a walk takes.",
       ],
     ]
 
@@ -193,11 +201,7 @@ enum DesktopServer {
           "type": "object",
           "properties": [
             "bundleId": bundleIdProperty,
-            "window": [
-              "type": "integer",
-              "description": "Index from apple_desktop_list_windows. Omitted means every window, "
-                + "which is usually what you want: a popover is its own window.",
-            ],
+            "window": windowProperty,
             "detail": detailProperty,
           ].merging(boundsProperties) { current, _ in current },
           "required": ["bundleId"],
@@ -240,6 +244,7 @@ enum DesktopServer {
               "type": "boolean",
               "description": "Only return elements that can be pressed. Defaults to false.",
             ],
+            "window": windowProperty,
           ].merging(boundsProperties) { current, _ in current },
           "required": ["bundleId"],
         ],
@@ -401,11 +406,21 @@ enum DesktopServer {
 
   // ─── calls ─────────────────────────────────────────────────────────────────
 
-  private static func bounds(_ args: [String: Any]) -> AccessibilityDriver.Bounds {
+  /// The ceilings exist because a session thread serves one caller at a time.
+  /// `budgetSeconds: 3600` is not a bigger answer, it is an hour in which this
+  /// surface answers nothing else — and the guide already says the way to reach
+  /// further is apple_desktop_expand rather than a raised bound. Depth needs no
+  /// ceiling: the walk is bounded by the real tree, which ends.
+  static let maxNodesCeiling = 50_000
+  static let maxSecondsCeiling = 60.0
+
+  static func bounds(_ args: [String: Any]) -> AccessibilityDriver.Bounds {
     var out = AccessibilityDriver.Bounds()
     if let depth = args["maxDepth"] as? Int { out.depth = max(1, depth) }
-    if let nodes = args["maxNodes"] as? Int { out.nodes = max(1, nodes) }
-    if let seconds = args["budgetSeconds"] as? Double { out.seconds = max(0.1, seconds) }
+    if let nodes = args["maxNodes"] as? Int { out.nodes = min(max(1, nodes), maxNodesCeiling) }
+    if let seconds = args["budgetSeconds"] as? Double {
+      out.seconds = min(max(0.1, seconds), maxSecondsCeiling)
+    }
     return out
   }
 
@@ -575,21 +590,26 @@ enum DesktopServer {
         // Searched over `all` regardless of what the caller wants back: a
         // control that carries no name is still findable by role, and filtering
         // before matching would hide it.
+        //
+        // The test goes INTO the walk rather than over its result, because a
+        // handle is minted for every element the walk keeps. Filtering
+        // afterwards spent 4000 handles to return three, which is how a busy
+        // session used to evict handles the caller was still holding.
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
-          detail: .all, bounds: bounds(args), scope: scope)
-        let matched = tree.elements.filter { element in
-          if pressableOnly && !element.pressable { return false }
-          if let wantedId, element.identifier != wantedId { return false }
-          if let wantedRole, element.role != wantedRole { return false }
-          if let wantedName {
-            guard let name = element.name?.lowercased(), name.contains(wantedName) else {
-              return false
+          detail: .all, bounds: bounds(args), scope: scope,
+          match: { candidate in
+            if pressableOnly && !candidate.pressable { return false }
+            if let wantedId, candidate.identifier != wantedId { return false }
+            if let wantedRole, candidate.role != wantedRole { return false }
+            if let wantedName {
+              guard let name = candidate.name?.lowercased(), name.contains(wantedName) else {
+                return false
+              }
             }
-          }
-          return true
-        }
-        return ok(id, treeBody(tree, elements: matched))
+            return true
+          })
+        return ok(id, treeBody(tree, elements: tree.elements))
 
       case "apple_desktop_user_activity":
         // Not gated on `isTrusted`: this is CoreGraphics rather than

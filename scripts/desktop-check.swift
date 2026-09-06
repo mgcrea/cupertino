@@ -360,6 +360,16 @@ struct DesktopCheck {
       "user activity is a duration, not a flag",
       (activity?["secondsSinceInput"] as? Double).map { $0 >= 0 } ?? false)
 
+    // Announced only once the screen has actually changed. This runs BEFORE the
+    // record below, because it asserts on an indicator nothing has lit yet.
+    // app(forBundleId:) scans the running applications and never launches, so a
+    // bundle id that is not running is a refusal, not a side effect.
+    _ = callText(
+      "apple_desktop_activate", ["bundleId": "com.example.absent"], writes: true, anyApp: true)
+    check(
+      "activating an application that is not running does not light the indicator",
+      DriveActivity.current() != "com.example.absent")
+
     // The indicator is state, so it has to lapse on its own. There is no "the
     // agent has finished" signal — a driving sequence is a burst of calls with
     // gaps — so an explicit end would leave it lit forever the first time a
@@ -369,6 +379,54 @@ struct DesktopCheck {
     check(
       "diagnostics says what is being driven",
       callText("apple_desktop_diagnostics", [:], writes: false).0.contains("com.apple.Maps"))
+
+    // A session thread serves one caller at a time, so an unbounded budget is
+    // not a bigger answer — it is an hour in which this surface answers nothing
+    // else. The guide already says to reach further with expand.
+    check(
+      "a walk bound above the ceiling is clamped, not honoured",
+      DesktopServer.bounds(["maxNodes": 1_000_000]).nodes == DesktopServer.maxNodesCeiling
+        && DesktopServer.bounds(["budgetSeconds": 3600.0]).seconds
+          == DesktopServer.maxSecondsCeiling
+    )
+    check(
+      "a walk bound below the floor is still raised to it",
+      DesktopServer.bounds(["maxNodes": 0]).nodes == 1
+        && DesktopServer.bounds(["budgetSeconds": 0.0]).seconds == 0.1)
+
+    // find_elements has always honoured `window`; for a while it did not say so,
+    // which is how a caller learns an argument exists by having it ignored.
+    let findSchema =
+      ((ask("tools/list", writes: false)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .first { $0["name"] as? String == "apple_desktop_find_elements" }
+      .flatMap { $0["inputSchema"] as? [String: Any] }
+      .flatMap { $0["properties"] as? [String: Any] }
+    check(
+      "find_elements declares every argument it reads",
+      Set(
+        [
+          "bundleId", "id", "role", "name", "pressableOnly", "window", "maxDepth", "maxNodes",
+          "budgetSeconds",
+        ]
+      ).isSubset(of: Set((findSchema ?? [:]).keys)))
+
+    // The store fills DURING a walk that is minting into it, so a full wipe
+    // strands handles minted earlier in the very answer being composed. The
+    // system-wide element needs no grant and no IPC to hold.
+    let store = AccessibilityDriver.HandleStore()
+    let capacity = AccessibilityDriver.HandleStore.capacity
+    var lastHandle = ""
+    for _ in 0...capacity {
+      lastHandle = store.put(AXUIElementCreateSystemWide(), bundleId: "com.example.filler")
+    }
+    check(
+      "filling the handle store evicts the oldest half, not everything",
+      store.get("e1") == nil && store.get("e\(capacity / 2 + 1)") != nil
+        && store.get(lastHandle) != nil)
+    check(
+      "a surviving handle still names the application it came from",
+      store.get(lastHandle)?.bundleId == "com.example.filler")
 
     check(
       "the driver binds scope to the handle, not only to the call",

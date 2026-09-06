@@ -117,29 +117,41 @@ enum AccessibilityDriver {
     /// turning the switch off takes effect on the next call rather than at the
     /// next restart — the same guarantee `ServerHost` gives by re-reading
     /// `isEnabled` per request.
-    private var elements: [String: (element: AXUIElement, bundleId: String)] = [:]
+    /// Keyed by the number in the handle rather than by its spelling, so that
+    /// age is an ordering rather than a lookup: eviction is "everything below
+    /// this number", which a dictionary of strings cannot answer.
+    private var elements: [Int: (element: AXUIElement, bundleId: String)] = [:]
     private var next = 0
     private let lock = NSLock()
 
     /// Bounded so a long session cannot grow without limit. Handles are cheap to
     /// re-mint — a stale one is an error a caller recovers from with a fresh
     /// tree, which is the same contract a WebDriver element id has.
-    private let capacity = 20000
+    static let capacity = 20000
 
+    /// Evicting the oldest half rather than everything, because the walk that
+    /// trips the bound is minting handles INTO it: a full wipe would strand
+    /// handles minted earlier in the very answer being composed, and the caller
+    /// would be told to take a fresh tree for the tree it just took.
+    /// apple_desktop_find_elements reaches the cap fastest, since it walks with
+    /// detail `all`.
     func put(_ element: AXUIElement, bundleId: String) -> String {
       lock.lock()
       defer { lock.unlock() }
-      if elements.count >= capacity { elements.removeAll() }
       next += 1
-      let handle = "e\(next)"
-      elements[handle] = (element, bundleId)
-      return handle
+      elements[next] = (element, bundleId)
+      if elements.count > Self.capacity {
+        let floor = next - Self.capacity / 2
+        elements = elements.filter { $0.key >= floor }
+      }
+      return "e\(next)"
     }
 
     func get(_ handle: String) -> (element: AXUIElement, bundleId: String)? {
       lock.lock()
       defer { lock.unlock() }
-      return elements[handle]
+      guard handle.hasPrefix("e"), let number = Int(handle.dropFirst()) else { return nil }
+      return elements[number]
     }
 
     func clear() {
@@ -420,8 +432,21 @@ enum AccessibilityDriver {
     var seconds = 5.0
   }
 
+  /// What a search tests a node against, before the node earns a handle.
+  ///
+  /// A search visits everything and returns almost nothing, so minting a handle
+  /// per visited node spends the store's whole capacity on elements the caller
+  /// will never be given. This is the same four fields the search filters on.
+  struct Candidate {
+    let role: String
+    let identifier: String?
+    let name: String?
+    let pressable: Bool
+  }
+
   static func tree(
-    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope
+    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope,
+    match: ((Candidate) -> Bool)? = nil
   ) throws -> Tree {
     let all = try windows(bundleId: bundleId, scope: scope)
     let chosen: [WindowRef]
@@ -435,7 +460,7 @@ enum AccessibilityDriver {
       chosen = all
     }
     let roots = chosen.compactMap { handles.get($0.handle)?.element }
-    return walk(roots: roots, detail: detail, bounds: bounds, bundleId: bundleId)
+    return walk(roots: roots, detail: detail, bounds: bounds, bundleId: bundleId, match: match)
   }
 
   /// Children of one already-resolved element — the lazy half.
@@ -451,7 +476,8 @@ enum AccessibilityDriver {
   }
 
   private static func walk(
-    roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String
+    roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String,
+    match: ((Candidate) -> Bool)? = nil
   ) -> Tree {
     var out: [Element] = []
     var visited = 0
@@ -484,11 +510,18 @@ enum AccessibilityDriver {
       // AXStaticText and AXImage at least as often as AXButton.
       let pressable = actions(el).contains(kAXPressAction as String)
 
-      let keep: Bool
+      var keep: Bool
       switch detail {
       case .interactive: keep = pressable
       case .labelled: keep = identifier != nil || title != nil || description != nil
       case .all: keep = true
+      }
+      // `visited` still counts every node, so the walk's own bounds and the
+      // `stoppedBy` it reports mean what they did before.
+      if keep, let match {
+        keep = match(
+          Candidate(
+            role: role, identifier: identifier, name: title ?? description, pressable: pressable))
       }
 
       if keep {
@@ -670,7 +703,6 @@ enum AccessibilityDriver {
   /// deliberately does something narrower.
   static func activate(bundleId: String, scope: Scope) throws {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    DriveActivity.record(bundleId)
     let running = try app(forBundleId: bundleId)
     // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
     // and refusing it for want of a grant it does not use would be a confusing
@@ -678,6 +710,10 @@ enum AccessibilityDriver {
     guard running.activate() else {
       throw Failure.refused("\(bundleId) refused to come to the front.")
     }
+    // Recorded only once the screen has actually changed. Announcing first put
+    // "Cupertino is driving X" on screen for four seconds after a refusal that
+    // told the caller X was not even running.
+    DriveActivity.record(bundleId)
   }
 
   /// Read ONE named attribute off an element.
