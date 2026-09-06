@@ -180,6 +180,44 @@ struct DispatchCheck {
     }
     check("a surface with no in-process server says so", noServer)
 
+    // ─── the internal channel ────────────────────────────────────────────────
+    //
+    // `ServerHost` lends `desktop` to a node surface for that surface's own
+    // application. What it hands down is a scope, and the property that makes
+    // it a bound rather than a suggestion is that NOTHING here can widen it:
+    // `allowAnyApp` is on for both calls below and the lend is unmoved.
+    //
+    // Pinned at this seam because it is the layer that can be driven without a
+    // socket. The peer-pid proof lives in `ServerHost.serve` and needs a real
+    // connection, so it is exercised by hand — see docs/desktop.md.
+    func lentReach(gates: Bool) -> String {
+      let message: [String: Any] = [
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": ["name": "apple_desktop_diagnostics", "arguments": [String: Any]()],
+      ]
+      let line = String(
+        data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
+      guard
+        case .message(let text) = InProcessServers.handle(
+          line, surface: Surface.named("desktop")!, allowWrites: false,
+          gateOn: { _ in gates },
+          lentScope: .only(["com.apple.mail"])),
+        let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+        let result = object["result"] as? [String: Any],
+        let content = (result["content"] as? [[String: Any]])?.first,
+        let body = content["text"] as? String
+      else { return "" }
+      return body
+    }
+
+    check(
+      "a lent scope names the borrower's app as the reach",
+      lentReach(gates: false).contains("com.apple.mail"))
+    check(
+      "the scope gate cannot widen a lend",
+      lentReach(gates: true).contains("com.apple.mail")
+        && !lentReach(gates: true).contains("any running application"))
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
   }

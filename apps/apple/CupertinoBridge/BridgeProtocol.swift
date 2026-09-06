@@ -53,6 +53,23 @@ enum BridgeProtocol {
   /// First line the bridge sends: `cupertino/1 mail\n`
   static func handshake(server: String) -> String { "\(version) \(server)\n" }
 
+  /// The internal channel: `cupertino/1 desktop for=mail\n`.
+  ///
+  /// A node server asking to borrow an in-process surface for its OWN
+  /// application — Mail reaching its composer through the native Accessibility
+  /// driver rather than through System Events. `cupertino-bridge` never sends
+  /// this; the only callers are servers the app itself spawned, and `ServerHost`
+  /// proves that with the peer pid rather than believing the line.
+  ///
+  /// A third field rather than a second verb, so a host that does not know about
+  /// it fails the arity check above and is told the protocol is unsupported
+  /// instead of being served something it did not ask for.
+  static func lentHandshake(server: String, onBehalfOf: String) -> String {
+    "\(version) \(server) \(onBehalfOfPrefix)\(onBehalfOf)\n"
+  }
+
+  static let onBehalfOfPrefix = "for="
+
   /// First line the app sends back: `ok\n`, or `err <reason>\n`.
   static let ok = "ok"
   static let errorPrefix = "err "
