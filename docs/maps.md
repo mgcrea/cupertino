@@ -244,6 +244,47 @@ Worth recording for the next macOS release: if those actions ever appear in Shor
 write half becomes tractable overnight, and it would be about **Lists** — no intent adds a
 favourite either.
 
+## The interface lane, built 2026-09-06
+
+`packages/maps/src/client/ax.ts` drives the place card through Cupertino's native Accessibility
+driver. It does **not** replace the SQL lane and could not: pressing `AddButton` lands an unfiled
+saved place and never touches `ZFAVORITEITEM`. The two lanes address different objects, and what
+this one reaches is the set SQL does not offer at all — the **Places library** and **guide
+membership**, the second of which this document lists as unbuilt.
+
+**Reading the guides works, and it is better than the store's answer.** The `Add to Guides` picker
+enumerates every guide with its count, which is the read gap recorded above: it lists a `Favorites`
+guide that `apple_maps_list_collections` does not return. Measured live, eleven guides came back
+where the store lane reports ten.
+
+**Writing to a guide works and CANNOT BE VERIFIED, which is why the tool refuses to claim it.**
+Pressing a picker row does select it — confirmed by a person watching the screen take the
+checkmark — and nothing in the accessibility tree says so. The row's label carries a **stale
+count**: `"My Places, 2 places"` reads identically before and after, so a verification built on it
+reports a successful write as a failure and an unverified one as a success. No attribute read off
+the row (`AXValue`, `AXSelected`, `AXMenuItemMarkChar`, `AXHelp`, `AXDescription`, `AXSubrole`)
+carries the selection either. So `apple_maps_add_place_to_guide` returns `filed: "unverified"` and
+says plainly that it must not be reported as done.
+
+That is the honest shape and it is the only acceptable one here. The first version returned
+`filed: true` on the strength of having pressed things, which is precisely the failure
+[mail-compose.md](mail-compose.md) exists to prevent — a result correct in every visible respect
+except whether it happened. **Finding the selection bit is the open item**, and until it is found
+this write is a suggestion rather than a report.
+
+### Two defects this lane exposed elsewhere
+
+**A refusal is not a JSON-RPC error.** `packages/core/src/ax.ts` read the desktop server's replies
+and checked only `message.error`. A refused tool answers with a normal result carrying
+`isError: true` and the reason as plain text, so every refusal was resolving as a success value —
+and the lane above reported "the naming sheet did not appear", a sentence about Maps rather than
+about permission. It sent the debugging in entirely the wrong direction for an afternoon.
+
+**A read can fail while you are waiting, and that is not a verdict.** `maps://` launches Maps, and
+for a moment it is running with no window this surface can address. The poll now swallows that until
+its deadline and rethrows afterwards, because "the card never appeared" is a much worse sentence
+than "Accessibility is not granted" when the latter is why.
+
 ### Where each lane stands
 
 | Lane               | Verdict                             | Why                                                                |

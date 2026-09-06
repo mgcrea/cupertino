@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { AppleMapsClient } from "../client/maps.js";
+import { registerAxWriteTools } from "./ax-writes.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerPlaceTools } from "./places.js";
 import { registerWriteTools } from "./writes.js";
@@ -38,4 +39,13 @@ export const registerTools = (
   registerPlaceTools(server, client);
   if (!ctx.allowWrites) return;
   registerWriteTools(server, client);
+  // The interface lane, and only when the app is hosting this server. The
+  // Accessibility grant belongs to Cupertino.app rather than to node, so a
+  // package run from npm has no lane here — registering tools that could only
+  // ever refuse would tell a host about a capability it does not have.
+  //
+  // Behind `allowWrites` with the rest, because these press controls in a real
+  // window and their writes reach every device on the account.
+  const ax = client.axLane;
+  if (ax) registerAxWriteTools(server, ax);
 };

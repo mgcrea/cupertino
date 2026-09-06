@@ -231,3 +231,34 @@ describe("openAxChannel", () => {
     channel?.close();
   });
 });
+
+describe("a refused tool", () => {
+  /*
+   * A refusal is NOT a JSON-RPC error. The desktop server answers with a normal
+   * result carrying `isError: true` and the reason as plain text, so a caller
+   * that only inspects `message.error` reads it as a success value.
+   *
+   * That shipped and cost an afternoon: every press through this channel was
+   * being refused for want of a write gate, and the lane above reported "the
+   * naming sheet did not appear" — a sentence about Maps rather than about
+   * permission, which sent the debugging in entirely the wrong direction.
+   */
+  it("is a rejection, not a value, even though it arrives as a result", async () => {
+    const { path, server } = await hostStub({
+      reply: (message) =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            content: [{ type: "text", text: "Driving Desktop is switched off." }],
+            isError: true,
+          },
+        }),
+    });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path));
+    await expect(channel?.call({ tool: "apple_desktop_press", args: {} })).rejects.toThrow(
+      /switched off/,
+    );
+  });
+});

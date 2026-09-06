@@ -1,6 +1,7 @@
 import type { Logger, ReadOnlyMode } from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
+import { MapsAxLane } from "./ax.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import { MapsStoreUnavailableError } from "./errors.js";
 import { locateStore, type LocateResult } from "./locate.js";
@@ -69,6 +70,14 @@ export type CreateClientOptions = {
   logger?: Logger;
   /** Injected by tests so discovery never reaches the developer's real home. */
   home?: string;
+  /**
+   * The interface lane, for tests.
+   *
+   * A seam of the same shape as `home`: null pins the store-only surface on a
+   * machine that IS hosted, and a stub drives the interface lane on one that is
+   * not. Undefined means "ask the environment", which is what the server does.
+   */
+  ax?: MapsAxLane | null | undefined;
 };
 
 /**
@@ -86,6 +95,15 @@ const summariseEntity = (e: MapsStore["caps"]["favorites"]) => ({
 
 export class AppleMapsClient {
   readonly #config: Config;
+
+  /**
+   * The interface lane, when this server is hosted by Cupertino.
+   *
+   * Null when it is not, which is the supported case rather than a fault: the
+   * npm package has to work with no app on the machine. `tools/index.ts` skips
+   * registering the tools that need it.
+   */
+  readonly #ax: MapsAxLane | null;
   readonly #logger: Logger | undefined;
   readonly #home: string | undefined;
 
@@ -95,12 +113,17 @@ export class AppleMapsClient {
 
   constructor(opts: CreateClientOptions) {
     this.#config = opts.config;
+    this.#ax = opts.ax !== undefined ? opts.ax : MapsAxLane.open();
     this.#logger = opts.logger;
     this.#home = opts.home;
   }
 
   get config(): Config {
     return this.#config;
+  }
+
+  get axLane(): MapsAxLane | null {
+    return this.#ax;
   }
 
   located(): LocateResult {

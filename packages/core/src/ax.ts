@@ -185,7 +185,10 @@ export const openAxChannel = (
         if (newline < 0) return;
         const raw = buffer.slice(0, newline);
         cleanup();
-        let message: { result?: { content?: { text?: string }[] }; error?: { message?: string } };
+        let message: {
+          result?: { content?: { text?: string }[]; isError?: boolean };
+          error?: { message?: string };
+        };
         try {
           message = JSON.parse(raw);
         } catch {
@@ -197,12 +200,21 @@ export const openAxChannel = (
           return;
         }
         // The desktop server answers in MCP's content envelope, and its tools
-        // put one JSON document in the first text part. A tool that refused
-        // reports it inside that document rather than as a JSON-RPC error, so
-        // the caller reads the body either way.
+        // put one JSON document in the first text part.
         const text = message.result?.content?.[0]?.text;
         if (text === undefined) {
           reject(new AxChannelError(surface, `empty reply to ${payload.tool}`));
+          return;
+        }
+        // A REFUSED tool is not a JSON-RPC error. It comes back as a normal
+        // result carrying `isError: true` and the reason as PLAIN TEXT, so a
+        // caller that only checks `message.error` reads a refusal as a success
+        // value and carries on. That shipped, and it cost an afternoon: every
+        // press through this channel was being refused for want of a write gate
+        // and the lane above reported "the sheet did not appear", which is a
+        // sentence about Maps rather than about permission.
+        if (message.result?.isError === true) {
+          reject(new AxChannelError(surface, `${payload.tool}: ${text}`));
           return;
         }
         try {
