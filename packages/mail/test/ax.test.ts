@@ -302,3 +302,65 @@ describe("containsText", () => {
     expect(containsText("anything", "   ")).toBe(true);
   });
 });
+
+describe("finish", () => {
+  /*
+   * Command-shift-D rather than pressing the button named "Send". The button's
+   * name is localised — a French Mail says "Envoyer" — and the shortcut is not,
+   * so addressing it by name would have worked only on the machine this was
+   * written on.
+   */
+  it("sends with the shortcut, not with a localised button name", async () => {
+    const { env, seen } = await hostStub({});
+    const lane = MailAxLane.open(env)!;
+    await lane.finish(true);
+    expect(seen).toEqual([{ tool: "key", args: { key: "d", modifiers: ["command", "shift"] } }]);
+    lane.close();
+  });
+
+  it("saves a draft with command-S", async () => {
+    const { env, seen } = await hostStub({});
+    const lane = MailAxLane.open(env)!;
+    await lane.finish(false);
+    expect(seen).toEqual([{ tool: "key", args: { key: "s", modifiers: ["command"] } }]);
+    lane.close();
+  });
+});
+
+describe("composerGone", () => {
+  /*
+   * How a send is confirmed. Mail closes the window when it accepts one, so the
+   * window still being there means it did not go — checked rather than assumed,
+   * because nothing here may report success on the strength of a keystroke
+   * having been delivered.
+   */
+  it("is true once the window with that subject has closed", async () => {
+    const { env } = await hostStub({
+      list_windows: { windows: [{ handle: "w1", index: 0, title: "Inbox" }] },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.composerGone("Re: lunch", 0)).resolves.toBe(true);
+    lane.close();
+  });
+
+  it("is false while the composer is still on screen", async () => {
+    const { env } = await hostStub({
+      list_windows: { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.composerGone("Re: lunch", 0)).resolves.toBe(false);
+    lane.close();
+  });
+
+  it("waits for the window to go rather than reading once", async () => {
+    const { env } = await hostStub({
+      list_windows: (_args, n) =>
+        n < 2
+          ? { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] }
+          : { windows: [{ handle: "w1", index: 0, title: "Inbox" }] },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.composerGone("Re: lunch", 2000)).resolves.toBe(true);
+    lane.close();
+  });
+});

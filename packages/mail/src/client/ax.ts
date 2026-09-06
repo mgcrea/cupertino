@@ -257,6 +257,56 @@ export class MailAxLane {
     return true;
   }
 
+  /**
+   * Send the composer, or save it as a draft.
+   *
+   * A keyboard shortcut rather than the Send button, and that is a correctness
+   * choice rather than a shortcut in the other sense: the button's name is
+   * localised — a French Mail says "Envoyer" — while command-shift-D is the same
+   * on every Mac. Addressing it by name would have worked on the machine it was
+   * written on and nowhere else.
+   *
+   * This is the step that replaces `draft.send()`, and the reason it had to. A
+   * JXA object reference cannot outlive the `osascript` process that made it,
+   * and this flow now spans two processes: Apple Events opens the composer, and
+   * everything after is native. Re-finding the draft to send it was the
+   * alternative and is worse — drafts are discovered by subject, so two with the
+   * same one are indistinguishable, on the single path whose named failure is
+   * sending the wrong thing.
+   */
+  async finish(sendNow: boolean): Promise<void> {
+    await this.#call(
+      "key",
+      sendNow
+        ? { key: "d", modifiers: ["command", "shift"] }
+        : {
+            key: "s",
+            modifiers: ["command"],
+          },
+    );
+  }
+
+  /**
+   * Has the composer for this subject gone?
+   *
+   * How a send is confirmed. Mail closes the window when it accepts one, so the
+   * window still being there means it did not go — which is checked rather than
+   * assumed, because nothing in this path may report success on the strength of
+   * a keystroke having been delivered.
+   */
+  async composerGone(subject: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const listed = (await this.#call("list_windows", {
+        bundleId: MAIL_BUNDLE,
+        includeTitles: true,
+      })) as Windows;
+      if (!(listed.windows ?? []).some((w) => (w.title ?? "") === subject)) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+
   /** Select everything in the body, for the quote strip. */
   async selectAll(): Promise<void> {
     await this.#call("key", { key: "a", modifiers: ["command"] });

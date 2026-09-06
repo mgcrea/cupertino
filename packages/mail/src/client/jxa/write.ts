@@ -827,3 +827,64 @@ export const REPLY_OR_FORWARD = script(
 `,
   { allowLaunch: true },
 );
+
+/**
+ * Open a reply or forward composer, address it, and stop.
+ *
+ * The Apple Events half of the NATIVE composer path — see `client/ax.ts` for
+ * the other half and `client/compose.ts` for the sequence that joins them.
+ *
+ * It exists because a JXA object reference cannot outlive the `osascript`
+ * process that made it, and `packages/core/src/osascript.ts` spawns one per
+ * call by design. The old flow held `draft` from `M.reply(...)` all the way
+ * through to `draft.send()`, with every Accessibility step in between; once
+ * those steps move out of the script, the reference cannot survive to the end
+ * of it. So this script does everything that NEEDS the reference — open,
+ * address — and returns the subject, which is the identity the native half
+ * addresses the window by.
+ *
+ * **No System Events here, deliberately.** That is the whole point of the
+ * split: this half needs Automation for Mail, which every other write tool
+ * already has, and nothing else. The second grant goes with the second half.
+ *
+ * Recipients go through the scripting object, which does work for them, and
+ * only once the composer exists.
+ */
+export const OPEN_COMPOSER = script(
+  `
+  var acct = findAccount(M, p.accountUuid);
+  if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
+  var mb = resolveMailbox(acct, p.mailbox);
+  if (!mb) return err("MAILBOX_NOT_FOUND", "No mailbox " + p.mailbox + " in that account");
+
+  var original;
+  try {
+    original = mb.messages.byId(p.id);
+    original.subject();
+  } catch (e) {
+    return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
+  }
+
+  var draft;
+  if (p.mode === "forward") {
+    draft = M.forward(original, { openingWindow: true });
+  } else {
+    draft = M.reply(original, { openingWindow: true, replyToAll: p.replyToAll ? true : false });
+  }
+
+  var subject = String(prop(function () { return draft.subject(); }, ""));
+  if (!subject) {
+    return err("COMPOSER_NOT_FOUND", "Mail did not return a composer for the " + p.mode + ".");
+  }
+
+  if (p.mode === "forward") {
+    var addrs = p.to || [];
+    for (var i = 0; i < addrs.length; i++) {
+      draft.toRecipients.push(M.ToRecipient({ address: addrs[i] }));
+    }
+  }
+
+  return ok({ subject: subject });
+`,
+  { allowLaunch: true },
+);

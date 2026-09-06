@@ -2,7 +2,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } f
 import { basename, join, resolve, sep } from "node:path";
 
 import type { Config } from "../config.js";
+import { MailAxLane } from "./ax.js";
 import { scanBodies } from "./body-scan.js";
+import { replyOrForwardNatively } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
@@ -123,6 +125,15 @@ export type AppleMailClientOptions = {
   config: Config;
   logger?: Logger | undefined;
   osascript?: OsascriptRunner | undefined;
+  /**
+   * The composer lane, for tests.
+   *
+   * A seam of the same shape as `osascript`: passing null pins the System Events
+   * path on a machine that IS hosted, and passing a stub drives the native one
+   * on a machine that is not. Undefined means "ask the environment", which is
+   * what the server does.
+   */
+  ax?: MailAxLane | null | undefined;
 };
 
 export class AppleMailClient {
@@ -130,6 +141,16 @@ export class AppleMailClient {
   readonly runner: OsascriptRunner;
   readonly mailboxes: MailboxMap;
   readonly #logger: Logger | undefined;
+
+  /**
+   * The native Accessibility lane, when this server is hosted by Cupertino.
+   *
+   * Null when it is not — a package installed from npm and run by hand — and
+   * that is the supported case rather than a fault, so every use of it falls
+   * back to the System Events path rather than refusing. `diagnostics` reports
+   * which one is live.
+   */
+  readonly #ax: MailAxLane | null;
 
   #located: LocateResult | null = null;
   #index: EnvelopeIndex | null = null;
@@ -152,6 +173,12 @@ export class AppleMailClient {
       allowlist: opts.config.accounts,
       ttlMs: opts.config.mailboxCacheTtlMs,
     });
+    this.#ax = opts.ax !== undefined ? opts.ax : MailAxLane.open();
+  }
+
+  /** Which composer lane is live, for `diagnostics` to report. */
+  get composerLane(): "accessibility" | "system-events" {
+    return this.#ax ? "accessibility" : "system-events";
   }
 
   accounts(force = false): Promise<MailAccount[]> {
@@ -1229,7 +1256,7 @@ export class AppleMailClient {
     },
   ): Promise<unknown> {
     const decoded = decodeRef(ref);
-    return this.runner.run(REPLY_OR_FORWARD, {
+    const params = {
       accountUuid: decoded.accountUuid,
       mailbox: decoded.mailbox,
       id: decoded.id,
@@ -1238,7 +1265,14 @@ export class AppleMailClient {
       to: opts.to ?? [],
       replyToAll: opts.replyToAll ?? false,
       sendNow: opts.sendNow,
-    });
+    };
+    // The native lane when the app is hosting this server, and the System Events
+    // one otherwise. Both are kept because the npm packages are published
+    // artifacts that have to work with no Cupertino on the machine — the
+    // difference a person sees is that the native path needs ONE grant where
+    // the other needs two.
+    if (this.#ax) return replyOrForwardNatively(this.#ax, this.runner, params);
+    return this.runner.run(REPLY_OR_FORWARD, params);
   }
 
   #withRef(m: Omit<MessageSummary, "ref"> & MessageIdentity): MessageSummary {

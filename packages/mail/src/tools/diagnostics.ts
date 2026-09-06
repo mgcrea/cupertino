@@ -99,7 +99,22 @@ export const buildDiagnostics = async (
       // opposite — so when they conflict, this is the one to believe.
       composerUiRead: composer.uiRead,
       ...(composer.windows ? { composerWindowsSeen: composer.windows } : {}),
-      ...(composer.uiRead === "granted" && composer.systemEvents === "granted"
+      // WHICH lane fills a composer, which decides whether the two grants above
+      // are both needed. `accessibility` reaches Mail's composer through
+      // Cupertino's own native driver and needs Accessibility alone;
+      // `system-events` is the fallback for a server nobody is hosting — a
+      // package installed from npm and run by hand — and needs both.
+      composerLane: client.composerLane,
+      ...(client.composerLane === "accessibility"
+        ? {
+            composerLaneNote:
+              "This server is hosted by Cupertino, so a composer is driven through the app's " +
+              "own Accessibility driver. Automation to System Events is NOT required for it, " +
+              "and `automationSystemEvents` above can be denied without affecting a reply.",
+          }
+        : {}),
+      ...((composer.uiRead === "granted" && composer.systemEvents === "granted") ||
+      client.composerLane === "accessibility"
         ? {}
         : {
             composerNote:
