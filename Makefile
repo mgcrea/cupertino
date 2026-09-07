@@ -708,6 +708,16 @@ surfaces: ## Regenerate every copy of the surface list from surfaces.json
 surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
 	@node scripts/generate-surfaces.mjs --check
 
+# The app's What's New pane, from the same CHANGELOG.md the appcast is cut from.
+# Release-day order matters: this runs AFTER the new section is written and
+# dated, and the result is committed with it — otherwise the release build fails
+# changelog-check on a file the release commit forgot.
+changelog: ## Regenerate the app's release notes from CHANGELOG.md
+	@node scripts/generate-changelog.mjs
+
+changelog-check: ## Fail if the app's release notes have drifted from CHANGELOG.md
+	@node scripts/generate-changelog.mjs --check
+
 readme-check: ## Fail if README's Surfaces table has drifted from the tree
 	@node scripts/readme-surfaces-check.mjs
 
@@ -1013,4 +1023,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check changelog changelog-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean

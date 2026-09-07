@@ -67,6 +67,8 @@ jobs:
       # Release whose consent prompt names the wrong apps.
       - name: Surface manifest 🔍
         run: make surfaces-check
+      - name: Changelog drift 🔍
+        run: make changelog-check
       # The README's table is the one copy of the surface list that is NOT
       # generated — its third column is hand-written prose no manifest knows.
       # So it drifted: three wrong counts, a missing `screen` row, and Safari

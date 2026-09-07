@@ -20,6 +20,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
+    // Whether this build's notes count as read, decided once and never again.
+    //
+    // Has to happen before any view can ask `Changelog.hasUnseen`, and has to
+    // happen on a launch that is NOT a capture — the demo branch returns above.
+    // Without it, a fresh install has no seen-version recorded, every release in
+    // the pane looks unread, and Cupertino greets somebody who has never run it
+    // with an indicator in three places. See `markSeenIfUnset()`.
+    Changelog.markSeenIfUnset()
+
     // Before the first line is logged. Listening is not writing: with the
     // Activity pane untouched `AuditLog` opens no file.
     AuditLog.install()
@@ -691,6 +700,19 @@ struct StatusMenu: View {
         Button("Quit") { NSApplication.shared.terminate(nil) }
       }
       .controlSize(.small)
+
+      // A row that appears once after an update and then goes away, rather than
+      // a permanent marker on something already on screen. This panel is 320pt
+      // and most of what is in it is status that can need acting on; news that
+      // is right twice a year would not earn a standing place. MenuBarExtra
+      // builds this content lazily, so the test is re-read each time it opens.
+      if Changelog.hasUnseen {
+        Divider()
+        Button("What's new in \(Changelog.marketingVersion)…") {
+          SettingsOpener.show(.whatsNew)
+        }
+        .controlSize(.small)
+      }
     }
     .padding(14)
     .frame(width: 320)

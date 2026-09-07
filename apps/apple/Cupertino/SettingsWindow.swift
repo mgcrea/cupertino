@@ -13,6 +13,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case audit
   case permissions
+  case whatsNew
   case updates
   case licence
 
@@ -22,13 +23,19 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
   /// How the app behaves…
   ///
+  /// What's New sits next to Updates because the two are halves of one
+  /// question: what did this build change, and is there a newer one. It is not
+  /// beside General, where the version and the build number are — those say
+  /// WHICH build this is, which is the question you ask with a bug report open,
+  /// not the one you ask after updating.
+  ///
   /// Updates sits last. It was a Section in General, under the version number,
   /// on the theory that somebody wondering whether they are current has already
   /// looked there — which holds only for the people who scroll. The one manual
   /// check the app has was the second card on a page whose other rows are about
   /// launching at login and where the bundle lives, and a row in the sidebar is
   /// findable without knowing that. Bastion splits it the same way.
-  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .updates]
+  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .whatsNew, .updates]
 
   /// …and what was bought, which is a different question and the only reason
   /// the sidebar is in two groups rather than one list of four. Somebody opens
@@ -41,6 +48,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "General"
     case .audit: "Activity"
     case .permissions: "Permissions"
+    case .whatsNew: "What's New"
     case .updates: "Updates"
     case .licence: "Licence"
     }
@@ -51,6 +59,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "gearshape"
     case .audit: "list.bullet.rectangle"
     case .permissions: "lock.shield"
+    case .whatsNew: "sparkles"
     case .updates: "arrow.down.circle"
     case .licence: "key"
     }
@@ -177,7 +186,12 @@ struct SettingsView: View {
   }
 
   private func row(_ pane: SettingsPane) -> some View {
-    Label(pane.title, systemImage: pane.symbol).tag(pane)
+    Label(pane.title, systemImage: pane.symbol)
+      // Only ever on What's New, and only while something is genuinely unread.
+      // `.badge(0)` draws nothing, so the unread case needs no branch of its
+      // own and the row cannot end up with an empty pill on it.
+      .badge(pane == .whatsNew && Changelog.hasUnseen ? Changelog.unseen.count : 0)
+      .tag(pane)
   }
 
   /// The pane's name is drawn in the content rather than left to the title bar,
@@ -202,6 +216,7 @@ struct SettingsView: View {
     case .general: GeneralPane(model: model)
     case .audit: AuditPane()
     case .permissions: PermissionsPane(model: model)
+    case .whatsNew: WhatsNewPane()
     case .updates: UpdatesPane()
     case .licence: LicensePane()
     }

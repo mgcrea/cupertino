@@ -290,12 +290,22 @@ struct MainView: View {
       // and this one never does. Opens Settings, where the build number, the
       // commit and the copy button are.
       HStack(spacing: 6) {
+        // Where this goes depends on what there is to say. Normally General,
+        // which is what the comment above means by "the build number, the
+        // commit and the copy button". When something has shipped that has not
+        // been read, the dot is a claim that there is news — and a claim like
+        // that has to lead to the news rather than to the build number.
         Button {
-          SettingsOpener.show(.general)
+          SettingsOpener.show(Changelog.hasUnseen ? .whatsNew : .general)
         } label: {
-          Text("Version \(AppInfo.shortVersion)")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+          HStack(spacing: 4) {
+            Text("Version \(AppInfo.shortVersion)")
+            if Changelog.hasUnseen {
+              Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+            }
+          }
+          .font(.caption)
+          .foregroundStyle(.tertiary)
         }
         .buttonStyle(.plain)
 
