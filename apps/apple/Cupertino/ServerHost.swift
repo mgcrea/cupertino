@@ -779,11 +779,20 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Client -> server. Also the only place that sees requests, so it is where
     // tool calls are picked out for the log. On EOF, close the child's stdin so
     // the server shuts down cleanly; nothing else here owns that handle.
+    //
+    // Closing stdin is a REQUEST to exit, not a guarantee of one, which is why
+    // the deadline below exists: a server that ignores EOF — wedged, mid-syscall,
+    // or simply not handling it — used to be waited on forever by
+    // `waitUntilExit()`, leaking a thread, three pipes and a process per session
+    // for the life of the app.
     let childStdin = toChild.fileHandleForWriting
     pump(
       from: client, to: childStdin.fileDescriptor, group: group,
       observe: { observer.saw($0) },
-      onFinish: { try? childStdin.close() })
+      onFinish: {
+        try? childStdin.close()
+        Self.endAfterGrace(process, surface: surface.id)
+      })
 
     // Server -> client. Half-close only: `serve` owns the socket and closes it
     // exactly once, in its `defer`.
@@ -829,6 +838,48 @@ nonisolated final class ServerHost: @unchecked Sendable {
   }
 
   // MARK: - Plumbing
+
+  /// How long a server gets to notice its stdin closed before it is made to.
+  ///
+  /// Generous on purpose. A server that is mid-write to Mail's index, or waiting
+  /// on an Apple Event that is itself waiting on a permission dialog, is not
+  /// wedged and must not be killed for being slow — the aim here is only to
+  /// bound the case where nothing is ever going to happen again.
+  static let childGraceSeconds = 10.0
+
+  /// End a child that did not exit when its stdin closed.
+  ///
+  /// `waitUntilExit()` in `run` has no deadline of its own, so a server that
+  /// ignores EOF held a session thread, three pipes and a process for the life
+  /// of the app. Closing stdin is a request; this is what happens when the
+  /// request is not answered.
+  ///
+  /// SIGTERM first, because a server may have a flush or a rollback to do, then
+  /// SIGKILL, so an ordinary exit inside the grace window costs nothing and logs
+  /// nothing.
+  ///
+  /// Liveness is asked of the `Process`, NOT of `kill(pid, 0)`. This file's own
+  /// teardown comment records why: a pid is reused by the kernel eventually, and
+  /// a signal sent to a stale one reaches whatever inherited the number. By the
+  /// time this fires the child may have exited and been reaped, which is exactly
+  /// when that number becomes somebody else's.
+  private static func endAfterGrace(_ process: Process, surface: String) {
+    let deadline = DispatchTime.now() + childGraceSeconds
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: deadline) {
+      guard process.isRunning else { return }
+      let pid = process.processIdentifier
+      hostLog(
+        surface, .info,
+        "server \(pid) did not exit \(Int(childGraceSeconds))s after its client hung up; "
+          + "asking it to stop")
+      process.terminate()
+      DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+        guard process.isRunning else { return }
+        hostLog(surface, .error, "server \(pid) ignored SIGTERM; killing it")
+        kill(pid, SIGKILL)
+      }
+    }
+  }
 
   /// Copy bytes until EOF, then run `onFinish`.
   ///

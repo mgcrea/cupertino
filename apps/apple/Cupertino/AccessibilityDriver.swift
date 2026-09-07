@@ -766,6 +766,25 @@ enum AccessibilityDriver {
     DriveActivity.record(bundleId)
   }
 
+  /// The same notice, for the verbs that address the SESSION rather than an
+  /// element: `click`, `type` and `key`.
+  ///
+  /// These three lit nothing at all, which was exactly backwards. They are the
+  /// most invasive things here — a click lands at a screen point and a keystroke
+  /// goes to whatever is frontmost, so they are the verbs that actually collide
+  /// with the person at the keyboard, and they were the only ones that did it
+  /// silently. They were skipped because they take no bundle id to report.
+  ///
+  /// The frontmost application IS the honest answer: it is where the event is
+  /// about to land. Read on this thread rather than hopped to the main actor,
+  /// because `NSWorkspace.frontmostApplication` is safe to read from anywhere
+  /// and a press that waited on the UI would be the worse trade this file
+  /// already refuses elsewhere.
+  private static func announceSessionInput() {
+    let target = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    DriveActivity.record(target ?? "the frontmost application")
+  }
+
   // ─── the other direction: what the PERSON is doing ─────────────────────────
 
   /// Seconds since a human last touched this machine.
@@ -816,6 +835,7 @@ enum AccessibilityDriver {
         mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point,
         mouseButton: .left)
     else { throw Failure.refused("Could not synthesise a click.") }
+    announceSessionInput()
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
   }
@@ -830,6 +850,7 @@ enum AccessibilityDriver {
   static func type(text: String) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
+    announceSessionInput()
     // Chunked: the unicode string on a single event is not meant for unbounded
     // input, and a long paste-like burst is better delivered as several events.
     for chunk in text.chunked(into: 20) {
@@ -868,6 +889,7 @@ enum AccessibilityDriver {
     else { throw Failure.refused("Could not synthesise a key press.") }
     down.flags = flags
     up.flags = flags
+    announceSessionInput()
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
   }

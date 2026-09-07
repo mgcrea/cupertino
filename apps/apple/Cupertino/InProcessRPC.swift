@@ -17,6 +17,91 @@ enum InProcessRPC {
   /// across every Cupertino surface.
   static let protocolVersion = "2024-11-05"
 
+  /// The method switch, which is the wire and therefore belongs here.
+  ///
+  /// It shipped as three byte-identical copies — Desktop, Screen and Sound —
+  /// differing only in the four values this takes as parameters. The header
+  /// above says only the wire lives here and that two copies is where drift
+  /// starts; the switch is as much the wire as the envelope is, and three
+  /// copies is where it ended.
+  ///
+  /// **A malformed request is now `-32700`, not silence.** All three copies
+  /// returned `nil` when the line did not parse, and `nil` means "notification,
+  /// send nothing" — so a client that sent broken JSON, or JSON with no
+  /// `method`, waited forever on an id that was never going to be answered. A
+  /// parse failure has no id to answer with, which is exactly what JSON-RPC's
+  /// null id is for.
+  ///
+  /// - Parameters:
+  ///   - name: the `serverInfo.name`, e.g. `cupertino-desktop`.
+  ///   - tools: the tool list, already gated.
+  ///   - resources: the resource list.
+  ///   - read: answers `resources/read` for one uri.
+  ///   - call: answers `tools/call` for one name and its arguments.
+  static func dispatch(
+    _ line: String,
+    name: String,
+    tools: () -> [[String: Any]],
+    resources: () -> [[String: Any]],
+    read: (_ uri: String, _ id: Any?) -> String,
+    call: (_ name: String, _ args: [String: Any], _ id: Any?) -> String
+  ) -> String? {
+    guard let data = line.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let msg = object as? [String: Any]
+    else {
+      return error(nil, code: -32700, message: "could not parse that as JSON")
+    }
+    guard let method = msg["method"] as? String else {
+      // An id may be present here, so the reply can name it. Only the parse
+      // failure above is genuinely anonymous.
+      return error(msg["id"], code: -32600, message: "no 'method' in that request")
+    }
+
+    let id = msg["id"]
+    // No id means a notification. Answering one is a protocol error.
+    let isNotification = id == nil
+
+    switch method {
+    case "initialize":
+      return isNotification
+        ? nil
+        : result(
+          id,
+          [
+            "protocolVersion": protocolVersion,
+            "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
+            "serverInfo": ["name": name, "version": AppInfo.shortVersion],
+          ])
+
+    case "ping":
+      return isNotification ? nil : result(id, [String: Any]())
+
+    case "tools/list":
+      return isNotification ? nil : result(id, ["tools": tools()])
+
+    case "resources/list":
+      return isNotification ? nil : result(id, ["resources": resources()])
+
+    case "resources/read":
+      guard !isNotification else { return nil }
+      return read(((msg["params"] as? [String: Any])?["uri"] as? String) ?? "", id)
+
+    case "prompts/list":
+      return isNotification ? nil : result(id, ["prompts": [Any]()])
+
+    case "tools/call":
+      guard !isNotification else { return nil }
+      let params = msg["params"] as? [String: Any] ?? [:]
+      return call(
+        params["name"] as? String ?? "", params["arguments"] as? [String: Any] ?? [:], id)
+
+    default:
+      guard !isNotification else { return nil }
+      return error(id, code: -32601, message: "unknown method '\(method)'")
+    }
+  }
+
   /// One newline-delimited JSON-RPC message. MCP's stdio framing, which the
   /// socket carries verbatim.
   static func nextLine(_ fd: Int32) -> String? {

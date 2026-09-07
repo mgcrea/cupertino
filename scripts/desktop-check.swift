@@ -163,6 +163,15 @@ struct DesktopCheck {
         isError && text.lowercased().contains("switched off"))
     }
 
+    // Refused means NOTHING happened, including the notice. `click`, `type` and
+    // `key` announce before posting — they are the verbs that actually collide
+    // with the person at the keyboard, since they land wherever focus is — so
+    // this pins that the announcement sits after the gate rather than before it.
+    // Runs before anything in this check deliberately lights the indicator.
+    check(
+      "a refused driving verb lights no indicator",
+      DriveActivity.current() == nil)
+
     // ─── the observe half answers without a grant ───────────────────────────
     //
     // NSWorkspace.runningApplications is not TCC-gated, and the surface's whole

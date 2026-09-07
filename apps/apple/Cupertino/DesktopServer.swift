@@ -29,61 +29,17 @@ enum DesktopServer {
   static func handle(
     _ line: String, surface: Surface, writesAllowed: Bool, scope: AccessibilityDriver.Scope
   ) -> String? {
-    guard let data = line.data(using: .utf8),
-      let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let method = msg["method"] as? String
-    else { return nil }
-
-    let id = msg["id"]
-    // No id means a notification. Answering one is a protocol error.
-    let isNotification = id == nil
-
-    switch method {
-    case "initialize":
-      return isNotification
-        ? nil
-        : result(
-          id,
-          [
-            "protocolVersion": protocolVersion,
-            "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
-            "serverInfo": ["name": "cupertino-desktop", "version": AppInfo.shortVersion],
-          ])
-
-    case "ping":
-      return isNotification ? nil : result(id, [String: Any]())
-
-    case "tools/list":
-      return isNotification
-        ? nil
-        : result(id, ["tools": tools(writesAllowed: writesAllowed, scope: scope)])
-
-    case "resources/list":
-      return isNotification ? nil : result(id, ["resources": resources()])
-
-    case "resources/read":
-      guard !isNotification else { return nil }
-      let uri = ((msg["params"] as? [String: Any])?["uri"] as? String) ?? ""
-      return readResource(
-        uri, id: id, surface: surface, writesAllowed: writesAllowed,
-        scope: scope)
-
-    case "prompts/list":
-      return isNotification ? nil : result(id, ["prompts": [Any]()])
-
-    case "tools/call":
-      guard !isNotification else { return nil }
-      let params = msg["params"] as? [String: Any] ?? [:]
-      let name = params["name"] as? String ?? ""
-      let args = params["arguments"] as? [String: Any] ?? [:]
-      return call(
-        name, args: args, id: id, surface: surface, writesAllowed: writesAllowed,
-        scope: scope)
-
-    default:
-      guard !isNotification else { return nil }
-      return error(id, code: -32601, message: "unknown method '\(method)'")
-    }
+    InProcessRPC.dispatch(
+      line,
+      name: "cupertino-desktop",
+      tools: { tools(writesAllowed: writesAllowed, scope: scope) },
+      resources: { resources() },
+      read: { uri, id in
+        readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+      },
+      call: { name, args, id in
+        call(name, args: args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+      })
   }
 
   // ─── tools ─────────────────────────────────────────────────────────────────

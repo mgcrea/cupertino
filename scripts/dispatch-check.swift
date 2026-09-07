@@ -166,6 +166,32 @@ struct DispatchCheck {
         replied = true
       }
       check("\(id): a notification draws no reply", !replied)
+
+      // A MALFORMED request is not a notification, and answering it with
+      // silence is what all three copies of this switch used to do — so a
+      // client that sent broken JSON waited forever on an id nothing was ever
+      // going to answer. There is no id to answer with, which is what
+      // JSON-RPC's null id is for.
+      var parseError: Int?
+      if case .message(let reply) = InProcessServers.handle(
+        "{not json at all", surface: surface, allowWrites: true, gateOn: { _ in true }),
+        let data = reply.data(using: .utf8),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+      {
+        parseError = (object["error"] as? [String: Any])?["code"] as? Int
+      }
+      check("\(id): a request that is not JSON is answered -32700", parseError == -32700)
+
+      var missingMethod: Int?
+      if case .message(let reply) = InProcessServers.handle(
+        #"{"jsonrpc":"2.0","id":7}"#, surface: surface, allowWrites: true,
+        gateOn: { _ in true }),
+        let data = reply.data(using: .utf8),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+      {
+        missingMethod = (object["error"] as? [String: Any])?["code"] as? Int
+      }
+      check("\(id): a request with no method is answered -32600", missingMethod == -32600)
     }
 
     // The third case is reachable and distinguishable, so a swift surface added
