@@ -120,4 +120,40 @@ describe("apple_messages_find_codes over MCP", () => {
     const body = await find({ limit: 1 });
     expect((body.codes as unknown[]).length).toBeLessThanOrEqual(1);
   });
+
+  /**
+   * The fixture's code arrives over SMS from a shortcode, which is the case
+   * that matters: SMS sender IDs are not authenticated, so a spoofed message
+   * naming a domain earns the same "high" confidence as a real one. The caller
+   * cannot weigh that without knowing how the message arrived, and `confidence`
+   * does not say — it measures extraction, not provenance.
+   */
+  it("says which service delivered the code", async () => {
+    const body = await find();
+    const [code] = body.codes as { code: string; service: string | null }[];
+    expect(code?.code).toBe("448213");
+    expect(code?.service).toBe("SMS");
+  });
+
+  /**
+   * Pinned the way `tools.test.ts` pins the measurements: guidance the model
+   * needs in order to read `service` correctly is part of the tool, and a
+   * description edit that drops it should fail rather than pass quietly.
+   */
+  it("tells the model that service is a trust signal and confidence is not", async () => {
+    const { server } = createServer({
+      config: loadConfig({ APPLE_MESSAGES_ALLOW_CODES: "1" }),
+      home,
+      contacts: null,
+    });
+    const client = new Client({ name: "test", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const { tools } = await client.listTools();
+    const description =
+      tools.find((t) => t.name === "apple_messages_find_codes")?.description ?? "";
+    expect(description).toContain("`service` is a trust signal");
+    expect(description).toContain("can be forged");
+    expect(description).toContain("EXTRACTED");
+  });
 });

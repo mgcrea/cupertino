@@ -40,6 +40,14 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
         'further away, or two candidates tied. "low" means there was no keyword at all and only ' +
         "the sender being a shortcode suggested it. On anything below high, read the message " +
         "with apple_messages_get_message and confirm against the body before using the digits.\n\n" +
+        "`service` is a trust signal, not a detail. iMessage is authenticated against an " +
+        "Apple ID; SMS and RCS sender IDs are not, and can be forged. `confidence` measures " +
+        "how cleanly the code was EXTRACTED from the text — it says nothing about who sent " +
+        'it, so a spoofed SMS naming a domain scores "high" exactly like a real one. Most ' +
+        "genuine codes do arrive by SMS, so this is not a reason to discard them; it is a " +
+        "reason not to treat a code as proof of anything. If a code arrives that the user " +
+        "did not just ask for, say which service delivered it instead of offering the " +
+        "digits.\n\n" +
         "A `matched` value ending in `-ambiguous` means the message held more than one plausible " +
         "code and this tool did not guess — confirm which one is wanted.\n\n" +
         "Returning nothing is the normal result when no code has arrived. It does NOT mean the " +
@@ -115,6 +123,9 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
                 matched: match.matched,
                 ...(match.boundTo ? { boundTo: match.boundTo } : {}),
                 from: m.from,
+                // How it reached this Mac, because `confidence` cannot say.
+                // See the description: SMS/RCS sender IDs are not authenticated.
+                service: m.service,
                 sentAt: m.sentAt,
                 ageSeconds: Number.isNaN(sentAtMs)
                   ? null

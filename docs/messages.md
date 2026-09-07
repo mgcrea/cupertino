@@ -259,6 +259,36 @@ The id a caller passes is `attachment.guid`, never the ROWID, for exactly the re
 about messages: SQLite reuses freed rowids and Messages deletes constantly, so a rowid listed in one
 turn and used two turns later can name a different file with no error anywhere.
 
+### `service` is not an authentication signal
+
+The capability table above lists `service`, and it is the one column there that says something
+about _trust_ rather than about content. It is worth stating what, because the answer is "less than
+it looks".
+
+iMessage is authenticated against an Apple ID. **SMS and RCS sender IDs are not, and can be
+forged** — the `From` on a text is a routing hint the sending network fills in, not a credential.
+This store is mostly the unauthenticated kind: 796 SMS handles against 265 iMessage and 15 RCS.
+
+Anthropic's own iMessage plugin reached the same conclusion from the other end and defaults
+`IMESSAGE_ALLOW_SMS` to `false`, because a forged SMS from the owner's own number would otherwise
+walk through its access control. That framing does not transfer here: this server has no allowlist,
+so there is nothing to bypass, and every read tool is already bounded by what the caller asked for.
+
+**Where it does land is `find_codes`**, the one tool that draws a conclusion from message content.
+One-time codes arrive overwhelmingly by SMS, and `confidence: "high"` is earned by the _text_ —
+a domain binding like `@site.com #123456`, or a keyword sitting against the digits. All of that is
+attacker-controlled. A spoofed message scores exactly as well as a real one, and `ageSeconds`
+does not help: a planted code is fresh.
+
+So the result now carries `service`, and the tool description says what it means — that `confidence`
+measures how cleanly the code was _extracted_, never who sent it.
+
+What was deliberately **not** done is filter or down-rank SMS matches. Genuine bank and airline
+codes arrive that way, so dropping them would break the tool's main use to defend against something
+the caller is better served by being told. The same reasoning as `--read-only`-as-a-flag, one level
+down: the fix is information, not a refusal. This server cannot authenticate a sender and does not
+pretend to; what it can do is stop implying that a high-confidence extraction is a trustworthy one.
+
 ## The id bridge is unanswerable by construction
 
 Every other surface got an answer here. This one cannot.
