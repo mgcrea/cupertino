@@ -72,6 +72,32 @@ summary.
 - **A search could invalidate the element handles it had just issued**, because the handle store
   emptied itself at capacity while a search was still filling it.
 
+- **An attachment whose name is not ASCII could be neither listed nor saved.** A filename is the
+  one MIME parameter that routinely is not ASCII, and it has two encodings; neither was handled.
+  One returned nothing, so the attachment was reported as having no filename at all; the other
+  came back verbatim, so saving it wrote a file literally named `=?utf-8?Q?...?=`.
+
+- **Safari reported when a page was first visited using only the visits inside the window asked
+  for**, while the visit count beside it stayed the page's lifetime total. A search of last week
+  said a page had been first visited last Tuesday when it had been open since 2019.
+
+- **A full page of calendar events was indistinguishable from a quiet week.** The existing
+  truncation flag is about how far the store's expansion reaches, so a dense day answered with the
+  default fifty read as the whole day. There is a `hasMore` beside it now.
+
+- **Counting messages by a phone number only worked if you spelled it the way the store does**,
+  while sending to that same number resolved it properly — in the same server, against a
+  description promising both spellings work.
+
+- **Mail grouped by UTC days while filtering by local ones**, so a message that arrived at 23:30
+  counted against the next day.
+
+- **A wedged server was never cleaned up.** Closing its input is a request to exit, and one that
+  ignored it held a thread, three pipes and a process for as long as the app ran.
+
+- **A malformed request got no answer at all** from the three surfaces the app serves itself, so a
+  client that sent broken JSON waited forever instead of being told.
+
 ### Changed
 
 - **The driving notice is an on-screen panel, not a menu bar badge.** See the correction under
@@ -92,8 +118,15 @@ summary.
 
 ### Security
 
+- **`click`, `type` and `key` now light the driving notice.** They are the most invasive verbs
+  here — landing at a screen point, or in whatever is frontmost — and they were the only ones that
+  did it without saying so.
+
 - **The application support directory is 0700**, and an existing one is tightened rather than left
   as it was found. The socket is created under a private umask rather than narrowed a moment later.
+
+- **Saving an attachment no longer checks and then writes**, which was two steps with a window
+  between them, and it refuses a bad destination before doing the work rather than after.
 
 - **A failed audit write is reported instead of swallowed**, so a full disk stops looking like
   tampering after the fact.

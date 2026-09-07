@@ -113,8 +113,9 @@ export const registerDiagnosticsTools = (
     {
       description:
         "Report which lanes are live, which macOS permissions are granted, and what each " +
-        "missing one is blocking. Start here when a tool returns degraded or fails — it names " +
-        "the exact System Settings pane to open.",
+        "missing one is blocking. Start here when a tool fails, or answers from the Apple " +
+        "Events lane when you expected the index — it names the exact System Settings pane to " +
+        "open.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },

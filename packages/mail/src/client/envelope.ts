@@ -344,9 +344,21 @@ export class EnvelopeIndex {
     }
   }
 
-  /** `date_received` is epoch-with-offset, so shift it before formatting. */
+  /**
+   * `date_received` is epoch-with-offset, so shift it before formatting.
+   *
+   * `'localtime'`, matching Messages' buckets and — since the shared grammar
+   * landed — matching the bounds. A day bucket is a CALENDAR day, and a person
+   * asking "how much mail per day" means their own days. In UTC a message that
+   * arrived at 23:30 local counted against tomorrow, so a bare `dateTo` naming
+   * a local day could return rows the grouping then filed under the day after
+   * the one that was asked for.
+   */
   #dateBucket(format: string): string {
-    return `strftime('${format}', datetime(m.date_received + ${this.caps.epochOffset}, 'unixepoch'))`;
+    return (
+      `strftime('${format}', datetime(m.date_received + ${this.caps.epochOffset}, ` +
+      `'unixepoch', 'localtime'))`
+    );
   }
 
   /**

@@ -150,6 +150,27 @@ describe("groupBy", () => {
     expect(totalRows).toBe(2);
   });
 
+  /**
+   * A day bucket is a LOCAL calendar day, matching the bounds and matching
+   * Messages. In UTC a message at 23:30 local counted against tomorrow, so a
+   * `dateTo` naming a local day could return rows the grouping filed under the
+   * day after the one asked for.
+   */
+  it("buckets by the local calendar day, not by UTC", () => {
+    const index = open();
+    const row = index.search({ limit: 50, offset: 0 }).find((r) => r.rowid === 104) as {
+      dateReceived: string;
+    };
+    const local = new Date(row.dateReceived);
+    const expected =
+      `${local.getFullYear()}-` +
+      `${String(local.getMonth() + 1).padStart(2, "0")}-` +
+      `${String(local.getDate()).padStart(2, "0")}`;
+    const keys = index.groupBy({ limit: 50 }, "day").groups.map((g) => g.key);
+    expect(keys).toContain(expected);
+    index.close();
+  });
+
   it("groups by day and by month", () => {
     const byDay = open().groupBy({ limit: 25 }, "day");
     expect(byDay.totalGroups).toBe(6);
