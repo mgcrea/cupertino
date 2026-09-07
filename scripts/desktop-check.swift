@@ -179,9 +179,19 @@ struct DesktopCheck {
     // docs/desktop.md; pinned here so it cannot regress into a blank failure.
     let (appsText, appsError) = callText("apple_desktop_list_apps", [:], writes: false)
     check("list_apps answers with no Accessibility grant", !appsError)
+    // Scoped to the brokered set with the gate off, so this list is legitimately
+    // EMPTY on a machine where no Apple app happens to be open — which is every
+    // clean CI runner. The assertion here used to be `contains("bundleId")`,
+    // which passed on a developer's Mac with Mail running and failed the first
+    // time this check ran on a runner. That tested the machine, not the surface.
+    // What is invariant is the envelope and the shape of an entry: a listing
+    // that stopped naming bundle ids still fails, an empty one does not.
     check(
-      "list_apps names this process's own bundle among the running apps",
-      appsText.contains("bundleId"))
+      "list_apps answers with an apps list, empty or not",
+      appsText.contains("\"apps\""))
+    check(
+      "every application list_apps names carries a bundle id",
+      !appsText.contains("\"name\"") || appsText.contains("\"bundleId\""))
     check(
       "list_apps reports the grant state rather than assuming it",
       appsText.contains("granted"))
