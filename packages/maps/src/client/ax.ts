@@ -73,7 +73,10 @@ export type Guide = { name: string; places: number | null };
 export type OpenUrl = (url: string) => void;
 
 const defaultOpenUrl: OpenUrl = (url) => {
-  execFileSync("/usr/bin/open", ["-g", url]);
+  // Bounded like `write.ts`'s. `open` normally returns immediately, but it can
+  // hang waiting on LaunchServices, and an unbounded synchronous child on a
+  // single-threaded server is the whole surface stopping.
+  execFileSync("/usr/bin/open", ["-g", url], { timeout: 10_000, stdio: "ignore" });
 };
 
 /**

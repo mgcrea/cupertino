@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 import type { Config } from "../config.js";
@@ -1021,8 +1021,10 @@ export class AppleMailClient {
       );
     }
 
-    const { bytes, from } = extractAttachment(located.path, filename, decoded.id);
-
+    // The path is settled BEFORE the attachment is extracted. Extraction parses
+    // the whole message file and may walk the sidecar tree, and doing that first
+    // meant a refusal — a traversal attempt, or a destination already taken —
+    // was paid for with all of that work. Order the cheap refusal first.
     const root = resolve(this.config.attachmentDir);
     // basename() first: the filename comes from message content, which is
     // attacker-controlled in exactly the way path traversal needs.
@@ -1032,12 +1034,22 @@ export class AppleMailClient {
         `Refusing to write outside ${root}. Set APPLE_MAIL_ATTACHMENT_DIR to change the destination.`,
       );
     }
-    if (existsSync(target) && !opts.overwrite) {
-      throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
-    }
+
+    const { bytes, from } = extractAttachment(located.path, filename, decoded.id);
 
     mkdirSync(root, { recursive: true });
-    writeFileSync(target, bytes, { mode: 0o600 });
+    // `wx` rather than existsSync-then-write. The check and the write were two
+    // steps with a window between them, so a file appearing in that window was
+    // overwritten by a call that had already decided it would not overwrite
+    // anything. The flag makes the refusal the file system's job, and atomic.
+    try {
+      writeFileSync(target, bytes, { mode: 0o600, flag: opts.overwrite ? "w" : "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
+      }
+      throw err;
+    }
     return { path: target, bytes: bytes.length, from };
   }
 

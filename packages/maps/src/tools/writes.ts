@@ -53,7 +53,7 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
     },
     async ({ query, latitude, longitude, name }) =>
       wrapResult(async () => {
-        const result = client.writer().addFavorite({ query, latitude, longitude, name });
+        const result = await client.writer().addFavorite({ query, latitude, longitude, name });
         return ok(
           compact({
             favorite: {

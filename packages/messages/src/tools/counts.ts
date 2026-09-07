@@ -54,8 +54,11 @@ export const registerCountTools = (server: McpServer, client: AppleMessagesClien
           .string()
           .optional()
           .describe(
-            "Only messages with this correspondent — a phone number or email, matched as a " +
-              "substring. Spans every chat they appear in, which is the difference from chatRef.",
+            "Only messages with this correspondent — a phone number or email. Spellings of the " +
+              'same number match each other, so "06 12 34 56 78" and "+33612345678" are the ' +
+              "same person, exactly as they are for send_message. A fragment that resolves to " +
+              "nobody falls back to a substring match. Spans every chat they appear in, which " +
+              "is the difference from chatRef.",
           ),
         direction: z
           .enum(["sent", "received"])

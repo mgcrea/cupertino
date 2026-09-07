@@ -563,8 +563,17 @@ export class AppleMessagesClient {
     groupBy?: CountGroupField,
   ): RenderedCount | { groups: RenderedCountGroup[]; totalGroups: number; totalRows: number } {
     const store = this.#require();
+    // Resolved to the store's own spellings first. A handle the store does not
+    // hold resolves to nothing, and the substring match is left in place for
+    // that case rather than silently counting zero — a partial handle is a
+    // reasonable thing to type, and it is the only thing the fallback is for.
+    const resolved = q.handle ? this.#handlesLike(q.handle) : [];
     const result = store.countMessages(
-      { ...q, limit: resolveLimit(q.limit, this.#config.maxResults) },
+      {
+        ...q,
+        ...(resolved.length ? { handles: resolved } : {}),
+        limit: resolveLimit(q.limit, this.#config.maxResults),
+      },
       groupBy,
     );
 
@@ -631,15 +640,7 @@ export class AppleMessagesClient {
     if (!to) return { guid: null, chat: null, handle: null };
     if (!store) return { guid: null, chat: null, handle: to };
 
-    const kind = handleKind(to);
-    const wantedSuffix = kind === "phone" ? suffixKey(to) : null;
-    const wantedEmail = kind === "email" ? emailKey(to) : null;
-    const candidates = store.handles().filter((h) => {
-      if (h === to) return true;
-      if (wantedEmail) return emailKey(h) === wantedEmail;
-      if (wantedSuffix) return suffixKey(h) === wantedSuffix;
-      return false;
-    });
+    const candidates = this.#handlesLike(to);
     if (!candidates.length) return { guid: null, chat: null, handle: to };
 
     // A one-to-one chat wins over a group with the same person in it: "message
@@ -647,6 +648,31 @@ export class AppleMessagesClient {
     const chats = store.chatsForHandles(candidates, 25);
     const direct = chats.find((c) => !c.isGroup) ?? null;
     return { guid: direct?.guid ?? null, chat: direct, handle: candidates[0] ?? to };
+  }
+
+  /**
+   * Every handle in the store that names the same correspondent.
+   *
+   * The last-nine-digits rule `packages/contacts` measured, so
+   * "06 12 34 56 78", "+33 6 12 34 56 78" and "+33612345678" all reach the same
+   * rows. Used by the send lane to pick a chat, and by `count_messages`, which
+   * used a substring LIKE instead — so counting by a locally-spelled number
+   * answered zero while `send_message` to that same string worked. One
+   * surface, two ideas of what a handle is.
+   */
+  #handlesLike(handle: string): string[] {
+    const store = this.store();
+    if (!store) return [];
+    const wanted = handle.trim();
+    const kind = handleKind(wanted);
+    const wantedSuffix = kind === "phone" ? suffixKey(wanted) : null;
+    const wantedEmail = kind === "email" ? emailKey(wanted) : null;
+    return store.handles().filter((h) => {
+      if (h === wanted) return true;
+      if (wantedEmail) return emailKey(h) === wantedEmail;
+      if (wantedSuffix) return suffixKey(h) === wantedSuffix;
+      return false;
+    });
   }
 
   /**

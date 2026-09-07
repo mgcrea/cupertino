@@ -308,16 +308,36 @@ export class SafariStore {
       where.push(`(${clauses.join(" OR ")})`);
     }
 
-    if (canRange && q.from) {
-      where.push(`v."visit_time" >= ?`);
-      params.push(toStoreTime(q.from, this.caps.epoch));
-    }
-    if (canRange && q.to) {
-      // Exclusive, because `parseBound` resolves a bare upper day to the NEXT
-      // day's midnight. `<=` here would let in the first instant of the day
-      // after the one the caller named.
-      where.push(`v."visit_time" < ?`);
-      params.push(toStoreTime(q.to, this.caps.epoch));
+    // The range decides MEMBERSHIP, through EXISTS — it does not narrow the
+    // joined rows the aggregates are computed over.
+    //
+    // As a plain predicate on `v` it ran before GROUP BY, so `firstVisitedRaw`
+    // became the first visit INSIDE the window while `visitCount` stayed the
+    // item's lifetime total. A search of last week reported a page as first
+    // visited last Tuesday when it had actually been open since 2019, and put
+    // a lifetime count beside it. One row, two different meanings of "this
+    // page's history", and nothing saying so.
+    //
+    // Every visit-derived field is whole-history now, matching the count, and
+    // the window answers only "was this page visited then".
+    if (canRange && (q.from || q.to)) {
+      const bounds: string[] = [];
+      if (q.from) {
+        bounds.push(`vr."visit_time" >= ?`);
+        params.push(toStoreTime(q.from, this.caps.epoch));
+      }
+      if (q.to) {
+        // Exclusive, because `parseBound` resolves a bare upper day to the NEXT
+        // day's midnight. `<=` here would let in the first instant of the day
+        // after the one the caller named.
+        bounds.push(`vr."visit_time" < ?`);
+        params.push(toStoreTime(q.to, this.caps.epoch));
+      }
+      where.push(
+        `EXISTS (SELECT 1 FROM "${VISITS_TABLE}" vr
+                  WHERE vr."${this.caps.itemFk}" = i."${this.caps.itemPk}"
+                    AND ${bounds.join(" AND ")})`,
+      );
     }
 
     // One extra row, so "there is more" is known rather than inferred from a

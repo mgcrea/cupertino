@@ -128,6 +128,30 @@ describe("apple_messages_count_messages over MCP", () => {
     ]);
   });
 
+  /**
+   * The same rule `send_message` uses, which is what its description promises:
+   * "local and international spellings of the same number both work". Counting
+   * used a substring LIKE, so a locally-spelled number answered zero for a
+   * correspondent it could perfectly well send to.
+   */
+  it("counts by any spelling of the same number", async () => {
+    const stored = await count({ handle: "+15551234567" });
+    expect(stored.total).toBeGreaterThan(0);
+    // Formatted the way a person writes it. NOT a substring of what the store
+    // holds, which is exactly why the old LIKE answered zero — while
+    // send_message to this same string works, because it resolves properly.
+    expect(await count({ handle: "(555) 123-4567" })).toMatchObject({ total: stored.total });
+  });
+
+  /** A fragment that names nobody still falls back to the substring match. */
+  it("still matches a partial handle as a substring", async () => {
+    expect((await count({ handle: "1234567" })).total).toBeGreaterThan(0);
+  });
+
+  it("counts nothing for a handle that is nobody at all", async () => {
+    expect(await count({ handle: "+19999999999" })).toMatchObject({ total: 0 });
+  });
+
   it("narrows to a window, and to one direction", async () => {
     // B, C and D. A bare `to` names a whole day, so the 4th is IN — it used to
     // parse as UTC midnight of the 4th and silently exclude the day asked for.

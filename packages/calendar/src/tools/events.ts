@@ -31,7 +31,8 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "expanded, so a weekly standup appears once per week rather than once. The result " +
         "carries a `coverage` block naming the window the expansion is known to cover; if your " +
         "range runs past it, `truncated` is set and says what is missing rather than returning a " +
-        "short list silently. Returns a `ref` per event for get_event.",
+        "short list silently. `hasMore` is the other reason a list can be partial: more events " +
+        "matched than `limit` allowed. Returns a `ref` per event for get_event.",
       inputSchema: { from: fromArg, to: toArg, ...filterSchema },
       annotations: { readOnlyHint: true },
     },

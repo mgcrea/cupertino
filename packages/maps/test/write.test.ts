@@ -94,10 +94,10 @@ const failIfCalled = () => {
 };
 
 describe("addFavorite", () => {
-  it("copies an existing place record rather than seeding", () => {
+  it("copies an existing place record rather than seeding", async () => {
     const path = storeWithDonor();
     const writer = new MapsWriter({ storePath: path, openUrl: failIfCalled });
-    const result = writer.addFavorite({
+    const result = await writer.addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -119,9 +119,9 @@ describe("addFavorite", () => {
    * or absent record displays as a husk in Maps and syncs that way to every
    * device.
    */
-  it("copies the place record BYTE FOR BYTE", () => {
+  it("copies the place record BYTE FOR BYTE", async () => {
     const path = storeWithDonor();
-    new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
+    await new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -144,9 +144,9 @@ describe("addFavorite", () => {
    * the id landed in the INTEGER column rounded to the nearest representable
    * value, 233 away, and synced there.
    */
-  it("copies a 64-bit ZMUID exactly, rather than through a double", () => {
+  it("copies a 64-bit ZMUID exactly, rather than through a double", async () => {
     const path = storeWithDonor();
-    new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
+    await new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -159,9 +159,9 @@ describe("addFavorite", () => {
     expect(row.muid).toBe(String(REAL_MUID));
   });
 
-  it("bumps Z_MAX for both entities", () => {
+  it("bumps Z_MAX for both entities", async () => {
     const path = storeWithDonor();
-    new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
+    await new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -175,12 +175,12 @@ describe("addFavorite", () => {
    * HIDES the duplicate in its own UI, so the store would disagree with the app
    * invisibly — the failure nobody would report.
    */
-  it("is idempotent, and says so rather than silently doing nothing", () => {
+  it("is idempotent, and says so rather than silently doing nothing", async () => {
     const path = storeWithDonor();
     const writer = new MapsWriter({ storePath: path, openUrl: failIfCalled });
     const input = { query: "Musée d'Orsay", latitude: 48.86, longitude: 2.3266 };
-    const first = writer.addFavorite(input);
-    const second = writer.addFavorite(input);
+    const first = await writer.addFavorite(input);
+    const second = await writer.addFavorite(input);
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
@@ -189,11 +189,11 @@ describe("addFavorite", () => {
   });
 
   /* Coordinates never compare exactly across sources; a metre is the same door. */
-  it("treats a coordinate a metre away as the same place", () => {
+  it("treats a coordinate a metre away as the same place", async () => {
     const path = storeWithDonor();
     const writer = new MapsWriter({ storePath: path, openUrl: failIfCalled });
-    writer.addFavorite({ query: "Musée d'Orsay", latitude: 48.86, longitude: 2.3266 });
-    const again = writer.addFavorite({
+    await writer.addFavorite({ query: "Musée d'Orsay", latitude: 48.86, longitude: 2.3266 });
+    const again = await writer.addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.860004,
       longitude: 2.32660_4,
@@ -208,7 +208,7 @@ describe("addFavorite", () => {
    * must not produce two favourites — this failed against the real store because
    * the caller's coordinate was being compared with a canonical one.
    */
-  it("is idempotent even when Maps resolves to its own coordinate", () => {
+  it("is idempotent even when Maps resolves to its own coordinate", async () => {
     const path = storeWithDonor();
     let seeds = 0;
     const openUrl = () => {
@@ -234,8 +234,8 @@ describe("addFavorite", () => {
     };
     const writer = new MapsWriter({ storePath: path, openUrl, seedTimeoutMs: 2000 });
     const input = { query: "Big Ben", latitude: 51.5007, longitude: -0.1246 };
-    expect(writer.addFavorite(input).created).toBe(true);
-    expect(writer.addFavorite(input).created).toBe(false);
+    expect((await writer.addFavorite(input)).created).toBe(true);
+    expect((await writer.addFavorite(input)).created).toBe(false);
     expect(read(path)).toHaveLength(1);
   });
 
@@ -244,7 +244,7 @@ describe("addFavorite", () => {
    * that seeds before noticing the duplicate pollutes the user's Recents once
    * per retry for a favourite it does not create.
    */
-  it("does not seed again on a repeat call", () => {
+  it("does not seed again on a repeat call", async () => {
     const path = storeWithDonor();
     let seeds = 0;
     const openUrl = () => {
@@ -268,14 +268,14 @@ describe("addFavorite", () => {
     };
     const writer = new MapsWriter({ storePath: path, openUrl, seedTimeoutMs: 2000 });
     const input = { query: "Big Ben", latitude: 51.5007, longitude: -0.1246 };
-    writer.addFavorite(input);
-    const second = writer.addFavorite(input);
+    await writer.addFavorite(input);
+    const second = await writer.addFavorite(input);
     expect(second.created).toBe(false);
     expect(second.seeded).toBe(false);
     expect(seeds).toBe(1);
   });
 
-  it("seeds through the URL scheme when the place is unknown", () => {
+  it("seeds through the URL scheme when the place is unknown", async () => {
     const path = storeWithDonor();
     const opened: string[] = [];
     // Stands in for Maps: resolves the place and files it in Recents with a
@@ -300,7 +300,11 @@ describe("addFavorite", () => {
       db.close();
     };
 
-    const result = new MapsWriter({ storePath: path, openUrl, seedTimeoutMs: 2000 }).addFavorite({
+    const result = await new MapsWriter({
+      storePath: path,
+      openUrl,
+      seedTimeoutMs: 2000,
+    }).addFavorite({
       query: "Big Ben",
       latitude: 51.5007,
       longitude: -0.1246,
@@ -326,13 +330,13 @@ describe("addFavorite", () => {
    * collides with a row that already exists, which is how a first version of
    * this file failed.
    */
-  it("survives a stale Z_MAX rather than colliding", () => {
+  it("survives a stale Z_MAX rather than colliding", async () => {
     const path = storeWithDonor();
     const db = new DatabaseSync(path);
     db.exec(`UPDATE Z_PRIMARYKEY SET Z_MAX = 0 WHERE Z_NAME = 'MixinMapItem'`);
     db.close();
 
-    const result = new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
+    const result = await new MapsWriter({ storePath: path, openUrl: failIfCalled }).addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -346,14 +350,14 @@ describe("addFavorite", () => {
    * built on a record Maps never made, which is the one thing this design says
    * must never happen.
    */
-  it("refuses rather than inventing a record when Maps produces nothing", () => {
+  it("refuses rather than inventing a record when Maps produces nothing", async () => {
     const path = storeWithDonor();
     const writer = new MapsWriter({
       storePath: path,
       openUrl: () => {},
       seedTimeoutMs: 300,
     });
-    expect(() => writer.addFavorite({ query: "Nowhere At All" })).toThrow(MapsWriteError);
+    await expect(writer.addFavorite({ query: "Nowhere At All" })).rejects.toThrow(MapsWriteError);
     expect(read(path)).toHaveLength(0);
   });
 });
@@ -364,7 +368,7 @@ describe("addFavorite", () => {
  * about, which then syncs to every device on the account.
  */
 describe("seed sanity", () => {
-  it("refuses a place Maps resolved far from the coordinate given", () => {
+  it("refuses a place Maps resolved far from the coordinate given", async () => {
     const path = storeWithDonor();
     const openUrl = () => {
       const db = new DatabaseSync(path);
@@ -378,14 +382,14 @@ describe("seed sanity", () => {
       db.close();
     };
     const writer = new MapsWriter({ storePath: path, openUrl, seedTimeoutMs: 2000 });
-    expect(() =>
+    await expect(
       // Asked for London; Maps answered New York.
       writer.addFavorite({ query: "Big Ben", latitude: 51.5007, longitude: -0.1246 }),
-    ).toThrow(MapsWriteError);
+    ).rejects.toThrow(MapsWriteError);
     expect(read(path)).toHaveLength(0);
   });
 
-  it("accepts a coordinate a couple of hundred metres off", () => {
+  it("accepts a coordinate a couple of hundred metres off", async () => {
     const path = storeWithDonor();
     const openUrl = () => {
       const db = new DatabaseSync(path);
@@ -401,16 +405,17 @@ describe("seed sanity", () => {
     const writer = new MapsWriter({ storePath: path, openUrl, seedTimeoutMs: 2000 });
     // An entrance versus a pin, which is the normal case rather than an error.
     expect(
-      writer.addFavorite({ query: "Big Ben", latitude: 51.5007, longitude: -0.1246 }).created,
+      (await writer.addFavorite({ query: "Big Ben", latitude: 51.5007, longitude: -0.1246 }))
+        .created,
     ).toBe(true);
   });
 });
 
 describe("removeFavorite", () => {
-  const seeded = () => {
+  const seeded = async () => {
     const path = storeWithDonor();
     const writer = new MapsWriter({ storePath: path, openUrl: failIfCalled });
-    const added = writer.addFavorite({
+    const added = await writer.addFavorite({
       query: "Musée d'Orsay",
       latitude: 48.86,
       longitude: 2.3266,
@@ -418,8 +423,8 @@ describe("removeFavorite", () => {
     return { path, writer, added };
   };
 
-  it("removes the favourite and the record it owns", () => {
-    const { path, writer, added } = seeded();
+  it("removes the favourite and the record it owns", async () => {
+    const { path, writer, added } = await seeded();
     expect(writer.removeFavorite({ uuid: added.uuid })).toBe(true);
     expect(read(path)).toHaveLength(0);
     // Its own map item goes; the donor's stays, because another row owns it.
@@ -430,14 +435,14 @@ describe("removeFavorite", () => {
    * Core Data never reuses a primary key. Decrementing the counter would hand
    * the next insert — possibly one by MAPS — a key that is already spoken for.
    */
-  it("leaves Z_MAX alone, so no later insert collides", () => {
-    const { path, writer, added } = seeded();
+  it("leaves Z_MAX alone, so no later insert collides", async () => {
+    const { path, writer, added } = await seeded();
     writer.removeFavorite({ uuid: added.uuid });
     expect(scalar(path, `SELECT Z_MAX AS v FROM Z_PRIMARYKEY WHERE Z_NAME='FavoriteItem'`)).toBe(1);
   });
 
-  it("reports a miss rather than pretending to have removed something", () => {
-    const { writer } = seeded();
+  it("reports a miss rather than pretending to have removed something", async () => {
+    const { writer } = await seeded();
     expect(writer.removeFavorite({ uuid: "00000000-0000-0000-0000-000000000000" })).toBe(false);
   });
 });

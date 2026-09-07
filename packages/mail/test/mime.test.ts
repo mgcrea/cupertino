@@ -4,6 +4,7 @@ import {
   bestBody,
   decodeCharset,
   decodeEncodedWords,
+  headerFilename,
   headerParam,
   htmlToText,
   listAttachments,
@@ -61,6 +62,62 @@ describe("header parsing", () => {
     expect(headerParam('multipart/mixed; boundary="abc123"', "boundary")).toBe("abc123");
     expect(headerParam("text/plain; charset=utf-8", "charset")).toBe("utf-8");
     expect(headerParam("text/plain", "charset")).toBeNull();
+  });
+});
+
+describe("attachment filenames", () => {
+  /**
+   * A filename is the one MIME parameter that routinely is not ASCII, and it
+   * has two encodings. Neither was handled: the RFC 2231 form returned null, so
+   * an accented attachment was reported as having no filename at all — shown as
+   * unretrievable and impossible to save — and the RFC 2047 form came back
+   * verbatim, so saving it wrote a file literally named `=?utf-8?Q?...?=`.
+   */
+  it("decodes the RFC 2231 extended form", () => {
+    expect(headerFilename(`attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf`, null)).toBe(
+      "résumé.pdf",
+    );
+  });
+
+  it("decodes an RFC 2047 encoded word in a plain parameter", () => {
+    expect(headerFilename(`attachment; filename="=?utf-8?Q?r=C3=A9sum=C3=A9=2Epdf?="`, null)).toBe(
+      "résumé.pdf",
+    );
+  });
+
+  it("joins RFC 2231 continuations, charset from the first segment only", () => {
+    const header = `attachment; filename*0*=UTF-8''a%20very; filename*1*=%20long%20n%C3%A5me.txt`;
+    expect(headerFilename(header, null)).toBe("a very long nåme.txt");
+  });
+
+  /** A continuation without its own star is literal text, `%` included. */
+  it("does not percent-decode an unstarred continuation", () => {
+    expect(headerFilename(`attachment; filename*0="100%"; filename*1=" off.txt"`, null)).toBe(
+      "100% off.txt",
+    );
+  });
+
+  it("honours a charset that is not UTF-8", () => {
+    expect(headerFilename(`attachment; filename*=iso-8859-1''caf%E9.txt`, null)).toBe("café.txt");
+  });
+
+  it("still reads a plain quoted filename", () => {
+    expect(headerFilename(`attachment; filename="notes.pdf"`, null)).toBe("notes.pdf");
+  });
+
+  it("falls back to the content-type name parameter", () => {
+    expect(headerFilename(null, `image/png; name="=?utf-8?B?w6l0w6kucG5n?="`)).toBe("été.png");
+  });
+
+  it("prefers the extended form when a part carries both", () => {
+    // Mailers emit an ASCII-mangled `filename` beside the real `filename*` for
+    // clients that predate RFC 2231. The starred one is the true name.
+    const header = `attachment; filename="resume.pdf"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf`;
+    expect(headerFilename(header, null)).toBe("résumé.pdf");
+  });
+
+  it("is null when there is no filename anywhere", () => {
+    expect(headerFilename(`inline`, `text/plain; charset=utf-8`)).toBeNull();
   });
 });
 

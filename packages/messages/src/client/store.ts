@@ -158,7 +158,17 @@ export type CountGroupField = (typeof COUNT_GROUP_FIELDS)[number];
 
 export type CountQuery = {
   chatGuid?: string | undefined;
-  /** Substring of a handle — a phone number or an email address. */
+  /**
+   * Exact store handles to count, already resolved by the client.
+   *
+   * Preferred over `handle` below. The client resolves what the caller typed
+   * through the same last-nine-digits rule `send_message` uses, so
+   * "06 12 34 56 78" and "+33612345678" reach the same rows — which the
+   * substring match could not do, while `send_message`'s own description
+   * promises exactly that.
+   */
+  handles?: string[] | undefined;
+  /** Substring of a handle. Only used when nothing resolved — see `handles`. */
   handle?: string | undefined;
   direction?: "sent" | "received" | undefined;
   fromApple?: number | undefined;
@@ -762,7 +772,7 @@ export class MessagesStore {
    */
   #countFrom(q: CountQuery, field?: CountGroupField): string {
     const parts: string[] = [];
-    if (q.handle || field === "handle") {
+    if (q.handle || q.handles?.length || field === "handle") {
       parts.push(`LEFT JOIN "handle" h ON h."ROWID" = m."handle_id"`);
     }
     if (q.chatGuid || field === "chat") {
@@ -787,7 +797,10 @@ export class MessagesStore {
       where.push(`c."guid" = ?`);
       params.push(q.chatGuid);
     }
-    if (q.handle) {
+    if (q.handles?.length) {
+      where.push(`h."id" IN (${q.handles.map(() => "?").join(",")})`);
+      params.push(...q.handles);
+    } else if (q.handle) {
       where.push(`h."id" LIKE ? ESCAPE '\\'`);
       params.push(`%${escapeLike(q.handle)}%`);
     }

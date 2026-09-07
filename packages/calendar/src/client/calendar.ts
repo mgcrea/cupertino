@@ -143,6 +143,16 @@ export type EventDetail = EventSummary & {
 
 export type EventPage = {
   events: EventSummary[];
+  /**
+   * More events matched the window than fit under `limit`.
+   *
+   * Distinct from `truncated`, which is about the store's expansion COVERAGE
+   * running out. Both mean "this is not the whole picture" and they mean it for
+   * different reasons, so collapsing them would leave a caller unable to tell a
+   * dense day from an unexpanded one — and a short list of events is
+   * indistinguishable from a free afternoon.
+   */
+  hasMore: boolean;
   expansion: ExpansionState;
   expansionReason?: string;
   /** The window actually queried, echoed so a clamp is visible. */
@@ -502,13 +512,23 @@ export class AppleCalendarClient {
 
     const declined = filters.includeDeclined ?? this.config.includeDeclined;
     const cancelled = filters.includeCancelled ?? this.config.includeCancelled;
-    const events = merged.rows
-      .filter((r) => this.#visible(r, { declined, cancelled }))
-      .slice(0, filters.limit)
-      .map((r) => this.#summarise(r, store));
+    const visible = merged.rows.filter((r) => this.#visible(r, { declined, cancelled }));
+    const events = visible.slice(0, filters.limit).map((r) => this.#summarise(r, store));
+
+    // A page that filled its limit is not the same as a week with nothing more
+    // in it, and this surface has no way to say so otherwise: `truncated` is
+    // about COVERAGE — the range running past what the store has expanded — and
+    // an empty tail there reads as free time. A dense day of 80 events answered
+    // with the default 50 and looked like the whole day.
+    //
+    // Both legs run `ORDER BY start ASC LIMIT legLimit`, so a leg that came back
+    // exactly full may have dropped the END of the window rather than the
+    // middle, which is worse than a short page and is reported separately.
+    const hasMore = visible.length > filters.limit;
 
     return {
       events,
+      hasMore,
       expansion: merged.expansion,
       ...(merged.expansionReason ? { expansionReason: merged.expansionReason } : {}),
       window: {
@@ -581,11 +601,10 @@ export class AppleCalendarClient {
 
     const declined = args.includeDeclined ?? this.config.includeDeclined;
     const cancelled = args.includeCancelled ?? this.config.includeCancelled;
+    const visible = rows.filter((r) => this.#visible(r, { declined, cancelled }));
     return {
-      events: rows
-        .filter((r) => this.#visible(r, { declined, cancelled }))
-        .slice(0, args.limit)
-        .map((r) => this.#summarise(r, store)),
+      events: visible.slice(0, args.limit).map((r) => this.#summarise(r, store)),
+      hasMore: visible.length > args.limit,
       // Search does not expand, and says so rather than implying it did.
       expansion: "unavailable",
       expansionReason:

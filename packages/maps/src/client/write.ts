@@ -56,6 +56,12 @@ import type { EntityKey } from "./store.js";
 
 const STORAGE_POLL_MS = 250;
 
+/** A pause that yields the event loop, unlike `Atomics.wait`, which does not. */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 /**
  * Progress, on stderr.
  *
@@ -340,7 +346,17 @@ export class MapsWriter {
    *              poll with a short-lived read-only handle each time.
    *   3. WRITE — open read-write, insert, close.
    */
-  addFavorite(input: AddFavoriteInput): AddFavoriteResult {
+  /**
+   * Async because the seed can take THIRTY SECONDS.
+   *
+   * When the place is not already in the store this asks Maps to mint it
+   * through the URL scheme and then polls for the row to appear. That poll used
+   * `Atomics.wait`, which blocks the thread — and this server is single
+   * threaded, so for the whole seed it answered nothing at all: not a ping, not
+   * a cancellation, not another tool call. A sleep that yields costs the same
+   * wall clock and leaves the server able to speak.
+   */
+  async addFavorite(input: AddFavoriteInput): Promise<AddFavoriteResult> {
     const hasCoords = input.latitude !== undefined && input.longitude !== undefined;
     const lat = input.latitude ?? 0;
     const lon = input.longitude ?? 0;
@@ -417,7 +433,7 @@ export class MapsWriter {
         } finally {
           probe.close();
         }
-        if (!donor) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STORAGE_POLL_MS);
+        if (!donor) await sleep(STORAGE_POLL_MS);
         polls += 1;
         if (polls % 8 === 0) progress(`still waiting (${polls * (STORAGE_POLL_MS / 1000)}s)…`);
       }

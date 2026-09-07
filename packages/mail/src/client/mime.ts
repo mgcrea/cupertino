@@ -150,6 +150,110 @@ export const headerParam = (value: string | null, param: string): string | null 
   return match ? (match[1] ?? match[2] ?? null) : null;
 };
 
+/**
+ * The filename a part actually carries, through both ways of spelling one.
+ *
+ * `headerParam` reads `filename="x"` and nothing else, which is fine for
+ * `charset` and `boundary` — both plain ASCII tokens by definition — and wrong
+ * for a filename, because a filename is the one parameter that routinely is not
+ * ASCII. Two encodings exist for it and mail uses both:
+ *
+ *   RFC 2231  `filename*=UTF-8''r%C3%A9sum%C3%A9.pdf`
+ *             also split across `filename*0*=`, `filename*1*=` for long names
+ *   RFC 2047  `name="=?utf-8?Q?r=C3=A9sum=C3=A9=2Epdf?="`
+ *
+ * Neither was handled. The first returned null, so an attachment with an
+ * accented name was reported as having no filename at all — which
+ * `list_attachments` shows as unretrievable and `save_attachment` cannot write.
+ * The second came back verbatim, so saving it wrote a file literally named
+ * `=?utf-8?Q?...?=` on disk.
+ *
+ * RFC 2231 is tried first because it is the one designed for this; the RFC 2047
+ * form in a parameter is technically not allowed and is nonetheless everywhere.
+ */
+export const headerFilename = (
+  disposition: string | null,
+  contentType: string | null,
+): string | null => {
+  for (const [value, param] of [
+    [disposition, "filename"],
+    [contentType, "name"],
+  ] as const) {
+    if (!value) continue;
+    const extended = extendedParam(value, param);
+    if (extended !== null) return extended;
+    const plain = headerParam(value, param);
+    if (plain !== null) return decodeEncodedWords(plain);
+  }
+  return null;
+};
+
+/**
+ * The RFC 2231 form, including the numbered continuations long names use.
+ *
+ * A continuation is only percent-decoded when its own segment is starred —
+ * `filename*1=` is literal text and `filename*1*=` is encoded, and treating the
+ * two alike turns a legitimate `%` in a filename into mojibake.
+ */
+const extendedParam = (value: string, param: string): string | null => {
+  const single = new RegExp(`${param}\\*\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, "i").exec(value);
+  if (single) return decodeExtended(single[1] ?? single[2] ?? "", true);
+
+  const segments: { index: number; text: string; encoded: boolean }[] = [];
+  const pattern = new RegExp(`${param}\\*(\\d+)(\\*)?\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, "gi");
+  for (const match of value.matchAll(pattern)) {
+    segments.push({
+      index: Number(match[1]),
+      text: match[3] ?? match[4] ?? "",
+      encoded: match[2] === "*",
+    });
+  }
+  if (segments.length === 0) return null;
+  segments.sort((a, b) => a.index - b.index);
+
+  // The charset prefix rides on the first segment only.
+  let charset: string | null = null;
+  let out = "";
+  for (const [position, segment] of segments.entries()) {
+    if (!segment.encoded) {
+      out += segment.text;
+      continue;
+    }
+    if (position === 0) {
+      const parts = segment.text.split("'");
+      if (parts.length >= 3) {
+        charset = parts[0] || null;
+        out += percentDecode(parts.slice(2).join("'"), charset);
+        continue;
+      }
+    }
+    out += percentDecode(segment.text, charset);
+  }
+  return out;
+};
+
+const decodeExtended = (raw: string, hasCharsetPrefix: boolean): string => {
+  if (!hasCharsetPrefix) return percentDecode(raw, null);
+  const parts = raw.split("'");
+  // charset'language'text — anything shorter is not the extended form.
+  if (parts.length < 3) return percentDecode(raw, null);
+  return percentDecode(parts.slice(2).join("'"), parts[0] || null);
+};
+
+/** Percent-decoded as BYTES, then read in the charset the header named. */
+const percentDecode = (raw: string, charset: string | null): string => {
+  const bytes: number[] = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    if (raw[i] === "%" && /^[0-9a-f]{2}$/i.test(raw.slice(i + 1, i + 3))) {
+      bytes.push(Number.parseInt(raw.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      bytes.push(raw.charCodeAt(i) & 0xff);
+    }
+  }
+  return decodeCharset(Buffer.from(bytes), charset);
+};
+
 // ─── body ────────────────────────────────────────────────────────────────────
 
 const HEADER_BODY_SPLIT = /\r?\n\r?\n/;
@@ -171,8 +275,7 @@ export const parsePart = (buf: Buffer): MimePart => {
     charset: headerParam(contentTypeRaw, "charset"),
     encoding: headerValue(headers, "content-transfer-encoding")?.trim().toLowerCase() ?? null,
     disposition: dispositionRaw?.split(";")[0]?.trim().toLowerCase() ?? null,
-    filename:
-      headerParam(dispositionRaw, "filename") ?? headerParam(contentTypeRaw, "name") ?? null,
+    filename: headerFilename(dispositionRaw, contentTypeRaw),
     contentId: headerValue(headers, "content-id")?.replaceAll(/[<>]/g, "") ?? null,
     raw: Buffer.from(text.slice(bodyStart), "latin1"),
     parts: [],

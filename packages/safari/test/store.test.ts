@@ -213,6 +213,28 @@ describe("search", () => {
     expect(rows.map((r) => r.url)).toContain("https://example.com/");
   });
 
+  /**
+   * The range decides which items come back, and nothing else.
+   *
+   * As a plain WHERE on the joined visits it ran before GROUP BY, so
+   * `firstVisitedRaw` became the first visit inside the window while
+   * `visitCount` stayed the item's lifetime total — one row carrying two
+   * different meanings of "this page's history". example.com has a ten-day-old
+   * visit and a one-day-old one; a window covering only the recent one must
+   * still report the old one as when the page was first seen.
+   */
+  it("keeps visit aggregates whole-history when a range is applied", () => {
+    const s = build();
+    const unfiltered = s.search({ limit: 10 }).rows.find((r) => r.url === "https://example.com/");
+    const windowed = s
+      .search({ from: new Date(NOW - 4 * 86_400_000), limit: 10 })
+      .rows.find((r) => r.url === "https://example.com/");
+    expect(windowed).toBeDefined();
+    expect(windowed?.firstVisitedRaw).toBe(unfiltered?.firstVisitedRaw);
+    expect(windowed?.lastVisitedRaw).toBe(unfiltered?.lastVisitedRaw);
+    expect(windowed?.visitCount).toBe(unfiltered?.visitCount);
+  });
+
   it("reports truncation rather than a quietly short list", () => {
     const s = build();
     const { rows, truncated } = s.search({ limit: 2 });

@@ -167,6 +167,7 @@ type Page = {
     calendar: string;
   }[];
   expansion: string;
+  hasMore: boolean;
   coverage: { from: string; to: string } | null;
   truncated?: { affects: string; uncoveredTo?: string };
   window: { clamped: boolean };
@@ -207,6 +208,33 @@ describe("apple_calendar_list_events", () => {
     expect(p.events.map((e) => e.summary)).toContain("Design review");
     const starts = p.events.map((e) => e.start.iso ?? e.start.day ?? "");
     expect(starts).toEqual([...starts].toSorted());
+  });
+
+  /**
+   * A full page and a quiet week are different facts.
+   *
+   * `truncated` is about COVERAGE — the range running past what the store has
+   * expanded — so it says nothing when a dense window simply holds more events
+   * than `limit`. Without this, 80 events answered with 50 read as the whole
+   * day, and on this surface a short list of events is indistinguishable from a
+   * free afternoon.
+   */
+  it("says when more events matched than the limit allowed", async () => {
+    const full = (
+      await call("apple_calendar_list_events", { from: "2026-08-21", to: "2026-09-10" })
+    ).json as Page;
+    expect(full.events.length).toBeGreaterThan(1);
+    expect(full.hasMore).toBe(false);
+
+    const page = (
+      await call("apple_calendar_list_events", {
+        from: "2026-08-21",
+        to: "2026-09-10",
+        limit: 1,
+      })
+    ).json as Page;
+    expect(page.events).toHaveLength(1);
+    expect(page.hasMore).toBe(true);
   });
 
   /** The whole point of leg 2: a weekly series must not appear once. */
