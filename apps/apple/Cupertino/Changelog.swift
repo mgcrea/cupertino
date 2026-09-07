@@ -220,7 +220,59 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_17_0, v1_16_0, v1_15_0, v1_14_0, v1_13_0]
+  static let releases: [Release] = [v1_18_0, v1_17_0, v1_16_0, v1_15_0, v1_14_0]
+
+  // swift-format-ignore
+  private static let v1_18_0: Release = Release(
+    version: "1.18.0",
+    date: "2026-09-07",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "What changed, readable after you have already updated.",
+            body: [
+              "Release notes existed in exactly one place a user could reach: the sheet Sparkle puts up while it asks permission to install. That sheet is gone the moment you press Install, which left the one person most likely to want them — somebody who has just replaced an app holding Full Disk Access — with nowhere to look but `CHANGELOG.md` on GitHub. Settings has a **What's New** pane now, beside Updates, because the two are halves of one question: what did this build change, and is there a newer one. General keeps the version and the build number, which answer _which_ build this is — the question you ask with a bug report open, not the one you ask after updating.",
+              "It is generated, not bundled. `make changelog` compiles the last five releases of `CHANGELOG.md` into `Changelog.swift` the same way `make surfaces` compiles `surfaces.json` into `SurfaceCatalog.swift`, and `changelog-check` fails CI if the two drift — so the notes in the app are the notes in the repository, or the build goes red. `### Internal` sections are dropped at generation time rather than hidden at render time, so repo-facing prose never reaches the binary. `[Unreleased]` is emitted separately and shown only in a Debug build, which matters here because CI asserts only that a `## [<version>]` section exists, not that it is the top one.",
+              "The parse behind it is shared with `changelog-notes.mjs`, which renders the appcast, so the two cannot disagree about what a bullet is — and the appcast's own guards, on a missing section and an empty one, stay where they were. `scripts/lib/changelog.test.mjs` is written against the shapes this file actually contains rather than tidy examples: a bullet with no bold headline, a headline with a code span inside it, prose between a `###` heading and its first bullet, and a freely named section like `### Note for 1.0.0 users`. One assertion is deliberately about code spans rather than the word \"undefined\", because 1.3.0's prose is _about_ a field that read back as `undefined` and the blunt check fails on a correct render.",
+              "Entries whose bold lead is a whole sentence get it pulled onto its own line; entries that bold only the subject and run on — \"…**filled the page**, because the text column pass ran to the limit\" — are left as one flowing paragraph, because splitting those puts a line break before a comma.",
+              "Anything that shipped since the version you last read is marked, and says so from the menu bar panel and the sidebar footer as well as in Settings — once, until you look. A fresh install is treated as caught up rather than greeted with five unread releases.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "The Simulator's tab bar was there all along; the walker could not see it.",
+            body: [
+              "`docs/simulator.md` recorded the tab bar as \"genuinely childless, not merely unwalked\": every children attribute on the `AXGroup` answers 0. That was measured correctly and concluded wrongly. Hit-testing the group's frame returns four `AXRadioButton`s, each naming that group as its `AXParent` and each taking `AXPress` — the edge is one-way, the children know the parent and the parent does not list them. A walk that descends only `AXChildren` stopped there and reported the walk complete, which is worse than a truncated one because nothing said so.",
+              "`AccessibilityDriver.walk` now sweeps the frame of a container whose children link is empty with `AXUIElementCopyElementAtPosition`, keeps every distinct hit whose parent chain leads back to the container, and walks those as its children; `apple_desktop_expand` and `apple_simulator_ui_tree` on such a handle do the same. The answer carries `recovered` when it happened. On the screen that found it the walk went from 8 elements to 17: the tab bar's four items and, from a navigation bar with the same broken link, a heading, a search field and three toolbar buttons. Measured across seven Mac apps first: a hit-test costs 0.3–3 ms and a whole tree holds at most five containers that qualify, so the sweep runs on every walk rather than behind a switch.",
+              "The part worth knowing as a caller: the recovered tab items carry their SF Symbol name as `id` (`leaf`, `checkmark.circle`, `calendar`, `cross.case`), which does not change with the device's language. WebDriverAgent gives the same tabs no identifier at all, only the translated label — so on this one point the Accessibility lane addresses more stably than the runner does. The tool descriptions say so, and the sentence that called the tab bar an empty container is gone.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Turning on \"Reach any application\" could remove Screen's capture tool rather than widen it.",
+            body: [
+              "The `surface` argument's `enum` IS the scope, so lifting the gate has to lift the constraint — but it did that by setting the key to `nil`, and `\"enum\": null` is not valid JSON Schema. A client that validates the tool list drops the whole tool instead of reporting the fault, so the switch meant to broaden capture silently took it away. The key is omitted now when the gate is off. `screen-check` asserts on the serialized bytes, because a `[String: Any]` lookup reads an absent key and a null one identically — which is exactly why the check it already had passed.",
+            ]),
+        ]),
+      Section(
+        name: "Security",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "`find_codes` says which service delivered a code, because `confidence` cannot.",
+            body: [
+              "iMessage is authenticated against an Apple ID; SMS and RCS sender IDs are not, and can be forged — the `From` on a text is a routing hint the sending network fills in, not a credential. `confidence` measures how cleanly a code was extracted from the message text, and all of that text is attacker-controlled, so a spoofed SMS naming a domain scores `high` exactly like a real one; `ageSeconds` does not help either, since a planted code is fresh. Every match now carries `service`, and the tool description says what it does and does not mean. Deliberately **not** done: filtering or down-ranking SMS matches. Genuine codes arrive overwhelmingly that way — this store holds 796 SMS handles against 265 iMessage and 15 RCS — so the point is not to discard them, it is not to treat a code as proof of anything.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_17_0: Release = Release(
@@ -638,93 +690,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_13_0: Release = Release(
-    version: "1.13.0",
-    date: "2026-09-04",
-    sections: [
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Visual Studio Code is configured with one click, not a pasted command.",
-            body: [
-              "It was held back on the grounds that its config is JSONC and re-serialising it would delete somebody's comments. That was a mix-up between two files: `settings.json` is the JSONC one, and `User/mcp.json` — where VS Code actually keeps MCP servers, under a `servers` key rather than `mcpServers` — is strict JSON, written by VS Code itself.",
-              "The residual worry does not survive being looked at either. Every write begins with a read and `JSONSerialization` throws on a comment, so a file somebody has commented reads as unreadable and the write refuses. It fails closed: it cannot strip a comment it cannot parse.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "ChatGPT & Codex is configured with one click too, and `~/.codex/config.toml` is spliced rather than re-serialised.",
-            body: [
-              "That file is the one config here that is genuinely not safe to round-trip — twenty-nine `[projects.\"…\"]` tables, a `[features]` block and a multi-line string full of markdown on the machine this was written against. `ClientWiringTOML`, ported from Bastion, replaces the lines that hold MCP servers and quotes every other byte verbatim, so a wire produces a diff with one hunk in it and an unwire gives the file back exactly.",
-              "It also gets what a pasted command could never give it: a real status. The row now reports `configured`, `incomplete` or `points elsewhere` like every other client, and it reports the one thing no JSON client can — `enabled = false`, which Codex honours and which the ChatGPT app is reported to set on servers it did not expect. An entry in that state still points where it should, so it audits as configured while Codex runs none of it; the row says so.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "The row is called \"ChatGPT & Codex\" rather than \"Codex CLI\"",
-            body: [
-              ", because the ChatGPT app, the Codex CLI and the Codex IDE extension all read that one file — the ChatGPT app bundles the Codex binary and names it in `CODEX_CLI_PATH`. The old name sent somebody who had installed only ChatGPT looking for a row that was already there.",
-              "The reason recorded for ChatGPT having no row of its own was also wrong, and is corrected: it did not \"take remote HTTP connectors only and cannot spawn a local stdio server at all\". Connectors are remote-only; the Codex lane inside the same app runs local stdio servers and ships three of its own in that file. It has no row because it is not a separate client.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "`apple_mail_query` is on every mail server now, not only the read-only ones.",
-            body: [
-              "It was held back on budget grounds — a tool costs listing tokens on every connect, and this one had to prove it saves more than it costs — and the measurement in [mail-query.md](docs/mail-query.md) settled that a while ago: 64x on a grouped question, against a ~716-token listing.",
-              "What the budget argument missed is that `allowWrites` is a per-surface switch, so the only way to reach a lane that reaches nothing but the index was to give up send, reply, move and delete for Mail across every client at once. Nobody makes that trade, which made the tool invisible to almost everyone — including the website, which has been listing it as a plain read tool.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Client rows show the editor's real icon instead of an SF Symbol.",
-            body: [
-              "Cursor, VS Code and every other row in the sidebar, the client detail header and Settings' automation table now draw the installed app's own icon, looked up by bundle id or by path. `SurfaceIcon.swift` becomes `AppIcon.swift` and the lookup is shared, so surface icons and client icons stop being two unrelated pieces of code that happened to render the same size.",
-              "Two knock-on fixes. Cursor's fallback symbol moves from the chevron-brackets glyph to `cursorarrow`, because the brackets now belong to VS Code and having both wear them was the reason the fallbacks read as interchangeable; and ChatGPT & Codex gains a bundle id (`com.openai.codex`) so its row can resolve to a real icon rather than being the one client that could never have one.",
-              "Lookups are disabled under a screenshot capture. The goldens would otherwise depend on which editors happen to be installed on the Mac doing the capturing, which is a gate that fails for a reason that has nothing to do with the change under test.",
-            ]),
-        ]),
-      Section(
-        name: "Removed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 5,
-            headline: "Nothing has to be pasted into a terminal any more.",
-            body: [
-              "With both remaining clients written, the copy-a-command lane had no users: the `Recipe` templates, the shell quoting, the two copy buttons, the \"VS Code has no command that removes a server\" paragraph and the `unknown` status that existed only because a pasted client could never report one are all gone. Zed and Goose are still the reason to remember it existed, and neither is JSON or TOML, so the honest way to add them is a third `Wiring` case rather than a snippet maintained blind.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "What changed, readable after you have already updated.",
-            body: [
-              "Release notes existed in exactly one place a user could reach: the sheet Sparkle puts up while it asks permission to install. That sheet is gone the moment you press Install, which left the one person most likely to want them — somebody who has just replaced an app holding Full Disk Access — with nowhere to look but `CHANGELOG.md` on GitHub. Settings has a **What's New** pane now, beside Updates, because the two are halves of one question: what did this build change, and is there a newer one. General keeps the version and the build number, which answer _which_ build this is — the question you ask with a bug report open, not the one you ask after updating.",
-              "It is generated, not bundled. `make changelog` compiles the last five releases of `CHANGELOG.md` into `Changelog.swift` the same way `make surfaces` compiles `surfaces.json` into `SurfaceCatalog.swift`, and `changelog-check` fails CI if the two drift — so the notes in the app are the notes in the repository, or the build goes red. `### Internal` sections are dropped at generation time rather than hidden at render time, so repo-facing prose never reaches the binary. `[Unreleased]` is emitted separately and shown only in a Debug build, which matters here because CI asserts only that a `## [<version>]` section exists, not that it is the top one.",
-              "The parse behind it is shared with `changelog-notes.mjs`, which renders the appcast, so the two cannot disagree about what a bullet is — and the appcast's own guards, on a missing section and an empty one, stay where they were. `scripts/lib/changelog.test.mjs` is written against the shapes this file actually contains rather than tidy examples: a bullet with no bold headline, a headline with a code span inside it, prose between a `###` heading and its first bullet, and a freely named section like `### Note for 1.0.0 users`. One assertion is deliberately about code spans rather than the word \"undefined\", because 1.3.0's prose is _about_ a field that read back as `undefined` and the blunt check fails on a correct render.",
-              "Entries whose bold lead is a whole sentence get it pulled onto its own line; entries that bold only the subject and run on — \"…**filled the page**, because the text column pass ran to the limit\" — are left as one flowing paragraph, because splitting those puts a line break before a comma.",
-              "Anything that shipped since the version you last read is marked, and says so from the menu bar panel and the sidebar footer as well as in Settings — once, until you look. A fresh install is treated as caught up rather than greeted with five unread releases.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

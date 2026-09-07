@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.17.0`,
-`notes-v1.17.0`, `reminders-v1.17.0`, `core-v1.17.0` for the npm packages, and `app-v1.17.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.18.0`,
+`notes-v1.18.0`, `reminders-v1.18.0`, `core-v1.18.0` for the npm packages, and `app-v1.18.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.18.0] - 2026-09-07
 
 ### Added
 
@@ -76,6 +76,27 @@ summary.
   language. WebDriverAgent gives the same tabs no identifier at all, only the translated label —
   so on this one point the Accessibility lane addresses more stably than the runner does. The
   tool descriptions say so, and the sentence that called the tab bar an empty container is gone.
+
+- **Turning on "Reach any application" could remove Screen's capture tool rather than widen it.**
+  The `surface` argument's `enum` IS the scope, so lifting the gate has to lift the constraint —
+  but it did that by setting the key to `nil`, and `"enum": null` is not valid JSON Schema. A
+  client that validates the tool list drops the whole tool instead of reporting the fault, so the
+  switch meant to broaden capture silently took it away. The key is omitted now when the gate is
+  off. `screen-check` asserts on the serialized bytes, because a `[String: Any]` lookup reads an
+  absent key and a null one identically — which is exactly why the check it already had passed.
+
+### Security
+
+- **`find_codes` says which service delivered a code, because `confidence` cannot.** iMessage is
+  authenticated against an Apple ID; SMS and RCS sender IDs are not, and can be forged — the `From`
+  on a text is a routing hint the sending network fills in, not a credential. `confidence` measures
+  how cleanly a code was extracted from the message text, and all of that text is
+  attacker-controlled, so a spoofed SMS naming a domain scores `high` exactly like a real one;
+  `ageSeconds` does not help either, since a planted code is fresh. Every match now carries
+  `service`, and the tool description says what it does and does not mean. Deliberately **not**
+  done: filtering or down-ranking SMS matches. Genuine codes arrive overwhelmingly that way — this
+  store holds 796 SMS handles against 265 iMessage and 15 RCS — so the point is not to discard
+  them, it is not to treat a code as proof of anything.
 
 ## [1.17.0] - 2026-09-07
 
@@ -1981,7 +2002,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.17.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.18.0...HEAD
+[1.18.0]: https://github.com/mgcrea/cupertino/compare/app-v1.17.0...app-v1.18.0
 [1.17.0]: https://github.com/mgcrea/cupertino/compare/app-v1.16.0...app-v1.17.0
 [1.16.0]: https://github.com/mgcrea/cupertino/compare/app-v1.15.0...app-v1.16.0
 [1.15.0]: https://github.com/mgcrea/cupertino/compare/app-v1.14.0...app-v1.15.0
