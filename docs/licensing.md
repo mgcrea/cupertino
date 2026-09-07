@@ -354,7 +354,7 @@ release; 2.0 is a separate purchase. Nothing lapses and nothing renews.
 **The price does not move with the surface count, and the table above no longer says it does.** It
 said "rising with the surface count" while the section below already described the ladder as
 retired, which is a promise and its retraction in one document. Surfaces have kept arriving since —
-Screen, Sound and Desktop are the ninth, tenth and eleventh — and every one of them landed inside a
+Screen, Sound and Desktop are the ninth, tenth and eleventh, Simulator the twelfth — and every one of them landed inside a
 price that did not move. That is the shape now: **1.x gets whatever ships, at the price it was
 bought at.** A rise, if there is one, is 2.0, and 2.0 is a separate purchase anyway — which is the
 only honest way left to charge for growth once the ladder is gone.

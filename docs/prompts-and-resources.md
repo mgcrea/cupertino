@@ -41,9 +41,10 @@ those belong to the other two resources, which are allowed to fail.
 
 Desktop's guide is the one that varies, and only on the two switches: writes and reach. Both are
 settings this app owns, readable with every grant denied, so the rule above still holds — the guide
-never reports what a probe found, only what the caller is allowed to ask for. A paragraph about
-driving an iOS Simulator, which is not a brokered surface, would otherwise describe something the
-default scope refuses. See [`simulator.md`](simulator.md).
+never reports what a probe found, only what the caller is allowed to ask for. Its paragraph about
+driving an iOS Simulator was gated on the reach while Simulator.app was not a brokered application;
+the `simulator` surface made it one, so the paragraph is unconditional now and points at that
+surface. Simulator's own guide varies on writes alone. See [`simulator.md`](simulator.md).
 
 **A failed read returns data, not a protocol error.** A tool that throws still returns its text
 under `isError`. A resource read that throws becomes a JSON-RPC error and keeps nothing, which

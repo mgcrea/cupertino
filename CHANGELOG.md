@@ -14,7 +14,29 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **A `simulator` surface.** Simulator.app bridges a simulated device's accessibility tree into the
+  Mac's, so an iOS app's own controls are readable and pressable with no WebDriverAgent and no
+  runner process — and until now reaching them cost switching Desktop to "Reach any application",
+  which opens every window on the Mac to touch a developer's own app. The new surface is served
+  in-process, pinned to `com.apple.iphonesimulator` with no switch that widens it, and answers in
+  **iOS points**: the device screen is found as the `AXGroup` whose size is the device's point size
+  times the window scale, the scale is measured against CoreSimulator's own `profile.plist` rather
+  than assumed to be 1, and every `rect` and `point` can be handed to `ios_simulator_tap` unchanged.
+  Four read tools and, behind writes, `press`, `tap`, `swipe`, `type`, `key` and `press_button`.
+  Deliberately absent: boot, install, launch, screenshots, push and staging, which need no grant and
+  belong to `@mgcrea/mcp-ios-simulator`. Measured in [docs/simulator.md](docs/simulator.md): a
+  click lands only once the Simulator is frontmost, a drag arrives as a touch pan, and the Simulator
+  forwards key codes rather than characters, so typing goes one key at a time on the Mac's layout.
+
 ### Fixed
+
+- **A depth-capped walk silently dropped every sibling after the first branch that hit the cap.**
+  The depth bound set the same "stopped" flag the node and time bounds do, and the walk returns on
+  that flag before visiting the next node — so a depth-1 listing of a window with eleven children
+  answered one and named `depth(1)` as the reason, which is true and useless. Found by the first
+  simulator probe; the cap is reported and no longer stops anything.
 
 - **A message addressed to a group could be delivered privately to one person.** The send lane
   passed a group chat's first participant as its handle, and the JXA ladder guesses a one-to-one
@@ -104,11 +126,14 @@ summary.
   1.16.0: the badge could never render. The panel does not take focus and does not steal a
   keystroke from the sequence it is reporting on.
 
-- **The Desktop guide describes driving an iOS Simulator**, when the reach allows it. Simulator.app
-  bridges a simulated device's accessibility tree into the Mac's, so an iOS app's own controls are
-  readable and pressable with no WebDriverAgent and no runner process. Measured in
-  [docs/simulator.md](docs/simulator.md): a strict subset of what WebDriverAgent reaches, entirely
-  named, and it contradicts WebDriverAgent on the one flag WebDriverAgent gets wrong.
+- **Simulator.app is a brokered application.** The `simulator` surface's entry in the manifest puts it
+  into the set Desktop reaches without "Reach any application" and Screen can capture, by design;
+  the Desktop guide's paragraph about it is no longer gated on the reach and sends a caller to the
+  `simulator` surface for iOS-point coordinates. Every "the eight applications Cupertino brokers"
+  string now says nine.
+
+- **The Desktop guide's writes-on line names all eight driving verbs.** It listed six; `focus` and
+  `activate` were registered and unmentioned.
 
 - **Walk bounds have a ceiling**, so a budget of an hour cannot hold a session thread for one.
   `find_elements` also declares the `window` argument it has always honoured.
@@ -151,6 +176,11 @@ summary.
 
 - CI runs the Desktop server's own check, which is the only gate on its refusal paths, and a
   release is refused if the CHANGELOG has no entry for the tag.
+- `dispatch-check` compares tool lists as canonical JSON. It compared the wire text, and Swift seeds
+  a dictionary's hashing per instance, so two identical lists differed at byte 22: the "a gate
+  changes something" assertion passed for free on every gated surface, and the "no gate changes
+  nothing" assertion failed on the first surface without one. It also pins that nothing — no gate,
+  no lent scope — moves the simulator surface's reach, and CI runs `simulator-check`.
 - The README check now reads the per-surface tool tables and the prose under them, not just the
   Surfaces table. Eleven registered tools were missing, and Safari's section still called the
   surface read-only while registering five write tools.

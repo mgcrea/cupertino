@@ -312,10 +312,10 @@ was found.
 `allowWrites` and `allowAnyApp` are orthogonal, and neither other in-process surface has a pair
 shaped this way — Sound's two gates are both capability tiers, these are **capability and scope**.
 
-|               | off (shipped)                                             | on                              |
-| ------------- | --------------------------------------------------------- | ------------------------------- |
-| `allowWrites` | reads structure; the six driving tools are not registered | can press, type, click, raise   |
-| `allowAnyApp` | reaches the 8 applications Cupertino brokers              | reaches any running application |
+|               | off (shipped)                                                                              | on                                             |
+| ------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `allowWrites` | reads structure; the eight driving tools are not registered                                | can press, type, click, raise, focus, activate |
+| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application                |
 
 **Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
 Maps place card reads anything on the Mac, so the bound comes from the closed table or from nowhere —
@@ -360,7 +360,7 @@ filter here could only drop real windows. There is none, and the reason is now i
 |                         | `screen`                    | `desktop`                            |
 | ----------------------- | --------------------------- | ------------------------------------ |
 | Grant                   | Screen Recording            | Accessibility                        |
-| Reach                   | the 8 brokered surface apps | **any running application**          |
+| Reach                   | the 9 brokered surface apps | **any running application**          |
 | Answers                 | pixels                      | structure, and it can act            |
 | Sees an occluded window | yes, composited             | yes, irrelevant — no pixels involved |
 

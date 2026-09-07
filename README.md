@@ -45,20 +45,33 @@ off cannot see that they exist.
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
 | Desktop   | —                                          | implemented — 16 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
+| Simulator | —                                          | implemented — 10 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
-**Screen, Sound and Desktop arrive switched off.** Every surface that brokers an Apple app is on when
-Cupertino is installed; those three are not, because Screen Recording, the microphone and
-Accessibility are per-process grants that reach past the surface being brokered. Desktop reaches
-furthest of the three — Accessibility does not scope to a target at all, so the right to press a
+**Screen, Sound, Desktop and Simulator arrive switched off.** Every other surface that brokers an
+Apple app is on when Cupertino is installed; those four are not, because Screen Recording, the
+microphone and Accessibility are per-process grants that reach past the surface being brokered.
+Desktop reaches furthest — Accessibility does not scope to a target at all, so the right to press a
 button in Maps is the right to press one in anything, and it additionally arrives with writes off, so
-it can only look until you say otherwise. Switch them on in the surface list if you want them.
+it can only look until you say otherwise. Simulator holds the same grant and pins its own reach to
+Simulator.app, with no switch that widens it. Switch them on in the surface list if you want them.
 
 Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
-an Apple app is also its own npm package; `screen`, `sound` and `desktop` are not, and could not be —
-they broker a framework rather than an app, the grant lives in the app, so the app serves them
-in-process and a published package could do nothing. See [docs/screen.md](docs/screen.md) and
-[docs/desktop.md](docs/desktop.md).
+an Apple app through its store or its scripting dictionary is also its own npm package; `screen`,
+`sound`, `desktop` and `simulator` are not, and could not be — the first three broker a framework
+rather than an app, `simulator` brokers an app through Accessibility, and in every case the grant
+lives in the app, so the app serves them in-process and a published package could do nothing. See
+[docs/screen.md](docs/screen.md), [docs/desktop.md](docs/desktop.md) and
+[docs/simulator.md](docs/simulator.md).
+
+`simulator` is the lane for an app you are building. Simulator.app bridges the simulated device's
+accessibility tree into the Mac's, so an iOS app's own controls are readable and pressable here with
+no WebDriverAgent and no runner process — and the surface answers in **iOS points**, the space
+`ios_simulator_tap` and `ios_simulator_screenshot` use, with the window scale measured on every
+call rather than assumed. It reads, finds and presses; behind writes it taps, swipes, types and
+presses the device's buttons. Booting, installing, launching, screenshots and push need no grant
+and stay with [`@mgcrea/mcp-ios-simulator`](https://github.com/mgcrea/mcp-ios-simulator), which
+this complements rather than copies.
 
 `desktop` is the one surface that drives an interface rather than reading a store, and it does it
 through `AXUIElement` **natively** rather than through `osascript`. That distinction is the whole
@@ -170,18 +183,18 @@ app does.
 These land on **whatever process launched the server** — your editor, your terminal, or
 Cupertino — never on Mail, Notes or Reminders themselves.
 
-| Grant                                     | Needed for                                                      |
-| ----------------------------------------- | --------------------------------------------------------------- |
-| **Full Disk Access**                      | the index lane: Mail search, attachment bytes                   |
-| **Automation** (per target app, prompted) | the Apple Events lane: accounts, mailboxes, all writes          |
-| **Contacts** (prompted)                   | the Contacts surface — its store is not behind Full Disk Access |
-| **Screen Recording** (prompted)           | the Screen surface                                              |
-| **Microphone** (prompted)                 | Sound's recording tools only                                    |
-| **Accessibility** (prompted)              | the Desktop surface — see the note below on how far it reaches  |
+| Grant                                     | Needed for                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| **Full Disk Access**                      | the index lane: Mail search, attachment bytes                    |
+| **Automation** (per target app, prompted) | the Apple Events lane: accounts, mailboxes, all writes           |
+| **Contacts** (prompted)                   | the Contacts surface — its store is not behind Full Disk Access  |
+| **Screen Recording** (prompted)           | the Screen surface                                               |
+| **Microphone** (prompted)                 | Sound's recording tools only                                     |
+| **Accessibility** (prompted)              | the Desktop and Simulator surfaces — see the note below on reach |
 
-The last three are why Screen, Sound and Desktop arrive switched off: each is a per-process grant
-that reaches past the surface being brokered, and Accessibility does not scope to a target app at
-all.
+The last three are why Screen, Sound, Desktop and Simulator arrive switched off: each is a
+per-process grant that reaches past the surface being brokered, and Accessibility does not scope to
+a target app at all — Simulator pins its own reach in the server, since the system will not.
 
 System Settings → Privacy & Security → Full Disk Access → add the launching app, then restart it.
 Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
@@ -367,7 +380,8 @@ it sits in the one directory of Maps' container that Full Disk Access gates, and
 [docs/maps.md](docs/maps.md).
 
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
-`apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_`.
+`apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_` — and `apple_screen_` /
+`apple_sound_` / `apple_desktop_` / `apple_simulator_` for the surfaces the app serves itself.
 
 ## Prompts and resources
 
@@ -522,7 +536,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/calendar.md](docs/calendar.md)                           | Apple Calendar phase-0 measurements           |
 | [docs/safari.md](docs/safari.md)                               | Safari phase-0 measurements                   |
 | [docs/maps.md](docs/maps.md)                                   | Maps phase-0 measurements                     |
-| [docs/simulator.md](docs/simulator.md)                         | driving an iOS Simulator through `desktop`    |
+| [docs/simulator.md](docs/simulator.md)                         | the Simulator surface: measurements, geometry |
 | [docs/envelope-index.md](docs/envelope-index.md)               | Mail's observed `Envelope Index` schema       |
 | [docs/prompts-and-resources.md](docs/prompts-and-resources.md) | what the servers expose beyond tools          |
 | [docs/verify.md](docs/verify.md)                               | checking the Mail server against a real index |

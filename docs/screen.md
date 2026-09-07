@@ -126,7 +126,7 @@ got its numbers, and is itself the problem stated as a fact.
 > running application. It is off unless someone turns it on, and the paragraphs below hold exactly
 > while it is. With it on, the bound is the surface being enabled at all — the same bound `desktop`
 > has. See [desktop.md](desktop.md) for why: `desktop` can drive any application and `screen` could
-> photograph eight, so seeing what had just been clicked was impossible for anything outside the
+> photograph the eight it then brokered, so seeing what had just been clicked was impossible for anything outside the
 > table, which is the wrong shape for driving an app under development.
 >
 > The sentence that must not be quoted without this note is "not by policy, by construction". With

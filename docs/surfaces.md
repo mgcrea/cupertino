@@ -241,12 +241,12 @@ generated region is a red build rather than a shipped inconsistency.
 Adding a surface is one manifest entry and `make surfaces`, plus four declarations that decide what
 kind of thing it is and whether anyone gets it unasked:
 
-| Field              | Meaning                                                                                                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`             | `app` brokers one Apple application; `capability` brokers something the system provides and no app owns. Drives how the settings list is grouped, which icon is drawn, and which permission is asked for. |
-| `runtime`          | `node` is a package under `packages/<id>`; `swift` is served in-process by the app.                                                                                                                       |
-| `appleEventsScope` | `always` if the read lane goes through Apple Events; `writes` if events are the write lane and reads come off files; `null` when `usesAppleEvents` is false.                                              |
-| `defaultEnabled`   | Whether the surface is served on a Mac where nobody has touched its switch. True for every app; false for Screen and Sound, whose grants reach past the surface being brokered.                           |
+| Field              | Meaning                                                                                                                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`             | `app` brokers one Apple application; `capability` brokers something the system provides and no app owns. Drives how the settings list is grouped, which icon is drawn, and which permission is asked for.       |
+| `runtime`          | `node` is a package under `packages/<id>`; `swift` is served in-process by the app.                                                                                                                             |
+| `appleEventsScope` | `always` if the read lane goes through Apple Events; `writes` if events are the write lane and reads come off files; `null` when `usesAppleEvents` is false.                                                    |
+| `defaultEnabled`   | Whether the surface is served on a Mac where nobody has touched its switch. True for every app but Simulator; false for the capabilities and for Simulator, whose grants reach past the surface being brokered. |
 
 `appleEventsScope` is the one that decides what a status glyph asks for, and it is separate from
 `usesAppleEvents` on purpose. `usesAppleEvents` says whether the grant is ever needed — it generates
@@ -255,9 +255,10 @@ on. `appleEventsScope` says whether it is needed **as this Mac is configured**: 
 read through the file lane and script their app only to write, so with `allowWrites` off they send no
 event at all, and the popover used to nag them for a grant nothing on the machine would ever spend.
 
-They are declared rather than inferred from each other. Today every capability is also `swift` and
-has no `bundleId`, and that is a coincidence of there being one of them — the next capability should
-not have to be recognised by what it lacks.
+They are declared rather than inferred from each other. Every capability is `swift` and has no
+`bundleId`, but the converse stopped holding with `simulator`: an `app` served in-process, with a
+`bundleId` and neither a package nor a file lane. It is the case the two fields were kept separate
+for — see [`simulator.md`](simulator.md).
 
 A capability names its own icon, because there is no app to ask LaunchServices about: `iconPath`
 points at Apple's own Settings extension so it sits beside the app icons rather than looking like a

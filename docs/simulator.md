@@ -13,8 +13,9 @@ Settings.
 
 **Verdict: a real capability, and NOT a replacement for WebDriverAgent.** It reaches a strict subset
 of what WDA reaches — but a subset that is 100% named, an order of magnitude smaller, and that
-contradicts WDA on the one thing WDA gets wrong. The simulator is not in the brokered table, so all
-of this needs **Reach any application** switched on.
+contradicts WDA on the one thing WDA gets wrong. ~~The simulator is not in the brokered table, so all
+of this needs **Reach any application** switched on.~~ **Superseded 2026-09-07:** it is a surface of
+its own now — see [What shipped](#what-shipped) — and Simulator.app is a brokered application.
 
 ## The device screen is an `AXGroup` sized like the device
 
@@ -167,12 +168,14 @@ Concretely, with **Reach any application** on and no runner running at all:
   `set_environment` and `push` keep working, since none of those needs WDA either
 
 That is enough to drive a simple app end to end, and enough to answer "what is on screen right now"
-when the runner is down.
+when the runner is down. (The paragraph above describes the Desktop route; the `simulator` surface
+below does the same with the coordinates already converted and no scope switch.)
 
 ## Reproducing
 
-Requires Accessibility on the running bundle and **Reach any application**, since
-`com.apple.iphonesimulator` is not a brokered surface:
+Requires Accessibility on the running bundle. **Reach any application** was required when this was
+written and is not any more — Simulator.app is brokered since the `simulator` surface — but the
+Desktop route still works as recorded:
 
 ```
 xcrun simctl boot <udid> && open -a Simulator
@@ -186,3 +189,127 @@ the iOS point space.
 
 Poll rather than settle, the same trap [`desktop.md`](desktop.md) records: the simulator's window
 appears well before the booted device draws anything into it.
+
+## What shipped
+
+**Status: BUILT, 2026-09-07.** `simulator` is in `surfaces.json` and served in-process by
+`SimulatorServer.swift`, over the same `AccessibilityDriver` Desktop uses, with the reach pinned to
+`com.apple.iphonesimulator` the way `ServerHost` pins a lend. No gate widens it. Everything above
+is the measurement that justified it; what follows is what the build measured on top, by
+[`scripts/spike-simulator-drive.swift`](../scripts/spike-simulator-drive.swift) (`make simulator-spike`),
+same machine, same iPhone 17 Pro on iOS 26.5, Settings on screen.
+
+| Tool                            | Gated         | Answers                                                                 |
+| ------------------------------- | ------------- | ----------------------------------------------------------------------- |
+| `apple_simulator_list_devices`  | no            | CoreSimulator's devices, and each open window's device screen geometry  |
+| `apple_simulator_ui_tree`       | no            | the device screen's elements, in iOS points, bezel and toolbar excluded |
+| `apple_simulator_find_elements` | no            | the same, filtered by id, role, name or pressability                    |
+| `apple_simulator_diagnostics`   | no            | grant, Simulator running, windows resolved, scale, writes, reach        |
+| `apple_simulator_press`         | `allowWrites` | AXPress by handle — no activation needed                                |
+| `apple_simulator_tap`           | `allowWrites` | activate, then click at an iOS point                                    |
+| `apple_simulator_swipe`         | `allowWrites` | activate, then drag between two iOS points                              |
+| `apple_simulator_type`          | `allowWrites` | activate, then one key code per character                               |
+| `apple_simulator_key`           | `allowWrites` | one unmodified device key from a short allowlist                        |
+| `apple_simulator_press_button`  | `allowWrites` | home, lock, rotate — the Simulator's own chords, by name                |
+
+Deliberately absent: boot, shutdown, erase, install, launch, terminate, open_url, push, add_media,
+set_environment, screenshot, wait_for_element. None needs a grant, and
+[`@mgcrea/mcp-ios-simulator`](https://github.com/mgcrea/mcp-ios-simulator) does them through
+`simctl` and WebDriverAgent. The point of this surface is the one lane that server cannot have.
+
+### The coordinate contract
+
+Every `rect` and `point` is in iOS points with the device screen's top-left as origin — the space
+`ios_simulator_tap` and `ios_simulator_screenshot` use. Verified live against WDA on Settings' root
+list: `General` at `[16, 293.3, 370, 52]` here, `[16, 293, 370, 53]` there. `screenPoint` carries the
+Mac-screen point beside it for anyone driving through Desktop.
+
+**The scale is measured, never assumed.** The device screen is the `AXGroup` child of the window
+whose size, divided by the device type's portrait point size in either orientation, gives the same
+ratio for width and height within 1%. That ratio is the window scale. The point size comes from
+CoreSimulator's own plists — `~/Library/Developer/CoreSimulator/Devices/<udid>/device.plist` names
+the device type, `/Library/Developer/CoreSimulator/Profiles/DeviceTypes/<type>.simdevicetype/
+Contents/Resources/profile.plist` gives `mainScreenWidth 1206`, `mainScreenHeight 2622`,
+`mainScreenScale 3`, so 402x874 — the same files `mcp-ios-simulator` reads. The Simulator's own
+`WindowScale` preference is reported by diagnostics as a cross-check and never trusted over the
+measured group: it was `1` on the probed device and `0.68` on another that day, so any factor is
+possible. Landscape is the same match with width and height swapped; an iPad rotated mid-session is
+re-resolved on the next call, because nothing is cached across calls.
+
+The window title names the device — `iPhone 17 Pro – iOS 26.5`, with an en dash — and is matched
+against CoreSimulator's booted devices by name and runtime label. A title that matches nothing is
+tried against every booted device's profile, and two open windows are reported as ambiguous rather
+than guessed between; `device` disambiguates.
+
+### Measured while building it
+
+**A click lands only once the Simulator is frontmost.** The first tap leg posted a `CGEvent` click
+at `General`'s centre with VS Code frontmost: nothing happened on the device in four seconds, and
+the click went to whatever covered the window. With `activate()` first the same click opened
+`General` in 733 ms. So every synthetic verb here activates and WAITS — `activateAndWait` polls the
+window server's focused application through Accessibility, because `NSWorkspace.frontmostApplication`
+is fed by KVO and answers from before the activation — and refuses to post when the Simulator did not
+come to the front. Activation took ~105 ms on every trial, in both `activate()` forms.
+
+**`AXPress` needs no activation.** The same run pressed the back button by handle with the editor
+frontmost and Settings returned to its root list. That is why `press` is the verb the guide prefers.
+
+**A drag is a touch pan.** A 400-point drag over 400 ms scrolled `General` off the root list; over
+120 ms it did too; dragging back restored it to `y = 293.3`. What this run did NOT establish is where
+the scroll/fling boundary lies — both durations moved a full screen — so `durationMs` is honoured
+as wall-clock and described as "shorter is more of a fling" without a number.
+
+**The Simulator forwards key codes, not characters.** The driver's `type(text:)` puts a unicode
+string on one event with virtual key 0, which every Mac application reads. Settings' search field
+received a single **"Q"** — key 0 on the AZERTY layout it was typed from. So `apple_simulator_type`
+sends one key code per character, resolved against the Mac's current layout by the same
+`UCKeyTranslate` map `apple_desktop_key` uses, with shift for an uppercase letter, and reports back
+the characters the layout has no key for. **The per-key path is implemented and not yet measured
+end to end**: the run that would have measured it was stopped because the person at the keyboard
+was using the Mac, which is exactly the collision the driving notice exists for. `make
+simulator-spike SPIKE_ARGS="--type"` is the measurement, and it needs Settings' root list on screen.
+
+**Command-L locks; home does not unlock.** Command-L brought up the lock screen (`Monday,
+September 7, 11:00`). Command-shift-H on that screen did not unlock a Face ID device; a swipe up
+from `(201, 868)` to `(201, 300)` did, in 62 ms. `press_button`'s description says so, and the guide
+sends a caller to `swipe`. The home chord itself — leaving an app for the springboard — is in the
+same unmeasured state as typing, for the same reason, and `--home` is the leg that measures it.
+
+**The depth cap truncated siblings.** The first geometry pass listed the window's children with
+`maxDepth: 1` and got one child back — `AXButton "Action"` — with `stoppedBy: depth(1)`. The walk
+set the same flag for the depth bound as for the node and time bounds, and returns on that flag
+before visiting the next node, so the first branch to reach the cap ended the walk for every sibling
+after it. The comment beside it said the opposite. Fixed in `AccessibilityDriver.walk`: the cap is
+reported and stops nothing. Desktop had shipped with this; a default walk of depth 12 lost every
+sibling after the first subtree deep enough to hit it.
+
+**`NSWorkspace.frontmostApplication` does not move in a process with no run loop.** Six activation
+trials reported "frontmost after 0.0 ms" because the value was read once at launch and never again.
+The measurement, and the server, ask `AXUIElementCreateSystemWide()` for `AXFocusedApplication`
+instead — the window server's own answer, and the one that decides where a keystroke lands.
+
+**Swift serialises equal dictionaries in different key orders.** `dispatch-check` compared two
+`tools/list` replies as text and they differed at byte 22; this surface, the first with no gate, was
+the first to fail the "no gate changes nothing" assertion honestly. The check compares canonical
+JSON now, which also makes the "a gate changes something" assertion mean something for the surfaces
+that have one.
+
+### What Simulator.app being brokered changes
+
+The manifest entry gives Simulator.app a `bundleId`, and `AccessibilityDriver.brokeredBundleIds`
+and `ScreenCapture.targets` both read `Surface.all`. So, by design and pinned in `simulator-check`:
+Desktop reaches the Simulator under its default scope, `apple_screen_capture_surface { surface:
+"simulator" }` photographs its window (chrome included, at window scale — for the device's screen in
+points use `ios_simulator_screenshot`), and every "the N applications Cupertino brokers" string says
+nine. The alternative — a `capability` with a literal bundle id in the server — was weighed and
+rejected because it would have left the Simulator refused by Desktop for no reason a user could act
+on.
+
+### Still open
+
+- The two unmeasured legs above: typing by key code, and the home chord. Both are implemented; both
+  need a run with nobody at the keyboard.
+- Whether a mouse scroll-wheel event maps to anything inside the Simulator. Not shipped, and not
+  needed while a swipe scrolls.
+- A device window at a non-integer scale has not been driven, only resolved on numbers. The 1%
+  tolerance is a guess that fits 0.68; a Fit Screen window is the next measurement.
