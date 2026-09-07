@@ -2,8 +2,8 @@
 
 `docs/surfaces.md` describes what Cupertino serves and `docs/distribution.md` why it ships signed
 rather than sandboxed. This describes the other end: the seven MCP clients Cupertino knows how to
-wire, why two of them are handed a command instead, and what the client pane can and cannot tell
-you about a file it does not own.
+wire, how each one's config is written rather than pasted, and what the client pane can and cannot
+tell you about a file it does not own.
 
 ## The seven clients
 

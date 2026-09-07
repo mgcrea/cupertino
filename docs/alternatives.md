@@ -14,7 +14,7 @@ one, so nothing in Claude reads Mail.app on the desktop out of the box. Everythi
 including Cupertino — exists to fill that hole.
 
 That qualifier is new as of this refresh and it is load-bearing. Anthropic's **iOS** app now drives
-Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the ten
+Messages, Mail, Calendar, Maps and Reminders first-party, reading and drafting — five of the twelve
 surfaces on this page, on a platform this cannot ship to. Claude Desktop separately installs an
 Apple **Notes** extension from Settings › Extensions in one click, no JSON and no Terminal; whether
 Anthropic authors that extension or merely lists it could not be settled from Anthropic's own
@@ -84,9 +84,12 @@ Two of these are unique, and the rest are uncommon.
 **The grant lands on the right process.** Everyone else says "add Terminal to Full Disk Access".
 macOS attributes file access to the _responsible process_ — the app at the top of the launch chain
 — so in practice the grant lands on VS Code or Cursor, and with it every extension and task that
-editor will ever run. Cupertino's launcher re-execs with
-`responsibility_spawnattrs_setdisclaim` to become its own responsible process, and the signed app
-holds the grant under a stable bundle identifier. Nothing else surveyed attempts this.
+editor will ever run. Cupertino puts the signed app at the top of that chain instead: the app is
+launched by the user, holds the grant under a stable bundle identifier, and spawns the bridge and
+every server itself, so the responsible process is Cupertino whatever wired it. An earlier build
+re-exec'd through a launcher calling `responsibility_spawnattrs_setdisclaim`; that private SPI is no
+longer needed and [distribution.md](distribution.md) records why it is not shipped. Nothing else
+surveyed attempts this.
 
 **The tool list is a pure function of `allowWrites`.** Writes off means the mutating tools are not
 registered — invisible to the model, not merely refused. `imdinu` has no writes at all, which is
@@ -115,9 +118,11 @@ absent instead of a vanished tool. Nobody else reports index staleness at all �
 now that the peer servers are also index-backed, because a fast wrong answer is the failure mode
 they share.
 
-**One grant covers all eight app surfaces.** Full Disk Access is indivisible, so a second
-single-surface server buys no containment and costs another trip to System Settings. `screen` is the
-exception and does not ride on it: it takes its own Screen Recording grant, which is a second trip.
+**One grant covers every Full-Disk-Access surface at once.** Full Disk Access is indivisible, so a
+second single-surface server buys no containment and costs another trip to System Settings. Four
+surfaces do not ride on it and each names its own grant instead: `contacts` has its own TCC service,
+`screen` takes Screen Recording, `sound` the Microphone, and `desktop` and `simulator`
+Accessibility. Each is a separate trip, asked for only by someone who turns that surface on.
 
 ## Where we lose
 
@@ -129,12 +134,12 @@ the permanent refresh problem an FTS5 index would cost. `imdinu` still wins the 
 The refusal names the candidate count and the bound, which is the part that matters: it is not a
 silent cap reported as an absence. See [mail-body.md](mail-body.md).
 
-**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers ten
+**Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers twelve
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why
-Terminal, Script Editor and System Settings are excluded on purpose — but "ten" loses a feature
-comparison to "188" and will keep doing so. The tool counts are much closer than the scope counts
-suggest — 120 here against their 188 — which is why the honest argument is about what a tool may
-reach rather than how many there are.
+Terminal, Script Editor and System Settings are excluded on purpose — but a count in the tens loses a
+feature comparison to "188" and will keep doing so. The tool counts are much closer than the scope
+counts suggest — 137 here against their 188 — which is why the honest argument is about what a tool
+may reach rather than how many there are.
 
 **Installation.** A `.mcpb` desktop extension installs in one click. Cupertino needs a download, a
 Full Disk Access trip and a restart. The grant is the reason, and it is not going away. What is not
@@ -153,17 +158,18 @@ worse than losing one line of it.
 
 **Published, and the asterisk is closed.** The signed app ships from GitHub releases and a Homebrew
 tap, and the packages ship too: all nine node packages — `-core`, `-mail`, `-notes`, `-reminders`, `-calendar`,
-`-contacts`, `-messages`, `-safari` and `-maps` — are on npm at 1.8.0. `screen` has none and could
-not: the Screen Recording grant lives in the app, so a published package could do nothing. The
+`-contacts`, `-messages`, `-safari` and `-maps` — are on npm, versioned with the app and released
+together. The four in-process surfaces have no package and could not: `screen`, `sound`, `desktop`
+and `simulator` hold grants that live in the app, so a published package could do nothing. The
 distribution gap this section was written about is closed.
 
 The asterisk was `-messages` and `-safari` at 1.3.0, and it is worth recording rather than quietly
 forgetting. Both were published **from a laptop, so neither carried a provenance attestation** — the
-one thing [distribution.md](distribution.md) keeps `npm.publish: false` in `.release-it.json` to
-prevent. npm forbids republishing a version, so those two builds could not be re-signed and 1.3.0
-of each is still unattested on the registry. The prediction held: the next release restored it, and
-as of 1 September every package's current version carries one — verified against
-`registry.npmjs.org/-/npm/v1/attestations` rather than assumed.
+one thing [distribution.md](distribution.md) keeps `npm.publish: false` in each package's
+`.release-it.json` to prevent. npm forbids republishing a version, so those two builds could not be
+re-signed and 1.3.0 of each is still unattested on the registry. The prediction held: the next
+release restored it, and as of 1 September every package's current version carries one — verified
+against `registry.npmjs.org/-/npm/v1/attestations` rather than assumed.
 
 This section used to claim the gap was closed for both. It was written from the intent of the
 `publish-npm` job rather than from the registry, which is the same mistake it criticises the

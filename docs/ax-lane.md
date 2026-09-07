@@ -3,15 +3,19 @@
 [`docs/surfaces.md`](surfaces.md) files Freeform, Journal, Books, Podcasts, Weather and News under
 "the grant is the _only_ way in — the most differentiated value and the highest maintenance risk,
 since **there is no fallback lane**." That sentence was true when it was written and is not any
-more: [`desktop.md`](desktop.md) built the lane. This is what it finds on the six.
+more: [`desktop.md`](desktop.md) built the lane. This is what it finds on five of those six — News
+is not installed here — plus **Home**, which [`surfaces.md`](surfaces.md) had already moved out of
+that set for a probe of its own, and which is measured alongside them because the file-lane probe
+left its most important question open.
 
 Measured **2026-09-06, macOS 26.6**, through `apple_desktop_ui_tree` against the shipped
 `AccessibilityDriver`, hosted by the Debug bundle with Accessibility granted and
 **Reach any application** switched on — none of these apps is a surface, so none is in
 `brokeredBundleIds`, and the scope gate is what keeps them out of reach by default.
 
-**Verdict: two clear GOs, one partial, three not measurable on this Mac.** The most valuable result
-is Home, because it answers something the file lane structurally cannot.
+**Verdict, across the six apps measured: two clear GOs, one partial, three not measurable on this
+Mac.** The most valuable result is Home, because it answers something the file lane structurally
+cannot.
 
 ## Measured
 

@@ -20,7 +20,7 @@ the exact System Settings pane to open. It gets called once something has alread
 Neither is fixed by writing better tool descriptions, because the problem is not what the
 descriptions say — it is that a description is not addressable and a tool result is not durable.
 
-## Resources: three per surface
+## Resources: up to three per surface
 
 | URI                                 | What                                      | Can it fail?        |
 | ----------------------------------- | ----------------------------------------- | ------------------- |
@@ -53,11 +53,17 @@ failure comes back shaped like the `degraded` results the tools already return, 
 still tell an unreadable store from an empty one. See `guardedRead` in
 [`packages/core/src/resources.ts`](../packages/core/src/resources.ts).
 
-**Three surfaces register only two resources.** Contacts, Messages and Safari have no containers
-you address by name. A contact is reached by searching, never by naming the store it lives in;
-chats are unbounded and change constantly; history, tabs and the Reading List are three queries
-rather than three folders. A resource that is never the same twice is a tool call wearing a URI, so
-those surfaces do not register one.
+**Four surfaces register only two resources.** Contacts, Messages, Safari and Maps have no
+containers you address by name. A contact is reached by searching, never by naming the store it
+lives in; chats are unbounded and change constantly; history, tabs and the Reading List are three
+queries rather than three folders, and favourites, collections and recents are three more. A
+resource that is never the same twice is a tool call wearing a URI, so those surfaces do not
+register one.
+
+**Desktop registers one.** It has no store to report on and nothing to inventory — what it can
+reach is decided by two switches the guide already states — so it serves a guide and no
+`diagnostics` URI. The tool of that name still answers; the resource is the thing that would have
+had nothing to add.
 
 ## Prompts: the ordering constraints
 
@@ -182,7 +188,7 @@ write gate already uses: absent, not present-and-empty.
 
 ## Adding a surface
 
-Both primitives are registered from `packages/core`, so surface number eight is:
+Both primitives are registered from `packages/core`, so the ninth node surface is:
 
 1. `src/guide.ts` — the static manual. Nothing a probe could know.
 2. `src/prompts.ts` — `registerWorkflowPrompt` per workflow, write-gated ones behind the flag.

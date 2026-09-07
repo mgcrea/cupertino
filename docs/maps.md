@@ -295,7 +295,9 @@ than "Accessibility is not granted" when the latter is why.
 | Accessibility      | **built, as the `desktop` surface** | named, pressable `Favorite` and `Add`; see below                   |
 
 Both write rows have since shipped, and `surfaces.json` now carries `supportsWrites: true` with
-`APPLE_MAPS_ALLOW_WRITES` gating the two mutating tools for real. The paragraph that stood here said
+`APPLE_MAPS_ALLOW_WRITES` gating all five mutating tools for real — `add_favorite` and
+`remove_favorite` on the SQL lane, `save_place`, `remove_saved_place` and `add_place_to_guide` on
+the Accessibility one. The paragraph that stood here said
 the flag was "accepted-and-ignored so a config that sets it does not look broken"; that is no longer
 the case and was left standing after the write lane landed. The fourth row shipped as the `desktop`
 surface rather than inside this package — the Accessibility grant lands on the responsible GUI
@@ -434,8 +436,10 @@ tests are now unfaithful in fewer ways, and the ones that remain are labelled.
 
 #### What is still not built
 
-- **Guides.** Adding a place to a collection needs one `Z_6PLACES` join row, which
-  is small work now that membership is resolved.
+- **Guides, on the SQL lane.** Adding a place to a collection needs one `Z_6PLACES` join row,
+  which is small work now that membership is resolved. The capability itself is not missing:
+  `apple_maps_add_place_to_guide` ships on the Accessibility lane and files the place through the
+  UI, returning `filed: "unverified"` because it cannot read the result back.
 - **`list_favorites` reports `address: null`** for rows whose address lives only in
   the place record. The flat columns are a display cache, which the write work
   proved by inserting NULL and watching Maps render the address anyway. A
@@ -525,8 +529,10 @@ This is the finding that constrains the whole write half, and it is the bad one 
 outcomes that were possible.
 
 `Favorite` is a toggle in the UI, so pressing it on a place that is ALREADY a favourite would
-remove it — and a tool called `add_to_favorites` that pressed blind would silently delete
-saved places on exactly the input a caller is most likely to retry with.
+remove it — and an add-a-favourite tool that pressed blind would silently delete saved places on
+exactly the input a caller is most likely to retry with. (The tool that eventually shipped on this
+lane is `apple_maps_save_place`; the SQL-lane pair is `apple_maps_add_favorite` /
+`apple_maps_remove_favorite`.)
 
 So the control's state has to be readable first. It is not. Dumped for three cards — one place
 that is not a favourite, and two that are, one of them a bakery whose name can only resolve to
@@ -681,10 +687,11 @@ places the surface cannot list rather than debris.
 - **`ZMUID` stability is untested.** It looks like Apple's cross-device place id and is
   reported, but it is populated 20/23 and identifies a _place_ rather than an _entry_, so
   refs use `ZIDENTIFIER` instead. See `packages/maps/src/client/ref.ts`.
-- **A write half is now plausible and unbuilt.** The Accessibility lane has named, pressable
-  `Favorite` and `Add` controls, and the grants inherit into the app's servers. What is
-  missing is a measurement that an `osascript` grandchild of Cupertino.app can name Maps'
-  windows, and then the verbs themselves.
+- ~~**A write half is now plausible and unbuilt.**~~ Built. Both lanes ship: SQL writes into the
+  store, and the Accessibility verbs as part of the `desktop` surface's driver. The missing
+  measurement was never taken in the form this bullet imagined it — the lane is called natively
+  rather than through an `osascript` grandchild, which is the whole finding of
+  [desktop.md](desktop.md).
 - **Refs are session-scoped only when a store has no `ZIDENTIFIER`.** Resolved: refs now
   carry the Core Data UUID when it is set and distinct on every row, and fall back to the
   row id otherwise. The fallback keeps the old caveat in full.

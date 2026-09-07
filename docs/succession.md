@@ -80,6 +80,12 @@ If no release and no substantive commit has landed for **twelve consecutive mont
 MIT License, on the same terms as `packages/*`, with no action required by anyone and no further
 announcement.
 
+This commitment currently lives here and reaches licensees through the EULA, which incorporates this
+document by reference. The licence file itself does not yet state it. That is a gap rather than a
+qualification — the promise is owed either way — and the fix is a section in
+[`apps/apple/LICENSE`](../apps/apple/LICENSE) saying the same thing, so a reader of the licence alone
+finds it.
+
 Section 2(a) — the binary redistribution reservation — is the whole of the commercial reservation,
 and it exists to protect a project that is being maintained. Applied to one that is not, it protects
 nothing and blocks a fork. So it expires on its own.

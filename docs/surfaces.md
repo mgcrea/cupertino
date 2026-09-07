@@ -56,14 +56,17 @@ rather than about capability.
 | Screen    | **capture lane** — ScreenCaptureKit, ~30 ms      | implemented, in the app: the first with no npm package |
 | Sound     | CoreAudio — 4 devices in 28 ms                   | implemented, in the app; two independent gates         |
 | Desktop   | **sixth lane** — native AX, 1.24 ms a round trip | implemented, in the app; reaches any running app       |
+| Simulator | the AX lane into Simulator.app, in iOS points    | implemented, in the app; one bundle id, no scope gate  |
 
 Every probed surface now has a server, though **Screen no longer means a package** — it is served
 in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
 holds no `screencapture`. `surfaces.json` carries a `runtime` field for exactly that split, so the
 targets that mean "has a node package" (the bundler's entry map, the CI handshake, `make servers`)
 say so, while the bridge, the closed table and the settings UI take every surface — which is now
-three of them, `screen`, `sound` and `desktop`, so "served in the app" is the rule for a capability
-rather than the exception `screen` looked like.
+four of them, `screen`, `sound`, `desktop` and `simulator`. "Served in the app" became the rule for a
+capability rather than the exception `screen` looked like, and then stopped being about capabilities
+at all: `simulator` is `kind: app` with a `bundleId` and no package, which is why `kind` and
+`runtime` are separate fields — see below.
 
 **Safari was the only read-only one and no longer is**, which is worth recording rather than quietly
 editing: `supportsWrites` was false for v0.1 on the grounds that a write here navigates a real,
@@ -226,17 +229,17 @@ copies.
 from it by `make surfaces`. `make surfaces-check` fails on drift and runs in CI, so a hand-edit to a
 generated region is a red build rather than a shipped inconsistency.
 
-| File                                    | Form                                                             |
-| --------------------------------------- | ---------------------------------------------------------------- |
-| `apps/apple/Cupertino/Surfaces.swift`   | `Surface.all`                                                    |
-| `apps/apple/CupertinoBridge/main.swift` | `let known = [...]`                                              |
-| `Makefile`                              | `SURFACES :=`, `NODE_SURFACES :=`, `SHOT_WRITES :=`              |
-| `.github/workflows/ci.yml`              | the stdio handshake loop                                         |
-| `apps/apple/tsdown.servers.config.ts`   | the bundler's entry map                                          |
-| `Cupertino.xcodeproj/project.pbxproj`   | the Apple Events consent string, ×2                              |
-| `scripts/wiring-check.swift`            | the surfaces it checks                                           |
-| `apps/website/src/data/surfaces.ts`     | the `id` union (not the tool names)                              |
-| `.mcp.json`                             | the dev bridge entries (written, not checked — it is gitignored) |
+| File                                             | Form                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `apps/apple/Cupertino/Surfaces.swift`            | `Surface.all`                                                                               |
+| `apps/apple/CupertinoBridge/main.swift`          | `let known = [...]`                                                                         |
+| `Makefile`                                       | `SURFACES :=`, `NODE_SURFACES :=`, `SWIFT_SURFACES :=`, `SHOT_WRITES :=`, `SHOT_ENABLED :=` |
+| `.github/workflows/ci.yml`                       | the stdio handshake loop                                                                    |
+| `apps/apple/tsdown.servers.config.ts`            | the bundler's entry map                                                                     |
+| `apps/apple/Cupertino.xcodeproj/project.pbxproj` | the Apple Events consent string, ×2                                                         |
+| `scripts/wiring-check.swift`                     | the surfaces it checks                                                                      |
+| `apps/website/src/data/surfaces.ts`              | the `id` union (not the tool names)                                                         |
+| `.mcp.json`                                      | the dev bridge entries (written, not checked — it is gitignored)                            |
 
 Adding a surface is one manifest entry and `make surfaces`, plus four declarations that decide what
 kind of thing it is and whether anyone gets it unasked:

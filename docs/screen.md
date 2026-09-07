@@ -150,14 +150,15 @@ flag says. See [passwords.md](passwords.md).
 One surface, `screen`, served **in-process by the app** — the first with `runtime: "swift"` and no
 npm package. `ServerHost` answers JSON-RPC for it directly instead of spawning node. The bridge
 cannot tell: it never parses JSON-RPC, so `--server=screen` arrives by exactly the path
-`--server=mail` does, and `make smoke` handshakes all nine surfaces identically.
+`--server=mail` does, and `make smoke` handshakes every surface identically.
 
 An npm package is not merely absent but impossible. The Screen Recording grant lives in the app, so
 a published `@mgcrea/mcp-apple-screen` could do nothing — publishing one would be an empty-handed
 claim.
 
 **The surface itself is off until somebody asks for it.** `defaultEnabled: false` in
-`surfaces.json`, which is the manifest's only `false` beside Sound's: Screen Recording is
+`surfaces.json` — the first of what are now four, with Sound, Desktop and Simulator, every surface
+whose grant reaches past the thing being brokered. Screen Recording is
 per-process and all-or-nothing, so a Mac that has never been asked serves none of the three tools
 below and `cupertino-screen` is written into no client config. Switching the surface on in the
 surface list is the ask; `allowCapture` is a second, narrower one.

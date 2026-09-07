@@ -6,7 +6,7 @@ has Full Disk Access, and they are all read-only.
 
 ```bash
 pnpm build
-npx @modelcontextprotocol/inspector node dist/cli.js
+npx @modelcontextprotocol/inspector node packages/mail/dist/cli.js
 ```
 
 Then call, in order:
@@ -39,7 +39,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"c","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"apple_mail_diagnostics","arguments":{}}}' \
-  | node dist/cli.js 2>/dev/null | tail -1
+  | node packages/mail/dist/cli.js 2>/dev/null | tail -1
 ```
 
 ---

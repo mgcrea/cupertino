@@ -180,8 +180,11 @@ their browser can be scripted.
 
 ## Built
 
-`packages/safari` ships this surface: six read tools, no write tool, 151 tests. Three decisions
-came out of building it that this document did not anticipate.
+`packages/safari` shipped this surface as six read tools with no write tool, and now ships
+**fourteen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
+`allowWrites`, and `find_codes` behind `allowCodes`. Each arrival is recorded further down, under
+[Writes, built](#writes-built) and [Acting on a page, built](#acting-on-a-page-built). Three
+decisions came out of building the read half that this document did not anticipate.
 
 **The epoch is detected at runtime, not hardcoded.** The obvious response to the `visit_time` bug
 below was to write the corrected value into the code. That would have been wrong. A misread epoch

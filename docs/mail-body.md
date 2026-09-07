@@ -9,10 +9,11 @@ takes a `body` term; see `packages/mail/src/client/body-scan.ts`.
 
 ## The question
 
-`apple_mail_search_messages` matches subject and sender. The tool description says so in the text
-the model reads — _"Does NOT search message bodies"_ — and
-[`envelope.ts`](../packages/mail/src/client/envelope.ts) calls body search "a separate, opt-in
-scan" that does not exist.
+`apple_mail_search_messages` matched subject and sender only, and the tool description said so in
+the text the model reads — _"Does NOT search message bodies"_ — while
+[`envelope.ts`](../packages/mail/src/client/envelope.ts) called body search "a separate, opt-in
+scan" that did not exist. (That description has since been rewritten around the `body` term; the
+`envelope.ts` phrase still stands, because the scan it names is what shipped.)
 
 It is the one capability where a competing server beats this one outright; see
 [alternatives.md](alternatives.md). "Find the mail where they mentioned the invoice" is a body

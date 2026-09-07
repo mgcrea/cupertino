@@ -210,7 +210,7 @@ same machine, same iPhone 17 Pro on iOS 26.5, Settings on screen.
 | `apple_simulator_swipe`         | `allowWrites` | activate, then drag between two iOS points                              |
 | `apple_simulator_type`          | `allowWrites` | activate, then one key code per character                               |
 | `apple_simulator_key`           | `allowWrites` | one unmodified device key from a short allowlist                        |
-| `apple_simulator_press_button`  | `allowWrites` | home, lock, rotate — the Simulator's own chords, by name                |
+| `apple_simulator_press_button`  | `allowWrites` | home, lock, rotate_left, rotate_right — the Simulator's chords, by name |
 
 Deliberately absent: boot, shutdown, erase, install, launch, terminate, open_url, push, add_media,
 set_environment, screenshot, wait_for_element. None needs a grant, and

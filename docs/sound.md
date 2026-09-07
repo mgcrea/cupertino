@@ -3,10 +3,9 @@
 Phase-0 probe for the proposed sound surface. Measured on **macOS 26.6 (Darwin 25.6.0), 2026-09-01**,
 by [`scripts/probe-sound.swift`](../scripts/probe-sound.swift).
 
-**Status: NOT BUILT, and deliberately no entry in `surfaces.json`.** One there would generate Swift, a
-bridge allow-list, two Makefile regions, a CI handshake loop and a `smoke-swift` build for a server
-that is not there — the same reason [passwords.md](passwords.md) and [home.md](home.md) stay out of the
-manifest until their surface exists.
+**Status: BUILT.** `sound` is in `surfaces.json` and served in-process by the app, over the same
+`InProcessRPC` plumbing `screen` uses. What is below is the measurement that justified it;
+[What shipped](#what-shipped) is the result.
 
 **Verdict: GO, both halves.** The free half needs no permission at all. The recording half was
 measured through [`scripts/spike-app-tcc`](../scripts/spike-app-tcc/) — the grant lands on the bundle,
@@ -280,31 +279,60 @@ talks to is asking for a permission it does not need."_
 
 Rejected as this surface's lane, not as a lane.
 
-## What it would cost to build
+## What shipped
 
-- `storePermission` needs a fourth value, `"microphone"`. **Two ends must change together**: the
-  validator list, and the Swift emitter — which is a silent fallthrough,
-  `s.storePermission === "contacts" ? "contacts" : "fullDiskAccess"`. Adding a value to the validator
-  alone generates `.fullDiskAccess`, a surface claiming a grant it does not need, with a green build.
-- `INFOPLIST_KEY_NSMicrophoneUsageDescription`, which makes the app claim microphone access in its
-  metadata for **every** user, including everyone who never enables the surface.
-- A `MicrophoneStatus` in `Permissions.swift` — four states, the first status enum in this project
-  richer than `DiskAccessStatus`'s three.
-- `SoundDevices.swift`, `SoundCapture.swift`, `SoundServer.swift`, and an extension to `smoke-swift`,
-  which currently names the `screen` sources by hand.
+Every cost this section predicted was paid, and the list is kept because it is also the checklist a
+future capability follows. What it got wrong is marked.
+
+- `storePermission` gained `"microphone"`, and the **two ends did have to change together** — the
+  validator list and the Swift emitter. The emitter is no longer the silent fallthrough this
+  paragraph warned about: `scripts/generate-surfaces.mjs` emits
+  `storePermission: .${STORE_PERMISSION[s.storePermission]}` from a lookup table, so a value the
+  table does not carry is a build error rather than a quiet `.fullDiskAccess`.
+- `INFOPLIST_KEY_NSMicrophoneUsageDescription` shipped, and it does make the app claim microphone
+  access in its metadata for **every** user. The string names the surface and the gate, and says the
+  orange indicator runs the whole time. `com.apple.security.device.audio-input` went into
+  `Cupertino.entitlements` with it.
+- `MicrophoneStatus` is in `Permissions.swift`, four states as predicted, and it is the first status
+  enum here richer than `DiskAccessStatus`'s three.
+- `SoundDevices.swift`, `SoundCapture.swift` and `SoundServer.swift` all exist. `smoke-swift` no
+  longer names the `screen` sources by hand: it iterates `SWIFT_SURFACES`, which
+  `surfaces.json` generates, so a fifth in-process surface needs no Makefile edit at all.
 - Icon: `/System/Library/ExtensionKit/Extensions/Sound.appex` declares
   `ISTypeIdentifier = com.apple.graphic-icon.sound`, exactly parallel to the `DisplaysExt.appex` that
   `screen` already points at. Symbol fallback `speaker.wave.2`.
 
-`supportsWrites` should be **true**, unlike `screen` — volume, mute, speak and the default device are mutations that
-are not recording, and they must be reachable without ever enabling the microphone. Recording sits
-behind its own gate, `allowRecording`, following the `allowCodes` precedent that a change of tier gets
-_"its own switch rather than `allowWrites`"_.
+**Enumeration got faster than this probe measured.** The table above says 42.5 ms; the shipped
+`SoundDevices.swift` measures the same four devices in **28 ms**, which is the figure
+`surfaces.json` and [surfaces.md](surfaces.md) carry. The probe measured a cold process doing its
+first CoreAudio call, and both numbers are far below anything a caller notices.
 
-`defaultEnabled` is **false**, the only `false` beside `screen`'s. Volume and speech are harmless,
-but the surface carries the microphone lane behind them, and the switch that decides whether an MCP
-client sees this surface at all should be moved by the person who wants it rather than by an
-install. A Mac nobody has asked serves no sound tools and has `cupertino-sound` in no client config.
+`supportsWrites` is **true**, unlike `screen` — volume, mute, speak and the default device are
+mutations that are not recording, and they are reachable without ever enabling the microphone.
+Recording sits behind its own gate, `allowRecording`, following the `allowCodes` precedent that a
+change of tier gets _"its own switch rather than `allowWrites`"_.
+
+`defaultEnabled` is **false**. It was the only `false` beside `screen`'s when this was written and is
+now one of four, with `desktop` and `simulator` — every surface whose grant reaches past the thing
+being brokered. Volume and speech are harmless, but the surface carries the microphone lane behind
+them, and the switch that decides whether an MCP client sees this surface at all should be moved by
+the person who wants it rather than by an install. A Mac nobody has asked serves no sound tools and
+has `cupertino-sound` in no client config.
+
+Ten tools, split by the two independent gates:
+
+| Tool                             | Gated                | Answers                                             |
+| -------------------------------- | -------------------- | --------------------------------------------------- |
+| `apple_sound_list_devices`       | no                   | every CoreAudio device, with settability per device |
+| `apple_sound_get_volume`         | no                   | per device, and says so when the hardware has none  |
+| `apple_sound_diagnostics`        | no                   | grant, gates, devices resolved                      |
+| `apple_sound_recording_status`   | no                   | reads the live recorder, never a cache              |
+| `apple_sound_set_volume`         | `allowWrites`        | per device                                          |
+| `apple_sound_set_muted`          | `allowWrites`        | per device                                          |
+| `apple_sound_set_default_device` | `allowWrites`        | output AND input — the capability with no CLI       |
+| `apple_sound_speak`              | `allowWrites`        | text to the default output                          |
+| `apple_sound_start_recording`    | **`allowRecording`** | to CAF, never m4a                                   |
+| `apple_sound_stop_recording`     | **`allowRecording`** | finalises the container                             |
 
 ## Still open
 
@@ -317,10 +345,12 @@ install. A Mac nobody has asked serves no sound tools and has `cupertino-sound` 
   The shipping default should be measured, not inherited from this probe.
 - **A device disappearing mid-capture** — unplugging headphones, a Continuity device walking out of the
   room. Unmeasured, and it decides what `stop_recording` returns when there is nothing left to stop.
-- **Recording is stateful, and would be the first such tool here.** `start`/`stop` outlives a tool call,
-  so `recording_status` must read the live recorder rather than cache, and `start` must refuse when one
-  is already running instead of opening a second. The failure mode to design against is the orphaned
-  recording — the audio analogue of the stranded `-ScreenshotMode` instance that fails `make smoke`.
+- ~~**Recording is stateful, and would be the first such tool here.**~~ Settled by the build.
+  `start`/`stop` does outlive a tool call, and `SoundCapture.swift` answers all three requirements:
+  `recording_status` reads the live recorder rather than a cache, `start` refuses with
+  `alreadyRecording` instead of opening a second, and `stop()` also runs from the app's termination
+  handler — a quit mid-recording would otherwise leave an unfinalised container, which is the same
+  total loss as a truncated m4a.
 - **System-audio capture** is available and deliberately not proposed. `AudioHardwareCreateProcessTap`
   (`API_AVAILABLE(macos 14.2)`) records what the speakers play, including the other side of a call —
   a person who consented to nothing. Strictly worse than the microphone and its own decision, the same

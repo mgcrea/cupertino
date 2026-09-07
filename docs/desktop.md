@@ -370,12 +370,13 @@ one grant and one implementation in `ScreenCapture.swift`.
 
 ### The seam this leaves
 
-`desktop` reaches every running application. `screen` reaches eight, and is scoped at three levels
-rather than by convention:
+`desktop` reaches every running application. `screen` reaches the nine the table brokers, and is
+scoped at three levels rather than by convention:
 
 1. `capture_surface`'s schema declares `surface` as an **enum of surface ids** — verified live:
-   `['mail','notes','reminders','calendar','contacts','messages','safari','maps']`. An agent cannot
-   express "capture Xcode".
+   `['mail','notes','reminders','calendar','contacts','messages','safari','maps','simulator']`. The
+   enum is built from `Surface.all` filtered to entries with a `bundleID`, so it grew by itself when
+   `simulator` landed. An agent cannot express "capture Xcode".
 2. `Surface.named(wanted)` resolves through the closed table; anything else is `unknownSurface`.
 3. `targets()` walks `Surface.all` and skips every entry without a `bundleID`.
 
@@ -615,7 +616,7 @@ handle, or an application answering an AX query. That list's known weakness, "sh
 helper layers", is harmless when the only question is which display, and taking the largest window
 stops a helper layer winning.
 
-**`sharingType = .none` keeps it out of captures**, so `apple_screen_capture` and the screenshot
+**`sharingType = .none` keeps it out of captures**, so `apple_screen_capture_surface` and the screenshot
 pipeline never see it: the `screen` surface exists to show a model what the USER can see, and a frame
 with Cupertino's own banner across it is noise at best. The cost is real and worth stating — nobody
 can screenshot the indicator, including whoever next tries to verify it. The verification above is

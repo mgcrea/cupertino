@@ -10,12 +10,12 @@ SQL lives beside the search lane in
 This started as "should we adopt Cloudflare-style Code Mode — one sandboxed `execute` tool and a
 generated TypeScript API — to cut what the tool surface costs in context?"
 
-No. The listing cost is real (93 tools across eight surfaces, ~40 KB of description prose before
+No. The listing cost is real (98 tools across the eight node surfaces, ~40 KB of description prose before
 schema scaffolding), but code mode relocates that cost rather than removing it: the model still
 needs the API, and the win in the published versions comes from the _client_ lazily loading only
 the modules a task touches — which the clients that matter already do for tool schemas. What it
 would definitely cost is the thing the tool surface is _for_ here. A `run_code` tool holding Full
-Disk Access and write access to Mail collapses 93 individually-permissionable operations into one
+Disk Access and write access to Mail collapses 98 individually-permissionable operations into one
 opaque call, and tool identity is what host allowlists key on, what the audit log records, and
 what `allowWrites` gates on in [`config.ts`](../packages/core/src/config.ts).
 

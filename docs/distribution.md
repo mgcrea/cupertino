@@ -87,12 +87,15 @@ and "Apple MCP" sitting there would undercut the README's first line.
 ```text
 cupertino/
   packages/core/        @mgcrea/mcp-apple-core
-  packages/mail/        @mgcrea/mcp-apple-mail   ← this repo, history preserved
+  packages/mail/        @mgcrea/mcp-apple-mail
   packages/notes/
   packages/reminders/
-  packages/contacts/    implemented
-  packages/messages/    implemented
-  apps/apple/           the Cupertino.app build
+  packages/calendar/
+  packages/contacts/
+  packages/messages/
+  packages/safari/
+  packages/maps/
+  apps/apple/           the Cupertino.app build, and the four in-process surfaces
   apps/website/         the marketing site
   design/               the one mark, and what `make icon` generates from it
   docs/                 this
@@ -148,7 +151,7 @@ order of work below asked for: Full Disk Access and Automation granted to a sign
 inherited by the processes it spawns, two levels deep — a `node` grandchild reads the Envelope
 Index, and `tccd` resolves a grandchild `osascript` to `io.mgcrea.cupertino`, not to whatever
 launched it. So there is nothing to escape, and `responsibility_spawnattrs_setdisclaim` is no
-longer needed. `native/launcher.c` stays in the repo as the clearest statement of the
+longer needed. `packages/mail/native/launcher.c` stays in the repo as the clearest statement of the
 responsible-process problem, but it is not shipped — and neither is
 [`scripts/spike-disclaim`](../scripts/spike-disclaim), which is the probe that proved the SPI worked
 before the app made it unnecessary. Both are kept as the record of an approach that was measured
@@ -433,7 +436,7 @@ once the file lane landed.
 **The measurements retired it, and it should stop being claimed.** It held for Notes (97 ms) and
 holds for Reminders. It never held for Messages, which has no read path at all. And it does not hold
 for Mail or Calendar: a 74-second search and a 3.4-second range query are not a trial, they are a
-broken product that happens to return the right answer. A promise three of eight surfaces cannot
+broken product that happens to return the right answer. A promise three surfaces cannot
 keep is worse than no promise.
 
 What replaces it is narrower and true: **with writes off, a surface needs no Automation grant at
@@ -466,16 +469,17 @@ to "what did I just give Full Disk Access to".
 
 ## Risks
 
-- **The disclaim SPI is still private.** No worse than today, and `native/launcher.c` already
+- **The disclaim SPI is still private.** No worse than today, and `packages/mail/native/launcher.c` already
   warns to stderr and runs the server without it. `scripts/spike-launchd-fda.sh` is the measured
   fallback: a LaunchAgent gets its own Full Disk Access identity too.
 - **Quarantine on first exec.** The app is spawned by an MCP host and may never be opened by the
   user. Stapled notarization should satisfy Gatekeeper — test it on a machine that has never seen
   the bundle, because if it does not hold, the double-click path stops being a nicety.
 - **Scope.** Settled since 1.1.0: core and every bundled surface — seven of them as of 1.2.0 — are
-  in scope to publish, versioned with the app rather than on their own count. `.release-it.json`
-  keeps `npm.publish: false` deliberately — release-it bumps and tags, and the `publish-npm` job
-  does the publishing, so a release cannot happen from a laptop without provenance.
+  in scope to publish, versioned with the app rather than on their own count. Each package's
+  `.release-it.json` keeps `npm.publish: false` deliberately — release-it bumps and tags, and the
+  `publish-npm` job does the publishing, so a release cannot happen from a laptop without
+  provenance.
 
   **All eight are on npm at 1.3.0 as of 2026-08-26**, which closes a gap this section tracked from
   1.1.0. Two of them got there the wrong way, and that is the part worth keeping.

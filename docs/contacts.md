@@ -76,8 +76,11 @@ lands on `open` while letting `access` through. Two consequences:
   fallback because Reminders' store path is a directory.
 - **It asks.** Full Disk Access must be granted by hand in System Settings and never prompts; the
   Contacts grant prompts on first touch. That is a materially better permission story than the one the
-  rest of the app has — and it is a grant `apps/apple/Cupertino/Permissions.swift` does not model, the
-  second such gap after Safari's "Allow JavaScript from Apple Events" toggle.
+  rest of the app has. It was a grant `apps/apple/Cupertino/Permissions.swift` did not model, the
+  second such gap after Safari's "Allow JavaScript from Apple Events" toggle; that half is now fixed —
+  `Permissions.contacts()` probes it with `access(2)` and `storeGrant(for:diskAccess:)` dispatches on
+  `Surface.storePermission`. Safari's toggle is still unmodelled, and deliberately so, because no
+  shipped verb needs it.
 
 **Unsettled:** whether Full Disk Access alone opens this store, or whether the Contacts grant is also
 required. A process holding the Contacts grant and no FDA reads it fine — that direction is measured.
@@ -185,8 +188,8 @@ Calendar's bare table names.
 | Containers     | `ZCONTAINER`, `ZCONTAINER1`, `ZCONTAINER2`, `ZLASTDOTMACACCOUNT`                              |
 
 `ZLINKID` matters for output: Contacts shows one unified card for a person who exists in two accounts,
-and a resolver without it hands back two names for one handle. The six-record gap between the union and
-the live count is the first place to look.
+and a resolver without it hands back two names for one handle. It is not visible as a count gap —
+the union reconciles exactly against the live figure, as the correction above records.
 
 Schema fixture captured: `packages/contacts/test/fixtures/contacts-store.sql`, 94 objects, no rows.
 
@@ -212,8 +215,9 @@ the probe, not findings about the store.
 
 ## Still open
 
-- **Whether Full Disk Access alone opens this store.** Measured in one direction only. Decides whether
-  the app needs a permission state it does not model.
+- **Whether Full Disk Access alone opens this store.** Measured in one direction only. It no longer
+  decides anything about the app's permission model — `Permissions` dispatches on the surface's own
+  `storePermission` and probes the Contacts service directly — but the answer is still unknown.
 - **`ZLINKID` and unified contacts.** Counts now reconcile exactly, so there are no stray duplicates
   to explain — but a person held in two accounts still resolves to two records, and collapsing them is
   unmeasured.
@@ -235,8 +239,10 @@ the probe, not findings about the store.
 
 ## What was built
 
-`packages/contacts` — `@mgcrea/mcp-apple-contacts`, five read tools, no write tools, no Apple Events
-lane, 54 tests.
+`packages/contacts` — `@mgcrea/mcp-apple-contacts`. Five read tools at first, with no write tools and
+no Apple Events lane; it now ships **seven tools**, the two writes added later going out over Apple
+Events behind `allowWrites` — see [Writes, added afterwards](#writes-added-afterwards). The five reads
+below are unchanged and still need no Automation grant.
 
 | Tool                             | Notes                                     |
 | -------------------------------- | ----------------------------------------- |

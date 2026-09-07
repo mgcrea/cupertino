@@ -56,7 +56,8 @@ being readable at all.
 
 ## What is actually being sold
 
-Not the tools. They are MIT, and a `.mcp.json` pointing at `node dist/cli.js` stays free forever.
+Not the tools. They are MIT, and a `.mcp.json` pointing at `npx -y @mgcrea/mcp-apple-mail` stays
+free forever.
 
 What is sold is what [distribution.md](distribution.md) already argues for: **one Full Disk Access
 grant, held by a notarized binary from an identifiable developer**, instead of four grants handed
@@ -127,8 +128,10 @@ contradicts its own pitch, and the next section is why that matters more than us
    of ownership ships under a **new** bundle identifier — every user re-grants, consciously, having
    been told who the acquirer is. That is deliberately expensive to acquire through, which is the
    whole point. The second is a twelve-month dead-man's switch: no release and no substantive commit
-   for a year and `apps/apple/` relicenses to MIT on its own, because a redistribution reservation
-   protecting an unmaintained project protects nothing and only blocks a fork.
+   for a year and `apps/apple/` relicenses to MIT, because a redistribution reservation protecting an
+   unmaintained project protects nothing and only blocks a fork. That one is a commitment made in
+   `succession.md` and owed through the EULA; the `apps/apple/LICENSE` text does not yet carry the
+   clause itself, which is a gap worth closing in the licence rather than only in the promise.
 
 ## Enforcing the first claim
 
@@ -213,8 +216,8 @@ Three things to settle before it ships:
   to be built from the runtime socket path rather than hardcoded, since `BridgeProtocol.socketPath`
   is derived per user.
 - **`sandbox_init` is deprecated SPI.** Same risk class as `responsibility_spawnattrs_setdisclaim`,
-  already accepted in `native/launcher.c`, and with no App Review in the path there is no rejection
-  risk. It should degrade-don't-die exactly the way that `dlsym` does.
+  already accepted in `packages/mail/native/launcher.c`, and with no App Review in the path there is
+  no rejection risk. It should degrade-don't-die exactly the way that `dlsym` does.
 - **Whether a custom profile disturbs TCC** — Full Disk Access, the disclaimed re-exec, Apple Events
   — is an empirical question rather than a design one. It is a spike in the shape of
   `scripts/spike-app-tcc`.
@@ -461,9 +464,15 @@ produce byte-identical keys from identical input.
 
 `UserDefaults` rather than the Keychain, which is what this table said first. The key is not a
 secret — it is issued to the user, rendered in the menu bar, emailed in plain text and re-sendable on
-demand — so encrypting it at rest would be ceremony, and it would make licensing the app's first
-`SecItem` code for nothing gained. `SurfaceSettings.allowWrites` already reads `UserDefaults` synchronously
-from the connection thread, which is exactly what the gate needs and all it needs.
+demand — so encrypting it at rest would be ceremony for nothing gained.
+`SurfaceSettings.allowWrites` already reads `UserDefaults` synchronously from the connection thread,
+which is exactly what the gate needs and all it needs.
+
+This used to add "and it would make licensing the app's first `SecItem` code". That clause is gone:
+`KeyStore.swift` is that code now, holding the audit-export signing key in the Keychain. The
+distinction it draws is the one that matters here — a licence key can be re-issued and retyped, a
+private signing key cannot — so the decision above stands on its own reasoning rather than on being
+first.
 
 **"Who has not paid" is not stored anywhere.** There is no such list. It is the absence of a valid key
 on a disk we cannot see, and any design that needs the list has smuggled a phone-home back in.
