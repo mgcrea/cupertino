@@ -432,14 +432,16 @@ it. Mail also takes `*_ROOT`, `*_ENVELOPE_INDEX`, `*_DEGRADED_MAX_MESSAGES`, `*_
 `*_BODY_SCAN_MAX`, `*_BODY_SCAN_BYTES` and `*_MAILBOX_CACHE_TTL_MS`; see [`packages/mail/src/config.ts`](packages/mail/src/config.ts).
 
 `*_EXPOSE_PROMPTS` is a cost knob, not a safety gate — which is why it defaults **on** while
-writes default off. Measured across all eight servers with writes enabled, the prompt and resource
-listings come to ~3.4k tokens against ~26.5k for the tool definitions, so about 13% on top of a
-bill that tools dominate either way; resource _contents_ cost nothing until something reads one.
+writes default off. Measured across all eight node servers with writes enabled, the prompt and
+resource listings come to ~3.7k tokens against ~25.3k for the tool definitions, so about 14% on top
+of a bill that tools dominate either way; resource _contents_ cost nothing until something reads
+one. The per-surface breakdown is in
+[docs/prompts-and-resources.md](docs/prompts-and-resources.md).
 
-`*_LAZY_TOOLS` is the knob for that ~26.5k. With it on, a server lists its diagnostics tool plus
+`*_LAZY_TOOLS` is the knob for that ~25.3k. With it on, a server lists its diagnostics tool plus
 `apple_<surface>_search_tools`, `_describe_tool` and `_call_tool` — and `_call_write_tool` when
 writes are on — instead of every tool up front: ~5.8k tokens across the eight servers rather than
-~25.4k, a 4.4× cut. It is off by default because it **trades** rather than tightens. The server
+~25.3k, a 4.4× cut. It is off by default because it **trades** rather than tightens. The server
 refuses exactly what it refused before, and a write tool is still absent rather than merely hidden
 when `*_ALLOW_WRITES` is off, but your client's per-tool permission prompt collapses into two: one
 for this surface's reads, one for its writes. Leave it off for Claude Code and Claude Desktop,
@@ -515,7 +517,7 @@ under it rather than under an editor:
 | **Writes are off, per surface**        | and the toggle decides whether the mutating tools are registered at all                                |
 | **`*_ACCOUNTS` bounds reading**        | the blast radius on Mail is the archive, not the mutations                                             |
 | **Results say how much to trust them** | `indexAgeSeconds`, a WAL-blind warning, and a structured `degraded` result rather than a vanished tool |
-| **Eight app surfaces, one grant**      | which is the actual payoff of the indivisibility above                                                 |
+| **Seven app surfaces, one grant**      | which is the actual payoff of the indivisibility above; the other five name their own                  |
 
 [docs/alternatives.md](docs/alternatives.md) is the honest version of that list: what else reads
 Apple Mail for an assistant, and where those tools are ahead.
@@ -623,8 +625,8 @@ Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-ki
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per package, so a tag names what it publishes: `mail-v1.16.0`,
-`reminders-v1.16.0`, `calendar-v1.16.0`, `core-v1.16.0`. The app is tagged `app-v1.16.0` and releases on its own lane —
+Releases are tagged per package, so a tag names what it publishes: `mail-v1.17.0`,
+`reminders-v1.17.0`, `calendar-v1.17.0`, `core-v1.17.0`. The app is tagged `app-v1.17.0` and releases on its own lane —
 a signed, notarized `Cupertino.zip` attached to the GitHub release, plus its SHA-256. See
 [docs/distribution.md](docs/distribution.md).
 <!-- </generated:version> -->
