@@ -34,6 +34,12 @@ enum InProcessRPC {
   ///
   /// - Parameters:
   ///   - name: the `serverInfo.name`, e.g. `cupertino-desktop`.
+  ///   - instructions: the `initialize` result's `instructions`, which a client
+  ///     loads on connect without being asked — unlike a resource, which is
+  ///     pull-only and so goes unread unless something names it. Paid on every
+  ///     connect by every surface a client wires up, so it holds only what
+  ///     changes a caller's first move and points at the guide for the rest.
+  ///     Omitted from the answer entirely when nil.
   ///   - tools: the tool list, already gated.
   ///   - resources: the resource list.
   ///   - read: answers `resources/read` for one uri.
@@ -41,6 +47,7 @@ enum InProcessRPC {
   static func dispatch(
     _ line: String,
     name: String,
+    instructions: String? = nil,
     tools: () -> [[String: Any]],
     resources: () -> [[String: Any]],
     read: (_ uri: String, _ id: Any?) -> String,
@@ -64,15 +71,16 @@ enum InProcessRPC {
 
     switch method {
     case "initialize":
-      return isNotification
-        ? nil
-        : result(
-          id,
-          [
-            "protocolVersion": protocolVersion,
-            "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
-            "serverInfo": ["name": name, "version": AppInfo.shortVersion],
-          ])
+      guard !isNotification else { return nil }
+      var value: [String: Any] = [
+        "protocolVersion": protocolVersion,
+        "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
+        "serverInfo": ["name": name, "version": AppInfo.shortVersion],
+      ]
+      // Absent, not null, for a surface that declares none — so their answer
+      // stays byte-for-byte what it was.
+      if let instructions { value["instructions"] = instructions }
+      return result(id, value)
 
     case "ping":
       return isNotification ? nil : result(id, [String: Any]())

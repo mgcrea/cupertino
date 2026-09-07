@@ -51,6 +51,7 @@ enum SimulatorServer {
     InProcessRPC.dispatch(
       line,
       name: "cupertino-simulator",
+      instructions: instructions(writesAllowed),
       tools: { tools(writesAllowed: writesAllowed) },
       resources: { resources() },
       read: { uri, id in readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed)
@@ -786,6 +787,38 @@ enum SimulatorServer {
     default:
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
     }
+  }
+
+  /// What a client loads on connect, which a resource never is: `guide` is
+  /// pull-only, so a caller who never names the uri drives the Simulator
+  /// without ever seeing it. This is the short version — only what changes the
+  /// first move — and it names the guide for the rest. Kept deliberately small:
+  /// it is paid on every connect, alongside every other surface's.
+  private static func instructions(_ writesAllowed: Bool) -> String {
+    guard writesAllowed else {
+      return """
+        Reading an iOS app's own controls on a Simulator through the Mac's accessibility tree —
+        no WebDriverAgent and no runner process. Every `rect` and `point` is in iOS points,
+        top-left of the device screen.
+
+        Writes are off, so this surface can only look: the driving tools are not registered at
+        all. Fuller notes: `cupertino://simulator/guide`.
+        """
+    }
+    return """
+      Driving an iOS app on a Simulator through the Mac's accessibility tree — no WebDriverAgent
+      and no runner process to keep alive.
+
+      Prefer `apple_simulator_press` with a handle from `ui_tree` or `find_elements`: it
+      addresses the control, needs no activation and survives the window moving. `tap`, `swipe`,
+      `type` and `key` are synthetic input the Simulator only takes when it is frontmost, so each
+      one takes the focus from whoever is using the Mac — read the screen again after any of them
+      rather than assuming the result. Every `rect` and `point` is in iOS points, top-left of the
+      device screen.
+
+      Fuller notes, including what this lane reaches and what stays with `ios_simulator_*`:
+      `cupertino://simulator/guide`.
+      """
   }
 
   /// Static apart from the write line: no probe fact, so it reads on a Mac
