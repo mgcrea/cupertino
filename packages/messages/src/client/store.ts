@@ -409,7 +409,7 @@ export class MessagesStore {
     // Stable sort, so a column hit and a blob hit at the same instant keep the
     // order the cheaper lane found them in.
     return [...column, ...decoded]
-      .sort((a, b) => (b.sentAt ?? -Infinity) - (a.sentAt ?? -Infinity))
+      .toSorted((a, b) => (b.sentAt ?? -Infinity) - (a.sentAt ?? -Infinity))
       .slice(0, cap);
   }
 

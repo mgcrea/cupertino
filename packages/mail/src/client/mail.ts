@@ -468,7 +468,7 @@ export class AppleMailClient {
       const known = [...lookup.values()]
         .filter((e) => !account || e.accountUuid === account.id)
         .map((e) => e.mailbox);
-      const unique = [...new Set(known)].sort();
+      const unique = [...new Set(known)].toSorted();
       throw new PreconditionError(
         `No mailbox matching ${JSON.stringify(opts.mailbox ?? "")}` +
           `${account ? ` in account ${JSON.stringify(account.name)}` : ""} is present in ` +

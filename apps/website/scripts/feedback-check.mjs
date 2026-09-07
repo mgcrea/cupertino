@@ -143,8 +143,10 @@ const unscopedAnchorRule = /\.[a-z-]+\[data-astro-cid-[^\]]+\]\s*a\s*\{[^}]*colo
 // so the source class is what gets checked.
 const unscopedVariant = /\[&_a\]:(text|decoration|underline)/;
 for (const file of pages) {
-  const html = readFileSync(file, "utf8");
-  const variant = html.match(unscopedVariant);
+  // Named for what it is rather than shadowing the built feedback page above,
+  // which is a different file and is still being read from further down.
+  const source = readFileSync(file, "utf8");
+  const variant = source.match(unscopedVariant);
   if (variant) {
     failures.push(
       `${file.replace(root + "/", "")}: prose styles anchors with \`${variant[0]}\`.\n` +
@@ -154,7 +156,7 @@ for (const file of pages) {
     );
   }
 
-  const hit = html.match(unscopedAnchorRule);
+  const hit = source.match(unscopedAnchorRule);
   if (hit) {
     failures.push(
       `${file.replace(root + "/", "")}: a scoped layout styles bare \`a\` with a colour.\n` +

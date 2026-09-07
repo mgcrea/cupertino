@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Spike 1 — does a launchd-spawned process get its OWN Full Disk Access identity?
 #
 # OUTCOME: yes, it works — but this route was NOT the one adopted. Kept because

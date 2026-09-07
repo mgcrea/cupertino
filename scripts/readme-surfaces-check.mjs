@@ -210,10 +210,10 @@ const READ_ONLY_CLAIMS = [
 
 for (const s of manifest.surfaces) {
   const listed = siteTools(s.id);
-  const section = sectionFor(s.displayName);
+  const body = sectionFor(s.displayName);
   // A surface with no section of its own is not a drift: `screen`, `sound` and
   // `desktop` are described in prose elsewhere, having no npm package to list.
-  if (!listed || !section) continue;
+  if (!listed || !body) continue;
 
   /*
    * A SAFETY claim, anywhere in the section rather than only in the status
@@ -221,7 +221,7 @@ for (const s of manifest.surfaces) {
    * in a bold paragraph under a table that already had an empty write column,
    * and it was false in both places.
    */
-  if (s.supportsWrites && READ_ONLY_CLAIMS.some((re) => re.test(section))) {
+  if (s.supportsWrites && READ_ONLY_CLAIMS.some((re) => re.test(body))) {
     problems.push(
       `${s.displayName}: its section calls the surface read-only, but it registers ` +
         `${listed.write.length} write tool(s) — this is a safety claim and it is false`,
@@ -230,7 +230,7 @@ for (const s of manifest.surfaces) {
 
   // The table names tools without their `apple_<surface>_` prefix.
   const named = new Set(
-    [...section.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => `apple_${s.id}_${m[1]}`),
+    [...body.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => `apple_${s.id}_${m[1]}`),
   );
   const missing = [...listed.read, ...listed.write].filter((t) => !named.has(t));
   if (missing.length > 0) {

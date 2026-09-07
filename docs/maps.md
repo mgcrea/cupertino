@@ -445,8 +445,10 @@ tests are now unfaithful in fewer ways, and the ones that remain are labelled.
 
 This section previously dismissed AX in one line. That was an assertion, and the record on
 Maps is that assertions about Maps have been wrong every time.
-[scripts/spike-maps-ax-write.mjs](../scripts/spike-maps-ax-write.mjs) measured it instead.
-With a place card open, on macOS 26.6:
+[scripts/spike-maps-ax-write.mjs](../scripts/spike-maps-ax-write.mjs) measured it instead, and
+[scripts/spike-maps-ax-state.mjs](../scripts/spike-maps-ax-state.mjs) asked the follow-up that
+decides whether a write is safe: whether the control's state can be read BEFORE pressing it, since
+pressing a toggle that is already on removes what it names. With a place card open, on macOS 26.6:
 
     AXButton  "Favorite"   actions = AXPress/AXScrollToVisible/AXCancel/AXShowMenu
     AXButton  "Add"        actions = AXPress/...

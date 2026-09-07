@@ -149,7 +149,10 @@ inherited by the processes it spawns, two levels deep — a `node` grandchild re
 Index, and `tccd` resolves a grandchild `osascript` to `io.mgcrea.cupertino`, not to whatever
 launched it. So there is nothing to escape, and `responsibility_spawnattrs_setdisclaim` is no
 longer needed. `native/launcher.c` stays in the repo as the clearest statement of the
-responsible-process problem, but it is not shipped.
+responsible-process problem, but it is not shipped — and neither is
+[`scripts/spike-disclaim`](../scripts/spike-disclaim), which is the probe that proved the SPI worked
+before the app made it unnecessary. Both are kept as the record of an approach that was measured
+rather than abandoned on a hunch.
 
 What an MCP host spawns instead is `cupertino-bridge`, which copies bytes between stdin and a unix
 socket and opens no protected path at all. Its own TCC identity is therefore irrelevant. It

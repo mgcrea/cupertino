@@ -224,6 +224,10 @@ where it started.
 What the run cost the plan is that **almost every assumption `docs/maps.md` recorded about this
 control was wrong**, and none of it was visible from a read-only tree dump.
 
+The run itself is [`scripts/spike-desktop-maps-write.swift`](../scripts/spike-desktop-maps-write.swift),
+kept because this is the one question a read-only probe cannot answer: settling it meant changing
+something.
+
 ### 1. `FavoriteButton` does not write a favourite
 
 Pressing it opens a **"Name This Location" sheet** — a text field, Cancel and Save. Nothing is
