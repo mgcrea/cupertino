@@ -12,6 +12,45 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **What changed, readable after you have already updated.** Release notes existed in exactly one
+  place a user could reach: the sheet Sparkle puts up while it asks permission to install. That
+  sheet is gone the moment you press Install, which left the one person most likely to want them
+  — somebody who has just replaced an app holding Full Disk Access — with nowhere to look but
+  `CHANGELOG.md` on GitHub. Settings has a **What's New** pane now, beside Updates, because the
+  two are halves of one question: what did this build change, and is there a newer one. General
+  keeps the version and the build number, which answer _which_ build this is — the question you
+  ask with a bug report open, not the one you ask after updating.
+
+  It is generated, not bundled. `make changelog` compiles the last five releases of
+  `CHANGELOG.md` into `Changelog.swift` the same way `make surfaces` compiles `surfaces.json` into
+  `SurfaceCatalog.swift`, and `changelog-check` fails CI if the two drift — so the notes in the
+  app are the notes in the repository, or the build goes red. `### Internal` sections are dropped
+  at generation time rather than hidden at render time, so repo-facing prose never reaches the
+  binary. `[Unreleased]` is emitted separately and shown only in a Debug build, which matters here
+  because CI asserts only that a `## [<version>]` section exists, not that it is the top one.
+
+  The parse behind it is shared with `changelog-notes.mjs`, which renders the appcast, so the two
+  cannot disagree about what a bullet is — and the appcast's own guards, on a missing section and
+  an empty one, stay where they were. `scripts/lib/changelog.test.mjs` is written against the
+  shapes this file actually contains rather than tidy examples: a bullet with no bold headline, a
+  headline with a code span inside it, prose between a `###` heading and its first bullet, and a
+  freely named section like `### Note for 1.0.0 users`. One assertion is deliberately about code
+  spans rather than the word "undefined", because 1.3.0's prose is _about_ a field that read back
+  as `undefined` and the blunt check fails on a correct render.
+
+  Entries whose bold lead is a whole sentence get it pulled onto its own line; entries that bold
+  only the subject and run on — "…**filled the page**, because the text column pass ran to the
+  limit" — are left as one flowing paragraph, because splitting those puts a line break before a
+  comma.
+
+  Anything that shipped since the version you last read is marked, and says so from the menu bar
+  panel and the sidebar footer as well as in Settings — once, until you look. A fresh install is
+  treated as caught up rather than greeted with five unread releases.
+
 ## [1.17.0] - 2026-09-07
 
 ### Added
