@@ -213,6 +213,127 @@ enum AccessibilityDriver {
     (copy(el, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
   }
 
+  // ─── orphans: children the parent will not name ────────────────────────────
+
+  /// The Simulator's tab bar, measured 2026-09-07 (docs/simulator.md): an
+  /// `AXGroup` whose `AXChildren`, `AXVisibleChildren`, `AXContents`, `AXTabs`,
+  /// `AXSelectedChildren` and `AXChildrenInNavigationOrder` all answer 0 — and
+  /// whose frame, hit-tested, returns four `AXRadioButton`s that each name that
+  /// very group as their `AXParent`, and that take `AXPress`. The edge is
+  /// one-way: the children know their parent, the parent does not list them.
+  /// A walk that descends only `AXChildren` stops there and reports the walk
+  /// complete, which is worse than a truncated one because nothing says so.
+  ///
+  /// So when a container's children link is empty, its frame is swept with
+  /// `AXUIElementCopyElementAtPosition` and every distinct hit whose ancestor
+  /// chain leads back to the container is walked as one of its children. The
+  /// hit is the DEEPEST element at the point, so the chain is climbed to the
+  /// element directly under the container, and that is what is kept — the tree
+  /// stays a tree.
+  ///
+  /// Cost, measured across seven Mac apps and the Simulator: one hit-test is
+  /// 0.3–3 ms, and a whole tree holds between zero and five childless
+  /// containers that pass the gate below. Probe points inside a child already
+  /// found are skipped, so the tab bar's four tabs cost about ten round trips
+  /// rather than the grid's full count. That is why this runs on every walk
+  /// rather than behind a switch: the price is a few milliseconds where it does
+  /// nothing, and where it does something there was no answer before.
+  ///
+  /// What it does not recover: children of a container that is scrolled or
+  /// covered — a hit-test sees what is on screen. That is the same limit a
+  /// finger has, and `recovered` in the answer says how many came this way.
+  private static let sweepRoles: Set<String> = [
+    "AXGroup", "AXToolbar", "AXTabGroup", "AXRadioGroup", "AXList", "AXScrollArea",
+    "AXSplitGroup", "AXLayoutArea", "AXGenericElement",
+  ]
+  /// Coarser than the smallest control that matters (a tab item is 95x54) and
+  /// fine enough that nothing a finger can hit falls between two probes.
+  private static let sweepStep = 24.0
+  private static let sweepMaxProbes = 48
+
+  /// Whether an element with no `AXChildren` is worth sweeping: a container by
+  /// role, drawn at a size a child could hide in, and not itself a control — a
+  /// childless button is a leaf, and there are hundreds per window.
+  private static func sweepWorthy(role: String, rect: [Double]?, pressable: Bool) -> Bool {
+    guard sweepRoles.contains(role), !pressable, let rect else { return false }
+    return rect[2] >= sweepStep && rect[3] >= sweepStep
+  }
+
+  /// `AXUIElement` compares by identity through `CFEqual`, not by Swift `==`;
+  /// this is the wrapper that lets a `Set` do the de-duplication.
+  private struct ElementKey: Hashable {
+    let element: AXUIElement
+    static func == (a: ElementKey, b: ElementKey) -> Bool { CFEqual(a.element, b.element) }
+    func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
+  }
+
+  /// The hit-test sweep. Returns the recovered children in reading order
+  /// (top-to-bottom, then left-to-right, by their own frames rather than by
+  /// which probe found them), each one a direct child of `el` by its own
+  /// `AXParent` chain. `deadline` is the walk's wall-clock bound; a sweep that
+  /// would cross it stops and returns what it has.
+  private static func orphans(of el: AXUIElement, rect: [Double], deadline: Date)
+    -> [AXUIElement]
+  {
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(el, &pid) == .success else { return [] }
+    // Scoped to the application rather than system-wide, so a window of another
+    // app lying over this one cannot answer for it.
+    let app = element(for: pid)
+
+    let columns = max(1, min(Int(rect[2] / sweepStep), sweepMaxProbes))
+    let rows = max(1, min(Int(rect[3] / sweepStep), sweepMaxProbes / columns))
+    var found: [(element: AXUIElement, origin: CGPoint)] = []
+    var seen = Set<ElementKey>()
+    var covered: [CGRect] = []
+    func ordered() -> [AXUIElement] {
+      found.sorted {
+        $0.origin.y != $1.origin.y ? $0.origin.y < $1.origin.y : $0.origin.x < $1.origin.x
+      }.map(\.element)
+    }
+
+    for row in 0..<rows {
+      let y = rect[1] + rect[3] * (Double(row) + 0.5) / Double(rows)
+      for column in 0..<columns {
+        if Date() > deadline { return ordered() }
+        let x = rect[0] + rect[2] * (Double(column) + 0.5) / Double(columns)
+        let point = CGPoint(x: x, y: y)
+        if covered.contains(where: { $0.contains(point) }) { continue }
+
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(x), Float(y), &hit) == .success,
+          let deepest = hit, !CFEqual(deepest, el)
+        else { continue }
+
+        // Climb to the element directly under `el`. A chain that never reaches
+        // `el` is something else drawn at that point — a sibling, a sheet —
+        // and is not a child, however well it overlaps.
+        var child = deepest
+        var reached = false
+        for _ in 0..<12 {
+          guard let parent = copy(child, kAXParentAttribute as String) else { break }
+          let parentElement = parent as! AXUIElement
+          if CFEqual(parentElement, el) {
+            reached = true
+            break
+          }
+          child = parentElement
+        }
+        guard reached else { continue }
+
+        let key = ElementKey(element: child)
+        var origin = point
+        if let childRect = frame(child) {
+          origin = CGPoint(x: childRect[0], y: childRect[1])
+          covered.append(
+            CGRect(x: childRect[0], y: childRect[1], width: childRect[2], height: childRect[3]))
+        }
+        if seen.insert(key).inserted { found.append((child, origin)) }
+      }
+    }
+    return ordered()
+  }
+
   private static func actions(_ el: AXUIElement) -> [String] {
     var names: CFArray?
     guard AXUIElementCopyActionNames(el, &names) == .success else { return [] }
@@ -401,6 +522,10 @@ enum AccessibilityDriver {
     let point: [Double]?
     let pressable: Bool
     let depth: Int
+    /// Reached by hit-testing a container that did not list it — see
+    /// `orphans(of:)`. Emitted as `via: "hit-test"` only when true, the way
+    /// `pressable` is, so a tree that told the truth looks as it always did.
+    var recovered = false
 
     var json: [String: Any] {
       var out: [String: Any] = ["handle": handle, "role": role, "depth": depth]
@@ -411,6 +536,7 @@ enum AccessibilityDriver {
       if let rect { out["rect"] = rect }
       if let point { out["point"] = point }
       if pressable { out["pressable"] = true }
+      if recovered { out["via"] = "hit-test" }
       return out
     }
   }
@@ -422,6 +548,9 @@ enum AccessibilityDriver {
     let visited: Int
     let seconds: Double
     let stoppedBy: String?
+    /// How many nodes arrived by hit-testing a container whose children link
+    /// was empty — see `orphans(of:)`. Zero on a tree that told the truth.
+    let recovered: Int
   }
 
   struct Bounds {
@@ -475,13 +604,32 @@ enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
     let element = try resolve(handle, scope: scope)
-    return walk(
-      roots: children(element), detail: detail, bounds: bounds, bundleId: owner, match: match)
+    // The same recovery the walk applies below: expanding the Simulator's tab
+    // bar by handle used to answer nothing for the same reason walking into it
+    // did.
+    var roots = children(element)
+    var recovered = 0
+    if roots.isEmpty {
+      let role = string(element, kAXRoleAttribute as String) ?? "AXUnknown"
+      let rect = frame(element)
+      let pressable = actions(element).contains(kAXPressAction as String)
+      if sweepWorthy(role: role, rect: rect, pressable: pressable), let rect {
+        roots = orphans(
+          of: element, rect: rect, deadline: Date().addingTimeInterval(bounds.seconds))
+        recovered = roots.count
+      }
+    }
+    let tree = walk(
+      roots: roots, detail: detail, bounds: bounds, bundleId: owner, match: match,
+      rootsRecovered: recovered > 0)
+    return Tree(
+      elements: tree.elements, visited: tree.visited, seconds: tree.seconds,
+      stoppedBy: tree.stoppedBy, recovered: tree.recovered + recovered)
   }
 
   private static func walk(
     roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String,
-    match: ((Candidate) -> Bool)? = nil
+    match: ((Candidate) -> Bool)? = nil, rootsRecovered: Bool = false
   ) -> Tree {
     var out: [Element] = []
     var visited = 0
@@ -493,9 +641,11 @@ enum AccessibilityDriver {
     // children answered one child and named `depth(1)` as the reason, which is
     // true and useless. Measured on the Simulator's window, 2026-09-07.
     var depthCapped = false
+    var recovered = 0
     let started = Date()
+    let deadline = started.addingTimeInterval(bounds.seconds)
 
-    func visit(_ el: AXUIElement, depth: Int) {
+    func visit(_ el: AXUIElement, depth: Int, recovered viaHitTest: Bool = false) {
       if stoppedBy != nil { return }
       if visited >= bounds.nodes {
         stoppedBy = "nodes(\(bounds.nodes))"
@@ -548,7 +698,8 @@ enum AccessibilityDriver {
             rect: rect,
             point: rect.map { [$0[0] + $0[2] / 2, $0[1] + $0[3] / 2] },
             pressable: pressable,
-            depth: depth))
+            depth: depth,
+            recovered: viaHitTest))
       }
 
       if depth >= bounds.depth {
@@ -557,14 +708,29 @@ enum AccessibilityDriver {
         depthCapped = true
         return
       }
-      for child in children(el) { visit(child, depth: depth + 1) }
+      let next = children(el)
+      if !next.isEmpty {
+        for child in next { visit(child, depth: depth + 1) }
+        return
+      }
+      // Role and action are already in hand; the frame is read only for the few
+      // childless containers that get this far, since a node the caller did
+      // not keep has not paid for one yet.
+      if sweepRoles.contains(role), !pressable,
+        let rect = keep ? out.last?.rect : frame(el),
+        sweepWorthy(role: role, rect: rect, pressable: pressable)
+      {
+        let found = orphans(of: el, rect: rect, deadline: deadline)
+        recovered += found.count
+        for child in found { visit(child, depth: depth + 1, recovered: true) }
+      }
     }
 
-    for root in roots { visit(root, depth: 0) }
+    for root in roots { visit(root, depth: 0, recovered: rootsRecovered) }
     if stoppedBy == nil, depthCapped { stoppedBy = "depth(\(bounds.depth))" }
     return Tree(
       elements: out, visited: visited, seconds: Date().timeIntervalSince(started),
-      stoppedBy: stoppedBy)
+      stoppedBy: stoppedBy, recovered: recovered)
   }
 
   // ─── driving ───────────────────────────────────────────────────────────────

@@ -451,6 +451,11 @@ enum DesktopServer {
       "seconds": (tree.seconds * 1000).rounded() / 1000,
       "coordinateSpace": coordinateSpace,
     ]
+    // Present only when it happened: elements that arrived by hit-testing a
+    // container whose children link was empty (the Simulator's tab bar). A
+    // caller who sees it knows those nodes exist because they are on screen,
+    // and that a scrolled-away sibling would not have been found the same way.
+    if tree.recovered > 0 { body["recovered"] = tree.recovered }
 
     // Named rather than implied. A truncated answer that does not say so is
     // worse than a slow one, and which bound stopped it tells the caller what to
@@ -807,6 +812,11 @@ enum DesktopServer {
       elements or 5 seconds. The answer names which bound stopped it in `stoppedBy`.
       Reach further with `apple_desktop_expand` on a handle rather than by raising the
       bounds — that is what it is for.
+
+      A container that lists no children but draws some (a UIKit tab bar seen through the
+      Simulator) is swept by hit-testing its frame, and the children found that way are
+      walked as its own. `recovered` counts them when it happened; they are what is on
+      screen, so a scrolled-away sibling is not among them.
 
       ## A popover is its own window
 

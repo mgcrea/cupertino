@@ -130,8 +130,8 @@ enum SimulatorServer {
           + "elements with a tap point already computed" + pointDescription
           + " Each element carries an opaque handle apple_simulator_press takes. Rooted at the "
           + "device screen, so the Simulator's own bezel and toolbar never appear. It reaches a "
-          + "subset of what WebDriverAgent reaches — a tab bar can arrive as an empty container — "
-          + "and needs no runner at all.",
+          + "subset of what WebDriverAgent reaches, and needs no runner at all. A tab bar's items "
+          + "carry their SF Symbol name as `id`, which is stable across locales.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -817,10 +817,11 @@ enum SimulatorServer {
 
     ## What this reaches, and what it does not
 
-    A strict subset of what WebDriverAgent reaches, and a subset that is fully named. A tab bar
-    or a navigation bar can arrive as an empty container; when a control you can see is not
-    in the tree, `ios_simulator_ui_tree` sees it, or a `swipe` reaches it. Poll rather than
-    settle: the window exists before the device has drawn anything into it.
+    A strict subset of what WebDriverAgent reaches, and a subset that is fully named. A tab
+    bar's items report their SF Symbol name (`leaf`, `calendar`) as `id`, which does not
+    change with the device's language, so prefer it over the label. When a control you can
+    see is not in the tree, `ios_simulator_ui_tree` sees it, or a `swipe` reaches it. Poll
+    rather than settle: the window exists before the device has drawn anything into it.
 
     ## What stays with simctl
 

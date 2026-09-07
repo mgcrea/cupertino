@@ -51,6 +51,32 @@ summary.
   panel and the sidebar footer as well as in Settings — once, until you look. A fresh install is
   treated as caught up rather than greeted with five unread releases.
 
+### Fixed
+
+- **The Simulator's tab bar was there all along; the walker could not see it.** `docs/simulator.md`
+  recorded the tab bar as "genuinely childless, not merely unwalked": every children attribute on
+  the `AXGroup` answers 0. That was measured correctly and concluded wrongly. Hit-testing the
+  group's frame returns four `AXRadioButton`s, each naming that group as its `AXParent` and each
+  taking `AXPress` — the edge is one-way, the children know the parent and the parent does not
+  list them. A walk that descends only `AXChildren` stopped there and reported the walk complete,
+  which is worse than a truncated one because nothing said so.
+
+  `AccessibilityDriver.walk` now sweeps the frame of a container whose children link is empty with
+  `AXUIElementCopyElementAtPosition`, keeps every distinct hit whose parent chain leads back to the
+  container, and walks those as its children; `apple_desktop_expand` and
+  `apple_simulator_ui_tree` on such a handle do the same. The answer carries `recovered` when it
+  happened. On the screen that found it the walk went from 8 elements to 17: the tab bar's four
+  items and, from a navigation bar with the same broken link, a heading, a search field and three
+  toolbar buttons. Measured across seven Mac apps first: a hit-test costs 0.3–3 ms and a whole
+  tree holds at most five containers that qualify, so the sweep runs on every walk rather than
+  behind a switch.
+
+  The part worth knowing as a caller: the recovered tab items carry their SF Symbol name as `id`
+  (`leaf`, `checkmark.circle`, `calendar`, `cross.case`), which does not change with the device's
+  language. WebDriverAgent gives the same tabs no identifier at all, only the translated label —
+  so on this one point the Accessibility lane addresses more stably than the runner does. The
+  tool descriptions say so, and the sentence that called the tab bar an empty container is gone.
+
 ## [1.17.0] - 2026-09-07
 
 ### Added

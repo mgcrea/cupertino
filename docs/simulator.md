@@ -119,13 +119,74 @@ AXGroup "Tab Bar" [0,791 402x83]
 ```
 
 And on the screen group itself, `AXChildren` and `AXChildrenInNavigationOrder` both answer 11, so
-there is no richer tree behind the ordering attribute. The container is genuinely childless, not
-merely unwalked, and `apple_desktop_expand` has nothing to expand.
+there is no richer tree behind the ordering attribute. ~~The container is genuinely childless, not
+merely unwalked, and `apple_desktop_expand` has nothing to expand.~~ **Wrong, and corrected below
+on 2026-09-07: the container is childless by its `AXChildren` link and not by any other measure.
+The attribute readings above are all still true; the conclusion drawn from them was not.**
 
 **Two screens is a small sample and the coverage differed between them** — Settings gave essentially
 everything useful, Photos gave the content and none of the chrome. What decides which is not
 established here. A third screen with a known control set would settle it; this probe did not stage
 one.
+
+## The tab bar was there, 2026-09-07
+
+The section above pushed on every children attribute the group offers and found them all empty. It
+did not push on the one thing that does not go through the parent: **hit-testing**.
+`AXUIElementCopyElementAtPosition` across the tab bar's frame returns four real elements —
+
+```
+AXRadioButton  desc=Garden    id=leaf
+AXRadioButton  desc=Today     id=checkmark.circle
+AXRadioButton  desc=Calendar  id=calendar
+AXRadioButton  desc=Rescue    id=cross.case
+```
+
+— and each one, asked for `AXParent`, names the tab bar group; the chain continues up to the window
+and the application. So the edge is one-way: the children know their parent, and the parent does
+not list them. They are not hidden and not absent, they are **orphaned**. And they are drivable:
+`AXPress` on one switched the app's tab, confirmed by screenshot.
+
+This is therefore a limitation of the walker, not of the Simulator. `AccessibilityDriver.walk`
+descended `kAXChildrenAttribute` and nothing else, so a container with a broken children link was a
+dead end that reported nothing — a `maxDepth: 30` walk of this screen visited 36 nodes with no
+`stoppedBy`, because it genuinely had nowhere left to go. Verified with a raw AX probe that bypasses
+the driver, so this is not the driver misreporting.
+
+**Fixed in the walker.** When a container's children link is empty, its frame is swept with
+hit-tests and every distinct hit whose parent chain leads back to the container is walked as one of
+its children; the deepest hit is climbed to the element directly under the container so the tree
+stays a tree. `expand` on such a handle does the same. The answer carries `recovered` when it
+happened. Measured before shipping it everywhere: a hit-test costs 0.3–3 ms (Safari 0.29,
+Simulator 3.06), and across Finder, Notes, Maps, Safari, System Settings and Messages a whole tree
+holds between zero and five childless containers that pass the gate — so the sweep is on for every
+walk, with no switch. Finder's and Safari's whole windows walked with `recovered: 0` and no
+measurable change.
+
+On the screen that found it, same device, `apple_simulator_ui_tree { detail: "all" }`:
+
+|             | before | after     |
+| ----------- | ------ | --------- |
+| elements    | 8      | 17        |
+| `recovered` | —      | 9         |
+| seconds     | 0.109  | 0.35–0.45 |
+
+The nine are the tab bar's four items and five more from the **navigation bar**, whose group had the
+same broken link: a heading, a search field and three toolbar buttons (`action.identify`,
+`action.addPlant`, `action.more`). That is the shape of the Photos finding above — `Sort and
+Filter` and `Select` in the navigation bar, `Library`, `Collections` and `Search` in the tab bar —
+and the reason to expect it now closes too; that re-measurement has not been made.
+
+**The handle this gives is better than WebDriverAgent's.** The recovered tab items carry their SF
+Symbol name as `AXIdentifier`, and a symbol name is not localised: `cross.case` is `cross.case` on a
+French device whose label reads `Sauvetage`. WDA sees the same tabs and gives them no identifier at
+all, only the translated label. So a tab bar is addressable by a stable id through this lane and
+not through the runner — which partly inverts the verdict at the top of this file, on this one
+point.
+
+What the sweep does not recover: children of a container that is scrolled or covered. A hit-test
+sees what is on screen, which is the same limit a finger has, and `recovered` in the answer is how
+a caller knows those nodes came that way.
 
 ## Why this cannot move into `mcp-ios-simulator`
 

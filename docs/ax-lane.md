@@ -109,6 +109,14 @@ content is present before reporting a negative — the procedural rule
 `scripts/spike-maps-store.mjs` already applies to gated stores, which "refuses to report a negative
 unless it can open them".
 
+The same rule has a second form for a tree: **a container that lists no children is not proven
+childless until its frame has been hit-tested.** [`simulator.md`](simulator.md) pushed on every
+children attribute the Simulator's tab bar offers, found them all empty, and concluded the container
+was genuinely empty; `AXUIElementCopyElementAtPosition` across the same frame returned four pressable
+tabs whose `AXParent` was that container. The children link can be broken while the parent link is
+not, and only a hit-test tells the two apart. The walker does this itself now and reports it as
+`recovered`.
+
 ## What this does and does not license
 
 It does **not** make any of these a surface. `docs/distribution.md`'s cost for one is ~2k LOC, and
