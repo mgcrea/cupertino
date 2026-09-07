@@ -175,6 +175,16 @@ Share of pressable elements a `role == "AXButton"` filter would miss. Maps repor
 nodes as `AXGenericElement`. The rule stands exactly as written: **ask what has `AXPress`, never what
 calls itself a button.**
 
+Re-measured 2026-09-07 across the 21 regular apps running on one Mac, and the table above is the
+Catalyst half of the story. Maps 77%, Messages 83%, Calendar 75%, System Settings 68%: the misses are
+`AXGenericElement`, `AXStaticText` and `AXHeading`, and no role list recovers them. In AppKit and
+plain SwiftUI apps — Finder 17%, Mail 26%, four in-house SwiftUI apps 15–27% — most controls do say
+`AXButton`, and widening the filter to the whole button family (checkbox, radio, pop-up, disclosure,
+link) leaves one or two stragglers per app; Xcode goes from 60% missed to none. So "it is the norm"
+above is true of Catalyst and overstated elsewhere. The rule does not change, for the reason that
+survives the re-measurement: the stragglers are a clickable heading or a list row, exactly the
+elements a caller cannot predict, and `pressable` costs nothing to ask.
+
 ## Traps found
 
 **Counting nodes instead of round trips produced a confident NO-GO.** The first instrumented run

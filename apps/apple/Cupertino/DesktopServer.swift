@@ -800,9 +800,11 @@ enum DesktopServer {
       order. An identifier is unlocalised and survives a layout change; a point does
       not survive either, and on a non-English Mac a name may not survive at all.
 
-      Do not filter by role to find something clickable. Controls report themselves as
-      AXGenericElement, AXStaticText and AXImage at least as often as AXButton — in Maps
-      a role filter would miss 86% of what can be pressed. The tree already marks
+      Do not filter by role to find something clickable. In Catalyst apps controls report
+      themselves as AXGenericElement, AXStaticText and AXImage more often than AXButton —
+      a role filter misses about 80% of what can be pressed in Maps, Messages and
+      Calendar. In AppKit and SwiftUI apps it misses a fifth, and that fifth is the
+      clickable heading or row you could not have guessed. The tree already marks
       `pressable`, which is the answer to "what has an AXPress".
 
       ## The tree is bounded on purpose
