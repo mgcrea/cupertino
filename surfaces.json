@@ -1,5 +1,4 @@
 {
-  "$schema": "./scripts/surfaces.schema.json",
   "$comment": [
     "THE SURFACE LIST. Every other copy of it is generated from this file by",
     "`make surfaces` (scripts/generate-surfaces.mjs), and CI fails if any of them",
@@ -14,8 +13,11 @@
     "fifth.",
     "",
     "Adding a surface: add an entry here, run `make surfaces`, review the diff.",
-    "Nothing below is free-form \u2014 `scripts/surfaces.schema.json` is enforced by the",
-    "generator before it writes anything."
+    "Nothing below is free-form \u2014 `scripts/generate-surfaces.mjs` validates every",
+    "entry before it writes anything, and refuses to write if any of them fails.",
+    "The rules are cross-field (a capability must have bundleId null; a surface",
+    "that sends no Apple Event must have appleEventsScope null), which is why",
+    "they live in the generator rather than in a JSON Schema file."
   ],
   "surfaces": [
     {
