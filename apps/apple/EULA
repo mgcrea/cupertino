@@ -88,10 +88,15 @@ however you obtained the build and whether or not you have paid.
 4. VALIDATION IS OFFLINE, AND WHAT THAT COSTS
 
 The app verifies your key locally, using a signature it can check without asking
-anyone. It does not contact a licensing server, because it does not contact any
-server: the app opens no network socket of its own, and that is checked on every
-build rather than asserted. See `scripts/audit-network.sh` in the repository, and
-run it against the copy you downloaded if you would rather not take our word.
+anyone. It does not contact a licensing server, and never did.
+
+It makes exactly one network connection of any kind: the update check described
+in Section 8, which is off in the build you download and runs only if you turn it
+on. Nothing about your licence or your machine is sent with it. Apart from that
+one connection the app opens no network socket of its own, and all of this is
+checked on every build rather than asserted. See `scripts/audit-network.sh` in
+the repository, and run it against the copy you downloaded if you would rather
+not take our word.
 
 Two consequences follow, and they are stated here rather than discovered:
 
@@ -128,7 +133,7 @@ Nothing leaves your Mac by way of Cupertino. The app reads your local Mail,
 Notes and Reminders data on behalf of the MCP clients you connect to it, over a
 socket that is a file on your own disk, restricted to your own user account.
 
-Two honest limits on that sentence:
+Three honest limits on that sentence:
 
   (a) The MCP client you connect — Claude, an editor, whatever it is — is a
       separate program with its own network behaviour and its own privacy terms.
@@ -136,8 +141,13 @@ Two honest limits on that sentence:
 
   (b) Some operations ask Mail.app to send a message or check for new mail.
       Mail.app then does network I/O, as it would if you had clicked the button
-      yourself. Cupertino opens no socket; it is not true that nothing at all
-      leaves the machine.
+      yourself. Cupertino opens no socket for it; it is not true that nothing at
+      all leaves the machine.
+
+  (c) If you turn on the update check in Section 8, the app requests a published
+      feed over HTTPS. That request carries no identifier of any kind — not your
+      licence key, not a machine id — but it does reach a server, and your IP
+      address is visible to it as it would be for any download.
 
 7. FULL DISK ACCESS
 
@@ -151,8 +161,16 @@ reports what it cannot reach; it does not work around the refusal.
 8. UPDATES
 
 Updates within your major version are free and are published as new downloads.
-The app does not update itself and contains no update checker, which follows from
-Section 4. Checking for a new version is something you do, not something it does.
+
+Since version 1.1.0 the app can also check for them itself, and that check is the
+one exception to Section 4. It is off in the build you download. It stays off
+until you either answer the card that offers it or press Check Now, and you may
+leave it off forever and keep downloading new versions by hand.
+
+When it does run it reads a published feed over HTTPS and sends nothing with the
+request — not your licence key, not a machine identifier. Every update is signed,
+and the signature is verified before anything is installed. Nothing installs
+silently: there is always a person clicking Install.
 
 9. SUCCESSION
 
