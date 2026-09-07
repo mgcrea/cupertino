@@ -86,6 +86,22 @@ enum ScreenServer {
     ]
 
     guard captureAllowed else { return list }
+    // The enum IS the scope. With the gate off a caller cannot even express a
+    // target outside the table; with it on the constraint has to come off, or
+    // widening the surface would change nothing a model is able to ask for.
+    //
+    // With it on the key is OMITTED, never set to nil: `"enum": null` is not a
+    // valid JSON Schema, and a client that validates the tool list drops the
+    // whole tool rather than reporting the fault. Widening the gate would then
+    // REMOVE capture instead of broadening it -- silently, which is worse than
+    // either behaviour it is choosing between.
+    var surfaceProperty: [String: Any] = [
+      "type": "string",
+      "description": "Which surface's window to capture.",
+    ]
+    if !anyAppAllowed {
+      surfaceProperty["enum"] = Surface.all.filter { $0.bundleID != nil }.map(\.id)
+    }
     list.append([
       "name": "apple_screen_capture_surface",
       "description":
@@ -96,16 +112,7 @@ enum ScreenServer {
       "inputSchema": [
         "type": "object",
         "properties": [
-          "surface": [
-            "type": "string",
-            // The enum IS the scope. With the gate off a caller cannot even
-            // express a target outside the table; with it on the constraint has
-            // to come off, or widening the surface would change nothing a model
-            // is able to ask for.
-            "enum": anyAppAllowed
-              ? nil : Surface.all.filter { $0.bundleID != nil }.map(\.id),
-            "description": "Which surface's window to capture.",
-          ],
+          "surface": surfaceProperty,
           "directory": [
             "type": "string",
             "description":

@@ -262,6 +262,27 @@ struct ScreenCheck {
     check(
       "widened: the enum comes OFF, so a bundle id can be asked for at all",
       captureSchemaEnum(anyApp: true) == nil)
+    // ...but `as? [String]` reads an ABSENT key and a null one alike, so the
+    // check above held while the schema still carried `"enum": null`. That is
+    // not valid JSON Schema: a validating client drops the whole tool, so the
+    // gate meant to WIDEN capture silently removed it. Assert on the serialized
+    // bytes instead, which is the only place the two cases look different.
+    func captureSchemaJSON(anyApp: Bool) -> String {
+      let reply = ask("tools/list", gate: true, anyApp: anyApp)
+      let tools = (reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
+      let capture = tools.first { ($0["name"] as? String) == "apple_screen_capture_surface" }
+      let schema = capture?["inputSchema"] ?? [String: Any]()
+      guard JSONSerialization.isValidJSONObject(schema),
+        let data = try? JSONSerialization.data(withJSONObject: schema)
+      else { return "<not serializable>" }
+      return String(decoding: data, as: UTF8.self)
+    }
+    check(
+      "widened: the enum key is ABSENT, never null, in the serialized schema",
+      !captureSchemaJSON(anyApp: true).contains("\"enum\""))
+    check(
+      "scoped: the enum key survives serialization",
+      captureSchemaJSON(anyApp: false).contains("\"enum\""))
     check(
       "the scope gate does not change WHICH tools exist",
       toolNames(gate: true, anyApp: false) == toolNames(gate: true, anyApp: true))
