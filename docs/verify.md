@@ -59,15 +59,16 @@ npx @modelcontextprotocol/inspector node packages/reminders/dist/cli.js
 
 ## What to check
 
-| Check                                       | Expected                                                         |
-| ------------------------------------------- | ---------------------------------------------------------------- |
-| `diagnostics.server.lanes.index`            | `live`, with `indexMode: "ro"`                                   |
-| `diagnostics.server.lanes.storeFingerprint` | `278b001e3c55` on macOS 26.6                                     |
-| `diagnostics.store.candidates`              | more than 1 — several `.sqlite` files is normal; largest wins    |
-| `list_reminders` → `source`                 | `index`. `apple-events` means the store was not opened           |
-| `list_reminders` → `dueAllDaySource`        | `index`. `heuristic` means the same                              |
-| a timed reminder                            | `dueAllDay: false` — **the one worth actually doing**, see below |
-| `get_reminder` on a parent                  | `subtasks` populated; `attachments` and `alarms` non-null        |
+| Check                                            | Expected                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------- |
+| `diagnostics.server.lanes.index`                 | `live`, with `indexMode: "ro"`                                   |
+| `diagnostics.server.lanes.storeFingerprint`      | `278b001e3c55` on macOS 26.6                                     |
+| `diagnostics.store.candidates`                   | more than 1 — several `.sqlite` files is normal; largest wins    |
+| `list_reminders` → `source`                      | `index`. `apple-events` means the store was not opened           |
+| `list_reminders` → `hasMore`                     | `false` on a small library; `true` means the page was cut        |
+| `list_reminders` → `reminders[].dueAllDaySource` | `index`. `heuristic` means the same                              |
+| a timed reminder                                 | `dueAllDay: false` — **the one worth actually doing**, see below |
+| `get_reminder` on a parent                       | `subtasks` populated; `attachments` and `alarms` non-null        |
 
 The all-day row is the Gmail row of this surface. Reminders populates **both** `due date` and
 `allday due date` for every dated reminder — 144 of 144 on the probed library — so a server that
@@ -81,13 +82,14 @@ populated `subtasks` array proves the index join is working and not merely that 
 
 Revoke Full Disk Access and restart. Everything should still work:
 
-| Check                       | Expected                                                         |
-| --------------------------- | ---------------------------------------------------------------- |
-| `lanes.index`               | `unavailable`, with a reason naming the System Settings pane     |
-| `lanes.applescript`         | still `live`                                                     |
-| `list_reminders`            | still returns reminders, `source: "apple-events"`                |
-| `dueAllDaySource`           | `heuristic`                                                      |
-| `get_reminder` → `subtasks` | `[]`, and `attachments` / `alarms` **null** — unknown, not empty |
+| Check                         | Expected                                                         |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `lanes.index`                 | `unavailable`, with a reason naming the System Settings pane     |
+| `lanes.applescript`           | still `live`                                                     |
+| `list_reminders`              | still returns reminders, `source: "apple-events"`                |
+| `reminders[].dueAllDaySource` | `heuristic`                                                      |
+| `note`                        | present only if the 500-reminder lane cap cut the list short     |
+| `get_reminder` → `subtasks`   | `[]`, and `attachments` / `alarms` **null** — unknown, not empty |
 
 That run is the try-before-you-grant path. It is a feature, not a degradation — the only things
 that should disappear are the ones the permission genuinely buys.

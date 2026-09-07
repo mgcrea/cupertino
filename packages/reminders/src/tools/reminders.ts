@@ -44,9 +44,11 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
     "apple_reminders_list_reminders",
     {
       description:
-        "List reminders, soonest due first, with undated ones last. Returns a `ref` per " +
-        "reminder for the read and action tools. Completed reminders are excluded unless you " +
-        "ask for them. Every filter is optional; with none, this is the whole live list.",
+        "List reminders, soonest due first, with undated ones last. Returns `reminders` with a " +
+        "`ref` each for the read and action tools, alongside `source` and `hasMore`. Completed " +
+        "reminders are excluded unless you ask for them. Every filter is optional; with none, " +
+        "this is the whole live list — but check `hasMore` before believing that, and read the " +
+        "`note` field if one is present: it means a lane bound, not your `limit`, ended the list.",
       inputSchema: filterSchema,
       annotations: { readOnlyHint: true },
     },
@@ -65,7 +67,8 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
       description:
         'Search reminders by text. `scope: "full"` (the default) matches the name and the ' +
         'notes body; `scope: "title"` matches only the name. Accepts the same filters as ' +
-        "list_reminders, so you can search within one list or one date range.",
+        "list_reminders, so you can search within one list or one date range. Carries the same " +
+        "`hasMore` and `note` fields as list_reminders.",
       inputSchema: {
         query: z.string().min(1).describe("Text to look for. Case-insensitive substring match."),
         scope: z

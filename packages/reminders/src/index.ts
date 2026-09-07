@@ -42,6 +42,7 @@ export {
   type LaneStatus,
   type ReminderAccount,
   type ReminderDetail,
+  type ReminderListing,
   type ReminderFields,
   type ReminderFilters,
   type ReminderList,

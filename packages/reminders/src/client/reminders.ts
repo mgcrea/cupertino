@@ -79,6 +79,24 @@ export type ReminderSummary = {
   source: "index" | "apple-events";
 };
 
+/**
+ * A page of reminders, plus what a bare array could not say: which lane
+ * answered, and whether anything was left behind.
+ *
+ * Both lanes truncate, for different reasons, and neither had a way to admit
+ * it. Apple Events reads every reminder and then cuts to a cap independent of
+ * `limit`. The index lane over-fetches from SQL and applies the date and flag
+ * predicates afterwards in JS, so a query whose filters reject most rows can
+ * exhaust the over-fetch window before it fills the page — a short list that
+ * looks complete. `note` names whichever of the two happened.
+ */
+export type ReminderListing = {
+  reminders: ReminderSummary[];
+  source: "index" | "apple-events";
+  hasMore: boolean;
+  note?: string;
+};
+
 export type ReminderDetail = ReminderSummary & {
   body: string | null;
   completionDate: string | null;
@@ -503,26 +521,49 @@ export class AppleRemindersClient {
     query: string | undefined,
     scope: "title" | "full" | undefined,
     now: Date,
-  ): ReminderSummary[] {
+  ): ReminderListing {
     // Resolved before the query runs, so an unreadable bound is refused even
     // when nothing would have matched it.
     const bounds = AppleRemindersClient.#bounds(filters, now);
     const listPk = filters.list ? this.#listPk(store, filters.list) : undefined;
     // A named list that the index does not know would otherwise silently widen
     // the query to every list, which is worse than returning nothing.
-    if (filters.list && listPk === undefined) return [];
+    if (filters.list && listPk === undefined) {
+      return { reminders: [], source: "index", hasMore: false };
+    }
+    // Over-fetch, because the date and flag predicates are applied after SQL.
+    const sqlLimit = Math.min(filters.limit * 4 + 50, 2_000);
     const rows = store.search({
       ...(query ? { query } : {}),
       ...(scope ? { scope } : {}),
       ...(listPk === undefined ? {} : { listPk }),
       includeCompleted: filters.includeCompleted ?? this.config.includeCompleted,
-      // Over-fetch, because the date and flag predicates are applied after SQL.
-      limit: Math.min(filters.limit * 4 + 50, 2_000),
+      limit: sqlLimit,
     });
-    return rows
+    const matched = rows
       .map((r) => this.#fromIndex(r))
-      .filter((r) => this.#matchesIndex(r, filters, bounds))
-      .slice(0, filters.limit);
+      .filter((r) => this.#matchesIndex(r, filters, bounds));
+    // A full window means SQL had more to give, so matches may exist past it
+    // whether or not the page filled.
+    const windowFull = rows.length >= sqlLimit;
+    return {
+      reminders: matched.slice(0, filters.limit),
+      source: "index",
+      hasMore: matched.length > filters.limit || windowFull,
+      // The over-fetch is a multiple of `limit` on the assumption that the
+      // post-SQL predicates reject a minority of rows. When they reject most of
+      // them the window runs out first and the page comes back short — which is
+      // indistinguishable from "that is all there is" unless it says so.
+      ...(windowFull && matched.length <= filters.limit
+        ? {
+            note:
+              `The index query read ${rows.length} rows and the filters applied after SQL left ` +
+              `${matched.length}, short of the ${filters.limit} asked for. More may match beyond ` +
+              `that window. Narrow with \`list\` or a search term, which filter inside the query ` +
+              `rather than after it.`,
+          }
+        : {}),
+    };
   }
 
   /**
@@ -539,7 +580,7 @@ export class AppleRemindersClient {
     return this.config.accounts.length === 0;
   }
 
-  async listReminders(filters: ReminderFilters): Promise<ReminderSummary[]> {
+  async listReminders(filters: ReminderFilters): Promise<ReminderListing> {
     const now = this.#now();
     const store = this.#indexCanAnswer() ? this.index() : null;
     if (store) return this.#fromStore(store, filters, undefined, undefined, now);
@@ -548,11 +589,36 @@ export class AppleRemindersClient {
     // a refusal, not nine seconds of Apple Events followed by an empty list.
     const bounds = AppleRemindersClient.#bounds(filters, now);
     const data = await this.#bulk();
-    return data.reminders
+    const matched = data.reminders
       .filter((r) => this.#matches(r, filters, bounds))
       .map((r) => this.#summarise(r))
-      .toSorted(AppleRemindersClient.#order)
-      .slice(0, Math.min(filters.limit, this.config.degradedMaxReminders));
+      .toSorted(AppleRemindersClient.#order);
+    return this.#capped(matched, filters.limit);
+  }
+
+  /**
+   * Cut an Apple Events result to the page, and say which bound did the cutting.
+   *
+   * The lane cap exists because a bulk read costs ~700ms per property whatever
+   * the library size; it is not the caller's `limit` and can sit well below it.
+   * Shared by list and search so the two cannot describe it differently.
+   */
+  #capped(matched: ReminderSummary[], limit: number): ReminderListing {
+    const cap = Math.min(limit, this.config.degradedMaxReminders);
+    return {
+      reminders: matched.slice(0, cap),
+      source: "apple-events",
+      hasMore: matched.length > cap,
+      ...(matched.length > cap && this.config.degradedMaxReminders < limit
+        ? {
+            note:
+              `The Apple Events lane is capped at ${this.config.degradedMaxReminders} reminders ` +
+              `and you asked for ${limit}, so this list stops short of what matched. Grant Full ` +
+              `Disk Access to read the Reminders index instead, or raise ` +
+              `APPLE_REMINDERS_DEGRADED_MAX_REMINDERS.`,
+          }
+        : {}),
+    };
   }
 
   /**
@@ -565,7 +631,7 @@ export class AppleRemindersClient {
   async searchReminders(
     query: string,
     opts: { scope?: "title" | "full" } & ReminderFilters,
-  ): Promise<ReminderSummary[]> {
+  ): Promise<ReminderListing> {
     const now = this.#now();
     const needle = query.trim().toLowerCase();
     const full = (opts.scope ?? "full") === "full";
@@ -575,7 +641,7 @@ export class AppleRemindersClient {
 
     const bounds = AppleRemindersClient.#bounds(opts, now);
     const data = await this.#bulk();
-    return data.reminders
+    const matched = data.reminders
       .filter((r) => this.#matches(r, opts, bounds))
       .filter((r) => {
         if (!needle) return true;
@@ -583,8 +649,8 @@ export class AppleRemindersClient {
         return full && (r.body ?? "").toLowerCase().includes(needle);
       })
       .map((r) => this.#summarise(r))
-      .toSorted(AppleRemindersClient.#order)
-      .slice(0, Math.min(opts.limit, this.config.degradedMaxReminders));
+      .toSorted(AppleRemindersClient.#order);
+    return this.#capped(matched, opts.limit);
   }
 
   /**

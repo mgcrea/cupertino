@@ -13,6 +13,7 @@ export {
   type LaneStatus,
   type NoteAccount,
   type NoteFolder,
+  type NoteListing,
   type NoteSummary,
 } from "./client/notes.js";
 export {

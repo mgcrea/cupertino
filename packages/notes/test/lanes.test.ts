@@ -133,7 +133,7 @@ const client = (env: NodeJS.ProcessEnv = {}) =>
 describe("lane selection", () => {
   it("prefers the index when nothing stops it", async () => {
     const out = await client().listNotes({ limit: 10 });
-    expect(out.map((n) => n.title)).toEqual(["From the index"]);
+    expect(out.notes.map((n) => n.title)).toEqual(["From the index"]);
   });
 
   /**
@@ -143,12 +143,12 @@ describe("lane selection", () => {
    */
   it("falls back to Apple Events when an account allowlist is set", async () => {
     const out = await client({ APPLE_NOTES_ACCOUNTS: "iCloud" }).listNotes({ limit: 10 });
-    expect(out.map((n) => n.title)).toEqual(["From Apple Events"]);
+    expect(out.notes.map((n) => n.title)).toEqual(["From Apple Events"]);
   });
 
   it("actually filters on that allowlist rather than merely switching lane", async () => {
     const out = await client({ APPLE_NOTES_ACCOUNTS: "SomeoneElse" }).listNotes({ limit: 10 });
-    expect(out).toEqual([]);
+    expect(out.notes).toEqual([]);
   });
 
   /**
@@ -157,12 +157,12 @@ describe("lane selection", () => {
    */
   it("falls back to Apple Events when a folder is named", async () => {
     const out = await client().listNotes({ folder: "Archive", limit: 10 });
-    expect(out.map((n) => n.title)).toEqual(["From Apple Events"]);
+    expect(out.notes.map((n) => n.title)).toEqual(["From Apple Events"]);
   });
 
   it("actually filters on that folder", async () => {
     const out = await client().listNotes({ folder: "NoSuchFolder", limit: 10 });
-    expect(out).toEqual([]);
+    expect(out.notes).toEqual([]);
   });
 
   it("applies the same rule to a title search", async () => {

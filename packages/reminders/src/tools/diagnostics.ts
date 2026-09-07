@@ -71,6 +71,10 @@ export const buildDiagnostics = async (
       includeCompleted: client.config.includeCompleted,
       indexMode: client.config.indexMode,
       maxResults: client.config.maxResults,
+      // The Apple Events listing cap. Reported because list_reminders now names
+      // it when it is what ended a list, and a number in an error is only
+      // useful if there is somewhere to go and see what it is.
+      degradedMaxReminders: client.config.degradedMaxReminders,
       searchCacheTtlMs: client.config.searchCacheTtlMs,
     },
     caveats: [
@@ -92,6 +96,11 @@ export const buildDiagnostics = async (
       "Apple Events results are cached for " +
         `${client.config.searchCacheTtlMs}ms. Checking for changes costs about as much ` +
         "as re-reading everything, so there is no cheaper invalidation to be had.",
+      `Listings over Apple Events stop at ${client.config.degradedMaxReminders} reminders ` +
+        "whatever `limit` says. The index lane has its own bound: it over-fetches from SQL " +
+        "and applies the date, flag and priority filters afterwards, so a query those reject " +
+        "can come back short. Both cases are reported in a `note` field rather than " +
+        "returning a short list silently.",
     ],
   };
 };

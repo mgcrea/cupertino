@@ -22,8 +22,11 @@ export const registerNoteTools = (
     "apple_notes_list_notes",
     {
       description:
-        "List notes, newest first. Returns a `ref` per note for the read and action tools. " +
-        "Prefers Notes' own index, which stays fast as a library grows.",
+        "List notes, newest first. Returns `notes` with a `ref` per note for the read and " +
+        "action tools, alongside `source` and `hasMore`. Prefers Notes' own index, which stays " +
+        "fast as a library grows. `hasMore` means more notes matched than `limit` allowed; a " +
+        "`note` field appears when the Apple Events lane's own cap ended the list early, which " +
+        "is a different thing and is worth reading.",
       inputSchema: {
         folder: folderArg,
         limit: limitArg,
@@ -41,7 +44,9 @@ export const registerNoteTools = (
     {
       description:
         'Search notes. `scope: "full"` (the default) matches the body text; `scope: "title"` ' +
-        "matches only titles and previews and is the cheaper query. Returns a `ref` per hit.",
+        "matches only titles and previews and is the cheaper query. Returns `notes` with a " +
+        "`ref` per hit, plus `hasMore` — set when more matched than this page carries, so a " +
+        "full page is never mistaken for the end of the results.",
       inputSchema: {
         query: z.string().min(1).describe("Text to look for. Case-insensitive substring match."),
         scope: z

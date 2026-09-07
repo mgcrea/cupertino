@@ -61,6 +61,23 @@ export type NoteSummary = {
   source: "index" | "apple-events";
 };
 
+/**
+ * A page of notes, plus the two facts a bare array had no room for: which lane
+ * answered, and whether anything was left behind.
+ *
+ * `hasMore` is about the PAGE — more notes matched than `limit` allowed. `note`
+ * is about the LANE: the Apple Events bulk read is capped independently of
+ * `limit`, so a caller asking for 500 could be handed 200 with nothing saying
+ * which of the two bounds stopped the list. Only the second one needs prose,
+ * because only the second one is fixable by the person reading it.
+ */
+export type NoteListing = {
+  notes: NoteSummary[];
+  source: "index" | "apple-events";
+  hasMore: boolean;
+  note?: string;
+};
+
 type BodyCache = {
   at: number;
   source: "index" | "apple-events";
@@ -202,11 +219,19 @@ export class AppleNotesClient {
    * keeps working as a library grows past the point where a bulk fetch stops
    * being instant.
    */
-  async listNotes(opts: { folder?: string | undefined; limit: number }): Promise<NoteSummary[]> {
+  async listNotes(opts: { folder?: string | undefined; limit: number }): Promise<NoteListing> {
     const store = this.#indexCanAnswer(opts) ? this.index() : null;
     if (store?.caps.storeUuid) {
-      const rows = store.search({ limit: opts.limit, offset: 0 });
-      return rows.map((r) => this.#fromIndex(r, store.caps.storeUuid as string));
+      // One row past the page, so a full page can be told from an exhausted
+      // library. SQL is asked for it rather than counted separately: a COUNT
+      // over the whole table costs more than the extra row on every call.
+      const rows = store.search({ limit: opts.limit + 1, offset: 0 });
+      const uuid = store.caps.storeUuid;
+      return {
+        notes: rows.slice(0, opts.limit).map((r) => this.#fromIndex(r, uuid)),
+        source: "index",
+        hasMore: rows.length > opts.limit,
+      };
     }
     return this.#bulkNotes(opts);
   }
@@ -225,7 +250,7 @@ export class AppleNotesClient {
     };
   }
 
-  async #bulkNotes(opts: { folder?: string | undefined; limit: number }): Promise<NoteSummary[]> {
+  async #bulkNotes(opts: { folder?: string | undefined; limit: number }): Promise<NoteListing> {
     const data = await withBusyRetry(() =>
       this.runner.run<{
         count: number;
@@ -240,11 +265,12 @@ export class AppleNotesClient {
         }[];
       }>(BULK_NOTES),
     );
-    return data.notes
+    const matched = data.notes
       .filter((n) => this.#allowed(n.account))
-      .filter((n) => !opts.folder || n.folder === opts.folder)
-      .slice(0, Math.min(opts.limit, this.config.degradedMaxNotes))
-      .map((n) => ({
+      .filter((n) => !opts.folder || n.folder === opts.folder);
+    const cap = Math.min(opts.limit, this.config.degradedMaxNotes);
+    return {
+      notes: matched.slice(0, cap).map((n) => ({
         ref: encodeRef(n.id),
         title: n.name,
         snippet: null,
@@ -254,7 +280,22 @@ export class AppleNotesClient {
         created: n.created,
         locked: n.locked,
         source: "apple-events" as const,
-      }));
+      })),
+      source: "apple-events",
+      hasMore: matched.length > cap,
+      // Only when the LANE is what stopped the list — the cap sitting below a
+      // larger `limit`, with more notes behind it. A caller whose own limit ran
+      // out first is not being shortchanged and does not need telling.
+      ...(matched.length > cap && this.config.degradedMaxNotes < opts.limit
+        ? {
+            note:
+              `The Apple Events lane is capped at ${this.config.degradedMaxNotes} notes and you ` +
+              `asked for ${opts.limit}, so this list stops short of what matched. Grant Full ` +
+              `Disk Access to read Notes' own index instead, or raise ` +
+              `APPLE_NOTES_DEGRADED_MAX_NOTES.`,
+          }
+        : {}),
+    };
   }
 
   /**
@@ -306,14 +347,20 @@ export class AppleNotesClient {
     scope: "title" | "full";
     limit: number;
     offset: number;
-  }): Promise<{ notes: NoteSummary[]; source: "index" | "apple-events"; scope: string }> {
+  }): Promise<NoteListing & { scope: string }> {
     const store = this.#indexCanAnswer() ? this.index() : null;
 
     if (opts.scope === "title" && store?.caps.storeUuid) {
-      const rows = store.search({ query: opts.query, limit: opts.limit, offset: opts.offset });
+      const rows = store.search({
+        query: opts.query,
+        limit: opts.limit + 1,
+        offset: opts.offset,
+      });
+      const uuid = store.caps.storeUuid;
       return {
-        notes: rows.map((r) => this.#fromIndex(r, store.caps.storeUuid as string)),
+        notes: rows.slice(0, opts.limit).map((r) => this.#fromIndex(r, uuid)),
         source: "index",
+        hasMore: rows.length > opts.limit,
         scope: "title+snippet",
       };
     }
@@ -330,6 +377,9 @@ export class AppleNotesClient {
     return {
       notes: summaries.map((s) => s.summary),
       source: corpus.source,
+      // Exact, not a guess: the corpus behind a full-text search is every note
+      // in both lanes, so `hits` is the whole match set and not a page of it.
+      hasMore: hits.length > opts.offset + opts.limit,
       scope: "full-text",
     };
   }

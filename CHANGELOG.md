@@ -116,6 +116,22 @@ summary.
 - **The handshake has a deadline on the app's side too.** A process that connected and sent nothing
   used to hold a thread and a descriptor until it exited.
 
+- **Notes and Reminders listings say when they were cut short.** `apple_notes_list_notes`,
+  `apple_notes_search_notes`, `apple_reminders_list_reminders` and
+  `apple_reminders_search_reminders` now answer with an object — `notes` or `reminders`, plus
+  `source` and `hasMore` — rather than a bare array. **This changes the output shape of four
+  shipped tools.** A caller that indexed the result directly has to read the named field instead.
+
+  The reason is that all four truncated silently, and two of the three bounds involved are nothing
+  the caller asked for. The Apple Events lane stops at its own cap (200 notes, 500 reminders)
+  regardless of `limit`, because a bulk read costs about 700ms per property whatever the library
+  size — so asking for 500 and receiving 200 was indistinguishable from asking for 500 and there
+  being 200. The Reminders index lane over-fetches from SQL and applies the date, flag and priority
+  filters afterwards in JS; when those reject nearly everything, the window runs out before the
+  page fills and the answer comes back short. `hasMore` reports that more matched than the page
+  carries; a `note` field appears only when a lane bound rather than `limit` is what ended the
+  list, so it names something the reader can act on. Both diagnostics tools now report the cap.
+
 ### Security
 
 - **`click`, `type` and `key` now light the driving notice.** They are the most invasive verbs

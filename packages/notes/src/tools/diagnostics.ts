@@ -60,12 +60,19 @@ export const buildDiagnostics = async (
       accountAllowlist: client.config.accounts,
       indexMode: client.config.indexMode,
       maxResults: client.config.maxResults,
+      // The Apple Events listing cap. Reported because list_notes now names it
+      // when it is what ended a list, and a number in an error is only useful
+      // if there is somewhere to go and see what it is.
+      degradedMaxNotes: client.config.degradedMaxNotes,
       searchCacheTtlMs: client.config.searchCacheTtlMs,
       attachmentDir: client.config.attachmentDir,
     },
     caveats: [
       "Without Full Disk Access the index lane is unavailable: search falls back to an " +
         "Apple Events bulk scan, which is fine on a small library and degrades linearly.",
+      `Listings over Apple Events stop at ${client.config.degradedMaxNotes} notes whatever ` +
+        "`limit` says. When that is what ended a list, list_notes says so in a `note` field " +
+        "rather than returning a short list silently.",
       "Password-protected notes are encrypted at rest; no permission makes them readable.",
       "Attachment bytes need Full Disk Access — the scripting dictionary carries no file path.",
     ],

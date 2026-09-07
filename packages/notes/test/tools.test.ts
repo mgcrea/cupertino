@@ -172,7 +172,7 @@ describe("reads through the Apple Events lane", () => {
   it("lists notes with a ref that round-trips", async () => {
     const client = await connect(config());
     const out = await client.callTool({ name: "apple_notes_list_notes", arguments: {} });
-    const [first] = JSON.parse(textOf(out));
+    const [first] = JSON.parse(textOf(out)).notes;
     expect(first.ref).toBe(`n1:${NOTE_ID}`);
     expect(first.source).toBe("apple-events");
   });

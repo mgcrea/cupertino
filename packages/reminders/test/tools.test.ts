@@ -245,6 +245,16 @@ const connectWith = async (
 const connect = async (env: NodeJS.ProcessEnv = {}, overrides: Record<string, unknown> = {}) =>
   (await connectWith(env, overrides)).client;
 
+/**
+ * The rows out of a listing tool.
+ *
+ * `list_reminders` and `search_reminders` answer with an object — the rows plus
+ * `source`, `hasMore` and sometimes a `note` — rather than a bare array, so that
+ * a page cut short by a lane bound can say so instead of looking complete.
+ */
+const listed = <T>(res: { json: () => unknown }): T[] =>
+  (res.json() as { reminders: T[] }).reminders;
+
 const call = async (client: Client, name: string, args: Record<string, unknown> = {}) => {
   const res = (await client.callTool({ name, arguments: args })) as {
     content: { type: string; text: string }[];
@@ -292,25 +302,25 @@ describe("tool registration", () => {
 
 describe("list_reminders", () => {
   it("hides completed reminders by default", async () => {
-    const out = (await call(await connect(), "apple_reminders_list_reminders")).json() as {
+    const out = listed<{
       name: string;
-    }[];
+    }>(await call(await connect(), "apple_reminders_list_reminders"));
     expect(out.map((r) => r.name)).not.toContain("Already done");
   });
 
   it("includes them when asked", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_list_reminders", { includeCompleted: true })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { includeCompleted: true }),
+    );
     expect(out.map((r) => r.name)).toContain("Already done");
   });
 
   /** Soonest due first, undated last — not creation order, not id order. */
   it("orders by due date with undated reminders last", async () => {
-    const out = (await call(await connect(), "apple_reminders_list_reminders")).json() as {
+    const out = listed<{
       name: string;
       due: string | null;
-    }[];
+    }>(await call(await connect(), "apple_reminders_list_reminders"));
     expect(out.map((r) => r.name)).toEqual([
       "Buy milk",
       "Call the dentist",
@@ -321,28 +331,28 @@ describe("list_reminders", () => {
   });
 
   it("filters by list name", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_list_reminders", { list: "Groceries" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { list: "Groceries" }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Buy milk"]);
   });
 
   it("filters by flagged and by priority", async () => {
-    const flagged = (
-      await call(await connect(), "apple_reminders_list_reminders", { flagged: true })
-    ).json() as { name: string }[];
+    const flagged = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { flagged: true }),
+    );
     expect(flagged.map((r) => r.name)).toEqual(["Buy milk"]);
 
-    const high = (
-      await call(await connect(), "apple_reminders_list_reminders", { priority: "high" })
-    ).json() as { name: string }[];
+    const high = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { priority: "high" }),
+    );
     expect(high.map((r) => r.name)).toEqual(["Buy milk"]);
   });
 
   it("filters by whether a due date exists at all", async () => {
-    const undated = (
-      await call(await connect(), "apple_reminders_list_reminders", { hasDueDate: false })
-    ).json() as { name: string }[];
+    const undated = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { hasDueDate: false }),
+    );
     expect(undated.map((r) => r.name)).toEqual(["Find the number"]);
   });
 
@@ -352,45 +362,45 @@ describe("list_reminders", () => {
    * quietly exclude the day the caller named.
    */
   it("treats a bare day in dueBefore as the whole day", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_list_reminders", { dueBefore: "2026-08-21" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { dueBefore: "2026-08-21" }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Buy milk"]);
   });
 
   it("accepts a relative offset as a bound", async () => {
     // NOW is 2026-08-20; +7d reaches the 27th, so it catches the 21st and 25th
     // but not the 30 September one.
-    const out = (
-      await call(await connect(), "apple_reminders_list_reminders", { dueBefore: "+7d" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { dueBefore: "+7d" }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Buy milk", "Call the dentist"]);
   });
 
   it("excludes undated reminders from a range query", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_list_reminders", { dueAfter: "2026-01-01" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_list_reminders", { dueAfter: "2026-01-01" }),
+    );
     expect(out.map((r) => r.name)).not.toContain("Find the number");
   });
 
   it("reports the account allowlist by filtering, not erroring", async () => {
-    const out = (
+    const out = listed<{ name: string }>(
       await call(
         await connect({ APPLE_REMINDERS_ACCOUNTS: "Work" }),
         "apple_reminders_list_reminders",
-      )
-    ).json() as { name: string }[];
+      ),
+    );
     expect(out.map((r) => r.name)).toEqual(["Write the standup notes"]);
   });
 
   it("scopes by list allowlist independently of account", async () => {
-    const out = (
+    const out = listed<{ name: string }>(
       await call(
         await connect({ APPLE_REMINDERS_LISTS: "Groceries" }),
         "apple_reminders_list_reminders",
-      )
-    ).json() as { name: string }[];
+      ),
+    );
     expect(out.map((r) => r.name)).toEqual(["Buy milk"]);
   });
 });
@@ -404,11 +414,11 @@ describe("list_reminders", () => {
  */
 describe("due date interpretation", () => {
   it("does not infer all-day from the property merely being present", async () => {
-    const out = (await call(await connect(), "apple_reminders_list_reminders")).json() as {
+    const out = listed<{
       name: string;
       dueAllDay: boolean;
       due: string | null;
-    }[];
+    }>(await call(await connect(), "apple_reminders_list_reminders"));
     const timed = out.find((r) => r.name === "Call the dentist");
     expect(timed?.due).toBe("2026-08-25T09:00:00+02:00");
     // It has an alldayDueDate too, and is still not all-day.
@@ -416,10 +426,10 @@ describe("due date interpretation", () => {
   });
 
   it("reports a genuine all-day reminder as all-day", async () => {
-    const out = (await call(await connect(), "apple_reminders_list_reminders")).json() as {
+    const out = listed<{
       name: string;
       dueAllDay: boolean;
-    }[];
+    }>(await call(await connect(), "apple_reminders_list_reminders"));
     expect(out.find((r) => r.name === "Buy milk")?.dueAllDay).toBe(true);
   });
 
@@ -429,52 +439,52 @@ describe("due date interpretation", () => {
    * defeat. The caller is told which answer it got.
    */
   it("says the flag came from a heuristic when the index is unavailable", async () => {
-    const out = (await call(await connect(), "apple_reminders_list_reminders")).json() as {
+    const out = listed<{
       dueAllDaySource: string;
-    }[];
+    }>(await call(await connect(), "apple_reminders_list_reminders"));
     expect(out.every((r) => r.dueAllDaySource === "heuristic")).toBe(true);
   });
 });
 
 describe("search_reminders", () => {
   it("matches the name", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_search_reminders", { query: "dentist" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_search_reminders", { query: "dentist" }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Call the dentist"]);
   });
 
   it("matches the notes body in full scope", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_search_reminders", { query: "semi-skimmed" })
-    ).json() as { name: string }[];
+    const out = listed<{ name: string }>(
+      await call(await connect(), "apple_reminders_search_reminders", { query: "semi-skimmed" }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Buy milk"]);
   });
 
   it("does not match the body in title scope", async () => {
-    const out = (
+    const out = listed<unknown>(
       await call(await connect(), "apple_reminders_search_reminders", {
         query: "semi-skimmed",
         scope: "title",
-      })
-    ).json() as unknown[];
+      }),
+    );
     expect(out).toEqual([]);
   });
 
   it("is case-insensitive", async () => {
-    const out = (
-      await call(await connect(), "apple_reminders_search_reminders", { query: "DENTIST" })
-    ).json() as unknown[];
+    const out = listed<unknown>(
+      await call(await connect(), "apple_reminders_search_reminders", { query: "DENTIST" }),
+    );
     expect(out).toHaveLength(1);
   });
 
   it("applies the same filters as list", async () => {
-    const out = (
+    const out = listed<{ name: string }>(
       await call(await connect(), "apple_reminders_search_reminders", {
         query: "e",
         list: "Standup",
-      })
-    ).json() as { name: string }[];
+      }),
+    );
     expect(out.map((r) => r.name)).toEqual(["Write the standup notes"]);
   });
 });

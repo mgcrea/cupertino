@@ -97,15 +97,15 @@ const client = (env: NodeJS.ProcessEnv = {}) =>
 describe("lane selection", () => {
   it("prefers the index when it is readable", async () => {
     const out = await client().listReminders({ limit: 10 });
-    expect(out.map((r) => r.name)).toEqual(["From the index"]);
-    expect(out[0]?.source).toBe("index");
+    expect(out.reminders.map((r) => r.name)).toEqual(["From the index"]);
+    expect(out.reminders[0]?.source).toBe("index");
   });
 
   /** ZALLDAY is authoritative, and only the index has it. */
   it("reports the all-day flag as coming from the index", async () => {
     const out = await client().listReminders({ limit: 10 });
-    expect(out[0]?.dueAllDay).toBe(true);
-    expect(out[0]?.dueAllDaySource).toBe("index");
+    expect(out.reminders[0]?.dueAllDay).toBe(true);
+    expect(out.reminders[0]?.dueAllDaySource).toBe("index");
   });
 
   /**
@@ -115,14 +115,14 @@ describe("lane selection", () => {
    */
   it("renders an all-day due date as the day it names, not an instant", async () => {
     const out = await client().listReminders({ limit: 10 });
-    expect(out[0]?.due).toBe("2026-08-21");
+    expect(out.reminders[0]?.due).toBe("2026-08-21");
   });
 
   /** The output of an all-day reminder is valid input meaning the same thing. */
   it("round-trips: the rendered day parses back as all-day", async () => {
     const { parseDate } = await import("../src/client/dates.js");
     const out = await client().listReminders({ limit: 10 });
-    const reparsed = parseDate("due", out[0]?.due as string);
+    const reparsed = parseDate("due", out.reminders[0]?.due as string);
     expect(reparsed.kind).toBe("allDay");
   });
 
@@ -141,16 +141,16 @@ describe("lane selection", () => {
     const fromAppleEvents = await client({ APPLE_REMINDERS_INDEX_MODE: "off" }).listReminders({
       limit: 10,
     });
-    expect(fromIndex[0]?.source).toBe("index");
-    expect(fromAppleEvents[0]?.source).toBe("apple-events");
-    expect(fromIndex[0]?.due).toBe("2026-08-21");
-    expect(fromAppleEvents[0]?.due).toBe(fromIndex[0]?.due);
+    expect(fromIndex.reminders[0]?.source).toBe("index");
+    expect(fromAppleEvents.reminders[0]?.source).toBe("apple-events");
+    expect(fromIndex.reminders[0]?.due).toBe("2026-08-21");
+    expect(fromAppleEvents.reminders[0]?.due).toBe(fromIndex.reminders[0]?.due);
   });
 
   it("falls back to Apple Events when the index is turned off", async () => {
     const out = await client({ APPLE_REMINDERS_INDEX_MODE: "off" }).listReminders({ limit: 10 });
-    expect(out[0]?.source).toBe("apple-events");
-    expect(out[0]?.dueAllDaySource).toBe("heuristic");
+    expect(out.reminders[0]?.source).toBe("apple-events");
+    expect(out.reminders[0]?.dueAllDaySource).toBe("heuristic");
   });
 
   /**
@@ -164,31 +164,31 @@ describe("lane selection", () => {
    */
   it("takes the Apple Events lane when an account allowlist is set", async () => {
     const out = await client({ APPLE_REMINDERS_ACCOUNTS: "iCloud" }).listReminders({ limit: 10 });
-    expect(out[0]?.source).toBe("apple-events");
-    expect(out.map((r) => r.name)).toEqual(["From Apple Events"]);
+    expect(out.reminders[0]?.source).toBe("apple-events");
+    expect(out.reminders.map((r) => r.name)).toEqual(["From Apple Events"]);
   });
 
   it("actually filters on that allowlist rather than merely switching lane", async () => {
     const out = await client({ APPLE_REMINDERS_ACCOUNTS: "SomeoneElse" }).listReminders({
       limit: 10,
     });
-    expect(out).toEqual([]);
+    expect(out.reminders).toEqual([]);
   });
 
   it("applies the same rule to search", async () => {
     const indexed = await client().searchReminders("index", { limit: 10 });
-    expect(indexed[0]?.source).toBe("index");
+    expect(indexed.reminders[0]?.source).toBe("index");
 
     const scoped = await client({ APPLE_REMINDERS_ACCOUNTS: "iCloud" }).searchReminders("Apple", {
       limit: 10,
     });
-    expect(scoped[0]?.source).toBe("apple-events");
+    expect(scoped.reminders[0]?.source).toBe("apple-events");
   });
 
   /** A list allowlist needs no fallback: the store joins the list name itself. */
   it("keeps the index for a list allowlist, which it can honour", async () => {
     const out = await client({ APPLE_REMINDERS_LISTS: "Work" }).listReminders({ limit: 10 });
-    expect(out[0]?.source).toBe("index");
+    expect(out.reminders[0]?.source).toBe("index");
   });
 
   it("reports the index lane as live in diagnostics", async () => {
@@ -233,12 +233,12 @@ describe("date bounds", () => {
    */
   it("includes the day an upper bound names", async () => {
     const out = await client().listReminders({ dueBefore: "2026-08-21", limit: 10 });
-    expect(out.map((r) => r.name)).toEqual(["From the index"]);
+    expect(out.reminders.map((r) => r.name)).toEqual(["From the index"]);
   });
 
   it("excludes it when the bound names the day before", async () => {
     const out = await client().listReminders({ dueBefore: "2026-08-20", limit: 10 });
-    expect(out).toEqual([]);
+    expect(out.reminders).toEqual([]);
   });
 
   /**
@@ -248,8 +248,8 @@ describe("date bounds", () => {
    */
   it("reads an all-day due date as a local day on both edges", async () => {
     const from = await client().listReminders({ dueAfter: "2026-08-21", limit: 10 });
-    expect(from.map((r) => r.name)).toEqual(["From the index"]);
+    expect(from.reminders.map((r) => r.name)).toEqual(["From the index"]);
     const after = await client().listReminders({ dueAfter: "2026-08-22", limit: 10 });
-    expect(after).toEqual([]);
+    expect(after.reminders).toEqual([]);
   });
 });
