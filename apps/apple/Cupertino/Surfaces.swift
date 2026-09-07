@@ -609,7 +609,7 @@ struct Surface: Identifiable, Hashable {
       //
       // The switch exists because the table was the wrong shape for driving
       // an app under development: desktop can address any application and
-      // screen could photograph eight, so seeing what was just clicked was
+      // screen could photograph the eight it then brokered, so seeing what was just clicked was
       // impossible for anything outside the table. Two gates, same default,
       // and neither surface widens without a deliberate flip.
       bundleID: nil,
@@ -729,8 +729,8 @@ struct Surface: Identifiable, Hashable {
       // TWO independent gates, and they bound different things. allowWrites
       // decides whether it can ACT; allowAnyApp decides how far it can REACH.
       // Both default off, so the shipped surface reads the structure of the
-      // eight brokered apps and nothing else -- the same remit screen has, by
-      // the same closed table.
+      // brokered apps -- nine, Simulator.app included -- and nothing else,
+      // the same remit screen has, by the same closed table.
       //
       // The scope gate exists because Accessibility does not scope to a target.
       // The grant that lets this read a Maps place card is the grant that lets
@@ -753,6 +753,60 @@ struct Surface: Identifiable, Hashable {
       gates: [
         Surface.Gate(id: "allowAnyApp", envSuffix: "ALLOW_ANY_APP", label: "Reach any application", description: "Lets this surface read and drive ANY running application rather than only the Apple apps Cupertino brokers. Off by default: Accessibility does not scope to a target, so this is the difference between a surface that stays inside its own remit and one that reaches the whole Mac."),
       ]
+    ),
+    Surface(
+      id: "simulator",
+      displayName: "Simulator",
+      // The FIRST app surface served in-process, and the first that arrives OFF.
+      // Every other app entry is an npm package with a file lane; this one has
+      // neither, because what it brokers is the Accessibility lane into
+      // Simulator.app, and that grant lands on the responsible GUI ancestor --
+      // the reason desktop has npmName null applies here unchanged.
+      //
+      // MEASURED, macOS 26.6, see docs/simulator.md. Simulator.app bridges the
+      // simulated device's accessibility tree into the Mac's: inside the device
+      // window sits an AXGroup whose size is the device's point size times the
+      // window scale, and its children are the iOS app's own controls. The
+      // surface answers in iOS POINTS -- the space ios_simulator_tap and
+      // ios_simulator_screenshot use -- with the scale derived from the measured
+      // group against CoreSimulator's profile.plist, never assumed to be 1.
+      //
+      // It reaches ONE application and no gate widens it. The driver is scoped
+      // to this bundle id the way ServerHost scopes a lend, so "Reach any
+      // application" on Desktop is neither needed nor consulted. That is the
+      // whole reason this is a surface rather than a paragraph in Desktop's
+      // guide: driving a developer's own app used to cost opening the Mac.
+      //
+      // Adding a bundleId here puts Simulator.app into the brokered set that
+      // desktop and screen read from Surface.all, BY DESIGN. Desktop reaches it
+      // without its scope gate and screen can photograph its window. The count
+      // in every 'the N applications Cupertino brokers' string moves with it.
+      //
+      // No lifecycle, no screenshot, no push, no staging. Those need no grant and
+      // belong to @mgcrea/mcp-ios-simulator, which Bastion runs beside this;
+      // duplicating simctl behind a TCC grant would be a worse copy of it. What
+      // this adds is the lane that server cannot have: named, pressable elements
+      // with no WebDriverAgent runner to keep alive.
+      //
+      // supportsWrites is TRUE: press, tap, swipe, type, key and press_button are
+      // registered only with the write flag on, like Desktop's driving verbs.
+      //
+      // iconPath and symbol are null because kind is app: LaunchServices finds
+      // Simulator.app inside Xcode. On a Mac without Xcode the row renders the
+      // not-installed glyph, which is the truth.
+      bundleID: "com.apple.iphonesimulator",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
+      usesAppleEvents: false,
+      appleEventsScope: nil,
+      supportsWrites: true,
+      defaultEnabled: false,
+      storePath: nil,
+      storePermission: .accessibility,
+      envPrefix: "APPLE_SIMULATOR_",
+      runtime: .swift,
+      gates: []
     ),
   ]
   // </generated:surfaces>

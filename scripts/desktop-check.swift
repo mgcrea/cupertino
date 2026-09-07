@@ -240,16 +240,25 @@ struct DesktopCheck {
     check(
       "the guide says writes are on when they are",
       guideText(writes: true).contains("Writes are ON"))
-    // The Simulator is not a brokered surface, so the paragraph about it describes
-    // something the default scope would refuse. It is worth saying only when the
-    // reach is there to act on it.
+    // Simulator.app is a brokered application since the `simulator` surface,
+    // so the paragraph about it is true under every scope and must not be
+    // gated — a caller on the default reach can address it.
     check(
-      "the guide mentions the Simulator only when the reach is any application",
+      "the guide mentions the Simulator under both reaches, now that it is brokered",
       guideText(writes: false, anyApp: true).contains("iOS Simulator")
-        && !guideText(writes: false, anyApp: false).contains("iOS Simulator"))
+        && guideText(writes: false, anyApp: false).contains("iOS Simulator"))
     check(
-      "leaving the Simulator paragraph out closes the gap rather than leaving a hole",
+      "the guide sends a caller to the simulator surface for iOS points",
+      guideText(writes: false, anyApp: false).contains("`simulator` surface"))
+    check(
+      "the guide has no hole where a paragraph was",
       !guideText(writes: false, anyApp: false).contains("\n\n\n"))
+    check(
+      "the writes-on line names every driving verb, focus and activate included",
+      guideText(writes: true).contains("focus, activate"))
+    check(
+      "the Simulator is in reach under the default scope",
+      AccessibilityDriver.inScope("com.apple.iphonesimulator", scope: .brokered))
     check(
       "an unknown resource is a JSON-RPC error",
       ((ask("resources/read", params: ["uri": "cupertino://desktop/nope"])?["error"]

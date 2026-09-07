@@ -24,9 +24,9 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop
+SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator
 NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
-SWIFT_SURFACES := screen sound desktop
+SWIFT_SURFACES := screen sound desktop simulator
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -278,6 +278,45 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/desktop-check.swift
 	@apps/apple/.build/desktop-check
 
+simulator-check: ## Assert the in-process simulator server speaks MCP, answers in iOS points, and cannot drive with writes off
+	@# The same gate scripts/verify-servers.sh cannot be, for the reason
+	@# screen-check gives. Stricter than desktop-check about what it may touch:
+	@# on a developer's Mac the terminal running this may hold Accessibility by
+	@# inheritance AND a device may be booted, so a driving verb with writes on
+	@# would tap a real screen. Every driving call below runs with writes OFF,
+	@# and the geometry is pinned on numbers rather than on a window.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/simulator-check \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/SimulatorServer.swift \
+		apps/apple/Cupertino/SimulatorGeometry.swift \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/simulator-check.swift
+	@apps/apple/.build/simulator-check
+
+simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by hand, with flags
+	@# Not a gate. It clicks, drags and types into whatever device is booted,
+	@# from a terminal that holds Accessibility by inheritance — see the file's
+	@# header for what each flag does and what the run measured.
+	@#   make simulator-spike SPIKE_ARGS="--tap --activate"
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/simulator-spike \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/spike-simulator-drive.swift
+	@apps/apple/.build/simulator-spike $(SPIKE_ARGS)
+
 sound-check: ## Assert the in-process sound server speaks MCP and its gates are independent
 	@# The same gate scripts/verify-servers.sh cannot be, for the reason
 	@# screen-check gives: a surface the app serves itself has no cli.js to
@@ -322,6 +361,8 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/SimulatorServer.swift \
+		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
@@ -840,8 +881,8 @@ SHOT_SCREENS := surface prompt activity connections settings writes
 # inside a backslash continuation — putting the generated region in the middle of
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
-SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO -allowWrites.desktop NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO -allowWrites.desktop NO -allowWrites.simulator NO
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \
@@ -972,4 +1013,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean

@@ -71,6 +71,7 @@ const SWIFT_SERVERS = [
   ["desktop", join(ROOT, "apps", "apple", "Cupertino", "DesktopServer.swift")],
   ["screen", join(ROOT, "apps", "apple", "Cupertino", "ScreenServer.swift")],
   ["sound", join(ROOT, "apps", "apple", "Cupertino", "SoundServer.swift")],
+  ["simulator", join(ROOT, "apps", "apple", "Cupertino", "SimulatorServer.swift")],
 ];
 
 /** Every tool name passed to `server.registerTool`, across every package. */

@@ -96,6 +96,13 @@ enum InProcessServers {
           line, surface: surface,
           writesAllowed: allowWrites,
           scope: lentScope ?? (gateOn("allowAnyApp") ? .any : .brokered)))
+    // One application, pinned inside the server. No gate reaches it and a lend
+    // cannot happen to it — `ServerHost` lends `desktop` and nothing else — so
+    // neither `gateOn` nor `lentScope` is consulted, and that is asserted by
+    // `dispatch-check` rather than assumed.
+    case "simulator":
+      return reply(
+        SimulatorServer.handle(line, surface: surface, writesAllowed: allowWrites))
     default:
       return .noServer
     }

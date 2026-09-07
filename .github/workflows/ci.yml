@@ -159,6 +159,14 @@ jobs:
       - name: Desktop server 🔍
         if: runner.os == 'macOS'
         run: make desktop-check
+      # Same shape as the Desktop check, one step stricter: a runner has Xcode,
+      # so CoreSimulator's device types are there to read, and no count is
+      # asserted because how many devices a runner keeps is not this repo's
+      # business. Every driving call runs with writes off and is answered by
+      # the refusal path; the geometry is pinned on numbers, not on a window.
+      - name: Simulator server 🔍
+        if: runner.os == 'macOS'
+        run: make simulator-check
       # The two steps above each drive ONE server. This one covers the code
       # that picks which, which had two copies and shipped with the second one
       # wrong — invisibly, because a list of the wrong surface's tools still

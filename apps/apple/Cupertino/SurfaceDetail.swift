@@ -50,7 +50,10 @@ struct SurfaceDetail: View {
           // copy under it says "everything goes through Apple Events", which is
           // false twice over here: this surface has no file lane AND sends no
           // Apple Event. A card that can only lie is better absent.
-          if surface.kind == .app { storeSection }
+          //
+          // Nor for an app with no file lane. Simulator is an app and reads no
+          // store: the same sentence would be the same lie.
+          if surface.kind == .app, surface.storePath != nil { storeSection }
           pageContentSection
           CapabilitiesCard(surface: surface)
           activity
@@ -60,7 +63,7 @@ struct SurfaceDetail: View {
           // it costs a `stat` and an `access(2)`, and it is the only card that
           // answers "would this work if I turned it back on", which may well be
           // the question that follows.
-          if surface.kind == .app { storeSection }
+          if surface.kind == .app, surface.storePath != nil { storeSection }
           pageContentSection
         }
       }

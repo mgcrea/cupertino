@@ -468,11 +468,15 @@ enum AccessibilityDriver {
   /// This is what makes a 9770-node window usable: docs/desktop.md measured
   /// Notes at 37 s for a full walk, and depth 3 for its first 500 nodes. A
   /// default tree plus this verb is not a degraded whole tree; it is the product.
-  static func expand(handle: String, detail: Detail, bounds: Bounds, scope: Scope) throws -> Tree {
+  static func expand(
+    handle: String, detail: Detail, bounds: Bounds, scope: Scope,
+    match: ((Candidate) -> Bool)? = nil
+  ) throws -> Tree {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
     let element = try resolve(handle, scope: scope)
-    return walk(roots: children(element), detail: detail, bounds: bounds, bundleId: owner)
+    return walk(
+      roots: children(element), detail: detail, bounds: bounds, bundleId: owner, match: match)
   }
 
   private static func walk(
@@ -482,6 +486,13 @@ enum AccessibilityDriver {
     var out: [Element] = []
     var visited = 0
     var stoppedBy: String?
+    // Kept apart from `stoppedBy` on purpose. The depth cap is reported like
+    // the other two bounds, but it must not STOP the walk: the first branch to
+    // reach the cap used to set `stoppedBy`, and the guard below then skipped
+    // every sibling after it — a depth-1 listing of a window with twenty
+    // children answered one child and named `depth(1)` as the reason, which is
+    // true and useless. Measured on the Simulator's window, 2026-09-07.
+    var depthCapped = false
     let started = Date()
 
     func visit(_ el: AXUIElement, depth: Int) {
@@ -543,13 +554,14 @@ enum AccessibilityDriver {
       if depth >= bounds.depth {
         // Not a stop condition for the whole walk — one deep branch must not
         // truncate its siblings — but the caller still has to know it happened.
-        if stoppedBy == nil { stoppedBy = "depth(\(bounds.depth))" }
+        depthCapped = true
         return
       }
       for child in children(el) { visit(child, depth: depth + 1) }
     }
 
     for root in roots { visit(root, depth: 0) }
+    if stoppedBy == nil, depthCapped { stoppedBy = "depth(\(bounds.depth))" }
     return Tree(
       elements: out, visited: visited, seconds: Date().timeIntervalSince(started),
       stoppedBy: stoppedBy)
@@ -716,6 +728,107 @@ enum AccessibilityDriver {
     DriveActivity.record(bundleId)
   }
 
+  /// The application that holds the focus RIGHT NOW, asked of the window
+  /// server through Accessibility rather than of `NSWorkspace`.
+  ///
+  /// `NSWorkspace.frontmostApplication` is fed by KVO and refreshes with the
+  /// run loop, so a thread that has just called `activate()` reads the answer
+  /// from before it — and a process with no run loop reads the answer from
+  /// when it started. MEASURED, docs/simulator.md: six activation trials all
+  /// reported "frontmost after 0.0 ms" because the value never moved. The
+  /// system-wide element's focused application is the window server's own
+  /// answer, and it is where a synthetic keystroke is about to land.
+  ///
+  /// Nil without a grant, which is an answer: the caller cannot post anyway.
+  static func frontmostBundleId() -> String? {
+    var raw: AnyObject?
+    let systemWide = AXUIElementCreateSystemWide()
+    guard
+      AXUIElementCopyAttributeValue(
+        systemWide, kAXFocusedApplicationAttribute as CFString, &raw) == .success,
+      let focused = raw
+    else { return nil }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(focused as! AXUIElement, &pid) == .success else { return nil }
+    return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+  }
+
+  /// `activate`, then WAIT until the window server agrees.
+  ///
+  /// Activation is asynchronous, and a click posted in the same millisecond
+  /// lands in whatever was in front before — measured on the Simulator, where
+  /// a click before activation reached nothing and a click after it opened
+  /// the row it was aimed at. About 105 ms on every trial. Returns whether the
+  /// application became frontmost within `timeout`; a caller that posts
+  /// anyway on `false` is typing into somebody else's window.
+  static func activateAndWait(bundleId: String, scope: Scope, timeout: TimeInterval = 2)
+    throws -> Bool
+  {
+    if frontmostBundleId() == bundleId { return true }
+    try activate(bundleId: bundleId, scope: scope)
+    let started = Date()
+    while Date().timeIntervalSince(started) < timeout {
+      if frontmostBundleId() == bundleId { return true }
+      usleep(20_000)
+    }
+    return frontmostBundleId() == bundleId
+  }
+
+  /// Type by KEY CODE, one character at a time, resolved against the layout
+  /// the Mac is actually using.
+  ///
+  /// `type(text:)` puts the unicode string on one event, which every Mac
+  /// application reads. The Simulator does not: it forwards the HID key code
+  /// to the device and ignores the string — MEASURED, docs/simulator.md: the
+  /// string "acc" on virtual key 0 arrived in Settings' search field as a
+  /// single "Q", which is key 0 on the AZERTY layout it was typed from. So a
+  /// simulated device is typed into the way a person types, one key at a
+  /// time, with shift for an uppercase letter.
+  ///
+  /// Returns the characters this layout has no key for, so the caller can say
+  /// which part of the text did not arrive rather than reporting a success it
+  /// did not have. Nothing is posted for those characters.
+  static func typeByKeyCodes(_ text: String, announcing target: String? = nil) throws
+    -> [Character]
+  {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let source = CGEventSource(stateID: .hidSystemState)
+    var unmapped: [Character] = []
+    var events: [(CGEvent, CGEvent)] = []
+    for character in text {
+      let lower = String(character).lowercased()
+      let name: String
+      switch lower {
+      case " ": name = "space"
+      case "\n": name = "return"
+      case "\t": name = "tab"
+      default: name = lower
+      }
+      guard let code = keyCode(for: name) else {
+        unmapped.append(character)
+        continue
+      }
+      guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+      else { throw Failure.refused("Could not synthesise typing.") }
+      if String(character) != lower {
+        down.flags = .maskShift
+        up.flags = .maskShift
+      }
+      events.append((down, up))
+    }
+    guard !events.isEmpty else { return unmapped }
+    announceSessionInput(target)
+    for (down, up) in events {
+      down.post(tap: .cghidEventTap)
+      up.post(tap: .cghidEventTap)
+      // A device keyboard drops keys that arrive faster than a person could
+      // press them; 20 ms a key is well inside what a typist manages.
+      usleep(20_000)
+    }
+    return unmapped
+  }
+
   /// Read ONE named attribute off an element.
   ///
   /// The tree carries a fixed field set, chosen because it is what a driver
@@ -780,9 +893,14 @@ enum AccessibilityDriver {
   /// because `NSWorkspace.frontmostApplication` is safe to read from anywhere
   /// and a press that waited on the UI would be the worse trade this file
   /// already refuses elsewhere.
-  private static func announceSessionInput() {
-    let target = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-    DriveActivity.record(target ?? "the frontmost application")
+  ///
+  /// `target` is for a caller that knows better than the frontmost read: the
+  /// simulator surface posts into a window it has just activated, and the
+  /// notice should name the Simulator rather than whatever `NSWorkspace` still
+  /// reports as frontmost in the same millisecond.
+  private static func announceSessionInput(_ target: String? = nil) {
+    let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    DriveActivity.record(target ?? frontmost ?? "the frontmost application")
   }
 
   // ─── the other direction: what the PERSON is doing ─────────────────────────
@@ -823,7 +941,7 @@ enum AccessibilityDriver {
   /// This is the fallback, not the default. A click at a point is what a driver
   /// does when an element offers no action; it is not how a driver should
   /// normally reach a control.
-  static func click(x: Double, y: Double) throws {
+  static func click(x: Double, y: Double, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
@@ -835,8 +953,55 @@ enum AccessibilityDriver {
         mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point,
         mouseButton: .left)
     else { throw Failure.refused("Could not synthesise a click.") }
-    announceSessionInput()
+    announceSessionInput(target)
     down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+  }
+
+  /// Press, move along the segment, release.
+  ///
+  /// Interpolated `leftMouseDragged` events at ~60 Hz, so whatever is under
+  /// the pointer sees a pan with a velocity rather than a jump. Written for the
+  /// simulator surface, where the Simulator turns a mouse drag into a touch
+  /// pan — MEASURED, docs/simulator.md: a 400-point drag over 400 ms scrolled
+  /// Settings' root list a full screen, and the same drag over 120 ms did too.
+  /// The duration is honoured as wall-clock, so a caller asking for a fling
+  /// gets fewer, faster steps rather than the same steps spaced closer.
+  static func drag(
+    from: CGPoint, to: CGPoint, durationMs: Int, announcing target: String? = nil
+  ) throws {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let source = CGEventSource(stateID: .hidSystemState)
+    func event(_ type: CGEventType, at point: CGPoint) throws -> CGEvent {
+      guard
+        let made = CGEvent(
+          mouseEventSource: source, mouseType: type, mouseCursorPosition: point,
+          mouseButton: .left)
+      else { throw Failure.refused("Could not synthesise a drag.") }
+      return made
+    }
+    let steps = max(2, durationMs / 16)
+    let moved = try event(.mouseMoved, at: from)
+    let down = try event(.leftMouseDown, at: from)
+    var drags: [CGEvent] = []
+    for step in 1...steps {
+      let t = Double(step) / Double(steps)
+      drags.append(
+        try event(
+          .leftMouseDragged,
+          at: CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)))
+    }
+    let up = try event(.leftMouseUp, at: to)
+    // Every event is built before the first is posted, so a failure to
+    // synthesise one cannot leave the button held down.
+    announceSessionInput(target)
+    moved.post(tap: .cghidEventTap)
+    down.post(tap: .cghidEventTap)
+    let pause = UInt32(max(1, durationMs * 1000 / steps))
+    for drag in drags {
+      drag.post(tap: .cghidEventTap)
+      usleep(pause)
+    }
     up.post(tap: .cghidEventTap)
   }
 
@@ -847,10 +1012,10 @@ enum AccessibilityDriver {
   /// of driving System Events with a per-character Apple Event. Setting the
   /// unicode string on one event carries any character correctly and costs one
   /// round trip, so neither the pasteboard borrow nor a key-code table is needed.
-  static func type(text: String) throws {
+  static func type(text: String, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
-    announceSessionInput()
+    announceSessionInput(target)
     // Chunked: the unicode string on a single event is not meant for unbounded
     // input, and a long paste-like burst is better delivered as several events.
     for chunk in text.chunked(into: 20) {
@@ -866,7 +1031,7 @@ enum AccessibilityDriver {
   }
 
   /// A named key with modifiers — what `type` cannot express.
-  static func key(_ name: String, modifiers: [String]) throws {
+  static func key(_ name: String, modifiers: [String], announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     guard let code = keyCode(for: name) else {
       throw Failure.refused(
@@ -889,7 +1054,7 @@ enum AccessibilityDriver {
     else { throw Failure.refused("Could not synthesise a key press.") }
     down.flags = flags
     up.flags = flags
-    announceSessionInput()
+    announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
   }

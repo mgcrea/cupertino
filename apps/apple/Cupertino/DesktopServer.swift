@@ -77,7 +77,7 @@ enum DesktopServer {
       // The internal channel. Naming the one app it may address is not a
       // nicety: this driver was lent to a surface for ITS app, and a
       // description promising the brokered set would be an invitation to try
-      // the other seven and collect a refusal each time.
+      // the others and collect a refusal each time.
       bundleIdDescription =
         "Bundle identifier of \(ids.sorted().joined(separator: " or ")). This driver was lent "
         + "for that application alone and reaches nothing else."
@@ -380,7 +380,7 @@ enum DesktopServer {
     return out
   }
 
-  private static func detail(_ args: [String: Any]) -> AccessibilityDriver.Detail {
+  static func detail(_ args: [String: Any]) -> AccessibilityDriver.Detail {
     AccessibilityDriver.Detail(rawValue: args["detail"] as? String ?? "") ?? .interactive
   }
 
@@ -413,14 +413,21 @@ enum DesktopServer {
   /// exactly like a truncated answer and is the confusion this field exists to
   /// prevent. The byte cap was wrong the same way, measured against elements
   /// that were never going to be sent.
-  private static func treeBody(
-    _ tree: AccessibilityDriver.Tree, elements: [AccessibilityDriver.Element]? = nil
+  ///
+  /// `render` and `coordinateSpace` exist for the simulator surface, which
+  /// answers the same walk in iOS points: the byte cap and the `matched` /
+  /// `returned` / `truncated` contract are one implementation here rather
+  /// than a copy that would drift.
+  static func treeBody(
+    _ tree: AccessibilityDriver.Tree, elements: [AccessibilityDriver.Element]? = nil,
+    render: ((AccessibilityDriver.Element) -> [String: Any])? = nil,
+    coordinateSpace: String = "screen points, top-left origin"
   ) -> [String: Any] {
     let answering = elements ?? tree.elements
     var kept: [[String: Any]] = []
     var bytes = 0
     for element in answering {
-      let json = element.json
+      let json = render?(element) ?? element.json
       // Measured rather than estimated: an element with a long name and a rect
       // is several times the size of a bare button, so a per-element budget
       // would be wrong in both directions. Serialised with the SAME options
@@ -442,7 +449,7 @@ enum DesktopServer {
       "matched": answering.count,
       "visited": tree.visited,
       "seconds": (tree.seconds * 1000).rounded() / 1000,
-      "coordinateSpace": "screen points, top-left origin",
+      "coordinateSpace": coordinateSpace,
     ]
 
     // Named rather than implied. A truncated answer that does not say so is
@@ -757,28 +764,24 @@ enum DesktopServer {
     guard uri == "cupertino://desktop/guide" else {
       return error(id, code: -32602, message: "unknown resource '\(uri)'")
     }
-    // Only worth saying when the reach allows it: the Simulator is not a brokered
-    // surface, so under the default scope this paragraph would describe something
-    // the caller would be refused. See docs/simulator.md for the measurements.
+    // Simulator.app is a brokered application now — `simulator` in surfaces.json
+    // — so this is reachable under every scope, and the paragraph is no longer
+    // gated on the reach. What it says has changed too: the arithmetic it used
+    // to ask the model to do by hand is what the simulator surface does.
     //
-    // The blank lines belong to the paragraph rather than to the guide around it, so
-    // that leaving it out closes the gap instead of leaving a hole where it was.
-    let simulator =
-      scope == .any
-      ? """
+    // The blank lines belong to the paragraph rather than to the guide around it.
+    let simulator = """
 
       ## An iOS Simulator is a window too
 
       Simulator.app bridges the simulated device's accessibility tree into this one, so an
       iOS app's own controls are readable and pressable here — no WebDriverAgent and no
-      runner process. The device screen is the `AXGroup` whose size equals the device's
-      point size, and frames are Mac-screen absolute: subtract that group's origin to get
-      the iOS point space. It reaches less than WebDriverAgent does — a tab bar can arrive
-      as an empty container — so it is a second opinion and a no-setup lane, not a
-      replacement.
+      runner process. Frames here are Mac-screen absolute; the `simulator` surface reads the
+      same tree in iOS points, with the window scale measured, and is the one to prefer for
+      a device. It reaches less than WebDriverAgent does — a tab bar can arrive as an empty
+      container — so it is a second opinion and a no-setup lane, not a replacement.
 
       """
-      : ""
     let text = """
       # Driving macOS applications
 
@@ -819,7 +822,7 @@ enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, set_value, click, type, key and raise_window are available."
+        ? "Writes are ON: press, set_value, click, type, key, focus, activate and raise_window are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

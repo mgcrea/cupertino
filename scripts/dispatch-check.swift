@@ -71,12 +71,21 @@ struct DispatchCheck {
 
   /// The whole `tools/list` reply, not just the names — a gate that changes a
   /// DESCRIPTION rather than the tool set still has to be visible here.
+  /// CANONICAL, not the wire text. Swift seeds a dictionary's hashing per
+  /// instance, so two equal `[String: Any]` serialise their keys in different
+  /// orders on consecutive calls — the raw text of two identical tool lists
+  /// differed at byte 22. Comparing text made the "a gate changes something"
+  /// assertion pass for free on every gated surface, and made the "no gate
+  /// changes nothing" assertion fail on the first surface without one.
   static func payload(_ surface: Surface, writes: Bool, gates: Bool) -> String {
     guard
       case .message(let text) = send(surface, "tools/list", writes: writes, gates: gates)
-        .outcome
+        .outcome,
+      let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)),
+      let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+      let canonical = String(data: data, encoding: .utf8)
     else { return "" }
-    return text
+    return canonical
   }
 
   static func main() {
@@ -243,6 +252,40 @@ struct DispatchCheck {
       "the scope gate cannot widen a lend",
       lentReach(gates: true).contains("com.apple.mail")
         && !lentReach(gates: true).contains("any running application"))
+
+    // `simulator` pins its own reach. A lend cannot happen to it — ServerHost
+    // refuses — but the dispatch must not consult a lent scope or a gate for it
+    // either, so a scope that somehow arrived changes nothing it reports.
+    func simulatorReach(gates: Bool, lent: AccessibilityDriver.Scope?) -> String {
+      let message: [String: Any] = [
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": ["name": "apple_simulator_diagnostics", "arguments": [String: Any]()],
+      ]
+      let line = String(
+        data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
+      guard
+        case .message(let text) = InProcessServers.handle(
+          line, surface: Surface.named("simulator")!, allowWrites: false,
+          gateOn: { _ in gates }, lentScope: lent),
+        let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+        let result = object["result"] as? [String: Any],
+        let content = (result["content"] as? [[String: Any]])?.first,
+        let body = content["text"] as? String,
+        let parsed = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
+      else { return "" }
+      return parsed["reach"] as? String ?? ""
+    }
+    let pinned = simulatorReach(gates: false, lent: nil)
+    check(
+      "simulator reaches the Simulator alone",
+      pinned.contains("com.apple.iphonesimulator") && pinned.contains("no switch widens it"))
+    check(
+      "no gate widens the simulator's reach",
+      simulatorReach(gates: true, lent: nil) == pinned)
+    check(
+      "no lent scope narrows or widens the simulator's reach",
+      simulatorReach(gates: true, lent: .only(["com.apple.mail"])) == pinned
+        && simulatorReach(gates: true, lent: .any) == pinned)
 
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }

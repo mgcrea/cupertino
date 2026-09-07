@@ -163,7 +163,7 @@ struct MainView: View {
     // by launching onto it.
     //
     // Clients ONLY, and that is not an optimisation. Everything above them fits:
-    // eight surfaces, three capabilities and Activity are the rows above them,
+    // nine surfaces, three capabilities and Activity are the rows above them,
     // and scrolling to one of those moves a list that did
     // not need moving — measured on the marketing plates, where it pushed the
     // Surfaces section off the top of three of them to select a row that was

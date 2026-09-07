@@ -33,7 +33,8 @@ export interface Surface {
     | "maps"
     | "screen"
     | "sound"
-    | "desktop";
+    | "desktop"
+    | "simulator";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -66,11 +67,15 @@ export interface Surface {
  * is a claim about what a licence gets you.
  *
  * The difference is total rather than cosmetic. An app surface ships ON, shares
- * one Full Disk Access grant with the other seven, and is also an npm package
- * that runs without Cupertino at all. A capability ships OFF, needs its own TCC
+ * one Full Disk Access grant with the others, and is also an npm package that
+ * runs without Cupertino at all. A capability ships OFF, needs its own TCC
  * grant — Screen Recording, Microphone, Accessibility, one each — and can never
  * be an npm package, because the grant lives in the app and a published package
  * would hold nothing.
+ *
+ * Simulator is the app that breaks the first half of that: it brokers one Apple
+ * app but through Accessibility, so it ships OFF and has no package, for the
+ * capability's reasons. The heading counts it as an app because it is one.
  */
 // <generated:kind> generated from surfaces.json by `make surfaces` — do not edit by hand
 export const KIND: Record<Surface["id"], "app" | "capability"> = {
@@ -85,6 +90,7 @@ export const KIND: Record<Surface["id"], "app" | "capability"> = {
   screen: "capability",
   sound: "capability",
   desktop: "capability",
+  simulator: "app",
 };
 
 export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
@@ -99,6 +105,7 @@ export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
   screen: false,
   sound: false,
   desktop: false,
+  simulator: false,
 };
 
 export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
@@ -113,6 +120,7 @@ export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
   screen: false,
   sound: true,
   desktop: true,
+  simulator: true,
 };
 // </generated:kind>
 
@@ -472,6 +480,34 @@ export const SURFACES: readonly Surface[] = [
       "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
     withoutGrant:
       "Which apps are running, and nothing else. Accessibility is the grant that matters here rather than Full Disk Access, and every read past the app list refuses by name until it is given.",
+  },
+  {
+    id: "simulator",
+    name: "Simulator",
+    // An app surface with no package, which no other app entry is. The lane
+    // it brokers is Accessibility into Simulator.app, and that grant lands on
+    // the responsible GUI ancestor — the same reason Desktop has none. What
+    // needs no grant (boot, install, launch, screenshots, push) lives in
+    // @mgcrea/mcp-ios-simulator and is deliberately not duplicated here.
+    pkg: "\u2014",
+    read: [
+      "apple_simulator_list_devices",
+      "apple_simulator_ui_tree",
+      "apple_simulator_find_elements",
+      "apple_simulator_diagnostics",
+    ],
+    write: [
+      "apple_simulator_press",
+      "apple_simulator_tap",
+      "apple_simulator_swipe",
+      "apple_simulator_type",
+      "apple_simulator_key",
+      "apple_simulator_press_button",
+    ],
+    pitch:
+      "An iOS Simulator is a Mac window, and Simulator.app bridges the simulated device's accessibility tree into it. This reads an iOS app's own controls as named, pressable elements in iOS points \u2014 the same coordinates the simctl-based tools use \u2014 and behind the write gate presses, taps, swipes and types, with no WebDriverAgent runner to keep alive. Scoped to the Simulator alone; no switch widens it.",
+    withoutGrant:
+      "Which simulators CoreSimulator knows and which are booted, read from its own plists. Everything on the device's screen needs Accessibility, and refuses by name until it is given.",
   },
 ] as const;
 

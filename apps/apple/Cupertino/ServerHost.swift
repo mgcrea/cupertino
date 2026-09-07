@@ -486,6 +486,14 @@ nonisolated final class ServerHost: @unchecked Sendable {
         reply(client, "err '\(surface.id)' is not served in-process and cannot be lent")
         return
       }
+      // In-process is necessary and not sufficient. `simulator` is served
+      // in-process and pins its own reach, so lending it would hand a node
+      // server a driver for an app that is not the borrower's — the exact
+      // shape the scope below exists to prevent. Only the generic driver lends.
+      guard surface.id == "desktop" else {
+        reply(client, "err '\(surface.id)' cannot be lent; only desktop can")
+        return
+      }
       guard let borrower = Surface.named(borrowerId), borrower.bundleID != nil else {
         reply(client, "err unknown or app-less borrower '\(borrowerId)'")
         return
@@ -709,8 +717,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
       case .noReply:
         continue
       case .noServer:
-        // Unreachable: `runtime` comes from the closed table and only two
-        // surfaces are swift-hosted. Logged rather than silent, because that
+        // Unreachable: `runtime` comes from the closed table and every
+        // swift-hosted surface has a case in `InProcessServers`. Logged rather than silent, because that
         // table and the dispatch are two places one fact lives, and a new
         // swift surface that forgets a case would otherwise hang rather than
         // say why.
