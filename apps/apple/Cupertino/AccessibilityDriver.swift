@@ -878,20 +878,73 @@ enum AccessibilityDriver {
   ///
   /// `NSRunningApplication.activate()` rather than an AX action: there is no
   /// `AXRaise` on an application element, and the window-level raise above
-  /// deliberately does something narrower.
+  /// deliberately does something narrower. There is, however, a settable
+  /// `AXFrontmost` on it, and this needs both.
+  ///
+  /// LaunchServices arbitrates `activate()`, and since macOS 14 it refuses a
+  /// caller the user has not interacted with. This app is an `LSUIElement`
+  /// broker that nobody ever clicks, so it is refused for EVERY target — not
+  /// for want of a permission, and not because of anything about the target.
+  /// MEASURED on macOS 26.6.2: `apple_desktop_activate` was refused for
+  /// com.apple.mail and com.apple.finder alike, from Cupertino, while the same
+  /// `activate()` on Mail from a command-line process launched seconds earlier
+  /// returned true and moved the foreground. The difference is the caller.
+  ///
+  /// `.activateIgnoringOtherApps` is not the way out: it is deprecated since
+  /// macOS 14 and the compiler is explicit that it "will have no effect".
+  ///
+  /// So when LaunchServices says no, ask Accessibility — a different subsystem,
+  /// arbitrated differently, and the one this driver is built on top of anyway.
+  /// MEASURED, same session: setting `AXFrontmost` raised Mail from behind
+  /// VS Code with `err=0` in the moment after `activate()` had been refused.
+  ///
+  /// The answer is then read back off the window server rather than taken from
+  /// either call's return value, because activation is asynchronous and a
+  /// `true` that did not actually move the foreground is precisely how a
+  /// synthetic keystroke ends up in somebody else's window.
   static func activate(bundleId: String, scope: Scope) throws {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
     // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
     // and refusing it for want of a grant it does not use would be a confusing
     // lie. Scope still applies — it is this surface's bound, not the system's.
-    guard running.activate() else {
+    let asked = running.activate()
+
+    // Without the grant there is no second route to try and nothing to read the
+    // truth back with, so the boolean is all there is. Unchanged behaviour for
+    // a caller that never had Accessibility in the first place.
+    guard isTrusted() else {
+      guard asked else { throw Failure.refused("\(bundleId) refused to come to the front.") }
+      DriveActivity.record(bundleId)
+      return
+    }
+
+    if !asked {
+      AXUIElementSetAttributeValue(
+        element(for: running.processIdentifier), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+    guard frontmostSettled(on: bundleId) else {
       throw Failure.refused("\(bundleId) refused to come to the front.")
     }
     // Recorded only once the screen has actually changed. Announcing first put
     // "Cupertino is driving X" on screen for four seconds after a refusal that
     // told the caller X was not even running.
     DriveActivity.record(bundleId)
+  }
+
+  /// Wait for the window server to agree that `bundleId` is frontmost.
+  ///
+  /// Both routes above are asynchronous — about 105 ms, measured on the
+  /// Simulator and recorded on `activateAndWait` below — so the call that asked
+  /// for the foreground returns before the screen has it. This is the only
+  /// place that decides whether activation happened.
+  private static func frontmostSettled(on bundleId: String, timeout: TimeInterval = 2) -> Bool {
+    let started = Date()
+    repeat {
+      if frontmostBundleId() == bundleId { return true }
+      usleep(20_000)
+    } while Date().timeIntervalSince(started) < timeout
+    return frontmostBundleId() == bundleId
   }
 
   /// The application that holds the focus RIGHT NOW, asked of the window
