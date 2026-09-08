@@ -32,6 +32,7 @@
  */
 import { Picture } from "astro:assets";
 import activityShot from "../assets/shots/activity.png";
+import chatShot from "../assets/shots/chat.png";
 import connectionsShot from "../assets/shots/connections.png";
 import promptShot from "../assets/shots/prompt.png";
 import settingsShot from "../assets/shots/settings.png";
@@ -55,6 +56,13 @@ import SectionHeader from "./SectionHeader.astro";
  * navigation.
  */
 const shots = [
+  {
+    image: chatShot,
+    id: "chat",
+    title: "Try it without wiring anything",
+    body: "Pick a surface and ask in plain words. Apple's on-device model calls the same tools an editor would, over the same connection, and every call is shown with the arguments it invented — above the answer, because the calls are the evidence and the sentence is the model's account of them. The model holds 4,096 tokens, so the header says how much of that the loaded tools are spending. Nothing leaves the Mac, and it works before you buy a licence.",
+    alt: "Cupertino's chat pane: Mail selected, fifteen of twenty-one tools loaded against a 1,800-token budget, one apple_mail_search_messages call showing the arguments the model chose and the three messages it returned, then a one-sentence answer.",
+  },
   {
     image: promptShot,
     id: "prompt",

@@ -6,7 +6,9 @@
     "height": 1800
   },
   "//appearances": "Dark only, on purpose. apps/website/src/styles/global.css: \"Dark is the base, not an override... there is no light theme to be faithful to and none is invented here.\" Capturing light too would double the run and commit three goldens that nothing renders and nobody reviews. Adding \"light\" here and to the Makefile's APPEARANCES is the whole change if the site ever grows one.",
-  "appearances": ["dark"],
+  "appearances": [
+    "dark"
+  ],
   "//fontFamily": "SF Pro Display is NOT part of a stock macOS install — it ships in Apple's SF font pack. `make screenshots-doctor` refuses to compose if it does not resolve, which is the only way to catch a silent substitution.",
   "fontFamily": "'SF Pro Display', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif",
   "layout": {
@@ -99,6 +101,13 @@
       "website": "writes",
       "title": "Writes are off until you say so.",
       "subtitle": "With the toggle off, the mutating tools are never registered — seven tools here against Mail's twenty. An assistant is not refused; it is never told they exist."
+    },
+    {
+      "//": "Appended, never inserted: `appshot compose` stamps 01-…0N- from this order, so a new entry in the middle renames every later appstore/*.png and breaks the website's imports. The tools and the token counter are computed by ChatBudget.cost off the fixture's real schemas rather than typed in, so a change to what a tool costs shows up here rather than leaving the plate quietly claiming an old number. The calls sit above the prose because that is how the pane draws them — they are the evidence and the sentence is a small model's account of it.",
+      "id": "chat",
+      "website": "chat",
+      "title": "Try the tools without wiring anything.",
+      "subtitle": "Ask in plain words and Apple's on-device model calls the same tools an editor would, over the same connection — every call shown with the arguments it invented. Nothing leaves the Mac."
     }
   ]
 }

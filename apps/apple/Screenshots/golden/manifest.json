@@ -10,6 +10,40 @@
         "--golden",
         "apps/apple/Screenshots/golden"
       ],
+      "at" : "2026-09-08T19:11:05Z",
+      "count" : 7,
+      "cwd" : "/Users/olivier/Projects/apps/cupertino",
+      "host" : "oliviermacbookpro.local",
+      "pid" : 59997,
+      "user" : "olivier"
+    },
+    {
+      "appshotVersion" : "0.9.0",
+      "argv" : [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
+      "at" : "2026-09-08T16:51:55Z",
+      "count" : 7,
+      "cwd" : "/Users/olivier/Projects/apps/cupertino",
+      "host" : "oliviermacbookpro.local",
+      "pid" : 69290,
+      "user" : "olivier"
+    },
+    {
+      "appshotVersion" : "0.9.0",
+      "argv" : [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
       "at" : "2026-09-07T19:40:12Z",
       "count" : 6,
       "cwd" : "/Users/olivier/Projects/apps/cupertino",
@@ -135,77 +169,49 @@
       "host" : "oliviermacbookpro.local",
       "pid" : 54259,
       "user" : "olivier"
-    },
-    {
-      "appshotVersion" : "0.9.0",
-      "argv" : [
-        "/Users/olivier/.local/bin/appshot",
-        "accept",
-        "--source",
-        "apps/apple/Screenshots/source",
-        "--golden",
-        "apps/apple/Screenshots/golden"
-      ],
-      "at" : "2026-09-01T21:32:56Z",
-      "count" : 6,
-      "cwd" : "/Users/olivier/Projects/apps/cupertino",
-      "host" : "oliviermacbookpro.local",
-      "pid" : 73207,
-      "user" : "olivier"
-    },
-    {
-      "appshotVersion" : "0.9.0",
-      "argv" : [
-        "/Users/olivier/.local/bin/appshot",
-        "accept",
-        "--source",
-        "apps/apple/Screenshots/source",
-        "--golden",
-        "apps/apple/Screenshots/golden"
-      ],
-      "at" : "2026-09-01T19:11:00Z",
-      "count" : 6,
-      "cwd" : "/Users/olivier/Projects/apps/cupertino",
-      "host" : "oliviermacbookpro.local",
-      "pid" : 79357,
-      "user" : "olivier"
     }
   ],
   "entries" : {
     "activity~dark.png" : {
-      "bytes" : 454985,
+      "bytes" : 455027,
       "height" : 1144,
-      "sha256" : "58b1f75dece20f7c4882cea0485e523a295c7834bce0488a05080f7d87b93415",
+      "sha256" : "fdc1b49aea6592c99bb2ec346dea13b9b360885e9cdd8f93da92029025c9bf57",
+      "width" : 2240
+    },
+    "chat~dark.png" : {
+      "bytes" : 284775,
+      "height" : 1144,
+      "sha256" : "b480b7fd56d9ff66a551b5137eb1df335712182fd480221af0db5c755533f0f1",
       "width" : 2240
     },
     "connections~dark.png" : {
-      "bytes" : 362660,
+      "bytes" : 362668,
       "height" : 1144,
-      "sha256" : "6fc39578acea518fb42f45b6d455e4dc7bbb9d317e55a05eb7f711009aff7dfa",
+      "sha256" : "27918d0f673c3bc8e268826e92cafd14387f761627dc1099ee44090832f042b8",
       "width" : 2240
     },
     "prompt~dark.png" : {
-      "bytes" : 335014,
+      "bytes" : 335052,
       "height" : 1144,
-      "sha256" : "c81c1973e7f4e98062888961dc45be7838f0d472dbaa1a77864a1ac286242883",
+      "sha256" : "fba9035a456bcd18682836820cc1e794720bde845209278a43e3d543edb3d25d",
       "width" : 2240
     },
     "settings~dark.png" : {
-      "bytes" : 346345,
+      "bytes" : 350494,
       "height" : 1144,
-      "sha256" : "e13027434827c1118fae962c234b2b94e348d3058943d08105def4573232db03",
+      "sha256" : "806eae9bae0ff8e566bc54f35ded76fa8712d1e4cda4365677e0586edaad0d29",
       "width" : 2240
     },
     "surface~dark.png" : {
-      "bytes" : 301881,
+      "bytes" : 303364,
       "height" : 1144,
-      "sha256" : "6b7a18ed1a455fa6dff1d7d3a36767d713776dda13c2a066fa0bd216c14a92f9",
+      "sha256" : "892936513979e13af212c0a8590a7c9832cdc03be55bb716f4ad3082ef5694f6",
       "width" : 2240
     },
     "writes~dark.png" : {
-      "bytes" : 307139,
+      "bytes" : 307142,
       "height" : 1144,
-      "sha256" : "eaeb2c1fa3ca03fbbf94ab2b4604abb1b3c8b54ebfdb330359383686ae0c52eb",
+      "sha256" : "14afb946f1e2b646f05f89f3a75354e9e80fee34be2b358dac892213b5cfe6f4",
       "width" : 2240
     }
   },
