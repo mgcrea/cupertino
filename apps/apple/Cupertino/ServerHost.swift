@@ -476,7 +476,24 @@ nonisolated final class ServerHost: @unchecked Sendable {
     //      is not widened by `allowAnyApp`. A capability has no bundleID, so it
     //      cannot borrow: there is no app it would be borrowing FOR.
     var lentTo: Surface?
-    if parts.count == 3 {
+    /// Which client's config this connection came from, when it says.
+    ///
+    /// A claim, and deliberately an unverified one — unlike `for=` below, which
+    /// is checked against the peer pid. Nothing is granted on the strength of
+    /// it: the only thing it decides is whether the tool listing is fronted,
+    /// and a client that lied would get the listing it asked for. There is no
+    /// reason to lie and nothing gained by it.
+    var wiredClient: String?
+    if parts.count == 3, parts[2] != BridgeProtocol.selfSuffix,
+      parts[2].hasPrefix(BridgeProtocol.clientPrefix)
+    {
+      let claimed = String(parts[2].dropFirst(BridgeProtocol.clientPrefix.count))
+      guard BridgeProtocol.isWellFormedClient(claimed) else {
+        reply(client, "err malformed handshake '\(line)'")
+        return
+      }
+      wiredClient = claimed
+    } else if parts.count == 3, parts[2] != BridgeProtocol.selfSuffix {
       guard parts[2].hasPrefix(BridgeProtocol.onBehalfOfPrefix) else {
         reply(client, "err malformed handshake '\(line)'")
         return
@@ -506,6 +523,31 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
       lentTo = borrower
+    }
+
+    // ─── the app talking to itself ───────────────────────────────────────────
+    //
+    // `cupertino/1 mail self` — the Chat pane, reaching a surface by exactly
+    // the path an editor reaches it by. The pane could have spawned its own
+    // child on a pipe; going through here instead is what makes its calls real
+    // ones, subject to the same gates and visible in the same Log.
+    //
+    // The word is a claim, and the kernel is the check: `peerPID` reads
+    // LOCAL_PEERPID, which XNU records from whoever called `connect(2)`, so no
+    // other process on this machine can produce this pid. That is the same
+    // thing the `for=` channel above rests on.
+    //
+    // Requiring the word AS WELL AS the pid is deliberate. "Any connection from
+    // our own process is exempt" would be a property of the process, and the
+    // next thing in this app to open this socket would inherit the exemption
+    // with nothing in its diff to show it.
+    let isSelf =
+      parts.count == 3 && parts[2] == BridgeProtocol.selfSuffix
+      && peerPID(client) == getpid()
+    if parts.count == 3 && parts[2] == BridgeProtocol.selfSuffix && !isSelf {
+      hostLog(surface.id, .error, "refused a 'self' handshake from another process")
+      reply(client, "err this connection is not Cupertino")
+      return
     }
 
     // Every gate below answers for the borrower when there is one. `authority`
@@ -562,20 +604,37 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Logged as well as replied. The bridge relays this sentence to its MCP
     // host, where it lands in a log file nobody opens; the Activity window is
     // where someone will actually look for it.
+    //
+    // The Chat pane is carved out, and the carve-out is this narrow on purpose.
+    // What is sold is the relay — a client using Cupertino to reach a surface
+    // it could not reach itself. The pane is not a relay: the frames are the
+    // app's own, and refusing to let somebody see their own Mail listed inside
+    // the app that is asking them to pay for it would make the licence look
+    // like the thing that broke.
+    //
+    // It also means an expired trial cuts off the user's editors while the pane
+    // keeps answering. That asymmetry is intended, and the pane says so.
+    //
+    // AFTER the enablement check above and before anything is spawned. A chat
+    // that could reach a switched-off surface would break the one promise the
+    // sidebar makes, and enablement is a fact about configuration rather than
+    // about payment — which is the argument that comment already makes.
     var onTrial = false
-    switch Entitlement.current {
-    case .licensed:
-      break
-    case .trial:
-      onTrial = true
-      hostLog(surface.id, .info, "trial: \(Trial.remainingText)")
-    case .refused(let reason):
-      hostLog(surface.id, .error, "refused: \(reason)")
-      reply(
-        client,
-        "err \(reason) — open Cupertino to enter a licence key, or to start a "
-          + "\(Int(Trial.duration / 60))-minute trial")
-      return
+    if !isSelf {
+      switch Entitlement.current {
+      case .licensed:
+        break
+      case .trial:
+        onTrial = true
+        hostLog(surface.id, .info, "trial: \(Trial.remainingText)")
+      case .refused(let reason):
+        hostLog(surface.id, .error, "refused: \(reason)")
+        reply(
+          client,
+          "err \(reason) — open Cupertino to enter a licence key, or to start a "
+            + "\(Int(Trial.duration / 60))-minute trial")
+        return
+      }
     }
 
     // A swift-hosted surface is served here rather than spawned. There is no
@@ -600,7 +659,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     reply(client, BridgeProtocol.ok)
-    run(surface: surface, binaries: binaries, client: client, onTrial: onTrial)
+    run(
+      surface: surface, binaries: binaries, client: client, onTrial: onTrial,
+      isSelf: isSelf, wiredClient: wiredClient)
   }
 
   /// Close every server started on the trial, when the window closes.
@@ -728,12 +789,30 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-  private func run(surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool) {
+  private func run(
+    surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool, isSelf: Bool,
+    wiredClient: String?
+  ) {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
     let gates = SurfaceSettings.enabledGates(surface)
-    let lazyTools = SurfaceSettings.lazyTools(surface)
+    // Never lazy for the Chat pane, and `SurfaceCatalog.probe` gives the reason
+    // in full: a lazy server answers `tools/list` with a search tool and a
+    // dispatcher, so honouring the setting here would hand the model four tools
+    // on every surface and call that the surface's capability. The setting is a
+    // cost knob for OTHER clients, whose hosts fetch schemas lazily anyway.
+    //
+    // The third term is the client. Loading tools on demand is a decision about
+    // a surface, and a surface feeds every client wired to it at once — but
+    // Claude Code and Claude Desktop already fetch tool schemas only when they
+    // need them. Fronting one of those spends the whole cost of the facade to
+    // buy back nothing, and worse: the client's own search then indexes the
+    // facade's four generic entries instead of the surface's real tools.
+    let lazyTools =
+      isSelf
+      ? false
+      : SurfaceSettings.lazyTools(surface) && !ClientFacade.defersSchemas(wiredClient)
     process.environment = ServerLocator.environment(
       for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates,
       lazyTools: lazyTools)
@@ -744,6 +823,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
     }
     if lazyTools { hostLog(surface.id, .info, "lazyTools=true") }
+    if !lazyTools, !isSelf, SurfaceSettings.lazyTools(surface), let id = wiredClient {
+      hostLog(surface.id, .info, "lazyTools skipped — \(id) defers tool schemas itself")
+    }
 
     let toChild = Pipe()
     let fromChild = Pipe()

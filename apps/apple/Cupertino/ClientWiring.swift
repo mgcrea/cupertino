@@ -287,10 +287,22 @@ enum ClientWiring {
       .path
   }
 
-  static func entry(for surface: Surface) -> [String: Any] {
+  /// One `mcpServers` entry.
+  ///
+  /// `--client=` names which config this was written into, so the host can tell
+  /// Claude Desktop from Cursor when it decides whether to front the tool
+  /// listing — see `ClientFacade`. It is written for every client, not only the
+  /// deferring ones, because the list of which clients defer changes and the
+  /// configs do not get rewritten when it does.
+  ///
+  /// Adding it does not invalidate anybody's existing wiring:
+  /// `ClientWiringMerge.state` compares the `command` and explicitly never the
+  /// `args`, so a config written before this still reports as matching. It
+  /// simply carries no client id until the next Configure.
+  static func entry(for surface: Surface, client: String) -> [String: Any] {
     // No `env` block. Writes are the app's toggle now, not a client-side
     // variable that every client would carry its own stale copy of.
-    ["command": bridgePath, "args": ["--server=\(surface.id)"]]
+    ["command": bridgePath, "args": ["--server=\(surface.id)", "--client=\(client)"]]
   }
 
   /// Named after the thing that provides the server, not the thing it talks to.
@@ -308,13 +320,17 @@ enum ClientWiring {
   /// deployment, running under their own grant rather than Cupertino's.
   static func serverKey(for surface: Surface) -> String { "cupertino-\(surface.id)" }
 
+  /// Both project scopes below write into Claude Code's own files, so the
+  /// client they are wiring is not in doubt. Named rather than spelled twice.
+  static let claudeCodeID = "claude-code"
+
   /// What `serverKey` returned before the rename.
   static func legacyServerKey(for surface: Surface) -> String { "apple-\(surface.id)" }
 
-  private static var entries: [String: [String: Any]] {
+  private static func entries(for client: String) -> [String: [String: Any]] {
     Dictionary(
       uniqueKeysWithValues: SurfaceSettings.enabledSurfaces.map {
-        (serverKey(for: $0), entry(for: $0))
+        (serverKey(for: $0), entry(for: $0, client: client))
       })
   }
 
@@ -484,7 +500,8 @@ enum ClientWiring {
     case .json(let path, let rootKey):
       backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
         ClientWiringMerge.merged(
-          into: root, rootKey: rootKey, entries: entries, legacy: legacyKeys, remove: disabledKeys)
+          into: root, rootKey: rootKey, entries: entries(for: client.id), legacy: legacyKeys,
+          remove: disabledKeys)
       }
     case .toml(let path):
       // The legacy `apple-*` keys and the switched-off ones are removed by name
@@ -492,7 +509,7 @@ enum ClientWiring {
       // has no dictionary to diff. `spliceWrite` still refuses to delete a span
       // whose entry is not ours — see its `removing` argument.
       backup = try spliceWrite(
-        into: path, upserting: entries,
+        into: path, upserting: entries(for: client.id),
         removing: Set(legacyKeys.values).union(disabledKeys))
     }
     hostLog("cupertino", .info, "configured \(client.displayName) at \(client.wiring.path.path)")
@@ -821,7 +838,7 @@ enum ClientWiring {
   static func configureProject(_ folder: URL) throws -> URL? {
     let backup = try mergeWrite(into: projectConfig(in: folder), newFileMode: nil) { root in
       ClientWiringMerge.merged(
-        into: root, rootKey: "mcpServers", entries: entries, legacy: legacyKeys,
+        into: root, rootKey: "mcpServers", entries: entries(for: claudeCodeID), legacy: legacyKeys,
         remove: disabledKeys)
     }
     hostLog("cupertino", .info, "configured folder \(folder.path)")
@@ -834,7 +851,7 @@ enum ClientWiring {
   static func configureLocal(_ folder: URL) throws -> URL? {
     let backup = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
       ClientWiringMerge.mergedIntoLocalScope(
-        into: root, folder: folder.path, entries: entries, legacy: legacyKeys,
+        into: root, folder: folder.path, entries: entries(for: claudeCodeID), legacy: legacyKeys,
         remove: disabledKeys)
     }
     hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code")

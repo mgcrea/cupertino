@@ -382,7 +382,8 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/LogStore.swift \
 		apps/apple/Cupertino/BridgeProtocol.swift \
-		apps/apple/Cupertino/SafariCaptures.swift scripts/unit-check.swift
+		apps/apple/Cupertino/SafariCaptures.swift \
+		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
 audit-check: ## Prove an export signature survives a round trip, with no app and no Keychain

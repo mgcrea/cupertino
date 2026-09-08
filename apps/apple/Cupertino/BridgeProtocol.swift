@@ -70,6 +70,55 @@ enum BridgeProtocol {
 
   static let onBehalfOfPrefix = "for="
 
+  /// The internal channel the app uses on itself: `cupertino/1 mail self\n`.
+  ///
+  /// The Chat pane reaching a surface the same way any editor reaches it. A
+  /// third field again, and for a second reason on top of the arity one above:
+  /// it makes the exemptions this earns a property of THIS FEATURE rather than
+  /// of the process. "Any connection from our own pid is unlicensed-exempt"
+  /// would be true of the next in-app button to open this socket too, and
+  /// nobody reviewing that button would see it inherit anything.
+  ///
+  /// `ServerHost.serve` honours it only when the peer pid is its own, so the
+  /// word is a claim and the kernel is the check — exactly the arrangement
+  /// `for=` already relies on.
+  static func selfHandshake(server: String) -> String {
+    "\(version) \(server) \(selfSuffix)\n"
+  }
+
+  static let selfSuffix = "self"
+
+  /// `cupertino/1 mail client=claude-desktop\n` — an ordinary client, saying
+  /// which one it is.
+  ///
+  /// The app writes this into the config alongside `--server=`, so the id is
+  /// the one Cupertino chose when it wired that file rather than anything the
+  /// client says about itself. `clientInfo.name` from the MCP handshake would
+  /// be the obvious alternative and is useless here: it arrives after
+  /// `initialize`, and the server's environment is fixed when it is spawned.
+  ///
+  /// Absent from an older config, and that has to stay harmless: an unknown
+  /// client is treated as one that does not defer, which is what every client
+  /// was treated as before this existed. `ClientWiringMerge.state` compares the
+  /// `command` and never the `args`, so adding this does not make anybody's
+  /// existing wiring report as stale.
+  static func handshake(server: String, client: String) -> String {
+    "\(version) \(server) \(clientPrefix)\(client)\n"
+  }
+
+  static let clientPrefix = "client="
+
+  /// What may appear after `client=`.
+  ///
+  /// The handshake is one space-separated line, so a value carrying a space or
+  /// a newline would not be a bad id, it would be a different message. Ids are
+  /// this app's own (`ClientWiring.clients`), but they arrive here off a config
+  /// file a person can edit.
+  static func isWellFormedClient(_ id: String) -> Bool {
+    !id.isEmpty && id.count <= 64
+      && id.allSatisfy { $0.isLowercase && $0.isLetter || $0.isNumber || $0 == "-" }
+  }
+
   /// First line the app sends back: `ok\n`, or `err <reason>\n`.
   static let ok = "ok"
   static let errorPrefix = "err "

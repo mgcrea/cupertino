@@ -81,10 +81,26 @@ let known = ["mail", "notes", "reminders", "calendar", "contacts", "messages", "
 // </generated:surfaces>
 
 var requested: String?
+/// Which MCP client's config this invocation was written into.
+///
+/// Unlike `--server=`, this is NOT validated against a closed set here. The set
+/// lives in the app (`ClientWiring.clients`) and changes when a client is added;
+/// duplicating it in this binary would be a second list to keep in step for no
+/// safety gained, because an id this binary does not recognise is exactly as
+/// harmless as one it does — the app treats an unknown client as one that does
+/// not defer. What IS checked is the shape, because the handshake is one
+/// space-separated line and a value with a space in it is a different message.
+var wiredClient: String?
 for argument in CommandLine.arguments.dropFirst() {
   if argument.hasPrefix("--server=") {
     requested = String(argument.dropFirst("--server=".count))
   }
+  if argument.hasPrefix("--client=") {
+    wiredClient = String(argument.dropFirst("--client=".count))
+  }
+}
+if let claimed = wiredClient, !BridgeProtocol.isWellFormedClient(claimed) {
+  die("malformed --client='\(claimed)'", code: 2)
 }
 guard let server = requested else {
   die("usage: cupertino-bridge --server=<\(known.joined(separator: "|"))>", code: 2)
@@ -215,7 +231,10 @@ setsockopt(
   sock, SOL_SOCKET, SO_RCVTIMEO, &handshakeTimeout,
   socklen_t(MemoryLayout<timeval>.size))
 
-guard writeAll(sock, Array(BridgeProtocol.handshake(server: server).utf8)) else {
+let greeting =
+  wiredClient.map { BridgeProtocol.handshake(server: server, client: $0) }
+  ?? BridgeProtocol.handshake(server: server)
+guard writeAll(sock, Array(greeting.utf8)) else {
   die("handshake write failed: \(String(cString: strerror(errno)))")
 }
 

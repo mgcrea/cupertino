@@ -587,6 +587,48 @@ struct UnitCheck {
     check("a row that does not match at all is not", !order.matchIsHidden("absent", preview: 160))
     check("an empty query flags nothing", !buried.matchIsHidden("", preview: 160))
 
+    print("\nWhich clients are fronted")
+
+    // The table. Two entries, and both were measured rather than assumed.
+    check("claude-code defers", ClientFacade.defersSchemas("claude-code", override: nil))
+    check("claude-desktop defers", ClientFacade.defersSchemas("claude-desktop", override: nil))
+    check("cursor does not", !ClientFacade.defersSchemas("cursor", override: nil))
+    check("nor does lm-studio", !ClientFacade.defersSchemas("lm-studio", override: nil))
+
+    // The default that matters. A config written before `--client=` existed
+    // carries no id, and absence must not be read as "defers" — that would
+    // silently switch the facade off for everybody who has not re-configured.
+    check(
+      "an unknown client does not defer", !ClientFacade.defersSchemas("who-is-this", override: nil))
+    check("and neither does no client at all", !ClientFacade.defersSchemas(nil))
+
+    // Both directions, which is why the override is a tri-state and not a Bool.
+    check("an override can add one", ClientFacade.defersSchemas("cursor", override: "on"))
+    check("an override can remove one", !ClientFacade.defersSchemas("claude-code", override: "off"))
+    check(
+      "an empty override is not a decision",
+      ClientFacade.defersSchemas("claude-code", override: ""))
+    check(
+      "and neither is a value nobody wrote",
+      ClientFacade.defersSchemas("claude-code", override: "maybe") == false)
+
+    print("\nThe client id on the wire")
+
+    check("an ordinary id is well formed", BridgeProtocol.isWellFormedClient("claude-desktop"))
+    // The handshake is one space-separated line, so these are not bad ids —
+    // they are different messages.
+    check("a space is not", !BridgeProtocol.isWellFormedClient("claude desktop"))
+    check("a newline is not", !BridgeProtocol.isWellFormedClient("a\nb"))
+    check("an empty id is not", !BridgeProtocol.isWellFormedClient(""))
+    check("upper case is not", !BridgeProtocol.isWellFormedClient("Claude-Code"))
+    check(
+      "and neither is something absurdly long",
+      !BridgeProtocol.isWellFormedClient(String(repeating: "a", count: 65)))
+    check(
+      "the handshake it builds carries the id",
+      BridgeProtocol.handshake(server: "mail", client: "claude-desktop")
+        == "cupertino/1 mail client=claude-desktop\n")
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")

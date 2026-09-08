@@ -269,8 +269,11 @@ struct GeneralPane: View {
             "Serve a search tool and a dispatcher instead of listing every tool up front. "
               + "Cuts what a client reads on connect by about four fifths, at the cost of a "
               + "coarser permission prompt: your client asks once per surface for reads and "
-              + "once for writes, rather than naming each tool. Leave it off for Claude Code "
-              + "and Claude Desktop, which already load tool schemas only when they are needed."
+              + "once for writes, rather than naming each tool.\n\n"
+              + "Two things are skipped automatically. Claude Code and Claude Desktop already "
+              + "load tool schemas only when they need them, so they are served the whole "
+              + "listing whatever this says. So is any surface too small for the trade to pay "
+              + "— Contacts and Messages have too few tools to be worth searching."
           )
         }
       } header: {

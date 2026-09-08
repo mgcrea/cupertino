@@ -388,8 +388,18 @@ struct ClientDetail: View {
     }
   }
 
+  /// The command line this entry would be written with.
+  ///
+  /// Composed from `ClientWiring.entry` rather than spelled out again. This
+  /// card's whole claim is "here is what Cupertino would write", so a second
+  /// copy of the arguments is a claim that can quietly stop being true — which
+  /// it did the day `--client=` landed and this line went on showing only
+  /// `--server=`.
   private func reachLine(for surface: Surface) -> String {
-    "\(ClientWiring.bridgePath) --server=\(surface.id)"
+    let entry = ClientWiring.entry(for: surface, client: client.id)
+    let command = entry["command"] as? String ?? ClientWiring.bridgePath
+    let arguments = (entry["args"] as? [String] ?? []).joined(separator: " ")
+    return arguments.isEmpty ? command : "\(command) \(arguments)"
   }
 
   // MARK: - What Cupertino did not write
