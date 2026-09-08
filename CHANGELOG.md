@@ -6,11 +6,29 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.19.0`,
-`notes-v1.19.0`, `reminders-v1.19.0`, `core-v1.19.0` for the npm packages, and `app-v1.19.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.19.1`,
+`notes-v1.19.1`, `reminders-v1.19.1`, `core-v1.19.1` for the npm packages, and `app-v1.19.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.19.1] - 2026-09-08
+
+### Fixed
+
+- **`apple_safari_read_page` returned a single-page app's pre-boot shell, forever.** The extension
+  captured a page once, at `document_idle`, and again only after a route change — before a
+  single-page app has rendered anything. The only capture of x.com was therefore its loading shell:
+  an empty `<title>` and the static "Something went wrong … privacy related extensions" block X
+  ships in every response, easy to misread as a real error rather than an uninitialized page. The
+  store is keyed by URL, so that snapshot was the **permanent** answer for the page; no amount of
+  waiting before `read_page` improved it, because nothing ever captured a second time.
+
+  The content script now re-captures once the page settles: a `MutationObserver` fires after the DOM
+  holds still for 500ms, with a 5-second deadline for pages that never go fully quiet — a live
+  timeline (video, ads, ticking timestamps) would otherwise never trigger a debounce on its own. A
+  route change reuses the same watcher instead of a fixed delay, and a settled capture identical to
+  the one already sent is skipped rather than resent.
 
 ## [1.19.0] - 2026-09-08
 
@@ -2072,7 +2090,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.19.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.19.1...HEAD
+[1.19.1]: https://github.com/mgcrea/cupertino/compare/app-v1.19.0...app-v1.19.1
 [1.19.0]: https://github.com/mgcrea/cupertino/compare/app-v1.18.0...app-v1.19.0
 [1.18.0]: https://github.com/mgcrea/cupertino/compare/app-v1.17.0...app-v1.18.0
 [1.17.0]: https://github.com/mgcrea/cupertino/compare/app-v1.16.0...app-v1.17.0
