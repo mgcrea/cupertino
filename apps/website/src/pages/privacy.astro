@@ -17,7 +17,7 @@ import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 import { APP_NAME, REPO_URL, SITE_URL } from "../config";
 
-const updated = "30 August 2026";
+const updated = "8 September 2026";
 ---
 
 <Layout
@@ -25,7 +25,7 @@ const updated = "30 August 2026";
   description={`How ${APP_NAME} handles your mail, messages, contacts and calendar: it makes no network calls of its own, and hands data only to the agent you connected.`}
 >
   <Nav />
-  <main class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+  <main id="main" tabindex="-1" class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
     <div class="mono text-accent">sec · privacy</div>
     <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
       Privacy
@@ -94,6 +94,26 @@ const updated = "30 August 2026";
         <a href={REPO_URL} rel="noopener noreferrer">the source is public</a>. If you want to
         confirm the claim at the top of this page, search the tree for outbound HTTP — there is
         none, which is a thing you can verify in a minute rather than take our word for.
+      </p>
+
+      <h2>This site</h2>
+      <p>
+        Everything above is about the app. This website is a separate thing and does two
+        measurable things, both worth stating plainly.
+      </p>
+      <p>
+        It counts page views, using Cloudflare Web Analytics. That sets no cookie and stores
+        nothing on your device, so there is no banner asking you to accept it. What it records is
+        the page address, the referring page, your browser and operating system, your screen size,
+        how long the page took to load, and the country the request came from. It never receives
+        your IP address, and there is no identifier that would let one visit be joined to another
+        or to you. Any content blocker stops it, and the page works unchanged without it.
+      </p>
+      <p>
+        The feedback form, if you use it, posts what you typed to a small worker of ours at
+        <code>feedback.mgcrea.io</code>. That is the one place this site sends anything you wrote,
+        it happens only when you press the button, and the email address is optional and used only
+        to reply to you.
       </p>
 
       <h2>Contact</h2>

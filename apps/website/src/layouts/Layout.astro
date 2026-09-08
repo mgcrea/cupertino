@@ -94,6 +94,9 @@ const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
     }
   </head>
   <body>
+    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-100 focus:rounded-lg focus:bg-fg focus:px-4 focus:py-2 focus:text-sm focus:text-bg">
+      Skip to content
+    </a>
     <slot />
 
     <script>
@@ -137,5 +140,14 @@ const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
         });
       }
     </script>
+    {/* Cloudflare Web Analytics. Cookieless and stores nothing on the visitor's
+        device, so it needs no consent banner — see /privacy. The token is public
+        by design: it ships in the HTML of every page. */}
+    <script
+      is:inline
+      defer
+      src="https://static.cloudflareinsights.com/beacon.min.js"
+      data-cf-beacon='{"token": "1e718f006bc343e385dff365ba44b327"}'
+    ></script>
   </body>
 </html>
