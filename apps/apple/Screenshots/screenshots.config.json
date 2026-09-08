@@ -6,9 +6,7 @@
     "height": 1800
   },
   "//appearances": "Dark only, on purpose. apps/website/src/styles/global.css: \"Dark is the base, not an override... there is no light theme to be faithful to and none is invented here.\" Capturing light too would double the run and commit three goldens that nothing renders and nobody reviews. Adding \"light\" here and to the Makefile's APPEARANCES is the whole change if the site ever grows one.",
-  "appearances": [
-    "dark"
-  ],
+  "appearances": ["dark"],
   "//fontFamily": "SF Pro Display is NOT part of a stock macOS install — it ships in Apple's SF font pack. `make screenshots-doctor` refuses to compose if it does not resolve, which is the only way to catch a silent substitution.",
   "fontFamily": "'SF Pro Display', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif",
   "layout": {

@@ -24,7 +24,7 @@ summary.
 
   The answers come from Apple's on-device model, which is the only choice that keeps
   `scripts/audit-network.sh` true: the pane adds no network reach, no API key and nothing to send.
-  It also works before a licence is entered, because what a licence buys is letting *other* apps in
+  It also works before a licence is entered, because what a licence buys is letting _other_ apps in
   — a self-check is not a relay.
 
   The calls are real ones. The pane dials the app's own socket with the same handshake
