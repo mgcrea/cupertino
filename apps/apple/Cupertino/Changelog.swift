@@ -220,7 +220,43 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_19_1, v1_19_0, v1_18_0, v1_17_0, v1_16_0]
+  static let releases: [Release] = [v1_20_0, v1_19_1, v1_19_0, v1_18_0, v1_17_0]
+
+  // swift-format-ignore
+  private static let v1_20_0: Release = Release(
+    version: "1.20.0",
+    date: "2026-09-08",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A Chat pane, so the tools can be tried without wiring an editor first.",
+            body: [
+              "Until now the only way to see Cupertino do anything was to install an MCP client, configure it, and ask it a question — three steps before the first sign of life, and the app could only ever describe its servers. The new pane under Activity picks a surface, loads as many of its tools as fit, and lets you ask in plain words.",
+              "The answers come from Apple's on-device model, which is the only choice that keeps `scripts/audit-network.sh` true: the pane adds no network reach, no API key and nothing to send. It also works before a licence is entered, because what a licence buys is letting _other_ apps in — a self-check is not a relay.",
+              "The calls are real ones. The pane dials the app's own socket with the same handshake `cupertino-bridge` sends, so a tool call from here goes to the same supervised child, under the same write gate and the same surface switch, and shows up in the Log and Connections panes like anybody else's. Tool calls are drawn above the model's prose, with the arguments it invented, because the calls are the evidence and the prose is a small model's account of them.",
+              "The on-device model holds 4,096 tokens and Mail alone lists 4,858 tokens of tool schema, so the pane cannot offer a surface's tools — only as many as fit. It costs each tool, sorts the ones callable with no arguments first (a set of only `get_*(id)` tools gives the model nothing to open with), fills a 1,800-token budget greedily, and says in the header what it spent and in the picker what it left out. `make chat-check` asserts that arithmetic with no app and no model, and `make chat-check-real` puts every shipped tool schema through the same rule — all 131 of them convert.",
+              "A question may make six tool calls, and a reply is capped at 400 tokens. Neither is tidiness: a model looping on a failing tool would otherwise spend six minutes of call deadlines before anybody could type again, and a model that starts enumerating fills the window, overflows, and gets silently trimmed — so the only symptom is a conversation that has forgotten its own opening. Stopping a reply ends the turn immediately and drops the stopped question from what the model remembers, which the row says out loud.",
+              "With writes enabled for a surface, the pane honours it: the model can change your data, behind an acknowledgement that names the surface and gates the Send button.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "A client that already fetches tool schemas on its own is never fronted.",
+            body: [
+              "\"Load tools on demand\" reads as a decision about a surface, but a surface feeds every wired client at once, and they do not agree about what they need. Claude Code and Claude Desktop both load an MCP server's schemas only when they are about to use them, so fronting either paid the facade's whole cost to buy back only the tool names — and worse, their own tool search then indexed the facade's four generic entries instead of the surface's twenty real ones.",
+              "Cupertino now writes `--client=<id>` beside `--server=<id>` when it configures a client, so the host knows which config a connection came from and can leave those two alone. Which clients defer is an allowlist backed by evidence, with a per-client override (`defaults write … defersSchemas.<client> on|off`) for when it is wrong in either direction. An unrecognised client, or a config written before this existed, does not defer — the behaviour every client had before. Existing wirings are not invalidated: the staleness check compares the command and never the arguments, so nothing needs re-configuring, though a client that has not been re-configured carries no id until it is.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "A listing too small to be worth searching is served whole, whatever the switch says.",
+            body: [
+              "A facade costs its own declarations and buys back only what the real listing would have cost, so below a certain size the trade is a loss that looks exactly like a working facade. A surface is now fronted only when its listing has at least twice as many tools as the facade replacing it **and** costs at least twice as many bytes. Measured with writes on, Contacts (7 tools) and Messages (8) fail the first test at 1.4x and 1.6x while passing the second at 2.6x and 3.8x — which is why both terms are needed: a handful of fat schemas outweighs a facade made of prose, so a floor counting bytes alone would front them and buy nothing but a coarser permission prompt.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_19_1: Release = Release(
@@ -557,152 +593,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_16_0: Release = Release(
-    version: "1.16.0",
-    date: "2026-09-06",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail's composer runs on Cupertino's own Accessibility driver now, behind one grant instead of two.",
-            body: [
-              "Reply and forward reached the composer through System Events, which costs a second TCC grant — Automation to System Events — on top of Accessibility, and 47.4 ms per attribute read. Driven natively the same reads cost 0.202 ms. Both grants always had to be given; only one of them has to exist.",
-              "The split between the two halves is forced rather than chosen: a JXA object reference cannot outlive the `osascript` process that made it, so opening and addressing the draft stays an Apple Events call and returns the subject, which is what the native half finds the window by. Everything after — the paste, the read-back, the send — is Accessibility. That makes the send command-shift-D rather than the button named \"Send\", which is correctness rather than convenience: a French Mail says \"Envoyer\" and the shortcut is not localised.",
-              "**System Events stays as the fallback**, because the npm packages are published artifacts that have to keep working with no Cupertino on the machine.",
-              "One behaviour is deliberately given up and reported rather than hidden. The System Events path discards a composer when a paste provably did not land, so a retry is safe. This one cannot: closing an unsaved composer raises a save sheet whose buttons are localised, and pressing a button by a name that is only right in English is worse than pressing none. A failed compose now leaves the window on screen and says so — strictly safer, since nothing anybody wrote is destroyed, and strictly less tidy.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Maps can reach the objects its SQL lane cannot.",
-            body: [
-              "`apple_maps_save_place`, `apple_maps_remove_saved_place` and `apple_maps_add_place_to_guide` drive the place card through the same driver. They do not replace the store lane and could not — pressing Add lands an unfiled saved place and never touches a favourites row — but they reach the Places library and guide membership, the second of which was listed as unbuilt. Reading the guides beats the store's own answer: eleven guides came back live where `apple_maps_list_collections` reports ten.",
-              "**Filing into a guide works and cannot be verified, so the tool refuses to claim it.** Pressing a row does select it, and nothing in the tree says so — the label carries a stale count that reads identically before and after. So it returns `filed: \"unverified\"` and says it must not be reported as done.",
-              "Registered only when Cupertino is hosting the server, since the Accessibility grant belongs to the app.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Four more Desktop verbs, three of them the kind whose absence makes a write land somewhere else.",
-            body: [
-              "`focus` — raising a window is not focusing a field, and the keystroke that follows goes wherever the focus actually is, so it reads the focus back and reports whether it took. `activate` — synthetic keystrokes are posted to the session and land in whatever is frontmost, so `type` and `key` against a named app need this first. `get_attribute` — for the one field a caller needs that the walk's fixed set does not carry. And `user_activity`, below.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "The Mac says when it is being driven, and notices when somebody else is using it.",
-            body: [
-              "Driving is the one capability here that competes with the person at the keyboard: a synthetic keystroke goes to whatever is frontmost and a click goes to a screen point, so somebody typing during a sequence does not slow it down, it corrupts it.",
-              "`apple_desktop_user_activity` reports seconds since a person last touched the machine. It reports _when_, never what — no key, no position, no content — which is why it needs no grant and registers as a read. Measured against how long a sequence took, that figure separates \"they typed just before we started\" from \"they typed into the middle of it\", and every refusal in the Mail and Maps lanes now appends the finding when there is one. It stays silent when the machine was quiet, deliberately: \"nobody touched it\" invites the reader to stop looking.",
-              "It exists because of a misdiagnosis rather than a theory. Three Maps failures were blamed on interference and turned out to be bugs in the lane; one was blamed on the lane and turned out to be interference.",
-              "A menu bar indicator lights while an interface is being driven, and the popover says which app. macOS supplies an indicator for the microphone and the screen; it supplies none for Accessibility, which is the wider grant. It expires rather than being switched off, because nothing tells the app an agent has finished and an explicit end would leave it lit forever the first time a client disconnected mid-sequence.",
-              "**Correction, added after release: the badge described above never appeared.** A menu bar item's button cannot be recoloured while its window is closed, which is the only state it is ever in. What actually shows the notice is an on-screen panel, added in Unreleased below.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 4,
-            headline: "A node server can borrow the app's Accessibility driver over the socket it already has.",
-            body: [
-              "This is what lets Mail's composer run natively without anyone switching on the Desktop surface — the consent governing Mail's own window is Mail's — while equally not escaping Mail being switched off. The handshake line naming the borrower is a claim and nothing rests on it: `LOCAL_PEERPID`, answered by the kernel and unspoofable by the peer, is what turns \"I am the mail server\" into a check. Without it any same-user process could borrow the app's grant.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Desktop's reach is a value now rather than a switch",
-            body: [
-              ", so it can be narrowed as well as widened. A borrowed driver is pinned to one bundle id, and no user-facing gate can move it. The tool descriptions get a real third branch rather than folding it into the brokered wording — a description promising the brokered set to a caller that can reach one app is an invitation to try the other seven and collect a refusal each time.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 6,
-            headline: "`apple_desktop_key` could have quit Mail with an unsaved composer open, silently, and only for people not typing on a US layout.",
-            body: [
-              "It shipped with a table holding no letters at all, so command-V could not be expressed. The obvious repair is the US map, and it is destructive: a `CGKeyCode` names a physical position, not a letter. Measured on an AZERTY Mac, `a` resolves to 12 and `w` to 6, which in the US table are `q` and `z` — so \"select all before pasting a reply\" would have sent command-Q. The map is built by asking the current input source what each of the 128 codes produces, and cached on the input source id so switching layout rebuilds it.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "`apple_desktop_find_elements` reported `matched` from the whole walk instead of the filtered set",
-            body: [
-              "— one control found and an answer saying 136 matched, which reads as a truncated result and is precisely the confusion the field was added to prevent. The byte cap was wrong the same way, measured against elements that were never going to be sent.",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "`apple_maps_diagnostics` reported that the server registers no mutating tool while it registers two",
-            body: [
-              ", and had been wrong since the write lane shipped. Diagnostics is the one thing this repo says must never lie. It now reports the real lane: URL-scheme seeding, raw SQL, the Recents side effect and the CloudKit blast radius, keyed on whether writes are on.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "The \"Load tools on demand\" control was drawn on three surfaces where it did nothing.",
-            body: [
-              "Desktop, Screen and Sound are served in process, and the facade reaches a server through the spawn path's environment, which an in-process server never reads. Moving the picker changed nothing, which reads as a bug in the facade rather than in the card. It is gated on the node runtime now.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "`make desktop-check` counted a check that had vanished.",
-            body: [
-              "A case added for `matched` was written so that on a machine without Maps it did not fail — it disappeared, and the suite went 51 to 50 while still printing \"passed\". Skips are counted and named now. The count is the only line most people read.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "Three findings this repo had published are retracted, having been measured wrong.",
-            body: [
-              "A background application's menus _do_ open — the original write-up was a single A/B with no repetition and no control; re-run as six alternating trials the menu opened every time in both conditions. What actually governs it is the session boundary: closing the connection dismisses an open menu. Safari's page text was called \"an absence rather than a price\" on a census that was measuring System Events; natively the same Safari has one web area, 26 links and 10,735 characters. And a Maps delete does not alternate between taking effect and raising an alert — both shapes are real and a driver must handle either, not expect them to take turns.",
-              "The retractions are kept in full rather than quietly deleted, because how each was got wrong is more useful than the answer.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A Chat pane, so the tools can be tried without wiring an editor first.",
-            body: [
-              "Until now the only way to see Cupertino do anything was to install an MCP client, configure it, and ask it a question — three steps before the first sign of life, and the app could only ever describe its servers. The new pane under Activity picks a surface, loads as many of its tools as fit, and lets you ask in plain words.",
-              "The answers come from Apple's on-device model, which is the only choice that keeps `scripts/audit-network.sh` true: the pane adds no network reach, no API key and nothing to send. It also works before a licence is entered, because what a licence buys is letting _other_ apps in — a self-check is not a relay.",
-              "The calls are real ones. The pane dials the app's own socket with the same handshake `cupertino-bridge` sends, so a tool call from here goes to the same supervised child, under the same write gate and the same surface switch, and shows up in the Log and Connections panes like anybody else's. Tool calls are drawn above the model's prose, with the arguments it invented, because the calls are the evidence and the prose is a small model's account of them.",
-              "The on-device model holds 4,096 tokens and Mail alone lists 4,858 tokens of tool schema, so the pane cannot offer a surface's tools — only as many as fit. It costs each tool, sorts the ones callable with no arguments first (a set of only `get_*(id)` tools gives the model nothing to open with), fills a 1,800-token budget greedily, and says in the header what it spent and in the picker what it left out. `make chat-check` asserts that arithmetic with no app and no model, and `make chat-check-real` puts every shipped tool schema through the same rule — all 131 of them convert.",
-              "A question may make six tool calls, and a reply is capped at 400 tokens. Neither is tidiness: a model looping on a failing tool would otherwise spend six minutes of call deadlines before anybody could type again, and a model that starts enumerating fills the window, overflows, and gets silently trimmed — so the only symptom is a conversation that has forgotten its own opening. Stopping a reply ends the turn immediately and drops the stopped question from what the model remembers, which the row says out loud.",
-              "With writes enabled for a surface, the pane honours it: the model can change your data, behind an acknowledgement that names the surface and gates the Send button.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A client that already fetches tool schemas on its own is never fronted.",
-            body: [
-              "\"Load tools on demand\" reads as a decision about a surface, but a surface feeds every wired client at once, and they do not agree about what they need. Claude Code and Claude Desktop both load an MCP server's schemas only when they are about to use them, so fronting either paid the facade's whole cost to buy back only the tool names — and worse, their own tool search then indexed the facade's four generic entries instead of the surface's twenty real ones.",
-              "Cupertino now writes `--client=<id>` beside `--server=<id>` when it configures a client, so the host knows which config a connection came from and can leave those two alone. Which clients defer is an allowlist backed by evidence, with a per-client override (`defaults write … defersSchemas.<client> on|off`) for when it is wrong in either direction. An unrecognised client, or a config written before this existed, does not defer — the behaviour every client had before. Existing wirings are not invalidated: the staleness check compares the command and never the arguments, so nothing needs re-configuring, though a client that has not been re-configured carries no id until it is.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A listing too small to be worth searching is served whole, whatever the switch says.",
-            body: [
-              "A facade costs its own declarations and buys back only what the real listing would have cost, so below a certain size the trade is a loss that looks exactly like a working facade. A surface is now fronted only when its listing has at least twice as many tools as the facade replacing it **and** costs at least twice as many bytes. Measured with writes on, Contacts (7 tools) and Messages (8) fail the first test at 1.4x and 1.6x while passing the second at 2.6x and 3.8x — which is why both terms are needed: a handful of fat schemas outweighs a facade made of prose, so a floor counting bytes alone would front them and buy nothing but a coarser permission prompt.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
