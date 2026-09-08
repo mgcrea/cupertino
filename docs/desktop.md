@@ -322,10 +322,10 @@ was found.
 `allowWrites` and `allowAnyApp` are orthogonal, and neither other in-process surface has a pair
 shaped this way — Sound's two gates are both capability tiers, these are **capability and scope**.
 
-|               | off (shipped)                                                                              | on                                             |
-| ------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `allowWrites` | reads structure; the eight driving tools are not registered                                | can press, type, click, raise, focus, activate |
-| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application                |
+|               | off (shipped)                                                                              | on                                                    |
+| ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `allowWrites` | reads structure; the nine driving tools are not registered                                 | can press, type, click, hover, raise, focus, activate |
+| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application                       |
 
 **Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
 Maps place card reads anything on the Mac, so the bound comes from the closed table or from nowhere —
@@ -632,8 +632,64 @@ with Cupertino's own banner across it is noise at best. The cost is real and wor
 can screenshot the indicator, including whoever next tries to verify it. The verification above is
 therefore the harness, not a picture.
 
+## Hover is a ninth driving verb, and a click could never have done it
+
+Driving a SwiftUI chart's hover readout found the gap: this surface could press, click, type and
+read a tree, and could not make a tooltip appear. The reason is one line of `click` —
+
+```swift
+down.post(tap: .cghidEventTap)
+up.post(tap: .cghidEventTap)
+```
+
+— a press and a release and **nothing in between**. A tracking area sees a button go down inside it
+having never seen the pointer arrive, so `onContinuousHover`, `NSTrackingArea` and every tooltip in
+AppKit stay silent. Nothing was broken; the events were simply never posted.
+
+`apple_desktop_hover` posts them. Three properties it does not share with `click`:
+
+- **It re-reads the point.** A point from `ui_tree` was true when the walk ran, and a window being
+  driven moves. A stale coordinate makes a hover **miss in silence** — there is no control to fail
+  to press and nothing to report, just a readout that never appears, which is a worse failure than a
+  refusal and it cost real time to diagnose. The `handle` form reads the element's frame at call
+  time; `x`/`y` remain for what carries no element.
+- **It activates first, and refuses if that did not take.** Hover reaches only the frontmost
+  application. `activateAndWait` rather than `activate`, because activation is asynchronous and a
+  sweep posted in the same millisecond crosses whatever was in front before — the finding
+  `docs/simulator.md` already recorded for a tap.
+- **It is refused while somebody is using the Mac.** The only verb here gated on the person rather
+  than on the grant, because it takes the physical pointer for as long as it sweeps.
+
+### The guard could not be an idle check, and the reason generalises
+
+The obvious form — `secondsSinceUserInput() < floor` — is wrong here, and wrong in a way that hides.
+That function reads `.combinedSessionState` **on purpose**, so it counts synthetic events, including
+the ones `hover` is about to post. The second hover in a sequence would find the counter reset by
+the first and refuse itself. The guard would bite hardest when the agent is working alone, which is
+the case it exists to permit.
+
+`DriveActivity.current()` is the discriminator, and it already had the right shape: it names what
+Cupertino is driving for `linger` seconds after any driving verb. So the test is _recent input AND
+the indicator dark_, and `hoverIdleFloor` (2 s) sits under `DriveActivity.linger` (4 s) so a
+sequence composes. `desktop-check` pins that ordering, because the two constants are in different
+files and nothing else would notice them crossing.
+
+What it cannot see: a person typing **inside** a sequence, masked by the lit indicator. That is the
+same before/after ambiguity `apple_desktop_user_activity` already tells callers to settle by
+comparing the seconds against how long their own sequence took — which is why `hover` returns the
+reading rather than only acting on it.
+
 ## Still open
 
+- **Whether the sweep needs to be a sweep.** `hover` walks the pointer over `durationMs` (default 600) because that is the shape proven by hand against a SwiftUI chart — 24 steps 25 ms apart.
+  Whether a single `mouseMoved` would have fired `onContinuousHover` just as well was **never
+  tried**, so the default reproduces what worked rather than what is known to be necessary. The
+  measurement is one call at `durationMs: 0` against a hover-sensitive view.
+- **Whether `CGWarpMouseCursorPosition` is needed alongside the posted events.** The throwaway
+  script that proved the lane warped the cursor _and_ posted, to `.cgSessionEventTap`. The verb
+  posts only, to `.cghidEventTap`, on the theory that a HID-tap event carries its own cursor
+  position — which is what `click` and `drag` have always relied on. If a sweep is ever seen to move
+  the hover state without moving the visible cursor, that theory is wrong and the warp goes back in.
 - ~~**The hosted case.**~~ **CLOSED 2026-09-05.** Accessibility was granted to
   `io.mgcrea.cupertino.debug` and the surface was re-measured through the bridge, as the app:
 

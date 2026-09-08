@@ -12,6 +12,38 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **`apple_desktop_hover`, because a click is not a pointer.** The desktop surface could press,
+  click, type and read a tree, and still could not make a tooltip appear. `click` posts a press and
+  a release and nothing in between, so a tracking area sees a button go down inside it having never
+  seen the pointer arrive — which means every control that only exists under the cursor was
+  unreachable: a tooltip, a hover readout, SwiftUI's `onContinuousHover`. Driving a chart's hover
+  band is what found it, and the workaround was a throwaway `CGEvent` script outside the repo.
+
+  Addressed by `handle` in preference to a coordinate, and for a sharper reason than the other
+  verbs have. A point from `ui_tree` was true when the walk ran; a window that has moved since — and
+  one being driven moves often — leaves it aimed at bare desktop, where a hover **misses in
+  silence**. There is no control to fail to press and nothing to report, just a readout that never
+  appears. So the handle form re-reads the element's frame at call time. It also brings the target
+  application forward first and refuses to post if it did not come, because a hover is delivered
+  only to the frontmost application; the same reasoning the simulator surface already applies to a
+  tap.
+
+  It is the first verb here that is refused on account of the person at the keyboard. A hover takes
+  the physical pointer for as long as it sweeps, which is worse than a click rather than better, so
+  it declines while somebody is using the Mac. The check could not be `secondsSinceUserInput()`
+  alone: that reads `.combinedSessionState`, which counts Cupertino's own events, so a plain idle
+  test would have refused every hover after the first — biting hardest when the agent is working
+  alone, the case it exists to allow. The driving indicator already knows whether the last input was
+  ours, and the idle floor sits under its linger so a sequence composes. The reading is returned
+  with the answer, for the before/after comparison `apple_desktop_user_activity` describes.
+
+  Annotated non-destructive and idempotent, unlike `click`: moving the pointer twice to the same
+  place leaves the same state and presses nothing.
+
 ## [1.18.0] - 2026-09-07
 
 ### Added

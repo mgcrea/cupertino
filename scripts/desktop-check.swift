@@ -100,8 +100,8 @@ struct DesktopCheck {
   /// the gate below are asserted against the same list.
   static let driving = [
     "apple_desktop_activate", "apple_desktop_click", "apple_desktop_focus",
-    "apple_desktop_key", "apple_desktop_press", "apple_desktop_raise_window",
-    "apple_desktop_set_value", "apple_desktop_type",
+    "apple_desktop_hover", "apple_desktop_key", "apple_desktop_press",
+    "apple_desktop_raise_window", "apple_desktop_set_value", "apple_desktop_type",
   ]
 
   static let observing = [
@@ -438,6 +438,52 @@ struct DesktopCheck {
           "budgetSeconds",
         ]
       ).isSubset(of: Set((findSchema ?? [:]).keys)))
+
+    // hover is the one driving verb that takes EITHER a handle or a point, so
+    // the schema has to offer both and its refusal has to name both. A verb that
+    // required a handle it never says it accepts is how the click/press split
+    // became confusing.
+    let hoverSchema =
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .first { $0["name"] as? String == "apple_desktop_hover" }
+      .flatMap { $0["inputSchema"] as? [String: Any] }
+      .flatMap { $0["properties"] as? [String: Any] }
+    check(
+      "hover declares every argument it reads",
+      Set(["handle", "x", "y", "bundleId", "durationMs", "settleMs"])
+        .isSubset(of: Set((hoverSchema ?? [:]).keys)))
+    check(
+      "hover requires no argument up front, since either form will do",
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+        as? [[String: Any]] ?? [])
+        .first { $0["name"] as? String == "apple_desktop_hover" }
+        .flatMap { $0["inputSchema"] as? [String: Any] }
+        .flatMap { $0["required"] as? [String] } == nil)
+    // Reached with writes ON and no grant, so it returns before any event is
+    // built: this asserts the argument check, not the posting path.
+    let (hoverText, hoverError) = callText("apple_desktop_hover", [:], writes: true)
+    check(
+      "hover with neither a handle nor a point is refused, naming both",
+      hoverError && hoverText.contains("handle") && hoverText.contains("'x'"))
+    // Non-destructive and idempotent, unlike click: moving the pointer twice to
+    // the same place leaves the same state, and it presses nothing.
+    let hoverAnnotations =
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .first { $0["name"] as? String == "apple_desktop_hover" }
+      .flatMap { $0["annotations"] as? [String: Any] }
+    check(
+      "hover is annotated as non-destructive and idempotent, unlike click",
+      hoverAnnotations?["destructiveHint"] as? Bool == false
+        && hoverAnnotations?["idempotentHint"] as? Bool == true
+        && hoverAnnotations?["readOnlyHint"] as? Bool == false)
+    // The guard has to distinguish this app's own synthetic events from a
+    // person's, or a sequence refuses itself on its second hover — the floor
+    // sits under the linger for exactly that reason.
+    check(
+      "the hover idle floor sits under the driving indicator's linger",
+      AccessibilityDriver.hoverIdleFloor < DriveActivity.linger)
 
     // The store fills DURING a walk that is minting into it, so a full wipe
     // strands handles minted earlier in the very answer being composed. The

@@ -290,6 +290,44 @@ enum DesktopServer {
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
       [
+        "name": "apple_desktop_hover",
+        "description":
+          "Move the pointer onto something and leave it there, posting real mouse-moved events "
+          + "along the way. The verb for anything that only exists under the cursor — a tooltip, "
+          + "a hover readout, a SwiftUI onContinuousHover. A click will not do it: a click posts "
+          + "a press and a release and no movement at all, so a tracking area never sees the "
+          + "pointer arrive. Prefer 'handle' over 'x'/'y' — the point is re-read from the element "
+          + "at call time, so a window that has moved since the tree was taken cannot make the "
+          + "hover miss in silence. Brings the target application to the front first, because a "
+          + "hover is only delivered to the frontmost one. Refused while somebody is using the "
+          + "Mac, since it takes the physical pointer away from them.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "handle": [
+              "type": "string",
+              "description": "Element to hover, from apple_desktop_find_elements or "
+                + "apple_desktop_ui_tree. Preferred over a coordinate.",
+            ],
+            "x": ["type": "number", "description": "Screen point, when no element carries one."],
+            "y": ["type": "number"],
+            "bundleId": bundleIdProperty,
+            "durationMs": [
+              "type": "integer",
+              "description": "How long the pointer takes to travel, default 600. The pointer is "
+                + "walked rather than teleported because a tracking area wants motion.",
+            ],
+            "settleMs": [
+              "type": "integer",
+              "description": "Wait this long after arriving, default 0. The hover state is drawn "
+                + "by the other application, so a tree read immediately after a move can be "
+                + "taken from before the redraw.",
+            ],
+          ],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
         "name": "apple_desktop_type",
         "description":
           "Type text into whatever has keyboard focus. Sent as unicode, so accented and "
@@ -482,7 +520,7 @@ enum DesktopServer {
     let driving = [
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
-      "apple_desktop_focus", "apple_desktop_activate",
+      "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -625,6 +663,53 @@ enum DesktopServer {
         }
         try AccessibilityDriver.click(x: x, y: y)
         return ok(id, ["clicked": [x, y]])
+
+      case "apple_desktop_hover":
+        let durationMs = min(5000, max(0, (args["durationMs"] as? Int) ?? 600))
+        let settleMs = min(5000, max(0, (args["settleMs"] as? Int) ?? 0))
+        let target: CGPoint
+        let owner: String?
+        if let handle = args["handle"] as? String {
+          // Re-read rather than trusting the point the tree reported, and take
+          // the owner from the handle rather than from the arguments: the store
+          // knows which application it came from and the caller can be wrong.
+          let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
+          target = live.point
+          owner = live.bundleId
+        } else if let x = args["x"] as? Double, let y = args["y"] as? Double {
+          target = CGPoint(x: x, y: y)
+          owner = args["bundleId"] as? String
+        } else {
+          return failure(
+            id,
+            "Either 'handle', or both 'x' and 'y', are required. Prefer 'handle': its point is "
+              + "re-read at call time, so a window that has moved cannot make the hover miss.")
+        }
+        // A hover reaches only the frontmost application, so posting into an app
+        // that is behind sweeps the pointer across somebody else's window and
+        // reports a success that never happened. Refused rather than posted, as
+        // the simulator surface refuses for the same reason.
+        if let owner {
+          guard try AccessibilityDriver.activateAndWait(bundleId: owner, scope: scope) else {
+            return failure(
+              id,
+              "\(owner) did not come to the front, so nothing was posted — a hover is delivered "
+                + "only to the frontmost application.")
+          }
+        }
+        // Read BEFORE the sweep: afterwards it reports our own mouse-moved
+        // events. The caller compares it against how long its sequence took, the
+        // comparison apple_desktop_user_activity describes.
+        let idle = (AccessibilityDriver.secondsSinceUserInput() * 1000).rounded() / 1000
+        try AccessibilityDriver.hover(
+          to: target, durationMs: durationMs, settleMs: settleMs, announcing: owner)
+        return ok(
+          id,
+          [
+            "hovered": [target.x, target.y],
+            "durationMs": durationMs,
+            "secondsSinceInput": idle,
+          ])
 
       case "apple_desktop_type":
         guard let text = args["text"] as? String else {
@@ -834,7 +919,7 @@ enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, set_value, click, type, key, focus, activate and raise_window are available."
+        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate and raise_window are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

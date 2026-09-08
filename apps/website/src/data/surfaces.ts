@@ -466,6 +466,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_desktop_press",
       "apple_desktop_set_value",
       "apple_desktop_click",
+      "apple_desktop_hover",
       "apple_desktop_type",
       "apple_desktop_key",
       "apple_desktop_focus",
@@ -474,7 +475,7 @@ export const SURFACES: readonly Surface[] = [
     ],
     // `allowAnyApp` is deliberately NOT listed here. This column is for tools
     // registered only under their own flag, and the scope gate registers none:
-    // it changes how far the same sixteen tools reach, never which of them
+    // it changes how far the same seventeen tools reach, never which of them
     // exist. Listing it would misdescribe both the gate and the column.
     pitch:
       "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",

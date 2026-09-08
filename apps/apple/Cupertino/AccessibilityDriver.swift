@@ -1107,18 +1107,31 @@ enum AccessibilityDriver {
   /// This is the fallback, not the default. A click at a point is what a driver
   /// does when an element offers no action; it is not how a driver should
   /// normally reach a control.
+  /// One constructor for every synthetic mouse event below.
+  ///
+  /// `click`, `drag` and `hover` agree on the two things that are easy to get
+  /// wrong separately: the `.hidSystemState` source, and a point in the SAME
+  /// top-left global space `frame` reports — see the origin note there. The
+  /// source is passed in rather than made here so one sequence's events all
+  /// come from one source, as `drag` has always built them.
+  private static func mouseEvent(
+    _ type: CGEventType, at point: CGPoint, from source: CGEventSource?, doing what: String
+  ) throws -> CGEvent {
+    guard
+      let made = CGEvent(
+        mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+    else { throw Failure.refused("Could not synthesise \(what).") }
+    return made
+  }
+
   static func click(x: Double, y: Double, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
-    guard
-      let down = CGEvent(
-        mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point,
-        mouseButton: .left),
-      let up = CGEvent(
-        mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point,
-        mouseButton: .left)
-    else { throw Failure.refused("Could not synthesise a click.") }
+    // Both built before either is posted, so a failure to synthesise the second
+    // cannot leave the button held down — the property `drag` states below.
+    let down = try mouseEvent(.leftMouseDown, at: point, from: source, doing: "a click")
+    let up = try mouseEvent(.leftMouseUp, at: point, from: source, doing: "a click")
     announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
@@ -1139,12 +1152,7 @@ enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
     func event(_ type: CGEventType, at point: CGPoint) throws -> CGEvent {
-      guard
-        let made = CGEvent(
-          mouseEventSource: source, mouseType: type, mouseCursorPosition: point,
-          mouseButton: .left)
-      else { throw Failure.refused("Could not synthesise a drag.") }
-      return made
+      try mouseEvent(type, at: point, from: source, doing: "a drag")
     }
     let steps = max(2, durationMs / 16)
     let moved = try event(.mouseMoved, at: from)
@@ -1169,6 +1177,122 @@ enum AccessibilityDriver {
       usleep(pause)
     }
     up.post(tap: .cghidEventTap)
+  }
+
+  // ─── hover, which is not a click without the button ────────────────────────
+
+  /// Where the pointer is now, in the same top-left global space `frame`
+  /// reports and `click` posts into.
+  ///
+  /// `CGEvent(source: nil)?.location` answers there already.
+  /// `NSEvent.mouseLocation` does NOT — it is bottom-left, and mixing the two is
+  /// the origin flip this file warns about above: it puts a sweep on the wrong
+  /// half of the screen while every number still looks plausible.
+  static func cursorLocation() -> CGPoint {
+    CGEvent(source: nil)?.location ?? .zero
+  }
+
+  /// How long the Mac must have been left alone before `hover` will take the
+  /// pointer away from whoever is holding it. Under `DriveActivity.linger` on
+  /// purpose — see `someoneIsUsingTheMac`.
+  static let hoverIdleFloor: TimeInterval = 2
+
+  /// Whether a PERSON — rather than this app — touched the Mac just now.
+  ///
+  /// `secondsSinceUserInput` reads `.combinedSessionState` deliberately, so it
+  /// counts synthetic events too, including the ones `hover` posts below. A bare
+  /// `secondsSinceUserInput() < floor` check would therefore refuse every hover
+  /// after the first in a sequence, reset by the previous one: the guard would
+  /// bite hardest exactly when the agent is working alone, which is the case it
+  /// exists to permit.
+  ///
+  /// `DriveActivity.current()` is the discriminator, and it already has the
+  /// right shape — it names what Cupertino is driving for `linger` seconds after
+  /// any driving verb. Recent input while that is lit is most likely ours, so
+  /// the floor sits UNDER the linger and a sequence composes.
+  ///
+  /// What this cannot see: a person typing INSIDE a Cupertino sequence, masked
+  /// by the lit indicator. That is the same before/after ambiguity
+  /// `apple_desktop_user_activity` already tells callers to settle by comparing
+  /// the seconds against how long their own sequence took — which is why `hover`
+  /// reports the reading back rather than only acting on it.
+  static func someoneIsUsingTheMac() -> Bool {
+    secondsSinceUserInput() < hoverIdleFloor && DriveActivity.current() == nil
+  }
+
+  /// The live centre of a handle's element, re-read at call time.
+  ///
+  /// The point in a `ui_tree` answer was true when the walk ran. A window that
+  /// has moved since — and one being driven moves often — leaves every one of
+  /// those points aimed at bare desktop, where a hover MISSES IN SILENCE: there
+  /// is no control to fail to press and nothing to report, just a readout that
+  /// never appears. Re-reading the frame is what makes the handle form worth
+  /// preferring over two numbers, and it is the failure that motivated this verb.
+  static func hoverPoint(handle: String, scope: Scope) throws -> (
+    point: CGPoint, bundleId: String
+  ) {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let entry = try resolveEntry(handle, scope: scope)
+    guard let rect = frame(entry.element) else {
+      throw Failure.refused(
+        "That element reports no position, so there is no point to move the pointer to.")
+    }
+    return (CGPoint(x: rect[0] + rect[2] / 2, y: rect[1] + rect[3] / 2), entry.bundleId)
+  }
+
+  /// Walk the pointer to a point, posting real `mouseMoved` events along the way.
+  ///
+  /// The verb for everything that only exists under the cursor — a tooltip, a
+  /// hover readout, SwiftUI's `onContinuousHover`. None of them answer to
+  /// `click`, and the reason is visible in `click` above: it posts a press and a
+  /// release and NOTHING ELSE, so a tracking area sees a button go down inside
+  /// it having never seen the pointer arrive.
+  ///
+  /// Walked rather than teleported because that is the shape proven by hand
+  /// against a SwiftUI chart: 24 steps, 25 ms apart. Whether a single move would
+  /// have done is NOT known — it was never tried — so the default reproduces
+  /// what worked and `durationMs` is how a caller buys it back. Measuring that
+  /// is open, docs/desktop.md.
+  ///
+  /// Steps are derived as `drag` derives them, at ~60 Hz, so a duration means
+  /// wall-clock in both and the two read the same.
+  static func hover(
+    to point: CGPoint, durationMs: Int = 600, settleMs: Int = 0, announcing target: String? = nil
+  ) throws {
+    guard isTrusted() else { throw Failure.notTrusted }
+    guard !someoneIsUsingTheMac() else {
+      throw Failure.refused(
+        "Somebody is using this Mac — the last input was "
+          + String(format: "%.1f", secondsSinceUserInput())
+          + " s ago. Hovering takes the physical pointer away from them, so nothing was posted. "
+          + "Retry once the Mac has been left alone for \(Int(hoverIdleFloor)) s.")
+    }
+    let source = CGEventSource(stateID: .hidSystemState)
+    let from = cursorLocation()
+    let steps = max(2, durationMs / 16)
+    var moves: [CGEvent] = []
+    for step in 1...steps {
+      let t = Double(step) / Double(steps)
+      moves.append(
+        try mouseEvent(
+          .mouseMoved,
+          at: CGPoint(x: from.x + (point.x - from.x) * t, y: from.y + (point.y - from.y) * t),
+          from: source, doing: "a pointer move"))
+    }
+    // Every event built before the first is posted, for `drag`'s reason: a sweep
+    // that threw half way would leave the pointer stranded mid-path.
+    announceSessionInput(target)
+    let pause = UInt32(max(1, durationMs * 1000 / steps))
+    for move in moves {
+      move.post(tap: .cghidEventTap)
+      usleep(pause)
+    }
+    // The hover state is drawn by the OTHER application, so a caller that reads
+    // the tree in the same breath reads it from before the redraw.
+    // `Thread.sleep` rather than `usleep`, which is only specified below a
+    // second and can decline a longer settle by returning EINVAL — a silent
+    // no-wait, which here reads as an application that did not redraw.
+    if settleMs > 0 { Thread.sleep(forTimeInterval: Double(settleMs) / 1000) }
   }
 
   /// Type text as unicode rather than as key codes.
