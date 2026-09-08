@@ -130,8 +130,8 @@ export const SOCIAL_CARD = {
  * half-announce — but it does not gate every string: anything outside a SHIPPED
  * branch has to be true on its own, which the Status "Release" row was not.
  *
- * The app shipped WITHOUT the npm packages, so any copy still promising they
- * land together is stale rather than merely early.
+ * The app shipped BEFORE the npm packages did. Both are out now, so copy still
+ * saying they are "not on npm yet" is stale rather than merely early.
  */
 export const SHIPPED = true;
 
