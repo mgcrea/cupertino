@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.18.0`,
-`notes-v1.18.0`, `reminders-v1.18.0`, `core-v1.18.0` for the npm packages, and `app-v1.18.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.19.0`,
+`notes-v1.19.0`, `reminders-v1.19.0`, `core-v1.19.0` for the npm packages, and `app-v1.19.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.19.0] - 2026-09-08
 
 ### Added
 
@@ -43,6 +43,44 @@ summary.
 
   Annotated non-destructive and idempotent, unlike `click`: moving the pointer twice to the same
   place leaves the same state and presses nothing.
+
+- **The simulator surface introduces itself on connect.** A client loads the `initialize` result's
+  `instructions` without being asked to; the guide resource is pull-only and goes unread unless
+  something names its uri, which is the wrong shape for the handful of facts that change a caller's
+  very first move. `InProcessRPC.dispatch` takes an optional instructions string and omits the key
+  entirely when it is nil, so a surface that declares none answers byte for byte as it did before.
+  Simulator declares a short one — only what changes that first move — and points at the guide for
+  the rest.
+
+### Changed
+
+- **The role-filter guidance was drawn from Catalyst apps alone.** The advice about filtering
+  `apple_desktop_find_elements` by role came from a sample where controls report as
+  `AXGenericElement`, `AXStaticText` and `AXImage` far more often than `AXButton`. That is true of
+  Catalyst and was overstated as the norm. Re-measured across 21 regular apps: Catalyst still misses
+  about 80% of them (Maps, Messages, Calendar, System Settings), while AppKit and plain SwiftUI apps
+  miss only about a fifth, and widening the filter to the whole button family clears most of that.
+  The rule does not change — the stragglers are exactly the clickable heading or row a caller cannot
+  predict, and asking for pressable costs nothing — but the tool description and `docs/desktop.md`
+  no longer claim the miss rate is typical.
+
+### Fixed
+
+- **`apple_desktop_activate` was refusing every target, and it was never a permission.** Cupertino
+  is an `LSUIElement` broker nobody ever clicks, which since macOS 14 is on its own enough for
+  `NSRunningApplication.activate()` to refuse — whatever the target, and with no grant that changes
+  it. Measured on macOS 26.6.2: refused for `com.apple.mail` and `com.apple.finder` alike when
+  called from Cupertino, while the same `activate()` on Mail from a freshly launched command-line
+  process returned true and moved the foreground. `.activateIgnoringOtherApps` is not the way out
+  either, having been deprecated and a no-op since macOS 14.
+
+  When LaunchServices says no and the app holds Accessibility, the driver now sets `AXFrontmost` on
+  the target's application element instead — measured raising Mail from behind another app with
+  `err=0`. Either path is then checked against the window server's own `frontmostBundleId` rather
+  than the return value of the call that did it, because activation is asynchronous and a caller
+  that posts a keystroke before it lands types into whatever was already in front. That check is
+  what `apple_desktop_hover` leans on when it declines to post into an application that did not
+  come forward.
 
 ## [1.18.0] - 2026-09-07
 
@@ -2034,7 +2072,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.18.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.19.0...HEAD
+[1.19.0]: https://github.com/mgcrea/cupertino/compare/app-v1.18.0...app-v1.19.0
 [1.18.0]: https://github.com/mgcrea/cupertino/compare/app-v1.17.0...app-v1.18.0
 [1.17.0]: https://github.com/mgcrea/cupertino/compare/app-v1.16.0...app-v1.17.0
 [1.16.0]: https://github.com/mgcrea/cupertino/compare/app-v1.15.0...app-v1.16.0

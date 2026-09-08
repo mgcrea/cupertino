@@ -220,7 +220,57 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_18_0, v1_17_0, v1_16_0, v1_15_0, v1_14_0]
+  static let releases: [Release] = [v1_19_0, v1_18_0, v1_17_0, v1_16_0, v1_15_0]
+
+  // swift-format-ignore
+  private static let v1_19_0: Release = Release(
+    version: "1.19.0",
+    date: "2026-09-08",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_desktop_hover`, because a click is not a pointer.",
+            body: [
+              "The desktop surface could press, click, type and read a tree, and still could not make a tooltip appear. `click` posts a press and a release and nothing in between, so a tracking area sees a button go down inside it having never seen the pointer arrive — which means every control that only exists under the cursor was unreachable: a tooltip, a hover readout, SwiftUI's `onContinuousHover`. Driving a chart's hover band is what found it, and the workaround was a throwaway `CGEvent` script outside the repo.",
+              "Addressed by `handle` in preference to a coordinate, and for a sharper reason than the other verbs have. A point from `ui_tree` was true when the walk ran; a window that has moved since — and one being driven moves often — leaves it aimed at bare desktop, where a hover **misses in silence**. There is no control to fail to press and nothing to report, just a readout that never appears. So the handle form re-reads the element's frame at call time. It also brings the target application forward first and refuses to post if it did not come, because a hover is delivered only to the frontmost application; the same reasoning the simulator surface already applies to a tap.",
+              "It is the first verb here that is refused on account of the person at the keyboard. A hover takes the physical pointer for as long as it sweeps, which is worse than a click rather than better, so it declines while somebody is using the Mac. The check could not be `secondsSinceUserInput()` alone: that reads `.combinedSessionState`, which counts Cupertino's own events, so a plain idle test would have refused every hover after the first — biting hardest when the agent is working alone, the case it exists to allow. The driving indicator already knows whether the last input was ours, and the idle floor sits under its linger so a sequence composes. The reading is returned with the answer, for the before/after comparison `apple_desktop_user_activity` describes.",
+              "Annotated non-destructive and idempotent, unlike `click`: moving the pointer twice to the same place leaves the same state and presses nothing.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "The simulator surface introduces itself on connect.",
+            body: [
+              "A client loads the `initialize` result's `instructions` without being asked to; the guide resource is pull-only and goes unread unless something names its uri, which is the wrong shape for the handful of facts that change a caller's very first move. `InProcessRPC.dispatch` takes an optional instructions string and omits the key entirely when it is nil, so a surface that declares none answers byte for byte as it did before. Simulator declares a short one — only what changes that first move — and points at the guide for the rest.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "The role-filter guidance was drawn from Catalyst apps alone.",
+            body: [
+              "The advice about filtering `apple_desktop_find_elements` by role came from a sample where controls report as `AXGenericElement`, `AXStaticText` and `AXImage` far more often than `AXButton`. That is true of Catalyst and was overstated as the norm. Re-measured across 21 regular apps: Catalyst still misses about 80% of them (Maps, Messages, Calendar, System Settings), while AppKit and plain SwiftUI apps miss only about a fifth, and widening the filter to the whole button family clears most of that. The rule does not change — the stragglers are exactly the clickable heading or row a caller cannot predict, and asking for pressable costs nothing — but the tool description and `docs/desktop.md` no longer claim the miss rate is typical.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "`apple_desktop_activate` was refusing every target, and it was never a permission.",
+            body: [
+              "Cupertino is an `LSUIElement` broker nobody ever clicks, which since macOS 14 is on its own enough for `NSRunningApplication.activate()` to refuse — whatever the target, and with no grant that changes it. Measured on macOS 26.6.2: refused for `com.apple.mail` and `com.apple.finder` alike when called from Cupertino, while the same `activate()` on Mail from a freshly launched command-line process returned true and moved the foreground. `.activateIgnoringOtherApps` is not the way out either, having been deprecated and a no-op since macOS 14.",
+              "When LaunchServices says no and the app holds Accessibility, the driver now sets `AXFrontmost` on the target's application element instead — measured raising Mail from behind another app with `err=0`. Either path is then checked against the window server's own `frontmostBundleId` rather than the return value of the call that did it, because activation is asynchronous and a caller that posts a keystroke before it lands types into whatever was already in front. That check is what `apple_desktop_hover` leans on when it declines to post into an application that did not come forward.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_18_0: Release = Release(
@@ -653,70 +703,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_14_0: Release = Release(
-    version: "1.14.0",
-    date: "2026-09-04",
-    sections: [
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Screen and Sound arrive switched off.",
-            body: [
-              "Every surface that brokers an Apple app is on when Cupertino is installed; those two now are not. Their grants are the ones that do not stop at the surface being brokered — `kTCCServiceScreenCapture` is per-process and sees every window on the display, and the microphone hears the room, neither scoped by macOS to the thing Cupertino is asked for. A capability that reaches that far past what it brokers should be switched on by the person who wants it rather than found already on.",
-              "The default is per surface now, `defaultEnabled` in `surfaces.json` and generated into `Surface.all`, rather than the constant `true` that `SurfaceSettings.isEnabled` and three `@AppStorage` initialisers each spelled out on their own. A surface added later declares what it should be in the same manifest entry that declares everything else about it, and the app and the relay cannot drift into disagreeing about which surfaces exist.",
-              "**On a Mac where they are on today, they go off.** Neither ever wrote a `surfaceEnabled` key — 1.8.0 and 1.11.0 shipped them on by absence — so an untouched switch now reads the new default. The entries already in a client's configuration stay there, flagged in that client's pane as naming a switched-off surface, until the next Configure takes them out. Switching either surface back on in the surface list restores it and rewrites the entry.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Visual Studio Code is actually wired now.",
-            body: [
-              "1.13.0's notes announced it and the build did not carry it: the `vscode` entry never reached `ClientWiring.swift` before that release commit, so the client that had just been taken off the paste-a-command list was on no list at all. It is there now, merged into `~/Library/Application Support/Code/User/mcp.json` — strict JSON under `servers`, written by VS Code itself, and not the JSONC `settings.json` the two files were conflated as.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "The website's buttons no longer flash blue before the page finishes loading.",
-            body: [
-              "The design tokens sat in the last 13% of a 33 KB stylesheet, and Safari paints from a partially parsed sheet at around 250 ms, so on a cold load every colour var resolved invalid and the buttons rendered in the browser's link blue. Tokens are their own file now, imported first.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_hover`, because a click is not a pointer.",
-            body: [
-              "The desktop surface could press, click, type and read a tree, and still could not make a tooltip appear. `click` posts a press and a release and nothing in between, so a tracking area sees a button go down inside it having never seen the pointer arrive — which means every control that only exists under the cursor was unreachable: a tooltip, a hover readout, SwiftUI's `onContinuousHover`. Driving a chart's hover band is what found it, and the workaround was a throwaway `CGEvent` script outside the repo.",
-              "Addressed by `handle` in preference to a coordinate, and for a sharper reason than the other verbs have. A point from `ui_tree` was true when the walk ran; a window that has moved since — and one being driven moves often — leaves it aimed at bare desktop, where a hover **misses in silence**. There is no control to fail to press and nothing to report, just a readout that never appears. So the handle form re-reads the element's frame at call time. It also brings the target application forward first and refuses to post if it did not come, because a hover is delivered only to the frontmost application; the same reasoning the simulator surface already applies to a tap.",
-              "It is the first verb here that is refused on account of the person at the keyboard. A hover takes the physical pointer for as long as it sweeps, which is worse than a click rather than better, so it declines while somebody is using the Mac. The check could not be `secondsSinceUserInput()` alone: that reads `.combinedSessionState`, which counts Cupertino's own events, so a plain idle test would have refused every hover after the first — biting hardest when the agent is working alone, the case it exists to allow. The driving indicator already knows whether the last input was ours, and the idle floor sits under its linger so a sequence composes. The reading is returned with the answer, for the before/after comparison `apple_desktop_user_activity` describes.",
-              "Annotated non-destructive and idempotent, unlike `click`: moving the pointer twice to the same place leaves the same state and presses nothing.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
