@@ -108,6 +108,12 @@ const SHORTEST_TERM = 3;
 /** How much of a description is printed per row. The whole of it is searched. */
 const SUMMARY_LIMIT = 160;
 const SEARCH_LIMIT = 25;
+/**
+ * How much bigger a real listing must be than the facade replacing it, in both
+ * tools and bytes, before fronting it is a saving rather than a rounding error.
+ */
+const FRONTING_RATIO = 2;
+
 /** Partial matches are low precision by construction, so fewer of them. */
 const PARTIAL_LIMIT = 10;
 const INDEX_LIMIT = 200;
@@ -405,130 +411,99 @@ export const withLazyTools = (
    * a model that has just been refused should not have to discover the search
    * tool before it can find out why. All eight cost 3,766 B combined.
    */
-  const eagerName = `${prefix}_diagnostics`;
-  const eager = all.filter((d) => d.name === eagerName);
-  for (const decl of eager)
-    server.registerTool(decl.name, decl.config as never, decl.handler as never);
-
-  const lazy = all.filter((d) => d.name !== eagerName);
-  const reads = lazy.filter((d) => !writeNames.has(d.name));
-  const writes = lazy.filter((d) => writeNames.has(d.name));
-  const byName = new Map(lazy.map((d) => [d.name, d]));
-  const readIndex = reads.map(index);
-  const writeIndex = writes.map(index);
-  const allIndex = [...readIndex, ...writeIndex];
-
-  const searchName = `${prefix}_search_tools`;
-  const describeName = `${prefix}_describe_tool`;
-  const callName = `${prefix}_call_tool`;
-  const callWriteName = `${prefix}_call_write_tool`;
-
-  server.registerTool(
-    searchName,
-    {
-      description:
-        `Find ${opts.displayName} tools by what you want to do. This server loads its ` +
-        `${allIndex.length} tools on demand: they are not listed up front, and this is how you ` +
-        `reach them. Returns matching tool names with a one-line summary each. Call with no ` +
-        `query to list everything. Read a schema with ${describeName}, then run it with ` +
-        `${callName}` +
-        (writes.length > 0 ? ` or ${callWriteName}` : "") +
-        `.`,
-      inputSchema: {
-        query: z
-          .string()
-          .optional()
-          .describe("What you want to do, e.g. 'search messages' or 'unread'. Omit to list all."),
-      },
-      annotations: { readOnlyHint: true, idempotentHint: true },
-    },
-    ({ query }) =>
-      okText(
-        renderSearch(find(allIndex, query ?? ""), allIndex.length, {
-          search: searchName,
-          describe: describeName,
-          call: callName,
-        }),
-      ),
-  );
-
-  server.registerTool(
-    describeName,
-    {
-      description:
-        `Get the full description and input schema of one ${opts.displayName} tool, as it would ` +
-        `have appeared in a normal tool listing. Find names with ${searchName} first.`,
-      inputSchema: {
-        name: z.string().describe(`Exact tool name, e.g. ${lazy[0]?.name ?? callName}.`),
-      },
-      annotations: { readOnlyHint: true, idempotentHint: true },
-    },
-    ({ name }) => {
-      const decl = byName.get(name);
-      if (!decl) {
-        const suggestions = nearest([...byName.keys()], name, prefix);
-        return fail(
-          `No tool named ${name}.` +
-            (suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : ""),
-        );
-      }
-      const runner = writeNames.has(name) ? callWriteName : callName;
-      return okText(
-        `${JSON.stringify(describe(decl))}\n\nCall it with ${runner}: {"name": ${JSON.stringify(name)}, "arguments": {…}}.`,
-      );
-    },
-  );
-
-  server.registerTool(
-    callName,
-    {
-      description:
-        `Run one of this server's read-only ${opts.displayName} tools. Find a name with ` +
-        `${searchName} and its arguments with ${describeName}. Reads only: it cannot reach ` +
-        (writes.length > 0
-          ? `anything that changes ${opts.displayName} — those go through ${callWriteName}.`
-          : `anything that changes ${opts.displayName}, and this server has writes turned off.`),
-      inputSchema: {
-        name: z.string().describe("Exact tool name to run."),
-        arguments: z.record(z.string(), z.unknown()).optional().describe("That tool's arguments."),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    async ({ name, arguments: args }, extra) => {
-      const decl = byName.get(name);
-      if (!decl) {
-        const suggestions = nearest([...byName.keys()], name, prefix);
-        return fail(
-          `No tool named ${name}.` +
-            (suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : ""),
-        );
-      }
-      if (writeNames.has(name)) {
-        return fail(
-          `${name} changes ${opts.displayName}, so it cannot be run through ${callName}. Use ${callWriteName}.`,
-        );
-      }
-      return (await invoke(decl, args, extra)) as ToolResult;
-    },
-  );
-
   /*
-   * Absent, not present-and-empty, when the gate is shut. A dispatcher that
-   * exists and refuses everything is exactly the "registered but refuses" shape
-   * docs/alternatives.md holds against a competitor.
+   * Everything the facade registers, as one callable — so it can be measured
+   * before it is mounted.
+   *
+   * A facade is not free: it costs its own declarations, and it buys back only
+   * what the real listing would have cost. On a small surface that trade is a
+   * loss, and the loss is invisible because both halves look like a working
+   * facade. See the floor below.
    */
-  if (writes.length > 0) {
-    // Named in full rather than counted. A permission prompt that says only
-    // "a Mail write tool" tells the person approving it nothing about the
-    // blast radius, and this description is the only place left that can.
-    const writeList = writes.map((d) => d.name.slice(prefix.length + 1)).join(", ");
-    server.registerTool(
-      callWriteName,
+  const mount = (target: McpServer): void => {
+    const eagerName = `${prefix}_diagnostics`;
+    const eager = all.filter((d) => d.name === eagerName);
+    for (const decl of eager)
+      target.registerTool(decl.name, decl.config as never, decl.handler as never);
+
+    const lazy = all.filter((d) => d.name !== eagerName);
+    const reads = lazy.filter((d) => !writeNames.has(d.name));
+    const writes = lazy.filter((d) => writeNames.has(d.name));
+    const byName = new Map(lazy.map((d) => [d.name, d]));
+    const readIndex = reads.map(index);
+    const writeIndex = writes.map(index);
+    const allIndex = [...readIndex, ...writeIndex];
+
+    const searchName = `${prefix}_search_tools`;
+    const describeName = `${prefix}_describe_tool`;
+    const callName = `${prefix}_call_tool`;
+    const callWriteName = `${prefix}_call_write_tool`;
+
+    target.registerTool(
+      searchName,
       {
         description:
-          `Run one of this server's ${writes.length} ${opts.displayName} tools that CHANGE data ` +
-          `— ${writeList}. Find arguments ` +
-          `with ${describeName}. Read-only tools go through ${callName} instead.`,
+          `Find ${opts.displayName} tools by what you want to do. This server loads its ` +
+          `${allIndex.length} tools on demand: they are not listed up front, and this is how you ` +
+          `reach them. Returns matching tool names with a one-line summary each. Call with no ` +
+          `query to list everything. Read a schema with ${describeName}, then run it with ` +
+          `${callName}` +
+          (writes.length > 0 ? ` or ${callWriteName}` : "") +
+          `.`,
+        inputSchema: {
+          query: z
+            .string()
+            .optional()
+            .describe("What you want to do, e.g. 'search messages' or 'unread'. Omit to list all."),
+        },
+        annotations: { readOnlyHint: true, idempotentHint: true },
+      },
+      ({ query }) =>
+        okText(
+          renderSearch(find(allIndex, query ?? ""), allIndex.length, {
+            search: searchName,
+            describe: describeName,
+            call: callName,
+          }),
+        ),
+    );
+
+    target.registerTool(
+      describeName,
+      {
+        description:
+          `Get the full description and input schema of one ${opts.displayName} tool, as it would ` +
+          `have appeared in a normal tool listing. Find names with ${searchName} first.`,
+        inputSchema: {
+          name: z.string().describe(`Exact tool name, e.g. ${lazy[0]?.name ?? callName}.`),
+        },
+        annotations: { readOnlyHint: true, idempotentHint: true },
+      },
+      ({ name }) => {
+        const decl = byName.get(name);
+        if (!decl) {
+          const suggestions = nearest([...byName.keys()], name, prefix);
+          return fail(
+            `No tool named ${name}.` +
+              (suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : ""),
+          );
+        }
+        const runner = writeNames.has(name) ? callWriteName : callName;
+        return okText(
+          `${JSON.stringify(describe(decl))}\n\nCall it with ${runner}: {"name": ${JSON.stringify(name)}, "arguments": {…}}.`,
+        );
+      },
+    );
+
+    target.registerTool(
+      callName,
+      {
+        description:
+          `Run one of this server's read-only ${opts.displayName} tools. Find a name with ` +
+          `${searchName} and its arguments with ${describeName}. Reads only: it cannot reach ` +
+          (writes.length > 0
+            ? `anything that changes ${opts.displayName} — those go through ${callWriteName}.`
+            : `anything that changes ${opts.displayName}, and this server has writes turned off.`),
         inputSchema: {
           name: z.string().describe("Exact tool name to run."),
           arguments: z
@@ -536,22 +511,96 @@ export const withLazyTools = (
             .optional()
             .describe("That tool's arguments."),
         },
-        annotations: { readOnlyHint: false, destructiveHint: true },
+        annotations: { readOnlyHint: true },
       },
       async ({ name, arguments: args }, extra) => {
         const decl = byName.get(name);
         if (!decl) {
-          const suggestions = nearest([...writeNames], name, prefix);
+          const suggestions = nearest([...byName.keys()], name, prefix);
           return fail(
             `No tool named ${name}.` +
               (suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : ""),
           );
         }
-        if (!writeNames.has(name)) {
-          return fail(`${name} is read-only. Use ${callName}.`);
+        if (writeNames.has(name)) {
+          return fail(
+            `${name} changes ${opts.displayName}, so it cannot be run through ${callName}. Use ${callWriteName}.`,
+          );
         }
         return (await invoke(decl, args, extra)) as ToolResult;
       },
     );
+
+    /*
+     * Absent, not present-and-empty, when the gate is shut. A dispatcher that
+     * exists and refuses everything is exactly the "registered but refuses" shape
+     * docs/alternatives.md holds against a competitor.
+     */
+    if (writes.length > 0) {
+      // Named in full rather than counted. A permission prompt that says only
+      // "a Mail write tool" tells the person approving it nothing about the
+      // blast radius, and this description is the only place left that can.
+      const writeList = writes.map((d) => d.name.slice(prefix.length + 1)).join(", ");
+      target.registerTool(
+        callWriteName,
+        {
+          description:
+            `Run one of this server's ${writes.length} ${opts.displayName} tools that CHANGE data ` +
+            `— ${writeList}. Find arguments ` +
+            `with ${describeName}. Read-only tools go through ${callName} instead.`,
+          inputSchema: {
+            name: z.string().describe("Exact tool name to run."),
+            arguments: z
+              .record(z.string(), z.unknown())
+              .optional()
+              .describe("That tool's arguments."),
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+        async ({ name, arguments: args }, extra) => {
+          const decl = byName.get(name);
+          if (!decl) {
+            const suggestions = nearest([...writeNames], name, prefix);
+            return fail(
+              `No tool named ${name}.` +
+                (suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : ""),
+            );
+          }
+          if (!writeNames.has(name)) {
+            return fail(`${name} is read-only. Use ${callName}.`);
+          }
+          return (await invoke(decl, args, extra)) as ToolResult;
+        },
+      );
+    }
+  };
+
+  /*
+   * A listing too small to be worth searching is served whole, whatever the
+   * switch says.
+   *
+   * Both terms have to hold, and the count is the one that decides the real
+   * cases. Measured on this repo's own servers with writes on: contacts is 7
+   * tools against a 5-declaration facade and messages is 8 — 1.4x and 1.6x,
+   * so neither clears the count — while both clear the bytes comfortably
+   * (2.6x and 3.8x), because a handful of fat schemas outweighs a facade made
+   * of prose. A floor counting bytes alone would front them and buy nothing
+   * but a coarser permission prompt: the client stops seeing
+   * `apple_contacts_search_contacts` in its approval dialog and starts seeing
+   * "reads on Contacts".
+   *
+   * Bytes are the wire entry as `describe` renders it, which is the same unit
+   * the ~106 KB measurement at the top of this file is quoted in.
+   */
+  const facade: Declaration[] = [];
+  mount(recorder(facade));
+  const wire = (decls: Declaration[]): number =>
+    decls.reduce((n, d) => n + JSON.stringify(describe(d)).length, 0);
+
+  if (all.length < FRONTING_RATIO * facade.length || wire(all) < FRONTING_RATIO * wire(facade)) {
+    register(server, opts.allowWrites);
+    return;
   }
+
+  mount(server);
 };
