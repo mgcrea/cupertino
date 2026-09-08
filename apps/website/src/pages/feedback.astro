@@ -40,7 +40,7 @@ const label = "block text-sm font-medium text-fg mb-1.5";
   description="Report a bug or suggest an improvement to Cupertino. No account needed."
 >
   <Nav />
-  <main class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+  <main id="main" tabindex="-1" class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
     <div class="mono text-accent">sec · feedback</div>
     <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
       Feedback
@@ -110,6 +110,7 @@ const label = "block text-sm font-medium text-fg mb-1.5";
         id="email"
         name="email"
         type="email"
+        autocomplete="email"
         maxlength={LIMIT.email}
         placeholder="Only so we can reply"
       />
