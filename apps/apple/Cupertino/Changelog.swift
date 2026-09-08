@@ -220,7 +220,26 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_19_0, v1_18_0, v1_17_0, v1_16_0, v1_15_0]
+  static let releases: [Release] = [v1_19_1, v1_19_0, v1_18_0, v1_17_0, v1_16_0]
+
+  // swift-format-ignore
+  private static let v1_19_1: Release = Release(
+    version: "1.19.1",
+    date: "2026-09-08",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_safari_read_page` returned a single-page app's pre-boot shell, forever.",
+            body: [
+              "The extension captured a page once, at `document_idle`, and again only after a route change — before a single-page app has rendered anything. The only capture of x.com was therefore its loading shell: an empty `<title>` and the static \"Something went wrong … privacy related extensions\" block X ships in every response, easy to misread as a real error rather than an uninitialized page. The store is keyed by URL, so that snapshot was the **permanent** answer for the page; no amount of waiting before `read_page` improved it, because nothing ever captured a second time.",
+              "The content script now re-captures once the page settles: a `MutationObserver` fires after the DOM holds still for 500ms, with a 5-second deadline for pages that never go fully quiet — a live timeline (video, ads, ticking timestamps) would otherwise never trigger a debounce on its own. A route change reuses the same watcher instead of a fixed delay, and a settled capture identical to the one already sent is skipped rather than resent.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_19_0: Release = Release(
@@ -638,67 +657,6 @@ enum Changelog {
             body: [
               "A background application's menus _do_ open — the original write-up was a single A/B with no repetition and no control; re-run as six alternating trials the menu opened every time in both conditions. What actually governs it is the session boundary: closing the connection dismisses an open menu. Safari's page text was called \"an absence rather than a price\" on a census that was measuring System Events; natively the same Safari has one web area, 26 links and 10,735 characters. And a Maps delete does not alternate between taking effect and raising an alert — both shapes are real and a driver must handle either, not expect them to take turns.",
               "The retractions are kept in full rather than quietly deleted, because how each was got wrong is more useful than the answer.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_15_0: Release = Release(
-    version: "1.15.0",
-    date: "2026-09-06",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Cupertino can drive any app on the Mac now, not only the seven it brokers.",
-            body: [
-              "The new Desktop surface reads and operates interfaces through the Accessibility API: list what is running, walk a window's element tree, find a control by name, press it, expand a disclosure. It is a capability rather than a broker — there is no target app, and it reaches whatever is in front of you.",
-              "This lane had been closed three times here, on numbers that were measuring something else. Every Accessibility measurement this project took before it went through `osascript` and System Events, one Apple Event per attribute, so the 33.6 ms round trip in the Safari notes and the ~14 s place card in the Maps notes were the price of the transport rather than of the API. Called natively the same Maps card walks in 0.177 s, and 13,960 nodes across seven apps average 1.24 ms a round trip. 86% of pressable elements carry an identifier, title or description, so a control is addressed by name rather than by guessing at coordinates.",
-              "**It arrives switched off, with its writes gated,** the way Screen and Sound do. The Accessibility grant is per-process and all-or-nothing: it hands over every window on the machine, far past anything Cupertino is asked to broker, so it is switched on by the person who wants it rather than found already on.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A tool list can be traded for a searchable index now.",
-            body: [
-              "Listing every tool across the eight servers with writes on costs ~106 KB — roughly 26.5k tokens, paid by every client on every connect, whether or not one tool is ever called. `*_LAZY_TOOLS`, off by default, swaps the list for `search_tools`, `describe_tool` and `call_tool`, plus a separate `call_write_tool` when writes are on, so a host's read/write permission boundary survives the facade rather than collapsing into one anonymous name. `diagnostics` stays eagerly listed, since it is what every surface guide points at first on a refusal.",
-              "In the app it is a per-surface **Load tools on demand** control, defaulted app-wide in General and overridable in each surface's Access card. Activity still names the tool that actually ran — `apple_mail_send_message`, not the dispatcher that carried it.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "Every tool listing is 4.6% smaller, on every server and without opting in to anything.",
-            body: [
-              "The MCP SDK stamps a generated `\"$schema\"` key onto every `inputSchema` and `outputSchema` it emits, and nothing in the protocol ever reads it back. It is dropped from the outgoing listing now.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "The Maps notes no longer describe a favourite that never got written.",
-            body: [
-              "Four claims there had been read off read-only dumps of the interface; pressing the control for real falsifies all four. It opens a naming sheet instead of writing a favourite, what lands is an unfiled saved place rather than a favourites row, the control is not a toggle, and the state bit lives on the sibling button beside it. Only the addressing claim survived.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "The website describes what actually ships now.",
-            body: [
-              "Desktop was missing from the surface list entirely; the whole list sat under \"each surface is its own npm package\", true of only eight of the eleven; and the menu-bar mock captioned every row \"automation allowed\", including Maps and the three capabilities, which send no Apple Event at all. The site reads `KIND`, `USES_APPLE_EVENTS` and `SUPPORTS_WRITES` generated from `surfaces.json` now, so a card or a caption cannot drift from the manifest again.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "The pricing note no longer promises a ladder that was retired.",
-            body: [
-              "The surface list claimed that adding a surface raises the price, and `docs/licensing.md` carried the promise and its retraction in one document — a table still saying \"rising with the surface count\" above a section describing the ladder as retired. The price stayed flat across the whole 1.x line through three new surfaces, and listing one commits to support at the price already paid.",
             ]),
         ]),
     ])
