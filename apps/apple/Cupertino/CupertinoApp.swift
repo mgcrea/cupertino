@@ -43,6 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } catch {
       hostLog("cupertino", .error, error.localizedDescription)
     }
+    #if DEBUG
+      // After the host is listening and before anything opens a window: the
+      // conversation dials this app's own socket, so there has to be one.
+      // Returns immediately unless `--chat=` is on the command line.
+      if CommandLine.arguments.contains(where: { $0.hasPrefix("--chat=") }) {
+        Task { @MainActor in await ChatConversation.runHeadless() }
+        return
+      }
+    #endif
     DockPresence.observe()
     LoginItem.healIfNeeded()
     promptForLicenceIfNeeded()

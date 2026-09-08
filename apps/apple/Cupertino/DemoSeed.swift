@@ -52,6 +52,7 @@ enum DemoSeed {
     case connections
     case settings
     case writes
+    case chat
 
     /// Which window the shutter is aimed at.
     ///
@@ -76,7 +77,7 @@ enum DemoSeed {
     /// out — and the next pane that outgrows a form will want it back.
     var subject: Subject {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat: .main
       }
     }
 
@@ -99,7 +100,7 @@ enum DemoSeed {
       // surface detail pane, and `settings` photographs Clients from its top.
       // Kept rather than deleted because the next long pane will want it, and
       // the retry loop it drove is the non-obvious part.
-      case .settings, .writes, .surface, .prompt, .activity, .connections: .top
+      case .settings, .writes, .surface, .prompt, .activity, .connections, .chat: .top
       }
     }
 
@@ -117,7 +118,7 @@ enum DemoSeed {
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat: .main
       }
     }
 
@@ -145,6 +146,7 @@ enum DemoSeed {
       // one of the seven whose config also holds per-folder servers, so it is
       // the only pane that draws every card this screen has.
       case .settings: .client("claude-code")
+      case .chat: .chat
       }
     }
 
@@ -157,6 +159,10 @@ enum DemoSeed {
     var logLines: [(String, LogStore.Level, String)] {
       switch self {
       case .prompt: DemoSeed.heroTurnLogLines
+      // The same calls the transcript on that plate shows. A Log pane that
+      // disagreed with the Chat pane beside it would be a picture of the one
+      // claim this feature makes — that these are real calls — being false.
+      case .chat: DemoSeed.chatTurnLogLines
       case .surface, .activity, .connections, .settings, .writes: DemoSeed.logLines
       }
     }
@@ -377,6 +383,225 @@ enum DemoSeed {
     ("calendar", .call, "apple_calendar_list_events"),
   ]
 
+  nonisolated private static let chatTurnLogLines: [(String, LogStore.Level, String)] = [
+    (
+      "cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"
+    ),
+    ("mail", .info, "server started"),
+    ("mail", .info, "allowWrites=true"),
+    ("mail", .info, "initialize"),
+    ("mail", .info, "tools/list"),
+    ("mail", .call, "apple_mail_search_messages"),
+  ]
+
+  /// A conversation with one completed exchange in it.
+  ///
+  /// ## What is fixed and what is computed
+  ///
+  /// The tools are built through the REAL `ChatTool(json:)` and the header's
+  /// `N of M · used/budget` is computed by `ChatBudget`, so the plate cannot
+  /// claim a budget the arithmetic does not produce. Only the inputs are
+  /// written down here.
+  ///
+  /// Those inputs mirror Mail's actual listing rather than a convenient
+  /// subset: twenty-one tools, the same names, the same required-argument
+  /// counts and the same read-only marks, with property sets sized like the
+  /// real ones. That matters because the first version of this fixture used
+  /// nine toy tools and photographed "9 of 9 tools · 369/1800" — true of the
+  /// fixture, and a picture of a constraint that does not bite. Mail is the
+  /// surface where it bites hardest, and a plate about a token budget should
+  /// show the budget nearly full.
+  @MainActor static func chatSession(_ chat: ChatConversation) {
+    /// One property, as these servers write them: a type and a sentence.
+    typealias Property = (name: String, type: String, detail: String)
+
+    func tool(
+      _ name: String, _ summary: String, _ properties: [Property] = [],
+      required: [String] = [], readOnly: Bool = true
+    ) -> ChatTool? {
+      var schema: [String: Any] = [:]
+      for property in properties {
+        schema[property.name] = ["type": property.type, "description": property.detail]
+      }
+      return ChatTool(json: [
+        "name": name, "description": summary,
+        "annotations": ["readOnlyHint": readOnly],
+        "inputSchema": ["type": "object", "properties": schema, "required": required],
+      ])
+    }
+
+    // Properties that recur across the listing, written once.
+    let account: Property = ("account", "string", "Which account to look in. Defaults to all.")
+    let mailbox: Property = ("mailbox", "string", "The mailbox name, such as INBOX or Sent.")
+    let limit: Property = ("limit", "integer", "How many to return. Keep this small.")
+    let id: Property = ("id", "string", "The message id, as returned by a listing tool.")
+    let ids: Property = ("ids", "array", "The message ids to act on.")
+    let query: Property = ("query", "string", "Text to match in the subject, sender or body.")
+    let unread: Property = ("unreadOnly", "boolean", "Only messages that have not been read.")
+    let since: Property = ("since", "string", "Only messages after this ISO 8601 date.")
+    let until: Property = ("until", "string", "Only messages before this ISO 8601 date.")
+    let sender: Property = ("from", "string", "Match the sender's address or display name.")
+    let recipient: Property = ("to", "string", "Match a recipient's address or display name.")
+    let subject: Property = ("subject", "string", "Match the subject line.")
+    let body: Property = ("body", "string", "Match the message body. Slower — it reads the file.")
+    let flagged: Property = ("flaggedOnly", "boolean", "Only messages that carry a flag.")
+    let attachments: Property =
+      ("hasAttachments", "boolean", "Only messages that carry an attachment.")
+    let text: Property = ("body", "string", "The message body, as plain text.")
+    let path: Property = ("path", "string", "Where to write the file on disk.")
+
+    let tools = [
+      tool(
+        "apple_mail_diagnostics",
+        "Report whether this surface can reach Mail's store, which permissions it holds and "
+          + "what it would fall back to. Run this first when anything else returns an error, "
+          + "because it names the missing grant rather than the symptom."),
+      tool(
+        "apple_mail_list_accounts",
+        "List the mail accounts configured on this Mac, with the mailboxes each one owns. "
+          + "Names here are what every other tool's account argument expects."),
+      tool(
+        "apple_mail_list_mailboxes",
+        "List the mailboxes in an account, including nested ones, with an unread count for "
+          + "each. Use it to find the exact name a listing or a move needs.",
+        [account, limit]),
+      tool(
+        "apple_mail_count_messages",
+        "Count the messages matching a filter without reading any of them. Much cheaper than "
+          + "listing when the question is how many rather than which.",
+        [mailbox, unread]),
+      tool(
+        "apple_mail_list_messages",
+        "List messages in a mailbox, newest first, with sender, subject, date and read state. "
+          + "Ask for a small limit — each entry costs the reader tokens.",
+        [mailbox, limit, unread]),
+      tool(
+        "apple_mail_search_messages",
+        "Search messages across accounts by sender, recipient, subject, date range or body "
+          + "text. Every field is optional and they combine, so start narrow and widen.",
+        [
+          query, sender, recipient, subject, body, mailbox, account, since, until, unread,
+          flagged, attachments, limit,
+        ]),
+      tool(
+        "apple_mail_query",
+        "The full query interface: every filter search takes, plus sorting, pagination and a "
+          + "choice of which fields come back. Use search_messages unless you need one of "
+          + "those.",
+        [
+          query, sender, recipient, subject, body, mailbox, account, since, until, unread,
+          flagged, attachments, limit,
+          ("sort", "string", "Which field to order by."),
+          ("fields", "array", "Which fields to return for each message."),
+        ]),
+      tool(
+        "apple_mail_get_message",
+        "Read one message in full — headers, body and the list of its attachments — by the id "
+          + "a listing returned.", [id, account], required: ["id"]),
+      tool(
+        "apple_mail_get_thread",
+        "Read every message in a conversation, oldest first, by the id of any message in it.",
+        [id, limit], required: ["id"]),
+      tool(
+        "apple_mail_get_message_source",
+        "Return one message's raw RFC 822 source, headers included. Large — ask for it only "
+          + "when the parsed form is not enough.", [id, account, limit], required: ["id"]),
+      tool(
+        "apple_mail_list_attachments",
+        "List what is attached to one message, with names, types and sizes, without saving "
+          + "anything.", [id], required: ["id"]),
+      tool(
+        "apple_mail_check_for_new_mail",
+        "Ask Mail to poll its accounts now rather than waiting for its own schedule.",
+        [account], readOnly: false),
+      tool(
+        "apple_mail_save_attachment",
+        "Write one of a message's attachments to a file on disk.",
+        [id, ("name", "string", "Which attachment, by name."), path],
+        required: ["id", "path"], readOnly: false),
+      tool(
+        "apple_mail_set_message_flags",
+        "Mark messages read, unread, flagged or unflagged.",
+        [
+          ids, ("read", "boolean", "Mark as read."), ("flagged", "boolean", "Mark as flagged."),
+          mailbox, account,
+        ], required: ["ids"], readOnly: false),
+      tool(
+        "apple_mail_create_mailbox",
+        "Create a mailbox, optionally inside another one.",
+        [("name", "string", "The new mailbox's name."), account, mailbox],
+        required: ["name", "account"], readOnly: false),
+      tool(
+        "apple_mail_move_messages",
+        "Move messages into another mailbox in the same account.",
+        [ids, mailbox, ("destination", "string", "The mailbox to move them into."), account],
+        required: ["ids", "destination", "account"], readOnly: false),
+      tool(
+        "apple_mail_delete_messages",
+        "Move messages to the account's Trash. Not a permanent delete.",
+        [ids, account], required: ["ids", "account"], readOnly: false),
+      tool(
+        "apple_mail_send_message",
+        "Compose and send a new message.",
+        [
+          recipient, ("cc", "string", "Carbon copy recipients."),
+          ("bcc", "string", "Blind carbon copy recipients."), subject, text, account,
+          ("attachments", "array", "Files to attach, by path."),
+          ("draft", "boolean", "Save as a draft instead of sending."),
+        ],
+        required: ["to", "subject"], readOnly: false),
+      tool(
+        "apple_mail_reply_to_message",
+        "Reply to a message, quoting it, optionally to everyone on it.",
+        [
+          id, text, ("all", "boolean", "Reply to every recipient."), account,
+          ("draft", "boolean", "Save as a draft instead of sending."),
+        ],
+        required: ["id", "body"], readOnly: false),
+      tool(
+        "apple_mail_forward_message",
+        "Forward a message to someone else, with an optional note.",
+        [
+          id, recipient, text, account,
+          ("draft", "boolean", "Save as a draft instead of sending."),
+        ],
+        required: ["id", "to"], readOnly: false),
+      tool(
+        "apple_mail_update_draft",
+        "Change a draft that has not been sent yet.",
+        [id, recipient, subject, text], required: ["id", "account", "body"], readOnly: false),
+    ].compactMap { $0 }
+
+    let call = ChatCall(
+      tool: "apple_mail_search_messages",
+      arguments: #"{"query":"invoice","limit":3}"#,
+      output: """
+        3 messages
+        • Arkadi Kagan — “Re: invoice for August” — 2 Sep, unread
+        • Stripe — “Your invoice is available” — 28 Aug
+        • Arkadi Kagan — “invoice for August” — 26 Aug
+        """,
+      failed: false, seconds: 0.084)
+
+    chat.adoptDemo(
+      surface: Surface.named("mail")!,
+      tools: tools,
+      // Chosen the way `fill` would choose it, so the header's "N of M" and the
+      // token counter agree with what the picker would show — and so a change
+      // to what a tool costs moves this plate rather than leaving it stale.
+      selected: ChatBudget.fill(tools, budget: ChatConversation.budget).selected,
+      unusable: [],
+      messages: [
+        .init(role: .you, text: "any unpaid invoices in my mail?"),
+        .init(
+          role: .model,
+          text: "Three messages mention an invoice. The most recent is Arkadi Kagan’s "
+            + "“Re: invoice for August” from 2 September, which is still unread.",
+          calls: [call]),
+      ],
+      allowsWrites: true)
+  }
+
   /// Live sessions, as the handshake actually reports them.
   ///
   /// The client names are raw `clientInfo.name` values — `claude-code`,
@@ -528,11 +753,15 @@ enum DemoSeed {
   nonisolated static func clientConfig(for client: ClientWiring.Client)
     -> ClientWiring.Config?
   {
+    // Built by the real writer rather than copied from it. A hand-written
+    // `["--server=\(surface.id)"]` here was already stale the day `--client=`
+    // landed: the plate went on showing a config the app would no longer write,
+    // and nothing caught it because the fixture agreed with itself.
+    // `ClientWiring.bridgePath` is seeded for a capture, so the path is right.
     var servers: [String: Any] = [:]
     for surface in SurfaceSettings.enabledSurfaces {
-      servers[ClientWiring.serverKey(for: surface)] = [
-        "command": bridgePath, "args": ["--server=\(surface.id)"],
-      ]
+      servers[ClientWiring.serverKey(for: surface)] =
+        ClientWiring.entry(for: surface, client: client.id)
     }
     guard ClientWiring.hasLocalScope(client) else {
       return ClientWiring.Config(servers: servers, root: ["mcpServers": servers])

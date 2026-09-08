@@ -65,6 +65,8 @@ struct MainView: View {
   /// popover's "N more…" link opening the window on whatever pane it was last
   /// left on instead of on Connections.
   @AppStorage(Pane.defaultsKey) private var selection = Pane.log.rawValue
+  /// The chat, kept across pane switches. See `.chat` in `detail`.
+  @State private var chat = ChatConversation()
   @State private var surface: String = MainView.allSurfaces
   @State private var callsOnly = false
   @State private var following = true
@@ -86,6 +88,7 @@ struct MainView: View {
     case client(String)
     case log
     case connections
+    case chat
   }
 
   /// Optional because that is the shape `List(selection:)` drives for a single
@@ -218,6 +221,11 @@ struct MainView: View {
       Section("Activity") {
         Label("Log", systemImage: "list.bullet.rectangle").tag(Pane.log)
         Label("Connections", systemImage: "cable.connector").tag(Pane.connections)
+        // Activity, because that is what it is: the pane where you make
+        // something happen and then watch it appear two rows up. It is also the
+        // only fixed-length section left — see the note below on why anything
+        // whose length depends on the machine goes last.
+        Label("Chat", systemImage: "bubble.left.and.text.bubble.right").tag(Pane.chat)
       }
       // LAST, and that is not a judgement about how important a client is. It is
       // the only section whose length is a property of the machine rather than of
@@ -446,6 +454,12 @@ struct MainView: View {
       }
     case .connections:
       connections
+    case .chat:
+      // Owned here rather than by `ChatPane`, which is one arm of this switch:
+      // a trip to the Log and back would otherwise destroy the transcript, the
+      // tool selection, the `LanguageModelSession` and the MCP connection under
+      // it. `@State` is what survives that; the pane itself is recreated freely.
+      ChatPane(chat: chat)
     }
   }
 
@@ -774,6 +788,7 @@ extension MainView.Pane: RawRepresentable {
     switch rawValue {
     case "log": self = .log
     case "connections": self = .connections
+    case "chat": self = .chat
     default:
       // Only `surface:` and `client:` carry a payload, and an id that is no
       // longer in `Surface.all` or `ClientWiring.clients` still parses —
@@ -796,6 +811,7 @@ extension MainView.Pane: RawRepresentable {
     case .client(let id): "client:\(id)"
     case .log: "log"
     case .connections: "connections"
+    case .chat: "chat"
     }
   }
 }

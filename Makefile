@@ -386,6 +386,31 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
+chat-check: ## Assert the chat pane's tool budget and schema subset, with no app and no model
+	@# The one file with no dependencies is the one holding every decision the
+	@# Chat pane makes before it can talk to anything: what fits in the context
+	@# window, in what order, and which schemas can be expressed at all. All of
+	@# it is arithmetic and all of it is silent when wrong.
+	@#
+	@# It runs on a machine with no Apple Intelligence, which is every CI
+	@# machine — which is why the half that needs FoundationModels lives in
+	@# ChatModelTool.swift and deliberately makes no decisions.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/chat-check \
+		apps/apple/Cupertino/ChatTools.swift scripts/chat-check.swift
+	@apps/apple/.build/chat-check
+
+chat-check-real: servers chat-check ## Prove every SHIPPED tool schema converts, and print what fits
+	@# The drift gate. chat-check asserts the rule against schemas written by
+	@# hand; this is the half that notices when somebody adds a zod construct
+	@# nobody has seen. It is what would have caught contacts' .nullable() —
+	@# anyOf: [T, null] — the day it landed rather than in the pane.
+	@#
+	@# It also prints the fit table, because a new tool or a longer description
+	@# silently pushes another tool out of the budget and that belongs in CI
+	@# output rather than in a bug report.
+	@apps/apple/.build/chat-check $(wildcard packages/*/dist/cli.js)
+
 audit-check: ## Prove an export signature survives a round trip, with no app and no Keychain
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/audit-check \
@@ -1024,4 +1049,4 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check changelog changelog-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check changelog changelog-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
