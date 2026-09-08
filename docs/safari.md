@@ -412,6 +412,57 @@ Also: the appex bundle identifier must be prefixed by the app's, so Debug
 (`io.mgcrea.cupertino.debug`) and Release get different extension identifiers — and Safari keys
 enablement state to that identifier. The two builds hold separate extension state.
 
+### `document_idle` is before a single-page app has rendered anything
+
+The content script captured once, on injection, and then only after a route change. On a
+server-rendered page that is right immediately. On a single-page app it captures the shell, and
+because the store is keyed by URL, that shell was then the **permanent** answer for the page — no
+amount of waiting before `read_page` improved it, because nothing captured a second time.
+
+Measured on x.com, from four captures in one session:
+
+| URL                     | text  | `<title>` | `#placeholder` in html |
+| ----------------------- | ----- | --------- | ---------------------- |
+| `x.com/`                | 172   | empty     | yes                    |
+| `x.com/mgcrea`          | 2 763 | set       | no                     |
+| `x.com/i/article/…`     | 172   | empty     | yes                    |
+| `x.com/mgcrea/status/…` | 172   | empty     | yes                    |
+
+The 172 characters are the same every time, and they read as a site failure:
+
+> Something went wrong, but don't fret — let's give it another shot. Try again ⚠️ Some privacy
+> related extensions may cause issues on x.com. Please disable them and try again.
+
+**That text is not an error. It is `<div id="ScriptLoadFailure">`, which X ships inside every
+initial response and hides once its bundle boots.** The capture that worked contains that div too;
+what separates it is `#placeholder`, X's loading spinner, which is present in all three failures and
+gone from the one success. An empty `document.title` says the same thing. So the honest reading is
+"captured before the app rendered", and the misreading it invites — a privacy extension is blocking
+the site — sends someone to Safari's settings for a bug in this file.
+
+The same signature is in the store for other apps: `console.x.com/` captured 0 characters of text,
+its sub-pages 17, while Hacker News, `mg-crea.com` and `cupertino.mgcrea.io` captured 4 000 to
+26 000 in the same session.
+
+**The fix is a settle watcher, and it needs both halves.** A `MutationObserver` on
+`documentElement` re-captures once the DOM has held still for 500 ms — cheap, because it costs
+nothing while a page is quiet, and precise, because the `<title>` a framework sets on boot is itself
+a mutation. But a debounce alone would never fire on a live timeline: video, ads and ticking
+timestamps mean x.com's feed is never quiet for 500 ms. So a 5 s deadline captures regardless. The
+deadline is the common case on exactly the pages this lane is for, not a safety net.
+
+The rejected alternative was folding the check into the command poll, which already runs every
+second and would have needed no new timer. It is worse: deciding whether the page changed means
+computing `readableText()`, a full body clone and an `innerText` that forces layout — 300 KB and a
+reflow every second on a page like x.com, forever, to notice one change in the first few seconds.
+
+**The immediate capture stays.** It costs one message, it is already correct for most of the web,
+and a tab closed within the second still leaves something behind. The settle capture overwrites it.
+
+**What this still does not fix:** a read issued a second after `open_url` can land before the settle
+capture. `apple_safari_open_url` says the page was asked for and not waited for, and `read_page`
+reports `ageSeconds`; on a slow page the answer is still the shell, and the caller has to look.
+
 ### Replacing the app under a running Safari can crash Safari
 
 Observed on macOS 26.6, Safari 26.6, reinstalling `/Applications/Cupertino.app` while Safari was
@@ -724,7 +775,8 @@ webmail message, an issuer's dashboard, a bank's confirmation panel. There is no
 so no amount of toggling makes `page_elements` see it.
 
 **And `read_page` cannot substitute for it.** That reads the capture store, written at
-`document_idle` and again after a route change. A code delivered by XHR into an already-open tab
+`document_idle`, again when the DOM settles, and again after a route change. A code delivered by
+XHR into an already-open tab
 **was never captured**. The `codes` action scans the DOM at command time, which is the only thing
 that sees it — and is the reason this is a new action rather than server-side extraction over a
 capture. The cheap version was considered and is strictly worse: stale by up to 30 minutes, blind to

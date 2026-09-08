@@ -39,13 +39,44 @@
       .trim();
   }
 
+  /**
+   * How long the DOM must hold still before a second capture, and how long to
+   * wait for a stillness that may never come.
+   *
+   * `document_idle` is before a single-page app has rendered anything. The only
+   * capture of x.com was therefore its pre-boot shell — an empty `<title>`, a
+   * loading placeholder, and the static "Something went wrong ... privacy
+   * related extensions" block X ships in every response — and because the store
+   * is keyed by URL, that snapshot was the permanent answer for the page.
+   * Waiting before `read_page` could not fix it: nothing captured a second
+   * time. See docs/safari.md.
+   *
+   * The deadline is not a safety net, it is the common case. A live timeline —
+   * video, ads, ticking timestamps — never goes quiet, so a debounce on its own
+   * would wait forever on exactly the pages this exists for.
+   */
+  const SETTLE_QUIET_MS = 500;
+  const SETTLE_DEADLINE_MS = 5000;
+
+  /**
+   * The text of the last capture that left this page.
+   *
+   * A settle capture identical to the stored one is a native round trip that
+   * overwrites an entry with itself, and most pages settle without having
+   * changed. Compared on the text rather than a cheaper fingerprint because the
+   * text is being computed anyway to send.
+   */
+  let sent = null;
+
   function capture() {
     try {
+      const text = readableText();
+      if (text === sent) return;
       browser.runtime.sendMessage({
         kind: "capture",
         url: location.href,
         title: document.title || "",
-        text: readableText(),
+        text,
         html: document.documentElement?.outerHTML || "",
         // Which build wrote this. An update leaves already-open tabs running
         // the PREVIOUS content script — orphaned, unable to reach the
@@ -54,6 +85,9 @@
         // separates "reload the tab" from "the extension is not allowed here".
         extensionVersion: version(),
       });
+      // Only after the send: a throw here means nothing was stored, and
+      // recording it as sent would suppress the retry that follows.
+      sent = text;
     } catch {
       // The background worker may be asleep or the page may be closing. A lost
       // capture is a stale entry, never a broken page — never throw into a site
@@ -61,7 +95,59 @@
     }
   }
 
+  let observer = null;
+  let quietTimer = null;
+  let deadlineTimer = null;
+
+  function stopSettling() {
+    if (observer) observer.disconnect();
+    observer = null;
+    clearTimeout(quietTimer);
+    clearTimeout(deadlineTimer);
+    quietTimer = null;
+    deadlineTimer = null;
+  }
+
+  /**
+   * Capture again once the page stops changing, or once it has had long enough
+   * — whichever comes first.
+   *
+   * Only one watcher runs at a time: a route change replaces the one in flight
+   * rather than racing it, so a capture can never be attributed to the route
+   * the user has already left.
+   */
+  function captureWhenSettled() {
+    stopSettling();
+    const done = () => {
+      stopSettling();
+      capture();
+    };
+    const restart = () => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(done, SETTLE_QUIET_MS);
+    };
+    try {
+      observer = new MutationObserver(restart);
+      // `documentElement` rather than `body`, so the `<title>` a framework sets
+      // on boot counts as movement. It is usually the first thing to change.
+      observer.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    } catch {
+      // Nothing observable. The deadline below still runs, so a page that
+      // renders late is still captured — just not early.
+    }
+    quietTimer = setTimeout(done, SETTLE_QUIET_MS);
+    deadlineTimer = setTimeout(done, SETTLE_DEADLINE_MS);
+  }
+
+  // Immediately, so a server-rendered page needs no wait at all and a tab
+  // closed in the next second still leaves something behind. Then again when
+  // the page has actually rendered, which overwrites this one.
   capture();
+  captureWhenSettled();
 
   // Single-page apps replace the document without a navigation, so the first
   // capture would describe a route the user has already left. This is also why
@@ -70,7 +156,10 @@
   const onRouteChange = () => {
     if (location.href === last) return;
     last = location.href;
-    setTimeout(capture, 400);
+    // A new URL is a new entry in the store, so the previous route's text says
+    // nothing about whether this one is worth sending.
+    sent = null;
+    captureWhenSettled();
   };
   addEventListener("popstate", onRouteChange);
   const push = history.pushState;
@@ -78,6 +167,7 @@
     push.apply(this, args);
     onRouteChange();
   };
+  addEventListener("pagehide", stopSettling);
 })();
 
 // ── Commands ────────────────────────────────────────────────────────────────
