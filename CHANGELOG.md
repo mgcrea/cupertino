@@ -12,6 +12,71 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **A Chat pane, so the tools can be tried without wiring an editor first.** Until now the only way
+  to see Cupertino do anything was to install an MCP client, configure it, and ask it a question —
+  three steps before the first sign of life, and the app could only ever describe its servers.
+  The new pane under Activity picks a surface, loads as many of its tools as fit, and lets you ask
+  in plain words.
+
+  The answers come from Apple's on-device model, which is the only choice that keeps
+  `scripts/audit-network.sh` true: the pane adds no network reach, no API key and nothing to send.
+  It also works before a licence is entered, because what a licence buys is letting *other* apps in
+  — a self-check is not a relay.
+
+  The calls are real ones. The pane dials the app's own socket with the same handshake
+  `cupertino-bridge` sends, so a tool call from here goes to the same supervised child, under the
+  same write gate and the same surface switch, and shows up in the Log and Connections panes like
+  anybody else's. Tool calls are drawn above the model's prose, with the arguments it invented,
+  because the calls are the evidence and the prose is a small model's account of them.
+
+  The on-device model holds 4,096 tokens and Mail alone lists 4,858 tokens of tool schema, so the
+  pane cannot offer a surface's tools — only as many as fit. It costs each tool, sorts the ones
+  callable with no arguments first (a set of only `get_*(id)` tools gives the model nothing to open
+  with), fills a 1,800-token budget greedily, and says in the header what it spent and in the picker
+  what it left out. `make chat-check` asserts that arithmetic with no app and no model, and
+  `make chat-check-real` puts every shipped tool schema through the same rule — all 131 of them
+  convert.
+
+  A question may make six tool calls, and a reply is capped at 400 tokens. Neither is tidiness:
+  a model looping on a failing tool would otherwise spend six minutes of call deadlines before
+  anybody could type again, and a model that starts enumerating fills the window, overflows, and
+  gets silently trimmed — so the only symptom is a conversation that has forgotten its own
+  opening. Stopping a reply ends the turn immediately and drops the stopped question from what
+  the model remembers, which the row says out loud.
+
+  With writes enabled for a surface, the pane honours it: the model can change your data, behind an
+  acknowledgement that names the surface and gates the Send button.
+
+- **A client that already fetches tool schemas on its own is never fronted.** "Load tools on
+  demand" reads as a decision about a surface, but a surface feeds every wired client at once, and
+  they do not agree about what they need. Claude Code and Claude Desktop both load an MCP server's
+  schemas only when they are about to use them, so fronting either paid the facade's whole cost to
+  buy back only the tool names — and worse, their own tool search then indexed the facade's four
+  generic entries instead of the surface's twenty real ones.
+
+  Cupertino now writes `--client=<id>` beside `--server=<id>` when it configures a client, so the
+  host knows which config a connection came from and can leave those two alone. Which clients
+  defer is an allowlist backed by evidence, with a per-client override
+  (`defaults write … defersSchemas.<client> on|off`) for when it is wrong in either direction. An
+  unrecognised client, or a config written before this existed, does not defer — the behaviour
+  every client had before. Existing wirings are not invalidated: the staleness check compares the
+  command and never the arguments, so nothing needs re-configuring, though a client that has not
+  been re-configured carries no id until it is.
+
+- **A listing too small to be worth searching is served whole, whatever the switch says.** A
+  facade costs its own declarations and buys back only what the real listing would have cost, so
+  below a certain size the trade is a loss that looks exactly like a working facade. A surface is
+  now fronted only when its listing has at least twice as many tools as the facade replacing it
+  **and** costs at least twice as many bytes. Measured with writes on, Contacts (7 tools) and
+  Messages (8) fail the first test at 1.4x and 1.6x while passing the second at 2.6x and 3.8x —
+  which is why both terms are needed: a handful of fat schemas outweighs a facade made of prose,
+  so a floor counting bytes alone would front them and buy nothing but a coarser permission
+  prompt.
+
 ## [1.19.1] - 2026-09-08
 
 ### Fixed
