@@ -90,10 +90,12 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "Reply to a message. By default it opens a draft in Mail with the original quoted beneath " +
         "your text, for the user to review. Pass replyToAll to include every original recipient. " +
         "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
-        "Success means the body was read back out of the composer window and matched; an error " +
-        "means the draft is EMPTY and must not be described to the user as ready. Filling the " +
-        "composer brings Mail to the front for a moment and borrows the clipboard, both of which " +
-        "are put back.",
+        "Success means the body was read back out of the composer window and matched, and only " +
+        "then may it be described to the user as ready. A failure is NOT automatically an empty " +
+        "draft: read the note, which says what was actually found — including that the composer " +
+        "was taken by someone using the Mac, in which case the reply may already have been SENT " +
+        "and a retry would send it twice. Filling the composer brings Mail to the front for a " +
+        "moment and borrows the clipboard, both of which are put back.",
       inputSchema: {
         ref: messageRefArg,
         body: bodyArg,

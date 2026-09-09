@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { interferenceNote, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 
 import { containsText, MailAxLane, type ComposerRef } from "./ax.js";
+import { SENT_SINCE } from "./jxa/read.js";
 import { OPEN_COMPOSER } from "./jxa/write.js";
 
 const run = promisify(execFile);
@@ -53,13 +54,41 @@ const SEND_TIMEOUT_MS = 5_000;
  */
 const VERIFY_CHARS = 400;
 
+/**
+ * How far back to accept a message in Sent as this call's.
+ *
+ * Generous on purpose. `dateSent` and the moment the row appears are not the
+ * same instant — a real send measured 16s between them — and the cost of the two
+ * errors is lopsided: a window slightly too wide names a message that was
+ * already there, which a reader can see and dismiss; one too narrow reports a
+ * reply that DID go as missing, and invites sending it again.
+ */
+const SENT_SLACK_MS = 120_000;
+
 export type ComposeResult = {
   ok: boolean;
   subject: string;
   bodyVerified: boolean | null;
   verifiedChars: number;
-  sent: boolean;
+  /** Null when it cannot be told — the composer went while nobody was looking. */
+  sent: boolean | null;
   note: string;
+};
+
+/**
+ * Did anything at all reach the composer?
+ *
+ * Three answers rather than two, and the third is the bug this path was rebuilt
+ * around. "unknown" is a body that cannot be READ — which is what a composer
+ * that has closed looks like from here, because its element handle dies with it.
+ * Folding that into "different from before" reported a reply sent by hand as a
+ * body that never went in.
+ */
+type Landed = "yes" | "no" | "unknown";
+
+const compare = (before: number | null, after: number | null): Landed => {
+  if (before === null || after === null) return "unknown";
+  return after === before ? "no" : "yes";
 };
 
 /**
@@ -124,7 +153,7 @@ const paste = async (
   ref: ComposerRef,
   text: string,
   focusTimeoutMs: number | undefined,
-): Promise<{ verified: boolean; landed: boolean }> => {
+): Promise<{ verified: boolean; landed: Landed }> => {
   const expected = text.length > VERIFY_CHARS ? text.slice(0, VERIFY_CHARS) : text;
   const sizeBefore = await lane.bodySize(ref.body);
 
@@ -134,14 +163,101 @@ const paste = async (
       if (focused) {
         const after = await lane.bodyText(ref.body);
         if (after !== null && containsText(after, expected))
-          return { verified: true, landed: true };
+          return { verified: true, landed: "yes" as const };
       }
-      // Something went in that cannot be matched. Pasting again would put the
-      // reply in the draft twice, and nothing here can undo that.
-      if ((await lane.bodySize(ref.body)) !== sizeBefore) break;
+      // Something went in that cannot be matched, or the body can no longer be
+      // read at all. Pasting again would put the reply in the draft twice, and
+      // nothing here can undo that — so an UNKNOWN reading stops the retry just
+      // as firmly as a changed one.
+      if (compare(sizeBefore, await lane.bodySize(ref.body)) !== "no") break;
     }
-    return { verified: false, landed: (await lane.bodySize(ref.body)) !== sizeBefore };
+    return { verified: false, landed: compare(sizeBefore, await lane.bodySize(ref.body)) };
   });
+};
+
+/**
+ * What became of a composer that is no longer on screen.
+ *
+ * Nothing in this file closes a composer, so one that has gone was taken by the
+ * person at the keyboard — and sent and discarded look identical from the
+ * Accessibility side. This is the only place that can tell them apart, and it
+ * asks Mail rather than guessing.
+ *
+ * Costs one Apple Event, on a failure path. Deliberately NOT the envelope index:
+ * the index is rebuilt on a schedule and was 47 minutes stale when this bug was
+ * found, so it cannot see a message sent seconds ago.
+ */
+const sentVerdict = async (
+  runner: OsascriptRunner,
+  accountUuid: string,
+  subject: string,
+  since: number,
+): Promise<{ sent: boolean | null; sentence: string }> => {
+  let found: {
+    checked?: boolean;
+    found?: boolean;
+    mailbox?: string;
+    scanned?: number;
+    newest?: string | null;
+    messages?: { dateSent?: string | null; dateReceived?: string | null }[];
+  };
+  try {
+    found = (await runner.run(SENT_SINCE, {
+      accountUuid,
+      subject,
+      sinceMs: since - SENT_SLACK_MS,
+    })) as typeof found;
+  } catch {
+    return {
+      sent: null,
+      sentence:
+        "Whether it was sent could NOT be checked from here — Mail would not answer for its " +
+        "Sent mailbox. Look there for this subject before retrying: a retry after a send that " +
+        "did go sends it twice.",
+    };
+  }
+
+  if (found.checked !== true) {
+    return {
+      sent: null,
+      sentence:
+        "Whether it was sent could NOT be checked from here — no Sent mailbox could be resolved. " +
+        "Look for this subject in Sent before retrying: a retry after a send that did go sends " +
+        "it twice.",
+    };
+  }
+
+  if (found.found === true) {
+    const when = found.messages?.[0]?.dateSent ?? found.messages?.[0]?.dateReceived ?? "just now";
+    return {
+      sent: true,
+      sentence:
+        `It WAS SENT: a message with this subject is in ${found.mailbox ?? "Sent"}, dated ` +
+        `${when}. Do NOT send it again. Its body was never read back from the window, so what ` +
+        `went out is not verified from here — open it in ${found.mailbox ?? "Sent"} to see what ` +
+        `it actually says.`,
+    };
+  }
+
+  // Nothing matched, which is only evidence if the listing was showing recent
+  // mail at all. See SENT_SINCE on why `found: false` is weak on its own.
+  const newest = found.newest ? Date.parse(found.newest) : Number.NaN;
+  if (!Number.isNaN(newest) && newest < since - SENT_SLACK_MS) {
+    return {
+      sent: null,
+      sentence:
+        `Whether it was sent could NOT be told: the ${found.scanned ?? 0} messages read back ` +
+        `from ${found.mailbox ?? "Sent"} are all older than this call (newest ${found.newest}), ` +
+        `so that listing never showed recent mail. Check Sent yourself before retrying.`,
+    };
+  }
+  return {
+    sent: false,
+    sentence:
+      `It does NOT appear to have been sent: no message with this subject is among the ` +
+      `${found.scanned ?? 0} most recent in ${found.mailbox ?? "Sent"}. So it was most likely ` +
+      `closed or discarded rather than sent. Confirm in Sent before retrying.`,
+  };
 };
 
 export const replyOrForwardNatively = async (
@@ -176,6 +292,9 @@ export const replyOrForwardNatively = async (
   // Watched from before anything is opened, so a disturbed run says so instead
   // of blaming Mail. Every refusal below appends the finding when there is one.
   const watch = lane.watch();
+  // The floor for the Sent check below, taken before the composer exists so it
+  // cannot exclude the very message this call is about.
+  const startedAt = Date.now();
 
   const reach = await lane.reach();
   if (!reach.ok) throw new Error(MailAxLane.grantMessage(params.mode));
@@ -202,6 +321,39 @@ export const replyOrForwardNatively = async (
     };
   }
 
+  /**
+   * The composer is no longer on screen, and nothing here closed it.
+   *
+   * Which makes this someone else's doing, and the two things they can have done
+   * — sent it, discarded it — leave exactly the same empty screen. Saying "the
+   * body did not go in" here is what shipped, and it was wrong in every part: it
+   * named the body as the failure when the body was fine, and forbade the retry
+   * on double-paste grounds when the real hazard was sending the mail twice.
+   */
+  const vanished = async (
+    // What was known about the body before the window went. Null from the paste,
+    // which is the case that could not read it; true when the vanishing arrived
+    // later, after a body had been read back and matched — and that is worth
+    // keeping, because it says the message that may have gone out was the right
+    // one.
+    knownBody: { verified: boolean; chars: number } | null = null,
+  ): Promise<ComposeResult> => {
+    const verdict = await sentVerdict(runner, params.accountUuid, subject, startedAt);
+    return {
+      ok: false,
+      subject,
+      // Unknown, NOT false. Nothing here established that the body was wrong.
+      bodyVerified: knownBody?.verified ?? null,
+      verifiedChars: knownBody?.chars ?? 0,
+      sent: verdict.sent,
+      note:
+        `The ${params.mode} window for "${subject}" is GONE. Nothing here closed it — this path ` +
+        `never discards a composer — so someone using the Mac sent it or closed it while this ` +
+        `was running. ${verdict.sentence}` +
+        interferenceNote(await watch.check()),
+    };
+  };
+
   let bodyVerified: boolean | null = null;
   let verifiedChars = 0;
   if (params.body) {
@@ -209,6 +361,10 @@ export const replyOrForwardNatively = async (
     bodyVerified = result.verified;
     verifiedChars = result.verified ? Math.min(params.body.length, VERIFY_CHARS) : 0;
     if (!result.verified) {
+      // Asked before anything is claimed about the body: a composer that has
+      // gone reads exactly like one whose body is unreadable, and only this
+      // tells them apart.
+      if (await lane.composerGone(subject, 0)) return vanished();
       return {
         ok: false,
         subject,
@@ -219,18 +375,26 @@ export const replyOrForwardNatively = async (
           `The ${params.mode} window for "${subject}" was opened and correctly addressed, but ` +
           `the body did not go in: reading the composer back does not show the text that was ` +
           `sent. It MUST NOT be described to the user as ready. ` +
-          (result.landed
-            ? "SOMETHING DID land in it that could not be read back — look at it in Mail before " +
-              "retrying, because a retry would paste the reply in twice."
-            : "Nothing landed in it. It was left open rather than discarded, because closing an " +
+          (result.landed === "no"
+            ? "Nothing landed in it. It was left open rather than discarded, because closing an " +
               "unsaved composer raises a save sheet whose buttons are localised. Close it in " +
-              "Mail, then retry.") +
+              "Mail, then retry."
+            : result.landed === "yes"
+              ? "SOMETHING DID land in it that could not be read back — look at it in Mail " +
+                "before retrying, because a retry would paste the reply in twice."
+              : "The window is still there but its body could not be READ, so whether anything " +
+                "landed is unknown — look at it in Mail before retrying, because a retry would " +
+                "paste the reply in twice.") +
           interferenceNote(await watch.check()),
       };
     }
   }
 
-  await lane.finish(params.sendNow);
+  // False means the composer could not be raised — it has gone — and no
+  // keystroke was posted. The body was verified a moment ago, so this is the
+  // same vanishing arriving one step later.
+  if (!(await lane.finish(params.sendNow, ref)))
+    return vanished(bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
   // A send closes the window. Checked rather than assumed: nothing here may
   // report success on the strength of a keystroke having been delivered.
   const sent = params.sendNow ? await lane.composerGone(subject, sendTimeoutMs) : false;

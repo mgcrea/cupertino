@@ -138,3 +138,82 @@ export const GET_MESSAGES = script(`
   }
   return ok(out);
 `);
+
+/**
+ * Did a message with this subject reach Sent, at or after a given instant?
+ *
+ * The question a failed compose cannot answer for itself. When the composer
+ * window is GONE, nothing in the Accessibility lane can say whether it was sent
+ * or discarded — both leave the same empty screen — and getting that wrong in
+ * either direction is expensive: calling a sent reply a failure invites a retry
+ * that sends it twice, and calling a discarded one sent loses the reply.
+ *
+ * ## Where it looks
+ *
+ * The application-level unified mailbox, not the account's. `docs/mail-compose.md`
+ * measured `account.draftsMailbox` answering "Can't get object." on all four
+ * account types while `application.draftsMailbox` resolves to the unified "All
+ * Drafts", and there is no reason to expect `sentMailbox` to differ. The
+ * documented per-account property is still tried first, so this repairs itself
+ * if Apple ever fixes it.
+ *
+ * Unified is the better target anyway: which account Mail actually sends from is
+ * its own decision, and need not be the account the original was read in.
+ *
+ * ## Why `found: false` is deliberately weak
+ *
+ * The newest messages are taken as the head of the collection, the way
+ * LIST_RECENT does. If a mailbox ever came back oldest-first, the head would be
+ * ancient and nothing would match — a FALSE NEGATIVE on a reply that did go,
+ * which is the dangerous direction. So `newest` is reported alongside: a caller
+ * that sees nothing found AND a newest older than its floor knows the listing
+ * never showed it recent mail, and must say "could not tell" rather than "not
+ * sent".
+ */
+export const SENT_SINCE = script(`
+  var box = null;
+  var acct = p.accountUuid ? findAccount(M, p.accountUuid) : null;
+  // name() forces the event: JXA is lazy, so a specifier that will fail does not
+  // fail until something reads through it.
+  if (acct) box = prop(function () { var b = acct.sentMailbox(); b.name(); return b; }, null);
+  if (!box) box = prop(function () { var b = M.sentMailbox(); b.name(); return b; }, null);
+  if (!box) return ok({ checked: false, reason: "NO_SENT_MAILBOX", found: false, messages: [] });
+
+  var mailbox = prop(function () { return box.name(); }, "Sent");
+  var total = prop(function () { return box.messages.length; }, 0);
+  var n = Math.min(p.limit || 25, total);
+  if (n <= 0) return ok({ checked: true, mailbox: mailbox, total: total, found: false, newest: null, messages: [] });
+
+  // One Apple Event per property rather than one per message, as LIST_RECENT.
+  var slice = box.messages.slice(0, n);
+  var subjects = prop(function () { return slice.subject(); }, []);
+  var sent = prop(function () { return slice.dateSent(); }, []);
+  var received = prop(function () { return slice.dateReceived(); }, []);
+
+  var floor = p.sinceMs ? Number(p.sinceMs) : 0;
+  var wanted = String(p.subject == null ? "" : p.subject);
+  var hits = [];
+  var newest = 0;
+  for (var i = 0; i < n; i++) {
+    var when = sent[i] || received[i];
+    var ms = 0;
+    try { ms = when ? when.getTime() : 0; } catch (e) { ms = 0; }
+    if (ms > newest) newest = ms;
+    if (String(subjects[i] === undefined ? "" : subjects[i]) !== wanted) continue;
+    if (ms && ms < floor) continue;
+    hits.push({
+      subject: subjects[i] === undefined ? null : subjects[i],
+      dateSent: iso(sent[i]),
+      dateReceived: iso(received[i])
+    });
+  }
+  return ok({
+    checked: true,
+    mailbox: mailbox,
+    total: total,
+    scanned: n,
+    found: hits.length > 0,
+    newest: newest ? new Date(newest).toISOString() : null,
+    messages: hits
+  });
+`);

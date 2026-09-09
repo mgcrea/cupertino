@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MailAxLane } from "../src/client/ax.js";
 import { replyOrForwardNatively, type Clipboard } from "../src/client/compose.js";
+import { SENT_SINCE } from "../src/client/jxa/read.js";
 
 const open = new Set<Server>();
 const scratch = new Set<string>();
@@ -59,12 +60,20 @@ const laneOver = async (
           typeof entry === "function"
             ? (entry as (a: unknown, n: number) => unknown)(message.params.arguments, counts[tool])
             : (entry ?? {});
+        // A dead element handle is not a value the driver returns, it is a
+        // REFUSAL — `Failure.staleHandle`, "Element 'e7' no longer exists". A
+        // stub that can only answer with documents cannot reach the paths that
+        // matter most here, because every one of them is downstream of a throw.
         socket.write(
-          `${JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            result: { content: [{ type: "text", text: JSON.stringify(body) }] },
-          })}\n`,
+          `${JSON.stringify(
+            body !== null && typeof body === "object" && "refusal" in body
+              ? { jsonrpc: "2.0", id: message.id, error: { message: (body as never)["refusal"] } }
+              : {
+                  jsonrpc: "2.0",
+                  id: message.id,
+                  result: { content: [{ type: "text", text: JSON.stringify(body) }] },
+                },
+          )}\n`,
         );
       }
     });
@@ -89,6 +98,35 @@ const fakeClipboard = (): Clipboard & { history: string[]; current: string | nul
 };
 
 const runnerReturning = (subject: string) => ({ run: async () => ({ subject }) }) as never;
+
+/**
+ * A runner that answers the Sent check too.
+ *
+ * `replyOrForwardNatively` reaches Apple Events twice now: once to open the
+ * composer, and once more — only when the composer has GONE — to ask whether
+ * what was in it went out.
+ */
+const runnerWithSent = (subject: string, sent: Record<string, unknown>) =>
+  ({
+    run: async (s: string) => (s === SENT_SINCE ? sent : { subject }),
+  }) as never;
+
+/** Present while the body is pasted, gone by the time anything is read back. */
+const composerThatVanishes = (over: Record<string, unknown> = {}) =>
+  healthyHost({
+    // Found, raised and focused; gone from the window list once the paste has
+    // been posted — which is what a person pressing command-shift-D looks like.
+    // Calls 1 and 2 are the pre-flight reach and findComposer; the third is the
+    // presence check in the failure branch.
+    list_windows: (_a: unknown, n: number) =>
+      n > 2
+        ? { windows: [{ handle: "w1", index: 0, title: "All Sent" }] }
+        : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+    // The handle died with the window.
+    expand: (_a: unknown, n: number) =>
+      n === 1 ? { elements: [], matched: 40 } : { refusal: "Element 'e7' no longer exists" },
+    ...over,
+  });
 
 const PARAMS = {
   accountUuid: "UUID",
@@ -186,6 +224,103 @@ describe("replyOrForwardNatively", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.note).toContain("retry would paste the reply in twice");
+    lane.close();
+  });
+
+  /*
+   * The incident this path was rebuilt around, 2026-09-09.
+   *
+   * A reply was composed correctly and sent by hand while the call was still
+   * running. The composer closed, its element handle died with it, and every
+   * read after that came back as a refusal — which the lane reported as -1 and
+   * the caller compared as a count. The tool said the body had not gone in and
+   * warned against a retry on the grounds that it would paste twice. All of it
+   * was wrong, and the one true sentence — the composer is gone, so someone
+   * took it — was never said.
+   */
+  it("reports a composer that vanished mid-paste as gone, not as a body that failed", async () => {
+    const { lane } = await laneOver(composerThatVanishes());
+    const result = await replyOrForwardNatively(
+      lane,
+      runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
+      PARAMS,
+      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+    );
+    expect(result.note).toContain("is GONE");
+    // The two claims that sent the last investigation the wrong way.
+    expect(result.note).not.toContain("the body did not go in");
+    expect(result.note).not.toContain("paste the reply in twice");
+    // Unknown, NOT false: nothing here established that the body was wrong.
+    expect(result.bodyVerified).toBeNull();
+    lane.close();
+  });
+
+  /*
+   * Sent and discarded leave exactly the same empty screen, and only Mail can
+   * tell them apart. Getting it wrong either way is expensive: a sent reply
+   * called a failure invites a retry that sends it twice.
+   */
+  it("says the reply went when Sent holds it, and does not invite a retry", async () => {
+    const { lane } = await laneOver(composerThatVanishes());
+    const result = await replyOrForwardNatively(
+      lane,
+      runnerWithSent("Re: lunch", {
+        checked: true,
+        mailbox: "Sent Items",
+        found: true,
+        scanned: 25,
+        messages: [{ dateSent: "2026-09-09T20:56:54.000Z" }],
+      }),
+      PARAMS,
+      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+    );
+    expect(result.sent).toBe(true);
+    expect(result.note).toContain("WAS SENT");
+    expect(result.note).toContain("2026-09-09T20:56:54.000Z");
+    expect(result.note).toContain("Do NOT send it again");
+    lane.close();
+  });
+
+  /*
+   * `found: false` is only evidence if the listing was showing recent mail at
+   * all. A newest older than the call means it never did, and "not sent" would
+   * be a false negative on the dangerous side.
+   */
+  it("refuses to call it unsent when Sent's newest entry predates the call", async () => {
+    const { lane } = await laneOver(composerThatVanishes());
+    const result = await replyOrForwardNatively(
+      lane,
+      runnerWithSent("Re: lunch", {
+        checked: true,
+        mailbox: "Sent",
+        found: false,
+        scanned: 25,
+        newest: "2019-01-01T00:00:00.000Z",
+      }),
+      PARAMS,
+      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+    );
+    expect(result.sent).toBeNull();
+    expect(result.note).toContain("could NOT be told");
+    lane.close();
+  });
+
+  /*
+   * The same vanishing, one step later: the body verified, and the window gone
+   * before the send. Nothing may be pressed into an unknown foreground.
+   */
+  it("does not press send into whatever replaced a composer that went", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({ raise_window: (_a: unknown, n: number) => (n > 1 ? { refusal: "gone" } : {}) }),
+    );
+    const result = await replyOrForwardNatively(
+      lane,
+      runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
+      PARAMS,
+      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+    );
+    expect(result.note).toContain("is GONE");
+    expect(seen.filter((c) => c.tool === "key" && c.args["key"] === "d")).toEqual([]);
     lane.close();
   });
 

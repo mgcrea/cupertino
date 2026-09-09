@@ -263,8 +263,18 @@ export class MailAxLane {
    * `matched` rather than the returned length, because the response is byte
    * capped and a long quoted message will truncate — a fingerprint taken from a
    * truncated list would compare two different bounds rather than two states.
+   *
+   * **Null when the body cannot be read at all, and that is the whole point.**
+   * This returned -1 for a failed read, and the caller compared it as a count.
+   * A composer that CLOSES takes its element handle with it — the driver answers
+   * `staleHandle` — so a body that had gone in perfectly read back as -1 and
+   * compared unequal to the size before, which is the signature of "something
+   * landed that cannot be matched". A reply sent by hand mid-call was reported
+   * as a body that never went in, with a warning against the retry that was in
+   * fact the safe move. Blind and different are not the same answer, exactly as
+   * `bodyText` above insists, and this is where that was forgotten.
    */
-  async bodySize(body: string): Promise<number> {
+  async bodySize(body: string): Promise<number | null> {
     try {
       const tree = (await this.#call("expand", {
         handle: body,
@@ -273,7 +283,7 @@ export class MailAxLane {
       })) as Tree;
       return tree.matched ?? (tree.elements ?? []).length;
     } catch {
-      return -1;
+      return null;
     }
   }
 
@@ -296,19 +306,30 @@ export class MailAxLane {
    *
    * The guard itself stays. Posting command-V without knowing where the focus is
    * types into whatever happens to be in front, and that is the user's window.
+   *
+   * **A composer that has gone answers false rather than throwing.** Both handles
+   * die with the window, so raising or focusing one afterwards is a `staleHandle`
+   * — and letting that escape turns a describable failure into a bare channel
+   * error with no note attached, on the one path whose whole job is to say what
+   * happened. False is the honest answer: the focus was not taken, so nothing was
+   * typed.
    */
   async paste(ref: ComposerRef, focusTimeoutMs = FOCUS_TIMEOUT_MS): Promise<boolean> {
-    await this.#call("raise_window", { handle: ref.window });
-    await this.activate();
-    const deadline = Date.now() + focusTimeoutMs;
-    for (;;) {
-      const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
-      if (focused.focused === true) break;
-      if (Date.now() >= deadline) return false;
-      await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
+    try {
+      await this.#call("raise_window", { handle: ref.window });
+      await this.activate();
+      const deadline = Date.now() + focusTimeoutMs;
+      for (;;) {
+        const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
+        if (focused.focused === true) break;
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
+      }
+      await this.#call("key", { key: "v", modifiers: ["command"] });
+      return true;
+    } catch {
+      return false;
     }
-    await this.#call("key", { key: "v", modifiers: ["command"] });
-    return true;
   }
 
   /**
@@ -327,8 +348,25 @@ export class MailAxLane {
    * alternative and is worse — drafts are discovered by subject, so two with the
    * same one are indistinguishable, on the single path whose named failure is
    * sending the wrong thing.
+   *
+   * **The window is raised again first, and the answer says whether that took.**
+   * The focus is only known to be in the composer at the moment of the paste;
+   * between the read that verifies the body and this keystroke the person at the
+   * keyboard can move the foreground, and command-shift-D would then be posted
+   * into whatever they moved to. Re-raising costs two round trips and closes
+   * that window.
+   *
+   * False means the composer could not be brought forward — it has gone — and
+   * NOTHING was pressed. Posting a send into an unknown foreground is the one
+   * outcome worth refusing outright.
    */
-  async finish(sendNow: boolean): Promise<void> {
+  async finish(sendNow: boolean, ref: ComposerRef): Promise<boolean> {
+    try {
+      await this.#call("raise_window", { handle: ref.window });
+      await this.activate();
+    } catch {
+      return false;
+    }
     await this.#call(
       "key",
       sendNow
@@ -338,6 +376,7 @@ export class MailAxLane {
             modifiers: ["command"],
           },
     );
+    return true;
   }
 
   /**

@@ -36,6 +36,16 @@ type MailBehaviour = {
   axTrusted?: boolean;
   /** Mail refuses to close the composer this script opened. */
   closeFails?: boolean;
+  /**
+   * The body can be pasted into but not measured — `entireContents()` refuses.
+   *
+   * The reading that used to come back as -1 and be compared as a length. Two
+   * of those in a row read as "nothing landed", which is the branch that
+   * DISCARDS the composer.
+   */
+  bodyUnreadable?: boolean;
+  /** Someone sends or closes the composer by hand, right after the paste. */
+  windowVanishesAfterPaste?: boolean;
 };
 
 const paragraphs = (text: string) => text.split("\n").filter((line) => line.trim());
@@ -60,6 +70,8 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     blind,
     axTrusted = true,
     closeFails = false,
+    bodyUnreadable = false,
+    windowVanishesAfterPaste = false,
   } = behaviour;
 
   const state = {
@@ -83,12 +95,20 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     closedSaving: null as string | null,
   };
 
+  // A reference into a window that has closed does not come back empty, it
+  // REFUSES — the reference died with the window. Which is exactly why a closed
+  // composer and an unreadable one look identical from here, and why the script
+  // has to ask whether the window is still on screen rather than infer it.
+  const readBody = () => {
+    if (bodyUnreadable || state.windowClosed) throw new Error("-25200 AXError cannot complete");
+    return state.bodyLines.map(staticText);
+  };
   const webArea: any = {
     role: () => "AXWebArea",
     value: () => "",
-    uiElements: () => state.bodyLines.map(staticText),
+    uiElements: readBody,
     // The cheap fingerprint the script takes before and after a paste.
-    entireContents: () => state.bodyLines.map(staticText),
+    entireContents: readBody,
     set focused(v: boolean) {
       state.bodyFocused = v;
     },
@@ -182,6 +202,10 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
       state.pastes++;
       state.clipboardDuringPaste = state.clipboard;
       state.frontmostDuringPaste = state.frontmost;
+      // Someone at the keyboard sends or closes the composer. The body may well
+      // have gone in — that is the whole difficulty — but the window that held
+      // it is gone before anything can read it back.
+      if (windowVanishesAfterPaste) state.windowClosed = true;
       if (pasteDoesNothing) return;
       const pasted = pasteGarbles ? "something else entirely" : (state.clipboard ?? "");
       state.bodyLines = [...paragraphs(pasted), ...state.bodyLines];
@@ -454,6 +478,38 @@ describe("opening nothing it cannot fill", () => {
     expect(envelope.ok).toBe(false);
     expect(state.closes).toBe(0);
     expect(envelope.error.message).toMatch(/left it open|left open/);
+  });
+
+  /*
+   * The dangerous half of the -1 sentinel, in the path that can still destroy
+   * something. An unreadable body measured -1 before and -1 after, which
+   * compared EQUAL and read as "nothing landed" — the one branch that discards
+   * the composer. A body that had gone in would have been thrown away with it.
+   */
+  it("never discards a composer whose body it could not measure", () => {
+    const { envelope, state } = runScript(REPLY, { bodyUnreadable: true });
+    expect(envelope.ok).toBe(false);
+    expect(state.closes).toBe(0);
+    expect(envelope.error.message).toMatch(/whether anything landed is unknown/i);
+  });
+
+  it("does not paste a second time on a reading it could not make", () => {
+    const { state } = runScript(REPLY, { bodyUnreadable: true });
+    expect(state.pastes).toBe(1);
+  });
+
+  /*
+   * The 2026-09-09 incident, in the fallback path. A reply sent by hand while
+   * the script was running left the same empty screen as a paste that failed,
+   * and was reported as a body that never went in — with a warning against the
+   * retry that was safe, and none against the one that would have sent it twice.
+   */
+  it("names a composer that someone took, instead of blaming the body", () => {
+    const { envelope } = runScript(REPLY, { windowVanishesAfterPaste: true });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("COMPOSER_GONE");
+    expect(envelope.error.message).toMatch(/LOOK IN SENT/);
+    expect(envelope.error.message).not.toMatch(/the body did not go in/);
   });
 
   it("admits it when the composer cannot be closed either", () => {

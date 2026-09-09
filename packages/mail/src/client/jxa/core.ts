@@ -157,7 +157,26 @@ function collectText(el, depth, acc, budget) {
  * ends up in the draft twice with no way to undo it from here.
  */
 function composerBodySize(body) {
-  return prop(function () { return body.entireContents().length; }, -1);
+  return prop(function () { return body.entireContents().length; }, null);
+}
+
+/**
+ * Did anything at all reach the composer, comparing two fingerprints?
+ *
+ * Three answers, and the third is the one that was missing. "unknown" is a body
+ * that cannot be READ -- which is what a composer that has CLOSED looks like
+ * from the outside, because its reference dies with the window.
+ *
+ * This returned -1 for an unreadable body and the caller compared it as a
+ * length. Two consequences, both wrong and in opposite directions: -1 against a
+ * real count read as "something landed", so a reply sent by hand mid-call was
+ * reported as a body that never went in; and -1 against -1 read as "nothing
+ * landed", which is the branch that DISCARDS the composer -- destroying a body
+ * that may well have been in it.
+ */
+function landedVerdict(before, after) {
+  if (before === null || after === null) return "unknown";
+  return after === before ? "no" : "yes";
 }
 
 /**

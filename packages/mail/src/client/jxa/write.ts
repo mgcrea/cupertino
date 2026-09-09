@@ -730,9 +730,11 @@ export const REPLY_OR_FORWARD = script(
         bodyVerified = after !== null && containsText(after, expected);
         if (bodyVerified) {
           verifiedChars = expected.length;
-        } else if (composerBodySize(bodyArea) !== sizeBefore) {
-          // Something went in that we cannot match. Pasting again would put the
-          // reply in the draft twice, and nothing here can undo that.
+        } else if (landedVerdict(sizeBefore, composerBodySize(bodyArea)) !== "no") {
+          // Something went in that we cannot match, or the body can no longer be
+          // read at all. Pasting again would put the reply in the draft twice,
+          // and nothing here can undo that -- so an UNKNOWN reading stops the
+          // retry just as firmly as a changed one.
           break;
         }
       }
@@ -742,12 +744,37 @@ export const REPLY_OR_FORWARD = script(
 
     if (!bodyVerified) {
       restore();
+
+      // A composer that has GONE reads exactly like one whose body is
+      // unreadable, and only this tells them apart. Nothing here closes a
+      // composer before this point, so one that is missing was taken by the
+      // person at the keyboard -- and sent and discarded leave the same empty
+      // screen. Saying "the body did not go in" here named the wrong failure and
+      // forbade the wrong retry: the hazard is sending the mail twice, not
+      // pasting it twice.
+      //
+      // The native path (client/compose.ts) goes on to ask Mail whether the
+      // message reached Sent. This one only says where to look -- it is the
+      // fallback for a server not hosted by Cupertino, and a second mailbox scan
+      // inside this script is not worth the surface.
+      if (composerWindow(proc, subject, 0) === null) {
+        return err(
+          "COMPOSER_GONE",
+          "The " + p.mode + " window for \\"" + subject + "\\" is GONE. Nothing here closed it — " +
+          "this path discards a composer only when it is provably empty — so someone using the " +
+          "Mac sent it or closed it while this was running. Whether it went cannot be told from " +
+          "here: LOOK IN SENT for this subject before retrying, because a retry after a send " +
+          "that did go sends it twice."
+        );
+      }
+
       // Take the window back only when it is provably still empty. A paste that
       // landed and could not be READ is a different thing from one that never
       // landed, and closing that one would destroy the reply with no way to get
-      // it back -- so it is left on screen for the user to judge.
-      var landed = composerBodySize(bodyArea) !== sizeBefore;
-      var closedUnverified = landed ? false : discardComposer(M, draft);
+      // it back -- so it is left on screen for the user to judge. An UNKNOWN
+      // reading counts as "may have landed" for exactly the same reason.
+      var landed = landedVerdict(sizeBefore, composerBodySize(bodyArea));
+      var closedUnverified = landed === "no" ? discardComposer(M, draft) : false;
       return err(
         "DRAFT_BODY_NOT_SET",
         "The " + p.mode + " window for \\"" + subject + "\\" was opened and correctly addressed, but the " +
@@ -755,12 +782,16 @@ export const REPLY_OR_FORWARD = script(
         "MUST NOT be described to the user as ready. " +
         (closedUnverified
           ? "Nothing had landed in it, so it was closed again without saving and a retry is safe."
-          : landed
+          : landed === "yes"
             ? "SOMETHING DID land in it that could not be read back, so it was left open rather " +
               "than discarded — look at it in Mail before retrying, because a retry would paste " +
               "the reply in twice."
-            : "It could NOT be closed from here — close it in Mail before retrying, or the retry " +
-              "leaves a second draft behind.")
+            : landed === "unknown"
+              ? "The window is still there but its body could not be READ, so whether anything " +
+                "landed is unknown. It was left open rather than discarded — look at it in Mail " +
+                "before retrying, because a retry would paste the reply in twice."
+              : "It could NOT be closed from here — close it in Mail before retrying, or the retry " +
+                "leaves a second draft behind.")
       );
     }
   }

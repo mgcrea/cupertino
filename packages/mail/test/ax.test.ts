@@ -77,6 +77,9 @@ const hostStub = async (
 
 const el = (over: Record<string, unknown>) => ({ role: "AXStaticText", depth: 3, ...over });
 
+/** A composer that has already been found: the window, and its body area. */
+const REF = { window: "w1", body: "e7", index: 0 };
+
 describe("MailAxLane.open", () => {
   /*
    * The whole reason `client/mail.ts` can keep both lanes: a package installed
@@ -225,10 +228,17 @@ describe("bodySize", () => {
     lane.close();
   });
 
-  it("is -1, never 0, when the body cannot be read", async () => {
+  /*
+   * Null, and never a number. This returned -1, and the caller compared it as a
+   * count: a composer that CLOSES takes its handle with it, so a body that had
+   * gone in perfectly read back as -1, compared unequal to the size before, and
+   * was reported as "something landed that cannot be matched". A reply sent by
+   * hand mid-call came back as a body that never went in.
+   */
+  it("is null, never a number, when the body cannot be read", async () => {
     const { env } = await hostStub({ expand: { refusal: "gone" } });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.bodySize("e7")).resolves.toBe(-1);
+    await expect(lane.bodySize("e7")).resolves.toBeNull();
     lane.close();
   });
 });
@@ -329,16 +339,44 @@ describe("finish", () => {
   it("sends with the shortcut, not with a localised button name", async () => {
     const { env, seen } = await hostStub({});
     const lane = MailAxLane.open(env)!;
-    await lane.finish(true);
-    expect(seen).toEqual([{ tool: "key", args: { key: "d", modifiers: ["command", "shift"] } }]);
+    await expect(lane.finish(true, REF)).resolves.toBe(true);
+    expect(seen.at(-1)).toEqual({
+      tool: "key",
+      args: { key: "d", modifiers: ["command", "shift"] },
+    });
     lane.close();
   });
 
   it("saves a draft with command-S", async () => {
     const { env, seen } = await hostStub({});
     const lane = MailAxLane.open(env)!;
-    await lane.finish(false);
-    expect(seen).toEqual([{ tool: "key", args: { key: "s", modifiers: ["command"] } }]);
+    await expect(lane.finish(false, REF)).resolves.toBe(true);
+    expect(seen.at(-1)).toEqual({ tool: "key", args: { key: "s", modifiers: ["command"] } });
+    lane.close();
+  });
+
+  /*
+   * The focus is only known to be in the composer at the moment of the paste.
+   * Between the read that verifies the body and this keystroke the person at the
+   * keyboard can move the foreground, so the window is raised again first.
+   */
+  it("raises the composer before pressing, so the keystroke cannot land elsewhere", async () => {
+    const { env, seen } = await hostStub({});
+    const lane = MailAxLane.open(env)!;
+    await lane.finish(true, REF);
+    expect(seen.map((c) => c.tool)).toEqual(["raise_window", "activate", "key"]);
+    lane.close();
+  });
+
+  /*
+   * A composer that has gone cannot be raised, and command-shift-D posted into
+   * an unknown foreground is the one outcome worth refusing outright.
+   */
+  it("presses nothing when the composer can no longer be raised", async () => {
+    const { env, seen } = await hostStub({ raise_window: { refusal: "stale handle" } });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.finish(true, REF)).resolves.toBe(false);
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
   });
 });
