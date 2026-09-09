@@ -201,6 +201,19 @@ describe("html to text", () => {
   it("collapses runaway blank lines to a single paragraph break", () => {
     expect(htmlToText("<p>a</p><br><br><br><p>b</p>")).toBe("a\n\nb");
   });
+
+  it("drops an unterminated script or style block instead of leaking its source", () => {
+    // The scan lane parses only the first maxBytes of a file, so a style block
+    // routinely has no closing tag. The paired stripper then left the CSS behind
+    // as text and a body search for "Helvetica" started matching mail that never
+    // said it.
+    expect(htmlToText("<p>hi</p><style>p{background:#fff;font-family:Helvetica}")).toBe("hi");
+    expect(htmlToText("<p>hi</p><script>const a = 1; if (a < 2)")).toBe("hi");
+  });
+
+  it("drops a tag cut off mid-attribute", () => {
+    expect(htmlToText('<p>hi</p><div class="quo')).toBe("hi");
+  });
 });
 
 describe("attachments", () => {
@@ -328,5 +341,415 @@ describe("attachments", () => {
     const headers = summaryHeaders(parsePart(Buffer.from(withAttachment)));
     expect(headers.subject).toBe("Invoice");
     expect(headers.from).toBe("Billing <billing@example.com>");
+  });
+});
+
+describe("body selection across containers", () => {
+  it("keeps every text run in a multipart/mixed, not just the first", () => {
+    // Pasting a screenshot mid-mail makes Mail emit text -> image -> text. Taking
+    // the first text/plain and stopping dropped everything below the image, and
+    // reported nothing wrong while doing it.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="OUTER"',
+        "",
+        "--OUTER",
+        "Content-Type: text/plain",
+        "",
+        "First half of the mail.",
+        "--OUTER",
+        "Content-Type: image/png",
+        'Content-Disposition: inline; filename="shot.png"',
+        "",
+        "xx",
+        "--OUTER",
+        "Content-Type: text/plain",
+        "",
+        "Second half, the PS and the sign-off.",
+        "--OUTER--",
+      ].join("\n"),
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/plain");
+    expect(picked.text).toBe(
+      "First half of the mail.\n\n[image: shot.png]\n\nSecond half, the PS and the sign-off.",
+    );
+  });
+
+  it("loses nothing below an inline image on the html lane either", () => {
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="OUTER"',
+        "",
+        "--OUTER",
+        "Content-Type: text/html",
+        "",
+        "<p>html first half</p>",
+        "--OUTER",
+        "Content-Type: image/png",
+        'Content-Disposition: inline; filename="shot.png"',
+        "",
+        "xx",
+        "--OUTER",
+        "Content-Type: text/html",
+        "",
+        "<p>html second half</p>",
+        "--OUTER--",
+      ].join("\n"),
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/html");
+    expect(picked.text).toBe("html first half\n\n[image: shot.png]\n\nhtml second half");
+  });
+
+  it("trims a marker off the head as well as the tail", () => {
+    // The tail case is covered by "does not treat the readable body as an
+    // attachment". A file that arrives BEFORE the only text run must not push a
+    // marker in front of the body either.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        'Content-Type: application/pdf; name="invoice.pdf"',
+        'Content-Disposition: attachment; filename="invoice.pdf"',
+        "",
+        "JVBERi0=",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "See attached.",
+        "--M--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe("See attached.");
+  });
+
+  it("keeps a marker that is only interior once its subtree is spliced in", () => {
+    // Inside the related part the image is a TAIL marker and would be trimmed.
+    // At the root it sits between two text runs and has to survive, which is why
+    // segments stay tagged until the top instead of being joined on the way up.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="OUTER"',
+        "",
+        "--OUTER",
+        'Content-Type: multipart/related; boundary="INNER"',
+        "",
+        "--INNER",
+        "Content-Type: text/html",
+        "",
+        "<p>see the shot</p>",
+        "--INNER",
+        "Content-Type: image/png",
+        'Content-Disposition: inline; filename="shot.png"',
+        "",
+        "xx",
+        "--INNER--",
+        "--OUTER",
+        "Content-Type: text/plain",
+        "",
+        "after",
+        "--OUTER--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe(
+      "see the shot\n\n[image: shot.png]\n\nafter",
+    );
+  });
+
+  it("still picks one rendering out of a multipart/alternative under a mixed", () => {
+    // A flat "gather every text/plain" would get the interleaved case right and
+    // this one wrong, emitting both competing renderings of the first run.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="OUTER"',
+        "",
+        "--OUTER",
+        'Content-Type: multipart/alternative; boundary="INNER"',
+        "",
+        "--INNER",
+        "Content-Type: text/plain",
+        "",
+        "run one plain",
+        "--INNER",
+        "Content-Type: text/html",
+        "",
+        "<p>run one html</p>",
+        "--INNER--",
+        "--OUTER",
+        "Content-Type: text/plain",
+        "",
+        "run two",
+        "--OUTER--",
+      ].join("\n"),
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/plain");
+    expect(picked.text).toBe("run one plain\n\nrun two");
+  });
+
+  it("leaves Mail's own composer output on the plain alternative", () => {
+    // docs/mail-compose.md: Mail emits alternative{ plain, mixed{ html, file,
+    // html } }. The alternative rule picks the plain child, so the interleaved
+    // html subtree is deliberately never rendered. Pinned so nobody later
+    // "fixes" the alternative rule to prefer the richer branch.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/alternative; boundary="OUTER"',
+        "",
+        "--OUTER",
+        "Content-Type: text/plain",
+        "",
+        "plain alternative",
+        "--OUTER",
+        'Content-Type: multipart/mixed; boundary="INNER"',
+        "",
+        "--INNER",
+        "Content-Type: text/html",
+        "",
+        "<p>html first half</p>",
+        "--INNER",
+        "Content-Type: image/png",
+        'Content-Disposition: inline; filename="probe.png"',
+        "",
+        "xx",
+        "--INNER",
+        "Content-Type: text/html",
+        "",
+        "<p>html second half</p>",
+        "--INNER--",
+        "--OUTER--",
+      ].join("\n"),
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/plain");
+    expect(picked.text).toBe("plain alternative");
+  });
+
+  it("falls through an empty text/plain alternative to the html sibling", () => {
+    // Senders do ship an empty plain alternative. Returning it reported
+    // from: "text/plain" with an empty body and the real content one part away.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/alternative; boundary="A"',
+        "",
+        "--A",
+        "Content-Type: text/plain",
+        "",
+        "",
+        "--A",
+        "Content-Type: text/html",
+        "",
+        "<p>the real content</p>",
+        "--A--",
+      ].join("\n"),
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/html");
+    expect(picked.text).toBe("the real content");
+  });
+
+  it("reports text/html when any run of a concatenation came from html", () => {
+    // bodyFrom is the caller's only signal that the text went through the tag
+    // stripper. Reporting the FIRST run's type would claim text/plain for a body
+    // that is half derived, in one of these two orders.
+    const shape = (first: string[], second: string[]) =>
+      crlf(
+        [
+          'Content-Type: multipart/mixed; boundary="M"',
+          "",
+          "--M",
+          ...first,
+          "--M",
+          ...second,
+          "--M--",
+        ].join("\n"),
+      );
+    const html = ["Content-Type: text/html", "", "<p>from html</p>"];
+    const plain = ["Content-Type: text/plain", "", "from plain"];
+
+    const htmlFirst = bestBody(parsePart(Buffer.from(shape(html, plain))));
+    expect(htmlFirst.text).toBe("from html\n\nfrom plain");
+    expect(htmlFirst.from).toBe("text/html");
+
+    const plainFirst = bestBody(parsePart(Buffer.from(shape(plain, html))));
+    expect(plainFirst.text).toBe("from plain\n\nfrom html");
+    expect(plainFirst.from).toBe("text/html");
+  });
+
+  it("keeps a filename-bearing text part out of a body that has real text", () => {
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "the actual body",
+        "--M",
+        'Content-Type: text/plain; name="notes.txt"',
+        'Content-Disposition: attachment; filename="notes.txt"',
+        "",
+        "not the body",
+        "--M--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe("the actual body");
+  });
+
+  it("still reads a message whose only text part carries a filename", () => {
+    // Aligning the attachment predicate is strictly more exclusive, so a lone
+    // filename-bearing text part would go from readable to empty. Some senders
+    // name the body part; losing the whole message to that is worse than the
+    // notes.txt case above.
+    const raw = crlf(
+      'Content-Type: text/plain; charset=utf-8; name="mail.txt"\n\nthe whole message',
+    );
+    const picked = bestBody(parsePart(Buffer.from(raw)));
+    expect(picked.from).toBe("text/plain");
+    expect(picked.text).toBe("the whole message");
+  });
+
+  it("does not let a boundary match inside a longer one", () => {
+    // "--B" also matches inside "--B2", which flattened the nested alternative
+    // into the parent's sibling list. First-wins hid it; concatenating surfaced
+    // it as the message text appearing twice, once plain and once from html.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="B"',
+        "",
+        "--B",
+        "Content-Type: text/plain",
+        "",
+        "outer plain",
+        "--B",
+        'Content-Type: multipart/alternative; boundary="B2"',
+        "",
+        "--B2",
+        "Content-Type: text/plain",
+        "",
+        "inner plain",
+        "--B2",
+        "Content-Type: text/html",
+        "",
+        "<p>inner html</p>",
+        "--B2--",
+        "--B--",
+      ].join("\n"),
+    );
+    const root = parsePart(Buffer.from(raw));
+    expect(root.parts).toHaveLength(2);
+    expect(bestBody(root).text).toBe("outer plain\n\ninner plain");
+  });
+
+  it("does not split on a boundary that the body merely mentions", () => {
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="B"',
+        "",
+        "--B",
+        "Content-Type: text/plain",
+        "",
+        "the delimiter is --B by the way",
+        "--B--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe("the delimiter is --B by the way");
+  });
+
+  it("returns none for a multipart whose boundary never appears", () => {
+    // The parser leaves parts empty and the whole body in raw. Dumping that raw
+    // as text would surface delimiters and headers as if they were prose.
+    const raw = crlf('Content-Type: multipart/mixed; boundary="NOPE"\n\nnot a part, just bytes\n');
+    expect(bestBody(parsePart(Buffer.from(raw)))).toEqual({ text: "", from: "none" });
+  });
+
+  it("marks a forwarded message that carries no filename", () => {
+    // message/rfc822 is a leaf here — the parser does not descend into it — so
+    // without a marker a forwarded mail between two runs vanishes silently.
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "see below",
+        "--M",
+        "Content-Type: message/rfc822",
+        "Content-Disposition: inline",
+        "",
+        "From: someone@example.com",
+        "",
+        "the forwarded body",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "thoughts?",
+        "--M--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe(
+      "see below\n\n[attachment: message/rfc822]\n\nthoughts?",
+    );
+  });
+
+  it("does not open a gap for an empty or whitespace-only run", () => {
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "a",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "   ",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "b",
+        "--M--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe("a\n\nb");
+  });
+
+  it("separates two adjacent markers the same way it separates runs", () => {
+    const raw = crlf(
+      [
+        'Content-Type: multipart/mixed; boundary="M"',
+        "",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "a",
+        "--M",
+        "Content-Type: image/png",
+        'Content-Disposition: inline; filename="one.png"',
+        "",
+        "xx",
+        "--M",
+        "Content-Type: application/pdf",
+        'Content-Disposition: inline; filename="two.pdf"',
+        "",
+        "xx",
+        "--M",
+        "Content-Type: text/plain",
+        "",
+        "b",
+        "--M--",
+      ].join("\n"),
+    );
+    expect(bestBody(parsePart(Buffer.from(raw))).text).toBe(
+      "a\n\n[image: one.png]\n\n[attachment: two.pdf]\n\nb",
+    );
   });
 });

@@ -291,16 +291,35 @@ export const parsePart = (buf: Buffer): MimePart => {
 const splitMultipart = (body: Buffer, boundary: string): MimePart[] => {
   const text = body.toString("latin1");
   const marker = `--${boundary}`;
+
+  /**
+   * RFC 2046: a delimiter starts a line, and nothing follows it but the closing
+   * `--` or the end of that line. Both halves earn their keep. Without the
+   * first, a body that merely quotes the delimiter splits the part it sits in.
+   * Without the second, `--B` also matches inside `--B2`, which flattened a
+   * nested multipart into its parent's sibling list — harmless while only one
+   * part was ever read, and a doubled body the moment the parts are joined.
+   */
+  const isDelimiter = (at: number): boolean => {
+    if (at !== 0 && text[at - 1] !== "\n") return false;
+    const after = text[at + marker.length];
+    return after === undefined || after === "\r" || after === "\n" || after === "-";
+  };
+  const find = (from: number): number => {
+    let at = text.indexOf(marker, from);
+    while (at !== -1 && !isDelimiter(at)) at = text.indexOf(marker, at + 1);
+    return at;
+  };
+
   const segments: string[] = [];
-  let index = text.indexOf(marker);
+  let index = find(0);
   if (index === -1) return [];
 
   while (index !== -1) {
     const afterMarker = index + marker.length;
     if (text.startsWith("--", afterMarker)) break; // closing delimiter
-    const start = afterMarker;
-    const next = text.indexOf(marker, start);
-    segments.push(text.slice(start, next === -1 ? undefined : next).replace(/^\r?\n/, ""));
+    const next = find(afterMarker);
+    segments.push(text.slice(afterMarker, next === -1 ? undefined : next).replace(/^\r?\n/, ""));
     if (next === -1) break;
     index = next;
   }
@@ -328,10 +347,17 @@ export const partText = (part: MimePart): string => decodeCharset(partBytes(part
 export const htmlToText = (html: string): string =>
   html
     .replaceAll(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
+    // The rule above needs a closing tag. The scan lane parses only the first
+    // maxBytes of a file, so a style block routinely has none — and the tag
+    // stripper then left the CSS behind as prose for a body search to match.
+    .replaceAll(/<(script|style)[^>]*>[\s\S]*$/gi, "")
     .replaceAll(/<br\s*\/?>/gi, "\n")
     .replaceAll(/<\/(p|div|tr|h[1-6]|li)>/gi, "\n")
     .replaceAll(/<li[^>]*>/gi, "- ")
     .replaceAll(/<[^>]+>/g, "")
+    // A tag cut off mid-attribute. Anchored on a tag name so that prose using a
+    // bare "<" as a less-than sign keeps it.
+    .replaceAll(/<\/?[a-zA-Z][^>]*$/g, "")
     .replaceAll("&nbsp;", " ")
     .replaceAll("&amp;", "&")
     .replaceAll("&lt;", "<")
@@ -348,25 +374,129 @@ const walk = (part: MimePart, visit: (p: MimePart) => void): void => {
   for (const child of part.parts) walk(child, visit);
 };
 
+type BodyFrom = "text/plain" | "text/html" | "none";
+
 /**
- * Pick the body a person would want to read: the first text/plain that is not
- * an attachment, else the first text/html converted to text.
+ * Is this part a file rather than something to read?
+ *
+ * Deliberately shared with `listAttachments`. The two used to disagree — this
+ * one excluded only `disposition: attachment`, that one also counted any
+ * non-multipart part carrying a filename — and the disagreement was harmless
+ * only because a single part was ever chosen as the body. Joining the parts
+ * made it visible, as an attached notes.txt landing in the mail it came with.
  */
-export const bestBody = (
-  root: MimePart,
-): { text: string; from: "text/plain" | "text/html" | "none" } => {
-  let plain: MimePart | null = null;
-  let html: MimePart | null = null;
+const isAttachmentPart = (p: MimePart): boolean =>
+  p.disposition === "attachment" ||
+  (p.filename !== null && !p.contentType.startsWith("multipart/"));
 
-  walk(root, (p) => {
-    if (p.disposition === "attachment") return;
-    if (!plain && p.contentType === "text/plain") plain = p;
-    if (!html && p.contentType === "text/html") html = p;
-  });
+/**
+ * A run of body text, or a note that a file sat between two of them.
+ *
+ * Markers cannot be resolved to text on the way up: inside a `related` part an
+ * image is a trailing marker and would be dropped, while at the root the same
+ * image sits between two runs and has to survive. So the tagging lasts until
+ * `bestBody` collapses the whole thing, once.
+ */
+type Segment = { kind: "text" | "marker"; text: string };
+type Resolved = { segments: Segment[]; from: BodyFrom };
 
-  if (plain) return { text: partText(plain).trim(), from: "text/plain" };
-  if (html) return { text: htmlToText(partText(html)), from: "text/html" };
-  return { text: "", from: "none" };
+const NOTHING: Resolved = { segments: [], from: "none" };
+
+const hasText = (r: Resolved): boolean =>
+  r.segments.some((s) => s.kind === "text" && s.text.trim() !== "");
+
+/** `[image: shot.png]` — house style is the truncation marker's: label, colon, fact. */
+const markerFor = (p: MimePart): Segment => ({
+  kind: "marker",
+  text: `[${p.contentType.startsWith("image/") ? "image" : "attachment"}: ${
+    p.filename ?? p.contentType
+  }]`,
+});
+
+/**
+ * Resolve one subtree to the runs a person would read, in document order.
+ *
+ * The container decides. `multipart/alternative` children are competing
+ * renderings of one thing, so exactly one is taken; every other multipart holds
+ * sequential content, so the children are spliced in order. A flat walk that
+ * gathered all the text parts would read the interleaved message correctly and
+ * emit a plain+html alternative twice.
+ */
+const resolveBody = (part: MimePart, isFile: (p: MimePart) => boolean): Resolved => {
+  if (part.contentType.startsWith("multipart/")) {
+    // No children means the boundary never appeared. The whole body is still
+    // sitting in `raw`, but it is delimiters and headers, not prose.
+    if (part.parts.length === 0) return NOTHING;
+    const children = part.parts.map((child) => resolveBody(child, isFile));
+
+    if (part.contentType === "multipart/alternative") {
+      // Only a rendering that actually says something can win. An empty
+      // text/plain alternative used to, reporting an empty body with the real
+      // content one part away.
+      return (
+        children.find((c) => c.from === "text/plain" && hasText(c)) ??
+        children.find((c) => c.from === "text/html" && hasText(c)) ??
+        NOTHING
+      );
+    }
+
+    // mixed, related, signed, report, anything unknown. `related` is sequential
+    // on purpose: Mail emits related{ html, file, html } for a reply carrying
+    // one file, so reading it as RFC 2387's root-plus-resources drops half.
+    const contributing = children.filter(hasText);
+    return {
+      segments: children.flatMap((c) => c.segments),
+      from: contributing.some((c) => c.from === "text/html")
+        ? "text/html"
+        : contributing.some((c) => c.from === "text/plain")
+          ? "text/plain"
+          : "none",
+    };
+  }
+
+  if (isFile(part)) return { segments: [markerFor(part)], from: "none" };
+  if (part.contentType === "text/plain")
+    return { segments: [{ kind: "text", text: partText(part).trim() }], from: "text/plain" };
+  if (part.contentType === "text/html")
+    return { segments: [{ kind: "text", text: htmlToText(partText(part)) }], from: "text/html" };
+  // Not text and not flagged as a file — a cid image, a forwarded message.
+  // Still worth marking: it is a thing the reader saw at this point.
+  return { segments: [markerFor(part)], from: "none" };
+};
+
+/**
+ * The body a person would want to read: every run of it, in order.
+ *
+ * `from` reports the worst provenance of the runs that contributed, not the
+ * first. It is the caller's only warning that the text went through
+ * `htmlToText`, and a concatenation that is half derived must not claim to be
+ * text/plain just because its first run was.
+ */
+export const bestBody = (root: MimePart): { text: string; from: BodyFrom } => {
+  const strict = resolveBody(root, isAttachmentPart);
+  // The shared predicate is stricter than the disposition-only test this used
+  // to apply, so a message whose ONLY text part carries a filename would go
+  // from readable to empty. Losing a whole message to that is worse than the
+  // notes.txt it was tightened for, so fall back rather than go silent.
+  const resolved = hasText(strict)
+    ? strict
+    : resolveBody(root, (p) => p.disposition === "attachment");
+
+  const kept = resolved.segments.filter((s) => s.kind === "marker" || s.text.trim() !== "");
+  // A marker exists to deny an adjacency the message does not have. One at the
+  // head or the tail separates nothing, and would append a line to every mail
+  // that merely carries a file.
+  let first = 0;
+  let last = kept.length;
+  while (first < last && kept[first]!.kind === "marker") first += 1;
+  while (last > first && kept[last - 1]!.kind === "marker") last -= 1;
+
+  const text = kept
+    .slice(first, last)
+    .map((s) => s.text)
+    .join("\n\n")
+    .trim();
+  return { text, from: text === "" ? "none" : resolved.from };
 };
 
 /**
@@ -395,10 +525,7 @@ const hasContent = (bytes: Buffer): boolean => {
 export const listAttachments = (root: MimePart): Attachment[] => {
   const found: Attachment[] = [];
   walk(root, (p) => {
-    const isAttachment =
-      p.disposition === "attachment" ||
-      (p.filename !== null && !p.contentType.startsWith("multipart/"));
-    if (!isAttachment || p.contentType.startsWith("multipart/")) return;
+    if (!isAttachmentPart(p) || p.contentType.startsWith("multipart/")) return;
     // Measure the DECODED payload. `raw` is still transfer-encoded, so a base64
     // part would otherwise report roughly 4/3 of its true size.
     const decoded = partBytes(p);

@@ -78,6 +78,56 @@ beforeAll(() => {
       ),
     ),
   );
+
+  // Text, an inline screenshot, then more text. Everything below the image used
+  // to be invisible to this lane, so a body search for a word in the second run
+  // returned no hit at all — a silence with nothing to notice.
+  paths.set(
+    5,
+    write(
+      5,
+      emlx(
+        [
+          "From: sam@example.com",
+          "Subject: Notes",
+          'Content-Type: multipart/mixed; boundary="b1"',
+          "",
+          "--b1",
+          "Content-Type: text/plain",
+          "",
+          "Meeting notes below.",
+          "--b1",
+          "Content-Type: image/png",
+          'Content-Disposition: inline; filename="shot.png"',
+          "",
+          "xx",
+          "--b1",
+          "Content-Type: text/plain",
+          "",
+          "The deadline is Wednesday.",
+          "--b1--",
+        ].join("\n"),
+      ),
+    ),
+  );
+
+  // An html part whose style block is far longer than the scan's read window,
+  // so the parse always sees it unterminated.
+  paths.set(
+    6,
+    write(
+      6,
+      emlx(
+        [
+          "From: news@example.com",
+          "Subject: Newsletter",
+          "Content-Type: text/html",
+          "",
+          `<p>hello</p><style>p{font-family:Helvetica}/*${"x".repeat(4_000)}*/</style><p>tail</p>`,
+        ].join("\n"),
+      ),
+    ),
+  );
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -107,6 +157,22 @@ describe("readEmlxBodyText", () => {
     expect(text).not.toContain("cmVtaXR0YW5jZQ");
   });
 
+  it("keeps the text that sits below an inline image", () => {
+    const text = readEmlxBodyText(paths.get(5)!, { maxBytes: 65_536 });
+    expect(text).toContain("Meeting notes below.");
+    expect(text).toContain("The deadline is Wednesday.");
+  });
+
+  it("does not leak css out of a style block the read window cut in half", () => {
+    // The read stops at maxBytes, so the closing tag is never seen and the
+    // paired stripper cannot fire. Leaving the css as text made a body search
+    // for a font name match a newsletter that never said it.
+    const text = readEmlxBodyText(paths.get(6)!, { maxBytes: 1_024 });
+    expect(text).toContain("hello");
+    expect(text).not.toContain("Helvetica");
+    expect(text).not.toContain("font-family");
+  });
+
   it("returns null for a file that is not there, rather than throwing", () => {
     expect(readEmlxBodyText(join(root, "nope.emlx"), { maxBytes: 1_024 })).toBeNull();
   });
@@ -119,6 +185,19 @@ describe("scanBodies", () => {
     if (out.status !== "ok") return;
     expect(out.matched).toEqual([1]);
     expect(out.scanned).toBe(3);
+  });
+
+  it("finds a term that sits below an inline image", () => {
+    const out = scan("wednesday", [1, 5]);
+    expect(out.status === "ok" && out.matched).toEqual([5]);
+  });
+
+  it("does not match a css token from a truncated style block", () => {
+    const out = scan("Helvetica", [6], 100, 1_024);
+    expect(out.status).toBe("ok");
+    if (out.status !== "ok") return;
+    expect(out.matched).toEqual([]);
+    expect(out.scanned).toBe(1);
   });
 
   it("is case-insensitive, like the subject search it sits beside", () => {
