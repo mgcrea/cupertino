@@ -1050,3 +1050,44 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check changelog changelog-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+
+# ─── deploy ──────────────────────────────────────────────────────────────────
+# The same two words in every repo: `make deploy`. WHAT it deploys differs — a
+# site here, a Worker there, both in bastion and cupertino — and that is the
+# point. The command does not change when the repo does, so an urgent push
+# never starts with remembering which half this one has.
+#
+# `pnpm -C apps/website release`, never `pnpm --filter <name> release`: the
+# filter name differs in all twelve repos (@balise/website, swift-d1-website,
+# dev-pulse-website ...) and is not derivable from the path, so the filter form
+# cannot be the shared line. CI runs these very commands — see the deploy stage
+# in .gitlab-ci.yml — so what ships by hand and what ships on a push to main are
+# the same thing built the same way.
+#
+# And never a bare `pnpm deploy`: `deploy` is a pnpm builtin that ships nothing
+# and exits 0.
+
+API_URL := https://api.cupertino.mgcrea.io/health
+
+api-deploy: ## Build and publish the API Worker to Cloudflare
+	pnpm -C apps/api release
+	@# A green `wrangler deploy` does not prove the Worker answers. This does.
+	@curl -fsS --max-time 20 -o /dev/null $(API_URL)
+	@echo "deployed $(API_URL)"
+
+SITE_URL := https://cupertino.mgcrea.io/
+
+site-deploy: ## Build and publish the website to Cloudflare
+	pnpm -C apps/website release
+	@# `wrangler deploy` exiting 0 is not proof the site moved. This is.
+	@curl -fsS --max-time 20 -o /dev/null $(SITE_URL)
+	@echo "deployed $(SITE_URL)"
+
+# Sequential sub-makes rather than `deploy: api-deploy site-deploy`.
+# Prerequisites may run in parallel under -j, and the Worker the site talks to
+# has to be live before the site that talks to it.
+deploy: ## Deploy both halves: the API Worker, then the website
+	@$(MAKE) --no-print-directory api-deploy
+	@$(MAKE) --no-print-directory site-deploy
+
+.PHONY: deploy site-deploy api-deploy
