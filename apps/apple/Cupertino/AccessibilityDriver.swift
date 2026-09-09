@@ -1433,11 +1433,36 @@ enum AccessibilityDriver {
   /// for the previous one.
   /// `NSLock` rather than `OSAllocatedUnfairLock`, matching `HandleStore` above:
   /// this file guards its own state and does not import `os` for it.
+  ///
+  /// **The Text Input Services half runs on the main thread and nowhere else,
+  /// and that is a crash fix rather than a convention.** MEASURED: four
+  /// `EXC_BREAKPOINT` reports between 1.18.0 and 1.20.0, every one on a
+  /// `cupertino.session` thread inside `TSMCurrentKeyboardInputSourceRefCreate`
+  /// or `TSMGetInputSourceProperty`. HIToolbox enumerates the input source list
+  /// under a `dispatch_assert_queue`, so a lookup answered on the thread the
+  /// RPC arrived on takes the whole app down — every surface's connection at
+  /// once, not just the one that asked. It was intermittent because the
+  /// assertion sits in the branch that REBUILDS the current source ref rather
+  /// than the one serving a cached one, which is how it survived three releases
+  /// of constant driving. `command-V` into the Mail composer is the call that
+  /// found it, being the first single-character key anything sends.
+  ///
+  /// Hence the split: `refreshLayout` touches TIS and is main-thread-only,
+  /// `layoutKeyCodes` reads the cache and never touches TIS at all.
   private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
   private static let layoutLock = NSLock()
 
-  private static func layoutKeyCodes() -> [String: CGKeyCode] {
-    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return [:] }
+  /// Ask TIS which layout is current, and rebuild the map if it moved.
+  ///
+  /// MAIN THREAD ONLY — see above. The precondition is the point: a later
+  /// caller on the wrong thread fails here, loudly and in its own stack frame,
+  /// rather than inside HIToolbox on a machine that is only sometimes unlucky.
+  ///
+  /// Cheap on the common path — the id compare is one TIS call, and the 128
+  /// `UCKeyTranslate` calls run only when the layout actually changed.
+  static func refreshLayout() {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return }
     let idPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
     let id =
       idPointer.map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
@@ -1445,7 +1470,7 @@ enum AccessibilityDriver {
     layoutLock.lock()
     let cached = layoutCache
     layoutLock.unlock()
-    if let cached, cached.id == id { return cached.map }
+    if let cached, cached.id == id { return }
 
     var map: [String: CGKeyCode] = [:]
     if let layoutPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) {
@@ -1476,7 +1501,65 @@ enum AccessibilityDriver {
     layoutLock.lock()
     layoutCache = (id: id, map: map)
     layoutLock.unlock()
-    return map
+  }
+
+  /// Warm the map and keep it current, so no lookup ever has to reach for TIS.
+  ///
+  /// MAIN THREAD ONLY, and called once at launch BEFORE the host opens its
+  /// socket: after that a client can arrive at any moment, and arriving ahead of
+  /// the first warm is exactly what leaves a session thread with nothing to
+  /// read.
+  ///
+  /// The notification is what keeps a switched layout from being served stale,
+  /// which matters more than it sounds. A map for the previous layout does not
+  /// fail — it presses a DIFFERENT PHYSICAL KEY, which is the destructive
+  /// failure this whole lookup exists to prevent.
+  static func watchLayout() {
+    dispatchPrecondition(condition: .onQueue(.main))
+    refreshLayout()
+    DistributedNotificationCenter.default.addObserver(
+      forName: Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+      object: nil, queue: .main
+    ) { _ in refreshLayout() }
+  }
+
+  /// The map, read from the cache. Touches nothing that asserts a queue.
+  private static func layoutKeyCodes() -> [String: CGKeyCode] {
+    layoutLock.lock()
+    let cached = layoutCache
+    layoutLock.unlock()
+
+    if let cached {
+      // Belt to the notification's braces, and off this thread. If the
+      // notification is ever missed, a stale map survives ONE lookup rather
+      // than until the next time the layout changes.
+      DispatchQueue.main.async { refreshLayout() }
+      return cached.map
+    }
+
+    // Cold, which in the app means something asked before `watchLayout` ran.
+    // Inline when this already IS the main thread, because the standalone check
+    // binaries have no run loop to service a hop. Otherwise a BOUNDED wait: the
+    // alternative to waiting is refusing a key the caller can name, and the
+    // alternative to bounding it is parking a session thread on a main thread
+    // that may be busy.
+    if Thread.isMainThread {
+      refreshLayout()
+    } else {
+      let ready = DispatchSemaphore(value: 0)
+      DispatchQueue.main.async {
+        refreshLayout()
+        ready.signal()
+      }
+      _ = ready.wait(timeout: .now() + 0.25)
+    }
+
+    layoutLock.lock()
+    let filled = layoutCache
+    layoutLock.unlock()
+    // Empty rather than fatal: `key` turns this into its "Unknown key" refusal,
+    // which is a bad answer where the trap was a dead app.
+    return filled?.map ?? [:]
   }
 
   /// The code for a named key, position-keyed first and layout-resolved second.

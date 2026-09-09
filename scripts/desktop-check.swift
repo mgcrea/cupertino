@@ -523,6 +523,59 @@ struct DesktopCheck {
       "list_apps returns fewer applications when the gate is off",
       scopedApps.count < wideApps.count)
 
+    // ─── key codes resolve off the main thread without asking TIS ───────────
+    //
+    // The crash this pins: Text Input Services asserts the main queue, every
+    // RPC is answered on a `cupertino.session` thread, and four EXC_BREAKPOINT
+    // reports between 1.18.0 and 1.20.0 died inside HIToolbox on exactly that.
+    //
+    // Nothing here drives anything, which this file is otherwise strict about:
+    // resolving a name to a CGKeyCode is a table lookup, and no CGEvent is
+    // built or posted.
+    //
+    // Be clear about what this can and cannot hold, because the gap is where
+    // the bug lived. It CANNOT reproduce the trap: the assertion sits in
+    // HIToolbox's cold branch, and a probe that calls TIS off the main thread
+    // comes back fine nearly every time — which is exactly how this shipped in
+    // three releases. It also cannot see a TIS call that a later edit puts back
+    // inline; only the `dispatchPrecondition` in `refreshLayout` catches that,
+    // by being the one place TIS is allowed to be reached from.
+    //
+    // What it DOES hold is the part a fix is likely to get wrong: that a
+    // background lookup answers from the cache, with the right code, without
+    // parking on the main thread to get it.
+    check(
+      "a position-keyed name needs no layout at all",
+      AccessibilityDriver.keyCode(for: "return") == 36)
+
+    // The main thread, exactly as at launch.
+    AccessibilityDriver.refreshLayout()
+    let onMain = AccessibilityDriver.keyCode(for: "v")
+    if onMain == nil {
+      skip("a character resolves off the main thread", "this input source maps no 'v'")
+      skip("and answers from the cache rather than waiting on main", "no 'v' to resolve")
+    } else {
+      // No run loop runs in this binary, so a lookup that still needed a hop to
+      // the main queue could only time out — which is what makes the elapsed
+      // time an assertion rather than a flourish. It has to come back from the
+      // cache: same answer, no waiting.
+      final class Box: @unchecked Sendable {
+        var code: CGKeyCode?
+        var elapsed = 0.0
+      }
+      let box = Box()
+      let done = DispatchSemaphore(value: 0)
+      Thread.detachNewThread {
+        let started = Date()
+        box.code = AccessibilityDriver.keyCode(for: "v")
+        box.elapsed = Date().timeIntervalSince(started)
+        done.signal()
+      }
+      let answered = done.wait(timeout: .now() + 5) == .success
+      check("a character resolves off the main thread", answered && box.code == onMain)
+      check("and answers from the cache rather than waiting on main", box.elapsed < 0.1)
+    }
+
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:
     // generate-surfaces.mjs refuses a swift surface with a non-null npmName, so

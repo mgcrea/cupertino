@@ -38,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       "cupertino", .info,
       "running from \(location.url.path)"
         + (location.isStable ? "" : " — not a stable location for MCP client configuration"))
+    // Before the socket, deliberately. Resolving a character to a key code has
+    // to ask Text Input Services which layout is current, TIS asserts the main
+    // queue, and every RPC is answered on a session thread — so the map is
+    // built here, on the way up, and a session thread only ever reads it. Doing
+    // it after `start()` leaves a window where the first client to connect is
+    // answered from a cold cache. See `AccessibilityDriver.watchLayout`.
+    AccessibilityDriver.watchLayout()
+
     do {
       try ServerHost.shared.start()
     } catch {
