@@ -220,7 +220,36 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_20_0, v1_19_1, v1_19_0, v1_18_0, v1_17_0]
+  static let releases: [Release] = [v1_20_1, v1_20_0, v1_19_1, v1_19_0, v1_18_0]
+
+  // swift-format-ignore
+  private static let v1_20_1: Release = Release(
+    version: "1.20.1",
+    date: "2026-09-09",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Cupertino crashed while driving the keyboard, taking every connected client down with it.",
+            body: [
+              "Four crash reports carry one signature: an `EXC_BREAKPOINT` inside HIToolbox on a `cupertino.session` thread, under `AccessibilityDriver.layoutKeyCodes()`. Measured on 1.18.0 twice, on 1.19.1, and on 1.20.0 — it has been shipping since key codes first started resolving against the real keyboard layout rather than a fixed table.",
+              "The lookup asked Text Input Services which layout was current on whatever thread the RPC arrived on, and HIToolbox enumerates the input source list under a `dispatch_assert_queue`. An off-main call trips a runtime trap and the process dies, so a single `apple_desktop_key` took down every surface's connection at once, not only the one that asked.",
+              "It was intermittent, which is how it shipped in three releases: the assertion fires only in the branch that rebuilds the current source ref, never in the one serving a cached one, so probes calling TIS off the main thread came back fine. The reliable trigger is the Mail composer, where `paste()` and `selectAll()` send single-character shortcuts — exactly the key names that miss the position-keyed table and fall through to the layout. Named keys never touch TIS, so most driving looked healthy.",
+              "The TIS half now runs main-thread-only behind a `dispatchPrecondition`, warmed at launch before the host opens its socket and refreshed when the selected input source changes. The per-call lookup is a cache read that asserts no queue, and a caller on the wrong thread now fails in its own frame instead of inside HIToolbox on a machine that is only sometimes unlucky.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "A mail body stopped at its first run, so anything below an inline image was missing.",
+            body: [
+              "A message whose text is interrupted — a screenshot pasted mid-mail, a file between two paragraphs — was read down to its first `text/plain` part and no further. `apple_mail_get_message` returned the opening and dropped the rest, and a `body:` search in `apple_mail_search_messages` could not match a word that sat below the image. Nothing reported a truncation; the message simply read as though it ended early.",
+              "The body is now assembled in document order across the whole tree, with an `[image: shot.png]` marker standing where a file separated two runs, and `multipart/alternative` still resolving to a single rendering so a plain-and-html message is not emitted twice. A body that came through the tag stripper for any of its runs now says so, rather than reporting the type of whichever run happened to be first.",
+              "Two parsing faults surfaced with it. A boundary was matched anywhere in the body instead of at the start of a line, so `--B` also matched inside `--B2` and flattened a nested multipart into its parent's sibling list — harmless while only one part was ever read, a doubled body the moment the parts are joined. And `htmlToText` left a `<style>` block's CSS behind as prose whenever the closing tag fell outside the scan's read window, which is routine at the window's size and made a body search for a font name match a newsletter that never said it.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_20_0: Release = Release(
@@ -375,220 +404,6 @@ enum Changelog {
             headline: "`find_codes` says which service delivered a code, because `confidence` cannot.",
             body: [
               "iMessage is authenticated against an Apple ID; SMS and RCS sender IDs are not, and can be forged — the `From` on a text is a routing hint the sending network fills in, not a credential. `confidence` measures how cleanly a code was extracted from the message text, and all of that text is attacker-controlled, so a spoofed SMS naming a domain scores `high` exactly like a real one; `ageSeconds` does not help either, since a planted code is fresh. Every match now carries `service`, and the tool description says what it does and does not mean. Deliberately **not** done: filtering or down-ranking SMS matches. Genuine codes arrive overwhelmingly that way — this store holds 796 SMS handles against 265 iMessage and 15 RCS — so the point is not to discard them, it is not to treat a code as proof of anything.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_17_0: Release = Release(
-    version: "1.17.0",
-    date: "2026-09-07",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A `simulator` surface.",
-            body: [
-              "Simulator.app bridges a simulated device's accessibility tree into the Mac's, so an iOS app's own controls are readable and pressable with no WebDriverAgent and no runner process — and until now reaching them cost switching Desktop to \"Reach any application\", which opens every window on the Mac to touch a developer's own app. The new surface is served in-process, pinned to `com.apple.iphonesimulator` with no switch that widens it, and answers in **iOS points**: the device screen is found as the `AXGroup` whose size is the device's point size times the window scale, the scale is measured against CoreSimulator's own `profile.plist` rather than assumed to be 1, and every `rect` and `point` can be handed to `ios_simulator_tap` unchanged. Four read tools and, behind writes, `press`, `tap`, `swipe`, `type`, `key` and `press_button`. Deliberately absent: boot, install, launch, screenshots, push and staging, which need no grant and belong to `@mgcrea/mcp-ios-simulator`. Measured in [docs/simulator.md](docs/simulator.md): a click lands only once the Simulator is frontmost, a drag arrives as a touch pan, and the Simulator forwards key codes rather than characters, so typing goes one key at a time on the Mac's layout.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "A depth-capped walk silently dropped every sibling after the first branch that hit the cap.",
-            body: [
-              "The depth bound set the same \"stopped\" flag the node and time bounds do, and the walk returns on that flag before visiting the next node — so a depth-1 listing of a window with eleven children answered one and named `depth(1)` as the reason, which is true and useless. Found by the first simulator probe; the cap is reported and no longer stops anything.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A message addressed to a group could be delivered privately to one person.",
-            body: [
-              "The send lane passed a group chat's first participant as its handle, and the JXA ladder guesses a one-to-one chat id from a handle whenever the chat lookup above it throws. Reconciliation then polled the group and found nothing, so it reported `pending` — \"do not send again\" — for a message that had been sent, to the wrong recipient. A group ref now carries no handle at all.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Every Maps favourite carried a wrong Apple place id, and synced it.",
-            body: [
-              "The donor's `ZMUID` is a 64-bit integer read deliberately as text because a real one is past `MAX_SAFE_INTEGER`; the write put it back through a JavaScript number, which SQLite binds as a double. The id landed rounded — measured 233 away — in a CloudKit-mirrored store, so it reached every device on the account.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "A pruned audit log reported itself as tampered with.",
-            body: [
-              "Retention drops whole segments, and the verifier started every run from genesis, so the oldest surviving record was always a broken link and the Activity pane went red saying a record had been removed. It now seeds from the surviving segment's own link and reports \"verifies from segment N\". A mislabelled first segment and a gap in the middle are still failures. Retention's 30-day bound also never ran on a Mac that logs a few hundred calls a day, because pruning only happened on a 4 MB rotation.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "A mailbox filter that matched nothing searched everything instead.",
-            body: [
-              "An empty set of index rowids read the same as \"no filter asked for\", so a scoped Mail search could return other accounts' messages and a per-mailbox count could report the whole archive. It refuses now, naming the mailboxes the index actually holds.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "Notes ignored the account allowlist and the folder argument whenever it could read the store.",
-            body: [
-              "Both failed open, and only on machines with Full Disk Access — which is exactly where they matter. Both now take the slower Apple Events lane rather than answering with what was not asked for.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "Date arguments were parsed six different ways, and three of them were wrong.",
-            body: [
-              "An unreadable date became `NaN`, which SQLite binds as `NULL`, so Mail answered a date written in words with zero results and no error. A bare day meant UTC midnight in some places and local midnight in others. An upper bound naming a day excluded that whole day. `2026-02-30T09:00` silently became 2 March. There is one grammar now, in core, and it refuses what it cannot read.",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "Mail's composer waited on the wrong signal, and asked the wrong object who had focus.",
-            body: [
-              "Two fixes from before this release: the readable state is not ready when the window appears, so the focus is polled; and focus is a property of the application, not of the element being addressed.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "`find_codes` could miss a code that was right there.",
-            body: [
-              "Its limit capped the messages scanned before the user's own replies were filtered out, so an ordinary few minutes of conversation pushed the code off the page. Direction is now a database predicate, and the limit applies to the codes returned.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "Messages search returned nothing recent once older results filled the page",
-            body: [
-              ", because the text column pass ran to the limit before the archived-blob pass got a look — and every message since March 2026 lives only in a blob. The two passes are merged by date now.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "`update_event` ignored `end` and `durationMinutes` unless `start` came with them",
-            body: [
-              ", reporting success and changing nothing.",
-            ]),
-          Entry(
-            ordinal: 12,
-            headline: "Contacts' diagnostics said the surface registers no mutating tool",
-            body: [
-              ", while two have been registered behind its write flag.",
-            ]),
-          Entry(
-            ordinal: 13,
-            headline: "A search could invalidate the element handles it had just issued",
-            body: [
-              ", because the handle store emptied itself at capacity while a search was still filling it.",
-            ]),
-          Entry(
-            ordinal: 14,
-            headline: "An attachment whose name is not ASCII could be neither listed nor saved.",
-            body: [
-              "A filename is the one MIME parameter that routinely is not ASCII, and it has two encodings; neither was handled. One returned nothing, so the attachment was reported as having no filename at all; the other came back verbatim, so saving it wrote a file literally named `=?utf-8?Q?...?=`.",
-            ]),
-          Entry(
-            ordinal: 15,
-            headline: "Safari reported when a page was first visited using only the visits inside the window asked for",
-            body: [
-              ", while the visit count beside it stayed the page's lifetime total. A search of last week said a page had been first visited last Tuesday when it had been open since 2019.",
-            ]),
-          Entry(
-            ordinal: 16,
-            headline: "A full page of calendar events was indistinguishable from a quiet week.",
-            body: [
-              "The existing truncation flag is about how far the store's expansion reaches, so a dense day answered with the default fifty read as the whole day. There is a `hasMore` beside it now.",
-            ]),
-          Entry(
-            ordinal: 17,
-            headline: "Counting messages by a phone number only worked if you spelled it the way the store does",
-            body: [
-              ", while sending to that same number resolved it properly — in the same server, against a description promising both spellings work.",
-            ]),
-          Entry(
-            ordinal: 18,
-            headline: "Mail grouped by UTC days while filtering by local ones",
-            body: [
-              ", so a message that arrived at 23:30 counted against the next day.",
-            ]),
-          Entry(
-            ordinal: 19,
-            headline: "A wedged server was never cleaned up.",
-            body: [
-              "Closing its input is a request to exit, and one that ignored it held a thread, three pipes and a process for as long as the app ran.",
-            ]),
-          Entry(
-            ordinal: 20,
-            headline: "A malformed request got no answer at all",
-            body: [
-              "from the three surfaces the app serves itself, so a client that sent broken JSON waited forever instead of being told.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 21,
-            headline: "The driving notice is an on-screen panel, not a menu bar badge.",
-            body: [
-              "See the correction under 1.16.0: the badge could never render. The panel does not take focus and does not steal a keystroke from the sequence it is reporting on.",
-            ]),
-          Entry(
-            ordinal: 22,
-            headline: "Simulator.app is a brokered application.",
-            body: [
-              "The `simulator` surface's entry in the manifest puts it into the set Desktop reaches without \"Reach any application\" and Screen can capture, by design; the Desktop guide's paragraph about it is no longer gated on the reach and sends a caller to the `simulator` surface for iOS-point coordinates. Every \"the eight applications Cupertino brokers\" string now says nine.",
-            ]),
-          Entry(
-            ordinal: 23,
-            headline: "The Desktop guide's writes-on line names all eight driving verbs.",
-            body: [
-              "It listed six; `focus` and `activate` were registered and unmentioned.",
-            ]),
-          Entry(
-            ordinal: 24,
-            headline: "Walk bounds have a ceiling",
-            body: [
-              ", so a budget of an hour cannot hold a session thread for one. `find_elements` also declares the `window` argument it has always honoured.",
-            ]),
-          Entry(
-            ordinal: 25,
-            headline: "The handshake has a deadline on the app's side too.",
-            body: [
-              "A process that connected and sent nothing used to hold a thread and a descriptor until it exited.",
-            ]),
-          Entry(
-            ordinal: 26,
-            headline: "Notes and Reminders listings say when they were cut short.",
-            body: [
-              "`apple_notes_list_notes`, `apple_notes_search_notes`, `apple_reminders_list_reminders` and `apple_reminders_search_reminders` now answer with an object — `notes` or `reminders`, plus `source` and `hasMore` — rather than a bare array. **This changes the output shape of four shipped tools.** A caller that indexed the result directly has to read the named field instead.",
-              "The reason is that all four truncated silently, and two of the three bounds involved are nothing the caller asked for. The Apple Events lane stops at its own cap (200 notes, 500 reminders) regardless of `limit`, because a bulk read costs about 700ms per property whatever the library size — so asking for 500 and receiving 200 was indistinguishable from asking for 500 and there being 200. The Reminders index lane over-fetches from SQL and applies the date, flag and priority filters afterwards in JS; when those reject nearly everything, the window runs out before the page fills and the answer comes back short. `hasMore` reports that more matched than the page carries; a `note` field appears only when a lane bound rather than `limit` is what ended the list, so it names something the reader can act on. Both diagnostics tools now report the cap.",
-            ]),
-        ]),
-      Section(
-        name: "Security",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 27,
-            headline: "`click`, `type` and `key` now light the driving notice.",
-            body: [
-              "They are the most invasive verbs here — landing at a screen point, or in whatever is frontmost — and they were the only ones that did it without saying so.",
-            ]),
-          Entry(
-            ordinal: 28,
-            headline: "The application support directory is 0700",
-            body: [
-              ", and an existing one is tightened rather than left as it was found. The socket is created under a private umask rather than narrowed a moment later.",
-            ]),
-          Entry(
-            ordinal: 29,
-            headline: "Saving an attachment no longer checks and then writes",
-            body: [
-              ", which was two steps with a window between them, and it refuses a bad destination before doing the work rather than after.",
-            ]),
-          Entry(
-            ordinal: 30,
-            headline: "A failed audit write is reported instead of swallowed",
-            body: [
-              ", so a full disk stops looking like tampering after the fact.",
             ]),
         ]),
     ])

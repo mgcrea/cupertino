@@ -6,11 +6,58 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.20.0`,
-`notes-v1.20.0`, `reminders-v1.20.0`, `core-v1.20.0` for the npm packages, and `app-v1.20.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.20.1`,
+`notes-v1.20.1`, `reminders-v1.20.1`, `core-v1.20.1` for the npm packages, and `app-v1.20.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.20.1] - 2026-09-09
+
+### Fixed
+
+- **Cupertino crashed while driving the keyboard, taking every connected client down with it.**
+  Four crash reports carry one signature: an `EXC_BREAKPOINT` inside HIToolbox on a
+  `cupertino.session` thread, under `AccessibilityDriver.layoutKeyCodes()`. Measured on 1.18.0
+  twice, on 1.19.1, and on 1.20.0 — it has been shipping since key codes first started resolving
+  against the real keyboard layout rather than a fixed table.
+
+  The lookup asked Text Input Services which layout was current on whatever thread the RPC arrived
+  on, and HIToolbox enumerates the input source list under a `dispatch_assert_queue`. An off-main
+  call trips a runtime trap and the process dies, so a single `apple_desktop_key` took down every
+  surface's connection at once, not only the one that asked.
+
+  It was intermittent, which is how it shipped in three releases: the assertion fires only in the
+  branch that rebuilds the current source ref, never in the one serving a cached one, so probes
+  calling TIS off the main thread came back fine. The reliable trigger is the Mail composer, where
+  `paste()` and `selectAll()` send single-character shortcuts — exactly the key names that miss the
+  position-keyed table and fall through to the layout. Named keys never touch TIS, so most driving
+  looked healthy.
+
+  The TIS half now runs main-thread-only behind a `dispatchPrecondition`, warmed at launch before
+  the host opens its socket and refreshed when the selected input source changes. The per-call
+  lookup is a cache read that asserts no queue, and a caller on the wrong thread now fails in its
+  own frame instead of inside HIToolbox on a machine that is only sometimes unlucky.
+
+- **A mail body stopped at its first run, so anything below an inline image was missing.** A
+  message whose text is interrupted — a screenshot pasted mid-mail, a file between two paragraphs —
+  was read down to its first `text/plain` part and no further. `apple_mail_get_message` returned
+  the opening and dropped the rest, and a `body:` search in `apple_mail_search_messages` could not
+  match a word that sat below the image. Nothing reported a truncation; the message simply read as
+  though it ended early.
+
+  The body is now assembled in document order across the whole tree, with an `[image: shot.png]`
+  marker standing where a file separated two runs, and `multipart/alternative` still resolving to a
+  single rendering so a plain-and-html message is not emitted twice. A body that came through the
+  tag stripper for any of its runs now says so, rather than reporting the type of whichever run
+  happened to be first.
+
+  Two parsing faults surfaced with it. A boundary was matched anywhere in the body instead of at
+  the start of a line, so `--B` also matched inside `--B2` and flattened a nested multipart into
+  its parent's sibling list — harmless while only one part was ever read, a doubled body the moment
+  the parts are joined. And `htmlToText` left a `<style>` block's CSS behind as prose whenever the
+  closing tag fell outside the scan's read window, which is routine at the window's size and made a
+  body search for a font name match a newsletter that never said it.
 
 ## [1.20.0] - 2026-09-08
 
@@ -2155,7 +2202,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.20.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...HEAD
+[1.20.1]: https://github.com/mgcrea/cupertino/compare/app-v1.20.0...app-v1.20.1
 [1.20.0]: https://github.com/mgcrea/cupertino/compare/app-v1.19.1...app-v1.20.0
 [1.19.1]: https://github.com/mgcrea/cupertino/compare/app-v1.19.0...app-v1.19.1
 [1.19.0]: https://github.com/mgcrea/cupertino/compare/app-v1.18.0...app-v1.19.0
