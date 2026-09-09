@@ -12,6 +12,38 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **A reply that was sent came back as a reply that failed, and the note argued against the wrong
+  retry.** `apple_mail_reply_to_message` composed a reply correctly and it went out — and then
+  reported `ok: false`, `bodyVerified: false`, "the body did not go in", and "SOMETHING DID land in
+  it that could not be read back, a retry would paste the reply in twice". Every part of that was
+  false. What actually happened is that the person at the keyboard pressed Send while the call was
+  still running.
+
+  A composer that closes takes its Accessibility handle with it, so every read after that is a
+  refusal — and `bodySize()` answered `-1` for a refusal while the caller compared it as an element
+  count. `-1` against a real count reads as "the body changed", which is the signature of a paste
+  that landed and cannot be matched. The same sentinel had a second edge in the System Events
+  fallback: `-1` against `-1` reads as "nothing landed", which is the one branch that DISCARDS the
+  composer, so an unreadable body could be thrown away rather than left on screen.
+
+  Blind and different are now different answers. Before blaming the body, both compose paths ask
+  whether the composer window is still there at all — nothing in them ever closes one, so a missing
+  composer was taken by whoever is using the Mac. The native path then asks Mail whether the message
+  reached Sent and says so with the timestamp, because sending and discarding leave the same empty
+  screen and guessing wrong in either direction is expensive: a sent reply called a failure invites
+  a retry that sends it twice. The Sent lookup deliberately does not use the envelope index, which
+  is rebuilt on a schedule and was 47 minutes stale when this was found.
+
+  Two smaller holes closed along the way. A composer that vanished before the paste's second attempt
+  escaped as a bare channel error with no note at all; it now returns a described failure. And the
+  send shortcut was posted without re-raising the composer, so a person who changed the foreground
+  between the verifying read and the send took ⌘⇧D into their own window — it is raised again first,
+  and if it cannot be raised nothing is pressed.
+
 ## [1.20.1] - 2026-09-09
 
 ### Fixed
