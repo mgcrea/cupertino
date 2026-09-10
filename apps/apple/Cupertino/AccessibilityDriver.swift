@@ -1060,6 +1060,7 @@ enum AccessibilityDriver {
       // press them; 20 ms a key is well inside what a typist manages.
       usleep(20_000)
     }
+    DriveActivity.postedInput()
     return unmapped
   }
 
@@ -1203,6 +1204,7 @@ enum AccessibilityDriver {
     announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
+    DriveActivity.postedInput()
   }
 
   /// Press, move along the segment, release.
@@ -1245,6 +1247,7 @@ enum AccessibilityDriver {
       usleep(pause)
     }
     up.post(tap: .cghidEventTap)
+    DriveActivity.postedInput()
   }
 
   // ─── hover, which is not a click without the button ────────────────────────
@@ -1355,6 +1358,7 @@ enum AccessibilityDriver {
       move.post(tap: .cghidEventTap)
       usleep(pause)
     }
+    DriveActivity.postedInput()
     // The hover state is drawn by the OTHER application, so a caller that reads
     // the tree in the same breath reads it from before the redraw.
     // `Thread.sleep` rather than `usleep`, which is only specified below a
@@ -1385,6 +1389,9 @@ enum AccessibilityDriver {
       up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
       down.post(tap: .cghidEventTap)
       up.post(tap: .cghidEventTap)
+      // Inside the loop: a later chunk can throw, and what already went out
+      // still counts as ours.
+      DriveActivity.postedInput()
     }
   }
 
@@ -1415,6 +1422,7 @@ enum AccessibilityDriver {
     announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
+    DriveActivity.postedInput()
   }
 
   /// Deliberately small. These are the keys a driver needs to get unstuck —

@@ -284,6 +284,37 @@ describe("watchInterference", () => {
     channel.close();
   });
 
+  /*
+   * The host's reading counts Cupertino's own synthetic events, so a sequence
+   * that posts a key finds "input" a moment ago on every run. A native Mail
+   * reply reported "Someone used this Mac 0.2s ago" for its own ⌘V.
+   */
+  it("is undisturbed when the latest input was Cupertino's own", async () => {
+    const { path, server } = await hostStub({
+      reply: (m) => okReply(m.id, { secondsSinceInput: 0.01, secondsSinceOwnInput: 0.008 }),
+    });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path))!;
+    const watch = watchInterference(channel);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const found = await watch.check();
+    expect(found?.disturbed).toBe(false);
+    channel.close();
+  });
+
+  it("is still disturbed when a person's input came after Cupertino's", async () => {
+    const { path, server } = await hostStub({
+      reply: (m) => okReply(m.id, { secondsSinceInput: 0.01, secondsSinceOwnInput: 0.9 }),
+    });
+    open.add(server);
+    const channel = openAxChannel(SURFACE, envFor(path))!;
+    const watch = watchInterference(channel);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const found = await watch.check();
+    expect(found?.disturbed).toBe(true);
+    channel.close();
+  });
+
   it("is undisturbed when nobody has touched it since well before the start", async () => {
     const { path, server } = await hostStub({
       reply: (m) => okReply(m.id, { secondsSinceInput: 600 }),

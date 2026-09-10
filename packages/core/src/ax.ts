@@ -278,10 +278,26 @@ export type Interference = {
 export type InterferenceWatch = { check(): Promise<Interference | null> };
 
 /**
+ * How much newer than Cupertino's own last posted event an input has to be
+ * before it is somebody else's. The host stamps its post just after the events
+ * go out, so the two readings of one keystroke differ by the posting alone.
+ */
+const OWN_INPUT_TOLERANCE_S = 0.25;
+
+/**
  * Start watching. `check()` answers for the span since this call.
  *
  * Returns null from `check()` when the question could not be asked at all,
  * which is not the same as "undisturbed" and must not be reported as it.
+ *
+ * **The host's idle reading counts Cupertino's own events.** It has to — input
+ * from any other software disturbs a sequence exactly as a person does — so a
+ * sequence that posts a key finds "input" a moment ago on every run. A native
+ * Mail reply reported "Someone used this Mac 0.2s ago" for its own ⌘V. The
+ * host now also says when it last posted, and input no newer than that is
+ * taken as ours. What that cannot see is a person whose input lands BEFORE our
+ * last post in the same sequence: masked, the ambiguity hover's idle guard
+ * already accepts. A host too old to report it keeps the bare comparison.
  */
 export const watchInterference = (channel: AxChannel): InterferenceWatch => {
   const started = Date.now();
@@ -292,10 +308,16 @@ export const watchInterference = (channel: AxChannel): InterferenceWatch => {
         const answer = (await channel.call({
           tool: "apple_desktop_user_activity",
           args: {},
-        })) as { secondsSinceInput?: number };
+        })) as { secondsSinceInput?: number; secondsSinceOwnInput?: number | null };
         const secondsSinceInput = answer.secondsSinceInput;
         if (typeof secondsSinceInput !== "number") return null;
-        return { disturbed: secondsSinceInput < elapsedSeconds, secondsSinceInput, elapsedSeconds };
+        const own = answer.secondsSinceOwnInput;
+        const ours = typeof own === "number" && secondsSinceInput >= own - OWN_INPUT_TOLERANCE_S;
+        return {
+          disturbed: secondsSinceInput < elapsedSeconds && !ours,
+          secondsSinceInput,
+          elapsedSeconds,
+        };
       } catch {
         return null;
       }

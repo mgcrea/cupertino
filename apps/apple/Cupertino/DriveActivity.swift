@@ -69,6 +69,30 @@ final class DriveActivity {
     Task { @MainActor in shared.began(bundleId, .driving) }
   }
 
+  /// When Cupertino last POSTED synthetic input, as opposed to driving at all.
+  ///
+  /// `secondsSinceUserInput` reads `.combinedSessionState` on purpose, so it
+  /// counts our own events, and a caller comparing it against its sequence found
+  /// "input" a moment ago on every run that posted a key: a native Mail reply
+  /// blamed "someone using this Mac" for its own ⌘V. Kept apart from `state`
+  /// because an AX action lights the notice without posting anything the idle
+  /// reading would see. Stamped AFTER the events go out, so both readings of
+  /// one keystroke agree.
+  private nonisolated(unsafe) static var lastPostedInput: Date?
+
+  nonisolated static func postedInput() {
+    stateLock.lock()
+    lastPostedInput = Date()
+    stateLock.unlock()
+  }
+
+  /// Nil when nothing has been posted since launch.
+  nonisolated static func secondsSincePostedInput() -> Double? {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return lastPostedInput.map { Date().timeIntervalSince($0) }
+  }
+
   /// Light the notice a `VisibleTools` entry asks for.
   ///
   /// `.driving` is `record` under another name, so a caller holding a table

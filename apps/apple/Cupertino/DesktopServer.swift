@@ -246,7 +246,9 @@ enum DesktopServer {
           + "interface competes with whoever is using it, because a keystroke goes to whatever "
           + "is frontmost, so read this before and after a sequence: if the seconds since input "
           + "are LESS than the time your sequence took, somebody typed into the middle of it and "
-          + "the result cannot be trusted.",
+          + "the result cannot be trusted. The reading counts Cupertino's own synthetic input too: "
+          + "secondsSinceOwnInput says when the last of that was posted (null if none), and input "
+          + "no more recent than it is most likely your own.",
         "inputSchema": empty,
         "annotations": ["readOnlyHint": true],
       ],
@@ -649,11 +651,16 @@ enum DesktopServer {
         // Not gated on `isTrusted`: this is CoreGraphics rather than
         // Accessibility, and refusing it for want of a grant it does not use
         // would be a lie — the same reasoning `activate` carries.
+        // The idle reading counts Cupertino's own posted events, so the answer
+        // also says when the last of those went out: a caller can then tell its
+        // own keystroke from a person's. Null when nothing was posted this launch.
+        let own = DriveActivity.secondsSincePostedInput()
         return ok(
           id,
           [
             "secondsSinceInput": (AccessibilityDriver.secondsSinceUserInput() * 1000).rounded()
-              / 1000
+              / 1000,
+            "secondsSinceOwnInput": own.map { ($0 * 1000).rounded() / 1000 } ?? NSNull(),
           ])
 
       case "apple_desktop_diagnostics":
