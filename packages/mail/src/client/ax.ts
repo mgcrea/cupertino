@@ -188,7 +188,10 @@ export class MailAxLane {
    * milliseconds.
    *
    * The subject is the identity, and requiring a body area with it rejects the
-   * main window and the drafts list. Counting windows does not work: Mail closes
+   * main window and the drafts list. It is an identity only because `compose.ts`
+   * refuses when a composer under the same subject was already open before the
+   * call: a leftover from an earlier attempt matches here just as well, and is
+   * readable first. Counting windows does not work: Mail closes
    * and reuses windows around a compose, so the count comes back unchanged with
    * a new composer on screen.
    */

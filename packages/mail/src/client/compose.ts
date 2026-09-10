@@ -302,6 +302,41 @@ export const replyOrForwardNatively = async (
   const opened = (await runner.run(OPEN_COMPOSER, params)) as { subject: string };
   const subject = opened.subject;
 
+  /**
+   * A composer under this subject was open BEFORE this call opened one.
+   *
+   * The subject is the only identity the native half has, and it stops being
+   * one the moment a composer from an earlier call survives — which is routine,
+   * because nothing here ever closes one. The incident, 2026-09-10: Mail keeps
+   * composers as tabs, the leftover was readable before the new one was, and
+   * the title matched it first. ⌘V went to the composer Mail had in front, the
+   * read-back went to the leftover, and a reply that was fine came back as
+   * "SOMETHING DID land in it that could not be read back". With `sendNow` the
+   * send shortcut would have named the leftover too: the wrong message sent,
+   * which is the one failure this path is built to refuse.
+   *
+   * Refused rather than disambiguated. Handles are minted per call, so there is
+   * nothing to tell the two apart by, and a guess here is a guess about which
+   * message to send. The pre-flight list is the one moment the new composer
+   * provably was not on screen.
+   */
+  if ((reach.windows ?? []).includes(subject)) {
+    return {
+      ok: false,
+      subject,
+      bodyVerified: null,
+      verifiedChars: 0,
+      sent: false,
+      note:
+        `A ${params.mode} window titled "${subject}" was already open in Mail before this call, ` +
+        `most likely left by an earlier attempt, and this call has now opened another. With two ` +
+        `under one title this path cannot tell which one it opened, so nothing was pasted, ` +
+        `pressed or sent. The one just opened has no text above the quoted message. Close it, ` +
+        `finish or discard the older one, then retry.` +
+        interferenceNote(await watch.check()),
+    };
+  }
+
   const ref = await lane.findComposer(subject, composerTimeoutMs);
   if (!ref) {
     return {

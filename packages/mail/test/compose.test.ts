@@ -18,9 +18,19 @@ afterEach(() => {
   scratch.clear();
 });
 
+/**
+ * What Mail's window list says before the composer exists.
+ *
+ * Call 1 to `list_windows` is always the pre-flight reach, taken BEFORE the
+ * composer is opened, so the composer cannot be in it. A stub that lists
+ * "Re: lunch" there is describing a composer that was already open.
+ */
+const BEFORE_OPENING = { windows: [{ handle: "w0", index: 0, title: "Inbox" }] };
+
 /** A composer that behaves: window appears, paste lands, send closes it. */
 const healthyHost = (over: Record<string, unknown> = {}) => ({
-  list_windows: { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+  list_windows: (_a: unknown, n: number) =>
+    n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
   ui_tree: { elements: [{ handle: "e7", role: "AXWebArea", depth: 2 }] },
   expand: { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "PASTED" }] },
   focus: { focused: true },
@@ -119,9 +129,11 @@ const composerThatVanishes = (over: Record<string, unknown> = {}) =>
     // Calls 1 and 2 are the pre-flight reach and findComposer; the third is the
     // presence check in the failure branch.
     list_windows: (_a: unknown, n: number) =>
-      n > 2
-        ? { windows: [{ handle: "w1", index: 0, title: "All Sent" }] }
-        : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+      n === 1
+        ? BEFORE_OPENING
+        : n > 2
+          ? { windows: [{ handle: "w1", index: 0, title: "All Sent" }] }
+          : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
     // The handle died with the window.
     expand: (_a: unknown, n: number) =>
       n === 1 ? { elements: [], matched: 40 } : { refusal: "Element 'e7' no longer exists" },
@@ -146,7 +158,7 @@ describe("replyOrForwardNatively", () => {
         // The composer is there while pasting and gone after the send, which is
         // how the send is confirmed.
         list_windows: (_a: unknown, n: number) =>
-          n > 3
+          n === 1 || n > 3
             ? { windows: [{ handle: "w1", index: 0, title: "Inbox" }] }
             : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
       }),
@@ -400,6 +412,52 @@ describe("replyOrForwardNatively", () => {
       tool: "key",
       args: { key: "s", modifiers: ["command"], handle: "w1" },
     });
+    lane.close();
+  });
+
+  /*
+   * The incident, 2026-09-10.
+   *
+   * A composer from an earlier call was still open under the same subject —
+   * this path never closes one — and Mail keeps composers as tabs, so both sat
+   * on the window list. The title matched the leftover, which was readable
+   * before the new one was: ⌘V went to the new composer Mail had in front, the
+   * read-back went to the leftover, and a reply that was fine came back as
+   * "SOMETHING DID land in it that could not be read back".
+   */
+  it("drives nothing when a composer with this subject was already open", async () => {
+    const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
+    const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
+    const clipboard = fakeClipboard();
+    const result = await replyOrForwardNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      { clipboard, sendTimeoutMs: 50, composerTimeoutMs: 50 },
+    );
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null, verifiedChars: 0 });
+    expect(result.note).toContain("already open");
+    expect(result.note).not.toContain("the body did not go in");
+    const driven = ["raise_window", "activate", "focus", "key"];
+    expect(seen.filter((c) => driven.includes(c.tool))).toEqual([]);
+    expect(clipboard.history).toEqual([]);
+    lane.close();
+  });
+
+  /*
+   * The same collision with a send is the dangerous one: the send shortcut
+   * names the composer it found, and that was the leftover.
+   */
+  it("never presses send when a composer with this subject was already open", async () => {
+    const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
+    const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
+    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+      clipboard: fakeClipboard(),
+      sendTimeoutMs: 50,
+      composerTimeoutMs: 50,
+    });
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
   });
 
