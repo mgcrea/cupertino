@@ -702,6 +702,90 @@ struct UnitCheck {
     stuck.answered("i-unknown")
     check("an unknown reply changes nothing", stuck.isEmpty)
 
+    print("\nServer resolution: which cli.js a surface runs")
+
+    // Built on disk rather than described, because every rule here is about
+    // what exists. `node` is only ever checked for existence, so an empty file
+    // stands in for the runtime.
+    let fs = FileManager.default
+    let lab = fs.temporaryDirectory.appendingPathComponent("cupertino-locate-\(UUID().uuidString)")
+    func touch(_ url: URL, _ text: String = "") {
+      try? fs.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? Data(text.utf8).write(to: url)
+    }
+    let resources = lab.appendingPathComponent("Resources")
+    touch(resources.appendingPathComponent("node"))
+    touch(resources.appendingPathComponent("servers/mail/dist/cli.js"))
+    let repo = lab.appendingPathComponent("repo")
+    let devNode = lab.appendingPathComponent("bin/node")
+    touch(devNode)
+    touch(repo.appendingPathComponent("packages/mail/dist/cli.js"))
+    let devConfig = lab.appendingPathComponent("support/dev.json")
+    let noConfig = lab.appendingPathComponent("support-absent/dev.json")
+    func writeDevConfig(node: URL = devNode, repo: URL = repo) {
+      touch(devConfig, #"{"node":"\#(node.path)","repo":"\#(repo.path)"}"#)
+    }
+
+    // A Release build passes no dev config at all: the bundle is the only answer.
+    let shipped = try? ServerResolution.resolve(id: "mail", resources: resources, devConfig: nil)
+    check("a release build runs the bundled server", shipped?.isDevelopment == false)
+    check(
+      "from the bundle's own path",
+      shipped?.script.path == resources.appendingPathComponent("servers/mail/dist/cli.js").path)
+    check(
+      "a debug build with no dev.json runs the bundled server too",
+      (try? ServerResolution.resolve(id: "mail", resources: resources, devConfig: noConfig))?
+        .isDevelopment == false)
+
+    // The bug. `make dev-config` exists to point a Debug build at the workspace,
+    // and a bundled copy left inside the app beat it silently: a probe read
+    // month-old code while dev.json said otherwise, and nothing said so.
+    writeDevConfig()
+    let dev = try? ServerResolution.resolve(id: "mail", resources: resources, devConfig: devConfig)
+    check("dev.json wins over a bundled copy", dev?.isDevelopment == true)
+    check(
+      "and runs the workspace build",
+      dev?.script.path == repo.appendingPathComponent("packages/mail/dist/cli.js").path)
+
+    // An explicit opt-in that cannot be honoured is an error, never a quiet
+    // fall back to the bundle, because the quiet fall back IS the trap.
+    var unbuilt = false
+    do {
+      _ = try ServerResolution.resolve(id: "maps", resources: resources, devConfig: devConfig)
+    } catch LocateError.devConfigInvalid(let detail) {
+      unbuilt = detail.contains("pnpm")
+    } catch {}
+    check("a dev.json whose build is missing refuses, and says how to build it", unbuilt)
+
+    touch(devConfig, "{not json")
+    var malformed = false
+    do {
+      _ = try ServerResolution.resolve(id: "mail", resources: resources, devConfig: devConfig)
+    } catch LocateError.devConfigInvalid {
+      malformed = true
+    } catch {}
+    check("a malformed dev.json refuses rather than falling back", malformed)
+
+    writeDevConfig(node: lab.appendingPathComponent("bin/absent-node"))
+    var nodeless = false
+    do {
+      _ = try ServerResolution.resolve(id: "mail", resources: resources, devConfig: devConfig)
+    } catch LocateError.devConfigInvalid(let detail) {
+      nodeless = detail.contains("no node")
+    } catch {}
+    check("a dev.json naming a missing node refuses", nodeless)
+
+    var nowhere = false
+    do {
+      _ = try ServerResolution.resolve(id: "notes", resources: resources, devConfig: noConfig)
+    } catch LocateError.notBundled {
+      nowhere = true
+    } catch {}
+    check("a surface with neither a bundle nor a dev.json is not bundled", nowhere)
+
+    try? fs.removeItem(at: lab)
+
     print("\nWhich clients are fronted")
 
     // The table. Two entries, and both were measured rather than assumed.

@@ -388,6 +388,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
+		apps/apple/Cupertino/ServerResolution.swift \
 		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
