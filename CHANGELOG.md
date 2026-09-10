@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.20.1`,
-`notes-v1.20.1`, `reminders-v1.20.1`, `core-v1.20.1` for the npm packages, and `app-v1.20.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.21.0`,
+`notes-v1.21.0`, `reminders-v1.21.0`, `core-v1.21.0` for the npm packages, and `app-v1.21.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.21.0] - 2026-09-10
 
 ### Added
 
@@ -27,9 +27,28 @@ summary.
   is posted and the call says so, and the notice names the application meant. Leaving it out keeps
   the old behaviour. `hover` already worked this way and now shares the same refusal.
 
+  Mail and Maps pass one. Mail's paste and its send and save shortcuts name the composer they are
+  meant for, so Mail is brought forward or nothing is pressed, rather than ⌘V landing in whatever
+  window someone switched to. Maps names itself when it closes its menu with Escape: its card opens
+  behind whatever is in front, so a bare Escape went to that other application instead.
+
   One scope hole closed along the way: bringing an application forward skipped the reach check when
   that application was already in front, so `hover` could drive an application outside "Reach any
   application" as long as it happened to be frontmost.
+
+- **Mail, Safari, Notes and the other Node surfaces now say when they change the screen.** The
+  notice naming what Cupertino is driving was lit only by the in-process surfaces, because that is
+  where synthetic input is posted. Everything else reaches its app by Apple Event, System Events or
+  the Safari extension, so a Safari tab switching under someone, or Notes starting up because a note
+  was written, came with no word from Cupertino at all.
+
+  The app now decides from each call's tool name, before the server has acted on it, and the notice
+  comes in tiers. Mail's compose tools raise Mail and press keys, so they get the orange card that
+  asks for hands off the keyboard and mouse. Safari's page verbs and adding a Maps favourite change
+  what is on screen without touching either, and get a quieter blue card that says you can keep
+  working. A write to Notes, Reminders, Calendar, Contacts or Messages gets one only when it had to
+  start the app, since that is all a person sees. A call that outlasts the notice's usual linger
+  holds it until the reply arrives.
 
 ### Fixed
 
@@ -60,6 +79,13 @@ summary.
   send shortcut was posted without re-raising the composer, so a person who changed the foreground
   between the verifying read and the send took ⌘⇧D into their own window — it is raised again first,
   and if it cannot be raised nothing is pressed.
+
+- **Listing Safari's tabs opened Safari.** `apple_safari_list_tabs` asked Safari for its windows by
+  Apple Event, and an Apple Event launches an application that is not running, so a question about
+  open tabs could put a browser on someone's screen. It now asks whether Safari is running first,
+  which launches nothing. When it is not, the tool says so in words, with `running: false`, rather
+  than returning an empty list that reads as a Safari with every window closed or as a missing
+  permission.
 
 ## [1.20.1] - 2026-09-09
 
@@ -2251,7 +2277,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...HEAD
+[1.21.0]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...app-v1.21.0
 [1.20.1]: https://github.com/mgcrea/cupertino/compare/app-v1.20.0...app-v1.20.1
 [1.20.0]: https://github.com/mgcrea/cupertino/compare/app-v1.19.1...app-v1.20.0
 [1.19.1]: https://github.com/mgcrea/cupertino/compare/app-v1.19.0...app-v1.19.1

@@ -220,7 +220,55 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_20_1, v1_20_0, v1_19_1, v1_19_0, v1_18_0]
+  static let releases: [Release] = [v1_21_0, v1_20_1, v1_20_0, v1_19_1, v1_19_0]
+
+  // swift-format-ignore
+  private static let v1_21_0: Release = Release(
+    version: "1.21.0",
+    date: "2026-09-10",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_desktop_click`, `apple_desktop_type` and `apple_desktop_key` can name the application they are meant for.",
+            body: [
+              "An agent that opened an application and clicked into it, while the person at the keyboard had switched to their editor, clicked into the editor — and the driving notice said so, \"Cupertino is driving com.microsoft.VSCode\", because it was true. These three verbs post into the session and took no target, so the event went to whatever was in front.",
+              "`click` now takes `bundleId`, and `type` and `key` take `bundleId` or the `handle` of the field that was focused. The application is brought to the front and waited for; if it does not come, nothing is posted and the call says so, and the notice names the application meant. Leaving it out keeps the old behaviour. `hover` already worked this way and now shares the same refusal.",
+              "Mail and Maps pass one. Mail's paste and its send and save shortcuts name the composer they are meant for, so Mail is brought forward or nothing is pressed, rather than ⌘V landing in whatever window someone switched to. Maps names itself when it closes its menu with Escape: its card opens behind whatever is in front, so a bare Escape went to that other application instead.",
+              "One scope hole closed along the way: bringing an application forward skipped the reach check when that application was already in front, so `hover` could drive an application outside \"Reach any application\" as long as it happened to be frontmost.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Mail, Safari, Notes and the other Node surfaces now say when they change the screen.",
+            body: [
+              "The notice naming what Cupertino is driving was lit only by the in-process surfaces, because that is where synthetic input is posted. Everything else reaches its app by Apple Event, System Events or the Safari extension, so a Safari tab switching under someone, or Notes starting up because a note was written, came with no word from Cupertino at all.",
+              "The app now decides from each call's tool name, before the server has acted on it, and the notice comes in tiers. Mail's compose tools raise Mail and press keys, so they get the orange card that asks for hands off the keyboard and mouse. Safari's page verbs and adding a Maps favourite change what is on screen without touching either, and get a quieter blue card that says you can keep working. A write to Notes, Reminders, Calendar, Contacts or Messages gets one only when it had to start the app, since that is all a person sees. A call that outlasts the notice's usual linger holds it until the reply arrives.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "A reply that was sent came back as a reply that failed, and the note argued against the wrong retry.",
+            body: [
+              "`apple_mail_reply_to_message` composed a reply correctly and it went out — and then reported `ok: false`, `bodyVerified: false`, \"the body did not go in\", and \"SOMETHING DID land in it that could not be read back, a retry would paste the reply in twice\". Every part of that was false. What actually happened is that the person at the keyboard pressed Send while the call was still running.",
+              "A composer that closes takes its Accessibility handle with it, so every read after that is a refusal — and `bodySize()` answered `-1` for a refusal while the caller compared it as an element count. `-1` against a real count reads as \"the body changed\", which is the signature of a paste that landed and cannot be matched. The same sentinel had a second edge in the System Events fallback: `-1` against `-1` reads as \"nothing landed\", which is the one branch that DISCARDS the composer, so an unreadable body could be thrown away rather than left on screen.",
+              "Blind and different are now different answers. Before blaming the body, both compose paths ask whether the composer window is still there at all — nothing in them ever closes one, so a missing composer was taken by whoever is using the Mac. The native path then asks Mail whether the message reached Sent and says so with the timestamp, because sending and discarding leave the same empty screen and guessing wrong in either direction is expensive: a sent reply called a failure invites a retry that sends it twice. The Sent lookup deliberately does not use the envelope index, which is rebuilt on a schedule and was 47 minutes stale when this was found.",
+              "Two smaller holes closed along the way. A composer that vanished before the paste's second attempt escaped as a bare channel error with no note at all; it now returns a described failure. And the send shortcut was posted without re-raising the composer, so a person who changed the foreground between the verifying read and the send took ⌘⇧D into their own window — it is raised again first, and if it cannot be raised nothing is pressed.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Listing Safari's tabs opened Safari.",
+            body: [
+              "`apple_safari_list_tabs` asked Safari for its windows by Apple Event, and an Apple Event launches an application that is not running, so a question about open tabs could put a browser on someone's screen. It now asks whether Safari is running first, which launches nothing. When it is not, the tool says so in words, with `running: false`, rather than returning an empty list that reads as a Safari with every window closed or as a missing permission.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_20_1: Release = Release(
@@ -356,98 +404,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_18_0: Release = Release(
-    version: "1.18.0",
-    date: "2026-09-07",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "What changed, readable after you have already updated.",
-            body: [
-              "Release notes existed in exactly one place a user could reach: the sheet Sparkle puts up while it asks permission to install. That sheet is gone the moment you press Install, which left the one person most likely to want them — somebody who has just replaced an app holding Full Disk Access — with nowhere to look but `CHANGELOG.md` on GitHub. Settings has a **What's New** pane now, beside Updates, because the two are halves of one question: what did this build change, and is there a newer one. General keeps the version and the build number, which answer _which_ build this is — the question you ask with a bug report open, not the one you ask after updating.",
-              "It is generated, not bundled. `make changelog` compiles the last five releases of `CHANGELOG.md` into `Changelog.swift` the same way `make surfaces` compiles `surfaces.json` into `SurfaceCatalog.swift`, and `changelog-check` fails CI if the two drift — so the notes in the app are the notes in the repository, or the build goes red. `### Internal` sections are dropped at generation time rather than hidden at render time, so repo-facing prose never reaches the binary. `[Unreleased]` is emitted separately and shown only in a Debug build, which matters here because CI asserts only that a `## [<version>]` section exists, not that it is the top one.",
-              "The parse behind it is shared with `changelog-notes.mjs`, which renders the appcast, so the two cannot disagree about what a bullet is — and the appcast's own guards, on a missing section and an empty one, stay where they were. `scripts/lib/changelog.test.mjs` is written against the shapes this file actually contains rather than tidy examples: a bullet with no bold headline, a headline with a code span inside it, prose between a `###` heading and its first bullet, and a freely named section like `### Note for 1.0.0 users`. One assertion is deliberately about code spans rather than the word \"undefined\", because 1.3.0's prose is _about_ a field that read back as `undefined` and the blunt check fails on a correct render.",
-              "Entries whose bold lead is a whole sentence get it pulled onto its own line; entries that bold only the subject and run on — \"…**filled the page**, because the text column pass ran to the limit\" — are left as one flowing paragraph, because splitting those puts a line break before a comma.",
-              "Anything that shipped since the version you last read is marked, and says so from the menu bar panel and the sidebar footer as well as in Settings — once, until you look. A fresh install is treated as caught up rather than greeted with five unread releases.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "The Simulator's tab bar was there all along; the walker could not see it.",
-            body: [
-              "`docs/simulator.md` recorded the tab bar as \"genuinely childless, not merely unwalked\": every children attribute on the `AXGroup` answers 0. That was measured correctly and concluded wrongly. Hit-testing the group's frame returns four `AXRadioButton`s, each naming that group as its `AXParent` and each taking `AXPress` — the edge is one-way, the children know the parent and the parent does not list them. A walk that descends only `AXChildren` stopped there and reported the walk complete, which is worse than a truncated one because nothing said so.",
-              "`AccessibilityDriver.walk` now sweeps the frame of a container whose children link is empty with `AXUIElementCopyElementAtPosition`, keeps every distinct hit whose parent chain leads back to the container, and walks those as its children; `apple_desktop_expand` and `apple_simulator_ui_tree` on such a handle do the same. The answer carries `recovered` when it happened. On the screen that found it the walk went from 8 elements to 17: the tab bar's four items and, from a navigation bar with the same broken link, a heading, a search field and three toolbar buttons. Measured across seven Mac apps first: a hit-test costs 0.3–3 ms and a whole tree holds at most five containers that qualify, so the sweep runs on every walk rather than behind a switch.",
-              "The part worth knowing as a caller: the recovered tab items carry their SF Symbol name as `id` (`leaf`, `checkmark.circle`, `calendar`, `cross.case`), which does not change with the device's language. WebDriverAgent gives the same tabs no identifier at all, only the translated label — so on this one point the Accessibility lane addresses more stably than the runner does. The tool descriptions say so, and the sentence that called the tab bar an empty container is gone.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Turning on \"Reach any application\" could remove Screen's capture tool rather than widen it.",
-            body: [
-              "The `surface` argument's `enum` IS the scope, so lifting the gate has to lift the constraint — but it did that by setting the key to `nil`, and `\"enum\": null` is not valid JSON Schema. A client that validates the tool list drops the whole tool instead of reporting the fault, so the switch meant to broaden capture silently took it away. The key is omitted now when the gate is off. `screen-check` asserts on the serialized bytes, because a `[String: Any]` lookup reads an absent key and a null one identically — which is exactly why the check it already had passed.",
-            ]),
-        ]),
-      Section(
-        name: "Security",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "`find_codes` says which service delivered a code, because `confidence` cannot.",
-            body: [
-              "iMessage is authenticated against an Apple ID; SMS and RCS sender IDs are not, and can be forged — the `From` on a text is a routing hint the sending network fills in, not a credential. `confidence` measures how cleanly a code was extracted from the message text, and all of that text is attacker-controlled, so a spoofed SMS naming a domain scores `high` exactly like a real one; `ageSeconds` does not help either, since a planted code is fresh. Every match now carries `service`, and the tool description says what it does and does not mean. Deliberately **not** done: filtering or down-ranking SMS matches. Genuine codes arrive overwhelmingly that way — this store holds 796 SMS handles against 265 iMessage and 15 RCS — so the point is not to discard them, it is not to treat a code as proof of anything.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_click`, `apple_desktop_type` and `apple_desktop_key` can name the application they are meant for.",
-            body: [
-              "An agent that opened an application and clicked into it, while the person at the keyboard had switched to their editor, clicked into the editor — and the driving notice said so, \"Cupertino is driving com.microsoft.VSCode\", because it was true. These three verbs post into the session and took no target, so the event went to whatever was in front.",
-              "`click` now takes `bundleId`, and `type` and `key` take `bundleId` or the `handle` of the field that was focused. The application is brought to the front and waited for; if it does not come, nothing is posted and the call says so, and the notice names the application meant. Leaving it out keeps the old behaviour. `hover` already worked this way and now shares the same refusal.",
-              "One scope hole closed along the way: bringing an application forward skipped the reach check when that application was already in front, so `hover` could drive an application outside \"Reach any application\" as long as it happened to be frontmost.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "A reply that was sent came back as a reply that failed, and the note argued against the wrong retry.",
-            body: [
-              "`apple_mail_reply_to_message` composed a reply correctly and it went out — and then reported `ok: false`, `bodyVerified: false`, \"the body did not go in\", and \"SOMETHING DID land in it that could not be read back, a retry would paste the reply in twice\". Every part of that was false. What actually happened is that the person at the keyboard pressed Send while the call was still running.",
-              "A composer that closes takes its Accessibility handle with it, so every read after that is a refusal — and `bodySize()` answered `-1` for a refusal while the caller compared it as an element count. `-1` against a real count reads as \"the body changed\", which is the signature of a paste that landed and cannot be matched. The same sentinel had a second edge in the System Events fallback: `-1` against `-1` reads as \"nothing landed\", which is the one branch that DISCARDS the composer, so an unreadable body could be thrown away rather than left on screen.",
-              "Blind and different are now different answers. Before blaming the body, both compose paths ask whether the composer window is still there at all — nothing in them ever closes one, so a missing composer was taken by whoever is using the Mac. The native path then asks Mail whether the message reached Sent and says so with the timestamp, because sending and discarding leave the same empty screen and guessing wrong in either direction is expensive: a sent reply called a failure invites a retry that sends it twice. The Sent lookup deliberately does not use the envelope index, which is rebuilt on a schedule and was 47 minutes stale when this was found.",
-              "Two smaller holes closed along the way. A composer that vanished before the paste's second attempt escaped as a bare channel error with no note at all; it now returns a described failure. And the send shortcut was posted without re-raising the composer, so a person who changed the foreground between the verifying read and the send took ⌘⇧D into their own window — it is raised again first, and if it cannot be raised nothing is pressed.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
