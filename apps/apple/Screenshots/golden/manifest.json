@@ -1,6 +1,23 @@
 {
   "accepts" : [
     {
+      "appshotVersion" : "0.10.0",
+      "argv" : [
+        "/Users/olivier/.local/bin/appshot",
+        "accept",
+        "--source",
+        "apps/apple/Screenshots/source",
+        "--golden",
+        "apps/apple/Screenshots/golden"
+      ],
+      "at" : "2026-09-10T14:15:55Z",
+      "count" : 7,
+      "cwd" : "/Users/olivier/Projects/apps/cupertino",
+      "host" : "oliviermacbookpro.local",
+      "pid" : 6714,
+      "user" : "olivier"
+    },
+    {
       "appshotVersion" : "0.9.0",
       "argv" : [
         "/Users/olivier/.local/bin/appshot",
@@ -152,66 +169,49 @@
       "host" : "oliviermacbookpro.local",
       "pid" : 35816,
       "user" : "olivier"
-    },
-    {
-      "appshotVersion" : "0.9.0",
-      "argv" : [
-        "/Users/olivier/.local/bin/appshot",
-        "accept",
-        "--source",
-        "apps/apple/Screenshots/source",
-        "--golden",
-        "apps/apple/Screenshots/golden"
-      ],
-      "at" : "2026-09-03T18:15:36Z",
-      "count" : 6,
-      "cwd" : "/Users/olivier/Projects/apps/cupertino",
-      "host" : "oliviermacbookpro.local",
-      "pid" : 1022,
-      "user" : "olivier"
     }
   ],
   "entries" : {
     "activity~dark.png" : {
-      "bytes" : 450287,
+      "bytes" : 454861,
       "height" : 1144,
-      "sha256" : "594b70f2eb9651e378a207456d662878480ba273d14982d9f400efe3cf78656b",
+      "sha256" : "1b2b46873702a91821c711ecccb47a7799f5530f1a9dc27809065bf74aab6b74",
       "width" : 2240
     },
     "chat~dark.png" : {
-      "bytes" : 368624,
+      "bytes" : 284676,
       "height" : 1144,
-      "sha256" : "c4506e61c3ea44e000d06bf1f7bf3d3307b0e16e20ea6ef7ece8a4e54f01dc99",
+      "sha256" : "4a84c70ee2b2d552f5b16395132840feb99a6a61711c7376ccabbf2063ee152e",
       "width" : 2240
     },
     "connections~dark.png" : {
-      "bytes" : 362250,
+      "bytes" : 362611,
       "height" : 1144,
-      "sha256" : "fb0b58fabf07577394ed206bf04c92d99971e075953c4ec4b8c7b5a54d7d1eef",
+      "sha256" : "71a084a2560d72c5b0fb66cb047719a637ead52f18e47938d86a5d666b712056",
       "width" : 2240
     },
     "prompt~dark.png" : {
-      "bytes" : 324391,
+      "bytes" : 334853,
       "height" : 1144,
-      "sha256" : "7e1b68c4f990ad9cdf4c92b89af532b6ad5b6b1e42d8f93697ca21bfa1a13609",
+      "sha256" : "b5cd6bac0c7839c8c03c1276c3d682da8730f044663db016ac81a173a0a9b10c",
       "width" : 2240
     },
     "settings~dark.png" : {
-      "bytes" : 353492,
+      "bytes" : 350406,
       "height" : 1144,
-      "sha256" : "7102436feb3f0ad804d768334969adc520776ed5a775c1002d9f75d9b03c0d03",
+      "sha256" : "32c91ebabd80c8fb2ffd6aa3de69a72d59ea7e9572b38ae5b1ba467e515ed4e8",
       "width" : 2240
     },
     "surface~dark.png" : {
-      "bytes" : 305031,
+      "bytes" : 302694,
       "height" : 1144,
-      "sha256" : "9284327b9dc58c73245027fea2cfcd5a9209b65ec9df35e682b0f30f396d47ab",
+      "sha256" : "f8b8104947357b26690a8d545c99437147a8feb662bc09ac36281ceb09cb4d86",
       "width" : 2240
     },
     "writes~dark.png" : {
-      "bytes" : 311843,
+      "bytes" : 307057,
       "height" : 1144,
-      "sha256" : "355c8329157b9aeb858ec18825dbb9477a7b0c41c254e44f2255c82667bfba1b",
+      "sha256" : "d4d66cc8d57db8c5e018999319ca3c74175cc93c194747780c43c34dd992c9d9",
       "width" : 2240
     }
   },
