@@ -12,6 +12,33 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **A reply that went in fine came back as "SOMETHING DID land in it that could not be read back",
+  and the same mix-up could have sent the wrong draft.** `apple_mail_reply_to_message` finds the
+  composer it opened by its title, and a composer from an earlier attempt was still open under the
+  same subject. Nothing in the native path closes one, so that is routine. Mail keeps composers as
+  tabs, and the leftover was readable before the new one, so the title matched it first. ⌘V went to
+  the composer Mail had in front, the read-back went to the leftover, and a correct reply was
+  reported as a failure that a retry would paste twice. With `sendNow`, the send shortcut would
+  have named the leftover as well.
+
+  The call now checks the window list it takes before opening anything. If a composer with the
+  reply's subject was already there, nothing is pasted, pressed or sent, and the note says to close
+  the extra window and deal with the older one first. Handles are minted per call, so there is
+  nothing to tell the two composers apart by, and guessing here means guessing which message to
+  send.
+
+- **Driven sequences blamed "someone using this Mac" for Cupertino's own keystrokes.** The idle
+  reading behind `apple_desktop_user_activity` counts synthetic events, deliberately, so a sequence
+  that posted a key always found input a moment ago. A native Mail reply reported "Someone used
+  this Mac 0.2s ago" for its own ⌘V and sent the reader looking for a person who was not there.
+  The tool now also returns `secondsSinceOwnInput`, the time since Cupertino last posted input, and
+  Mail and Maps only name interference when the input came after that. A host too old to report it
+  keeps the old comparison.
+
 ## [1.21.0] - 2026-09-10
 
 ### Added
