@@ -86,6 +86,17 @@ enum DesktopServer {
       "type": "string",
       "description": bundleIdDescription,
     ]
+    // `type` and `key` accept a handle for the application it names, not for the
+    // element: a keystroke still goes wherever the focus is. Said here, because a
+    // caller reading "handle" on a typing verb would reasonably expect the text
+    // to be put into that field.
+    let sessionHandleProperty: [String: Any] = [
+      "type": "string",
+      "description": "The field you focused, from apple_desktop_find_elements or "
+        + "apple_desktop_ui_tree. Its application is brought to the front first; the keystroke "
+        + "still goes wherever the focus is, so focus the field with apple_desktop_focus. "
+        + "Preferred over 'bundleId', since a handle already knows which application it belongs to.",
+    ]
     // One definition, because both the walk and the search honour it. Declaring
     // it on one and not the other is how a caller learns an argument exists by
     // having it silently ignored.
@@ -281,10 +292,15 @@ enum DesktopServer {
         "name": "apple_desktop_click",
         "description":
           "Click at a screen point. The fallback for a control that offers no press action — "
-          + "prefer apple_desktop_press whenever the element has one.",
+          + "prefer apple_desktop_press whenever the element has one. Pass 'bundleId' for the "
+          + "application the point belongs to: it is brought to the front first, and nothing is "
+          + "clicked if it does not come. Without it the click lands on whatever window is on top "
+          + "at that point, which may be one the person at the keyboard has since put there.",
         "inputSchema": [
           "type": "object",
-          "properties": ["x": ["type": "number"], "y": ["type": "number"]],
+          "properties": [
+            "x": ["type": "number"], "y": ["type": "number"], "bundleId": bundleIdProperty,
+          ],
           "required": ["x", "y"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
@@ -331,10 +347,17 @@ enum DesktopServer {
         "name": "apple_desktop_type",
         "description":
           "Type text into whatever has keyboard focus. Sent as unicode, so accented and "
-          + "non-Latin characters arrive intact.",
+          + "non-Latin characters arrive intact. Pass 'handle' (the field you focused) or "
+          + "'bundleId': that application is brought to the front first, and nothing is typed if "
+          + "it does not come. Without either, the text goes to whatever is frontmost, which may "
+          + "be someone else's window.",
         "inputSchema": [
           "type": "object",
-          "properties": ["text": ["type": "string"]],
+          "properties": [
+            "text": ["type": "string"],
+            "handle": sessionHandleProperty,
+            "bundleId": bundleIdProperty,
+          ],
           "required": ["text"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
@@ -343,7 +366,9 @@ enum DesktopServer {
         "name": "apple_desktop_key",
         "description":
           "Send one named key with optional modifiers — return, tab, escape, an arrow, a "
-          + "function key. Anything typeable should go through apple_desktop_type instead.",
+          + "function key. Anything typeable should go through apple_desktop_type instead. Pass "
+          + "'handle' or 'bundleId' exactly as for apple_desktop_type: that application is brought "
+          + "to the front first, and no key is sent if it does not come.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -352,6 +377,8 @@ enum DesktopServer {
               "type": "array", "items": ["type": "string"],
               "description": "command, shift, option, control, function.",
             ],
+            "handle": sessionHandleProperty,
+            "bundleId": bundleIdProperty,
           ],
           "required": ["key"],
         ],
@@ -375,8 +402,9 @@ enum DesktopServer {
         "name": "apple_desktop_activate",
         "description":
           "Bring an application to the front. Synthetic keystrokes land in whatever is "
-          + "frontmost, so apple_desktop_type and apple_desktop_key need this first or they "
-          + "type into someone else's window.",
+          + "frontmost. apple_desktop_click, apple_desktop_type and apple_desktop_key take a "
+          + "'bundleId' that does this for them and refuses when it did not take — prefer that to "
+          + "a separate call here, which the person at the keyboard can undo before the next one.",
         "inputSchema": [
           "type": "object",
           "properties": ["bundleId": bundleIdProperty],
@@ -661,8 +689,15 @@ enum DesktopServer {
         guard let x = args["x"] as? Double, let y = args["y"] as? Double else {
           return failure(id, "Both 'x' and 'y' are required.")
         }
-        try AccessibilityDriver.click(x: x, y: y)
-        return ok(id, ["clicked": [x, y]])
+        // A point has no owner, so the caller names one. Brought forward first
+        // because a click lands on whatever window is on top at that point, and
+        // the person at the keyboard may have put their own there since.
+        let owner = args["bundleId"] as? String
+        if let owner { try bringForward(owner, verb: "click", scope: scope) }
+        try AccessibilityDriver.click(x: x, y: y, announcing: owner)
+        var clicked: [String: Any] = ["clicked": [x, y]]
+        if let owner { clicked["target"] = owner }
+        return ok(id, clicked)
 
       case "apple_desktop_hover":
         let durationMs = min(5000, max(0, (args["durationMs"] as? Int) ?? 600))
@@ -689,14 +724,7 @@ enum DesktopServer {
         // that is behind sweeps the pointer across somebody else's window and
         // reports a success that never happened. Refused rather than posted, as
         // the simulator surface refuses for the same reason.
-        if let owner {
-          guard try AccessibilityDriver.activateAndWait(bundleId: owner, scope: scope) else {
-            return failure(
-              id,
-              "\(owner) did not come to the front, so nothing was posted — a hover is delivered "
-                + "only to the frontmost application.")
-          }
-        }
+        if let owner { try bringForward(owner, verb: "hover", scope: scope) }
         // Read BEFORE the sweep: afterwards it reports our own mouse-moved
         // events. The caller compares it against how long its sequence took, the
         // comparison apple_desktop_user_activity describes.
@@ -715,16 +743,24 @@ enum DesktopServer {
         guard let text = args["text"] as? String else {
           return failure(id, "The 'text' argument is required.")
         }
-        try AccessibilityDriver.type(text: text)
-        return ok(id, ["typed": text.count])
+        let owner = try sessionTarget(args, scope: scope)
+        if let owner { try bringForward(owner, verb: "text", scope: scope) }
+        try AccessibilityDriver.type(text: text, announcing: owner)
+        var typed: [String: Any] = ["typed": text.count]
+        if let owner { typed["target"] = owner }
+        return ok(id, typed)
 
       case "apple_desktop_key":
         guard let key = args["key"] as? String else {
           return failure(id, "The 'key' argument is required.")
         }
         let modifiers = (args["modifiers"] as? [String]) ?? []
-        try AccessibilityDriver.key(key, modifiers: modifiers)
-        return ok(id, ["key": key, "modifiers": modifiers])
+        let owner = try sessionTarget(args, scope: scope)
+        if let owner { try bringForward(owner, verb: "key", scope: scope) }
+        try AccessibilityDriver.key(key, modifiers: modifiers, announcing: owner)
+        var sent: [String: Any] = ["key": key, "modifiers": modifiers]
+        if let owner { sent["target"] = owner }
+        return ok(id, sent)
 
       case "apple_desktop_raise_window":
         guard let handle = args["handle"] as? String else {
@@ -773,6 +809,42 @@ enum DesktopServer {
       }
     } catch {
       return failed(id, error)
+    }
+  }
+
+  // ─── the application a session verb is meant for ───────────────────────────
+
+  /// Which application `type` or `key` is meant for, or nil when the caller
+  /// named none — in which case the event goes wherever it always went.
+  ///
+  /// A handle wins over a bundle id, as in `hover`: the store knows which
+  /// application the handle came from, and a caller can be wrong. A stale or
+  /// out-of-scope handle is a refusal here, before anything is posted, rather
+  /// than a reason to fall back on the bundle id and type anyway.
+  private static func sessionTarget(
+    _ args: [String: Any], scope: AccessibilityDriver.Scope
+  ) throws -> String? {
+    if let handle = args["handle"] as? String {
+      return try AccessibilityDriver.owner(of: handle, scope: scope)
+    }
+    return args["bundleId"] as? String
+  }
+
+  /// Bring `owner` to the front and WAIT for it, refusing when it did not come.
+  ///
+  /// The rule `SimulatorServer.front` enforces for its one application, for the
+  /// same measured reason: a click, a keystroke and a pointer sweep are posted to
+  /// the session, and the session delivers them to whatever is in front. An agent
+  /// driving the application it just opened cannot see that the person at the
+  /// keyboard has since switched to their editor — so the event landed there,
+  /// and the driving notice, reading the frontmost application, honestly said so.
+  private static func bringForward(
+    _ owner: String, verb: String, scope: AccessibilityDriver.Scope
+  ) throws {
+    guard try AccessibilityDriver.activateAndWait(bundleId: owner, scope: scope) else {
+      throw AccessibilityDriver.Failure.refused(
+        "\(owner) did not come to the front, so nothing was posted — the \(verb) would have "
+          + "landed in whatever is frontmost, which is someone else's window.")
     }
   }
 
@@ -911,6 +983,16 @@ enum DesktopServer {
       Asking for window 0 is how a search for a control that lives in a popover finds
       nothing at all.
       \(simulator)
+      ## Name the application you are typing into
+
+      `apple_desktop_click`, `apple_desktop_type` and `apple_desktop_key` post into the
+      session, and the session delivers them to whatever is in front — which is not
+      necessarily the application you opened a moment ago, because somebody may be using
+      this Mac. Pass `bundleId` (or, for type and key, the `handle` of the field you
+      focused) and that application is brought to the front first; if it does not come,
+      nothing is posted and the call says so. Leave it out and the event goes wherever the
+      focus happens to be.
+
       ## Handles go stale
 
       They point at elements in the window as it was. If a press returns a stale-handle

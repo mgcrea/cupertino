@@ -14,6 +14,23 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **`apple_desktop_click`, `apple_desktop_type` and `apple_desktop_key` can name the application they
+  are meant for.** An agent that opened an application and clicked into it, while the person at the
+  keyboard had switched to their editor, clicked into the editor — and the driving notice said so,
+  "Cupertino is driving com.microsoft.VSCode", because it was true. These three verbs post into the
+  session and took no target, so the event went to whatever was in front.
+
+  `click` now takes `bundleId`, and `type` and `key` take `bundleId` or the `handle` of the field that
+  was focused. The application is brought to the front and waited for; if it does not come, nothing
+  is posted and the call says so, and the notice names the application meant. Leaving it out keeps
+  the old behaviour. `hover` already worked this way and now shares the same refusal.
+
+  One scope hole closed along the way: bringing an application forward skipped the reach check when
+  that application was already in front, so `hover` could drive an application outside "Reach any
+  application" as long as it happened to be frontmost.
+
 ### Fixed
 
 - **A reply that was sent came back as a reply that failed, and the note argued against the wrong

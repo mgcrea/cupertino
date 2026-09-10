@@ -398,6 +398,29 @@ struct DesktopCheck {
       "activating an application that is not running does not light the indicator",
       DriveActivity.current() != "com.example.absent")
 
+    // The same rule for the session verbs, which name their target now. Each of
+    // these is refused BEFORE an event is built — a stale handle, a target that
+    // is not running, a target outside the reach — and that is the only reason
+    // they are safe to run here: a shell that holds Accessibility would
+    // otherwise post them into whatever the person has in front.
+    let (staleText, staleError) = callText(
+      "apple_desktop_type", ["text": "", "handle": "e999999"], writes: true, anyApp: true)
+    check(
+      "type naming a stale handle is refused rather than typed into whatever is in front",
+      staleError && staleText.contains("no longer exists"))
+    let (_, absentError) = callText(
+      "apple_desktop_key", ["key": "return", "bundleId": "com.example.absent"], writes: true,
+      anyApp: true)
+    check(
+      "key naming an application that is not running is refused and lights no indicator",
+      absentError && DriveActivity.current() != "com.example.absent")
+    let (reachText, reachError) = callText(
+      "apple_desktop_click", ["x": 0.0, "y": 0.0, "bundleId": "com.microsoft.VSCode"],
+      writes: true, anyApp: false)
+    check(
+      "click naming an application outside the reach is refused by the switch's name",
+      reachError && reachText.contains("Reach any application"))
+
     // The indicator is state, so it has to lapse on its own. There is no "the
     // agent has finished" signal — a driving sequence is a burst of calls with
     // gaps — so an explicit end would leave it lit forever the first time a
@@ -460,6 +483,33 @@ struct DesktopCheck {
         .first { $0["name"] as? String == "apple_desktop_hover" }
         .flatMap { $0["inputSchema"] as? [String: Any] }
         .flatMap { $0["required"] as? [String] } == nil)
+
+    // click, type and key used to take no target at all, which is how a click
+    // meant for the application an agent had just opened landed in whatever the
+    // person had switched to. The target stays optional — leaving it out is the
+    // old behaviour, unchanged — so `required` must not grow.
+    let sessionSchemas =
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .reduce(into: [String: [String: Any]]()) { out, tool in
+        if let name = tool["name"] as? String, let schema = tool["inputSchema"] as? [String: Any] {
+          out[name] = schema
+        }
+      }
+    for (name, declared, required) in [
+      ("apple_desktop_click", ["x", "y", "bundleId"], ["x", "y"]),
+      ("apple_desktop_type", ["text", "handle", "bundleId"], ["text"]),
+      ("apple_desktop_key", ["key", "modifiers", "handle", "bundleId"], ["key"]),
+    ] {
+      let schema = sessionSchemas[name]
+      check(
+        "\(name) declares the application it is meant for",
+        Set(declared).isSubset(
+          of: Set(((schema?["properties"] as? [String: Any]) ?? [:]).keys)))
+      check(
+        "\(name) requires no more than it did, so naming the application stays optional",
+        (schema?["required"] as? [String]) == required)
+    }
     // Reached with writes ON and no grant, so it returns before any event is
     // built: this asserts the argument check, not the posting path.
     let (hoverText, hoverError) = callText("apple_desktop_hover", [:], writes: true)

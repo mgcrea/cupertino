@@ -183,6 +183,17 @@ enum AccessibilityDriver {
     return entry
   }
 
+  /// The application a handle belongs to, with the same scope check.
+  ///
+  /// For `type` and `key`, which post into the SESSION rather than at an
+  /// element: the handle is not what receives the event, it names which
+  /// application has to be frontmost when the event arrives. Taken from the
+  /// store rather than from the caller for the reason `hover` gives — the store
+  /// knows where the handle came from, and a caller can be wrong.
+  static func owner(of handle: String, scope: Scope) throws -> String {
+    try resolveEntry(handle, scope: scope).bundleId
+  }
+
   // ─── raw reads ─────────────────────────────────────────────────────────────
 
   /// A hung app must not hang a tool call. Measured as available; without it
@@ -983,6 +994,10 @@ enum AccessibilityDriver {
   static func activateAndWait(bundleId: String, scope: Scope, timeout: TimeInterval = 2)
     throws -> Bool
   {
+    // Scope before the early return. It used to come after, inside `activate`,
+    // so an application outside this surface's reach passed unrefused whenever
+    // it happened to be in front — and the caller then posted into it.
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     if frontmostBundleId() == bundleId { return true }
     try activate(bundleId: bundleId, scope: scope)
     let started = Date()

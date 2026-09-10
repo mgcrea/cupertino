@@ -679,6 +679,45 @@ same before/after ambiguity `apple_desktop_user_activity` already tells callers 
 comparing the seconds against how long their own sequence took — which is why `hover` returns the
 reading rather than only acting on it.
 
+## `click`, `type` and `key` name their target, 2026-09-10
+
+The report: an agent opened an application, clicked into it, and the notice read _Cupertino is
+driving com.microsoft.VSCode_ — the editor the person had switched to in the meantime.
+
+**The notice was telling the truth.** These three verbs took no target. They post a `CGEvent` to the
+session, the session hands it to whatever is frontmost, and `announceSessionInput` named that
+application because it had nothing else to go on. The click really did land in the editor.
+
+This had already been fixed three times, each for one caller: `hover` takes a `bundleId` and refuses
+when `activateAndWait` does not take; `SimulatorServer.front` does the same for Simulator.app; and
+Mail's send path raises the composer again before ⌘⇧D. The session verbs were the ones left.
+
+**Now** `click` takes `bundleId`, and `type` and `key` take `bundleId` or `handle` — a handle wins,
+because the store knows which application it came from. The application is brought to the front and
+**waited for**, and when it does not come nothing is posted. The name goes to the notice, so it names
+the application meant rather than a frontmost read. Optional: leaving it out is the old behaviour,
+unchanged.
+
+**A scope hole closed on the way.** `activateAndWait` returned early when the application was already
+in front, and its scope check lived inside `activate`, below that return. An application outside this
+surface's reach therefore passed unrefused whenever it happened to be frontmost — `hover` has had that
+since it shipped. The guard now comes first. `desktop-check` does not pin the ordering: without a grant
+`frontmostBundleId()` is nil and the early return never fires, and with one the outcome depends on
+what is in front.
+
+What it does not do:
+
+- **A handle names the application, not the element.** The keystroke still goes wherever the focus is
+  inside it. Whether that is still the field is the `AXFocusedUIElement` question above, which has a
+  known false negative, so it is not checked here.
+- **Activation is not gated on the person**, unlike `hover`. Bringing an application forward while
+  somebody types takes their focus. That is deliberate: the alternative was the keystroke landing in
+  their window.
+- **The borrowers pass nothing yet.** `packages/mail` and `packages/maps` call `key` and `type` without
+  a target; Mail raises its own composer.
+- **A call with no target** still names the frontmost application through `NSWorkspace`, which lags an
+  activation.
+
 ## Still open
 
 - **Whether the sweep needs to be a sweep.** `hover` walks the pointer over `durationMs` (default 600) because that is the shape proven by hand against a SwiftUI chart — 24 steps 25 ms apart.
