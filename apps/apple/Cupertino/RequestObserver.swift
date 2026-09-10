@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import os
 
@@ -17,6 +18,10 @@ import os
 /// a tool name, a prompt name, a resource URI — and, for a surface that records
 /// them, the arguments. Prose is blanked unless the surface asks for it. See
 /// `CallCapture`, which owns both rules.
+///
+/// It is also where a Node call that changes the screen lights the notice,
+/// because it is the one place the app sees every such call before the child
+/// acts on it. `VisibleTools` says which calls those are.
 final class RequestObserver {
   private let surface: Surface
   private let session: UUID
@@ -38,6 +43,21 @@ final class RequestObserver {
   /// stale request is better than losing it for a live one.
   private let waiting = OSAllocatedUnfairLock<[(key: String, row: UUID)]>(initialState: [])
   private static let waitingLimit = 256
+
+  /// Visible calls still running, and whether a renewal is already scheduled.
+  ///
+  /// Locked for the same two-thread reason as `waiting`. Kept apart from it
+  /// because this one is filled whatever the capture mode: the notice is not
+  /// part of the log, and switching recording off must not switch it off.
+  private let visible = OSAllocatedUnfairLock(initialState: VisibleState())
+
+  private struct VisibleState {
+    var flight = VisibleTools.InFlight()
+    var renewing = false
+  }
+
+  /// Under the linger, so a held notice never flickers between renewals.
+  private static let renewEvery: TimeInterval = 1
 
   /// Whether this surface records anything beyond names, resolved once per
   /// connection rather than per frame — a `UserDefaults` read on a pump thread
@@ -71,8 +91,13 @@ final class RequestObserver {
   /// log is quiet on a surface set to arguments only. Making it always-on means
   /// paying the parse on every response, which is a trade worth making
   /// deliberately rather than by accident.
+  ///
+  /// The one other reason to parse: a visible call is waiting for its reply, so
+  /// the notice it holds up can be let go. That is rare and brief, so the parse
+  /// is paid only while it is true.
   func answered(_ chunk: Data) {
-    guard mode >= .argumentsAndResults else { return }
+    let holding = !visible.withLock { $0.flight.isEmpty }
+    guard mode >= .argumentsAndResults || holding else { return }
     for line in responses.lines(chunk) { reply(line) }
   }
 
@@ -82,6 +107,9 @@ final class RequestObserver {
       CallCapture.isResponse(object),
       let key = CallCapture.idKey(object["id"])
     else { return }
+
+    visible.withLock { $0.flight.answered(key) }
+    guard mode >= .argumentsAndResults else { return }
 
     let row = waiting.withLock { table -> UUID? in
       guard let index = table.firstIndex(where: { $0.key == key }) else { return nil }
@@ -138,6 +166,8 @@ final class RequestObserver {
       }
 
     if let identifier {
+      if method == "tools/call" { light(identifier, id: object["id"]) }
+
       let id = session
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.counted(id: id) }
 
@@ -168,5 +198,56 @@ final class RequestObserver {
     }
 
     hostLog(surface.id, .info, method)
+  }
+
+  // ─── the notice ────────────────────────────────────────────────────────────
+
+  /// Light the notice for a call that changes the screen, and hold it until
+  /// the call is answered.
+  ///
+  /// Before the child sees the request, which is the point: the notice is
+  /// meant to be up by the time Mail comes forward, not after.
+  private func light(_ tool: String, id: Any?) {
+    guard let listed = VisibleTools.notice(forTool: tool), let bundleId = surface.bundleID
+    else { return }
+    // Asked only for a launching tool, so an ordinary call pays no AppKit call.
+    let running =
+      listed == .launching
+      ? !NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).isEmpty
+      : true
+    guard let notice = VisibleTools.notice(forTool: tool, appRunning: running) else { return }
+
+    DriveActivity.inform(bundleId, notice)
+
+    guard let key = CallCapture.idKey(id) else { return }
+    let schedule = visible.withLock { state -> Bool in
+      state.flight.started(key, bundleId: bundleId, notice: notice, at: Date())
+      guard !state.renewing else { return false }
+      state.renewing = true
+      return true
+    }
+    if schedule { renewLater() }
+  }
+
+  private func renewLater() {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.renewEvery) {
+      [weak self] in self?.renew()
+    }
+  }
+
+  /// Push every held notice forward, or stop once nothing is held.
+  private func renew() {
+    let now = Date()
+    let held = visible.withLock { state -> [(bundleId: String, notice: VisibleTools.Notice)]? in
+      state.flight.prune(at: now)
+      guard !state.flight.isEmpty else {
+        state.renewing = false
+        return nil
+      }
+      return state.flight.live(at: now)
+    }
+    guard let held else { return }
+    for call in held { DriveActivity.inform(call.bundleId, call.notice) }
+    renewLater()
   }
 }

@@ -270,6 +270,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/AppInfo.swift \
@@ -293,6 +294,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/AppInfo.swift \
@@ -310,6 +312,7 @@ simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by 
 	@swiftc -O -o apps/apple/.build/simulator-spike \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/LogStore.swift \
@@ -365,6 +368,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
 		apps/apple/Cupertino/Permissions.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
@@ -383,6 +387,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/LogStore.swift \
 		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 

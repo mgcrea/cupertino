@@ -587,6 +587,121 @@ struct UnitCheck {
     check("a row that does not match at all is not", !order.matchIsHidden("absent", preview: 160))
     check("an empty query flags nothing", !buried.matchIsHidden("", preview: 160))
 
+    print("\nVisible tools: which Node calls light a notice")
+
+    // The warn tier is the orange card that asks for hands off the keyboard, so
+    // it belongs only to calls that take the foreground and post input. Mail's
+    // compose paths do: `stripCitation` raises Mail and sends Cmd-A plus menu
+    // clicks through System Events, and the fallback reply pastes with Cmd-V.
+    for tool in [
+      "apple_mail_send_message", "apple_mail_update_draft",
+      "apple_mail_reply_to_message", "apple_mail_forward_message",
+    ] {
+      check("\(tool) warns", VisibleTools.notice(forTool: tool) == .driving)
+    }
+
+    // The screen changes, but the keyboard and mouse stay the user's.
+    check(
+      "open_url is a page opening",
+      VisibleTools.notice(forTool: "apple_safari_open_url") == .showing(.openingPage))
+    check(
+      "a page click is a click",
+      VisibleTools.notice(forTool: "apple_safari_click") == .showing(.clickingPage))
+    check(
+      "a fill is a fill",
+      VisibleTools.notice(forTool: "apple_safari_fill") == .showing(.fillingPage))
+    check(
+      "a scroll is a scroll",
+      VisibleTools.notice(forTool: "apple_safari_scroll") == .showing(.scrollingPage))
+    check(
+      "a Maps favourite opens a place",
+      VisibleTools.notice(forTool: "apple_maps_add_favorite") == .showing(.openingPlace))
+
+    // Writes that reach an app by Apple Event, which starts it when it is quit.
+    // The observer only shows these when the app was not running, so a run of
+    // Notes writes does not flash a card each time.
+    for tool in [
+      "apple_notes_create_note", "apple_notes_update_note", "apple_notes_add_attachment",
+      "apple_notes_move_note", "apple_notes_delete_notes",
+      "apple_reminders_create_reminder", "apple_reminders_update_reminder",
+      "apple_reminders_complete_reminders", "apple_reminders_move_reminders",
+      "apple_reminders_delete_reminders",
+      "apple_calendar_create_event", "apple_calendar_update_event", "apple_calendar_delete_events",
+      "apple_contacts_create_contact", "apple_contacts_update_contact",
+      "apple_messages_send_message", "apple_mail_check_for_new_mail",
+      "apple_safari_add_reading_list_item",
+    ] {
+      check("\(tool) may launch", VisibleTools.notice(forTool: tool) == .launching)
+    }
+
+    // Reads change nothing on screen.
+    for tool in ["apple_safari_list_tabs", "apple_mail_list_messages", "apple_notes_get_note"] {
+      check("\(tool) is silent", VisibleTools.notice(forTool: tool) == nil)
+    }
+    // These already light the card through the desktop driver they borrow, and
+    // the in-process surfaces never pass through this table at all.
+    check(
+      "Maps save_place is left to its presses",
+      VisibleTools.notice(forTool: "apple_maps_save_place") == nil)
+    check(
+      "a desktop verb is not listed here",
+      VisibleTools.notice(forTool: "apple_desktop_press") == nil)
+    // The observer unwraps a lazy dispatcher before asking, so the wrapper's own
+    // name must not match anything.
+    check(
+      "a lazy dispatcher is not a tool",
+      VisibleTools.notice(forTool: "apple_mail_call_write_tool") == nil)
+    check("an unknown name is silent", VisibleTools.notice(forTool: "apple_mail_nope") == nil)
+    check("and so is an empty one", VisibleTools.notice(forTool: "") == nil)
+
+    print("\nVisible tools: a launch notice only for an app that was not running")
+
+    // A run of Notes writes against a Notes that is already open changes nothing
+    // anybody can see, and a card flashing on each one would teach people to
+    // ignore the card.
+    check(
+      "a launching write to a running app is silent",
+      VisibleTools.notice(forTool: "apple_notes_create_note", appRunning: true) == nil)
+    check(
+      "and lights when the app was quit",
+      VisibleTools.notice(forTool: "apple_notes_create_note", appRunning: false) == .launching)
+    // The other tiers change the screen whether or not the app was running.
+    check(
+      "a running app does not silence driving",
+      VisibleTools.notice(forTool: "apple_mail_send_message", appRunning: true) == .driving)
+    check(
+      "nor a page change",
+      VisibleTools.notice(forTool: "apple_safari_open_url", appRunning: true)
+        == .showing(.openingPage))
+
+    print("\nVisible tools: holding the notice while a call is in flight")
+
+    // Mail's send spends seconds inside stripCitation, longer than the linger,
+    // so the observer keeps the card lit until the reply arrives.
+    let t0 = Date(timeIntervalSince1970: 1_756_000_000)
+    var flight = VisibleTools.InFlight()
+    check("nothing is in flight to begin with", flight.isEmpty)
+    flight.started("i1", bundleId: "com.apple.mail", notice: .driving, at: t0)
+    check("a started call is in flight", !flight.isEmpty)
+    let held = flight.live(at: t0.addingTimeInterval(10))
+    check(
+      "and is held while it runs",
+      held.count == 1 && held.first?.bundleId == "com.apple.mail" && held.first?.notice == .driving)
+    flight.answered("i1")
+    check("the reply releases it", flight.isEmpty)
+
+    // A server that never answers must not hold the orange card up forever.
+    var stuck = VisibleTools.InFlight()
+    stuck.started("i2", bundleId: "com.apple.Safari", notice: .showing(.openingPage), at: t0)
+    check(
+      "a call past the cap is no longer held",
+      stuck.live(at: t0.addingTimeInterval(VisibleTools.InFlight.cap + 1)).isEmpty)
+    stuck.prune(at: t0.addingTimeInterval(VisibleTools.InFlight.cap + 1))
+    check("and pruning forgets it", stuck.isEmpty)
+    // An answer for a call this never saw, a read, say, is not an error.
+    stuck.answered("i-unknown")
+    check("an unknown reply changes nothing", stuck.isEmpty)
+
     print("\nWhich clients are fronted")
 
     // The table. Two entries, and both were measured rather than assumed.

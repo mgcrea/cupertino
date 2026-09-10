@@ -329,6 +329,32 @@ struct SimulatorCheck {
     if case .absent = CoreSimulatorCatalog.devices(home: nowhere) { absent = true }
     check("a Mac with no CoreSimulator directory reads as absent, not as empty", absent)
 
+    // ─── the notice's two tiers ─────────────────────────────────────────────
+    // Last on purpose: `record` lights the indicator for `linger` seconds, and
+    // every refusal above asserts that nothing is lit.
+    //
+    // `current()` is what hover's idle test and both diagnostics read, and it
+    // means "synthetic input is being posted". A Safari tab changing is not
+    // that, so an info notice must leave it alone or hover would start refusing
+    // on the strength of somebody else's page load.
+    DriveActivity.inform("com.apple.Safari", .showing(.openingPage))
+    check("an info notice is not driving", DriveActivity.current() == nil)
+    check(
+      "and is reported as what it is",
+      DriveActivity.notice()?.target == "com.apple.Safari"
+        && DriveActivity.notice()?.kind == .showing(.openingPage))
+
+    DriveActivity.inform("com.apple.mail", .driving)
+    check("a driving notice from the table is driving", DriveActivity.current() == "com.apple.mail")
+
+    // The orange card asks for hands off the keyboard. A launch landing in the
+    // middle of a sequence must not swap it for one saying "keep working".
+    DriveActivity.inform("com.apple.Notes", .launching)
+    check(
+      "info does not replace a live driving notice",
+      DriveActivity.notice()?.kind == .driving
+        && DriveActivity.notice()?.target == "com.apple.mail")
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
   }

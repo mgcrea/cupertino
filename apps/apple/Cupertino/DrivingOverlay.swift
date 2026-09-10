@@ -53,19 +53,20 @@ final class DrivingOverlay {
   static let shared = DrivingOverlay()
 
   private var panel: NSPanel?
-  /// What the visible panel currently names, so a burst of presses against one
-  /// application does not rebuild and re-place it on every call.
-  private var showing: String?
+  /// What the visible panel currently says, so a burst of presses against one
+  /// application does not rebuild and re-place it on every call. The kind is
+  /// part of it: an info card becoming a driving one must redraw.
+  private var showing: (bundleId: String, kind: VisibleTools.Notice)?
 
   private static let size = NSSize(width: 320, height: 60)
   private static let margin: CGFloat = 20
 
-  func show(bundleId: String, name: String) {
+  func show(bundleId: String, name: String, kind: VisibleTools.Notice) {
     let panel = panel ?? make()
     self.panel = panel
-    guard showing != bundleId else { return }
-    showing = bundleId
-    panel.contentView = NSHostingView(rootView: DrivingCard(name: name))
+    guard showing?.bundleId != bundleId || showing?.kind != kind else { return }
+    showing = (bundleId, kind)
+    panel.contentView = NSHostingView(rootView: DrivingCard(name: name, kind: kind))
     place(panel, near: bundleId)
     // NEVER makeKeyAndOrderFront — see the focus rule above.
     panel.orderFrontRegardless()
@@ -145,24 +146,79 @@ final class DrivingOverlay {
   }
 }
 
+/// What an info notice says, shared by the card and the popover row.
+///
+/// Only the info tier lives here. The driving wording is written out in each
+/// view as it always was, so the one notice that asks for hands off the
+/// keyboard cannot change by way of a table edit.
+extension VisibleTools.Notice {
+  var infoSymbol: String {
+    switch self {
+    case .driving: "cursorarrow.rays"
+    case .showing(.openingPage): "safari"
+    case .showing(.clickingPage): "cursorarrow.click"
+    case .showing(.fillingPage): "character.cursor.ibeam"
+    case .showing(.scrollingPage): "arrow.up.and.down"
+    case .showing(.openingPlace): "map"
+    case .launching: "arrow.up.forward.app"
+    }
+  }
+
+  func infoTitle(_ name: String) -> String {
+    switch self {
+    case .launching: "Cupertino opened \(name)"
+    default: "Cupertino is using \(name)"
+    }
+  }
+
+  var infoDetail: String {
+    switch self {
+    case .driving: "Please don't use the keyboard or mouse."
+    case .showing(.openingPage): "Opening a page. You can keep working."
+    case .showing(.clickingPage): "Clicking in a page. You can keep working."
+    case .showing(.fillingPage): "Filling in a form. You can keep working."
+    case .showing(.scrollingPage): "Scrolling a page. You can keep working."
+    case .showing(.openingPlace): "Opening a place in the background. You can keep working."
+    case .launching: "It was not running. You can keep working."
+    }
+  }
+}
+
 /// The notice itself, saying the same thing the popover's `DrivingNotice` says.
 ///
 /// Deliberately small and quiet: it has to be readable at a glance from across a
 /// desk without covering what the user was reading.
 private struct DrivingCard: View {
   let name: String
+  let kind: VisibleTools.Notice
 
   var body: some View {
     HStack(spacing: 10) {
-      Circle()
-        .fill(.orange)
-        .frame(width: 10, height: 10)
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Cupertino is driving \(name)")
+      if kind == .driving {
+        Circle()
+          .fill(.orange)
+          .frame(width: 10, height: 10)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Cupertino is driving \(name)")
+            .font(.callout.weight(.semibold))
+          Text("Please don't use the keyboard or mouse.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      } else {
+        // Same footprint as the driving card, so a tier change does not move
+        // anything; the glyph and its colour are what say "no need to stop".
+        Image(systemName: kind.infoSymbol)
+          .foregroundStyle(.blue)
           .font(.callout.weight(.semibold))
-        Text("Please don't use the keyboard or mouse.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          .frame(width: 16)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(kind.infoTitle(name))
+            .font(.callout.weight(.semibold))
+          Text(kind.infoDetail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
       Spacer(minLength: 0)
     }

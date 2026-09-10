@@ -233,7 +233,7 @@ struct MenuBarLabel: View {
   private var driving = DriveActivity.shared
 
   var body: some View {
-    Image(sessions.live.isEmpty && !driving.isDriving ? "MenuBarIcon" : "MenuBarIconActive")
+    Image(sessions.live.isEmpty && !driving.isActive ? "MenuBarIcon" : "MenuBarIconActive")
       // The asset carries template-rendering-intent, but SwiftUI resolves an
       // Image by name without consulting it, so a plain Image ships black-on-
       // black in a dark menu bar. AppKit does the tinting; this only says it may.
@@ -251,8 +251,10 @@ struct MenuBarLabel: View {
   }
 
   private var accessibilityLabel: String {
-    if let name = driving.displayName {
-      return "Cupertino — driving \(name), do not use the keyboard or mouse"
+    if let name = driving.displayName, let kind = driving.kind {
+      return kind == .driving
+        ? "Cupertino — driving \(name), do not use the keyboard or mouse"
+        : "Cupertino — \(kind.infoTitle(name))"
     }
     return sessions.live.isEmpty ? "Cupertino" : "Cupertino — a client is connected"
   }
@@ -1124,15 +1126,26 @@ struct DrivingNotice: View {
   private var driving = DriveActivity.shared
 
   var body: some View {
-    if let name = driving.displayName {
+    if let name = driving.displayName, let kind = driving.kind {
       VStack(alignment: .leading, spacing: 4) {
-        Label("Driving \(name)", systemImage: "cursorarrow.rays")
-          .foregroundStyle(.orange)
-          .font(.callout.weight(.medium))
-        Text("Please don't use the keyboard or mouse until this finishes.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        if kind == .driving {
+          Label("Driving \(name)", systemImage: "cursorarrow.rays")
+            .foregroundStyle(.orange)
+            .font(.callout.weight(.medium))
+          Text("Please don't use the keyboard or mouse until this finishes.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          // The info tier: the screen is changing, the keyboard stays theirs.
+          Label(kind.infoTitle(name), systemImage: kind.infoSymbol)
+            .foregroundStyle(.blue)
+            .font(.callout.weight(.medium))
+          Text(kind.infoDetail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
       }
       Divider()
     }

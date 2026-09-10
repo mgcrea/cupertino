@@ -18,6 +18,16 @@ import Observation
 /// Accessibility, which is the wider grant of the two, so this is that
 /// indicator.
 ///
+/// ## Two tiers, and why driving outranks the other
+///
+/// Some Node tools change the screen without posting any input: a Safari tab
+/// switches, Notes starts. Those deserve a notice too, but not the one asking
+/// for hands off the keyboard. So an INFO notice lives beside the driving state
+/// rather than inside it: `current()` still means "synthetic input is being
+/// posted", which is what hover's idle test and both diagnostics read, and a
+/// launch landing mid-sequence cannot swap the orange card for one that says
+/// keep working. `VisibleTools` decides which tier a Node call gets.
+///
 /// ## Why it expires rather than being switched off
 ///
 /// A driving sequence is a burst of calls with gaps between them, not a session
@@ -39,6 +49,9 @@ final class DriveActivity {
   /// with the lock rather than a hop — a diagnostics call that awaited the main
   /// actor would block on whatever the UI happened to be doing.
   private nonisolated(unsafe) static var state: (target: String, until: Date)?
+  /// The info tier, kept apart so it can never answer `current()`.
+  private nonisolated(unsafe) static var info:
+    (target: String, kind: VisibleTools.Notice, until: Date)?
   private static let stateLock = NSLock()
 
   /// What is being driven right now, for callers off the main actor.
@@ -53,7 +66,29 @@ final class DriveActivity {
     stateLock.lock()
     state = (bundleId, Date().addingTimeInterval(linger))
     stateLock.unlock()
-    Task { @MainActor in shared.began(bundleId) }
+    Task { @MainActor in shared.began(bundleId, .driving) }
+  }
+
+  /// Light the notice a `VisibleTools` entry asks for.
+  ///
+  /// `.driving` is `record` under another name, so a caller holding a table
+  /// answer does not have to branch on it.
+  nonisolated static func inform(_ bundleId: String, _ notice: VisibleTools.Notice) {
+    guard notice != .driving else { return record(bundleId) }
+    stateLock.lock()
+    info = (bundleId, notice, Date().addingTimeInterval(linger))
+    stateLock.unlock()
+    Task { @MainActor in shared.began(bundleId, notice) }
+  }
+
+  /// What the notice is saying right now, driving first.
+  nonisolated static func notice() -> (target: String, kind: VisibleTools.Notice)? {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    let now = Date()
+    if let state, now < state.until { return (state.target, .driving) }
+    if let info, now < info.until { return (info.target, info.kind) }
+    return nil
   }
 
   /// How long after the last driving verb the indicator stays lit.
@@ -65,23 +100,32 @@ final class DriveActivity {
   static let linger: TimeInterval = 4
 
   private(set) var target: String?
+  private(set) var kind: VisibleTools.Notice?
   private var expiry: Date?
   private var timer: Timer?
 
-  /// The application being driven, or nil when nothing is.
-  var isDriving: Bool { target != nil }
+  /// Whether synthetic input is being posted, which is what the orange card says.
+  var isDriving: Bool { kind == .driving }
+
+  /// Whether any notice is up, of either tier.
+  var isActive: Bool { target != nil }
 
   /// Called by every driving verb. Cheap on purpose: this is on the path of a
   /// press, and a press that waited on the UI to draw an indicator would be a
   /// worse trade than no indicator.
-  func began(_ bundleId: String) {
+  func began(_ bundleId: String, _ notice: VisibleTools.Notice) {
+    // Info never takes the card from a driving notice that is still live. It
+    // does not push the deadline either, so the orange card ends when the
+    // driving does.
+    if notice != .driving, isDriving, let expiry, Date() < expiry { return }
     target = bundleId
+    kind = notice
     expiry = Date().addingTimeInterval(Self.linger)
     // The on-screen notice, which is the indicator that actually shows —
     // `DrivingOverlay` records why the menu bar badge could not. Cheap on a
     // repeat: it returns immediately when it is already naming this
     // application, so a burst of presses does not rebuild a window per press.
-    DrivingOverlay.shared.show(bundleId: bundleId, name: displayName ?? bundleId)
+    DrivingOverlay.shared.show(bundleId: bundleId, name: displayName ?? bundleId, kind: notice)
     guard timer == nil else { return }
     timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.sweep() }
@@ -92,6 +136,7 @@ final class DriveActivity {
     guard let expiry else { return }
     if Date() >= expiry {
       target = nil
+      kind = nil
       self.expiry = nil
       DrivingOverlay.shared.hide()
       timer?.invalidate()
