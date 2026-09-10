@@ -132,6 +132,8 @@ type BookmarkEntry = {
 };
 
 type TabsPayload = {
+  /** False when Safari was quit and the script declined to launch it. */
+  running?: boolean;
   windows: number;
   appFrontmost: boolean | null;
   windowOrderUnknown: boolean;
@@ -325,6 +327,7 @@ export class AppleSafariClient {
    * once.
    */
   async tabs(opts: { enrich: boolean }): Promise<{
+    running: boolean;
     windows: number;
     appFrontmost: boolean | null;
     windowOrderUnknown: boolean;
@@ -362,6 +365,9 @@ export class AppleSafariClient {
     }
 
     return {
+      // Absent from a payload that predates the check, which only ever came
+      // back from a Safari that was running.
+      running: payload.running !== false,
       windows: payload.windows,
       appFrontmost: payload.appFrontmost,
       windowOrderUnknown: payload.windowOrderUnknown,

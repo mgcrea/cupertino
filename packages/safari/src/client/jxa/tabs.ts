@@ -85,6 +85,19 @@ export const LIVE_TABS = `
 function run(argv) {
   var S = Application("Safari");
 
+  // Asked first, because it is the one question that does not launch Safari.
+  // Everything below is an Apple Event, and an Apple Event to a quit Safari
+  // starts it: a read that opened the browser on somebody's screen. Null when
+  // unreadable, which falls through to the path this always took.
+  var running = null;
+  try { running = Boolean(S.running()); } catch (e) {}
+  if (running === false) {
+    return JSON.stringify({
+      ok: true,
+      data: { running: false, windows: 0, appFrontmost: null, windowOrderUnknown: false, tabs: [] }
+    });
+  }
+
   var wins;
   try {
     wins = S.windows();

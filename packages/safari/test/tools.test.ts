@@ -334,6 +334,33 @@ describe("live tabs", () => {
   });
 
   /**
+   * A quit Safari is an answer, not a failure: there are no open tabs. It must
+   * not read as an empty Safari either, which is a different state, and it must
+   * not blame Full Disk Access for tabs that were never there to enrich.
+   */
+  it("says Safari is not running rather than launching it", async () => {
+    const c = await connect(
+      {},
+      fakeOsascript({
+        tabs: {
+          running: false,
+          windows: 0,
+          appFrontmost: null,
+          windowOrderUnknown: false,
+          tabs: [],
+        },
+      }),
+    );
+    const r = await call(c, "apple_safari_list_tabs");
+    expect(r.isError).toBe(false);
+    const body = r.json() as { running: boolean; count: number; tabs: unknown[] };
+    expect(body.running).toBe(false);
+    expect(body.count).toBe(0);
+    expect(r.text).toContain("not running");
+    expect(r.text).not.toContain("Full Disk Access");
+  });
+
+  /**
    * The whole point of `frontmost`. The fixture has two `active` tabs because
    * that is what two open windows produce, and a caller asking "what am I
    * looking at" must get one answer rather than the first of two.

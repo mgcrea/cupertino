@@ -74,6 +74,20 @@ describe("JXA scripts", () => {
     expect(tabs.LIVE_TABS).not.toContain("com.apple.safari");
   });
 
+  /**
+   * A read must not start the app it reads. `S.windows()` is an Apple Event,
+   * and an Apple Event to a quit Safari launches it, so listing tabs used to
+   * open Safari on somebody's screen. Asking `running` first, which does not
+   * launch, is what lets the script answer "not running" instead.
+   */
+  it("asks whether Safari is running before asking it for windows", () => {
+    const asked = tabs.LIVE_TABS.indexOf("S.running()");
+    const windows = tabs.LIVE_TABS.indexOf("S.windows()");
+    expect(asked).toBeGreaterThan(-1);
+    expect(windows).toBeGreaterThan(-1);
+    expect(asked).toBeLessThan(windows);
+  });
+
   /** Bulk-fetch and filter in JS; never `whose`. Measured on three surfaces. */
   it("never uses whose()", () => {
     for (const [, source] of SCRIPTS) expect(source).not.toContain("whose(");

@@ -69,6 +69,19 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
         const wanted = enrich ?? true;
         const result = await client.tabs({ enrich: wanted });
 
+        // A quit Safari has no open tabs, and the script declined to launch it to
+        // find that out. Said in words, so an empty list is not read as a Safari
+        // with every window closed, and no permission is blamed for it.
+        if (!result.running) {
+          return ok({
+            running: false,
+            windows: 0,
+            tabs: [],
+            count: 0,
+            note: "Safari is not running, so there are no open tabs. It was not launched to check.",
+          });
+        }
+
         const tabs =
           only === "frontmost"
             ? result.tabs.filter((t) => t.frontmost)
