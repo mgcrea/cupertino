@@ -390,11 +390,29 @@ export const replyOrForwardNatively = async (
     }
   }
 
-  // False means the composer could not be raised — it has gone — and no
-  // keystroke was posted. The body was verified a moment ago, so this is the
-  // same vanishing arriving one step later.
-  if (!(await lane.finish(params.sendNow, ref)))
+  // Nothing was pressed unless `finish` says so, and its two refusals must not
+  // be reported alike. A composer that could not be raised has gone, the same
+  // vanishing as above arriving one step later. A refused keystroke left the
+  // composer where it was: the key names it, and the desktop server will not
+  // post into somebody else's window when Mail does not come forward.
+  const finished = await lane.finish(params.sendNow, ref);
+  if (finished === "gone")
     return vanished(bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
+  if (finished === "refused") {
+    return {
+      ok: false,
+      subject,
+      bodyVerified,
+      verifiedChars,
+      sent: false,
+      note:
+        `The ${params.mode} for "${subject}" was composed, but Mail could not be brought to the ` +
+        `front, so nothing was pressed and it was not ${params.sendNow ? "sent" : "saved"}. ` +
+        `Its window is still open in Mail. Someone is probably using the Mac; retry once it ` +
+        `is free, or finish it in Mail.` +
+        interferenceNote(await watch.check()),
+    };
+  }
   // A send closes the window. Checked rather than assumed: nothing here may
   // report success on the strength of a keystroke having been delivered.
   const sent = params.sendNow ? await lane.composerGone(subject, sendTimeoutMs) : false;

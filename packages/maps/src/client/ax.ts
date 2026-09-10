@@ -238,8 +238,16 @@ export class MapsAxLane {
     }
   }
 
+  /**
+   * Close whatever menu is open, with an Escape aimed at Maps.
+   *
+   * Named, because the card was opened with `open -g` and Maps is behind
+   * whatever the person is using. A bare Escape went to THAT app, and the
+   * driving notice honestly named it. With the bundle id the desktop server
+   * brings Maps forward first, or posts nothing.
+   */
   async #dismiss(): Promise<void> {
-    await this.#call("key", { key: "escape", modifiers: [] });
+    await this.#call("key", { key: "escape", modifiers: [], bundleId: MAPS_BUNDLE });
   }
 
   /**

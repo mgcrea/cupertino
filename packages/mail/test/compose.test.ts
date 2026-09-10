@@ -359,6 +359,34 @@ describe("replyOrForwardNatively", () => {
     lane.close();
   });
 
+  /*
+   * The send key names the composer now, so the desktop server refuses it when
+   * Mail will not come forward — somebody kept their own window in front. That
+   * is a composer still on screen with nothing pressed, and reporting it as
+   * GONE, "someone sent it or closed it", would send the user looking for a
+   * message that is sitting unsent in front of them.
+   */
+  it("does not call a composer that would not come forward gone", async () => {
+    const { lane } = await laneOver(
+      healthyHost({
+        key: (args: { key?: string }) =>
+          args.key === "d"
+            ? { refusal: "com.apple.mail did not come to the front, so nothing was posted" }
+            : {},
+      }),
+    );
+    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+      clipboard: fakeClipboard(),
+      sendTimeoutMs: 50,
+      composerTimeoutMs: 50,
+    });
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: true });
+    expect(result.note).not.toContain("GONE");
+    expect(result.note).toContain("still open");
+    expect(result.note).toContain("nothing was pressed");
+    lane.close();
+  });
+
   it("saves a draft without waiting for any window to close", async () => {
     const { lane, seen } = await laneOver(healthyHost());
     const result = await replyOrForwardNatively(
@@ -368,7 +396,10 @@ describe("replyOrForwardNatively", () => {
       { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
     );
     expect(result).toMatchObject({ ok: true, sent: false, bodyVerified: true });
-    expect(seen.at(-1)).toEqual({ tool: "key", args: { key: "s", modifiers: ["command"] } });
+    expect(seen.at(-1)).toEqual({
+      tool: "key",
+      args: { key: "s", modifiers: ["command"], handle: "w1" },
+    });
     lane.close();
   });
 

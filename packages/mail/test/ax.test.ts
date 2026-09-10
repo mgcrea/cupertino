@@ -255,7 +255,9 @@ describe("paste", () => {
     const lane = MailAxLane.open(env)!;
     await expect(lane.paste({ window: "w1", body: "e7", index: 0 })).resolves.toBe(true);
     expect(seen.map((c) => c.tool)).toEqual(["raise_window", "activate", "focus", "key"]);
-    expect(seen[3]?.args).toEqual({ key: "v", modifiers: ["command"] });
+    // The paste names the body it was focused into, so the desktop server brings
+    // Mail forward first and posts nothing if the person has switched away.
+    expect(seen[3]?.args).toEqual({ key: "v", modifiers: ["command"], handle: "e7" });
     lane.close();
   });
 
@@ -339,10 +341,10 @@ describe("finish", () => {
   it("sends with the shortcut, not with a localised button name", async () => {
     const { env, seen } = await hostStub({});
     const lane = MailAxLane.open(env)!;
-    await expect(lane.finish(true, REF)).resolves.toBe(true);
+    await expect(lane.finish(true, REF)).resolves.toBe("pressed");
     expect(seen.at(-1)).toEqual({
       tool: "key",
-      args: { key: "d", modifiers: ["command", "shift"] },
+      args: { key: "d", modifiers: ["command", "shift"], handle: "w1" },
     });
     lane.close();
   });
@@ -350,8 +352,27 @@ describe("finish", () => {
   it("saves a draft with command-S", async () => {
     const { env, seen } = await hostStub({});
     const lane = MailAxLane.open(env)!;
-    await expect(lane.finish(false, REF)).resolves.toBe(true);
-    expect(seen.at(-1)).toEqual({ tool: "key", args: { key: "s", modifiers: ["command"] } });
+    await expect(lane.finish(false, REF)).resolves.toBe("pressed");
+    expect(seen.at(-1)).toEqual({
+      tool: "key",
+      args: { key: "s", modifiers: ["command"], handle: "w1" },
+    });
+    lane.close();
+  });
+
+  /*
+   * The key names the composer, so the desktop server brings Mail forward and
+   * refuses outright when the person at the keyboard has moved on. Nothing was
+   * pressed, as with a composer that cannot be raised, but the composer is
+   * still there. The caller reports those two very differently, so the answer
+   * says which, and never throws.
+   */
+  it("answers refused, rather than throwing, when the keystroke is refused", async () => {
+    const { env } = await hostStub({
+      key: { refusal: "com.apple.mail did not come to the front, so nothing was posted" },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.finish(true, REF)).resolves.toBe("refused");
     lane.close();
   });
 
@@ -375,7 +396,7 @@ describe("finish", () => {
   it("presses nothing when the composer can no longer be raised", async () => {
     const { env, seen } = await hostStub({ raise_window: { refusal: "stale handle" } });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.finish(true, REF)).resolves.toBe(false);
+    await expect(lane.finish(true, REF)).resolves.toBe("gone");
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
   });

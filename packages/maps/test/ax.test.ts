@@ -213,6 +213,24 @@ describe("removePlace", () => {
     noMenu.lane.close();
   });
 
+  /*
+   * The card was opened with `open -g`, so Maps is behind whatever the person
+   * is using. An Escape with no target went to THAT app, and the driving notice
+   * named it. Naming Maps makes the desktop server bring it forward first, or
+   * post nothing.
+   */
+  it("closes the menu with an Escape aimed at Maps, not at the frontmost app", async () => {
+    const { lane, seen } = await laneOver({
+      ui_tree: { elements: [el({ handle: "eMore", id: "MoreButton" })] },
+      find_elements: { elements: [el({ handle: "e1", id: "add_to_places", role: "AXMenuItem" })] },
+    });
+    await expect(lane.removePlace()).resolves.toBe("not-saved");
+    expect(seen.filter((c) => c.tool === "key").map((c) => c.args)).toEqual([
+      { key: "escape", modifiers: [], bundleId: "com.apple.Maps" },
+    ]);
+    lane.close();
+  });
+
   it("presses Delete from Places when it is there", async () => {
     const { lane, seen } = await laneOver({
       ui_tree: { elements: [el({ handle: "eMore", id: "MoreButton" })] },

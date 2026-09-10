@@ -325,7 +325,10 @@ export class MailAxLane {
         if (Date.now() >= deadline) return false;
         await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
       }
-      await this.#call("key", { key: "v", modifiers: ["command"] });
+      // Named by the body's handle, so the desktop server brings Mail forward
+      // before posting and refuses if it does not come. The activate above can
+      // be undone by the person at the keyboard in the milliseconds between.
+      await this.#call("key", { key: "v", modifiers: ["command"], handle: ref.body });
       return true;
     } catch {
       return false;
@@ -356,27 +359,40 @@ export class MailAxLane {
    * into whatever they moved to. Re-raising costs two round trips and closes
    * that window.
    *
-   * False means the composer could not be brought forward — it has gone — and
-   * NOTHING was pressed. Posting a send into an unknown foreground is the one
-   * outcome worth refusing outright.
+   * The keystroke also names the composer's window, which closes the gap that
+   * remains between the re-raise and the key: the desktop server brings Mail
+   * forward again and refuses rather than posting into something else.
+   *
+   * Only `"pressed"` means anything was pressed. The other two answers are both
+   * refusals, and they are kept apart because they mean opposite things to the
+   * person reading the result:
+   *
+   *   * `"gone"`: the composer could not be raised. Its handle died with the
+   *     window, so somebody sent or closed it.
+   *   * `"refused"`: raised, but the keystroke was refused because Mail would
+   *     not come forward. The composer is still on screen, unsent.
+   *
+   * Posting a send into an unknown foreground is the one outcome worth refusing
+   * outright, which is why neither of them throws.
    */
-  async finish(sendNow: boolean, ref: ComposerRef): Promise<boolean> {
+  async finish(sendNow: boolean, ref: ComposerRef): Promise<"pressed" | "gone" | "refused"> {
     try {
       await this.#call("raise_window", { handle: ref.window });
       await this.activate();
     } catch {
-      return false;
+      return "gone";
     }
-    await this.#call(
-      "key",
-      sendNow
-        ? { key: "d", modifiers: ["command", "shift"] }
-        : {
-            key: "s",
-            modifiers: ["command"],
-          },
-    );
-    return true;
+    try {
+      await this.#call(
+        "key",
+        sendNow
+          ? { key: "d", modifiers: ["command", "shift"], handle: ref.window }
+          : { key: "s", modifiers: ["command"], handle: ref.window },
+      );
+    } catch {
+      return "refused";
+    }
+    return "pressed";
   }
 
   /**
