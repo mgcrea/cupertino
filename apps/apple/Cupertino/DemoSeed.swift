@@ -36,7 +36,29 @@ enum DemoSeed {
     static let readyFile = "ScreenshotReadyFile"
   }
 
-  nonisolated static var isEnabled: Bool { UserDefaults.standard.bool(forKey: Key.mode) }
+  /// The argument domain only, never `UserDefaults.standard` as a whole.
+  ///
+  /// `standard` also reads the persisted domain, so one `defaults write` of
+  /// `ScreenshotMode` would put a release build into demo mode on every launch
+  /// — and `stage`, which traps on a value it does not know, would then trap on
+  /// every launch after it. Worse, `seedStores` sets `LicenseStore.demoLicensed`,
+  /// so a persisted flag also answered the licence question. Launch arguments are
+  /// the only place these belong, and they apply to one launch, which is the
+  /// property the header describes.
+  nonisolated private static func argument(_ key: String) -> String? {
+    let arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+    switch arguments[key] {
+    case let value as String: return value
+    case let value as Bool: return value ? "YES" : "NO"
+    case let value as NSNumber: return value.stringValue
+    default: return nil
+    }
+  }
+
+  nonisolated static var isEnabled: Bool {
+    guard let raw = argument(Key.mode)?.lowercased() else { return false }
+    return ["yes", "true", "1"].contains(raw)
+  }
 
   /// Which screen this launch is for.
   ///
@@ -191,7 +213,7 @@ enum DemoSeed {
   /// failure that is genuinely hard to see by eye, and the reason
   /// `appshot accept` refuses a set containing two identical images.
   nonisolated static var stage: Stage {
-    let raw = UserDefaults.standard.string(forKey: Key.stage) ?? ""
+    let raw = argument(Key.stage) ?? ""
     guard let stage = Stage(rawValue: raw) else {
       fatalError("-\(Key.stage) was '\(raw)' — expected one of \(Stage.allNames)")
     }
@@ -244,7 +266,7 @@ enum DemoSeed {
   /// which is what makes `--appearances light,dark` mean anything: appshot
   /// launches twice and the *app* decides, not the Mac.
   @MainActor private static func pinAppearance() {
-    switch UserDefaults.standard.string(forKey: Key.appearance) {
+    switch argument(Key.appearance) {
     case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
     case "light": NSApp.appearance = NSAppearance(named: .aqua)
     default: break
@@ -930,7 +952,7 @@ enum DemoSeed {
 
   nonisolated static func signalReady(from source: ReadySource) {
     guard isEnabled, stage.readySource == source,
-      let path = UserDefaults.standard.string(forKey: Key.readyFile)
+      let path = argument(Key.readyFile)
     else { return }
     FileManager.default.createFile(atPath: path, contents: nil)
   }

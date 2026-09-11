@@ -25,7 +25,15 @@ enum LicenseStore {
   /// The stored key as typed, or nil. Kept separate from `check()` so the entry
   /// field can show what is there even when it is being refused.
   static var raw: String? {
-    UserDefaults.standard.string(forKey: defaultsKey)
+    // `LicensePane.onAppear` puts this into a 92pt `TextEditor`, in every
+    // entitlement state — so without the branch the developer's own key is
+    // photographed at full size on the licence plate.
+    #if DEBUG
+      if DemoSeed.isEnabled { return demoLicensed ? demoKey : nil }
+    #else
+      if DemoSeed.isEnabled { return nil }
+    #endif
+    return UserDefaults.standard.string(forKey: defaultsKey)
   }
 
   /// Set by `DemoSeed` and by nothing else.
@@ -34,17 +42,47 @@ enum LicenseStore {
   /// honest way: every valid key is Ed25519-signed, so the only alternative to
   /// this flag is committing a real working licence key to the repository.
   ///
-  /// This is not a hole in the licence check. The source is public and the gate
-  /// is a dozen readable lines in `ServerHost.swift`, so anyone minded to bypass
-  /// it would edit those rather than find their way here — and the flag is
-  /// unreachable in a shipped build regardless, since `DemoSeed.isEnabled` is
-  /// false without a launch argument.
+  /// Debug-only in its effect. `raw` and `check` consult it under `#if DEBUG`,
+  /// so a Release build cannot report a licence from this flag however
+  /// `ScreenshotMode` was set. The flag itself is deliberately NOT fenced: it is
+  /// assigned from `DemoSeed.seedStores`, which has to compile into any
+  /// configuration. Fencing the two readers costs the licensed plate nothing,
+  /// because `make screenshots` captures the `app` target and that is `Debug`
+  /// (`CONFIG` in the Makefile) — check that before moving the capture to
+  /// Release, because the plate would then render UNLICENSED rather than fail.
+  ///
+  /// This comment used to say the flag was "unreachable in a shipped build
+  /// regardless, since `DemoSeed.isEnabled` is false without a launch argument".
+  /// That was false: `isEnabled` read `UserDefaults.standard`, which also reads
+  /// the persisted domain, so one `defaults write ScreenshotMode -bool YES` set
+  /// it and licensed a shipped build. `DemoSeed.argument` fixed the read; the
+  /// fences below are why a second such slip would not reach the licence answer.
   nonisolated(unsafe) static var demoLicensed = false
+
+  /// A key of the right SHAPE and deliberately not of the right signature.
+  ///
+  /// It is rendered, never verified — `check` below branches before
+  /// `LicenseKey.check` ever sees it. That is the point: a demo key that
+  /// actually verified would be a valid licence sitting in a public repository.
+  static let demoKey =
+    "cup1.eyJpZCI6ImRlbW8iLCJlbWFpbCI6InlvdUBleGFtcGxlLmNvbSIsIm1ham9yIjoxLCJpc3N1ZWRBdCI6IjIwMjYtMDEtMTUifQ"
+    + ".DEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMOKEYNOTSIGNED"
 
   static var check: LicenseCheck {
     if demoLicensed {
-      return .valid(
-        License(id: "demo", email: "you@example.com", major: AppInfo.major, issuedAt: "2026-01-15"))
+      // `.valid` is reachable only from a Debug build, and the guard is the
+      // point rather than a formality. `demoLicensed` is set from
+      // `DemoSeed.seedStores`, and `DemoSeed` carries no DEBUG guard of its own
+      // — deliberately, since the plates are captured from a Release build — so
+      // without this the shipped binary would answer the licence question from a
+      // flag rather than from a signature. It did, until this fence went in.
+      #if DEBUG
+        return .valid(
+          License(
+            id: "demo", email: "you@example.com", major: AppInfo.major, issuedAt: "2026-01-15"))
+      #else
+        return .refused("no licence key on this Mac")
+      #endif
     }
     return LicenseKey.check(raw)
   }
