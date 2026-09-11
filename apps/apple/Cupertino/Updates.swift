@@ -45,7 +45,7 @@ final class UpdateController: NSObject {
   /// Called from `applicationDidFinishLaunching`. Builds nothing unless the
   /// user has already opted in.
   ///
-  /// The two guards mirror `promptForLicenceIfNeeded`, for the same reasons
+  /// The two guards mirror `promptForLicenseIfNeeded`, for the same reasons
   /// recorded there: a screenshot is of the product rather than of this
   /// machine's update state, and `--background` means the bridge started us
   /// while somebody is mid-sentence at an assistant.

@@ -820,7 +820,7 @@ extension MainView.Pane: RawRepresentable {
 ///
 /// The honest default already holds without an answer — nothing constructs an
 /// updater, and nothing resolves a name, until somebody opts in — so stopping
-/// the app to demand one would be theatre. That is `promptForLicenceIfNeeded`'s
+/// the app to demand one would be theatre. That is `promptForLicenseIfNeeded`'s
 /// reasoning in reverse: the licence pane opens itself because *nothing works*
 /// until the question is answered, and this does not.
 ///
