@@ -7,6 +7,15 @@ enum LicenseLinks {
   /// destination can move without shipping a new build — see the website's
   /// `public/_redirects`.
   static let buy = URL(string: "https://cupertino.mgcrea.io/buy")!
+
+  /// True as of 1.0.0: /buy resolves to the live Stripe payment link.
+  ///
+  /// The same flag, for the same reason, as `SHIPPED` in the website's
+  /// `config.ts` — a button here is a promise that there is something on the
+  /// other end of it. The two move together, and this one is the slower half:
+  /// the site can be redeployed in a minute, while a build that has shipped
+  /// carries whatever it was compiled with until the next release.
+  static let isSelling = true
 }
 
 /// Entering a licence key, seeing what happened to it, and — when there is none
@@ -280,8 +289,10 @@ struct LicensePane: View {
         }
         .disabled(LicenseStore.raw == nil)
         Spacer()
-        Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
-          .buttonStyle(.glass)
+        if LicenseLinks.isSelling {
+          Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
+            .buttonStyle(.glass)
+        }
       }
       .controlSize(.small)
     }

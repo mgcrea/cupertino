@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
     DockPresence.observe()
     LoginItem.healIfNeeded()
-    promptForLicenceIfNeeded()
+    promptForLicenseIfNeeded()
     UpdateController.shared.startIfConsented()
   }
 
@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// interruption that flag exists to prevent. They still learn why: the server
   /// refusal reaches the MCP host, the Activity log has it, and the popover
   /// carries the banner. The pane opens the first time a person opens the app.
-  private func promptForLicenceIfNeeded() {
+  private func promptForLicenseIfNeeded() {
     guard !CommandLine.arguments.contains(BridgeProtocol.backgroundFlag) else { return }
     // `Entitlement`, not `LicenseStore`: someone who started a trial two minutes
     // ago has something to run with, and opening the licence pane at them is
@@ -768,7 +768,7 @@ struct EntitlementNotice: View {
           TrialBanner()
           Divider()
         case .refused(let reason):
-          LicenceBanner(reason: reason) { revision += 1 }
+          LicenseBanner(reason: reason) { revision += 1 }
           Divider()
         }
       }
@@ -777,7 +777,7 @@ struct EntitlementNotice: View {
   }
 }
 
-struct LicenceBanner: View {
+struct LicenseBanner: View {
   let reason: String
   /// Called after a trial is armed, so the popover redraws now rather than at
   /// the next tick. Pressing a button and watching nothing happen for fifteen
@@ -838,9 +838,15 @@ struct TrialBanner: View {
       .font(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
-      Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
-        .buttonStyle(.glassProminent)
-        .controlSize(.small)
+      // Gated exactly as `LicensePane` gates the identical button. `isSelling`
+      // is compiled in, so a build made while the store is closed would
+      // otherwise offer a licence here and not there — two answers to one
+      // question, in the same app, on the same launch.
+      if LicenseLinks.isSelling {
+        Button("Buy a licence…") { NSWorkspace.shared.open(LicenseLinks.buy) }
+          .buttonStyle(.glassProminent)
+          .controlSize(.small)
+      }
     }
   }
 }
