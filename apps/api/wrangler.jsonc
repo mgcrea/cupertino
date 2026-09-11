@@ -18,11 +18,21 @@
   // Cloudflare Email Service. Sending to arbitrary recipients needs the Workers
   // Paid plan and a verified sender domain, or send() fails E_SENDER_NOT_VERIFIED.
   "send_email": [{ "name": "EMAIL" }],
+  // The price this Worker is allowed to fulfil, and the whole of the product
+  // guard. See `fulfil` in src/index.ts for why an allowlist of ours rather than
+  // a blocklist of theirs, and why an empty value means unguarded.
   "vars": {
     "CURRENT_MAJOR": "1",
+    "EXPECTED_PRICE_ID": "price_1U78HDFQJry8F0HMDlYyMXNa",
     "LICENSE_FROM_EMAIL": "licences@mgcrea.io",
     "SITE_URL": "https://cupertino.mgcrea.io"
   },
+  // Workers Logs. Without it a fulfilment failure leaves no trace on this side
+  // at all, and the only forensics is Stripe's own event log. Added after the
+  // 2026-09-11 mix-up, where this Worker fulfilled a Bastion sale and there was
+  // nothing here to read afterwards — the whole reconstruction ran off
+  // bastion-api's logs and the two D1 databases.
+  "observability": { "enabled": true },
   "send_metrics": false,
   "workers_dev": false,
   "preview_urls": false

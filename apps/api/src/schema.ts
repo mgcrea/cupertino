@@ -39,6 +39,19 @@ export const checkoutSession = z.object({
   currency: z.string().nullish(),
   payment_status: z.string().nullish(),
   customer_details: z.object({ email: z.string().nullish() }).nullish(),
+  /**
+   * Copied onto the session from the Payment Link that created it, which is how
+   * `price_id` can arrive without a second API call. Loose on purpose: metadata
+   * is free-form, a link created by hand may carry none, and a missing key is
+   * worth a blank column rather than a refused fulfilment.
+   *
+   * The live Cupertino link carries `major` and `rung` but NOT `price_id`, so
+   * today this parses to a metadata object the price is absent from and
+   * `priceIdFor` still does the work. Adding the key to the link is what closes
+   * that round trip — and what makes the product guard in `fulfil` hold when
+   * the API call is the thing that failed.
+   */
+  metadata: z.record(z.string(), z.string()).nullish(),
 });
 
 /**
