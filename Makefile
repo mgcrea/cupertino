@@ -665,6 +665,12 @@ appcast: ## Sign the release zip and write a one-item appcast
 		|| { echo "no apps/apple/.build/Cupertino.zip — run 'make notarize' first" >&2; exit 1; }
 	@test -x $(SPARKLE_TOOLS)/sign_update || $(MAKE) --no-print-directory sparkle
 	@set -e; \
+	: "# The key file is removed on EVERY exit path, not just the happy one."; \
+	: "# With `set -e` above, a sign_update that fails aborts the recipe before"; \
+	: "# any inline `rm -f` further down can run — which left the Ed25519 PRIVATE"; \
+	: "# key sitting in .build/sparkle.key, 0600 but still on disk, for anything"; \
+	: "# later in the job to pick up or archive. Found by testing the failure."; \
+	trap 'rm -f apps/apple/.build/sparkle.key' EXIT INT TERM; \
 	if [ -n "$$SPARKLE_ED_PRIVATE_KEY" ]; then \
 		: "# CI. The key reaches sign_update through a file, never argv: a private"; \
 		: "# key on a command line is readable by every process via ps."; \
@@ -678,6 +684,13 @@ appcast: ## Sign the release zip and write a one-item appcast
 		: "# locally without exporting the private key to do it."; \
 		sig=$$($(SPARKLE_TOOLS)/sign_update apps/apple/.build/Cupertino.zip); \
 	fi; \
+	: "# sign_update printing nothing leaves the enclosure with no edSignature"; \
+	: "# AND no length, in a feed that is still well-formed XML — which xmllint"; \
+	: "# accepts and every installed updater then refuses. That failure appears"; \
+	: "# nowhere in this pipeline; it appears on every installed copy, forever."; \
+	signature=$$(printf '%s' "$$sig" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/'); \
+	test -n "$$signature" && [ "$$signature" != "$$sig" ] \
+		|| { echo "  !! sign_update produced no edSignature; not shipping a feed" >&2; exit 1; }; \
 	version=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
 		"$(RELEASE_APP)/Contents/Info.plist"); \
 	build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
@@ -712,7 +725,9 @@ appcast: ## Sign the release zip and write a one-item appcast
 	'  </channel>' \
 	'</rss>' \
 	> apps/apple/.build/appcast.xml
-	@xmllint --noout apps/apple/.build/appcast.xml 2>/dev/null || true
+	@xmllint --noout apps/apple/.build/appcast.xml \
+		|| { echo "  !! appcast.xml is not well-formed; not shipping it" >&2; \
+		     rm -f apps/apple/.build/appcast.xml; exit 1; }
 	@echo "  appcast: apps/apple/.build/appcast.xml"
 
 notarize: ## Submit the signed bundle to Apple and staple the ticket
