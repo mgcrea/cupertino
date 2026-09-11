@@ -220,7 +220,32 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_21_0, v1_20_1, v1_20_0, v1_19_1, v1_19_0]
+  static let releases: [Release] = [v1_21_1, v1_21_0, v1_20_1, v1_20_0, v1_19_1]
+
+  // swift-format-ignore
+  private static let v1_21_1: Release = Release(
+    version: "1.21.1",
+    date: "2026-09-11",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A reply that went in fine came back as \"SOMETHING DID land in it that could not be read back\", and the same mix-up could have sent the wrong draft.",
+            body: [
+              "`apple_mail_reply_to_message` finds the composer it opened by its title, and a composer from an earlier attempt was still open under the same subject. Nothing in the native path closes one, so that is routine. Mail keeps composers as tabs, and the leftover was readable before the new one, so the title matched it first. ⌘V went to the composer Mail had in front, the read-back went to the leftover, and a correct reply was reported as a failure that a retry would paste twice. With `sendNow`, the send shortcut would have named the leftover as well.",
+              "The call now checks the window list it takes before opening anything. If a composer with the reply's subject was already there, nothing is pasted, pressed or sent, and the note says to close the extra window and deal with the older one first. Handles are minted per call, so there is nothing to tell the two composers apart by, and guessing here means guessing which message to send.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Driven sequences blamed \"someone using this Mac\" for Cupertino's own keystrokes.",
+            body: [
+              "The idle reading behind `apple_desktop_user_activity` counts synthetic events, deliberately, so a sequence that posted a key always found input a moment ago. A native Mail reply reported \"Someone used this Mac 0.2s ago\" for its own ⌘V and sent the reader looking for a person who was not there. The tool now also returns `secondsSinceOwnInput`, the time since Cupertino last posted input, and Mail and Maps only name interference when the input came after that. A host too old to report it keeps the old comparison.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_21_0: Release = Release(
@@ -354,87 +379,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_19_0: Release = Release(
-    version: "1.19.0",
-    date: "2026-09-08",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_hover`, because a click is not a pointer.",
-            body: [
-              "The desktop surface could press, click, type and read a tree, and still could not make a tooltip appear. `click` posts a press and a release and nothing in between, so a tracking area sees a button go down inside it having never seen the pointer arrive — which means every control that only exists under the cursor was unreachable: a tooltip, a hover readout, SwiftUI's `onContinuousHover`. Driving a chart's hover band is what found it, and the workaround was a throwaway `CGEvent` script outside the repo.",
-              "Addressed by `handle` in preference to a coordinate, and for a sharper reason than the other verbs have. A point from `ui_tree` was true when the walk ran; a window that has moved since — and one being driven moves often — leaves it aimed at bare desktop, where a hover **misses in silence**. There is no control to fail to press and nothing to report, just a readout that never appears. So the handle form re-reads the element's frame at call time. It also brings the target application forward first and refuses to post if it did not come, because a hover is delivered only to the frontmost application; the same reasoning the simulator surface already applies to a tap.",
-              "It is the first verb here that is refused on account of the person at the keyboard. A hover takes the physical pointer for as long as it sweeps, which is worse than a click rather than better, so it declines while somebody is using the Mac. The check could not be `secondsSinceUserInput()` alone: that reads `.combinedSessionState`, which counts Cupertino's own events, so a plain idle test would have refused every hover after the first — biting hardest when the agent is working alone, the case it exists to allow. The driving indicator already knows whether the last input was ours, and the idle floor sits under its linger so a sequence composes. The reading is returned with the answer, for the before/after comparison `apple_desktop_user_activity` describes.",
-              "Annotated non-destructive and idempotent, unlike `click`: moving the pointer twice to the same place leaves the same state and presses nothing.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "The simulator surface introduces itself on connect.",
-            body: [
-              "A client loads the `initialize` result's `instructions` without being asked to; the guide resource is pull-only and goes unread unless something names its uri, which is the wrong shape for the handful of facts that change a caller's very first move. `InProcessRPC.dispatch` takes an optional instructions string and omits the key entirely when it is nil, so a surface that declares none answers byte for byte as it did before. Simulator declares a short one — only what changes that first move — and points at the guide for the rest.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "The role-filter guidance was drawn from Catalyst apps alone.",
-            body: [
-              "The advice about filtering `apple_desktop_find_elements` by role came from a sample where controls report as `AXGenericElement`, `AXStaticText` and `AXImage` far more often than `AXButton`. That is true of Catalyst and was overstated as the norm. Re-measured across 21 regular apps: Catalyst still misses about 80% of them (Maps, Messages, Calendar, System Settings), while AppKit and plain SwiftUI apps miss only about a fifth, and widening the filter to the whole button family clears most of that. The rule does not change — the stragglers are exactly the clickable heading or row a caller cannot predict, and asking for pressable costs nothing — but the tool description and `docs/desktop.md` no longer claim the miss rate is typical.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "`apple_desktop_activate` was refusing every target, and it was never a permission.",
-            body: [
-              "Cupertino is an `LSUIElement` broker nobody ever clicks, which since macOS 14 is on its own enough for `NSRunningApplication.activate()` to refuse — whatever the target, and with no grant that changes it. Measured on macOS 26.6.2: refused for `com.apple.mail` and `com.apple.finder` alike when called from Cupertino, while the same `activate()` on Mail from a freshly launched command-line process returned true and moved the foreground. `.activateIgnoringOtherApps` is not the way out either, having been deprecated and a no-op since macOS 14.",
-              "When LaunchServices says no and the app holds Accessibility, the driver now sets `AXFrontmost` on the target's application element instead — measured raising Mail from behind another app with `err=0`. Either path is then checked against the window server's own `frontmostBundleId` rather than the return value of the call that did it, because activation is asynchronous and a caller that posts a keystroke before it lands types into whatever was already in front. That check is what `apple_desktop_hover` leans on when it declines to post into an application that did not come forward.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A reply that went in fine came back as \"SOMETHING DID land in it that could not be read back\", and the same mix-up could have sent the wrong draft.",
-            body: [
-              "`apple_mail_reply_to_message` finds the composer it opened by its title, and a composer from an earlier attempt was still open under the same subject. Nothing in the native path closes one, so that is routine. Mail keeps composers as tabs, and the leftover was readable before the new one, so the title matched it first. ⌘V went to the composer Mail had in front, the read-back went to the leftover, and a correct reply was reported as a failure that a retry would paste twice. With `sendNow`, the send shortcut would have named the leftover as well.",
-              "The call now checks the window list it takes before opening anything. If a composer with the reply's subject was already there, nothing is pasted, pressed or sent, and the note says to close the extra window and deal with the older one first. Handles are minted per call, so there is nothing to tell the two composers apart by, and guessing here means guessing which message to send.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Driven sequences blamed \"someone using this Mac\" for Cupertino's own keystrokes.",
-            body: [
-              "The idle reading behind `apple_desktop_user_activity` counts synthetic events, deliberately, so a sequence that posted a key always found input a moment ago. A native Mail reply reported \"Someone used this Mac 0.2s ago\" for its own ⌘V and sent the reader looking for a person who was not there. The tool now also returns `secondsSinceOwnInput`, the time since Cupertino last posted input, and Mail and Maps only name interference when the input came after that. A host too old to report it keeps the old comparison.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

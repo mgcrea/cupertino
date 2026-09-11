@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.21.0`,
-`notes-v1.21.0`, `reminders-v1.21.0`, `core-v1.21.0` for the npm packages, and `app-v1.21.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.21.1`,
+`notes-v1.21.1`, `reminders-v1.21.1`, `core-v1.21.1` for the npm packages, and `app-v1.21.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.21.1] - 2026-09-11
 
 ### Fixed
 
@@ -2304,7 +2304,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.21.1...HEAD
+[1.21.1]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...app-v1.21.1
 [1.21.0]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...app-v1.21.0
 [1.20.1]: https://github.com/mgcrea/cupertino/compare/app-v1.20.0...app-v1.20.1
 [1.20.0]: https://github.com/mgcrea/cupertino/compare/app-v1.19.1...app-v1.20.0
