@@ -19,6 +19,16 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
   var id: String { rawValue }
 
+  /// The bare, un-namespaced key. The fleet convention is `<slug>.settingsPane`
+  /// — but migrating onto swift-support-kit's `SettingsSelection`, which owns
+  /// that convention and has the tested migration for it, means linking
+  /// `SupportKitSettings`, and that scaffold adoption belongs to
+  /// `fleet-apple-conventions` rather than here.
+  ///
+  /// **When that migration happens it MUST pass `legacyKeys: ["settingsPane"]`.**
+  /// Without it every user's selected pane resets to the first one — and this app
+  /// deep-links through this key for the first-run licence prompt, so a reset
+  /// lands somebody on General wondering where the prompt went.
   static let defaultsKey = "settingsPane"
 
   /// How the app behaves…
