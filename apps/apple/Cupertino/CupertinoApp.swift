@@ -1,3 +1,4 @@
+import SupportKitMenuBar
 import SupportKitUI
 import SwiftUI
 
@@ -532,21 +533,49 @@ final class StatusModel {
   }
 }
 
+/// The summary panel: what is on, what is refused, and the way to whatever
+/// needs a decision.
+///
+/// The chrome around all of that — the header, the footer row, the width, and
+/// the body's scroll cap — is `MenuBarPanel` from `SupportKitMenuBar`, shared
+/// with every other menu bar app in the fleet. It used to be written out here,
+/// and the reasoning that argued for it has moved to the package with it: the
+/// fourth *text* button this row measured truncating "Open Cupertino" to "Open
+/// Cuperti…" at 320pt is why `MenuBarFooter` documents two glyph routes as its
+/// working ceiling. What stays here is what is actually Cupertino's: which rows
+/// the body draws.
+///
+/// Adopting it adds ⌘O and ⌘Q, which this row was missing and its siblings had.
 struct StatusMenu: View {
   let model: StatusModel
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // Baseline-aligned so the version reads as a suffix to the name rather
-      // than as a second heading. The popover is capped at 320pt and its button
-      // row is already full, so this goes beside the title — the one piece of
-      // horizontal space left that costs nothing.
-      HStack(alignment: .firstTextBaseline, spacing: 6) {
-        Text("Cupertino").font(.headline)
-        Text(AppInfo.shortVersion).font(.caption).foregroundStyle(.secondary)
-        Spacer()
-      }
-
+    MenuBarPanel(
+      app: Support.app,
+      version: AppInfo.shortVersion,
+      onOpenApp: { MainWindowController.show() },
+      // No `onShowAbout`: this app has no About pane. The version renders as
+      // plain text rather than as a button that goes nowhere — `AboutPane` is
+      // the one surface `SettingsPane` does not have, and inventing it to give
+      // this a destination is a bigger change than this one.
+      footer: MenuBarFooter(
+        // The rule the hand-written row stated and the package now owns: what
+        // opens something sits left, what you GO TO sits right. Refresh is
+        // still not here — `onAppear` below already refreshes on every open, so
+        // it reached no state the panel did not have, and it is what cost the
+        // row its fourth spelled button.
+        routes: [
+          .logs { MainWindowController.show(.log) },
+          .settings { SettingsOpener.show() },
+        ],
+        // A row that appears once after an update and then goes away, rather
+        // than a permanent marker on something already on screen. MenuBarExtra
+        // builds this content lazily, so the test is re-read each time it opens.
+        whatsNew: Changelog.hasUnseen
+          ? .init(version: Changelog.marketingVersion) { SettingsOpener.show(.whatsNew) }
+          : nil
+      )
+    ) {
       // Above the entitlement notice, and it is the only thing here that outranks
       // it. That one explains why nothing works; this one is asking the reader
       // to take their hands off the keyboard, and it stops being true a few
@@ -663,78 +692,7 @@ struct StatusMenu: View {
         Text(error).font(.caption).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
-
-      Divider()
-
-      // Four again, but only one of them is spelled. A fourth TEXT button
-      // truncated "Open Cupertino" to "Open Cuperti…" at 320pt, which is what
-      // cost Refresh its place — `onAppear` already refreshes every time the
-      // menu opens and `requestAutomation` writes its own result back, so it
-      // reached no state the other two did not. Two glyphs cost a fraction of
-      // that width, so the row grew back without the panel having to.
-      //
-      // The gap goes after "Open Cupertino", not before "Quit". What opens
-      // something sits left, what you GO TO sits right — Settings and the log
-      // are both windows you go to, not things this panel does.
-      HStack {
-        Button("Open Cupertino") { MainWindowController.show() }
-          .buttonStyle(.glass)
-
-        Spacer()
-
-        // Logs is the exception to the paragraph above, and worth naming rather
-        // than quietly re-adding a row that was removed.
-        //
-        // Refresh was dropped because nothing it reached was state the panel did
-        // not already have. The log is the opposite: every line above is a count
-        // of calls, and "what were those calls" is the one question this summary
-        // raises and cannot answer. It is also what people arrive with urgently
-        // — an agent just touched their mail and they want to see what.
-        //
-        // Both are icons, and both sit right, which is the rule stated above:
-        // what opens something sits left, what you GO TO sits right. Spelling
-        // them is what the comment above measured truncating "Open Cupertino"
-        // at 320pt; a gear and a list are the two glyphs nobody needs taught, so
-        // the tooltips and the shortcuts carry the names instead of twenty more
-        // points of panel.
-        Button {
-          MainWindowController.show(.log)
-        } label: {
-          Image(systemName: "list.bullet.rectangle")
-        }
-        .keyboardShortcut("l", modifiers: .command)
-        .help("Logs (⌘L) — what every client has called, live")
-
-        // ⌘, as well, matching the app menu item. The main menu already answers
-        // that chord app-wide, popover or no popover; declaring it here is what
-        // puts the shortcut where somebody looking for it would look.
-        Button {
-          SettingsOpener.show()
-        } label: {
-          Image(systemName: "gearshape")
-        }
-        .keyboardShortcut(",", modifiers: .command)
-        .help("Settings (⌘,)")
-
-        Button("Quit") { NSApplication.shared.terminate(nil) }
-      }
-      .controlSize(.small)
-
-      // A row that appears once after an update and then goes away, rather than
-      // a permanent marker on something already on screen. This panel is 320pt
-      // and most of what is in it is status that can need acting on; news that
-      // is right twice a year would not earn a standing place. MenuBarExtra
-      // builds this content lazily, so the test is re-read each time it opens.
-      if Changelog.hasUnseen {
-        Divider()
-        Button("What's new in \(Changelog.marketingVersion)…") {
-          SettingsOpener.show(.whatsNew)
-        }
-        .controlSize(.small)
-      }
     }
-    .padding(14)
-    .frame(width: 320)
     // Permission state changes in System Settings, not here, so a menu drawn
     // once at launch is a menu that lies. `Permissions.automation` is the
     // non-prompting variant precisely so this is safe.
