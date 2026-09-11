@@ -1075,7 +1075,24 @@ clean: ## Remove the app build output
 
 API_URL := https://api.cupertino.mgcrea.io/health
 
+# Wrangler's d1 subcommands do not take `account_id` from wrangler.jsonc the
+# way `deploy` does, and this token can reach three accounts — so without an
+# explicit one they stop to ask, which inside a recipe is just a failure. Same
+# value as wrangler.jsonc, which already documents it as public.
+CF_ACCOUNT_ID := 0121e8859874c6fc0d674676e17d9f18
+
 api-deploy: ## Build and publish the API Worker to Cloudflare
+	@# Code expecting a table the database has not got deploys green and then
+	@# fails on the first webhook. bastion-api spent 2026-09-07 to 09-11 doing
+	@# exactly that — migration committed, deploy shipped, `pnpm migrate` never
+	@# run, and a /health GET that touches none of it answering 200 throughout.
+	@#
+	@# This refuses; it does not apply. `pnpm -C apps/api migrate` stays a
+	@# separate and deliberate command, and all this does is make forgetting it
+	@# loud instead of silent.
+	@CLOUDFLARE_ACCOUNT_ID=$(CF_ACCOUNT_ID) pnpm -C apps/api exec wrangler d1 migrations list cupertino-licenses --remote 2>&1 \
+		| grep -q 'No migrations to apply' \
+		|| { echo 'refusing to deploy: unapplied migrations in apps/api - run: pnpm -C apps/api migrate'; exit 1; }
 	pnpm -C apps/api release
 	@# A green `wrangler deploy` does not prove the Worker answers. This does.
 	@curl -fsS --max-time 20 -o /dev/null $(API_URL)
