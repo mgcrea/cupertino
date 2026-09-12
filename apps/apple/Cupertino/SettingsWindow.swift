@@ -14,29 +14,29 @@ import SwiftUI
 /// The protocol is qualified because this enum has the same name as it, which
 /// is the fleet's convention.
 ///
-/// About, What's New and Updates answer three parts of one question, in the
-/// order somebody asks them: which build is this, what did it change, is there
-/// a newer one. About is new — the version and the identity line used to be the
-/// first Section of General, which answered "which build is this" on the page
-/// about launching at login.
+/// Two pairs after the configuration panes, then what was bought.
 ///
-/// What's New sits next to Updates rather than beside General for the same
-/// reason. Updates sits after it: it was a Section in General, under the
-/// version number, on the theory that somebody wondering whether they are
-/// current has already looked there — which holds only for the people who
-/// scroll.
+/// What's New and Updates are the version pair: what did this build change, and
+/// is there a newer one. Updates sits after it rather than in General, where it
+/// was a Section under the version number, on the theory that somebody
+/// wondering whether they are current has already looked there — which holds
+/// only for the people who scroll.
 ///
-/// Help sits last. Cupertino is `LSUIElement`, so the Help menu carrying those
-/// three links only exists while a window happens to be open; a pane is
-/// reachable whenever settings is. It goes after Updates rather than beside
-/// About so it does not split the trio above.
+/// About and Help are the identity pair, last, because that is where a settings
+/// window's footer material belongs. About is new here at all: the version and
+/// the identity line used to be the first Section of General, which answered
+/// "which build is this" on the page about launching at login.
+///
+/// Help is a pane at all because Cupertino is `LSUIElement`, so the Help menu
+/// carrying these same three links only exists while a window happens to be
+/// open.
 enum SettingsPane: String, SupportKitSettings.SettingsPane {
   case general
   case audit
   case permissions
-  case about
   case whatsNew
   case updates
+  case about
   case help
   case licence
 
@@ -169,7 +169,21 @@ struct SettingsView: View {
       case .whatsNew: WhatsNewPane()
       case .updates: UpdatesPane()
       case .help:
-        HelpSettingsPane(app: Support.app, preferIssueTracker: Support.preferIssueTracker)
+        // A replacement intro rather than the package default, which invites
+        // bugs, ideas and questions but deliberately stops short of inviting a
+        // pull request — true only where the tracker is the source. Cupertino's
+        // is: `Support.app.trackerURL` is this project's own repository.
+        HelpSettingsPane(
+          app: Support.app,
+          preferIssueTracker: Support.preferIssueTracker,
+          intro: """
+            Bugs, ideas and questions are all welcome, and none of them is a bother. \
+            Cupertino is built in the open, so an issue or a pull request lands where the \
+            code does. The feedback form and the issue template arrive with your version, \
+            macOS, Mac model and language already filled in, where you can read them \
+            before anything is sent.
+            """
+        )
       case .licence: LicensePane()
       }
     }
