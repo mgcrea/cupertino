@@ -256,7 +256,11 @@ enum DemoSeed {
   @MainActor static func openStagedWindow() {
     switch stage.subject {
     case .main: MainWindowController.show()
-    case .settings(let pane): SettingsWindowController.show(pane)
+    // `show()` rather than `show(_:)`: the pane comes from
+    // `SettingsPane.staged`, which the scaffold reads directly. Going through
+    // `show(_:)` would PERSIST the selection, leaving the developer's own
+    // settings pointing at whatever the last screenshot needed.
+    case .settings: SettingsWindowController.show()
     }
   }
 

@@ -1,4 +1,6 @@
 import AppKit
+import SupportKit
+import SupportKitSettings
 import SwiftUI
 
 /// The panes, and the key the selection persists under.
@@ -9,70 +11,82 @@ import SwiftUI
 /// open — `@AppStorage` observes the write, so `SettingsOpener.show(.licence)`
 /// moves the sidebar selection whether the window was built a moment ago or has
 /// been sitting behind Xcode for an hour.
-enum SettingsPane: String, CaseIterable, Identifiable {
+/// The protocol is qualified because this enum has the same name as it, which
+/// is the fleet's convention.
+///
+/// About, What's New and Updates answer three parts of one question, in the
+/// order somebody asks them: which build is this, what did it change, is there
+/// a newer one. About is new — the version and the identity line used to be the
+/// first Section of General, which answered "which build is this" on the page
+/// about launching at login.
+///
+/// What's New sits next to Updates rather than beside General for the same
+/// reason. Updates sits after it: it was a Section in General, under the
+/// version number, on the theory that somebody wondering whether they are
+/// current has already looked there — which holds only for the people who
+/// scroll.
+///
+/// Help sits last. Cupertino is `LSUIElement`, so the Help menu carrying those
+/// three links only exists while a window happens to be open; a pane is
+/// reachable whenever settings is. It goes after Updates rather than beside
+/// About so it does not split the trio above.
+enum SettingsPane: String, SupportKitSettings.SettingsPane {
   case general
   case audit
   case permissions
+  case about
   case whatsNew
   case updates
+  case help
   case licence
 
-  var id: String { rawValue }
-
-  /// The bare, un-namespaced key. The fleet convention is `<slug>.settingsPane`
-  /// — but migrating onto swift-support-kit's `SettingsSelection`, which owns
-  /// that convention and has the tested migration for it, means linking
-  /// `SupportKitSettings`, and that scaffold adoption belongs to
-  /// `fleet-apple-conventions` rather than here.
-  ///
-  /// **When that migration happens it MUST pass `legacyKeys: ["settingsPane"]`.**
-  /// Without it every user's selected pane resets to the first one — and this app
-  /// deep-links through this key for the first-run licence prompt, so a reset
-  /// lands somebody on General wondering where the prompt went.
-  static let defaultsKey = "settingsPane"
-
-  /// How the app behaves…
-  ///
-  /// What's New sits next to Updates because the two are halves of one
-  /// question: what did this build change, and is there a newer one. It is not
-  /// beside General, where the version and the build number are — those say
-  /// WHICH build this is, which is the question you ask with a bug report open,
-  /// not the one you ask after updating.
-  ///
-  /// Updates sits last. It was a Section in General, under the version number,
-  /// on the theory that somebody wondering whether they are current has already
-  /// looked there — which holds only for the people who scroll. The one manual
-  /// check the app has was the second card on a page whose other rows are about
-  /// launching at login and where the bundle lives, and a row in the sidebar is
-  /// findable without knowing that. Bastion splits it the same way.
-  static let configuration: [SettingsPane] = [.general, .audit, .permissions, .whatsNew, .updates]
-
-  /// …and what was bought, which is a different question and the only reason
-  /// the sidebar is in two groups rather than one list of four. Somebody opens
-  /// Licence because of a refusal or a receipt, never because they are tuning
-  /// something.
-  static let entitlement: [SettingsPane] = [.licence]
-
-  var title: String {
+  var title: LocalizedStringKey {
     switch self {
     case .general: "General"
     case .audit: "Activity"
     case .permissions: "Permissions"
+    case .about: "About"
     case .whatsNew: "What's New"
     case .updates: "Updates"
+    case .help: "Help"
     case .licence: "Licence"
     }
   }
 
-  var symbol: String {
+  var systemImage: String {
     switch self {
     case .general: "gearshape"
     case .audit: "list.bullet.rectangle"
     case .permissions: "lock.shield"
+    case .about: "info.circle"
     case .whatsNew: "sparkles"
     case .updates: "arrow.down.circle"
+    case .help: "questionmark.circle"
     case .licence: "key"
     }
+  }
+
+  /// Licence is its own group, and the only reason the sidebar is in two rather
+  /// than one list. Somebody opens it because of a refusal or a receipt, never
+  /// because they are tuning something.
+  var group: SettingsPaneGroup { self == .licence ? .entitlement : .configuration }
+
+  /// Only ever on What's New, and only while something is genuinely unread. The
+  /// package draws nothing for 0, so the read case needs no branch of its own.
+  var badge: Int { self == .whatsNew && Changelog.hasUnseen ? Changelog.unseen.count : 0 }
+
+  static var defaultPane: SettingsPane { .general }
+
+  /// The pane a screenshot stage asks for — and nil every other time.
+  ///
+  /// This replaces `openStagedWindow` writing the selection through
+  /// `show(_:)`, which persisted it: a capture run left the developer's own
+  /// settings pointing at whatever the last screenshot needed. A staged pane
+  /// overrides the stored one and drops every selection write, so it must stay
+  /// nil outside a capture or the sidebar freezes for real users.
+  static var staged: SettingsPane? {
+    guard DemoSeed.isEnabled, case .settings(let pane) = DemoSeed.stage.subject else { return nil }
+    return pane
   }
 }
 
@@ -103,7 +117,7 @@ enum SettingsWindowController {
     content: { SettingsView(model: StatusModel.shared) })
 
   static func show(_ pane: SettingsPane) {
-    UserDefaults.standard.set(pane.rawValue, forKey: SettingsPane.defaultsKey)
+    Support.settings.select(pane)
     hosted.show()
   }
 
@@ -144,91 +158,66 @@ enum SettingsOpener {
 /// and Xcode included.
 struct SettingsView: View {
   let model: StatusModel
-  @AppStorage(SettingsPane.defaultsKey) private var selection = SettingsPane.general.rawValue
-
-  /// `List(selection:)` drives an `Optional` for a single selection, and the
-  /// stored value is a `String` because that is what `@AppStorage` can hold.
-  /// Bridging here rather than mirroring into `@State` keeps one source of
-  /// truth: a `@State` copy seeded once at init is exactly how a deep link into
-  /// an already-open window stops working.
-  private var pane: Binding<SettingsPane?> {
-    Binding(
-      get: { SettingsPane(rawValue: selection) ?? .general },
-      set: { selection = ($0 ?? .general).rawValue })
-  }
-
-  private var current: SettingsPane { SettingsPane(rawValue: selection) ?? .general }
 
   var body: some View {
-    NavigationSplitView {
-      List(selection: pane) {
-        Section {
-          ForEach(SettingsPane.configuration) { row($0) }
-        }
-        Section {
-          ForEach(SettingsPane.entitlement) { row($0) }
-        }
+    SettingsScaffold(selection: Support.settings, staged: SettingsPane.staged) { pane in
+      switch pane {
+      case .general: GeneralPane(model: model)
+      case .audit: AuditPane()
+      case .permissions: PermissionsPane(model: model)
+      case .about: AboutPane()
+      case .whatsNew: WhatsNewPane()
+      case .updates: UpdatesPane()
+      case .help:
+        HelpSettingsPane(app: Support.app, preferIssueTracker: Support.preferIssueTracker)
+      case .licence: LicensePane()
       }
-      .navigationSplitViewColumnWidth(min: 172, ideal: 192, max: 240)
-    } detail: {
-      detail
     }
-    // Wider than the 580 the tabs needed, because the sidebar is new width that
-    // the content does not get to use. The minimum is what keeps the widest row
-    // in Permissions — an app icon, a name, a status and a control — on one line.
-    // 720 wide against the main window's 1120 leaves ~200pt of it showing on
-    // each side, which is its sidebar — so Settings opens in front of the main
-    // window rather than over the whole of it.
-    .frame(minWidth: 680, idealWidth: 720, minHeight: 440, idealHeight: 520)
+    // Sized for the content, never the window. The minimum is what keeps the
+    // widest row in Permissions — an app icon, a name, a status and a control —
+    // on one line. 720 wide against the main window's 1120 leaves ~200pt of it
+    // showing on each side, so Settings opens in front of the main window
+    // rather than over the whole of it.
+    .settingsWindowSize(minWidth: 680, idealWidth: 720, minHeight: 440, idealHeight: 520)
     .onAppear { model.refresh() }
     // Readiness is signalled by `PermissionsPane`, not here.
     //
-    // It used to be this `.task`, which was correct until the `writes` stage
-    // needed the pane SCROLLED before the shutter fired. Two tasks racing would
-    // let this one win and report a screen still sitting at the top, filed as
-    // the write gate — a real screen, correctly sized, showing the wrong part.
-    // Signalling from the pane that does the scrolling makes the order an
-    // ordering rather than a race.
-    //
-    // The cost is that a future stage opening a different pane would hang
-    // instead of capturing. That is the right failure: appshot says "the app
-    // never signalled ready" and names the stage.
+    // It used to be a `.task` on this view, which was correct until the
+    // `writes` stage needed the pane SCROLLED before the shutter fired. Two
+    // tasks racing would let this one win and report a screen still sitting at
+    // the top, filed as the write gate — a real screen, correctly sized,
+    // showing the wrong part. Signalling from the pane that does the scrolling
+    // makes the order an ordering rather than a race.
   }
+}
 
-  private func row(_ pane: SettingsPane) -> some View {
-    Label(pane.title, systemImage: pane.symbol)
-      // Only ever on What's New, and only while something is genuinely unread.
-      // `.badge(0)` draws nothing, so the unread case needs no branch of its
-      // own and the row cannot end up with an empty pill on it.
-      .badge(pane == .whatsNew && Changelog.hasUnseen ? Changelog.unseen.count : 0)
-      .tag(pane)
-  }
-
-  /// The pane's name is drawn in the content rather than left to the title bar,
-  /// which keeps the window called "Cupertino Settings" in ⌘-Tab and in the
-  /// Window menu while the heading still says which page this is.
-  private var detail: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Text(current.title)
-        .font(.title2)
-        .fontWeight(.semibold)
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-
-      content(for: current)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-  }
-
-  @ViewBuilder
-  private func content(for pane: SettingsPane) -> some View {
-    switch pane {
-    case .general: GeneralPane(model: model)
-    case .audit: AuditPane()
-    case .permissions: PermissionsPane(model: model)
-    case .whatsNew: WhatsNewPane()
-    case .updates: UpdatesPane()
-    case .licence: LicensePane()
+/// The shared About pane, plus the one row that is Cupertino's own.
+///
+/// This is new: the version and the identity line used to be the first Section
+/// of General. `AboutSettingsPane` brings the app icon, the System and Model
+/// rows and the copy button with it, and `showsIdentifier` adds the bundle id —
+/// and with it the package's debug-build notice.
+///
+/// `copySummary` keeps what the old button copied. The package's default is
+/// `bugReportSummary`, which documents a rule: the same four facts the feedback
+/// URL carries and no more. `AppInfo.buildLine` adds the commit and the signing
+/// identity, which are facts about the BUILD rather than about the person
+/// running it — worth having in a bug report, and this app's decision to make
+/// rather than a rule to widen for the whole fleet.
+///
+/// `includesSupport: false` because Help is its own pane now; leaving it on
+/// would draw Send Feedback, Report an Issue and Cupertino Support in both.
+private struct AboutPane: View {
+  var body: some View {
+    AboutSettingsPane(
+      app: Support.app,
+      showsIdentifier: true,
+      copySummary: AppInfo.buildLine,
+      includesSupport: false,
+      preferIssueTracker: Support.preferIssueTracker
+    ) {
+      LabeledContent("Build", value: AppInfo.identityLine)
+        .textSelection(.enabled)
     }
   }
 }
@@ -241,37 +230,10 @@ struct GeneralPane: View {
   let model: StatusModel
   @State private var launchAtLogin = LoginItem.isEnabled
   @State private var loginError: String?
-  @State private var copied = false
   @AppStorage(SurfaceSettings.appLazyToolsKey) private var lazyTools = false
 
   var body: some View {
     Form {
-      Section {
-        LabeledContent {
-          // Selectable *and* a button. Selecting a caption with a trackpad to
-          // paste it into an issue is fiddly enough that people retype it, and
-          // a retyped build number is the one that turns out to be wrong.
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(AppInfo.buildLine, forType: .string)
-            copied = true
-          } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-          }
-          .buttonStyle(.borderless)
-          .help("Copy build details for a bug report")
-          .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .seconds(2))
-            copied = false
-          }
-        } label: {
-          Text("Cupertino \(AppInfo.version)")
-          Text(AppInfo.identityLine)
-        }
-        .textSelection(.enabled)
-      }
-
       Section {
         Toggle(isOn: $lazyTools) {
           Text("Load tools on demand")

@@ -554,10 +554,10 @@ struct StatusMenu: View {
       app: Support.app,
       version: AppInfo.shortVersion,
       onOpenApp: { MainWindowController.show() },
-      // No `onShowAbout`: this app has no About pane. The version renders as
-      // plain text rather than as a button that goes nowhere — `AboutPane` is
-      // the one surface `SettingsPane` does not have, and inventing it to give
-      // this a destination is a bigger change than this one.
+      // The version opens About, which is the pane that says what the number
+      // means — the build, the machine, the signing identity and the
+      // copy-for-a-bug-report button.
+      onShowAbout: { SettingsOpener.show(.about) },
       footer: MenuBarFooter(
         // The rule the hand-written row stated and the package now owns: what
         // opens something sits left, what you GO TO sits right. Refresh is

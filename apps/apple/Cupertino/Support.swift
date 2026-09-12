@@ -1,5 +1,6 @@
 import Foundation
 import SupportKit
+import SupportKitSettings
 
 /// Cupertino's identity for the shared support package.
 ///
@@ -37,4 +38,12 @@ enum Support {
 
   /// Whether the Help menu lists the public tracker above the feedback form.
   static let preferIssueTracker = true
+
+  /// The persisted Settings pane, under the fleet's `<slug>.settingsPane`.
+  ///
+  /// `legacyKeys` is load-bearing, not decoration. Cupertino shipped the bare
+  /// `settingsPane` key for its whole life, and it deep-links through it for the
+  /// first-run licence prompt — so without carrying it forward, the upgrade that
+  /// lands this would drop somebody on General wondering where the prompt went.
+  static let settings = SettingsSelection<SettingsPane>(app: app, legacyKeys: ["settingsPane"])
 }
