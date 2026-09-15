@@ -75,25 +75,44 @@ export const verifySignature = async (
   return { ok: true };
 };
 
+export type PriceLookup = { ok: true; priceId: string } | { ok: false; reason: string };
+
+/** Well inside the time Stripe waits for a webhook answer, so a hang becomes a logged 500. */
+const LOOKUP_TIMEOUT_MS = 8000;
+
 /**
- * Which price the customer actually paid, for the upgrade maths at 2.0.
+ * Which price the customer actually paid: for the product guard in `fulfil`, and
+ * for the upgrade maths at 2.0.
  *
  * `checkout.session.completed` does not carry line items, so this is a second
- * call — and it is deliberately incapable of failing the fulfilment it belongs
- * to. A licence that reached a paying customer with an empty `price_id` is a
- * reporting gap; a licence that never reached them because a reporting call
- * timed out is a refund.
+ * call, and a call that FAILED says so rather than answering an empty price. It
+ * used to fold every failure, a timeout included, into "", which the guard could
+ * not tell apart from a session with no price to find, and so let the sale
+ * through. With no `price_id` on the live link, a Stripe API error was then all
+ * it took to mint a key for another product's buyer. The caller answers 500 on a
+ * failure instead, and Stripe's retry is the second attempt.
+ *
+ * A 200 that names no price is not a failure: retrying would get the same
+ * answer, so it comes back as `ok` with an empty price.
  */
-export const priceIdFor = async (sessionId: string, secretKey: string): Promise<string> => {
+export const priceIdFor = async (sessionId: string, secretKey: string): Promise<PriceLookup> => {
   try {
     const response = await fetch(
       `https://api.stripe.com/v1/checkout/sessions/${sessionId}/line_items?limit=1`,
-      { headers: { Authorization: `Bearer ${secretKey}` } },
+      {
+        headers: { Authorization: `Bearer ${secretKey}` },
+        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+      },
     );
-    if (!response.ok) return "";
+    // A 401 here is STRIPE_SECRET_KEY itself, a 404 a key from the other Stripe
+    // mode. Both are configuration, and both are worth a retry once fixed.
+    if (!response.ok) return { ok: false, reason: `Stripe answered ${response.status}` };
     const body = (await response.json()) as { data?: { price?: { id?: string } }[] };
-    return body.data?.[0]?.price?.id ?? "";
-  } catch {
-    return "";
+    return { ok: true, priceId: body.data?.[0]?.price?.id ?? "" };
+  } catch (error) {
+    // The name and message only: a fetch error describes the request, and the
+    // key travels in a header no error message repeats.
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return { ok: false, reason: `line items request failed, ${reason}` };
   }
 };

@@ -9,9 +9,9 @@
 //
 // The envelope is separate from the session ON PURPOSE. Stripe delivers every
 // event type this endpoint is subscribed to, and a single schema over the whole
-// payload would reject `payment_intent.succeeded` and friends as malformed —
-// turning "an event we do not care about" into the same retry loop. So: parse
-// the envelope, decide whether it is ours, and only then insist on a shape.
+// payload would reject `payment_intent.succeeded` and friends as malformed,
+// filling the error log with events we simply do not handle. So: parse the
+// envelope, decide whether it is ours, and only then insist on a shape.
 
 import { z } from "zod";
 
@@ -48,8 +48,8 @@ export const checkoutSession = z.object({
    * The live Cupertino link carries `major` and `rung` but NOT `price_id`, so
    * today this parses to a metadata object the price is absent from and
    * `priceIdFor` still does the work. Adding the key to the link is what closes
-   * that round trip — and what makes the product guard in `fulfil` hold when
-   * the API call is the thing that failed.
+   * that round trip, and with it the one way a Stripe API outage still delays
+   * fulfilment: a failed lookup answers 500 and the sale waits for a retry.
    */
   metadata: z.record(z.string(), z.string()).nullish(),
 });

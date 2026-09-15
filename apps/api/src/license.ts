@@ -48,6 +48,10 @@ export interface Minted {
   key: string;
 }
 
+/** The signing key as WebCrypto wants it. Throws on anything that is not one. */
+export const importSigningKey = (privateKey: string): Promise<CryptoKey> =>
+  crypto.subtle.importKey("pkcs8", fromBase64(privateKey), { name: "Ed25519" }, false, ["sign"]);
+
 export const mint = async (options: {
   email: string;
   major: number;
@@ -61,13 +65,7 @@ export const mint = async (options: {
   const payload = toBase64Url(
     encoder.encode(JSON.stringify({ id, email: options.email, major: options.major, issuedAt })),
   );
-  const signingKey = await crypto.subtle.importKey(
-    "pkcs8",
-    fromBase64(options.privateKey),
-    { name: "Ed25519" },
-    false,
-    ["sign"],
-  );
+  const signingKey = await importSigningKey(options.privateKey);
   const signature = await crypto.subtle.sign("Ed25519", signingKey, encoder.encode(payload));
   return {
     id,

@@ -51,7 +51,12 @@ if (!privateKey) {
   process.exit(2);
 }
 
-const email = args.valueOf("email", "");
+// Trimmed and lowercased, exactly as the Worker stores an address (index.ts on
+// the webhook, schema.ts on the resend route). Otherwise a comped key minted for
+// "Buyer@Example.com " carries a different email from the one the webhook would
+// have minted for the same customer, which is the ambiguity src/license.ts warns
+// about, and looks nothing like the address in D1 when support searches for it.
+const email = args.valueOf("email", "").trim().toLowerCase();
 if (!email.includes("@")) {
   console.error("FATAL: --email=<address> is required, and must look like one");
   process.exit(2);

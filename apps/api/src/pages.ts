@@ -44,6 +44,29 @@ It covers every 1.x release, on every Mac you own, and does not expire.</p>
   );
 
 /**
+ * A licence whose payment was refunded or disputed.
+ *
+ * No key on it. The webhook stops mailing a revoked key and the resend route
+ * never finds one, so the page that shows it stops too; otherwise a refunded
+ * buyer could collect a key that works until the next release simply by
+ * reopening the link Stripe sent them to.
+ */
+export const revokedPage = (reason: string | null): string => {
+  const why =
+    reason === "refunded"
+      ? "The payment for this licence was refunded, so its key has been revoked."
+      : reason === "disputed"
+        ? "The payment for this licence was disputed, so its key has been revoked."
+        : "This licence has been revoked.";
+  return shell(
+    "Your Cupertino licence",
+    `<h1>Licence revoked.</h1>
+<p>${why}</p>
+<p>If that looks wrong, reply to your Stripe receipt and it will be sorted out by hand.</p>`,
+  );
+};
+
+/**
  * Stripe redirects the moment payment succeeds, which can outrun the webhook.
  * This is that gap, and it says so rather than showing an error for a purchase
  * that went through perfectly.

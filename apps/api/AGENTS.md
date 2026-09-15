@@ -22,9 +22,12 @@ deliberately rather than as a side effect of a deploy. Both are gitignored, and 
 `.example` beside them.
 
 The three live values must be the same mode together. A live webhook secret with a test API key
-fulfils and records no `price_id`; the reverse rejects every real payment with a 400. `secrets:prod`
-refuses a file with any blank value for that reason — a half-applied set fails in ways that read as a
-code bug.
+cannot look up the price, so every sale whose session carries no `price_id` answers 500 and waits;
+the reverse rejects every real payment with a 400. `secrets:prod` refuses a file with any blank value
+for that reason, since a half-applied set fails in ways that read as a code bug. The script also
+refuses any file other than `.prod.vars` unless `--env <name>` says where it goes: without `--env`,
+`wrangler secret bulk` writes to the live Worker, and a test-mode `whsec_` secret carries nothing
+that marks it as test mode.
 
 Copy `.dev.vars.example` to `.dev.vars` first — it is gitignored and holds the signing key in plain
 text.
@@ -121,23 +124,29 @@ Changing the payload shape means changing all three. The field order in the obje
 - **Verify the signature against the raw body.** Re-serialising the JSON changes bytes Stripe
   signed.
 - **Parse the envelope before the session.** Every subscribed event arrives here, not just ours. A
-  single schema over the whole payload would call `payment_intent.succeeded` malformed and answer
-  400, putting unrelated events into the same three-day retry loop a broken payload deserves.
+  single schema over the whole payload would call `payment_intent.succeeded` malformed.
+- **Answer 200 to what no retry can fix, 500 to what one can.** Stripe retries every non-2xx, 4xx
+  included, for three days. Once the signature holds, a payload that does not parse answers 200 with
+  the reason and a `console.error`; a failed send, a failed price lookup or a missing secret answers 500. Only a bad signature is a 400, and its body says `invalid signature` and nothing more.
 - **Stay idempotent.** `stripe_session_id` is unique; Stripe redelivers for days and a redelivery
   must not mean a second licence.
 - **Return 500 when the email fails.** That is not an oversight — it is what makes Stripe retry, and
-  the alternative is a customer who paid and got nothing.
+  the alternative is a customer who paid and got nothing. The send is claimed in D1 before it is
+  attempted and handed back on failure, so two overlapping deliveries mail the key once.
+- **Never hand out a revoked key.** A redelivered `checkout.session.completed` after a refund is not
+  re-sent, and `/thanks` shows a revoked page instead of the key.
 - **Check `payment_status`.** A session completes for delayed payment methods before the money
   lands.
 
 ## Revocation is not enforced here
 
-This Worker only records it. `revoked_at` is set on a full refund or a dispute, cleared if the
-dispute is won, and read by `make revocations` at the repository root, which bakes the list into the
-next build. The app cannot consult anything at run time — it makes no network connections at all,
-which `scripts/audit-network.sh` gates in CI — so a refunded key keeps working until the next
-release and then stops. [EULA](../apple/EULA) §4(a) tells the buyer that rather than leaving it to
-be discovered. See [docs/licensing.md](../../docs/licensing.md).
+This Worker only records it. `revoked_at` is set on a full refund or a dispute, with
+`revoked_reason` saying which, cleared only if a dispute revoked it and that dispute is won (a
+refunded licence stays revoked whatever a later dispute does), and read by `make revocations` at
+the repository root, which bakes the list into the next build. The app cannot consult anything at
+run time — it makes no network connections at all, which `scripts/audit-network.sh` gates in CI —
+so a refunded key keeps working until the next release and then stops. [EULA](../apple/EULA) §4(a)
+tells the buyer that rather than leaving it to be discovered. See [docs/licensing.md](../../docs/licensing.md).
 
 ## What is not stored
 
@@ -146,4 +155,6 @@ record of which key went to whom; whether a given Mac is licensed lives in that 
 and is never transmitted. Any design that needs a not-paid list has smuggled a phone-home back in.
 
 `/license/resend` answers identically whether or not an address is a customer, on purpose — anything
-else makes it an oracle for "did this person buy Cupertino".
+else makes it an oracle for "did this person buy Cupertino". Identically includes the time taken: the
+lookup and the send run in `ctx.waitUntil` after the answer. It takes `application/json` only (415
+otherwise) and sends no CORS headers, so no page on another origin can make a browser call it.

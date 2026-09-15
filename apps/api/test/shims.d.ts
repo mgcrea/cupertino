@@ -17,3 +17,11 @@ declare module "*/license.mjs" {
     claims?: { id: string; email: string; major: number; issuedAt: string };
   };
 }
+
+/** The D1 stand-in the handler tests run against, plain JavaScript over node:sqlite. */
+declare module "*/d1.mjs" {
+  export const createD1: () => {
+    binding: D1Database;
+    sql: (query: string, ...params: (string | number | null)[]) => Record<string, unknown>[];
+  };
+}
