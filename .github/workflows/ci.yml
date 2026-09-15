@@ -68,6 +68,13 @@ jobs:
         run: pnpm run build
       - name: TypeScript 🔍
         run: pnpm run typecheck
+      # The feedback form breaks in the browser, not in the build: a CSP without
+      # the Worker's origin, a renamed field, or a slug the Worker does not know
+      # each ship a page that renders and cannot send. The script checks the built
+      # site for all of them, and it is only a gate if something runs it. It
+      # rebuilds the site first, so it does not depend on the Build step above.
+      - name: Feedback form 🔍
+        run: pnpm -C apps/website run feedback:check
       # The surface list lives in surfaces.json and is generated into nine other
       # files, including BOTH copies of the Apple Events consent string. This is
       # what makes the manifest the source of truth rather than a suggestion: a

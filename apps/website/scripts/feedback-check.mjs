@@ -30,6 +30,16 @@
  *    eight sibling sites have their own layouts and have not been fixed, so the
  *    assertion travels with the template.
  *
+ * And one that fails before anyone can send at all:
+ *
+ * 6. **The slug is one the contract names.** The contract's schema validates
+ *    `app` with `z.enum(APP_SLUGS)`, so a slug missing from that list renders a
+ *    form whose every submission is answered 400. The installed contract is
+ *    whatever npm had at install time, not the Worker's own copy, but it is the
+ *    best evidence a build has, and a form that cannot send is exactly what this
+ *    script exists to stop. So it fails rather than warns; the fix is to register
+ *    the slug in the contract and bump the dependency.
+ *
  * Run after `astro build`. Reads `dist/` only — it never starts a server, so it
  * is safe in CI and says which assertion broke rather than "the page is wrong".
  */
@@ -37,9 +47,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PARAM } from "@mgcrea/feedback-contract";
+import { APP_SLUGS, PARAM } from "@mgcrea/feedback-contract";
 
-import { FEEDBACK_API } from "../src/config.ts";
+import { APP_SLUG, FEEDBACK_API } from "../src/config.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const page = join(root, "dist", "feedback", "index.html");
@@ -88,6 +98,15 @@ if (!html.includes('name="website"')) failures.push('the "website" honeypot is m
 
 for (const [key, param] of Object.entries(PARAM)) {
   if (!param) failures.push(`contract PARAM.${key} is empty`);
+}
+
+// 6. The slug the form posts as `app`.
+if (!APP_SLUGS.includes(APP_SLUG)) {
+  failures.push(
+    `APP_SLUG "${APP_SLUG}" is not in the installed contract's APP_SLUGS (${APP_SLUGS.join(", ")}).\n` +
+      `    The schema rejects an unknown slug, so every submission would be answered 400.\n` +
+      `    fix: register the slug in @mgcrea/feedback-contract, publish, and bump it here`,
+  );
 }
 
 // The promise, enforced.
@@ -174,7 +193,7 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `feedback:check ok — ${bodyFields.length} fields, honeypot, editable diagnostics, ` +
+  `feedback:check ok — slug "${APP_SLUG}", ${bodyFields.length} fields, honeypot, editable diagnostics, ` +
     `${csp ? `${FEEDBACK_API} in connect-src` : "no CSP on this site"}, ` +
     `linked from ${linkers.length} page(s)`,
 );
