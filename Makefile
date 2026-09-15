@@ -688,9 +688,25 @@ appcast: ## Sign the release zip and write a one-item appcast
 	: "# AND no length, in a feed that is still well-formed XML — which xmllint"; \
 	: "# accepts and every installed updater then refuses. That failure appears"; \
 	: "# nowhere in this pipeline; it appears on every installed copy, forever."; \
-	signature=$$(printf '%s' "$$sig" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/'); \
-	test -n "$$signature" && [ "$$signature" != "$$sig" ] \
-		|| { echo "  !! sign_update produced no edSignature; not shipping a feed" >&2; exit 1; }; \
+	: "# So the value must be exactly ONE base64 ed25519 signature. The test"; \
+	: "# this replaces only asked that sed changed something, and sed works a"; \
+	: "# line at a time: a stray second line passed through untouched and the"; \
+	: "# whole multi-line string passed with it. sed -n with p prints matches"; \
+	: "# only, the pattern pins the shape, and the line count refuses two."; \
+	: "# The enclosure is then written from the validated value alone, never"; \
+	: "# from the raw output, with the length measured off the zip itself."; \
+	signature=$$(printf '%s\n' "$$sig" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p'); \
+	printf '%s\n' "$$signature" | grep -Eq '^[A-Za-z0-9+/]{86}==$$' \
+		&& [ "$$(printf '%s\n' "$$signature" | wc -l | tr -d ' ')" = 1 ] \
+		|| { echo "  !! sign_update produced no single well-formed edSignature; not shipping a feed" >&2; exit 1; }; \
+	length=$$(wc -c < apps/apple/.build/Cupertino.zip | tr -d ' '); \
+	: "# Well-formed is not the same as right. A signature made with any other"; \
+	: "# keypair passes every test above and is refused by every installed copy,"; \
+	: "# so check it against the key the app will check it with: SUPublicEDKey,"; \
+	: "# read out of the built app. See scripts/lib/update-signature.mjs."; \
+	edkey=$$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+		"$(RELEASE_APP)/Contents/Info.plist"); \
+	node scripts/verify-update-signature.mjs apps/apple/.build/Cupertino.zip "$$signature" "$$edkey"; \
 	version=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
 		"$(RELEASE_APP)/Contents/Info.plist"); \
 	build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
@@ -720,7 +736,7 @@ appcast: ## Sign the release zip and write a one-item appcast
 	'      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>' \
 	"      <description><![CDATA[$$notes]]></description>" \
 	"      <enclosure url=\"https://github.com/mgcrea/cupertino/releases/download/app-v$$version/Cupertino.zip\"" \
-	"        type=\"application/octet-stream\" $$sig/>" \
+	"        type=\"application/octet-stream\" sparkle:edSignature=\"$$signature\" length=\"$$length\"/>" \
 	'    </item>' \
 	'  </channel>' \
 	'</rss>' \
