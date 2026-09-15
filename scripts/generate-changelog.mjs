@@ -16,7 +16,9 @@
 // the binary and the decision is visible where the data is discarded:
 //
 //   - `### Internal` sections. Repo-facing prose about CI and generators; a user
-//     asking what changed in the app gets nothing from it.
+//     asking what changed in the app gets nothing from it. The list is
+//     `HIDDEN_SECTIONS` in `lib/changelog.mjs`, which the appcast renderer
+//     applies too, so the pane and the update dialog drop the same sections.
 //   - Everything past the most recent `SHOWN` releases. This is the pane you
 //     open after updating, not an archive.
 //
@@ -34,7 +36,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parse } from "./lib/changelog.mjs";
+import { HIDDEN_SECTIONS, parse } from "./lib/changelog.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
@@ -43,9 +45,6 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
 
 /** How many released versions reach the app. Raising it is this line. */
 const SHOWN = 5;
-
-/** Sections that exist for the repository rather than for the user. */
-const HIDDEN_SECTIONS = new Set(["Internal"]);
 
 const BANNER = "generated from CHANGELOG.md by `make changelog` — do not edit by hand";
 

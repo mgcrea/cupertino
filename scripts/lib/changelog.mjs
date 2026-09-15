@@ -39,6 +39,17 @@
 
 /** @typedef {{ version: string, date: string, unreleased: boolean, lead: string[], groups: Group[] }} Release */
 
+/**
+ * Sections that exist for the repository rather than for the user.
+ *
+ * Here rather than in either consumer, and applied by both: the What's New
+ * generator filters on it, and so does `renderHTML` below. It used to live in
+ * the generator alone, so the pane dropped `### Internal` while the appcast
+ * rendered it, and every user deciding whether to install an update read about
+ * CI jobs and generators in the dialog that asks them.
+ */
+export const HIDDEN_SECTIONS = new Set(["Internal"]);
+
 /** The leading `**…**`, non-greedy so a headline containing a code span still ends at its own close. */
 const HEADLINE = /^\*\*(.+?)\*\*\s*/;
 
@@ -171,7 +182,8 @@ export const inline = (text) => {
  * One release as the HTML Sparkle shows.
  *
  * Reads `entry.paragraphs`, never `headline`/`body`, so the split those two
- * carry cannot move the output.
+ * carry cannot move the output. Skips `HIDDEN_SECTIONS`, the one deliberate
+ * departure from the renderer it was moved from.
  *
  * @param {Release} release
  * @returns {string}
@@ -180,6 +192,7 @@ export const renderHTML = (release) => {
   const html = [];
   for (const text of release.lead) html.push(`<p>${inline(text)}</p>`);
   for (const group of release.groups) {
+    if (HIDDEN_SECTIONS.has(group.name)) continue;
     html.push(`<h3>${inline(group.name)}</h3>`);
     for (const text of group.lead) html.push(`<p>${inline(text)}</p>`);
     if (group.entries.length === 0) continue;

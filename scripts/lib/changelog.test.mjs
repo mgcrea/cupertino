@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { parse, renderHTML } from "./changelog.mjs";
+import { HIDDEN_SECTIONS, parse, renderHTML } from "./changelog.mjs";
 
 /**
  * The failures these guard against are silent in both directions.
@@ -169,17 +169,69 @@ describe("the real CHANGELOG.md", () => {
     // actually needs asserting is that no placeholder was eaten — every code
     // span in the source has to come out the other side as a <code>.
     for (const release of releases) {
+      // Hidden sections are left out of the render on purpose, so their spans
+      // are not owed to it.
       const sources = [
         ...release.lead,
-        ...release.groups.flatMap((group) => [
-          group.name,
-          ...group.lead,
-          ...group.entries.flatMap((entry) => entry.paragraphs),
-        ]),
+        ...release.groups
+          .filter((group) => !HIDDEN_SECTIONS.has(group.name))
+          .flatMap((group) => [
+            group.name,
+            ...group.lead,
+            ...group.entries.flatMap((entry) => entry.paragraphs),
+          ]),
       ];
       const spans = sources.reduce((n, text) => n + (text.match(/`[^`]+`/g) ?? []).length, 0);
       const rendered = (renderHTML(release).match(/<code>/g) ?? []).length;
       assert.equal(rendered, spans, `${release.version}: ${spans - rendered} code span(s) lost`);
+    }
+  });
+});
+
+describe("hidden sections", () => {
+  // The appcast is what a user reads before agreeing to install, and it used to
+  // carry `### Internal` in full because only the What's New generator filtered.
+  const release = parse(`## [2.0.0] - 2026-05-06
+
+### Added
+
+- **Shown.** A user-facing change.
+
+### Internal
+
+Lead prose about the build.
+
+- **Hidden.** A CI job nobody installs.
+`)[0];
+
+  it("hides Internal", () => {
+    assert.ok(HIDDEN_SECTIONS.has("Internal"));
+  });
+
+  it("keeps a hidden section in the parse, for callers that want it", () => {
+    assert.deepEqual(
+      release.groups.map((group) => group.name),
+      ["Added", "Internal"],
+    );
+  });
+
+  it("leaves hidden sections out of the appcast HTML, heading, lead and bullets", () => {
+    const html = renderHTML(release);
+    assert.match(html, /<h3>Added<\/h3>/);
+    assert.match(html, /Shown\./);
+    assert.doesNotMatch(html, /Internal/);
+    assert.doesNotMatch(html, /Lead prose about the build/);
+    assert.doesNotMatch(html, /Hidden\./);
+  });
+
+  it("renders no hidden heading for any release in the real CHANGELOG.md", () => {
+    for (const real of parse(readFileSync(join(root, "CHANGELOG.md"), "utf8"))) {
+      for (const name of HIDDEN_SECTIONS) {
+        assert.ok(
+          !renderHTML(real).includes(`<h3>${name}</h3>`),
+          `${real.version}: ### ${name} reached the appcast`,
+        );
+      }
     }
   });
 });
