@@ -365,6 +365,81 @@ obviously right — "a raw enumeration is not a target list", Mail enumerating 1
 returns shadows and helper layers. The AX window list is already curated by the application, so a
 filter here could only drop real windows. There is none, and the reason is now in the code.
 
+**And the six apps above were the wrong six.** Finder answers `kAXWindowsAttribute` with an EMPTY
+array — `.success`, `__NSArray0`, not an error — while a standard window is open and on screen. Read
+on 2026-09-14 against Finder pid 1458, one browser window open:
+
+|                          | finder                                                |
+| ------------------------ | ----------------------------------------------------- |
+| `CGWindowList`, filtered | 1 — layer 0, 3008x831                                 |
+| `kAXWindowsAttribute`    | 0                                                     |
+| `kAXFocusedWindow`       | the window                                            |
+| `kAXMainWindow`          | the window                                            |
+| `kAXChildren`            | the window, `AXMenuBar`, `AXScrollArea` (the desktop) |
+
+`osascript` agrees with the last three: System Events reports 1 window for that process, so it is
+not reading `AXWindows` either. Every desktop call against Finder funnels through
+`AccessibilityDriver.windows`, so `list_windows`, `ui_tree` and `find_elements` all failed with
+"Finder is running but has no window this surface can address" whatever was open.
+
+The list is now the UNION of `kAXWindows` and the app element's children whose role is `AXWindow`,
+deduped with `CFEqual` — two `AXUIElement`s for one window are distinct objects that compare equal,
+so identity would double-count every app that answers both. Checked against all 30 regular
+applications running that minute: the union differs from `kAXWindows` on Finder alone, 0 -> 1, and
+nothing double-counts. The role check is the one exception to the no-filter rule above, and it is a
+role check rather than a geometry one precisely so it drops Finder's menu bar and desktop scroll
+area without being able to drop a real window.
+
+## A window can be resized, and the clamp is the reason it reads back, 2026-09-15
+
+`list_windows` has always returned a `rect` that nothing could write back. The verb that closes
+that is `apple_desktop_set_window_frame`, and it exists because the alternative was worse rather
+than because the surface wanted another verb.
+
+**The alternative was osascript, and it is the one route this surface must not take.** Narrowing a
+window through System Events needs Accessibility granted to whatever is RESPONSIBLE for `osascript`
+— the terminal or the editor — which is the misattribution `alternatives.md` names as the thing no
+competitor solves, and the same reason `surfaces.ts` gives for shipping no npm package here. The
+write belongs in the process that already holds the grant. Unlike the capture verb weighed above,
+this needed **no second TCC grant**: it sits behind the two switches that were already there.
+
+**AppKit clamps geometry silently, so the verb reports what the window did rather than what was
+asked.** Measured against Silhouette 1.4.1, which declares `.frame(minWidth: 900)`:
+
+    requested  [-1584, 420, 600, 900]
+    actual     [-1584, 420, 900, 900]     confirmed: false
+
+Every AX call in that sequence returned `.success`. A caller that believed its own request would
+have gone on to measure a 600pt window it never had. This is the same honesty `set_value` and
+`focus` already owe — the write was permitted and the application did not honour it in full, which
+is a different fact from a refusal.
+
+## The toolbar overflow menu, 2026-09-15
+
+The check that verb was built for. Silhouette narrowed from 1440 to its 900pt floor drops
+`Run Batch` out of the toolbar, and the entries ARE readable:
+
+| | |
+| --- | --- |
+| the control | `AXPopUpButton`, name `"more toolbar items"`, no `AXIdentifier`, 38x38 |
+| the entry | `AXMenuItem`, name `"Run Batch"`, pressable |
+| appeared after | 130 ms |
+
+Two things a driver has to know, and both cut against advice this document gives elsewhere.
+
+**The overflow control is an `AXPopUpButton`, not an `AXButton`.** A first pass filtered the
+titlebar to `AXButton` and reported no overflow control on a window that visibly had one — the
+role-filter trap this document already warns about, walked into while looking for the thing that
+proves it.
+
+**The entry's identifier is the selector, not the item.** `Run Batch` carries
+`id=_simpleOverflowMenuItemClicked:`, which is AppKit's own action and is therefore THE SAME on
+every overflow entry. The toolbar item's real identifier — `toolbar.batch`, set by the app — does
+not survive into the menu. So in an overflow menu the `id` stops being a discriminator and the name
+is the only way to tell one entry from another, exactly inverting "reach for the identifier first".
+That also makes an overflow menu localised: `"more toolbar items"` and the entry names are both
+strings that change with the Mac's language.
+
 **Where they do not overlap, which is most of it:**
 
 |                         | `screen`                    | `desktop`                            |

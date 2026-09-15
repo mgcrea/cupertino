@@ -101,7 +101,8 @@ struct DesktopCheck {
   static let driving = [
     "apple_desktop_activate", "apple_desktop_click", "apple_desktop_focus",
     "apple_desktop_hover", "apple_desktop_key", "apple_desktop_press",
-    "apple_desktop_raise_window", "apple_desktop_set_value", "apple_desktop_type",
+    "apple_desktop_raise_window", "apple_desktop_set_value",
+    "apple_desktop_set_window_frame", "apple_desktop_type",
   ]
 
   static let observing = [
@@ -523,6 +524,42 @@ struct DesktopCheck {
       as? [[String: Any]] ?? [])
       .first { $0["name"] as? String == "apple_desktop_hover" }
       .flatMap { $0["annotations"] as? [String: Any] }
+    // set_window_frame writes the rect list_windows returns, and every
+    // component is optional so a caller can narrow a window without also
+    // deciding where it goes. That makes "none of them" the one shape the
+    // schema cannot express as `required`, so the refusal has to name all four.
+    let frameSchema =
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .first { $0["name"] as? String == "apple_desktop_set_window_frame" }
+      .flatMap { $0["inputSchema"] as? [String: Any] }
+    check(
+      "set_window_frame declares every argument it reads",
+      Set(["handle", "x", "y", "width", "height"])
+        .isSubset(
+          of: Set(((frameSchema?["properties"] as? [String: Any]) ?? [:]).keys)))
+    check(
+      "set_window_frame requires only the window, since any one component will do",
+      (frameSchema?["required"] as? [String]) == ["handle"])
+    // A refusal path: the geometry guard returns before AccessibilityDriver is
+    // reached, so this moves nothing on the machine running the check.
+    let (frameRefusal, frameFailed) = callText(
+      "apple_desktop_set_window_frame", ["handle": "nope"], writes: true)
+    check(
+      "set_window_frame with no geometry at all is refused, naming what it takes",
+      frameFailed && ["x", "y", "width", "height"].allSatisfy { frameRefusal.contains($0) })
+    check(
+      "set_window_frame is annotated as non-destructive and idempotent, like raise_window",
+      {
+        let annotations =
+          ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+          as? [[String: Any]] ?? [])
+          .first { $0["name"] as? String == "apple_desktop_set_window_frame" }
+          .flatMap { $0["annotations"] as? [String: Any] }
+        return (annotations?["destructiveHint"] as? Bool) == false
+          && (annotations?["idempotentHint"] as? Bool) == true
+      }())
+
     check(
       "hover is annotated as non-destructive and idempotent, unlike click",
       hoverAnnotations?["destructiveHint"] as? Bool == false

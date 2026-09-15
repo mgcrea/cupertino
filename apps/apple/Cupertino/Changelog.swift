@@ -384,6 +384,27 @@ enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_desktop_set_window_frame`, so the `rect` the surface reports can also be written.",
+            body: [
+              "`apple_desktop_list_windows` has always returned a window's position and size and nothing could set them, which left one ordinary thing — narrowing a window until its toolbar overflows — with no route through this surface at all. The alternative was `osascript` and System Events, and that is the one route this surface must not take: Accessibility attaches to the process RESPONSIBLE for `osascript`, so it would have meant granting a terminal the right to drive every application on the Mac. The write belongs in the app that already holds the grant. It needs no new permission and sits behind the writes and reach switches that were already there.",
+              "Every component is optional, so `width` alone narrows a window without deciding where it goes, and the numbers are the same screen points, top-left origin, that every other answer here uses.",
+              "**It reports what the window did, not what was asked.** AppKit enforces a window's own minimum size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the clamp instead of going on to measure a window it never got.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

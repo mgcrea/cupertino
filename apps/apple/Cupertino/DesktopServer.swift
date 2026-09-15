@@ -424,6 +424,29 @@ enum DesktopServer {
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
+      [
+        "name": "apple_desktop_set_window_frame",
+        "description":
+          "Move or resize a window by its handle — the rect apple_desktop_list_windows returns, "
+          + "written back. Every component is optional: pass 'width' alone to narrow a window "
+          + "without moving it. Screen points, top-left origin, the same space as every rect and "
+          + "point here. Reads the frame back and reports it, because a window's own minimum "
+          + "size clamps the request silently: ask a 900-point-wide minimum for 600 and it lands "
+          + "at 900 with no error anywhere. Compare 'actual' against 'requested' before "
+          + "measuring anything.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "handle": ["type": "string", "description": "Window handle from list_windows."],
+            "x": ["type": "number"],
+            "y": ["type": "number"],
+            "width": ["type": "number"],
+            "height": ["type": "number"],
+          ],
+          "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
     ])
     return list
   }
@@ -551,6 +574,7 @@ enum DesktopServer {
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
+      "apple_desktop_set_window_frame",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -775,6 +799,35 @@ enum DesktopServer {
         }
         try AccessibilityDriver.raise(handle: handle, scope: scope)
         return ok(id, ["raised": handle])
+
+      case "apple_desktop_set_window_frame":
+        guard let handle = args["handle"] as? String else {
+          return failure(id, "The 'handle' argument is required.")
+        }
+        let x = args["x"] as? Double
+        let y = args["y"] as? Double
+        let width = args["width"] as? Double
+        let height = args["height"] as? Double
+        guard x != nil || y != nil || width != nil || height != nil else {
+          return failure(id, "Pass at least one of 'x', 'y', 'width' or 'height'.")
+        }
+        let moved = try AccessibilityDriver.setFrame(
+          handle: handle, x: x, y: y, width: width, height: height, scope: scope)
+        // Reported rather than thrown, exactly as set_value and focus do: a
+        // window's own minimum size clamps the write with no error anywhere, and
+        // a caller that cannot see the clamp goes on to measure a window it
+        // never got.
+        let landed = moved.requested == moved.actual
+        return ok(
+          id,
+          [
+            "handle": handle, "requested": moved.requested, "actual": moved.actual,
+            "confirmed": landed,
+            "note": landed
+              ? "The frame read back as written."
+              : "The window did not take the whole request. Its own minimum or maximum size "
+                + "clamped it, silently and with no error — 'actual' is where it really is.",
+          ])
 
       case "apple_desktop_focus":
         guard let handle = args["handle"] as? String else {
@@ -1008,7 +1061,7 @@ enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate and raise_window are available."
+        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate, raise_window and set_window_frame are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

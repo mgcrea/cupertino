@@ -12,6 +12,27 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **`apple_desktop_set_window_frame`, so the `rect` the surface reports can also be written.**
+  `apple_desktop_list_windows` has always returned a window's position and size and nothing could
+  set them, which left one ordinary thing — narrowing a window until its toolbar overflows — with no
+  route through this surface at all. The alternative was `osascript` and System Events, and that is
+  the one route this surface must not take: Accessibility attaches to the process RESPONSIBLE for
+  `osascript`, so it would have meant granting a terminal the right to drive every application on
+  the Mac. The write belongs in the app that already holds the grant. It needs no new permission and
+  sits behind the writes and reach switches that were already there.
+
+  Every component is optional, so `width` alone narrows a window without deciding where it goes, and
+  the numbers are the same screen points, top-left origin, that every other answer here uses.
+
+  **It reports what the window did, not what was asked.** AppKit enforces a window's own minimum
+  size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere
+  along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the
+  clamp instead of going on to measure a window it never got.
+
 ## [1.21.1] - 2026-09-11
 
 ### Fixed

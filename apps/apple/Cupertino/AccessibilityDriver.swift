@@ -479,6 +479,24 @@ enum AccessibilityDriver {
   /// application. Measured across six surface apps, the AX count and the
   /// FILTERED CGWindowList count agree on every one. A filter here would only be
   /// able to drop real windows.
+  ///
+  /// **`kAXWindows` alone is not the window list.** Finder answers it with an
+  /// EMPTY array — `.success`, `__NSArray0`, not an error — while a standard
+  /// window is open and on screen, and hands the same window back through
+  /// `kAXFocusedWindow`, `kAXMainWindow` and `kAXChildren`. Read on 2026-09-14
+  /// against Finder pid 1458: `AXWindows` 0, `AXChildren` AXWindow
+  /// "mac-share-test" + AXMenuBar + AXScrollArea (the desktop), CGWindowList one
+  /// layer-0 3008x831 window. The six apps the paragraph above measured did not
+  /// include it, so every desktop call against Finder — `list_windows`,
+  /// `ui_tree`, `find_elements`, all of which funnel through here — failed with
+  /// `noWindows` whatever was open.
+  ///
+  /// So the list is the UNION of `kAXWindows` and the app element's children
+  /// whose role is `AXWindow`, deduped by element. The children are where the
+  /// filter ban above gets its one exception, and it is a role check rather than
+  /// a geometry one: Finder's other two children are a menu bar and the desktop
+  /// scroll area, neither of which is a window. `kAXWindows` still leads, so an
+  /// app that answers it properly keeps the order and the indices it had.
   static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
@@ -489,7 +507,17 @@ enum AccessibilityDriver {
     let err = AXUIElementCopyAttributeValue(
       appElement, kAXWindowsAttribute as CFString, &raw)
     if let problem = failure(for: err, doing: "Reading \(bundleId) windows") { throw problem }
-    guard let list = raw as? [AXUIElement], !list.isEmpty else {
+
+    var list = (raw as? [AXUIElement]) ?? []
+    for child in (copy(appElement, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
+    where string(child, kAXRoleAttribute as String) == (kAXWindowRole as String) {
+      // CFEqual, not `===`: two AXUIElements for one window are distinct objects
+      // that compare equal, so identity would double-count every app that
+      // answers both attributes.
+      if !list.contains(where: { CFEqual($0, child) }) { list.append(child) }
+    }
+
+    guard !list.isEmpty else {
       throw Failure.noWindows(running.localizedName ?? bundleId)
     }
 
@@ -797,6 +825,81 @@ enum AccessibilityDriver {
     announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
+  }
+
+  /// Move or resize a window, and report what the window actually did.
+  ///
+  /// `windows` has always returned a `rect` that nothing could write back, and
+  /// `setValue` cannot stand in for this: it hardcodes `kAXValueAttribute` and
+  /// takes a `String`, where position and size are `AXValue` boxes.
+  ///
+  /// **The read-back is the point.** AppKit enforces a window's `contentMinSize`
+  /// SILENTLY — a window with a 900pt minimum asked for 600 lands at 900 and
+  /// every AX call along the way returns `.success`. That is the same fact
+  /// `setValue` and `focus` report rather than throw: the write was permitted
+  /// and the application did not honour it in full, which a caller has to be
+  /// able to tell apart from a refusal. A caller that believed its own request
+  /// would go on to measure a window it does not have.
+  ///
+  /// Screen points, top-left origin — the space every `rect` and `point` here is
+  /// already in. `frame` above has the warning about flipping them.
+  static func setFrame(
+    handle: String, x: Double?, y: Double?, width: Double?, height: Double?, scope: Scope
+  ) throws -> (requested: [Double], actual: [Double]) {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+    announce(handle)
+
+    guard let current = frame(element) else {
+      throw Failure.refused(
+        "That element reports no position and size, so it cannot be moved or resized. This verb "
+          + "takes a window handle from list_windows.")
+    }
+    var origin = CGPoint(x: x ?? current[0], y: y ?? current[1])
+    var size = CGSize(width: width ?? current[2], height: height ?? current[3])
+
+    // Position before size: a window being GROWN is clamped by the screen space
+    // left of where it currently sits, so moving first is what makes room for
+    // the size that follows. Shrinking does not care about the order.
+    if x != nil || y != nil {
+      guard let box = AXValueCreate(.cgPoint, &origin) else {
+        throw Failure.refused("Could not express that position as an AXValue.")
+      }
+      try set(box, kAXPositionAttribute as String, on: element, handle: handle, what: "position")
+    }
+    if width != nil || height != nil {
+      guard let box = AXValueCreate(.cgSize, &size) else {
+        throw Failure.refused("Could not express that size as an AXValue.")
+      }
+      try set(box, kAXSizeAttribute as String, on: element, handle: handle, what: "size")
+    }
+
+    return (
+      requested: [origin.x, origin.y, size.width, size.height],
+      actual: frame(element) ?? current
+    )
+  }
+
+  /// Write one boxed geometry attribute, refusing by name.
+  ///
+  /// The settable check is not ceremony: a window with no resize control in its
+  /// style mask reports its size unsettable, and a caller needs to hear THAT
+  /// rather than watch a write succeed and change nothing. It also covers the
+  /// unsupported-attribute case, which `failure(for:)` deliberately treats as an
+  /// absence rather than an error.
+  private static func set(
+    _ value: AXValue, _ attribute: String, on element: AXUIElement, handle: String, what: String
+  ) throws {
+    var settable: DarwinBoolean = false
+    let check = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
+    if let problem = failure(for: check, doing: "Checking '\(handle)'") { throw problem }
+    guard settable.boolValue else {
+      throw Failure.refused(
+        "That window's \(what) is not settable. A window with no resize control reports this, and "
+          + "so does a full-screen one.")
+    }
+    let err = AXUIElementSetAttributeValue(element, attribute as CFString, value)
+    if let problem = failure(for: err, doing: "Setting '\(handle)' \(what)") { throw problem }
   }
 
   /// Give an element the keyboard focus, and read it back.
@@ -1472,6 +1575,9 @@ enum AccessibilityDriver {
   ///
   /// Hence the split: `refreshLayout` touches TIS and is main-thread-only,
   /// `layoutKeyCodes` reads the cache and never touches TIS at all.
+  ///
+  /// `nonisolated(unsafe)` is vouched for by `layoutLock` below: every read and
+  /// every write of this var happens while holding it.
   private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
   private static let layoutLock = NSLock()
 
