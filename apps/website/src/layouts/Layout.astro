@@ -11,6 +11,12 @@ export interface Props {
   /** Describes the picture, not the product. Pass one with any custom `ogImage`. */
   ogImageAlt?: string;
   schema?: SchemaObject | SchemaObject[];
+  /**
+   * Keep the page out of search results. The 404 is why this exists: the same
+   * page answers every URL that does not resolve, and it should never be what a
+   * search result lands on.
+   */
+  noindex?: boolean;
 }
 
 /**
@@ -33,6 +39,7 @@ const {
   ogImage = "/og-image.png",
   ogImageAlt = SOCIAL_CARD.alt,
   schema,
+  noindex = false,
 } = Astro.props;
 
 const canonicalHref = new URL(Astro.url.pathname, Astro.site).href;
@@ -55,7 +62,11 @@ const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
 
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonicalHref} />
+    {/*
+      One or the other, never both. A canonical link names the URL to index, so
+      putting one on a page that also says noindex sends two opposite signals.
+    */}
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonicalHref} />}
 
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
