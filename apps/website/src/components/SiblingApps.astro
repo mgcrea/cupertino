@@ -1,0 +1,73 @@
+---
+/**
+ * The cross-links to bastion and armada, the only place on this site that gives
+ * them a card. Armada's homepage has the same section, a card per sibling.
+ *
+ * Deliberately not a `SectionHeader` section. Every real section on this page
+ * opens with that eyebrow-and-display-heading grid, and a cross-promo that
+ * borrowed it would read as one of the page's own arguments. It gets an eyebrow
+ * and cards, which is the treatment contour and silhouette give the same block
+ * — subordinate to the sections above it and to the closing plate below.
+ *
+ * Each card is `Cta.astro`'s plate: same radius, same border, same ground. The
+ * sites already share a button and a type ramp to the pixel, so the one place
+ * they finally point at each other should look like it was always there.
+ *
+ * There is no `primary` button here. This page holds exactly one accent fill per
+ * viewport and the closing CTA directly below owns it — a filled button on a
+ * link to a different product is the page arguing against its own sale.
+ *
+ * Everything it says comes from `SIBLING_APPS` in config.ts.
+ */
+import { SIBLING_APPS } from "../config";
+import Button from "./Button.astro";
+---
+
+<section id="also" class="wrap py-[96px]">
+  <div class="mono mb-5 text-accent">Also from Magenta Creations</div>
+
+  <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+    {
+      SIBLING_APPS.map((app) => (
+        <div class="reveal flex flex-col gap-5 rounded-[20px] border border-rule bg-bg-2 p-7 md:p-8">
+          <div class="flex items-center gap-4">
+            {/* Served from this site's own `public/apps/`, never hotlinked: see
+                SIBLING_APPS. Per the CSP note in CLAUDE.md a blocked image is
+                invisible in dev, so check this with `pnpm build && pnpm preview`.
+                `rounded-[22.4%]` is the plate's own corner, 230/1024. Not
+                `Logo.astro`, which is hardcoded to this site's mark. */}
+            <img
+              src={app.icon}
+              alt=""
+              width="256"
+              height="256"
+              loading="lazy"
+              decoding="async"
+              class="h-14 w-14 shrink-0 rounded-[22.4%]"
+            />
+            <div class="flex flex-col gap-1">
+              <h2 class="m-0 font-display text-[22px] leading-[1.2] font-semibold tracking-[-0.03em]">
+                {app.name}
+              </h2>
+              <p class="m-0 text-[14.5px] text-accent-hi">{app.tagline}</p>
+            </div>
+          </div>
+          <p class="m-0 flex-1 text-[15px] leading-[1.6] text-pretty text-fg-dim">{app.pitch}</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <Button href={app.url} variant="secondary" external>
+              Visit {app.name} <span class="opacity-60">↗</span>
+            </Button>
+            <a
+              href={app.repo}
+              target="_blank"
+              rel="noopener"
+              class="inline-flex items-center justify-center px-[19px] py-[11px] text-[14px] text-fg-muted transition-colors hover:text-accent-hi"
+            >
+              Read the source ↗
+            </a>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>
