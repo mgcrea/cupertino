@@ -277,8 +277,11 @@ let chain = { () -> String in
   let pipe = Pipe()
   p.standardOutput = pipe
   try? p.run()
-  p.waitUntilExit()
+  // Read to EOF BEFORE waiting. The other order deadlocks as soon as the child
+  // writes more than a pipe buffer: it blocks on the full pipe and never exits,
+  // while this side waits for an exit before it will read.
   let data = pipe.fileHandleForReading.readDataToEndOfFile()
+  p.waitUntilExit()
   return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
 }()
 row("parent process", chain)
@@ -402,11 +405,19 @@ section("the walk — cost, census and depth")
 /// docs/screen.md derived this filter and the reason holds identically here:
 /// "a raw enumeration is not a target list". Mail reports 16 windows and has 3;
 /// the rest are shadows, toolbars and helper layers.
+///
+/// Mirrors `AccessibilityDriver.windows`: `kAXWindows` alone is not the window
+/// list. Finder answers it with an empty array while a window is open, and hands
+/// the same window back through `kAXChildren` — see docs/desktop.md. Union, then,
+/// deduped with `CFEqual`, since two `AXUIElement`s for one window are distinct
+/// objects that compare equal.
 func realWindows(_ appEl: AXUIElement) -> [AXUIElement] {
-  guard let raw = copyAttr(appEl, kAXWindowsAttribute as String) as? [AXUIElement] else {
-    return []
+  var windows = (copyAttr(appEl, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+  for child in (copyAttr(appEl, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
+  where stringAttr(child, kAXRoleAttribute as String) == (kAXWindowRole as String) {
+    if !windows.contains(where: { CFEqual($0, child) }) { windows.append(child) }
   }
-  return raw
+  return windows
 }
 
 struct Result {

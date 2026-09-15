@@ -166,11 +166,22 @@ func launchApp() {
       "-g", "-b", BridgeProtocol.appIdentifier, "--args", BridgeProtocol.backgroundFlag,
     ]
   }
+  // `open` returns as soon as LaunchServices has taken the request, normally in
+  // a blink. Bounded anyway: a wedged LaunchServices (a Gatekeeper assessment
+  // that never finishes, a busy lsd) would otherwise park the bridge here,
+  // before the connect loop below, which has its own deadline and a message
+  // that tells the person what to do.
+  let exited = DispatchSemaphore(value: 0)
+  open.terminationHandler = { _ in exited.signal() }
   do {
     try open.run()
-    open.waitUntilExit()
   } catch {
     warn("could not launch Cupertino: \(error.localizedDescription)")
+    return
+  }
+  if exited.wait(timeout: .now() + 10) == .timedOut {
+    open.terminate()
+    warn("open did not return within 10s; waiting for Cupertino's socket anyway")
   }
 }
 
@@ -197,7 +208,7 @@ guard let sock = socketFD else {
 
 // MARK: - Handshake
 
-func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
+@Sendable func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
   var offset = 0
   while offset < bytes.count {
     let written = bytes.withUnsafeBufferPointer {
@@ -301,7 +312,9 @@ setsockopt(
 let hostGone = DispatchSemaphore(value: 0)
 let appGone = DispatchSemaphore(value: 0)
 
-func pump(from source: Int32, to sink: Int32, label: String, onEnd: @escaping () -> Void) {
+func pump(
+  from source: Int32, to sink: Int32, label: String, onEnd: @escaping @Sendable () -> Void
+) {
   let thread = Thread {
     var buffer = [UInt8](repeating: 0, count: 64 * 1024)
     while true {

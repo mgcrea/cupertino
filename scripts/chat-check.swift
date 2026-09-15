@@ -85,10 +85,22 @@ struct ChatCheck {
     process.standardError = childErr
     try process.run()
 
-    // Killing the child is what unblocks a read that would otherwise wait
-    // forever; the reader sees EOF rather than a timeout it has to model.
-    let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
-    DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: watchdog)
+    // SIGTERM at the deadline, then SIGKILL for a server that outlives a short
+    // grace. Killing the child is necessary and not sufficient: a grandchild
+    // that inherited its stdout keeps the pipe open after the child is gone, so
+    // EOF never arrives and a blocking read waits forever. `readChunk` below
+    // therefore polls, and gives up once the deadline has passed AND the child
+    // has exited, whoever still holds the pipe.
+    let timeout: TimeInterval = 15
+    let expires = Date().addingTimeInterval(timeout)
+    let watchdog = DispatchWorkItem {
+      guard process.isRunning else { return }
+      process.terminate()
+      DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
     defer {
       watchdog.cancel()
       if process.isRunning { process.terminate() }
@@ -103,6 +115,25 @@ struct ChatCheck {
       try toChild.fileHandleForWriting.write(contentsOf: line)
     }
 
+    /// The next bytes the child wrote, or nil at EOF, on a read error, or once
+    /// the child is dead past its deadline.
+    func readChunk() -> Data? {
+      let fd = fromChild.fileHandleForReading.fileDescriptor
+      var bytes = [UInt8](repeating: 0, count: 64 * 1024)
+      while true {
+        var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let polled = poll(&ready, 1, 200)
+        if polled > 0 {
+          let n = read(fd, &bytes, bytes.count)
+          if n > 0 { return Data(bytes[0..<n]) }
+          if n == 0 || (errno != EINTR && errno != EAGAIN) { return nil }
+        } else if polled < 0, errno != EINTR {
+          return nil
+        }
+        if Date() >= expires, !process.isRunning { return nil }
+      }
+    }
+
     var buffer = Data()
     func awaitResult(_ id: Int) throws -> [String: Any] {
       while true {
@@ -115,8 +146,7 @@ struct ChatCheck {
             return object["result"] as? [String: Any] ?? [:]
           }
         }
-        let chunk = fromChild.fileHandleForReading.availableData
-        if chunk.isEmpty {
+        guard let chunk = readChunk() else {
           throw ChatSchema.Failure.unsupported(path: script, why: "gave no answer")
         }
         buffer.append(chunk)

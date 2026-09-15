@@ -217,9 +217,22 @@ enum SurfaceCatalog {
 
     try process.run()
 
-    // Killing the process is what unblocks a read that would otherwise wait
-    // forever; the reader below sees EOF rather than a timeout it has to model.
-    let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    // SIGTERM at the deadline, then SIGKILL for a server that outlives a short
+    // grace, the same escalation `ServerHost.endAfterGrace` uses. Killing the
+    // child is necessary and not sufficient to unblock the reader: a grandchild
+    // that inherited the child's stdout keeps the pipe open after the child is
+    // gone, so EOF never arrives. `LineReader` therefore polls, and gives up
+    // once the deadline has passed AND the child has exited, whoever still
+    // holds the pipe.
+    let expires = Date().addingTimeInterval(deadline)
+    let watchdog = DispatchWorkItem {
+      guard process.isRunning else { return }
+      process.terminate()
+      DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+        guard process.isRunning else { return }
+        kill(process.processIdentifier, SIGKILL)
+      }
+    }
     DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
     defer {
       watchdog.cancel()
@@ -231,7 +244,9 @@ enum SurfaceCatalog {
       try? toChild.fileHandleForWriting.close()
     }
 
-    let reader = LineReader(handle: fromChild.fileHandleForReading)
+    let reader = LineReader(handle: fromChild.fileHandleForReading) {
+      Date() >= expires && !process.isRunning
+    }
     let out = toChild.fileHandleForWriting
 
     func send(_ id: Int, _ method: String, _ params: [String: Any] = [:]) throws {
@@ -319,10 +334,15 @@ enum SurfaceCatalog {
 /// of them is lost by anything that splits each chunk on its own.
 private final class LineReader {
   private let handle: FileHandle
+  /// Asked each time a poll comes back empty. True means stop waiting for EOF.
+  private let giveUp: () -> Bool
   private var pending = Data()
   private var done = false
 
-  init(handle: FileHandle) { self.handle = handle }
+  init(handle: FileHandle, giveUp: @escaping () -> Bool) {
+    self.handle = handle
+    self.giveUp = giveUp
+  }
 
   func next() -> Data? {
     while true {
@@ -333,12 +353,34 @@ private final class LineReader {
         continue
       }
       if done { return nil }
-      let chunk = handle.availableData
-      if chunk.isEmpty {
+      guard let chunk = readChunk() else {
         done = true
         return pending.isEmpty ? nil : Data(pending)
       }
       pending.append(chunk)
+    }
+  }
+
+  /// The next bytes on the pipe, or nil at EOF, on a read error, or once
+  /// `giveUp` says waiting is pointless.
+  ///
+  /// `poll` with a short timeout rather than a blocking `availableData`, which
+  /// returns only when there is data or EOF, and so never returns at all while
+  /// an orphaned grandchild holds the write end.
+  private func readChunk() -> Data? {
+    let fd = handle.fileDescriptor
+    var bytes = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+      var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+      let polled = poll(&ready, 1, 200)
+      if polled > 0 {
+        let n = read(fd, &bytes, bytes.count)
+        if n > 0 { return Data(bytes[0..<n]) }
+        if n == 0 || (errno != EINTR && errno != EAGAIN) { return nil }
+      } else if polled < 0, errno != EINTR {
+        return nil
+      }
+      if giveUp() { return nil }
     }
   }
 }

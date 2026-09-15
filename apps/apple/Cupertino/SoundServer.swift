@@ -373,9 +373,12 @@ enum SoundServer {
     return out
   }
 
-  /// Runs `/usr/bin/say` and waits. Bounded by the schema's `maxLength` rather
-  /// than by a timeout, because the only thing that makes this slow is how much
-  /// text the caller asked for.
+  /// Runs `/usr/bin/say` and waits, for at most `speakTimeout(for:)`.
+  ///
+  /// The schema's `maxLength` bounds how much there is to say, and it used to be
+  /// the only bound. It does not bound `say` itself: a speech service that never
+  /// answers leaves the process alive with nothing to show for it, and this
+  /// call, and the session thread under it, waited with it indefinitely.
   private static func speak(text: String, voice: String?, id: Any?) -> String {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
@@ -387,11 +390,24 @@ enum SoundServer {
     task.standardOutput = FileHandle.nullDevice
     let errors = Pipe()
     task.standardError = errors
+    let exited = DispatchSemaphore(value: 0)
+    task.terminationHandler = { _ in exited.signal() }
     do { try task.run() } catch {
       return InProcessRPC.failure(id, "Could not run /usr/bin/say: \(error.localizedDescription)")
     }
+    // Wait BEFORE reading, which is the order that deadlocks on a chatty child.
+    // It cannot here: `say` writes at most a line of stderr. A child that did
+    // fill the pipe would block and come back as a timeout, which is bounded.
+    let limit = speakTimeout(for: text)
+    if exited.wait(timeout: .now() + limit) == .timedOut {
+      task.terminate()
+      if exited.wait(timeout: .now() + 2) == .timedOut, task.isRunning {
+        kill(task.processIdentifier, SIGKILL)
+      }
+      return InProcessRPC.failure(
+        id, "say did not finish within \(Int(limit)) seconds, so it was stopped.")
+    }
     let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-    task.waitUntilExit()
     guard task.terminationStatus == 0 else {
       let detail = String(decoding: stderr, as: UTF8.self).trimmingCharacters(
         in: .whitespacesAndNewlines)
@@ -399,6 +415,16 @@ enum SoundServer {
         id, detail.isEmpty ? "say exited \(task.terminationStatus)." : detail)
     }
     return InProcessRPC.ok(id, ["spoken": true, "characters": text.count])
+  }
+
+  /// How long `speak` waits: proportionate to the text, with a floor and a cap.
+  ///
+  /// Five characters a second is about a third of `say`'s default rate, so a
+  /// slow voice still finishes. The floor covers the speech service starting
+  /// cold; the cap keeps a future rise in `maxLength` from turning into a wait
+  /// nobody would sit through.
+  static func speakTimeout(for text: String) -> TimeInterval {
+    min(600, 15 + Double(text.count) / 5)
   }
 
   // ─── resources ─────────────────────────────────────────────────────────────
