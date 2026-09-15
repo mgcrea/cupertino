@@ -13,6 +13,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only unless a job asks for more. A job-level `permissions:` block REPLACES
+# this one rather than adding to it, which is why publish-npm, publish-registry,
+# github-release and release-app each still spell out `contents` beside what they
+# add. Without this, test, deploy-api and deploy-website ran with the repository's
+# default token scope, which can be write access to everything.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test on ${{ matrix.os }}
