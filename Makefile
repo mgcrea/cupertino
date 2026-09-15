@@ -812,27 +812,54 @@ version-check: ## Fail if any copy of the version has drifted from package.json
 # formatted -- the Safari extension is one file and was missed on the first pass.
 SWIFT_SRC := apps/apple/Cupertino apps/apple/CupertinoBridge apps/apple/CupertinoSafariExtension scripts
 
-# swift-format's version follows whichever Xcode is selected, so a toolchain bump
-# can reformat the whole tree with no change to `.swift-format` and turn the gate
-# red on code nobody edited. Assert it, so that day arrives as a sentence rather
-# than a mystery diff.
-SWIFT_FORMAT_VERSION := 6.3
+# swift-format's behaviour follows whichever Xcode is selected, so a toolchain
+# bump can reformat the whole tree with no change to `.swift-format` and turn the
+# gate red on code nobody edited. Assert it, so that day arrives as a sentence
+# rather than a mystery diff.
+#
+# Asserted against `swift --version`, NOT `swift-format --version`. Xcode 27
+# ships the formatter reporting its version as the literal string `main`, which
+# no pin can ever match — measured on Xcode 27.0 (27A266a), Swift 6.4, a RELEASE
+# build and not a beta, which is what this guard used to blame. The compiler
+# reports properly, and it is the toolchain the formatter shipped inside that
+# decides how it formats.
+#
+# A LIST, because CI and a developer's Mac are legitimately on different Xcodes:
+# the macos-latest runner is Swift 6.3 while Xcode 27 is 6.4. Both format this
+# tree identically — it was formatted under 6.3 and lints clean under 6.4 with
+# --strict — so both are accepted, and a third, unverified toolchain still fires.
+SWIFT_FORMAT_VERSIONS := 6.3 6.4
+
+# The assertion is fatal in CI and before anything is rewritten. A local lint
+# under an unlisted toolchain only warns: it changes no file, and CI still lints
+# under a listed one. $(1) is `fail` or `warn`.
+# A macro each recipe calls rather than a shared prerequisite, which make would
+# run once per invocation with whichever mode reached it first.
+swift_format_guard = v="$$(xcrun swift --version 2>/dev/null \
+	| sed -n 's/.*Apple Swift version \([0-9][0-9.]*\).*/\1/p' | head -1)"; \
+	ok=""; for w in $(SWIFT_FORMAT_VERSIONS); do \
+	  case "$$v" in $$w|$$w.*) ok=1;; esac; \
+	done; \
+	if [ -z "$$ok" ]; then \
+	  echo "Swift toolchain $${v:-unknown}, expected one of: $(SWIFT_FORMAT_VERSIONS) — the toolchain moved."; \
+	  if [ -n "$$CI" ] || [ "$(1)" != warn ]; then \
+	    echo "Reformat deliberately and add it to SWIFT_FORMAT_VERSIONS, or select a matching Xcode."; \
+	    exit 1; \
+	  fi; \
+	  echo "Linting anyway. CI lints under $(SWIFT_FORMAT_VERSIONS) and may disagree."; \
+	fi
 
 swift-format-version:
-	@v="$$(xcrun swift-format --version)"; \
-	case "$$v" in \
-	  $(SWIFT_FORMAT_VERSION).*) ;; \
-	  *) echo "swift-format $$v, expected $(SWIFT_FORMAT_VERSION).x — the toolchain moved."; \
-	     echo "Reformat deliberately and bump SWIFT_FORMAT_VERSION, or select the matching Xcode."; \
-	     exit 1;; \
-	esac
+	@$(call swift_format_guard,fail)
 
-format-swift: swift-format-version ## swift-format the Swift half
+format-swift: ## swift-format the Swift half
+	@$(call swift_format_guard,fail)
 	@xcrun swift-format format --in-place --recursive --parallel $(SWIFT_SRC)
 
 # `--strict` is what makes this a gate: without it lint prints its findings and
 # still exits 0, so CI would pass while reporting every violation it found.
-format-swift-check: swift-format-version ## Fail on unformatted Swift
+format-swift-check: ## Fail on unformatted Swift
+	@$(call swift_format_guard,warn)
 	@xcrun swift-format lint --recursive --parallel --strict $(SWIFT_SRC)
 
 # `git blame` walks straight into the reformat commit unless it is told not to,
