@@ -1,9 +1,19 @@
+# Cross-Origin-Opener-Policy puts every page of this site in its own browsing
+# context group: a window it opens cannot reach back through `window.opener`, and
+# a cross-origin page that opens one of ours cannot script it. Nothing here uses
+# that link. /buy is a same-tab 302 to Stripe (see _redirects), and every link
+# that opens a new tab already carries rel="noopener".
+#
+# The Content-Security-Policy is deliberately NOT set here. Astro builds it per
+# page from hashes of that page's own scripts (`security.csp` in
+# astro.config.mjs), and one static header for every path cannot know them.
 /*
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Cross-Origin-Opener-Policy: same-origin
 
 # Everything under /_astro/ carries a content hash in its filename, so the URL
 # changes whenever the bytes do. Without this, Workers Assets serves them with
