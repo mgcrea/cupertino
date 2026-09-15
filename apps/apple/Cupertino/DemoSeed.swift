@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Synchronization
 
 /// Screenshot mode: the app photographed instead of the app used.
 ///
@@ -663,7 +664,7 @@ enum DemoSeed {
   ]
 
   @MainActor private static func seedStores() {
-    LicenseStore.demoLicensed = true
+    LicenseStore.demoLicensed.store(true, ordering: .sequentiallyConsistent)
 
     for (index, line) in stage.logLines.enumerated() {
       LogStore.shared.appendDemo(

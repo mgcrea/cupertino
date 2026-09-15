@@ -33,7 +33,7 @@ import Foundation
 /// main actor. That is what lets `make unit` compile it against
 /// `scripts/unit-check.swift` alone, which is the only kind of test this
 /// project has.
-enum CallCapture {
+nonisolated enum CallCapture {
   /// How much of a call a surface records.
   ///
   /// Ordered by how much it keeps, so `>=` is a meaningful question.

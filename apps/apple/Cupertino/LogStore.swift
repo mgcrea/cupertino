@@ -178,7 +178,7 @@ final class LogStore {
 /// now.
 ///
 /// The mode is 0700: the audit log below it holds what tools were called with.
-enum AppSupport {
+nonisolated enum AppSupport {
   static var directory: URL { URL(fileURLWithPath: BridgeProtocol.socketDirectory) }
 
   /// The mode is 0700, and it is applied whether or not the directory is new.
@@ -210,7 +210,7 @@ enum AppSupport {
 /// keeps open, so this end is far less exposed — but "usually" is the whole
 /// problem, and a logging call is not something that should be able to take the
 /// app down. A dropped line is the correct failure here.
-func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
+nonisolated func hostLog(_ surface: String, _ level: LogStore.Level, _ text: String) {
   let bytes = Array("[\(surface)] \(level.rawValue): \(text)\n".utf8)
   var offset = 0
   while offset < bytes.count {

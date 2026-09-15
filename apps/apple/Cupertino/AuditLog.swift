@@ -44,14 +44,16 @@ final class AuditLog {
 
   // MARK: - Settings
 
-  static let enabledKey = "auditEnabled"
-  static let payloadsKey = "auditPayloads"
+  // `nonisolated` throughout: the readers below answer on server threads, and a
+  // key or a default isolated to the main actor is one they cannot reach.
+  nonisolated static let enabledKey = "auditEnabled"
+  nonisolated static let payloadsKey = "auditPayloads"
   /// The third act. Content reaches a file only when the surface records it
   /// live, the audit log is on, AND this is set — three deliberate switches,
   /// because the thing on the other side of them is the text of somebody's mail.
-  static let contentKey = "auditContent"
-  static let maxDaysKey = "auditMaxDays"
-  static let maxMegabytesKey = "auditMaxMegabytes"
+  nonisolated static let contentKey = "auditContent"
+  nonisolated static let maxDaysKey = "auditMaxDays"
+  nonisolated static let maxMegabytesKey = "auditMaxMegabytes"
 
   /// Absence means off, for both. An audit log that switched itself on would
   /// be writing a file nobody asked for out of what is otherwise memory.
@@ -59,8 +61,8 @@ final class AuditLog {
   nonisolated static var recordsPayloads: Bool { UserDefaults.standard.bool(forKey: payloadsKey) }
   nonisolated static var recordsContent: Bool { UserDefaults.standard.bool(forKey: contentKey) }
 
-  static let defaultMaxDays = 30
-  static let defaultMaxMegabytes = 100
+  nonisolated static let defaultMaxDays = 30
+  nonisolated static let defaultMaxMegabytes = 100
 
   nonisolated static var maxDays: Int {
     let set = UserDefaults.standard.integer(forKey: maxDaysKey)
@@ -224,7 +226,7 @@ final class AuditLog {
   /// when it had simply been unable to write. It is reported once per segment,
   /// because a disk that is full stays full and one row per call would be its
   /// own denial of service.
-  final class SegmentSink: @unchecked Sendable {
+  nonisolated final class SegmentSink: @unchecked Sendable {
     private var handle: FileHandle?
     private var url: URL?
     private var reported = false

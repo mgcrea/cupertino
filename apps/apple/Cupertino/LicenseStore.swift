@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Where this Mac's licence key lives, and whether it is any good.
 ///
@@ -29,7 +30,9 @@ enum LicenseStore {
     // entitlement state — so without the branch the developer's own key is
     // photographed at full size on the licence plate.
     #if DEBUG
-      if DemoSeed.isEnabled { return demoLicensed ? demoKey : nil }
+      if DemoSeed.isEnabled {
+        return demoLicensed.load(ordering: .sequentiallyConsistent) ? demoKey : nil
+      }
     #else
       if DemoSeed.isEnabled { return nil }
     #endif
@@ -57,7 +60,12 @@ enum LicenseStore {
   /// the persisted domain, so one `defaults write ScreenshotMode -bool YES` set
   /// it and licensed a shipped build. `DemoSeed.argument` fixed the read; the
   /// fences below are why a second such slip would not reach the licence answer.
-  nonisolated(unsafe) static var demoLicensed = false
+  ///
+  /// An `Atomic`, not a `nonisolated(unsafe) var`. It is written on the main
+  /// actor and read wherever the entitlement is asked, which includes the gate in
+  /// `ServerHost`, off the main actor. A plain var shared that way is a data race
+  /// the compiler was told to overlook, however rarely the write happens.
+  nonisolated static let demoLicensed = Atomic<Bool>(false)
 
   /// A key of the right SHAPE and deliberately not of the right signature.
   ///
@@ -69,7 +77,7 @@ enum LicenseStore {
     + ".DEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMODEMOKEYNOTSIGNED"
 
   static var check: LicenseCheck {
-    if demoLicensed {
+    if demoLicensed.load(ordering: .sequentiallyConsistent) {
       // `.valid` is reachable only from a Debug build, and the guard is the
       // point rather than a formality. `demoLicensed` is set from
       // `DemoSeed.seedStores`, and `DemoSeed` carries no DEBUG guard of its own

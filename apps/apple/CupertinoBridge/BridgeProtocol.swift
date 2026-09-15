@@ -6,7 +6,7 @@ import Foundation
 /// are separate and Xcode's filesystem-synchronized groups make sharing one
 /// file across both awkward, so this is copied rather than shared — it is small
 /// and changes to it must be made in both places.
-enum BridgeProtocol {
+nonisolated enum BridgeProtocol {
   /// Bumped only on a wire-incompatible change. The app refuses a version it
   /// does not know rather than guessing.
   static let version = "cupertino/1"
