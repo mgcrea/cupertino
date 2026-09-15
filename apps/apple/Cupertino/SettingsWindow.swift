@@ -14,22 +14,31 @@ import SwiftUI
 /// The protocol is qualified because this enum has the same name as it, which
 /// is the fleet's convention.
 ///
-/// Two pairs after the configuration panes, then what was bought.
+/// Three sections, which is what Armada arrived at once the two pairs below
+/// outgrew sitting on the end of the configuration list.
 ///
-/// What's New and Updates are the version pair: what did this build change, and
-/// is there a newer one. Updates sits after it rather than in General, where it
-/// was a Section under the version number, on the theory that somebody
-/// wondering whether they are current has already looked there — which holds
-/// only for the people who scroll.
+/// The first is what Cupertino does and what it did: General, Activity,
+/// Permissions. Permissions is configuration even though it is the one pane
+/// that only hands off to System Settings — what a server is allowed to reach
+/// is tuning, and somebody who opens it is in the middle of setting the app up
+/// rather than looking something up.
 ///
-/// About and Help are the identity pair, last, because that is where a settings
-/// window's footer material belongs. About is new here at all: the version and
-/// the identity line used to be the first Section of General, which answered
-/// "which build is this" on the page about launching at login.
+/// The second is the fleet's two pairs. What's New and Updates are the version
+/// pair: what did this build change, and is there a newer one. Updates sits
+/// after it rather than in General, where it was a Section under the version
+/// number, on the theory that somebody wondering whether they are current has
+/// already looked there — which holds only for the people who scroll.
 ///
-/// Help is a pane at all because Cupertino is `LSUIElement`, so the Help menu
-/// carrying these same three links only exists while a window happens to be
-/// open.
+/// About and Help are the identity pair, because both are where somebody goes
+/// when something is wrong rather than when they are tuning something. About is
+/// here at all because the version and the identity line used to be the first
+/// Section of General, which answered "which build is this" on the page about
+/// launching at login. Help is a pane rather than rows on About because
+/// Cupertino is `LSUIElement`, so the Help menu carrying these same three links
+/// only exists while a window happens to be open.
+///
+/// Licence is last and alone: somebody opens it because of a refusal or a
+/// receipt, never to tune something.
 enum SettingsPane: String, SupportKitSettings.SettingsPane {
   case general
   case audit
@@ -66,10 +75,13 @@ enum SettingsPane: String, SupportKitSettings.SettingsPane {
     }
   }
 
-  /// Licence is its own group, and the only reason the sidebar is in two rather
-  /// than one list. Somebody opens it because of a refusal or a receipt, never
-  /// because they are tuning something.
-  var group: SettingsPaneGroup { self == .licence ? .entitlement : .configuration }
+  var group: SettingsPaneGroup {
+    switch self {
+    case .general, .audit, .permissions: .configuration
+    case .whatsNew, .updates, .about, .help: .information
+    case .licence: .entitlement
+    }
+  }
 
   /// Only ever on What's New, and only while something is genuinely unread. The
   /// package draws nothing for 0, so the read case needs no branch of its own.
@@ -88,6 +100,12 @@ enum SettingsPane: String, SupportKitSettings.SettingsPane {
     guard DemoSeed.isEnabled, case .settings(let pane) = DemoSeed.stage.subject else { return nil }
     return pane
   }
+}
+
+/// Cupertino's section between the package's pair. Sections draw in ascending
+/// `order`, and `.entitlement` sits at 1_000 to leave room for exactly this.
+extension SettingsPaneGroup {
+  nonisolated static let information = SettingsPaneGroup(order: 500)
 }
 
 /// The Settings window.
@@ -688,11 +706,11 @@ enum StatusStyle {
 
 /// The update controls.
 ///
-/// A pane rather than the Section in General it used to be — see
-/// `SettingsPane.configuration` for why. What the version number gave it by
-/// being directly above, it now carries itself: the first row says which build
-/// this is, from the same `AppInfo.version` General reads, so the pane answers
-/// "am I current" without sending anybody back a page.
+/// A pane rather than the Section in General it used to be — see `SettingsPane`
+/// for why. What the version number gave it by being directly above, it now
+/// carries itself: the first row says which build this is, from the same
+/// `AppInfo.version` General reads, so the pane answers "am I current" without
+/// sending anybody back a page.
 ///
 /// Cupertino is the only thing in this app that can reach the internet, so the
 /// caption says what the check sends in plain terms rather than leaving it to
