@@ -401,6 +401,36 @@ enum Changelog {
               "Every component is optional, so `width` alone narrows a window without deciding where it goes, and the numbers are the same screen points, top-left origin, that every other answer here uses.",
               "**It reports what the window did, not what was asked.** AppKit enforces a window's own minimum size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the clamp instead of going on to measure a window it never got.",
             ]),
+          Entry(
+            ordinal: 1,
+            headline: "Agents now warn you before they take the keyboard and mouse.",
+            body: [
+              "Until now the orange card appeared in the same instant as the first click or keystroke, so somebody halfway through a sentence had no chance to stop. When you have used the Mac in the last 20 seconds, the first driving call of a Desktop or Simulator sequence now puts a card up first: \"Cupertino will drive Safari in 3 s\", with a Cancel button. Leave it and the agent goes ahead; cancel and nothing is posted, the agent is told you said no, and it cannot put the card back in front of you for 30 seconds. A Mac nobody has touched for 20 seconds is driven straight away, as before.",
+              "The Access card for Desktop and Simulator has a \"Before driving\" setting: count down, ask first (Allow or Don't, where no answer within 25 seconds is a no), or nothing, which is the old behaviour. The countdown length and how long an idle session lasts are set there too.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Driving is now a session that ends, and ending it gives you your app back.",
+            body: [
+              "The card used to vanish four seconds after each action, even while the agent was still thinking about the next one, and the driven app stayed in front afterwards, so there was no telling a pause from the end. The card now stays up for as long as the agent holds the screen. The session ends when the agent calls the new `apple_desktop_release` or `apple_simulator_release`, when you press Stop driving in the menu bar, when no call arrives for 45 seconds, or a few seconds after the client disconnects. When it ends, the app you were using comes back to the front, unless you had already switched to something yourself. A green card says the keyboard and mouse are yours again.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "`apple_desktop_run` takes a whole interaction in one call.",
+            body: [
+              "Steps are the desktop verbs (press, type, key, click, hover, focus and the rest), a few reads, and `wait`. Every step is checked before the first one runs, so a mistake in step five cannot leave a form half filled. The run stops at the first step that fails and says which one, and `releaseAfter` hands the Mac back when every step completed.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 4,
+            headline: "`apple_desktop_hover` no longer refuses while somebody is using the Mac.",
+            body: [
+              "It used to fail whenever there had been input in the last two seconds, and that refusal put no card on screen, which is why hovering looked like it never announced itself. It now waits for the same warning every other driving call gets.",
+            ]),
         ]),
     ])
 
