@@ -168,7 +168,9 @@ enum Permissions {
   /// which is what AddressBook — Contacts-gated — never was, and why this is a
   /// named list rather than every `.fullDiskAccess` surface: Reminders is a
   /// directory and Maps sits in another app's container, neither measured.
-  private static let fullDiskAccessFallbackSurfaces = ["mail", "messages", "safari", "notes", "calendar"]
+  private static let fullDiskAccessFallbackSurfaces = [
+    "mail", "messages", "safari", "notes", "calendar",
+  ]
 
   /// Is Full Disk Access granted?
   ///
