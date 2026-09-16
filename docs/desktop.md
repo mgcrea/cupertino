@@ -324,7 +324,7 @@ shaped this way — Sound's two gates are both capability tiers, these are **cap
 
 |               | off (shipped)                                                                              | on                                                    |
 | ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `allowWrites` | reads structure; the nine driving tools are not registered                                 | can press, type, click, hover, raise, focus, activate |
+| `allowWrites` | reads structure; the twelve driving tools are not registered                               | can press, type, click, hover, raise, focus, activate |
 | `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application                       |
 
 **Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
@@ -419,11 +419,11 @@ is a different fact from a refusal.
 The check that verb was built for. Silhouette narrowed from 1440 to its 900pt floor drops
 `Run Batch` out of the toolbar, and the entries ARE readable:
 
-| | |
-| --- | --- |
-| the control | `AXPopUpButton`, name `"more toolbar items"`, no `AXIdentifier`, 38x38 |
-| the entry | `AXMenuItem`, name `"Run Batch"`, pressable |
-| appeared after | 130 ms |
+|                |                                                                        |
+| -------------- | ---------------------------------------------------------------------- |
+| the control    | `AXPopUpButton`, name `"more toolbar items"`, no `AXIdentifier`, 38x38 |
+| the entry      | `AXMenuItem`, name `"Run Batch"`, pressable                            |
+| appeared after | 130 ms                                                                 |
 
 Two things a driver has to know, and both cut against advice this document gives elsewhere.
 
@@ -754,6 +754,11 @@ same before/after ambiguity `apple_desktop_user_activity` already tells callers 
 comparing the seconds against how long their own sequence took — which is why `hover` returns the
 reading rather than only acting on it.
 
+_Retired 2026-09-16._ The guard and `hoverIdleFloor` are gone. Its refusal put nothing on screen,
+which is exactly how hovering came to look like the one verb that never announced itself. Every
+driving verb now passes the admission described in "Driving is a session" below, which warns the
+person instead of refusing in silence.
+
 ## `click`, `type` and `key` name their target, 2026-09-10
 
 The report: an agent opened an application, clicked into it, and the notice read _Cupertino is
@@ -787,11 +792,128 @@ What it does not do:
   known false negative, so it is not checked here.
 - **Activation is not gated on the person**, unlike `hover`. Bringing an application forward while
   somebody types takes their focus. That is deliberate: the alternative was the keystroke landing in
-  their window.
+  their window. _Superseded 2026-09-16: activation now waits for the admission described below._
 - **The borrowers pass nothing yet.** `packages/mail` and `packages/maps` call `key` and `type` without
   a target; Mail raises its own composer.
 - **A call with no target** still names the frontmost application through `NSWorkspace`, which lags an
   activation.
+
+## Driving is a session, and the explicit end came back, 2026-09-16
+
+The report came in three parts. An agent's first click landed while the person was halfway through
+something, and the notice appeared in the same instant, so there was no time to react. Hovering
+never showed a notice at all. And when the agent stopped, the driven application stayed in front
+with no sign of whether it was finished, so the person could not tell whether it was safe to switch
+back to their own work.
+
+**The first two had one cause: nothing asked about the person before acting.** Only `hover` looked,
+and it looked by refusing, which put nothing on screen.
+
+**The third was a decision this document had recorded as correct.** `DriveActivity` held a deadline
+rather than a session because "an explicit end would leave the indicator lit forever the first time
+a client disconnected mid-sequence". The disconnect turned out to be visible: `ServerHost.serveInProcess`
+runs one thread per connection, and its `defer` fires when the connection ends. So the end came
+back. A session now ends in any of these ways, and none of them can strand the card:
+
+| Exit                                               | When                                           |
+| -------------------------------------------------- | ---------------------------------------------- |
+| `apple_desktop_release`, `apple_simulator_release` | the agent says it is done                      |
+| `apple_desktop_run` with `releaseAfter`            | every step of the run completed                |
+| Stop driving, in the menu bar                      | the person says it is done                     |
+| idle                                               | no call of any kind for 45 s (15 to 300)       |
+| disconnected                                       | 4 s after the last connection that drove in it |
+
+### Admission
+
+`DrivingSession.admit` runs inside every driving verb in `AccessibilityDriver`, **after the verb's
+own checks and before it acts**. After, so a refused verb (no grant, out of reach, a stale handle,
+an application that is not running) opens no session and shows no card. Before, so a "no" means
+nothing was posted. `activateAndWait` admits before its already-frontmost early return, because the
+target being in front does not mean nobody is typing into it. A verb that names no target admits
+whatever is frontmost, which is also where its event lands.
+
+When no session is open, `DrivingPolicy.decide` settles what happens:
+
+| Last input from the person    | Count down (default)             | Ask first                        | Nothing |
+| ----------------------------- | -------------------------------- | -------------------------------- | ------- |
+| within 20 s                   | 3 s card with Cancel (2 to 10 s) | Allow or Don't; 25 s silence: no | open    |
+| 20 s or more ago              | open                             | open                             | open    |
+| they said no in the last 30 s | refused, no card                 | refused, no card                 | refused |
+
+Four choices behind those numbers:
+
+- **"Active" counts Cupertino's own input.** The idle reading is `.combinedSessionState` for the
+  reason recorded above, so for 20 s after a session that typed, the Mac looks busy. That errs
+  toward warning, which is the cheap mistake.
+- **A no leaves a 30 s cooldown**, and it outranks the setting and an idle Mac. Without it an agent
+  that retries on refusal puts the same card back in front of the person who just dismissed it.
+  Silence on a question is not a no, so it leaves none.
+- **The question gives up at 25 s**, under the 30 s a lent channel allows a call
+  (`CALL_TIMEOUT_MS`), so a Mail reply waiting on the person hears "nobody answered" rather than a
+  socket timeout.
+- **The wait blocks the caller's own session thread**, the arrangement `InProcessRPC.blocking`
+  already relies on. The main thread never waits: only a check calls from there, and a main thread
+  blocked on a card it is meant to draw would hang.
+
+### The card
+
+The orange card now stays up for as long as the session is open, instead of lapsing four seconds
+after each verb while the model thinks. When the session ends, a green card says the keyboard and
+mouse are the person's again, and names the application that came back.
+
+The countdown and the question have buttons, so while one is up the panel takes clicks. The focus
+rule still holds, for two reasons. Nothing is posted while they are up, since every driving verb is
+waiting on the answer, so no synthetic click can land on them. And a click on a non-activating panel
+that never becomes key does not activate Cupertino or take the keyboard, so the person can press
+Cancel and keep typing. `FirstClickHostingView` accepts that first click, which a window that is
+not key would otherwise spend on nothing.
+
+The driving card itself cannot carry a button: it has to let the mouse through while input is being
+posted, or an agent's click aimed at the top-right corner would land on it. So Stop driving lives in
+the menu bar popover.
+
+### Handing back
+
+When the session opens, the application in front is recorded. When it ends, that application is
+brought back **only if a driven application is still in front**. If the person has switched to
+something themselves, pulling their previous app forward would undo a choice they just made.
+
+`AccessibilityDriver.handBack(to:)` takes the same two routes `activate` does, with no admission,
+no notice, and **no scope check**. Scope bounds what an agent may reach, and no agent chose this
+application: Cupertino read it off the window server, and it is very often an editor outside the
+brokered set.
+
+### `apple_desktop_run`
+
+A sequence of steps in one call, each `{"tool": <verb>, ...its arguments}`, stopping at the first
+that fails. Two properties matter:
+
+- **Every step goes through `call`**, so it passes the same write gate, argument checks and driver
+  path as the tool it names. The cost is decoding the JSON each step just encoded, which is nothing
+  next to an Accessibility round trip.
+- **The whole run is validated before the first step runs**: known steps, required arguments from
+  each tool's own schema, at most 25 steps, a `wait` of at most 5 s. Stopping at the first failure
+  is only half a promise without it, because a missing argument in step 5 would otherwise leave a
+  form half filled in by the time the caller hears about it.
+
+A step cannot use a handle found by another step in the same run. `ui_tree` and `expand` are not
+steps, because their answers would swamp the run's own.
+
+### What it does not do
+
+- **Mail's System Events compose path passes no admission.** It lights the orange card through
+  `VisibleTools` from the tool name, and never goes through the driver. Only the native lane Mail
+  borrows the driver for gets the countdown.
+- **One session for the whole Mac.** Two agents driving at once share it, and the first to release
+  ends it for both. There is one person at the keyboard, so this is the honest shape, but it is not
+  per agent.
+- **Not seen working by hand yet.** The overlay is excluded from capture, and the agent's shell
+  cannot run a hands-off leg while somebody is at the keyboard. `desktop-check` pins the state
+  machine without posting anything: a session opens, renames, releases, goes idle, outlives a
+  disconnect for the grace and survives a reconnect; a countdown that runs out lets the verb
+  through, Allow lets it through, and Cancel refuses it and leaves the cooldown. Whether the Cancel
+  button takes a first click in a panel that is never key, and whether the hand-back lands, still
+  need a person to watch them.
 
 ## Still open
 
