@@ -220,7 +220,104 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_21_1, v1_21_0, v1_20_1, v1_20_0, v1_19_1]
+  static let releases: [Release] = [v1_22_0, v1_21_1, v1_21_0, v1_20_1, v1_20_0]
+
+  // swift-format-ignore
+  private static let v1_22_0: Release = Release(
+    version: "1.22.0",
+    date: "2026-09-16",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_desktop_set_window_frame`, so the `rect` the surface reports can also be written.",
+            body: [
+              "`apple_desktop_list_windows` has always returned a window's position and size and nothing could set them, which left one ordinary thing — narrowing a window until its toolbar overflows — with no route through this surface at all. The alternative was `osascript` and System Events, and that is the one route this surface must not take: Accessibility attaches to the process RESPONSIBLE for `osascript`, so it would have meant granting a terminal the right to drive every application on the Mac. The write belongs in the app that already holds the grant. It needs no new permission and sits behind the writes and reach switches that were already there.",
+              "Every component is optional, so `width` alone narrows a window without deciding where it goes, and the numbers are the same screen points, top-left origin, that every other answer here uses.",
+              "**It reports what the window did, not what was asked.** AppKit enforces a window's own minimum size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the clamp instead of going on to measure a window it never got.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Agents now warn you before they take the keyboard and mouse.",
+            body: [
+              "Until now the orange card appeared in the same instant as the first click or keystroke, so somebody halfway through a sentence had no chance to stop. When you have used the Mac in the last 20 seconds, the first driving call of a Desktop or Simulator sequence now puts a card up first: \"Cupertino will drive Safari in 3 s\", with a Cancel button. Leave it and the agent goes ahead; cancel and nothing is posted, the agent is told you said no, and it cannot put the card back in front of you for 30 seconds. A Mac nobody has touched for 20 seconds is driven straight away, as before.",
+              "The Access card for Desktop and Simulator has a \"Before driving\" setting: count down, ask first (Allow or Don't, where no answer within 25 seconds is a no), or nothing, which is the old behaviour. The countdown length and how long an idle session lasts are set there too.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Driving is now a session that ends, and ending it gives you your app back.",
+            body: [
+              "The card used to vanish four seconds after each action, even while the agent was still thinking about the next one, and the driven app stayed in front afterwards, so there was no telling a pause from the end. The card now stays up for as long as the agent holds the screen. The session ends when the agent calls the new `apple_desktop_release` or `apple_simulator_release`, when you press Stop driving in the menu bar, when no call arrives for 45 seconds, or a few seconds after the client disconnects. When it ends, the app you were using comes back to the front, unless you had already switched to something yourself. A green card says the keyboard and mouse are yours again.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "`apple_desktop_run` takes a whole interaction in one call.",
+            body: [
+              "Steps are the desktop verbs (press, type, key, click, hover, focus and the rest), a few reads, and `wait`. Every step is checked before the first one runs, so a mistake in step five cannot leave a form half filled. The run stops at the first step that fails and says which one, and `releaseAfter` hands the Mac back when every step completed.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "Settings has an About pane and a Help pane.",
+            body: [
+              "Which build this is — the version, the system, the model — used to be answered in the first section of General, the page about launching at login. It is a pane of its own now, with the app icon, the bundle id and the signing identity beside it, and the version line in the menu bar is a button that opens it rather than text that does nothing. Help is new as well: the same three links the Help menu carries, reachable when no window is open, which is when somebody is most likely to want them.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 5,
+            headline: "`apple_desktop_hover` no longer refuses while somebody is using the Mac.",
+            body: [
+              "It used to fail whenever there had been input in the last two seconds, and that refusal put no card on screen, which is why hovering looked like it never announced itself. It now waits for the same warning every other driving call gets.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "The Settings sidebar is grouped into what Cupertino does, then what it did.",
+            body: [
+              "General, Activity and Permissions are the panes you configure; What's New, Updates, About and Help are the ones you open when you want to know what this build is or something has gone wrong; License is last. No stored selection moves, so the first-run licence prompt still lands where it did.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "The menu bar panel matches the fleet's other apps.",
+            body: [
+              "The version sits at the trailing edge of the footer, as a button to the new About pane rather than as a suffix to the app's name, and the row finally carries ⌘O and ⌘Q. Tooltips lose their trailing clauses: \"Logs (⌘L) — what every client has called, live\" is now \"Logs (⌘L)\", built from the action's own name and shortcut so the two cannot disagree.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 8,
+            headline: "Every desktop call against Finder found no windows.",
+            body: [
+              "Finder answers `kAXWindows` with an empty list while a perfectly ordinary window is open on screen, and the same window is reachable only through `kAXChildren`. The window list is now the union of both, deduped, so Finder is drivable like anything else.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "A call could wait forever.",
+            body: [
+              "Killing a server does not guarantee the end of its output: a grandchild that inherited the pipe holds it open after the child is gone, and the read behind it waited indefinitely no matter what the watchdog did. Those reads now give up once the deadline has passed and the child has exited, whoever still holds the pipe, and the watchdog escalates to SIGKILL for a server that outlives its grace period. Sound's `say` and the bridge's `open`, which had no timeout at all, are bounded the same way.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "The Simulator row said Simulator was not installed, on a Mac running one.",
+            body: [
+              "Xcode 27 ships no `Simulator.app` — the simulator's window belongs to DeviceHub now — while LaunchServices goes on pointing at the path Xcode 26 used. The row fell back to the not-installed glyph with devices booted and the surface working. It now falls back to the app that owns that window today, and a Mac with no Xcode at all still says nothing is installed, which is still true.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "The app offered a licence while the store was closed.",
+            body: [
+              "The website already gated its buy copy on whether the payment link resolves; the app's two buy buttons did not, so a build made while the store is shut still invited people to a page that could not sell them anything.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_21_1: Release = Release(
@@ -360,81 +457,11 @@ enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_19_1: Release = Release(
-    version: "1.19.1",
-    date: "2026-09-08",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_safari_read_page` returned a single-page app's pre-boot shell, forever.",
-            body: [
-              "The extension captured a page once, at `document_idle`, and again only after a route change — before a single-page app has rendered anything. The only capture of x.com was therefore its loading shell: an empty `<title>` and the static \"Something went wrong … privacy related extensions\" block X ships in every response, easy to misread as a real error rather than an uninitialized page. The store is keyed by URL, so that snapshot was the **permanent** answer for the page; no amount of waiting before `read_page` improved it, because nothing ever captured a second time.",
-              "The content script now re-captures once the page settles: a `MutationObserver` fires after the DOM holds still for 500ms, with a 5-second deadline for pages that never go fully quiet — a live timeline (video, ads, ticking timestamps) would otherwise never trigger a debounce on its own. A route change reuses the same watcher instead of a fixed delay, and a settled capture identical to the one already sent is skipped rather than resent.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_set_window_frame`, so the `rect` the surface reports can also be written.",
-            body: [
-              "`apple_desktop_list_windows` has always returned a window's position and size and nothing could set them, which left one ordinary thing — narrowing a window until its toolbar overflows — with no route through this surface at all. The alternative was `osascript` and System Events, and that is the one route this surface must not take: Accessibility attaches to the process RESPONSIBLE for `osascript`, so it would have meant granting a terminal the right to drive every application on the Mac. The write belongs in the app that already holds the grant. It needs no new permission and sits behind the writes and reach switches that were already there.",
-              "Every component is optional, so `width` alone narrows a window without deciding where it goes, and the numbers are the same screen points, top-left origin, that every other answer here uses.",
-              "**It reports what the window did, not what was asked.** AppKit enforces a window's own minimum size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the clamp instead of going on to measure a window it never got.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Agents now warn you before they take the keyboard and mouse.",
-            body: [
-              "Until now the orange card appeared in the same instant as the first click or keystroke, so somebody halfway through a sentence had no chance to stop. When you have used the Mac in the last 20 seconds, the first driving call of a Desktop or Simulator sequence now puts a card up first: \"Cupertino will drive Safari in 3 s\", with a Cancel button. Leave it and the agent goes ahead; cancel and nothing is posted, the agent is told you said no, and it cannot put the card back in front of you for 30 seconds. A Mac nobody has touched for 20 seconds is driven straight away, as before.",
-              "The Access card for Desktop and Simulator has a \"Before driving\" setting: count down, ask first (Allow or Don't, where no answer within 25 seconds is a no), or nothing, which is the old behaviour. The countdown length and how long an idle session lasts are set there too.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Driving is now a session that ends, and ending it gives you your app back.",
-            body: [
-              "The card used to vanish four seconds after each action, even while the agent was still thinking about the next one, and the driven app stayed in front afterwards, so there was no telling a pause from the end. The card now stays up for as long as the agent holds the screen. The session ends when the agent calls the new `apple_desktop_release` or `apple_simulator_release`, when you press Stop driving in the menu bar, when no call arrives for 45 seconds, or a few seconds after the client disconnects. When it ends, the app you were using comes back to the front, unless you had already switched to something yourself. A green card says the keyboard and mouse are yours again.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "`apple_desktop_run` takes a whole interaction in one call.",
-            body: [
-              "Steps are the desktop verbs (press, type, key, click, hover, focus and the rest), a few reads, and `wait`. Every step is checked before the first one runs, so a mistake in step five cannot leave a form half filled. The run stops at the first step that fails and says which one, and `releaseAfter` hands the Mac back when every step completed.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 4,
-            headline: "`apple_desktop_hover` no longer refuses while somebody is using the Mac.",
-            body: [
-              "It used to fail whenever there had been input in the last two seconds, and that refusal put no card on screen, which is why hovering looked like it never announced itself. It now waits for the same warning every other driving call gets.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

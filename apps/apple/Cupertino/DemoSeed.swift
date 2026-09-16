@@ -710,7 +710,7 @@ enum DemoSeed {
   /// churn the golden gate into noise — and the images would claim a version
   /// before the store listing showing them had caught up.
   /// Bump this deliberately, when new marketing images are wanted.
-  nonisolated static let version = "1.21.0"
+  nonisolated static let version = "1.22.0"
 
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted
@@ -858,7 +858,14 @@ enum DemoSeed {
   /// `HostedWindow` now documents meant a previous capture had written 1120x572
   /// into the real preferences, and the next capture restored it. Closing the
   /// leak is what exposed the missing `contentSize` here.
-  nonisolated static let contentSize = NSSize(width: 1120, height: 540)
+  /// **520 rather than 540 since the macOS 27 SDK.** The sidebar's own material
+  /// changed with it: the list is no longer drawn in an inset card, so it runs
+  /// the full height of the window and shows about 20pt more than it did. What
+  /// that bought was the top of the *Activity* section header, cut in half by
+  /// the status strip — a plate with a sliced glyph in it, which reads as a
+  /// rendering fault rather than as a list that continues. Twenty points fewer
+  /// puts the cut back in the gap above that header, where 540 used to put it.
+  nonisolated static let contentSize = NSSize(width: 1120, height: 520)
 
   /// The Settings window's size, and it is the size that window is *created*
   /// at — not one applied to it afterwards.

@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.21.1`,
-`notes-v1.21.1`, `reminders-v1.21.1`, `core-v1.21.1` for the npm packages, and `app-v1.21.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.22.0`,
+`notes-v1.22.0`, `reminders-v1.22.0`, `core-v1.22.0` for the npm packages, and `app-v1.22.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.22.0] - 2026-09-16
 
 ### Added
 
@@ -61,12 +61,81 @@ summary.
   The run stops at the first step that fails and says which one, and `releaseAfter` hands the Mac
   back when every step completed.
 
+- **Settings has an About pane and a Help pane.** Which build this is — the version, the system,
+  the model — used to be answered in the first section of General, the page about launching at
+  login. It is a pane of its own now, with the app icon, the bundle id and the signing identity
+  beside it, and the version line in the menu bar is a button that opens it rather than text that
+  does nothing. Help is new as well: the same three links the Help menu carries, reachable when no
+  window is open, which is when somebody is most likely to want them.
+
 ### Changed
 
 - **`apple_desktop_hover` no longer refuses while somebody is using the Mac.** It used to fail
   whenever there had been input in the last two seconds, and that refusal put no card on screen,
   which is why hovering looked like it never announced itself. It now waits for the same warning
   every other driving call gets.
+
+- **The Settings sidebar is grouped into what Cupertino does, then what it did.** General, Activity
+  and Permissions are the panes you configure; What's New, Updates, About and Help are the ones you
+  open when you want to know what this build is or something has gone wrong; License is last. No
+  stored selection moves, so the first-run licence prompt still lands where it did.
+
+- **The menu bar panel matches the fleet's other apps.** The version sits at the trailing edge of
+  the footer, as a button to the new About pane rather than as a suffix to the app's name, and the
+  row finally carries ⌘O and ⌘Q. Tooltips lose their trailing clauses: "Logs (⌘L) — what every
+  client has called, live" is now "Logs (⌘L)", built from the action's own name and shortcut so the
+  two cannot disagree.
+
+### Fixed
+
+- **Every desktop call against Finder found no windows.** Finder answers `kAXWindows` with an empty
+  list while a perfectly ordinary window is open on screen, and the same window is reachable only
+  through `kAXChildren`. The window list is now the union of both, deduped, so Finder is drivable
+  like anything else.
+
+- **A call could wait forever.** Killing a server does not guarantee the end of its output: a
+  grandchild that inherited the pipe holds it open after the child is gone, and the read behind it
+  waited indefinitely no matter what the watchdog did. Those reads now give up once the deadline
+  has passed and the child has exited, whoever still holds the pipe, and the watchdog escalates to
+  SIGKILL for a server that outlives its grace period. Sound's `say` and the bridge's `open`, which
+  had no timeout at all, are bounded the same way.
+
+- **The Simulator row said Simulator was not installed, on a Mac running one.** Xcode 27 ships no
+  `Simulator.app` — the simulator's window belongs to DeviceHub now — while LaunchServices goes on
+  pointing at the path Xcode 26 used. The row fell back to the not-installed glyph with devices
+  booted and the surface working. It now falls back to the app that owns that window today, and a
+  Mac with no Xcode at all still says nothing is installed, which is still true.
+
+- **The app offered a licence while the store was closed.** The website already gated its buy copy
+  on whether the payment link resolves; the app's two buy buttons did not, so a build made while
+  the store is shut still invited people to a page that could not sell them anything.
+
+### Internal
+
+- A persisted `ScreenshotMode` preference put a shipped build into screenshot mode on every launch,
+  which also answered the licence question and trapped on launch once the stage key went with it.
+  Screenshot flags are read from the argument domain alone now, and the licence branch they reached
+  is fenced out of Release builds rather than merely documented as unreachable.
+- `make appcast` verifies the signature it just made against the key compiled into the built app,
+  refuses an empty one, treats `xmllint` as fatal, and removes the Ed25519 private key on every
+  exit path instead of only the happy one. A silently unsigned feed is refused by every installed
+  updater, with the fix reaching them only as the update they refuse.
+- `### Internal` sections are dropped from the appcast as well as from the What's New pane; they
+  were rendered into the dialog people read before installing an update.
+- The Swift formatting guard asserts `swift --version` against a list of accepted toolchains, since
+  Xcode 27's swift-format reports its own version as the literal string `main`.
+- `push-worker-secrets` refuses any file but `.prod.vars` without an explicit `--env`, and no
+  longer reads a test-mode secret set as live.
+- CI's workflow token defaults to read-only, and the website's feedback slug is validated against
+  the installed contract as a gate rather than a script nobody ran. Every page sends
+  Cross-Origin-Opener-Policy, the 404 page is `noindex` instead of canonical, and Armada is
+  cross-linked beside Bastion.
+- The licence API claims a send in D1 before attempting it, answers 200 to what no retry can fix
+  and 500 to what one can, and records why a licence was revoked, so a won dispute cannot restore a
+  key that a refund revoked.
+- Cross-actor globals are `nonisolated` by declaration rather than by assumption,
+  `LicenseStore.demoLicensed` is an `Atomic<Bool>`, and the last identifiers spelled `Licence` are
+  spelled `License`.
 
 ## [1.21.1] - 2026-09-11
 
@@ -2360,7 +2429,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.21.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.22.0...HEAD
+[1.22.0]: https://github.com/mgcrea/cupertino/compare/app-v1.21.1...app-v1.22.0
 [1.21.1]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...app-v1.21.1
 [1.21.0]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...app-v1.21.0
 [1.20.1]: https://github.com/mgcrea/cupertino/compare/app-v1.20.0...app-v1.20.1
