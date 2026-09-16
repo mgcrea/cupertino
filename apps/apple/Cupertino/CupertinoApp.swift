@@ -252,6 +252,9 @@ struct MenuBarLabel: View {
   }
 
   private var accessibilityLabel: String {
+    if let name = driving.promptName {
+      return "Cupertino — about to drive \(name)"
+    }
     if let name = driving.displayName, let kind = driving.kind {
       return kind == .driving
         ? "Cupertino — driving \(name), do not use the keyboard or mouse"
@@ -1090,7 +1093,30 @@ struct DrivingNotice: View {
   private var driving = DriveActivity.shared
 
   var body: some View {
-    if let name = driving.displayName, let kind = driving.kind {
+    if let prompt = driving.prompt, let name = driving.promptName {
+      // The same choice the card on screen offers, for somebody who looked here
+      // first. Either one answers it.
+      VStack(alignment: .leading, spacing: 6) {
+        switch prompt {
+        case .countdown:
+          Label("About to drive \(name)", systemImage: "cursorarrow.rays")
+            .foregroundStyle(.orange)
+            .font(.callout.weight(.medium))
+          Button("Cancel") { DrivingSession.respond(.stop) }
+            .controlSize(.small)
+        case .asking:
+          Label("Cupertino wants to drive \(name)", systemImage: "hand.raised.fill")
+            .foregroundStyle(.orange)
+            .font(.callout.weight(.medium))
+          HStack {
+            Button("Allow") { DrivingSession.respond(.go) }
+            Button("Don't") { DrivingSession.respond(.stop) }
+          }
+          .controlSize(.small)
+        }
+      }
+      Divider()
+    } else if let name = driving.displayName, let kind = driving.kind {
       VStack(alignment: .leading, spacing: 4) {
         if kind == .driving {
           Label("Driving \(name)", systemImage: "cursorarrow.rays")
@@ -1100,6 +1126,16 @@ struct DrivingNotice: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+          // The way out that is not the card. The card has to let the mouse
+          // through while input is being posted, so it can carry no button.
+          if driving.sessionTarget != nil {
+            Button("Stop driving") {
+              // Off the main actor: handing back waits up to a second for the
+              // previous application to come forward.
+              Task.detached { DrivingSession.release(.person) }
+            }
+            .controlSize(.small)
+          }
         } else {
           // The info tier: the screen is changing, the keyboard stays theirs.
           Label(kind.infoTitle(name), systemImage: kind.infoSymbol)

@@ -702,6 +702,72 @@ struct UnitCheck {
     stuck.answered("i-unknown")
     check("an unknown reply changes nothing", stuck.isEmpty)
 
+    print("\nDriving policy: what happens before Cupertino takes the screen")
+
+    // The decision a countdown depends on, and the one that is silent when
+    // wrong: a card that never shows looks exactly like a Mac nobody was using.
+    let noon = Date(timeIntervalSince1970: 1_756_000_000)
+    let counting = DrivingPolicy.Settings(before: .countdown, countdown: 3, idleRelease: 45)
+    let asking = DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45)
+    let nothing = DrivingPolicy.Settings(before: .none, countdown: 3, idleRelease: 45)
+    func decide(_ settings: DrivingPolicy.Settings, idle: Double, declinedUntil: Date? = nil)
+      -> DrivingPolicy.Decision
+    {
+      DrivingPolicy.decide(
+        settings, secondsSinceInput: idle, declinedUntil: declinedUntil, now: noon)
+    }
+    check("somebody typing gets a countdown", decide(counting, idle: 0.5) == .countdown(3))
+    check(
+      "just inside the window still counts as somebody there",
+      decide(counting, idle: DrivingPolicy.activeWindow - 0.1) == .countdown(3))
+    check(
+      "a Mac left alone for the window is driven straight away",
+      decide(counting, idle: DrivingPolicy.activeWindow) == .open)
+    check(
+      "asking waits no longer than its timeout",
+      decide(asking, idle: 1) == .ask(timeout: DrivingPolicy.askTimeout))
+    check("nothing means nothing, even while somebody types", decide(nothing, idle: 0) == .open)
+    let declined = noon.addingTimeInterval(10)
+    check(
+      "a recent no outranks the preference, including nothing",
+      decide(nothing, idle: 0, declinedUntil: declined) == .declined(retryIn: 10))
+    check(
+      "and outranks an idle Mac",
+      decide(counting, idle: 600, declinedUntil: declined) == .declined(retryIn: 10))
+    check(
+      "a no that has expired decides nothing",
+      decide(counting, idle: 0.5, declinedUntil: noon.addingTimeInterval(-1)) == .countdown(3))
+    check(
+      "a question gives up before a lent channel's 30 s call timeout",
+      DrivingPolicy.askTimeout < 30)
+    check(
+      "the longest countdown ends inside the active window",
+      TimeInterval(DrivingPolicy.countdownRange.upperBound) < DrivingPolicy.activeWindow)
+
+    // Stored the way the Settings row writes them, and the way a launch argument
+    // arrives: `NSArgumentDomain` hands back strings.
+    let suite = "cupertino-unit-driving-\(UUID().uuidString)"
+    let store = UserDefaults(suiteName: suite)!
+    check(
+      "nothing stored reads as the defaults", DrivingPolicy.read(store) == DrivingPolicy.defaults)
+    store.set("ask", forKey: DrivingPolicy.Keys.before)
+    store.set("7", forKey: DrivingPolicy.Keys.countdownSeconds)
+    store.set(60, forKey: DrivingPolicy.Keys.idleReleaseSeconds)
+    check(
+      "a string and a number both read back",
+      DrivingPolicy.read(store)
+        == DrivingPolicy.Settings(before: .ask, countdown: 7, idleRelease: 60))
+    store.set("maybe", forKey: DrivingPolicy.Keys.before)
+    store.set(99, forKey: DrivingPolicy.Keys.countdownSeconds)
+    store.set(1, forKey: DrivingPolicy.Keys.idleReleaseSeconds)
+    check(
+      "a value nobody could have chosen falls back or is clamped",
+      DrivingPolicy.read(store)
+        == DrivingPolicy.Settings(
+          before: .countdown, countdown: TimeInterval(DrivingPolicy.countdownRange.upperBound),
+          idleRelease: TimeInterval(DrivingPolicy.idleReleaseRange.lowerBound)))
+    UserDefaults.standard.removePersistentDomain(forName: suite)
+
     print("\nServer resolution: which cli.js a surface runs")
 
     // Built on disk rather than described, because every rule here is about

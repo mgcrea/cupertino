@@ -473,10 +473,12 @@ export const SURFACES: readonly Surface[] = [
       "apple_desktop_activate",
       "apple_desktop_raise_window",
       "apple_desktop_set_window_frame",
+      "apple_desktop_run",
+      "apple_desktop_release",
     ],
     // `allowAnyApp` is deliberately NOT listed here. This column is for tools
     // registered only under their own flag, and the scope gate registers none:
-    // it changes how far the same eighteen tools reach, never which of them
+    // it changes how far the same twenty tools reach, never which of them
     // exist. Listing it would misdescribe both the gate and the column.
     pitch:
       "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
@@ -505,6 +507,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_simulator_type",
       "apple_simulator_key",
       "apple_simulator_press_button",
+      "apple_simulator_release",
     ],
     pitch:
       "An iOS Simulator is a Mac window, and Simulator.app bridges the simulated device's accessibility tree into it. This reads an iOS app's own controls as named, pressable elements in iOS points \u2014 the same coordinates the simctl-based tools use \u2014 and behind the write gate presses, taps, swipes and types, with no WebDriverAgent runner to keep alive. Scoped to the Simulator alone; no switch widens it.",

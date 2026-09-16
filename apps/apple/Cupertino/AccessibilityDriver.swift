@@ -784,7 +784,7 @@ enum AccessibilityDriver {
   static func press(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    announce(handle)
+    try announce(handle)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
@@ -802,7 +802,7 @@ enum AccessibilityDriver {
   static func setValue(handle: String, value: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    announce(handle)
+    try announce(handle)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -822,7 +822,7 @@ enum AccessibilityDriver {
   static func raise(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    announce(handle)
+    try announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
   }
@@ -848,7 +848,7 @@ enum AccessibilityDriver {
   ) throws -> (requested: [Double], actual: [Double]) {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    announce(handle)
+    try announce(handle)
 
     guard let current = frame(element) else {
       throw Failure.refused(
@@ -944,7 +944,7 @@ enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     let entry = try resolveEntry(handle, scope: scope)
     let target = entry.element
-    announce(handle)
+    try announce(handle)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -1019,6 +1019,9 @@ enum AccessibilityDriver {
   static func activate(bundleId: String, scope: Scope) throws {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
+    // Before anything moves, so the person is warned or asked while their own
+    // window is still in front. A no here means nothing was activated.
+    try DrivingSession.admit(bundleId)
     // Not gated on `isTrusted`: activation is LaunchServices, not Accessibility,
     // and refusing it for want of a grant it does not use would be a confusing
     // lie. Scope still applies — it is this surface's bound, not the system's.
@@ -1101,6 +1104,13 @@ enum AccessibilityDriver {
     // so an application outside this surface's reach passed unrefused whenever
     // it happened to be in front — and the caller then posted into it.
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    // Admitted before the early return and after the lookup. Before, because
+    // the application already being in front does not mean nobody is typing
+    // into it. After, because a countdown for an application that is not
+    // running warns somebody about nothing and then fails anyway — and a
+    // refused verb must put nothing on screen.
+    _ = try app(forBundleId: bundleId)
+    try DrivingSession.admit(bundleId)
     if frontmostBundleId() == bundleId { return true }
     try activate(bundleId: bundleId, scope: scope)
     let started = Date()
@@ -1109,6 +1119,31 @@ enum AccessibilityDriver {
       usleep(20_000)
     }
     return frontmostBundleId() == bundleId
+  }
+
+  /// Bring back the application the person was using before a driving session.
+  ///
+  /// The two routes `activate` takes, and the same read-back, but with no
+  /// admission and no notice: this is the end of driving, not more of it.
+  ///
+  /// **Not scope-checked, on purpose.** Scope bounds what an AGENT may reach, and
+  /// no agent chose this application. `DrivingSession` read it off the window
+  /// server when the session opened, so it is whatever the person had in front,
+  /// which is very often an editor outside the brokered set. Refusing to give
+  /// that back would leave the driven app in front, which is the complaint this
+  /// exists to answer.
+  ///
+  /// Returns whether it actually came to the front. Given one second rather
+  /// than two: nothing is waiting to post into it.
+  static func handBack(to bundleId: String) -> Bool {
+    guard let running = try? app(forBundleId: bundleId) else { return false }
+    let asked = running.activate()
+    guard isTrusted() else { return asked }
+    if !asked {
+      AXUIElementSetAttributeValue(
+        element(for: running.processIdentifier), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+    return frontmostSettled(on: bundleId, timeout: 1)
   }
 
   /// Type by KEY CODE, one character at a time, resolved against the layout
@@ -1155,7 +1190,7 @@ enum AccessibilityDriver {
       events.append((down, up))
     }
     guard !events.isEmpty else { return unmapped }
-    announceSessionInput(target)
+    try announceSessionInput(target)
     for (down, up) in events {
       down.post(tap: .cghidEventTap)
       up.post(tap: .cghidEventTap)
@@ -1212,8 +1247,13 @@ enum AccessibilityDriver {
   /// Fire-and-forget onto the main actor: this sits on the path of a press, and
   /// a press that waited for a menu bar icon to redraw would be a worse trade
   /// than no icon at all.
-  private static func announce(_ handle: String) {
+  ///
+  /// Admission first. `DrivingSession.admit` is where the person is warned or
+  /// asked before the first verb of a session, and it throws when they said no,
+  /// so the verb that called this never acts.
+  private static func announce(_ handle: String) throws {
     guard let bundleId = handles.get(handle)?.bundleId else { return }
+    try DrivingSession.admit(bundleId)
     DriveActivity.record(bundleId)
   }
 
@@ -1236,9 +1276,11 @@ enum AccessibilityDriver {
   /// simulator surface posts into a window it has just activated, and the
   /// notice should name the Simulator rather than whatever `NSWorkspace` still
   /// reports as frontmost in the same millisecond.
-  private static func announceSessionInput(_ target: String? = nil) {
+  private static func announceSessionInput(_ target: String? = nil) throws {
     let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-    DriveActivity.record(target ?? frontmost ?? "the frontmost application")
+    let who = target ?? frontmost ?? "the frontmost application"
+    try DrivingSession.admit(who)
+    DriveActivity.record(who)
   }
 
   // ─── the other direction: what the PERSON is doing ─────────────────────────
@@ -1304,7 +1346,7 @@ enum AccessibilityDriver {
     // cannot leave the button held down — the property `drag` states below.
     let down = try mouseEvent(.leftMouseDown, at: point, from: source, doing: "a click")
     let up = try mouseEvent(.leftMouseUp, at: point, from: source, doing: "a click")
-    announceSessionInput(target)
+    try announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()
@@ -1341,7 +1383,7 @@ enum AccessibilityDriver {
     let up = try event(.leftMouseUp, at: to)
     // Every event is built before the first is posted, so a failure to
     // synthesise one cannot leave the button held down.
-    announceSessionInput(target)
+    try announceSessionInput(target)
     moved.post(tap: .cghidEventTap)
     down.post(tap: .cghidEventTap)
     let pause = UInt32(max(1, durationMs * 1000 / steps))
@@ -1364,34 +1406,6 @@ enum AccessibilityDriver {
   /// half of the screen while every number still looks plausible.
   static func cursorLocation() -> CGPoint {
     CGEvent(source: nil)?.location ?? .zero
-  }
-
-  /// How long the Mac must have been left alone before `hover` will take the
-  /// pointer away from whoever is holding it. Under `DriveActivity.linger` on
-  /// purpose — see `someoneIsUsingTheMac`.
-  static let hoverIdleFloor: TimeInterval = 2
-
-  /// Whether a PERSON — rather than this app — touched the Mac just now.
-  ///
-  /// `secondsSinceUserInput` reads `.combinedSessionState` deliberately, so it
-  /// counts synthetic events too, including the ones `hover` posts below. A bare
-  /// `secondsSinceUserInput() < floor` check would therefore refuse every hover
-  /// after the first in a sequence, reset by the previous one: the guard would
-  /// bite hardest exactly when the agent is working alone, which is the case it
-  /// exists to permit.
-  ///
-  /// `DriveActivity.current()` is the discriminator, and it already has the
-  /// right shape — it names what Cupertino is driving for `linger` seconds after
-  /// any driving verb. Recent input while that is lit is most likely ours, so
-  /// the floor sits UNDER the linger and a sequence composes.
-  ///
-  /// What this cannot see: a person typing INSIDE a Cupertino sequence, masked
-  /// by the lit indicator. That is the same before/after ambiguity
-  /// `apple_desktop_user_activity` already tells callers to settle by comparing
-  /// the seconds against how long their own sequence took — which is why `hover`
-  /// reports the reading back rather than only acting on it.
-  static func someoneIsUsingTheMac() -> Bool {
-    secondsSinceUserInput() < hoverIdleFloor && DriveActivity.current() == nil
   }
 
   /// The live centre of a handle's element, re-read at call time.
@@ -1434,13 +1448,14 @@ enum AccessibilityDriver {
     to point: CGPoint, durationMs: Int = 600, settleMs: Int = 0, announcing target: String? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
-    guard !someoneIsUsingTheMac() else {
-      throw Failure.refused(
-        "Somebody is using this Mac — the last input was "
-          + String(format: "%.1f", secondsSinceUserInput())
-          + " s ago. Hovering takes the physical pointer away from them, so nothing was posted. "
-          + "Retry once the Mac has been left alone for \(Int(hoverIdleFloor)) s.")
-    }
+    // Admitted BEFORE the pointer's position is read. If the person is using
+    // the Mac they get a countdown, which is seconds in which they can move the
+    // pointer, and a sweep starting from where it used to be would jump.
+    //
+    // This replaced a refusal of its own: hover used to throw whenever somebody
+    // had touched the Mac in the last two seconds, which put no card on screen
+    // at all. The admission every verb now shares warns them instead.
+    try announceSessionInput(target)
     let source = CGEventSource(stateID: .hidSystemState)
     let from = cursorLocation()
     let steps = max(2, durationMs / 16)
@@ -1455,7 +1470,6 @@ enum AccessibilityDriver {
     }
     // Every event built before the first is posted, for `drag`'s reason: a sweep
     // that threw half way would leave the pointer stranded mid-path.
-    announceSessionInput(target)
     let pause = UInt32(max(1, durationMs * 1000 / steps))
     for move in moves {
       move.post(tap: .cghidEventTap)
@@ -1480,7 +1494,7 @@ enum AccessibilityDriver {
   static func type(text: String, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
-    announceSessionInput(target)
+    try announceSessionInput(target)
     // Chunked: the unicode string on a single event is not meant for unbounded
     // input, and a long paste-like burst is better delivered as several events.
     for chunk in text.chunked(into: 20) {
@@ -1522,7 +1536,7 @@ enum AccessibilityDriver {
     else { throw Failure.refused("Could not synthesise a key press.") }
     down.flags = flags
     up.flags = flags
-    announceSessionInput(target)
+    try announceSessionInput(target)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()

@@ -32,13 +32,19 @@ enum DesktopServer {
     InProcessRPC.dispatch(
       line,
       name: "cupertino-desktop",
+      instructions: instructions(writesAllowed),
       tools: { tools(writesAllowed: writesAllowed, scope: scope) },
       resources: { resources() },
       read: { uri, id in
         readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
       },
       call: { name, args, id in
-        call(name, args: args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+        let reply = call(
+          name, args: args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+        // Any call keeps an open session alive, reads included: an agent reading
+        // the tree between two presses is still driving. See `DrivingSession`.
+        DrivingSession.touch()
+        return reply
       })
   }
 
@@ -317,8 +323,7 @@ enum DesktopServer {
           + "pointer arrive. Prefer 'handle' over 'x'/'y' — the point is re-read from the element "
           + "at call time, so a window that has moved since the tree was taken cannot make the "
           + "hover miss in silence. Brings the target application to the front first, because a "
-          + "hover is only delivered to the frontmost one. Refused while somebody is using the "
-          + "Mac, since it takes the physical pointer away from them.",
+          + "hover is only delivered to the frontmost one.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -445,6 +450,51 @@ enum DesktopServer {
           ],
           "required": ["handle"],
         ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_run",
+        "description":
+          "Run a sequence of steps in one call, in order, stopping at the first that fails. Each "
+          + "step is {\"tool\": <verb>, ...that verb's arguments}, the verb being a desktop tool "
+          + "without its apple_desktop_ prefix: \(runSteps.joined(separator: ", ")). 'wait' takes "
+          + "'ms'. Every step is checked before the first runs, so a mistake in step 5 leaves "
+          + "steps 1 to 4 undone rather than half a form filled. A step cannot use a handle found "
+          + "by another step in the same run; take handles from a read before the run. The "
+          + "answer carries each step's result and, on failure, which step stopped it — the "
+          + "steps before it did happen. Pass 'releaseAfter' to hand the Mac back once every "
+          + "step completed.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "steps": [
+              "type": "array",
+              "maxItems": runStepCeiling,
+              "items": [
+                "type": "object",
+                "properties": ["tool": ["type": "string", "enum": runSteps]],
+                "required": ["tool"],
+              ],
+            ],
+            "releaseAfter": [
+              "type": "boolean",
+              "description": "Call apple_desktop_release when every step completed. Default false.",
+            ],
+          ],
+          "required": ["steps"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
+      ],
+      [
+        "name": "apple_desktop_release",
+        "description":
+          "Hand the Mac back when you have finished driving. Ends the driving session, takes "
+          + "Cupertino's notice off the screen, and brings back the application the person was "
+          + "using before it began, unless they have already switched away themselves. Call it as "
+          + "soon as a sequence is done: until then the person sees the driven application in "
+          + "front and a notice asking them not to touch anything, and cannot tell a pause from "
+          + "the end. Safe to call when nothing is being driven.",
+        "inputSchema": empty,
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
     ])
@@ -574,7 +624,7 @@ enum DesktopServer {
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
-      "apple_desktop_set_window_frame",
+      "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -846,6 +896,12 @@ enum DesktopServer {
         try AccessibilityDriver.activate(bundleId: bundleId, scope: scope)
         return ok(id, ["activated": bundleId])
 
+      case "apple_desktop_release":
+        return ok(id, DrivingSession.answer(DrivingSession.release(.agent)))
+
+      case "apple_desktop_run":
+        return run(args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+
       case "apple_desktop_get_attribute":
         guard let handle = args["handle"] as? String,
           let attribute = args["attribute"] as? String
@@ -869,6 +925,154 @@ enum DesktopServer {
       }
     } catch {
       return failed(id, error)
+    }
+  }
+
+  // ─── run: several steps in one call ────────────────────────────────────────
+
+  /// What a step may be. The driving verbs, the reads a sequence needs to check
+  /// its own progress, and `wait`. Not `ui_tree` or `expand`, whose answers are
+  /// large enough to swamp the one this builds; not `run` or `release`, which are
+  /// not steps of a sequence.
+  static let runSteps = [
+    "press", "set_value", "click", "hover", "type", "key", "focus", "activate", "raise_window",
+    "set_window_frame", "find_elements", "get_attribute", "list_windows", "user_activity", "wait",
+  ]
+  static let runStepCeiling = 25
+  static let runWaitCeilingMs = 5000
+
+  /// Check every step, then run them in order through `call`, stopping at the
+  /// first failure.
+  ///
+  /// **Through `call`, not beside it.** Each step goes through the same write
+  /// gate, the same argument checks and the same driver path as the tool it
+  /// names, so a step cannot do anything its tool could not. The price is
+  /// decoding the JSON each step just encoded, which is nothing next to an
+  /// Accessibility round trip.
+  ///
+  /// **Validated before the first step runs**, because stopping at the first
+  /// failure is only half a promise on its own: a missing argument in step 5
+  /// would otherwise leave steps 1 to 4 done, which for a form is a form half
+  /// filled in by the time the caller hears about it.
+  private static func run(
+    _ args: [String: Any], id: Any?, surface: Surface, writesAllowed: Bool,
+    scope: AccessibilityDriver.Scope
+  ) -> String {
+    guard let steps = args["steps"] as? [[String: Any]], !steps.isEmpty else {
+      return failure(
+        id, "'steps' is required: a non-empty array of {\"tool\": <verb>, ...its arguments}.")
+    }
+    guard steps.count <= runStepCeiling else {
+      return failure(
+        id,
+        "At most \(runStepCeiling) steps in one run, and this had \(steps.count). Split it, and "
+          + "read the screen between the halves. Nothing was run.")
+    }
+
+    let schemas = tools(writesAllowed: writesAllowed, scope: scope)
+      .reduce(into: [String: [String: Any]]()) { out, tool in
+        if let name = tool["name"] as? String, let schema = tool["inputSchema"] as? [String: Any] {
+          out[name] = schema
+        }
+      }
+    for (index, step) in steps.enumerated() {
+      let number = index + 1
+      guard let tool = step["tool"] as? String else {
+        return failure(id, "Step \(number) names no 'tool'. Nothing was run.")
+      }
+      guard runSteps.contains(tool) else {
+        return failure(
+          id,
+          "Step \(number): '\(tool)' cannot be a step. A step is one of "
+            + "\(runSteps.joined(separator: ", ")). Nothing was run.")
+      }
+      if tool == "wait" {
+        guard let ms = step["ms"] as? Int, (0...runWaitCeilingMs).contains(ms) else {
+          return failure(
+            id,
+            "Step \(number): wait takes 'ms', a whole number from 0 to \(runWaitCeilingMs). "
+              + "Nothing was run.")
+        }
+        continue
+      }
+      guard let schema = schemas["apple_desktop_\(tool)"] else {
+        return failure(
+          id,
+          "Step \(number): apple_desktop_\(tool) is not available, because driving is switched "
+            + "off for this surface. Nothing was run.")
+      }
+      let missing = (schema["required"] as? [String] ?? []).filter { step[$0] == nil }
+      guard missing.isEmpty else {
+        return failure(
+          id,
+          "Step \(number) (\(tool)) is missing \(missing.map { "'\($0)'" }.joined(separator: " and ")). "
+            + "Nothing was run.")
+      }
+      if tool == "hover", step["handle"] == nil, step["x"] == nil || step["y"] == nil {
+        return failure(
+          id, "Step \(number) (hover) needs 'handle', or both 'x' and 'y'. Nothing was run.")
+      }
+    }
+
+    let started = Date()
+    var results: [[String: Any]] = []
+    for (index, step) in steps.enumerated() {
+      let number = index + 1
+      let tool = step["tool"] as? String ?? ""
+      if tool == "wait" {
+        let ms = step["ms"] as? Int ?? 0
+        if ms > 0 { Thread.sleep(forTimeInterval: Double(ms) / 1000) }
+        DrivingSession.touch()
+        results.append(["step": number, "tool": tool, "waitedMs": ms])
+        continue
+      }
+      var arguments = step
+      arguments.removeValue(forKey: "tool")
+      let reply = call(
+        "apple_desktop_\(tool)", args: arguments, id: nil, surface: surface,
+        writesAllowed: writesAllowed, scope: scope)
+      DrivingSession.touch()
+      let (text, isError) = toolText(reply)
+      guard !isError else {
+        let body: [String: Any] = [
+          "completed": index, "total": steps.count, "results": results,
+          "failed": ["step": number, "tool": tool, "error": text],
+          "note":
+            "Stopped at step \(number), so the steps after it did not run. The steps before it "
+            + "did, so read the screen before retrying rather than running the whole sequence "
+            + "again.",
+        ]
+        return InProcessRPC.result(
+          id,
+          ["content": [["type": "text", "text": InProcessRPC.jsonText(body)]], "isError": true])
+      }
+      results.append(["step": number, "tool": tool, "result": jsonObject(text) ?? text])
+    }
+
+    var body: [String: Any] = [
+      "completed": steps.count, "total": steps.count, "results": results,
+      "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100,
+    ]
+    if args["releaseAfter"] as? Bool == true {
+      body["release"] = DrivingSession.answer(DrivingSession.release(.agent))
+    }
+    return ok(id, body)
+  }
+
+  /// The text of a tool result and whether it was a failure.
+  private static func toolText(_ reply: String) -> (String, Bool) {
+    guard let message = jsonObject(reply), let result = message["result"] as? [String: Any]
+    else {
+      let error = (jsonObject(reply)?["error"] as? [String: Any])?["message"] as? String
+      return (error ?? "The step returned nothing readable.", true)
+    }
+    let text = (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+    return (text, result["isError"] as? Bool ?? false)
+  }
+
+  private static func jsonObject(_ text: String) -> [String: Any]? {
+    text.data(using: .utf8).flatMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
     }
   }
 
@@ -940,7 +1144,8 @@ enum DesktopServer {
       // state in this app that asks something OF the user — a synthetic
       // keystroke goes wherever the focus is — and a caller that can read it can
       // also tell a person why their typing went somewhere unexpected.
-      "driving": DriveActivity.current() ?? "nothing",
+      "driving": DrivingSession.diagnostics().map { $0 as Any }
+        ?? (DriveActivity.current() ?? "nothing"),
       "windowRead": probe,
       "runningApps": apps.count,
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",
@@ -964,6 +1169,39 @@ enum DesktopServer {
         + "bundle id. Run `tccutil reset Accessibility \(Bundle.main.bundleIdentifier ?? "io.mgcrea.cupertino")` "
         + "and grant it once from the running copy — never add another grant on top.",
     ]
+  }
+
+  // ─── instructions ──────────────────────────────────────────────────────────
+
+  /// What a client loads on connect, which the guide never is: a resource is
+  /// pull-only, so a caller who never names it drives without reading it. The
+  /// session is the one thing about this surface that changes a caller's first
+  /// move — a call that waits, a refusal that means "ask, do not retry", a tool
+  /// to call at the end — so it is said here. Kept short, because every client
+  /// pays for it on every connect.
+  private static func instructions(_ writesAllowed: Bool) -> String {
+    guard writesAllowed else {
+      return """
+        Reading macOS applications' interfaces through the Accessibility API. Address controls by
+        the handles `apple_desktop_ui_tree` and `apple_desktop_find_elements` return.
+
+        Writes are off, so this surface can only look: the driving tools are not registered at
+        all. Fuller notes: `cupertino://desktop/guide`.
+        """
+    }
+    return """
+      Reading and driving macOS applications through the Accessibility API. Prefer
+      `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point.
+
+      Driving is a session the person at the keyboard can see. The first driving call while they
+      are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
+      back saying they cancelled or said no, nothing happened: ask them in the conversation, do
+      not retry. Send a burst as one `apple_desktop_run`. When you are done, call
+      `apple_desktop_release` (or pass `releaseAfter` to `run`). It brings back the app they were
+      in, and until then they cannot tell whether you have finished.
+
+      Fuller notes: `cupertino://desktop/guide`.
+      """
   }
 
   // ─── resources ─────────────────────────────────────────────────────────────
@@ -1053,6 +1291,25 @@ enum DesktopServer {
       nothing is posted and the call says so. Leave it out and the event goes wherever the
       focus happens to be.
 
+      ## Driving is a session the person can see
+
+      The first driving call while somebody is using this Mac does not act straight away.
+      Cupertino warns them first, with a countdown they can cancel or a question they answer,
+      whichever they chose, and the call waits for it: a few seconds for a countdown. If it
+      comes back saying they cancelled or said no, nothing was posted. Stop and ask them in
+      the conversation rather than retrying; Cupertino will not ask them again for
+      \(Int(DrivingPolicy.declineCooldown)) s anyway.
+
+      After that, every call goes straight through until the session ends. Call
+      `apple_desktop_release` when you are done. It takes the notice down and brings back the
+      application they were in, unless they have switched away themselves. Leaving it out is not
+      free: they see the driven application in front and a notice asking them not to touch
+      anything, and cannot tell a pause from the end. A session with no call for a while ends
+      on its own.
+
+      `apple_desktop_run` takes a whole sequence in one call and stops at the first step that
+      fails. Pass `releaseAfter` to hand the Mac back once every step completed.
+
       ## Handles go stale
 
       They point at elements in the window as it was. If a press returns a stale-handle
@@ -1061,7 +1318,7 @@ enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate, raise_window and set_window_frame are available."
+        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

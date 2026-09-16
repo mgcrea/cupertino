@@ -722,6 +722,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // a switch on another surface would not be a bound at all.
     let lentScope = lentTo?.bundleID.map { AccessibilityDriver.Scope.only([$0]) }
     let session = UUID()
+    // Which connection a driving verb arrived on, for `DrivingSession`. This
+    // loop runs on the connection's own thread for its whole life, so a
+    // thread-local carries the id to the driver without changing a signature
+    // between here and there.
+    Thread.current.threadDictionary[DrivingSession.connectionKey] = session
     let pid = ProcessInfo.processInfo.processIdentifier
     // Filed against the BORROWER, not the surface being served. A lend is work
     // done for Mail; showing it in Activity as a Desktop session would put a
@@ -732,6 +737,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
       Sessions.shared.opened(id: session, surface: authority.id, pid: pid)
     }
     defer {
+      // The disconnect `DriveActivity` once said was invisible. A session this
+      // connection drove in ends shortly after, and the Mac is handed back.
+      DrivingSession.connectionClosed(session)
+      Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey)
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
       hostLog(authority.id, .info, "server stopped")
     }

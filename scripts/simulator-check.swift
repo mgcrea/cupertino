@@ -82,6 +82,7 @@ struct SimulatorCheck {
   static let driving = [
     "apple_simulator_key", "apple_simulator_press", "apple_simulator_press_button",
     "apple_simulator_swipe", "apple_simulator_tap", "apple_simulator_type",
+    "apple_simulator_release",
   ]
 
   static let observing = [
@@ -154,6 +155,20 @@ struct SimulatorCheck {
         isError && text.lowercased().contains("switched off"))
     }
     check("a refused driving verb lights no indicator", DriveActivity.current() == nil)
+
+    // Release reaches no driver, so unlike the verbs above it is safe to call
+    // with writes on, and with nothing driven it is an answer rather than an
+    // error.
+    let (releaseText, releaseFailed) = callText("apple_simulator_release", [:], writes: true)
+    check(
+      "release with nothing driven is an answer, not an error",
+      !releaseFailed && json(releaseText)?["released"] is NSNull)
+    let instructions =
+      (ask("initialize", writes: true)?["result"] as? [String: Any])?["instructions"] as? String
+      ?? ""
+    check(
+      "with writes on, the connect-time instructions say to hand the Mac back",
+      instructions.contains("apple_simulator_release"))
 
     // ─── the observe half answers without a grant ───────────────────────────
     let (listText, listError) = callText("apple_simulator_list_devices", [:], writes: false)

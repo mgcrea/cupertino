@@ -57,7 +57,10 @@ enum SimulatorServer {
       read: { uri, id in readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed)
       },
       call: { name, args, id in
-        call(name, args: args, id: id, surface: surface, writesAllowed: writesAllowed)
+        let reply = call(name, args: args, id: id, surface: surface, writesAllowed: writesAllowed)
+        // Any call keeps an open driving session alive — see `DrivingSession`.
+        DrivingSession.touch()
+        return reply
       })
   }
 
@@ -272,6 +275,16 @@ enum SimulatorServer {
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
+      [
+        "name": "apple_simulator_release",
+        "description":
+          "Hand the Mac back when you have finished driving the Simulator. Ends the driving "
+          + "session, takes Cupertino's notice off the screen, and brings back the application "
+          + "the person was using before it began, unless they have already switched away "
+          + "themselves. Safe to call when nothing is being driven.",
+        "inputSchema": empty,
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
     ]
     list.append(contentsOf: driving)
     return list
@@ -280,6 +293,7 @@ enum SimulatorServer {
   static let drivingNames = [
     "apple_simulator_press", "apple_simulator_tap", "apple_simulator_swipe",
     "apple_simulator_type", "apple_simulator_key", "apple_simulator_press_button",
+    "apple_simulator_release",
   ]
 
   // ─── the device screen ─────────────────────────────────────────────────────
@@ -617,6 +631,9 @@ enum SimulatorServer {
         try AccessibilityDriver.key(key, modifiers: [], announcing: simulator)
         return ok(id, ["key": key])
 
+      case "apple_simulator_release":
+        return ok(id, DrivingSession.answer(DrivingSession.release(.agent)))
+
       case "apple_simulator_press_button":
         guard let button = (args["button"] as? String)?.lowercased() else {
           return failure(id, "The 'button' argument is required.")
@@ -742,7 +759,8 @@ enum SimulatorServer {
       "simulatorRunning": running,
       "coreSimulator": coreSimulator,
       "windows": windows,
-      "driving": DriveActivity.current() ?? "nothing",
+      "driving": DrivingSession.diagnostics().map { $0 as Any }
+        ?? (DriveActivity.current() ?? "nothing"),
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",
       "reach": "\(simulator) only — no switch widens it",
       "wda": "not used here; for the WebDriverAgent lane run ios_simulator_diagnostics",
@@ -816,6 +834,10 @@ enum SimulatorServer {
       rather than assuming the result. Every `rect` and `point` is in iOS points, top-left of the
       device screen.
 
+      The first driving call while the person is using the Mac may wait a few seconds while
+      Cupertino warns or asks them; if they cancel or say no, ask them rather than retrying. Call
+      `apple_simulator_release` when you are done, which brings back the app they were in.
+
       Fuller notes, including what this lane reaches and what stays with `ios_simulator_*`:
       `cupertino://simulator/guide`.
       """
@@ -848,6 +870,15 @@ enum SimulatorServer {
     frontmost — so each one brings it to the front first, which takes the focus from whoever
     is using the Mac. Read the screen again after any of them rather than assuming the result.
 
+    ## Driving is a session the person can see
+
+    The first driving call while somebody is using this Mac waits while Cupertino warns them,
+    with a countdown they can cancel or a question they answer. A refusal saying they cancelled
+    or said no means nothing was posted: ask them in the conversation rather than retrying.
+    After that every call goes straight through until the session ends. Call
+    `apple_simulator_release` when you are done: it takes the notice down and brings back the
+    application they were in, unless they have switched away themselves.
+
     ## What this reaches, and what it does not
 
     A strict subset of what WebDriverAgent reaches, and a subset that is fully named. A tab
@@ -871,7 +902,7 @@ enum SimulatorServer {
     reported back rather than silently dropped.
 
     \(writesAllowed
-      ? "Writes are ON: press, tap, swipe, type, key and press_button are available."
+      ? "Writes are ON: press, tap, swipe, type, key, press_button and release are available."
       : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
     """
   }

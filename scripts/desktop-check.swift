@@ -102,8 +102,15 @@ struct DesktopCheck {
     "apple_desktop_activate", "apple_desktop_click", "apple_desktop_focus",
     "apple_desktop_hover", "apple_desktop_key", "apple_desktop_press",
     "apple_desktop_raise_window", "apple_desktop_set_value",
-    "apple_desktop_set_window_frame", "apple_desktop_type",
+    "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
+    "apple_desktop_release",
   ]
+
+  static func json(_ text: String) -> [String: Any]? {
+    text.data(using: .utf8).flatMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+    }
+  }
 
   static let observing = [
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
@@ -130,6 +137,23 @@ struct DesktopCheck {
     check(
       "an unknown method is a JSON-RPC error",
       ((ask("nope/list")?["error"] as? [String: Any])?["code"] as? Int) == -32601)
+
+    // The session changes a caller's first move — a call that waits, a refusal
+    // that means ask rather than retry, a tool to call at the end — and a
+    // resource is pull-only, so it has to be in what a client loads on connect.
+    let instructionsOn =
+      (ask("initialize", writes: true)?["result"] as? [String: Any])?["instructions"] as? String
+      ?? ""
+    let instructionsOff =
+      (ask("initialize", writes: false)?["result"] as? [String: Any])?["instructions"] as? String
+      ?? ""
+    check(
+      "with writes on, the connect-time instructions say to hand the Mac back",
+      instructionsOn.contains("apple_desktop_release")
+        && instructionsOn.contains("apple_desktop_run"))
+    check(
+      "with writes off, they name no driving tool",
+      !instructionsOff.isEmpty && !instructionsOff.contains("apple_desktop_release"))
 
     // ─── the gate is registration, not refusal ──────────────────────────────
     //
@@ -422,10 +446,224 @@ struct DesktopCheck {
       "click naming an application outside the reach is refused by the switch's name",
       reachError && reachText.contains("Reach any application"))
 
-    // The indicator is state, so it has to lapse on its own. There is no "the
-    // agent has finished" signal — a driving sequence is a burst of calls with
-    // gaps — so an explicit end would leave it lit forever the first time a
-    // client disconnected mid-sequence.
+    // ─── run: validated whole, then stopped at the first failure ────────────
+    //
+    // Every refusal below returns before the first step runs. The two runs that
+    // execute use only `wait`, a read of a handle nobody minted, and
+    // `user_activity`, none of which reaches a driving path.
+    func runText(_ steps: [[String: Any]]) -> (String, Bool) {
+      callText("apple_desktop_run", ["steps": steps], writes: true)
+    }
+    let (unknownStep, unknownFailed) = runText([["tool": "wait", "ms": 1], ["tool": "launch"]])
+    check(
+      "run refuses a step it does not know, before running any",
+      unknownFailed && unknownStep.contains("Step 2") && unknownStep.contains("Nothing was run"))
+    let (tooMany, tooManyFailed) = runText(
+      Array(repeating: ["tool": "wait", "ms": 0], count: DesktopServer.runStepCeiling + 1))
+    check(
+      "run refuses more steps than its ceiling",
+      tooManyFailed && tooMany.contains("\(DesktopServer.runStepCeiling)"))
+    let (longWait, longWaitFailed) = runText([
+      ["tool": "wait", "ms": DesktopServer.runWaitCeilingMs + 1]
+    ])
+    check("run refuses a wait above its ceiling", longWaitFailed && longWait.contains("wait takes"))
+    let (missingArg, missingFailed) = runText([
+      ["tool": "wait", "ms": 0], ["tool": "wait", "ms": 0], ["tool": "type"],
+    ])
+    check(
+      "run names the step and the argument it is missing",
+      missingFailed && missingArg.contains("Step 3") && missingArg.contains("'text'"))
+    let (nested, nestedFailed) = runText([["tool": "run"]])
+    check("a run cannot contain a run", nestedFailed && nested.contains("cannot be a step"))
+    let (released, releasedFailed) = runText([["tool": "release"]])
+    check(
+      "release is not a step, since releaseAfter says it",
+      releasedFailed && released.contains("cannot be a step"))
+    let (halfPoint, halfPointFailed) = runText([["tool": "hover", "x": 1]])
+    check(
+      "a hover step needs a handle or a whole point",
+      halfPointFailed && halfPoint.contains("'handle', or both 'x' and 'y'"))
+    let (stoppedText, stoppedFailed) = runText([
+      ["tool": "wait", "ms": 1],
+      ["tool": "get_attribute", "handle": "e999999", "attribute": "AXRole"],
+      ["tool": "wait", "ms": 1],
+    ])
+    let stopped = json(stoppedText)
+    check(
+      "run stops at the first failing step and says which",
+      stoppedFailed && stopped?["completed"] as? Int == 1
+        && (stopped?["failed"] as? [String: Any])?["step"] as? Int == 2)
+    check(
+      "and reports the steps that did run before it",
+      (stopped?["results"] as? [[String: Any]])?.count == 1)
+    let (completeText, completeFailed) = runText([
+      ["tool": "wait", "ms": 1], ["tool": "user_activity"],
+    ])
+    let complete = json(completeText)
+    check(
+      "a run whose steps all complete answers each one with its own result",
+      !completeFailed && complete?["completed"] as? Int == 2
+        && ((complete?["results"] as? [[String: Any]])?.last?["result"] as? [String: Any])?[
+          "secondsSinceInput"] != nil
+    )
+    let runSchema =
+      ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .first { $0["name"] as? String == "apple_desktop_run" }
+      .flatMap { $0["inputSchema"] as? [String: Any] }
+    let stepTools =
+      (((runSchema?["properties"] as? [String: Any])?["steps"] as? [String: Any])?["items"]
+      as? [String: Any]).flatMap { ($0["properties"] as? [String: Any])?["tool"] as? [String: Any] }
+    check(
+      "run's schema lists exactly the steps it accepts",
+      (runSchema?["required"] as? [String]) == ["steps"]
+        && (stepTools?["enum"] as? [String]) == DesktopServer.runSteps)
+
+    // ─── the driving session ────────────────────────────────────────────────
+    //
+    // Opened and ended by hand, against bundle ids nothing is running as.
+    // Nothing is posted: `admit` is the gate a verb passes BEFORE acting, and
+    // handing back happens only when a driven application is the one in front,
+    // which a made-up id never is. The main thread never waits on a card, which
+    // is what lets most of this run here; the waiting half runs on a thread of
+    // its own, the way the app always calls it.
+    let quiet = DrivingPolicy.Settings(before: .none, countdown: 3, idleRelease: 45)
+    let driven = "com.example.driven"
+
+    let (idleRelease, idleReleaseFailed) = callText("apple_desktop_release", [:], writes: true)
+    check(
+      "release with nothing driven is an answer, not an error",
+      !idleReleaseFailed && json(idleRelease)?["released"] is NSNull)
+
+    try? DrivingSession.admit(driven, settings: quiet)
+    check("the first admitted verb opens a session", DrivingSession.target() == driven)
+    check("an open session is what is being driven", DriveActivity.current() == driven)
+    check(
+      "diagnostics reports the session rather than a bare id",
+      ((json(callText("apple_desktop_diagnostics", [:], writes: false).0)?["driving"])
+        as? [String: Any])?["target"] as? String == driven)
+    try? DrivingSession.admit(
+      "com.example.second",
+      settings: DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45),
+      secondsSinceInput: 0)
+    check(
+      "another application in the same session renames it rather than asking again",
+      DrivingSession.target() == "com.example.second")
+    let (endedText, endedFailed) = callText("apple_desktop_release", [:], writes: true)
+    let ended = json(endedText)
+    check(
+      "release ends the session and says what it was driving",
+      !endedFailed && ended?["released"] as? String == "com.example.second")
+    check(
+      "nothing is handed back when no driven application is in front",
+      ended?["restored"] is NSNull)
+    check(
+      "after release nothing is being driven",
+      DrivingSession.target() == nil && DriveActivity.current() == nil)
+
+    try? DrivingSession.admit(driven, settings: quiet)
+    let opened = Date()
+    check(
+      "a session with a recent call survives the sweep",
+      DrivingSession.sweep(now: opened.addingTimeInterval(10), settings: quiet) == nil
+        && DrivingSession.target() == driven)
+    check(
+      "a session with no call for the idle limit ends on its own",
+      DrivingSession.sweep(now: opened.addingTimeInterval(quiet.idleRelease + 1), settings: quiet)?
+        .reason == .idle && DrivingSession.target() == nil)
+
+    let client = UUID()
+    Thread.current.threadDictionary[DrivingSession.connectionKey] = client
+    try? DrivingSession.admit(driven, settings: quiet)
+    Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey)
+    DrivingSession.connectionClosed(UUID())
+    check(
+      "a connection that never drove cannot end a session",
+      DrivingSession.sweep(
+        now: Date().addingTimeInterval(DrivingSession.disconnectGrace + 1), settings: quiet) == nil)
+    let closedAt = Date()
+    DrivingSession.connectionClosed(client, now: closedAt)
+    check(
+      "a session outlives its client for the grace",
+      DrivingSession.sweep(
+        now: closedAt.addingTimeInterval(DrivingSession.disconnectGrace - 1), settings: quiet)
+        == nil && DrivingSession.target() == driven)
+    check(
+      "and ends once the grace is over",
+      DrivingSession.sweep(
+        now: closedAt.addingTimeInterval(DrivingSession.disconnectGrace + 1), settings: quiet)?
+        .reason == .disconnected && DrivingSession.target() == nil)
+
+    let before = UUID()
+    let after = UUID()
+    Thread.current.threadDictionary[DrivingSession.connectionKey] = before
+    try? DrivingSession.admit(driven, settings: quiet)
+    DrivingSession.connectionClosed(before)
+    Thread.current.threadDictionary[DrivingSession.connectionKey] = after
+    try? DrivingSession.admit(driven, settings: quiet)
+    Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey)
+    check(
+      "a verb from a reconnected client inside the grace keeps the session",
+      DrivingSession.sweep(
+        now: Date().addingTimeInterval(DrivingSession.disconnectGrace + 1), settings: quiet) == nil
+        && DrivingSession.target() == driven)
+    DrivingSession.release(.agent)
+
+    // The half that waits. Last, because a cancel leaves a cooldown behind that
+    // refuses every admission for the rest of this process.
+    func admitOffMain(_ settings: DrivingPolicy.Settings) -> (DispatchSemaphore, () -> String) {
+      let done = DispatchSemaphore(value: 0)
+      let box = ResultBox<String>()
+      Thread {
+        do {
+          try DrivingSession.admit(driven, settings: settings, secondsSinceInput: 0)
+          box.result = .success("")
+        } catch {
+          box.result = .success(error.localizedDescription)
+        }
+        done.signal()
+      }.start()
+      return (done, { (try? box.result?.get()) ?? "" })
+    }
+
+    let (ranOut, _) = admitOffMain(
+      DrivingPolicy.Settings(before: .countdown, countdown: 0.2, idleRelease: 45))
+    check(
+      "a countdown nobody cancels lets the verb through",
+      ranOut.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
+    DrivingSession.release(.agent)
+
+    let (allowed, _) = admitOffMain(
+      DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45))
+    Thread.sleep(forTimeInterval: 0.3)
+    check("a question holds the verb back until it is answered", DrivingSession.target() == nil)
+    DrivingSession.respond(.go)
+    check(
+      "Allow lets it through",
+      allowed.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
+    DrivingSession.release(.agent)
+
+    let (cancelled, cancelMessage) = admitOffMain(
+      DrivingPolicy.Settings(before: .countdown, countdown: 10, idleRelease: 45))
+    Thread.sleep(forTimeInterval: 0.3)
+    check("a countdown holds the verb back while it runs", DrivingSession.target() == nil)
+    DrivingSession.respond(.stop)
+    check(
+      "Cancel refuses the verb, saying the person cancelled, and opens nothing",
+      cancelled.wait(timeout: .now() + 5) == .success && cancelMessage().contains("cancelled")
+        && DrivingSession.target() == nil)
+    var retryMessage = ""
+    do {
+      try DrivingSession.admit(driven, settings: quiet)
+    } catch {
+      retryMessage = error.localizedDescription
+    }
+    check(
+      "a retry straight after is refused without asking again, whatever the setting",
+      retryMessage.contains("turned Cupertino away") && DrivingSession.target() == nil)
+
+    // Outside a session the indicator is still a deadline, which is all a
+    // borrowed driver's record ever gets, and it has to lapse on its own.
     DriveActivity.record("com.apple.Maps")
     check("driving is reported while it is happening", DriveActivity.current() == "com.apple.Maps")
     check(
@@ -568,9 +806,15 @@ struct DesktopCheck {
     // The guard has to distinguish this app's own synthetic events from a
     // person's, or a sequence refuses itself on its second hover — the floor
     // sits under the linger for exactly that reason.
+    // Two constants in three files that only make sense together. A session that
+    // went idle faster than one verb's linger bridges a gap would hand the Mac
+    // back in the middle of an ordinary poll-press-verify cycle.
     check(
-      "the hover idle floor sits under the driving indicator's linger",
-      AccessibilityDriver.hoverIdleFloor < DriveActivity.linger)
+      "a session cannot go idle faster than the notice's linger bridges a gap",
+      TimeInterval(DrivingPolicy.idleReleaseRange.lowerBound) > DriveActivity.linger)
+    check(
+      "a client that reconnects inside the linger keeps its session",
+      DrivingSession.disconnectGrace >= DriveActivity.linger)
 
     // The store fills DURING a walk that is minting into it, so a full wipe
     // strands handles minted earlier in the very answer being composed. The

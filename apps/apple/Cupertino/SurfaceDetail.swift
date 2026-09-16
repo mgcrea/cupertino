@@ -327,6 +327,15 @@ struct SurfaceDetail: View {
         }
       }
 
+      // Desktop and Simulator only, the two surfaces that post input into
+      // somebody's session. App-wide rather than per surface, because there is
+      // one person at the keyboard: both panes draw the same control over the
+      // same keys.
+      if surface.id == "desktop" || surface.id == "simulator", surface.supportsWrites {
+        Divider()
+        DrivingPolicyControl()
+      }
+
       // Node surfaces only. The facade and the `$schema` trim both live in
       // `packages/core` and reach a surface through `ServerLocator.environment`,
       // which is read on the spawn path in `ServerHost.run`. A swift surface is
@@ -841,6 +850,66 @@ private struct LazyToolsControl: View {
     .font(.caption)
     .foregroundStyle(.secondary)
     .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
+/// What happens before an agent takes the keyboard and mouse from somebody using the Mac.
+///
+/// Unlike the controls around it, a change applies to the NEXT DRIVING CALL,
+/// not the next connection: `DrivingPolicy.current` is read on every admission,
+/// which costs one `UserDefaults` read before a verb that is about to post
+/// events anyway.
+private struct DrivingPolicyControl: View {
+  @AppStorage(DrivingPolicy.Keys.before)
+  private var before = DrivingPolicy.defaults.before.rawValue
+  @AppStorage(DrivingPolicy.Keys.countdownSeconds)
+  private var countdown = Int(DrivingPolicy.defaults.countdown)
+  @AppStorage(DrivingPolicy.Keys.idleReleaseSeconds)
+  private var idleRelease = Int(DrivingPolicy.defaults.idleRelease)
+
+  var body: some View {
+    Picker("Before driving", selection: $before) {
+      Text("Count down").tag(DrivingPolicy.Before.countdown.rawValue)
+      Text("Ask first").tag(DrivingPolicy.Before.ask.rawValue)
+      Text("Nothing").tag(DrivingPolicy.Before.none.rawValue)
+    }
+    .font(.callout)
+
+    if before == DrivingPolicy.Before.countdown.rawValue {
+      Stepper(value: $countdown, in: DrivingPolicy.countdownRange) {
+        Text("Count down for \(countdown) s")
+      }
+      .font(.callout)
+    }
+
+    Stepper(value: $idleRelease, in: DrivingPolicy.idleReleaseRange, step: 15) {
+      Text("Hand the Mac back after \(idleRelease) s with no call")
+    }
+    .font(.callout)
+
+    Text(caption)
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private var caption: String {
+    let window = Int(DrivingPolicy.activeWindow)
+    switch DrivingPolicy.Before(rawValue: before) ?? DrivingPolicy.defaults.before {
+    case .countdown:
+      return
+        "If you used the Mac in the last \(window) s, a card counts down before an agent takes "
+        + "the keyboard and mouse, and Cancel stops it. Applies to Desktop and Simulator."
+    case .ask:
+      return
+        "If you used the Mac in the last \(window) s, an agent waits for you to allow it before "
+        + "taking the keyboard and mouse. No answer within \(Int(DrivingPolicy.askTimeout)) s is "
+        + "a no. Applies to Desktop and Simulator."
+    case .none:
+      return
+        "An agent takes the keyboard and mouse as soon as it asks, even while you are typing. "
+        + "The card still names what it is driving. Applies to Desktop and Simulator."
+    }
   }
 }
 
