@@ -155,7 +155,20 @@ enum Permissions {
   /// `access(2)` only asks whether it *could* be opened. Nothing here reads a
   /// byte of it, and nothing needs to — the question is the permission, not the
   /// contents.
+  ///
+  /// **Gone on macOS 27.** The per-user `com.apple.TCC` directory no longer
+  /// exists, so `access(2)` answered ENOENT with or without the grant and the
+  /// row read "denied" on every Mac that had upgraded — while every server's
+  /// diagnostics, which read their own stores, said granted. ENOENT proves
+  /// nothing about permission; only EPERM on a file that exists does.
   private static let fullDiskAccessOracle = "Library/Application Support/com.apple.TCC/TCC.db"
+
+  /// Where to ask once the oracle is missing: stores gated by Full Disk Access
+  /// and nothing else. MEASURED denied without the grant (see `diskAccess()`),
+  /// which is what AddressBook — Contacts-gated — never was, and why this is a
+  /// named list rather than every `.fullDiskAccess` surface: Reminders is a
+  /// directory and Maps sits in another app's container, neither measured.
+  private static let fullDiskAccessFallbackSurfaces = ["mail", "messages", "safari", "notes", "calendar"]
 
   /// Is Full Disk Access granted?
   ///
@@ -184,8 +197,15 @@ enum Permissions {
     let sawAStore = Surface.all.contains { resolveStore($0) != nil }
     guard sawAStore else { return .storeMissing }
 
-    let oracle = FileManager.default.homeDirectoryForCurrentUser
+    // The first candidate that EXISTS is the one asked — existence is
+    // answerable without the grant, so the choice does not depend on it.
+    let tccDB = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(fullDiskAccessOracle).path
+    let fallbacks = fullDiskAccessFallbackSurfaces.lazy.compactMap { id in
+      Surface.all.first { $0.id == id }.flatMap(resolveStore)
+    }
+    let oracle = FileManager.default.fileExists(atPath: tccDB) ? tccDB : fallbacks.first
+    guard let oracle else { return .denied }
     return access(oracle, R_OK) == 0 ? .granted : .denied
   }
 
