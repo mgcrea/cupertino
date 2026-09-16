@@ -384,19 +384,44 @@ jobs:
       # a tag must not turn a completed release red. The registry rejects a
       # version it already holds, so an "already exists" rejection is the state
       # this job wanted and is reported as a notice rather than a failure.
+      #
+      # **Retried on "was not found", because `needs: publish-npm` is not
+      # enough.** It orders the jobs, not npm's read side: the registry fetches
+      # the version from registry.npmjs.org, which answers 404 for a while after
+      # a publish has already succeeded. 1.22.0 lost six of its eight registry
+      # listings to exactly that, with npm green on every one, and 1.22.1 lost
+      # maps the same way. Polling npm from this runner first would not settle
+      # it either — the validator reads from its own vantage point, which can
+      # lag this one — so the rejection itself is what gets retried.
+      #
+      # Logged in again on every attempt: the registry token from the OIDC
+      # exchange is short-lived, and ten minutes of retries would outlast it and
+      # turn a propagation delay into an authentication failure.
       - name: Publish 🚀
         if: steps.pkg.outputs.publish == 'true'
         working-directory: ${{ steps.pkg.outputs.dir }}
         run: |
-          if ! out=$(mcp-publisher publish 2>&1); then
-            printf '%s\n' "$out"
+          attempts=20
+          for attempt in $(seq 1 "$attempts"); do
+            mcp-publisher login github-oidc >/dev/null
+            if out=$(mcp-publisher publish 2>&1); then
+              printf '%s\n' "$out"
+              exit 0
+            fi
             if printf '%s' "$out" | grep -qi 'already exists'; then
               echo "::notice::this version is already in the registry — nothing to do."
               exit 0
             fi
-            exit 1
-          fi
+            if ! printf '%s' "$out" | grep -q 'was not found'; then
+              printf '%s\n' "$out"
+              exit 1
+            fi
+            echo "npm is not serving this version to the registry yet (attempt $attempt/$attempts); retrying in 30s."
+            sleep 30
+          done
           printf '%s\n' "$out"
+          echo "::error::npm still was not serving this version to the registry after $attempts attempts."
+          exit 1
 
   github-release:
     name: GitHub release
