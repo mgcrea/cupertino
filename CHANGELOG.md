@@ -6,11 +6,25 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.22.0`,
-`notes-v1.22.0`, `reminders-v1.22.0`, `core-v1.22.0` for the npm packages, and `app-v1.22.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.22.1`,
+`notes-v1.22.1`, `reminders-v1.22.1`, `core-v1.22.1` for the npm packages, and `app-v1.22.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.22.1] - 2026-09-16
+
+### Fixed
+
+- **Full Disk Access read as denied on every Mac running macOS 27, whether it was granted or not.**
+  Cupertino tells whether the grant is in place by asking whether one file that only Full Disk
+  Access can open is readable, and on macOS 27 that file no longer exists. A missing file answered
+  "no" either way, so the row said denied while every server's own diagnostics, reading their own
+  stores, said granted — and it sent people off to grant a permission they already had.
+
+  A file that is not there proves nothing about permission. When it is gone, Cupertino now asks
+  the same question of the first Mail, Messages, Safari, Notes or Calendar store on the Mac, each of
+  which has been measured as unreadable without the grant.
 
 ## [1.22.0] - 2026-09-16
 
@@ -2429,7 +2443,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.22.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.22.1...HEAD
+[1.22.1]: https://github.com/mgcrea/cupertino/compare/app-v1.22.0...app-v1.22.1
 [1.22.0]: https://github.com/mgcrea/cupertino/compare/app-v1.21.1...app-v1.22.0
 [1.21.1]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...app-v1.21.1
 [1.21.0]: https://github.com/mgcrea/cupertino/compare/app-v1.20.1...app-v1.21.0

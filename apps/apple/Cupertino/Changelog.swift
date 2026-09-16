@@ -220,7 +220,26 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_22_0, v1_21_1, v1_21_0, v1_20_1, v1_20_0]
+  static let releases: [Release] = [v1_22_1, v1_22_0, v1_21_1, v1_21_0, v1_20_1]
+
+  // swift-format-ignore
+  private static let v1_22_1: Release = Release(
+    version: "1.22.1",
+    date: "2026-09-16",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Full Disk Access read as denied on every Mac running macOS 27, whether it was granted or not.",
+            body: [
+              "Cupertino tells whether the grant is in place by asking whether one file that only Full Disk Access can open is readable, and on macOS 27 that file no longer exists. A missing file answered \"no\" either way, so the row said denied while every server's own diagnostics, reading their own stores, said granted — and it sent people off to grant a permission they already had.",
+              "A file that is not there proves nothing about permission. When it is gone, Cupertino now asks the same question of the first Mail, Messages, Safari, Notes or Calendar store on the Mac, each of which has been measured as unreadable without the grant.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_22_0: Release = Release(
@@ -417,42 +436,6 @@ enum Changelog {
               "A message whose text is interrupted — a screenshot pasted mid-mail, a file between two paragraphs — was read down to its first `text/plain` part and no further. `apple_mail_get_message` returned the opening and dropped the rest, and a `body:` search in `apple_mail_search_messages` could not match a word that sat below the image. Nothing reported a truncation; the message simply read as though it ended early.",
               "The body is now assembled in document order across the whole tree, with an `[image: shot.png]` marker standing where a file separated two runs, and `multipart/alternative` still resolving to a single rendering so a plain-and-html message is not emitted twice. A body that came through the tag stripper for any of its runs now says so, rather than reporting the type of whichever run happened to be first.",
               "Two parsing faults surfaced with it. A boundary was matched anywhere in the body instead of at the start of a line, so `--B` also matched inside `--B2` and flattened a nested multipart into its parent's sibling list — harmless while only one part was ever read, a doubled body the moment the parts are joined. And `htmlToText` left a `<style>` block's CSS behind as prose whenever the closing tag fell outside the scan's read window, which is routine at the window's size and made a body search for a font name match a newsletter that never said it.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_20_0: Release = Release(
-    version: "1.20.0",
-    date: "2026-09-08",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A Chat pane, so the tools can be tried without wiring an editor first.",
-            body: [
-              "Until now the only way to see Cupertino do anything was to install an MCP client, configure it, and ask it a question — three steps before the first sign of life, and the app could only ever describe its servers. The new pane under Activity picks a surface, loads as many of its tools as fit, and lets you ask in plain words.",
-              "The answers come from Apple's on-device model, which is the only choice that keeps `scripts/audit-network.sh` true: the pane adds no network reach, no API key and nothing to send. It also works before a licence is entered, because what a licence buys is letting _other_ apps in — a self-check is not a relay.",
-              "The calls are real ones. The pane dials the app's own socket with the same handshake `cupertino-bridge` sends, so a tool call from here goes to the same supervised child, under the same write gate and the same surface switch, and shows up in the Log and Connections panes like anybody else's. Tool calls are drawn above the model's prose, with the arguments it invented, because the calls are the evidence and the prose is a small model's account of them.",
-              "The on-device model holds 4,096 tokens and Mail alone lists 4,858 tokens of tool schema, so the pane cannot offer a surface's tools — only as many as fit. It costs each tool, sorts the ones callable with no arguments first (a set of only `get_*(id)` tools gives the model nothing to open with), fills a 1,800-token budget greedily, and says in the header what it spent and in the picker what it left out. `make chat-check` asserts that arithmetic with no app and no model, and `make chat-check-real` puts every shipped tool schema through the same rule — all 131 of them convert.",
-              "A question may make six tool calls, and a reply is capped at 400 tokens. Neither is tidiness: a model looping on a failing tool would otherwise spend six minutes of call deadlines before anybody could type again, and a model that starts enumerating fills the window, overflows, and gets silently trimmed — so the only symptom is a conversation that has forgotten its own opening. Stopping a reply ends the turn immediately and drops the stopped question from what the model remembers, which the row says out loud.",
-              "With writes enabled for a surface, the pane honours it: the model can change your data, behind an acknowledgement that names the surface and gates the Send button.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A client that already fetches tool schemas on its own is never fronted.",
-            body: [
-              "\"Load tools on demand\" reads as a decision about a surface, but a surface feeds every wired client at once, and they do not agree about what they need. Claude Code and Claude Desktop both load an MCP server's schemas only when they are about to use them, so fronting either paid the facade's whole cost to buy back only the tool names — and worse, their own tool search then indexed the facade's four generic entries instead of the surface's twenty real ones.",
-              "Cupertino now writes `--client=<id>` beside `--server=<id>` when it configures a client, so the host knows which config a connection came from and can leave those two alone. Which clients defer is an allowlist backed by evidence, with a per-client override (`defaults write … defersSchemas.<client> on|off`) for when it is wrong in either direction. An unrecognised client, or a config written before this existed, does not defer — the behaviour every client had before. Existing wirings are not invalidated: the staleness check compares the command and never the arguments, so nothing needs re-configuring, though a client that has not been re-configured carries no id until it is.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A listing too small to be worth searching is served whole, whatever the switch says.",
-            body: [
-              "A facade costs its own declarations and buys back only what the real listing would have cost, so below a certain size the trade is a loss that looks exactly like a working facade. A surface is now fronted only when its listing has at least twice as many tools as the facade replacing it **and** costs at least twice as many bytes. Measured with writes on, Contacts (7 tools) and Messages (8) fail the first test at 1.4x and 1.6x while passing the second at 2.6x and 3.8x — which is why both terms are needed: a handful of fat schemas outweighs a facade made of prose, so a floor counting bytes alone would front them and buy nothing but a coarser permission prompt.",
             ]),
         ]),
     ])
