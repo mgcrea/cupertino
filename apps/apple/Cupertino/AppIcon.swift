@@ -73,6 +73,24 @@ enum AppIcon {
 /// Which icon stands for a surface.
 @MainActor
 enum SurfaceIcon {
+  /// Bundle ids to try when a surface's own app is not on this Mac.
+  ///
+  /// **Xcode 27 ships no `Simulator.app`.** The simulator's window belongs to
+  /// DeviceHub now, and LaunchServices keeps a registration pointing at the
+  /// path Xcode 26 used, so `urlForApplication` resolves nothing while
+  /// `simctl` still lists booted devices — the row claimed "Simulator is not
+  /// installed on this Mac" on a Mac running one. Falling back draws the app
+  /// that owns that window today.
+  ///
+  /// A Mac with no Xcode at all resolves neither id and still renders the
+  /// not-installed glyph, which stays the truth. Kept here rather than in
+  /// `surfaces.json` because it is about what this Mac has, not about what the
+  /// surface IS: the manifest is the closed table the launcher matches on, and
+  /// an alternate id in it would read as a second surface to broker.
+  private static let alternates: [String: [String]] = [
+    "com.apple.iphonesimulator": ["com.apple.dt.Devices"]
+  ]
+
   /// `nil` when the app is not installed — a real state on a Mac where someone
   /// has removed one of the four, and the caller shows that rather than
   /// substituting something that implies it is there.
@@ -86,7 +104,11 @@ enum SurfaceIcon {
     // which is why one is mandatory in the manifest.
     if let iconPath = surface.iconPath { return AppIcon.image(path: iconPath) }
     guard let bundleID = surface.bundleID else { return nil }
-    return AppIcon.image(bundleID: bundleID)
+    if let icon = AppIcon.image(bundleID: bundleID) { return icon }
+    for alternate in alternates[bundleID] ?? [] {
+      if let icon = AppIcon.image(bundleID: alternate) { return icon }
+    }
+    return nil
   }
 }
 
