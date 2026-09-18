@@ -43,6 +43,17 @@ summary.
 
 ### Fixed
 
+- **Every accent, em dash and curly quote in a composed mail was corrupted.** `pbcopy` and
+  `pbpaste` encode in the LOCALE's character set, and this server is spawned by the app with an
+  environment naming none — so they fell back to MacRoman, and every byte outside ASCII was wrong
+  in both directions. A body pasted into a composer arrived with `—` turned into `‚Äî`. Not a
+  display artefact: that is what went into the draft, and what would have gone into the mail. The
+  read is worse in kind, because the clipboard is BORROWED — read, overwritten, put back — so
+  replying to a mail handed back a corrupted copy of whatever the person had copied. Both verbs
+  now name `LC_CTYPE=UTF-8`, which sets the encoding and nothing else. Found by a live rewrite
+  whose read-back would not match, and verified end to end: `é à ç œ « »` and `—` now reach the
+  stored draft intact.
+
 - **`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a
   failure.** The composer was read back once, immediately after the paste — but `apple_desktop_key`
   returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and

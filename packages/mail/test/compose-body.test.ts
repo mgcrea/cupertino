@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { clipboardEnv } from "../src/client/compose.js";
 import { REPLY_OR_FORWARD } from "../src/client/jxa/write.js";
 
 /**
@@ -517,5 +518,36 @@ describe("opening nothing it cannot fill", () => {
     expect(envelope.ok).toBe(false);
     expect(state.closes).toBe(0);
     expect(envelope.error.message).toMatch(/close it in Mail/i);
+  });
+});
+
+/**
+ * The pasteboard's encoding.
+ *
+ * `pbcopy` and `pbpaste` speak the LOCALE's encoding, and this server is spawned
+ * with an environment that names none — so they fall back to MacRoman and every
+ * byte outside ASCII is wrong in BOTH directions. Found in a live composer, with
+ * an em dash arriving as `‚Äî`: not a display artefact, that is what went into
+ * the draft.
+ *
+ * Asserted on the environment rather than on a round trip, deliberately: a test
+ * that really called `pbcopy` would clobber whatever the person running it had
+ * copied, which `compose.ts` says is not a thing a test suite may do.
+ */
+describe("the system clipboard's encoding", () => {
+  it("names UTF-8, so the pasteboard verbs do not fall back to MacRoman", () => {
+    expect(clipboardEnv.LC_CTYPE).toBe("UTF-8");
+  });
+
+  /*
+   * Inherited rather than replaced. `pbcopy` is found by absolute path, but a
+   * bare environment is still a change of behaviour for anything else the child
+   * reads, and the narrowest fix is the one that only names the encoding.
+   */
+  it("keeps the rest of the environment", () => {
+    for (const key of Object.keys(process.env)) {
+      if (key === "LC_CTYPE") continue;
+      expect(clipboardEnv[key]).toBe(process.env[key]);
+    }
   });
 });

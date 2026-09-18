@@ -125,16 +125,42 @@ const compare = (before: number | null, after: number | null): Landed => {
  */
 export type Clipboard = { read(): Promise<string | null>; write(text: string): Promise<void> };
 
+/**
+ * `pbcopy` and `pbpaste` speak the locale's encoding, NOT UTF-8.
+ *
+ * With no `LANG` or `LC_CTYPE` in the environment they fall back to MacRoman,
+ * and this server is spawned by the app with a minimal environment that has
+ * neither. Every byte outside ASCII is then wrong in both directions:
+ *
+ *     echo 'em dash — here' | pbcopy   (no locale)  ->  pasted as 'em dash ‚Äî here'
+ *     echo 'em dash — here' | pbcopy   (LC_CTYPE)   ->  pasted as 'em dash — here'
+ *
+ * MEASURED, macOS 27.0, and found in a live composer: a body pasted through this
+ * path arrived with `—` turned into `‚Äî` — the UTF-8 bytes of the dash read back
+ * as MacRoman. It is not a display artefact; that is what went into the draft,
+ * and it would have gone into the mail. For anyone writing French or German it
+ * mangles every accent, and the reader's own quotation marks with them.
+ *
+ * The read matters just as much, and is worse in kind. This clipboard is
+ * BORROWED — read, overwritten, and put back — so a `pbpaste` that mis-decodes
+ * hands back a corrupted copy of whatever the person had copied. Replying to a
+ * mail should not quietly rewrite their clipboard.
+ *
+ * `LC_CTYPE=UTF-8` is the narrowest fix: it names the character encoding and
+ * nothing else, so no message, date or sort order changes with it.
+ */
+export const clipboardEnv: NodeJS.ProcessEnv = { ...process.env, LC_CTYPE: "UTF-8" };
+
 export const systemClipboard: Clipboard = {
   async read() {
     try {
-      return (await run("/usr/bin/pbpaste", [])).stdout;
+      return (await run("/usr/bin/pbpaste", [], { env: clipboardEnv })).stdout;
     } catch {
       return null;
     }
   },
   async write(text) {
-    const child = execFile("/usr/bin/pbcopy", []);
+    const child = execFile("/usr/bin/pbcopy", [], { env: clipboardEnv });
     child.stdin?.end(text);
     await new Promise((resolve, reject) => {
       child.on("close", resolve);
