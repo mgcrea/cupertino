@@ -71,9 +71,17 @@ const IDENTITY_CHARS = 120;
  */
 const MAX_EXTRA_LINES = 200;
 
-/** How long to wait for a pasted body to reach the accessibility tree. */
-const RENDER_TIMEOUT_MS = 4_000;
-const RENDER_POLL_MS = 150;
+/**
+ * How long to wait for a pasted body to reach the accessibility tree.
+ *
+ * Longer than the equivalent in `compose.ts`, and for a measured reason: this
+ * read is not one call but a walk plus a quote-level read per leading block, and
+ * it runs against a WebKit view that has just been handed a paste. On a composer
+ * quoting a long thread the attribute reads themselves started timing out, and
+ * four seconds was not enough for the view to settle and answer.
+ */
+const RENDER_TIMEOUT_MS = 12_000;
+const RENDER_POLL_MS = 250;
 
 /**
  * How long to wait for a copy to reach the pasteboard.

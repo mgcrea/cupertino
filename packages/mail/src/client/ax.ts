@@ -97,6 +97,16 @@ const FOCUS_POLL_MS = 100;
  */
 const BLOCK_SCAN_MAX = 60;
 
+/**
+ * How many times to ask for a block's quote level before giving up on it.
+ *
+ * A busy WebKit view answers "did not answer in time … retry" rather than
+ * refusing, and it says so straight after a paste — which is exactly when this
+ * is read. See `#quoteLevel`.
+ */
+const QUOTE_READ_TRIES = 3;
+const QUOTE_READ_PAUSE_MS = 120;
+
 /** One keystroke, as `apple_desktop_key` takes it. */
 type Keystroke = { key: string; modifiers?: string[] };
 
@@ -472,6 +482,35 @@ export class MailAxLane {
    * bounded anyway, since the loop stops at the first quoted block and on a
    * reply that is two or three in.
    */
+  /**
+   * One block's quote level, retried, because "busy" is not "no".
+   *
+   * MEASURED, macOS 27.0: on a composer quoting a long thread, a single
+   * `AXBlockQuoteLevel` read came back `Reading AXBlockQuoteLevel of 'e8320' did
+   * not answer in time. The app may be busy; retry.` — WebKit still digesting
+   * the paste that had just landed in it. One such timeout used to fail the
+   * whole read, which failed the verification, which refused a rewrite that had
+   * in fact gone in perfectly and left the composer unsaved.
+   *
+   * The app says to retry, so it retries. Null is kept for a read that never
+   * answers, because the caller must not mistake it for level zero.
+   */
+  async #quoteLevel(handle: string): Promise<number | null> {
+    for (let attempt = 0; attempt < QUOTE_READ_TRIES; attempt += 1) {
+      try {
+        const read = (await this.#call("get_attribute", {
+          handle,
+          attribute: "AXBlockQuoteLevel",
+        })) as { value?: unknown };
+        return typeof read.value === "number" ? read.value : 0;
+      } catch {
+        if (attempt + 1 >= QUOTE_READ_TRIES) return null;
+        await new Promise((resolve) => setTimeout(resolve, QUOTE_READ_PAUSE_MS));
+      }
+    }
+    return null;
+  }
+
   async composerBody(body: string): Promise<ComposerBody | null> {
     let tree: Tree;
     try {
@@ -490,16 +529,11 @@ export class MailAxLane {
     for (let block = 0; block < starts.length && block < BLOCK_SCAN_MAX; block += 1) {
       const handle = elements[starts[block] as number]?.handle;
       if (!handle) continue;
-      let level = 0;
-      try {
-        const read = (await this.#call("get_attribute", {
-          handle,
-          attribute: "AXBlockQuoteLevel",
-        })) as { value?: unknown };
-        level = typeof read.value === "number" ? read.value : 0;
-      } catch {
-        return null;
-      }
+      const level = await this.#quoteLevel(handle);
+      // Unknown, not zero. A block whose level could not be read cannot be
+      // called the sender's own — that is the reading that decides what may be
+      // replaced, and guessing it is how a quoted original gets overwritten.
+      if (level === null) return null;
       if (level > 0) {
         boundary = block;
         break;
