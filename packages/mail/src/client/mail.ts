@@ -4,7 +4,7 @@ import { basename, join, resolve, sep } from "node:path";
 import type { Config } from "../config.js";
 import { MailAxLane } from "./ax.js";
 import { scanBodies } from "./body-scan.js";
-import { replyOrForwardNatively } from "./compose.js";
+import { replyOrForwardNatively, type Clipboard } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
@@ -28,6 +28,7 @@ import {
   CHECK_FOR_NEW_MAIL,
   CREATE_MAILBOX,
   DELETE_MESSAGES,
+  DRAFT_FACTS,
   MOVE_MESSAGES,
   REPLY_OR_FORWARD,
   SEND_MESSAGE,
@@ -43,6 +44,7 @@ import {
   withBusyRetry,
 } from "./osascript.js";
 import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref.js";
+import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
 
 /**
  * The facade every tool talks to. It owns three things the tools should not
@@ -134,6 +136,15 @@ export type AppleMailClientOptions = {
    * what the server does.
    */
   ax?: MailAxLane | null | undefined;
+  /**
+   * The pasteboard, for tests.
+   *
+   * The same seam `compose.ts` already documents, hoisted to the client because
+   * `updateDraft` reaches the composer through it too. The real pasteboard is
+   * shared machine state and a test that wrote to it would clobber whatever the
+   * person running it had copied.
+   */
+  clipboard?: Clipboard | undefined;
 };
 
 export class AppleMailClient {
@@ -151,6 +162,9 @@ export class AppleMailClient {
    * which one is live.
    */
   readonly #ax: MailAxLane | null;
+
+  /** Undefined means the system pasteboard — see `AppleMailClientOptions`. */
+  readonly #clipboard: Clipboard | undefined;
 
   #located: LocateResult | null = null;
   #index: EnvelopeIndex | null = null;
@@ -174,6 +188,7 @@ export class AppleMailClient {
       ttlMs: opts.config.mailboxCacheTtlMs,
     });
     this.#ax = opts.ax !== undefined ? opts.ax : MailAxLane.open();
+    this.#clipboard = opts.clipboard;
   }
 
   /** Which composer lane is live, for `diagnostics` to report. */
@@ -1235,13 +1250,31 @@ export class AppleMailClient {
   }
 
   /**
-   * Replace a saved draft's body by recreating it.
+   * Replace a saved draft's body, editing it where that is possible and
+   * recreating it where it is not.
    *
-   * The refusals live in the script, next to the properties they are read from,
-   * and come back as ordinary results carrying `replaced: false` rather than as
-   * thrown errors — a caller that cannot rewrite this draft still wants to know
-   * WHY, and what to do instead, and both travel better as data than as a
-   * message string.
+   * ## Two lanes, and the order between them is the whole point
+   *
+   * **Editing the open composer comes first.** A draft whose composer is still
+   * on screen — which is every draft this server has just written, because
+   * nothing here closes one — can have its body replaced in that window, and
+   * the save lands on the same draft. Threading, attachments and the quoted
+   * original survive because nothing is remade. See `revise.ts`.
+   *
+   * **Recreating is the fallback.** It composes a replacement and deletes the
+   * original, which is the only thing Mail's scripting interface allows, and it
+   * is why `UPDATE_DRAFT` refuses a reply or a draft carrying attachments.
+   * Those refusals are costs of recreating, not of editing, so they must never
+   * be reached while a window that could simply be edited is open.
+   *
+   * The preflight that decides is only paid when there is a lane to decide for:
+   * with no accessibility lane — a package installed from npm and run by hand —
+   * this goes straight to recreation and costs exactly what it always did.
+   *
+   * The refusals on both lanes come back as ordinary results carrying
+   * `replaced: false` rather than as thrown errors: a caller that cannot rewrite
+   * this draft still wants to know WHY and what to do instead, and both travel
+   * better as data than as a message string.
    *
    * What is enforced here instead is the shape of the request, before Mail is
    * touched at all: an empty body would silently blank a draft the user wrote,
@@ -1259,11 +1292,29 @@ export class AppleMailClient {
       );
     }
     const decoded = decodeRef(ref);
+    const target = {
+      accountUuid: decoded.accountUuid,
+      mailbox: decoded.mailbox,
+      id: decoded.id,
+    };
+
+    if (this.#ax) {
+      const facts = await withBusyRetry(() => this.runner.run<DraftFacts>(DRAFT_FACTS, target));
+      // A new subject cannot be typed into the composer's subject field by this
+      // path, so asking for one sends the draft down the lane that can set it.
+      if (opts.subject === undefined || opts.subject === facts.subject) {
+        const edited = await reviseDraftInPlace(this.#ax, facts, {
+          body: opts.body,
+          clipboard: this.#clipboard,
+        });
+        // Null, and only null, means there was no composer to edit.
+        if (edited) return edited;
+      }
+    }
+
     return withBusyRetry(() =>
       this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
-        accountUuid: decoded.accountUuid,
-        mailbox: decoded.mailbox,
-        id: decoded.id,
+        ...target,
         body: opts.body,
         subject: opts.subject ?? null,
       }),
@@ -1322,7 +1373,13 @@ export class AppleMailClient {
     // artifacts that have to work with no Cupertino on the machine — the
     // difference a person sees is that the native path needs ONE grant where
     // the other needs two.
-    if (this.#ax) return replyOrForwardNatively(this.#ax, this.runner, params);
+    if (this.#ax)
+      return replyOrForwardNatively(
+        this.#ax,
+        this.runner,
+        params,
+        this.#clipboard ? { clipboard: this.#clipboard } : {},
+      );
     return this.runner.run(REPLY_OR_FORWARD, params);
   }
 

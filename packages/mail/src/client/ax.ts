@@ -85,6 +85,30 @@ const FOCUS_TIMEOUT_MS = 2_000;
 /** Between focus attempts. Each one is a round trip, so this is not a spin. */
 const FOCUS_POLL_MS = 100;
 
+/**
+ * How many leading blocks to classify as quoted or not.
+ *
+ * `composerBody` only needs the FIRST quoted block — everything from it down is
+ * the original — and on a reply that is the attribution line, two or three
+ * blocks in. The bound is therefore generous rather than tight, and its job is
+ * the failure case: a body whose boundary is not inside it is reported as
+ * unknown rather than guessed at, because guessing "no quote" would offer the
+ * whole quoted original up for replacement.
+ */
+const BLOCK_SCAN_MAX = 60;
+
+/** One keystroke, as `apple_desktop_key` takes it. */
+type Keystroke = { key: string; modifiers?: string[] };
+
+/**
+ * How many keystrokes go in one `apple_desktop_run`.
+ *
+ * The verb caps a run at 25 steps. Staying under it here means a burst is
+ * chunked rather than refused, which matters because the number of strokes is
+ * the number of lines in somebody's draft.
+ */
+const KEY_BURST = 20;
+
 type Element = {
   handle: string;
   role: string;
@@ -93,10 +117,45 @@ type Element = {
   depth: number;
 };
 
-type Tree = { elements?: Element[]; matched?: number; truncated?: string };
+type Tree = {
+  elements?: Element[];
+  matched?: number;
+  returned?: number;
+  truncated?: string;
+};
 type Windows = { windows?: { handle: string; index: number; title?: string | null }[] };
 
 export type ComposerRef = { window: string; body: string; index: number };
+
+/**
+ * A composer's own text, told apart from the original it quotes.
+ *
+ * MEASURED, macOS 27.0 (build 26A428), on a reply composer: `AXBlockQuoteLevel`
+ * reads 0 on every block the sender wrote and 1 on every block from the
+ * attribution line — `On <date>, <who> wrote:` — down, including the quoted
+ * message's images and links. The split is exact, which is what makes replacing
+ * a reply's text without touching its quote possible at all.
+ *
+ * **A FORWARD is quoted too**, and that was worth measuring rather than assuming:
+ * a forward reads as prose with a `Begin forwarded message:` header and nothing
+ * about it looks like a quotation, but that line and everything under it read
+ * level 1 on the same build. Had they read 0 the whole forwarded message would
+ * have counted as the sender's own text and been offered up for replacement.
+ *
+ * `blocks` counts the top-level elements above that boundary, NOT rendered
+ * lines: a paragraph that wraps is one block and two lines. So it is a floor for
+ * how many times the selection has to be extended, never a target — see
+ * `selectOwnText` in `revise.ts`, which converges upwards from it and verifies
+ * the answer before anything is replaced.
+ */
+export type ComposerBody = {
+  /** What the sender wrote, blocks joined by newlines. "" when they wrote nothing. */
+  text: string;
+  /** Top-level elements above the quote. */
+  blocks: number;
+  /** Whether a quoted original follows. */
+  quoted: boolean;
+};
 
 export type ReachReport = {
   ok: boolean;
@@ -212,6 +271,33 @@ export class MailAxLane {
     }
   }
 
+  /**
+   * Every composer currently under this subject, in window order.
+   *
+   * `findComposer` takes the first match because it is looking for a window it
+   * just opened. Rewriting one that was already there is the opposite problem:
+   * the caller has to know whether the subject picks out ONE composer, because
+   * two under one title cannot be told apart — handles are minted per call —
+   * and replacing the body of the wrong one destroys what somebody wrote. So
+   * this returns the list and lets `revise.ts` refuse on its length.
+   *
+   * Does not poll. Nothing here opened a window, so there is nothing to wait
+   * for: the composer either is on screen or is not.
+   */
+  async findComposers(subject: string): Promise<ComposerRef[]> {
+    const listed = (await this.#call("list_windows", {
+      bundleId: MAIL_BUNDLE,
+      includeTitles: true,
+    })) as Windows;
+    const found: ComposerRef[] = [];
+    for (const win of listed.windows ?? []) {
+      if ((win.title ?? "") !== subject) continue;
+      const body = await this.#bodyOf(win.index);
+      if (body) found.push({ window: win.handle, body, index: win.index });
+    }
+    return found;
+  }
+
   async #bodyOf(windowIndex: number): Promise<string | null> {
     const tree = (await this.#call("ui_tree", {
       bundleId: MAIL_BUNDLE,
@@ -318,6 +404,32 @@ export class MailAxLane {
    * typed.
    */
   async paste(ref: ComposerRef, focusTimeoutMs = FOCUS_TIMEOUT_MS): Promise<boolean> {
+    return this.keys(ref, [{ key: "v", modifiers: ["command"] }], focusTimeoutMs);
+  }
+
+  /**
+   * Focus the composer's body and send a burst of keystrokes to it.
+   *
+   * What `paste` was, generalised, because replacing a reply's text without
+   * touching its quote is a sequence rather than one key: the caret goes to the
+   * top of the document, the selection is walked down to the end of the
+   * sender's own text, and only then is anything pasted over it.
+   *
+   * Sent through `apple_desktop_run` so a burst is ONE round trip. That is not
+   * only speed: every stroke in a run is checked before the first one is posted,
+   * and the run stops at the first failure, so a selection cannot be left
+   * half-extended by a refusal partway through.
+   *
+   * Each stroke names the body's handle, so the desktop server brings Mail
+   * forward before posting and refuses rather than typing into whatever the
+   * person at the keyboard just switched to.
+   */
+  async keys(
+    ref: ComposerRef,
+    strokes: Keystroke[],
+    focusTimeoutMs = FOCUS_TIMEOUT_MS,
+  ): Promise<boolean> {
+    if (strokes.length === 0) return true;
     try {
       await this.#call("raise_window", { handle: ref.window });
       await this.activate();
@@ -328,14 +440,96 @@ export class MailAxLane {
         if (Date.now() >= deadline) return false;
         await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
       }
-      // Named by the body's handle, so the desktop server brings Mail forward
-      // before posting and refuses if it does not come. The activate above can
-      // be undone by the person at the keyboard in the milliseconds between.
-      await this.#call("key", { key: "v", modifiers: ["command"], handle: ref.body });
+      for (let at = 0; at < strokes.length; at += KEY_BURST) {
+        const chunk = strokes.slice(at, at + KEY_BURST);
+        if (chunk.length === 1) {
+          const only = chunk[0] as Keystroke;
+          await this.#call("key", { ...only, handle: ref.body });
+          continue;
+        }
+        await this.#call("run", {
+          steps: chunk.map((stroke) => ({ tool: "key", ...stroke, handle: ref.body })),
+        });
+      }
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Read the composer's own text, stopping where the quoted original begins.
+   *
+   * Null when the boundary cannot be established, and that answer is the point.
+   * Two ways it happens: the body cannot be read at all, or no quoted block was
+   * found within `BLOCK_SCAN_MAX` of a body that has more blocks than that.
+   * Reporting the second as "no quote, all of it is yours" would hand the whole
+   * quoted message to a caller that is about to replace what it is given.
+   *
+   * The quote level is read per element rather than from the tree, because the
+   * tree's field set is chosen for addressing controls and does not carry it.
+   * Affordable only natively — 0.2 ms a read against System Events' 47 ms — and
+   * bounded anyway, since the loop stops at the first quoted block and on a
+   * reply that is two or three in.
+   */
+  async composerBody(body: string): Promise<ComposerBody | null> {
+    let tree: Tree;
+    try {
+      tree = (await this.#call("expand", {
+        handle: body,
+        detail: "all",
+        maxDepth: BODY_DEPTH,
+      })) as Tree;
+    } catch {
+      return null;
+    }
+    const elements = tree.elements ?? [];
+    const starts = elements.flatMap((el, at) => (el.depth === 0 ? [at] : []));
+
+    let boundary: number | null = null;
+    for (let block = 0; block < starts.length && block < BLOCK_SCAN_MAX; block += 1) {
+      const handle = elements[starts[block] as number]?.handle;
+      if (!handle) continue;
+      let level = 0;
+      try {
+        const read = (await this.#call("get_attribute", {
+          handle,
+          attribute: "AXBlockQuoteLevel",
+        })) as { value?: unknown };
+        level = typeof read.value === "number" ? read.value : 0;
+      } catch {
+        return null;
+      }
+      if (level > 0) {
+        boundary = block;
+        break;
+      }
+    }
+
+    // Every block read was the sender's own. Believable only if the scan saw
+    // the whole body: a truncated list or one longer than the bound leaves the
+    // boundary unknown, which is not the same as there being none.
+    const truncated = tree.truncated !== undefined || (tree.matched ?? 0) > elements.length;
+    if (boundary === null) {
+      if (truncated || starts.length > BLOCK_SCAN_MAX) return null;
+      boundary = starts.length;
+    }
+
+    // A block's text is its own value plus its descendants' — inline runs on one
+    // line, so they join with nothing, and the blocks themselves with newlines.
+    const lines: string[] = [];
+    for (let block = 0; block < boundary; block += 1) {
+      const from = starts[block] as number;
+      const to = starts[block + 1] ?? elements.length;
+      lines.push(
+        elements
+          .slice(from, to)
+          .map((el) => el.value)
+          .filter((v): v is string => typeof v === "string")
+          .join(""),
+      );
+    }
+    return { text: lines.join("\n"), blocks: boundary, quoted: boundary < starts.length };
   }
 
   /**
@@ -457,7 +651,7 @@ export class MailAxLane {
  * Whitespace-squashed on both sides: the accessible text of a WebKit view breaks
  * lines where the rendering does, not where the source did.
  */
-const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+export const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
 export const containsText = (haystack: string, needle: string): boolean => {
   const n = squash(needle);

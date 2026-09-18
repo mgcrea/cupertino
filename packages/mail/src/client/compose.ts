@@ -55,6 +55,31 @@ const SEND_TIMEOUT_MS = 5_000;
 const VERIFY_CHARS = 400;
 
 /**
+ * How long to keep re-reading the body for text that was just pasted.
+ *
+ * **A paste is not on screen when the keystroke returns.** `apple_desktop_key`
+ * answers once the event is POSTED; WebKit then has to take it, edit the
+ * document and republish an accessibility tree. Reading once, immediately, races
+ * that — and loses on exactly the mail where it hurts, because the re-layout is
+ * paid for the whole document and a reply carries the original inside it.
+ *
+ * MEASURED, macOS 27.0 (build 26A428): a two-line reply pasted into a composer
+ * quoting a 322-element newsletter came back `bodyVerified: false` with "SOMETHING
+ * DID land in it that could not be read back" — and the tree, read again a
+ * moment later, held both lines exactly as sent. A correct reply reported as a
+ * failure, which then tells its reader not to retry.
+ *
+ * So the read is polled, like the focus above it and for the same reason
+ * `docs/desktop.md` gives: readable is not ready, and no fixed settle time is
+ * right. Costs nothing on the common path — the first read still usually
+ * answers — and the bound only has to be longer than a slow re-layout.
+ */
+const RENDER_TIMEOUT_MS = 3_000;
+
+/** Between read-backs. Each is a round trip over a subtree, so not a spin. */
+const RENDER_POLL_MS = 150;
+
+/**
  * How far back to accept a message in Sent as this call's.
  *
  * Generous on purpose. `dateSent` and the moment the row appears are not the
@@ -126,13 +151,11 @@ export const systemClipboard: Clipboard = {
  * or a file promise still comes back as text, because there is no way to carry
  * an arbitrary item across without knowing its type.
  */
-const withClipboard = async <T>(
+export const borrowClipboard = async <T>(
   clipboard: Clipboard,
-  text: string,
   body: () => Promise<T>,
 ): Promise<T> => {
   const saved = await clipboard.read();
-  await clipboard.write(text);
   try {
     return await body();
   } finally {
@@ -147,12 +170,40 @@ const withClipboard = async <T>(
   }
 };
 
+const withClipboard = <T>(clipboard: Clipboard, text: string, body: () => Promise<T>): Promise<T> =>
+  borrowClipboard(clipboard, async () => {
+    await clipboard.write(text);
+    return body();
+  });
+
+/**
+ * Wait for text to appear in the body, rather than reading for it once.
+ *
+ * Returns as soon as it matches, so the poll costs nothing when the tree is
+ * already current. See `RENDER_TIMEOUT_MS` for the measurement that put it here.
+ */
+const awaitBody = async (
+  lane: MailAxLane,
+  body: string,
+  expected: string,
+  timeoutMs = RENDER_TIMEOUT_MS,
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const after = await lane.bodyText(body);
+    if (after !== null && containsText(after, expected)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, RENDER_POLL_MS));
+  }
+};
+
 const paste = async (
   lane: MailAxLane,
   clipboard: Clipboard,
   ref: ComposerRef,
   text: string,
   focusTimeoutMs: number | undefined,
+  renderTimeoutMs: number | undefined,
 ): Promise<{ verified: boolean; landed: Landed }> => {
   const expected = text.length > VERIFY_CHARS ? text.slice(0, VERIFY_CHARS) : text;
   const sizeBefore = await lane.bodySize(ref.body);
@@ -160,11 +211,8 @@ const paste = async (
   return withClipboard(clipboard, text, async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const focused = await lane.paste(ref, focusTimeoutMs);
-      if (focused) {
-        const after = await lane.bodyText(ref.body);
-        if (after !== null && containsText(after, expected))
-          return { verified: true, landed: "yes" as const };
-      }
+      if (focused && (await awaitBody(lane, ref.body, expected, renderTimeoutMs)))
+        return { verified: true, landed: "yes" as const };
       // Something went in that cannot be matched, or the body can no longer be
       // read at all. Pasting again would put the reply in the draft twice, and
       // nothing here can undo that — so an UNKNOWN reading stops the retry just
@@ -280,6 +328,8 @@ export const replyOrForwardNatively = async (
     sendTimeoutMs?: number;
     /** Same, for the focus poll — see FOCUS_TIMEOUT_MS in `ax.ts`. */
     focusTimeoutMs?: number;
+    /** Same, for the read-back poll — see RENDER_TIMEOUT_MS above. */
+    renderTimeoutMs?: number;
   } = {},
 ): Promise<ComposeResult> => {
   const clipboard = opts.clipboard ?? systemClipboard;
@@ -392,7 +442,14 @@ export const replyOrForwardNatively = async (
   let bodyVerified: boolean | null = null;
   let verifiedChars = 0;
   if (params.body) {
-    const result = await paste(lane, clipboard, ref, params.body, opts.focusTimeoutMs);
+    const result = await paste(
+      lane,
+      clipboard,
+      ref,
+      params.body,
+      opts.focusTimeoutMs,
+      opts.renderTimeoutMs,
+    );
     bodyVerified = result.verified;
     verifiedChars = result.verified ? Math.min(params.body.length, VERIFY_CHARS) : 0;
     if (!result.verified) {

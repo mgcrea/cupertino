@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { UPDATE_DRAFT } from "../src/client/jxa/write.js";
+import { DRAFT_FACTS, UPDATE_DRAFT } from "../src/client/jxa/write.js";
 
 /**
  * The draft-rewrite script, run for real against a fake Mail.
@@ -39,13 +39,19 @@ type MailBehaviour = {
    * any reference held across the polling loop. Measured on iCloud.
    */
   staleAfterPolling?: boolean;
+  /** What the draft holds. Read only by DRAFT_FACTS, for matching a window to it. */
+  content?: string;
 };
 
 const ORIGINAL_ID = 42;
 
 const addressee = (address: string) => ({ address: () => address });
 
-const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {}) => {
+const runScript = (
+  params: Record<string, unknown>,
+  behaviour: MailBehaviour = {},
+  script: string = UPDATE_DRAFT,
+) => {
   const {
     savedAfterPolls = 0,
     saveThrows = false,
@@ -57,6 +63,7 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     accountDraftsMailboxWorks = false,
     allDraftsUnavailable = false,
     staleAfterPolling = false,
+    content = "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
   } = behaviour;
 
   const state = {
@@ -77,6 +84,7 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     subject: () => subject,
     sender: () => "me@example.com",
     allHeaders: () => headers,
+    content: () => `${content}`,
     mailAttachments: () => Array.from({ length: attachments }, (_, i) => ({ name: () => `f${i}` })),
     toRecipients: () => [addressee("ada@example.com")],
     ccRecipients: () => [addressee("bob@example.com")],
@@ -89,7 +97,11 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     messages: Object.assign(() => state.draftRows.map((r) => ({ id: () => r.id })), {
       // Mail hands back a live reference. On a syncing account the row is
       // renumbered underneath it, and the reference — not the id — goes dead.
-      byId: () => ({ ...original, bornAt: state.polls }),
+      // An id that is not there raises, the way Mail does: "Can't get object."
+      byId: (id: number) => {
+        if (id !== ORIGINAL_ID) throw new Error("Can't get object.");
+        return { ...original, bornAt: state.polls };
+      },
       whose: (spec: { subject: string }) => () => {
         // The replacement only becomes visible once Mail has caught up.
         if (state.saves > 0 && ++state.polls >= savedAfterPolls) {
@@ -106,7 +118,15 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
   const refMailbox =
     mailbox === "Drafts"
       ? draftsMailbox
-      : { name: () => mailbox, messages: { byId: () => original } };
+      : {
+          name: () => mailbox,
+          messages: {
+            byId: (id: number) => {
+              if (id !== ORIGINAL_ID) throw new Error("Can't get object.");
+              return original;
+            },
+          },
+        };
 
   const account: any = {
     id: () => "UUID",
@@ -181,7 +201,7 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
   dollar.NSPasteboardTypeString = "public.utf8-plain-text";
   dollar.NSPasteboard = { generalPasteboard: {} };
 
-  const factory = new Function("ObjC", "Application", "$", `${UPDATE_DRAFT}\nreturn run;`);
+  const factory = new Function("ObjC", "Application", "$", `${script}\nreturn run;`);
   const run = factory(ObjC, Application, dollar) as (argv: string[]) => string;
   const envelope = JSON.parse(
     run([
@@ -374,5 +394,56 @@ describe("references that go stale mid-script", () => {
     const { envelope } = runScript({});
     expect(envelope.data.newId).toBe(99);
     expect(envelope.data.confirmedId).toBe(99);
+  });
+});
+
+/**
+ * The read-only preflight that decides which lane a rewrite takes.
+ *
+ * It shares `RESOLVE_DRAFT` with the script above, which is the point of the
+ * tests here: the two must agree about what a draft IS, or the in-place lane
+ * would edit something the recreate lane would have refused to touch.
+ */
+describe("reading a draft's facts", () => {
+  it("reports what the in-place lane needs to find and identify the window", () => {
+    const { envelope, state } = runScript({}, { headers: REPLY_HEADERS }, DRAFT_FACTS);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toMatchObject({
+      subject: "Quarterly numbers",
+      isReply: true,
+      attachments: 0,
+      recipientCount: 2,
+      draftsMailbox: "Drafts",
+    });
+    expect(envelope.data.contentHead).toContain("The numbers as they stand.");
+    // A preflight that composed or deleted anything would not be one.
+    expect(state.composed).toBeNull();
+    expect(state.deleted).toEqual([]);
+    expect(state.saves).toBe(0);
+  });
+
+  /*
+   * An identity, not a body. A draft quoting a newsletter runs to six figures of
+   * characters and all of it would cross the Apple Event boundary.
+   */
+  it("caps the content it reads back", () => {
+    const { envelope } = runScript({}, { content: "x".repeat(5000) }, DRAFT_FACTS);
+    expect(envelope.data.contentHead).toHaveLength(400);
+  });
+
+  /*
+   * The same refusal the rewrite makes, from the same shared block. Editing a
+   * sent message in place would be exactly as wrong as recreating it.
+   */
+  it("refuses anything that is not in the Drafts mailbox", () => {
+    const { envelope } = runScript({}, { mailbox: "Sent Messages" }, DRAFT_FACTS);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("NOT_A_DRAFT");
+  });
+
+  it("refuses a message it cannot find", () => {
+    const { envelope } = runScript({ id: 4242 }, {}, DRAFT_FACTS);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("MESSAGE_NOT_FOUND");
   });
 });

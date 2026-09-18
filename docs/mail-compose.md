@@ -1,4 +1,4 @@
-# Composing, and why a draft cannot be edited
+# Composing, and how a draft is edited
 
 Regenerate the dictionary evidence with `sdef /System/Applications/Mail.app` on each new macOS
 release. Read on macOS 26.6, and checked against a live Mail with four accounts — see
@@ -6,12 +6,17 @@ release. Read on macOS 26.6, and checked against a live Mail with four accounts 
 contradict the dictionary. One claim in an earlier version of this file was itself wrong --
 see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so).
 
-**Implemented** — `apple_mail_update_draft` rewrites a standalone draft by recreating it, and
-refuses the cases recreation cannot carry across. See `packages/mail/src/client/jxa/write.ts`.
+**Implemented, in two lanes.** `apple_mail_update_draft` first tries to edit the draft **in its own
+composer window** (`packages/mail/src/client/revise.ts`), which keeps threading, attachments and the
+quoted original because nothing is recreated. Only when no composer is open does it fall back to
+recreating the draft (`packages/mail/src/client/jxa/write.ts`), which is where the familiar refusals
+live. The heading below — "why a draft cannot be edited" — is still true of Apple Events and is no
+longer true of the tool.
 
 **Checked live** — `node scripts/verify-mail-ax.mjs --compose` forwards a real message to your own
-address through the hosted mail server and asserts the body arrived in the composer. It sends
-nothing. Nothing else in the suite can tell you whether macOS still honours this lane.
+address through the hosted mail server, asserts the body arrived in the composer, and then rewrites
+that draft in place and asserts `method: "inPlace"`. It sends nothing. Nothing else in the suite can
+tell you whether macOS still honours this lane.
 
 ## The question
 
@@ -46,8 +51,14 @@ So there is no edit path **through the scripting interface**. There is only recr
 > **Amended 2026-09-06.** That sentence was written about Apple Events and is still true of them.
 > It is not true of the app: a composer's body CAN be edited in place through the Accessibility
 > lane, and the measurement is in
-> [Editing in place](#editing-in-place-works-the-missing-piece-is-the-way-in) below. What is
+> [Editing in place](#editing-in-place-works-and-is-now-the-first-choice) below. What is
 > missing is not the edit — it is a route from a saved draft back to a composer.
+>
+> **Amended 2026-09-18.** And that last sentence is now only true of a draft whose composer has
+> been CLOSED. For one whose window is still open — which is every draft this server has just
+> written — there is no route to find, because the composer never went away. `update_draft` edits
+> it there and recreates nothing. See
+> [Editing the composer that is already open](#editing-the-composer-that-is-already-open).
 
 ## Two kinds of "draft", and only one of them is this
 
@@ -238,7 +249,7 @@ result carries both `confirmedId` and `newId` for that reason.
 **A ref to a freshly saved draft on a syncing account is short-lived.** Re-find it by subject rather
 than holding the ref across turns.
 
-## Editing in place works; the missing piece is the way in
+## Editing in place works, and is now the first choice
 
 Measured 2026-09-06 against a live Mail on macOS 26.6, driving the composer through the native
 Accessibility lane rather than Apple Events.
@@ -260,7 +271,8 @@ reply draft's `In-Reply-To` survives an in-place edit because nothing recreates 
 attachments survive for the same reason; and the subject is not needed as a handle because the
 replacement is never looked up.
 
-**And none of that is reachable, because Apple Events cannot open a saved draft into a composer.**
+**And none of that is reachable from a saved draft on its own, because Apple Events cannot open one
+into a composer.**
 
 | Route tried                              | Result                                                                          |
 | ---------------------------------------- | ------------------------------------------------------------------------------- |
@@ -278,6 +290,9 @@ which mailbox the user's window is showing. `make new message viewer` gives a pr
 instead, and it was tried; it left the user's own viewer switched to Drafts and a ghost window that
 Apple Events reported and could not close.
 
+That was where this stopped for twelve days. What it missed is in the next section: the composer
+does not have to be REOPENED, because in the case that matters it was never closed.
+
 **An aside worth keeping.** Through that experiment, Mail's Apple Events window list disagreed with
 its accessibility tree — three windows named against one actually on screen:
 
@@ -288,17 +303,139 @@ its accessibility tree — three windows named against one actually on screen:
 was the right choice for a reason nobody had measured: the Apple Events list is stale, and a composer
 found in it may not exist.
 
+## Editing the composer that is already open
+
+Measured 2026-09-18 against a live Mail on **macOS 27.0 (build 26A428)**, driving the native
+Accessibility lane. This is what `apple_mail_update_draft` now does first; recreation is the
+fallback.
+
+### The realisation
+
+The blocker above was written as "a route from a saved draft to a composer", and every attempt at it
+meant moving the user's message list. But the request this tool exists for is _"draft a reply — now
+change this line"_, and at the moment it arrives **the composer is still on screen**. Nothing in
+this server ever closes one: `reply_to_message` presses command-S, which saves the draft and leaves
+the window open. There was no route to build.
+
+So the refusals in `UPDATE_DRAFT` — threading, attachments — were never costs of _editing_. They are
+costs of _recreating_, and a draft whose window is open does not have to be recreated.
+
+### The quote is the hard part, and `AXBlockQuoteLevel` solves it
+
+Command-A selects the whole document, quoted original included, so the obvious sequence replaces the
+reply AND the message it is replying to. What separates them:
+
+| Block in a reply composer                       | `AXBlockQuoteLevel` |
+| ----------------------------------------------- | ------------------- |
+| the sender's own paragraphs                     | `0`                 |
+| `On 18 Sep 2026, at 19:36, … wrote:`            | `1`                 |
+| every quoted paragraph, image and link below it | `1`                 |
+
+Exact, with no heuristic. **A forward splits the same way** — measured separately, because a forward
+reads as prose and nothing about `Begin forwarded message:` looks like a quotation, yet it and
+everything under it read `1`. Had they read `0`, the whole forwarded message would have counted as
+the sender's own text and been offered up for replacement.
+
+### The selection cannot be read, so it is copied
+
+The obvious way to verify a selection before pasting over it is to read it back. None of it works:
+
+| Attribute on the composer's `AXWebArea` | Reads                                     |
+| --------------------------------------- | ----------------------------------------- |
+| `AXSelectedText`                        | `null`                                    |
+| `AXSelectedTextRange`                   | `null`                                    |
+| `AXSelectedTextMarkerRange`             | `<__NSCFType>` — opaque, not serialisable |
+
+So the selection is read the only way it is legible: **command-C, and off the pasteboard.** Which
+carries two traps, and the second one cost a live run.
+
+**command-C over an EMPTY selection leaves the pasteboard alone**, so a copy that never happened
+reads back as whatever the last one put there. A sentinel is written before each copy, and a
+pasteboard still holding it means blind, not empty.
+
+**And the copy is not on the pasteboard when the keystroke returns.** `apple_desktop_key` answers
+once the event is POSTED — the same fact that broke the body read-back, one level over. Reading
+`pbpaste` on the next line raced Mail's handling of command-C and got the sentinel, so the first
+live run of this sequence refused a selection that was in fact made and correct:
+
+    "The draft's own text could not be selected in its composer: copying the
+     selection back returned nothing"  ->  replaced: false
+
+The hand probe that established the sequence had a 300 ms wait between the two steps and never saw
+it. The pasteboard is now polled, like everything else here.
+
+### The sequence, and why it is safe
+
+    command-up                     caret to the top of the document
+    shift-down   x (blocks - 1)    extend down one rendered line at a time
+    shift-command-right            out to the end of that line
+    command-C  -> compare          must equal the composer's own text, exactly
+    command-V                      replace it
+    read back  -> compare          must equal what was pasted
+    command-S                      save
+
+Measured, on a reply quoting a 322-element newsletter:
+
+    selection copied back  ->  "ALPHA line one\nALPHA line two"   (exactly, no trailing newline)
+    after the paste        ->  three BRAVO lines, then the attribution line at level 1,
+                               then the entire quoted newsletter, images intact
+    drafts with that subject, after  ->  1
+    In-Reply-To / References         ->  unchanged
+
+One more check sits after the paste and before the save: the quote was read at level 1 before, so
+it must still be there after. Nothing should be able to fail it — the selection was copied back and
+matched the sender's own text exactly, so it cannot have contained the quote — but a saved draft
+cannot be undone from here and an unsaved composer can, so the sequence stops short of command-S
+rather than committing damage it can still see.
+
+**Nothing destructive happens before it is verified, and that is what makes this allowed at all.**
+Selecting and copying do not alter a draft, so a selection that cannot be made to match exactly
+costs a refusal rather than a body. `blocks` counts paragraphs while the selection moves by rendered
+lines, so a wrapped paragraph starts the loop SHORT — the copy-back notices and keeps extending;
+anything that reaches past the sender's own words stops, having changed nothing.
+
+The window is also matched to the draft by CONTENT, not only by subject: two replies in one thread
+carry the same title, and rewriting the wrong one destroys what somebody wrote. Two composers under
+one title are refused outright, for the same reason `compose.ts` refuses them — handles are minted
+per call, so there is nothing to tell them apart by.
+
+### What it still cannot do
+
+Change the **subject**. The composer's subject field is not typed into by this path, so a rewrite
+that changes the subject goes the recreate way — which then refuses a reply, correctly.
+
+### A bug this found on the way
+
+`reply_to_message` read the composer back ONCE, immediately after posting command-V.
+`apple_desktop_key` returns when the event is posted; WebKit has still to take it, edit the document
+and republish an accessibility tree. On a reply quoting that same newsletter the read lost the race
+and the tool reported:
+
+> SOMETHING DID land in it that could not be read back
+
+for a body that was in fact perfect — and that message tells its reader not to retry. The read-back
+is now polled. Same lesson as the focus poll above it, one level further down.
+
 ## Still open
 
 - ~~**Whether an open composer can be re-found and rewritten.**~~ **ANSWERED 2026-09-06, for the
   half that matters.** An open composer's body can be rewritten — by select-all and paste through
   the Accessibility lane, not by assigning `content` — and the save lands on the same draft. See
-  [Editing in place](#editing-in-place-works-the-missing-piece-is-the-way-in). Assigning `content`
+  [Editing in place](#editing-in-place-works-and-is-now-the-first-choice). Assigning `content`
   to a composer retrieved from `M.outgoingMessages` is still unmeasured and now uninteresting: the
   paste path is proven, and the open question was never the rewrite.
-- **A route from a saved draft to a composer.** The blocker for making `update_draft` an edit rather
-  than a recreation, and the only one left. `M.open` gives a viewer; driving the message list means
-  moving the user's window. Unbuilt, and it needs a design decision before it needs code.
+- ~~**A route from a saved draft to a composer.**~~ **DISSOLVED 2026-09-18 for the case that
+  matters, and STILL OPEN for the other one.** A draft whose composer is still open needs no route,
+  and that is every draft this server has just written — see
+  [Editing the composer that is already open](#editing-the-composer-that-is-already-open). A draft
+  whose window has been CLOSED still has none: `M.open` gives a viewer, and driving the message list
+  means moving the user's window. That case falls back to recreation and keeps its refusals.
+- **Whether the selection survives a body with inline images or attachments.** Measured on text
+  above a quote. A composer whose own text holds an attachment character or an inline image has
+  blocks the copy-back may render differently from the accessibility tree, which would show up as a
+  refusal rather than damage — but it has not been seen either way.
+- **Re-selecting is bounded at 200 extra lines.** One press per wrapped line, so a draft of a few
+  hundred wrapped lines would reach the bound and refuse. Not seen; cheap to raise.
 - **Bcc on a saved draft.** Read from `bccRecipients` and preserved, but a draft stored on an IMAP
   server may not carry Bcc at all. Not measured, and it would be silently dropped if so.
 - **How long the renumbering window lasts.** One observation, on iCloud, of a single rewrite.

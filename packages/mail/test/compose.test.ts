@@ -167,6 +167,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result).toMatchObject({ ok: true, sent: true, bodyVerified: true });
     expect(seen.map((c) => c.tool)).toContain("key");
@@ -193,6 +194,40 @@ describe("replyOrForwardNatively", () => {
   });
 
   /*
+   * The opposite failure, and it shipped: a draft that was RIGHT, reported as
+   * one that had failed.
+   *
+   * MEASURED on macOS 27.0 — a two-line reply pasted into a composer quoting a
+   * 322-element newsletter read back empty and came back "SOMETHING DID land in
+   * it that could not be read back", while the tree a moment later held both
+   * lines exactly as sent. `apple_desktop_key` answers when the event is POSTED;
+   * WebKit has not yet taken it, edited the document and republished a tree. So
+   * the read-back is polled, and the stub below lies exactly once.
+   */
+  it("waits for a slow composer instead of calling a landed paste a failure", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        expand: (_a: unknown, n: number) =>
+          n === 1
+            ? // The paste is in, the accessibility tree has not caught up.
+              { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "" }] }
+            : { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "PASTED" }] },
+      }),
+    );
+    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+      clipboard: fakeClipboard(),
+      sendTimeoutMs: 50,
+      composerTimeoutMs: 50,
+      renderTimeoutMs: 2000,
+    });
+    expect(result.bodyVerified).toBe(true);
+    expect(result.note).not.toContain("could not be read back");
+    // One paste, not two: the poll must not be mistaken for a retry.
+    expect(seen.filter((call) => call.tool === "key" && call.args.key === "v")).toHaveLength(1);
+    lane.close();
+  });
+
+  /*
    * The failure this whole path is shaped around: a draft correct in every
    * visible respect except the words, reported as a success.
    */
@@ -204,6 +239,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result.ok).toBe(false);
     expect(result.bodyVerified).toBe(false);
@@ -233,6 +269,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result.ok).toBe(false);
     expect(result.note).toContain("retry would paste the reply in twice");
@@ -346,6 +383,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
       // Short, or this test would sit through the real focus poll twice.
       focusTimeoutMs: 30,
     });
@@ -364,6 +402,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result.sent).toBe(false);
     expect(result.ok).toBe(false);
@@ -391,6 +430,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: true });
     expect(result.note).not.toContain("GONE");
@@ -455,6 +495,7 @@ describe("replyOrForwardNatively", () => {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
     });
     expect(result).toMatchObject({ ok: false, sent: false });
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);

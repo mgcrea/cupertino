@@ -337,50 +337,15 @@ export const SEND_MESSAGE = script(
 );
 
 /**
- * Replace the body of a saved draft, by recreating it.
+ * Resolve the draft a ref names, and the Drafts mailbox it has to be in.
  *
- * ## Why recreating, when "edit the draft" is the obvious thing
- *
- * Because Mail's dictionary does not offer it, and that is measured rather than
- * assumed — see `docs/mail-compose.md`. A saved draft is a `message`, whose
- * `content` is `access="r"`. There is no `open` command and no `edit` command in
- * the entire suite, so nothing turns a saved draft back into the `outgoing
- * message` whose content IS writable. The only class that ever held a reference
- * from one to the other is `OLD message editor`, marked `hidden` and
- * "DEPRECATED - DO NOT USE".
- *
- * So the body is replaced the only way the interface allows: compose a new
- * message carrying the old one's recipients and the new text, and remove the
- * old one.
- *
- * ## The order is the safety property
- *
- * The replacement is created AND CONFIRMED PRESENT before the original is
- * deleted, never the other way round. A delete-then-create that fails halfway
- * has destroyed something the user wrote and cannot get back — this server has
- * no undo and Mail's Trash may not be in play, since `moveDeletedMessagesToTrash`
- * is per-account. If the confirmation does not come back, the original is left
- * exactly where it was and the caller is told there are now two.
- *
- * ## What it refuses
- *
- * Recreating cannot carry everything across, and the two things it drops are
- * both invisible in the result:
- *
- *   * **Threading.** `In-Reply-To` and `References` are set by Mail's own
- *     `reply` command, which needs the original message. A recreated reply
- *     draft looks perfect and starts a new thread.
- *   * **Attachments.** Adding one to an outgoing message IS possible:
- *     `content.attachments.push(Mail.Attachment({fileName: Path(f)}))`, measured
- *     on macOS 26.6. What is missing is a file to point at. The bytes live in the
- *     original's sidecar tree, and extracting them first is not done here.
- *
- * Both are refused rather than silently dropped. A draft that is correct in
- * every visible respect except the part nobody checks is the exact failure the
- * compose path already learned once.
+ * Shared verbatim by `DRAFT_FACTS` and `UPDATE_DRAFT`, because the two are two
+ * readings of one question and a copy of this that drifted would let one of them
+ * rewrite something the other would have refused. It returns early on every way
+ * it can fail, and otherwise leaves `acct`, `original`, `drafts`, `draftsName`
+ * and the draft's own facts in scope for whatever follows.
  */
-export const UPDATE_DRAFT = script(
-  `
+const RESOLVE_DRAFT = `
   var acct = findAccount(M, p.accountUuid);
   if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
   var mb = resolveMailbox(acct, p.mailbox);
@@ -465,6 +430,96 @@ export const UPDATE_DRAFT = script(
   var oldSubject = String(prop(function () { return original.subject(); }, ""));
   var sender = String(prop(function () { return original.sender(); }, ""));
 
+`;
+
+/**
+ * Everything about a draft that decides HOW it can be rewritten, and nothing more.
+ *
+ * Read on its own, before a line of it is changed, because there are now two
+ * ways to rewrite a draft and the choice between them is made outside any
+ * script: editing the open composer in place (`revise.ts`) needs the subject to
+ * find the window and the body's opening to prove the window is this draft,
+ * while recreating it (`UPDATE_DRAFT` below) needs neither.
+ *
+ * Costs one Apple Event and is only spent when the accessibility lane exists to
+ * use it — `client/mail.ts` goes straight to recreation otherwise, so a server
+ * running outside Cupertino pays nothing for a path it cannot take.
+ *
+ * `contentHead` is capped rather than whole: it is an identity, not a body, and
+ * a quoted newsletter runs to six figures of characters.
+ */
+export const DRAFT_FACTS = script(`
+  ${RESOLVE_DRAFT}
+
+  var content = String(prop(function () { return original.content(); }, ""));
+
+  return ok({
+    subject: oldSubject,
+    isReply: isReply,
+    attachments: attachments,
+    recipientCount: to.length + cc.length + bcc.length,
+    draftsMailbox: draftsName,
+    contentHead: content.slice(0, 400)
+  });
+`);
+
+/**
+ * Replace the body of a saved draft, by recreating it.
+ *
+ * ## Why recreating, when "edit the draft" is the obvious thing
+ *
+ * Because Mail's dictionary does not offer it, and that is measured rather than
+ * assumed — see `docs/mail-compose.md`. A saved draft is a `message`, whose
+ * `content` is `access="r"`. There is no `open` command and no `edit` command in
+ * the entire suite, so nothing turns a saved draft back into the `outgoing
+ * message` whose content IS writable. The only class that ever held a reference
+ * from one to the other is `OLD message editor`, marked `hidden` and
+ * "DEPRECATED - DO NOT USE".
+ *
+ * So the body is replaced the only way the interface allows: compose a new
+ * message carrying the old one's recipients and the new text, and remove the
+ * old one.
+ *
+ * ## The order is the safety property
+ *
+ * The replacement is created AND CONFIRMED PRESENT before the original is
+ * deleted, never the other way round. A delete-then-create that fails halfway
+ * has destroyed something the user wrote and cannot get back — this server has
+ * no undo and Mail's Trash may not be in play, since `moveDeletedMessagesToTrash`
+ * is per-account. If the confirmation does not come back, the original is left
+ * exactly where it was and the caller is told there are now two.
+ *
+ * ## What it refuses
+ *
+ * Recreating cannot carry everything across, and the two things it drops are
+ * both invisible in the result:
+ *
+ *   * **Threading.** `In-Reply-To` and `References` are set by Mail's own
+ *     `reply` command, which needs the original message. A recreated reply
+ *     draft looks perfect and starts a new thread.
+ *   * **Attachments.** Adding one to an outgoing message IS possible:
+ *     `content.attachments.push(Mail.Attachment({fileName: Path(f)}))`, measured
+ *     on macOS 26.6. What is missing is a file to point at. The bytes live in the
+ *     original's sidecar tree, and extracting them first is not done here.
+ *
+ * Both are refused rather than silently dropped. A draft that is correct in
+ * every visible respect except the part nobody checks is the exact failure the
+ * compose path already learned once.
+ *
+ * ## This is the FALLBACK, not the first choice
+ *
+ * Every refusal below is a cost of recreating, and none of them is a cost of
+ * editing. When the draft's own composer is still open — which it is for the
+ * whole of "draft a reply, now change this line", because nothing here ever
+ * closes one — `revise.ts` rewrites the body in that window instead, and
+ * threading, attachments and the quoted original all survive because nothing is
+ * remade. `client/mail.ts` tries that first and arrives here only when there is
+ * no window to edit.
+ */
+export const UPDATE_DRAFT = script(
+  `
+  ${RESOLVE_DRAFT}
+
   // Everything the caller needs to decide what to do instead, reported on the
   // refusals as well as on success.
   var facts = {
@@ -476,19 +531,21 @@ export const UPDATE_DRAFT = script(
 
   if (isReply) {
     return ok({
-      replaced: false, degraded: true, capability: "threading", draft: facts,
+      replaced: false, method: "recreate", degraded: true, capability: "threading", draft: facts,
       reason:
         "This draft is a reply or a forward: its headers carry In-Reply-To or References, and " +
         "those are written by Mail's own reply command, which needs the original message. " +
         "Recreating it would produce a draft that looks right and starts a NEW thread.",
       hint:
-        "Edit the body in Mail directly, or delete this draft and start again with " +
-        "apple_mail_reply_to_message, which threads correctly."
+        "This draft's composer window is NOT open in Mail — if it were, the body would have been " +
+        "edited in place and this refusal would not have happened. Either reopen the draft in " +
+        "Mail and edit it there, or delete it and start again with apple_mail_reply_to_message, " +
+        "which threads correctly and leaves the composer open for further revisions."
     });
   }
   if (attachments > 0) {
     return ok({
-      replaced: false, degraded: true, capability: "attachments", draft: facts,
+      replaced: false, method: "recreate", degraded: true, capability: "attachments", draft: facts,
       reason:
         "This draft carries " + attachments + " attachment(s). Recreating it would silently drop " +
         "them: their bytes live inside the original message, not as files this can point at, and " +
@@ -500,7 +557,7 @@ export const UPDATE_DRAFT = script(
   var subject = p.subject === null || p.subject === undefined ? oldSubject : String(p.subject);
   if (!subject) {
     return ok({
-      replaced: false, degraded: true, capability: "confirmation", draft: facts,
+      replaced: false, method: "recreate", degraded: true, capability: "confirmation", draft: facts,
       reason:
         "This draft has no subject, and the subject is the only handle this server has for " +
         "finding the replacement again after Mail saves it. Without that confirmation the " +
@@ -547,7 +604,7 @@ export const UPDATE_DRAFT = script(
 
   if (newId === null) {
     return ok({
-      replaced: false, degraded: true, capability: "confirmation", draft: facts, saved: saved,
+      replaced: false, method: "recreate", degraded: true, capability: "confirmation", draft: facts, saved: saved,
       reason:
         "The replacement was composed but never appeared in " + draftsName + " within four " +
         "seconds, so it could not be confirmed. THE ORIGINAL DRAFT WAS NOT DELETED — there are " +
@@ -590,6 +647,7 @@ export const UPDATE_DRAFT = script(
 
   return ok({
     replaced: true,
+    method: "recreate",
     newId: settledId,
     confirmedId: newId,
     draftsMailbox: draftsName,

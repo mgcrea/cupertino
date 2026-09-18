@@ -12,6 +12,46 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **`apple_mail_update_draft` now edits a reply draft instead of refusing it.** Revising a draft is
+  the most common thing asked of this server — "draft a reply, now change this line" — and it was
+  the one thing the tool would not do. Rewriting a draft meant RECREATING it, which cannot carry
+  `In-Reply-To` across, so a reply draft was refused outright and the only way through was deleting
+  it in Mail by hand.
+
+  Recreating was never the only option; it was the only one reachable from Apple Events. The draft's
+  own composer window is still on screen — nothing in this server closes one — and a body replaced
+  in that window saves back to the same draft, so threading, attachments and the quoted original all
+  survive because nothing is remade. `update_draft` now does that first and falls back to recreating
+  only when no composer is open. The result says which route it took in `method`, and a ref stays
+  valid across an in-place edit.
+
+  Telling the draft's own text from the message it quotes is the whole difficulty, and
+  `AXBlockQuoteLevel` answers it exactly: the sender's paragraphs read 0, and the attribution line
+  and everything below it read 1 — for a forward as well as a reply, which was measured rather than
+  assumed. The selection is then proved before anything is replaced: it is copied back and must
+  equal the composer's own text exactly, because `AXSelectedText` reads null on Mail's composer and
+  the pasteboard is the only place a selection is legible. Selecting and copying change nothing, so
+  a selection that cannot be made to match costs a refusal rather than somebody's draft. Measured on
+  macOS 27.0 (build 26A428) and verified end to end against a live Mail on a forward draft — the
+  kind recreation refuses — which came back with one draft, its `References` header intact and the
+  forwarded message still under the new text. `docs/mail-compose.md` carries the sequence and the
+  readings, and `node scripts/verify-mail-ax.mjs --compose` re-runs the whole thing.
+
+### Fixed
+
+- **`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a
+  failure.** The composer was read back once, immediately after the paste — but `apple_desktop_key`
+  returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and
+  republish an accessibility tree. On a long message the read lost that race and the reply came back
+  `bodyVerified: false` with "SOMETHING DID land in it that could not be read back", for a body that
+  was in fact perfect. Worse, that message tells its reader not to retry. Measured against a reply
+  quoting a 322-element newsletter. The read-back is now polled, the same way the focus poll above
+  it already was.
+
 ## [1.22.1] - 2026-09-16
 
 ### Fixed

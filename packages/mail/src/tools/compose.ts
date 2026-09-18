@@ -154,20 +154,30 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     "apple_mail_update_draft",
     {
       description:
-        "Replace the body of an unsent draft. Mail has no way to edit a saved draft — its " +
-        "`content` is read-only and there is no open or edit command — so this RECREATES it: a " +
-        "new draft with the same recipients and a new body, and the old one deleted once the " +
-        "replacement is confirmed present. The ref you passed in is DEAD afterwards and the " +
-        "result carries the new one. " +
+        "Replace the body of an unsent draft — including a REPLY draft you have just written " +
+        "and been asked to revise, which is the usual reason to reach for this. " +
+        "It takes one of two routes and the result says which in `method`. " +
+        "`inPlace`: the draft's own composer window is still open in Mail, so the body is " +
+        "edited in that window. Nothing is recreated, so threading, attachments and the quoted " +
+        "original all survive, no second draft appears, and your ref stays valid — though Mail " +
+        "may renumber a saved draft within seconds, so re-find it by subject rather than " +
+        "reusing a ref across turns. " +
+        "`recreate`: no composer is open, so a new draft is composed with the same recipients " +
+        "and the old one deleted once the replacement is confirmed present; the ref you passed " +
+        "in is DEAD afterwards and the result carries the new one. " +
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
-        "it does: on a reply or forward draft, because In-Reply-To is set by Mail's reply " +
-        "command and a recreated one would silently start a new thread; on a draft carrying " +
-        "attachments, because their bytes are not available as files to re-attach; and on " +
-        "anything not in the Drafts mailbox, because deleting a sent or received message and " +
-        "writing a lookalike is " +
-        "not editing. In every refusal the original is untouched. If the replacement cannot be " +
-        "confirmed the original is KEPT and you are told there are now two — never assume a " +
-        "clean swap without reading `replaced`.",
+        "it does. Editing in place refuses when two composers share the subject, when the open " +
+        "window turns out to hold a different message, or when the draft's own text cannot be " +
+        "selected exactly — it will not risk swallowing the quoted original. Recreating refuses " +
+        "on a reply or forward draft, because In-Reply-To is set by Mail's reply command and a " +
+        "recreated one would silently start a new thread; on a draft carrying attachments, " +
+        "because their bytes are not available as files to re-attach; and on anything not in " +
+        "the Drafts mailbox, because deleting a sent or received message and writing a " +
+        "lookalike is not editing. In every refusal the original is untouched. If a recreated " +
+        "replacement cannot be confirmed the original is KEPT and you are told there are now " +
+        "two — never assume a clean swap without reading `replaced`. " +
+        "Editing in place brings Mail to the front for a moment and borrows the clipboard, " +
+        "both of which are put back.",
       inputSchema: {
         ref: messageRefArg,
         body: z
@@ -182,9 +192,12 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
           .string()
           .optional()
           .describe(
-            "A new subject. Defaults to the draft's existing one. A draft with no subject at " +
-              "all is refused unless you pass one, because the subject is how the replacement " +
-              "is found again before the original is deleted.",
+            "A new subject. Defaults to the draft's existing one — OMIT IT unless the subject " +
+              "really is changing, because changing it forces the recreate route (a composer's " +
+              "subject field cannot be retyped from here), which in turn refuses a reply. " +
+              "On that route a draft with no subject at all is refused unless you pass one, " +
+              "because the subject is how the replacement is found again before the original " +
+              "is deleted.",
           ),
         confirm: confirmArg,
       },

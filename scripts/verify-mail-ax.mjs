@@ -36,6 +36,20 @@
  * person can look at it and see the words really are in there. The last lines
  * of output say exactly what to delete.
  *
+ * ## It then REWRITES that draft, which needs the window it just left open
+ *
+ * The composer still being there is the state every revision starts from
+ * ("draft a reply, now change this line"), so `--compose` goes on to rewrite the
+ * draft in place and asserts `method: "inPlace"` — not merely that it worked.
+ * Recreating would also report success while quietly refusing a forward, which
+ * is the whole failure the in-place lane exists to remove.
+ *
+ * And the keystrokes are the part no stub can vouch for: command-up, shift-down
+ * and shift-command-right have to still mean what they meant when the selection
+ * was measured, and the selection has to still be legible off the pasteboard —
+ * `AXSelectedText` reads null on Mail's composer, so a copy is the only way to
+ * read it. If Apple changes any of that, this is what notices.
+ *
  * What a failure means, in order of likelihood:
  *
  *   * `no socket`      — Cupertino is not running, or this shell is not one of
@@ -321,6 +335,11 @@ async function composeCheck() {
     );
     check("nothing was sent", result?.sent === false, `sent: ${result?.sent}`);
 
+    // The forward left a saved draft and its composer window, which is exactly
+    // the state a revision starts from — so the rewrite is checked here rather
+    // than in a run of its own.
+    if (result?.ok === true) await reviseCheck(mail, result.subject);
+
     // What is actually on screen differs by outcome, and saying "a draft" after
     // a failure would send someone looking for one that was never saved: the
     // compose path returns BEFORE the save when the body cannot be verified.
@@ -328,7 +347,9 @@ async function composeCheck() {
       result?.ok === true
         ? `\n  Left in Mail, on purpose, as the evidence:\n` +
             `    a saved draft "${result.subject}" addressed to ${address},\n` +
-            `    and its composer window.\n` +
+            `    and its composer window. Its note now reads REVISED and the\n` +
+            `    forwarded message below it should be untouched — that pair is\n` +
+            `    what the in-place rewrite is claiming.\n` +
             `  Open it, read it, then delete both. Nothing here will.\n`
         : `\n  Left in Mail: an EMPTY composer window "${result?.subject ?? "Fwd: …"}".\n` +
             `  No draft was saved — the compose path stops before the save when it\n` +
@@ -339,6 +360,90 @@ async function composeCheck() {
   } finally {
     mail.close();
   }
+}
+
+/**
+ * Rewrite the draft the forward just left, in its own composer window.
+ *
+ * The one thing no unit test can tell you: whether macOS still lets a selection
+ * be walked over a composer's own text and read back off the pasteboard. Every
+ * refusal in `revise.ts` is reachable from a fake; none of them proves the
+ * keystrokes still mean what they meant when they were measured.
+ *
+ * `method: "inPlace"` is therefore the assertion that matters. A pass on
+ * `replaced` alone would be satisfied by the fallback recreating the draft —
+ * which is precisely the outcome this lane exists to avoid, and which would
+ * have REFUSED here anyway, a forward carrying threading headers.
+ */
+async function reviseCheck(mail, subject) {
+  /*
+   * Finding the draft again is the unreliable step, and it is unreliable for
+   * reasons that have nothing to do with the rewrite. MEASURED on an Exchange
+   * account, macOS 27.0:
+   *
+   *   * `apple_mail_list_messages` over its Drafts comes back through the
+   *     AppleScript lane with `subject: null` and `id: null` on every row, and
+   *     `count_messages` says 2 for a mailbox that holds more.
+   *   * The index lane sometimes has the row within ~114s of the save and
+   *     sometimes not within 180s, and `search_messages` narrowed to that
+   *     account and mailbox reported 0 while the row was demonstrably there.
+   *
+   * So this polls, and its failure says which step failed. **A failure here is
+   * NOT a failure of the in-place rewrite** — it means the draft could not be
+   * addressed to try it on. The rewrite itself is handed a ref by its caller.
+   */
+  let draft = null;
+  for (let attempt = 0; attempt < 30 && !draft; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+    const found = await mail.call("apple_mail_search_messages", {
+      mailbox: "Drafts",
+      subject,
+      limit: 10,
+    });
+    draft = (found?.messages ?? []).find((m) => m.subject === subject) ?? null;
+  }
+  if (!draft?.ref) {
+    check(
+      "the draft could be addressed, to rewrite it",
+      false,
+      `no draft titled "${subject}" after 60s — NOT a failure of the rewrite: neither lane ` +
+        `could name a just-saved draft in this account. See the note above this function.`,
+    );
+    return;
+  }
+
+  const stamp = new Date().toISOString();
+  const revised =
+    `Cupertino verify-mail-ax REVISED ${stamp}. This replaced the note above the ` +
+    `forwarded message, in the composer window that was already open, without ` +
+    `recreating the draft — which is the only way the forwarded message below it ` +
+    `and this draft's threading headers can still be here.`;
+
+  let result;
+  try {
+    result = await mail.call("apple_mail_update_draft", {
+      ref: draft.ref,
+      body: revised,
+      confirm: true,
+    });
+  } catch (error) {
+    check("the rewrite was accepted", false, error.message);
+    return;
+  }
+
+  check(
+    "the draft was rewritten IN ITS COMPOSER, not recreated",
+    result?.method === "inPlace" && result?.replaced === true,
+    result?.method === "inPlace"
+      ? (result?.reason ?? "")
+      : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
+  );
+  check(
+    "the quoted original was left alone",
+    result?.quoteKept === true,
+    `quoteKept: ${result?.quoteKept}`,
+  );
+  check("it was saved", result?.saved === true, result?.note ?? "");
 }
 
 console.log(`${passed}/${passed + failed} automated checks passed\n`);
