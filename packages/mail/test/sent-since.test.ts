@@ -44,9 +44,23 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     name: () => name,
     messages: Object.assign(
       {
-        // The batched read: one Apple Event per property across a range.
+        /*
+         * The batched read: one Apple Event per property across a range.
+         *
+         * Modelled on APPLE EVENTS, not on JavaScript, and that distinction is
+         * the whole point of this stub. `slice(from, to)` on a specifier is
+         * INCLUSIVE of `to` and RAISES on an index past the end — where
+         * `Array.prototype.slice` is exclusive and silently returns short.
+         *
+         * The earlier stub used the JavaScript meaning, so it answered happily
+         * for a range that a real Mail refused, and every test passed over a
+         * script that could not list any mailbox holding fewer messages than
+         * the limit. A stub that is more forgiving than the thing it stands in
+         * for does not test that thing.
+         */
         slice: (from: number, to: number) => {
-          const window = messages.slice(from, to);
+          if (to >= messages.length) throw new Error("Invalid index.");
+          const window = messages.slice(from, to + 1);
           return {
             subject: () => window.map(([subject]) => subject),
             dateSent: () => (noDateSent ? [] : window.map(([, date]) => new Date(date))),

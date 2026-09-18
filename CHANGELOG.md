@@ -54,6 +54,23 @@ summary.
   whose read-back would not match, and verified end to end: `é à ç œ « »` and `—` now reach the
   stored draft intact.
 
+- **A mailbox holding fewer messages than the limit could not be listed at all.**
+  `apple_mail_list_messages` came back with a null subject, null sender and an unusable `#null`
+  ref on every row — so nothing else could act on any of them. `slice(from, to)` on an Apple
+  Events specifier is INCLUSIVE of `to`, not exclusive like JavaScript's, so asking for `n`
+  messages asked for `n + 1`; when `n` was the whole mailbox that ran one past the end, raised
+  `Invalid index.`, and left every batched property read empty. Drafts is where it was found,
+  because a Drafts mailbox almost always holds fewer messages than the limit — an agent that had
+  just written a reply could not find the draft again to revise it. The same off-by-one was in
+  `SENT_SINCE`, where it matters most: that is the read deciding whether a reply was SENT, and on
+  a Sent mailbox smaller than the limit it answered "it does NOT appear to have been sent" for a
+  mail that had gone, inviting a second send. Measured against a live Mail: `slice(0, 303)` on a
+  303-message mailbox raises, `slice(0, 302)` returns all 303.
+
+  The stubs had hidden it by being kinder than Mail — they modelled
+  `Array.prototype.slice`, which is exclusive and forgiving of an index past the end. They now
+  raise where Mail raises, and 7 of the 9 existing `sent-since` tests fail without the fix.
+
 - **`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a
   failure.** The composer was read back once, immediately after the paste — but `apple_desktop_key`
   returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and

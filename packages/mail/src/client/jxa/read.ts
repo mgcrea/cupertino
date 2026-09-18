@@ -84,7 +84,29 @@ export const LIST_RECENT = script(`
 
   // Batch the property reads: one Apple Event per property beats one per message
   // by roughly 6x. slice() on the message collection keeps it to a range specifier.
-  var slice = mb.messages.slice(0, n);
+  /*
+   * slice(from, to) on an Apple Events specifier is INCLUSIVE of "to".
+   *
+   * It is not JavaScript's slice. JXA turns it into a range specifier, so
+   * slice(0, n) asks for n + 1 messages, and asking for one past the end raises
+   * "Invalid index." -- which prop() swallows, leaving every batched read as []
+   * and every field on every row NULL, including the id the ref is built from.
+   *
+   * MEASURED, macOS 27.0 (build 26A428), against a live Mail:
+   *
+   *     Sent Items (303)  slice(0, 2)    -> 3 subjects
+   *     Sent Items (303)  slice(0, 303)  -> Invalid index.
+   *     Sent Items (303)  slice(0, 302)  -> 303 subjects
+   *     Drafts (1)        slice(0, 1)    -> Invalid index.
+   *     Drafts (1)        slice(0, 0)    -> 1 subject
+   *
+   * So the failure is not about drafts, which is where it was found. It is
+   * every listing whose limit reaches the end of the mailbox: n === total, and
+   * the read asks for one message that is not there. A mailbox holding fewer
+   * messages than the default limit could never be listed at all -- it came
+   * back as rows of nulls carrying unusable #null refs.
+   */
+  var slice = mb.messages.slice(0, n - 1);
   var subjects = prop(function () { return slice.subject(); }, []);
   var senders = prop(function () { return slice.sender(); }, []);
   var dates = prop(function () { return slice.dateReceived(); }, []);
@@ -184,8 +206,13 @@ export const SENT_SINCE = script(`
   var n = Math.min(p.limit || 25, total);
   if (n <= 0) return ok({ checked: true, mailbox: mailbox, total: total, found: false, newest: null, messages: [] });
 
-  // One Apple Event per property rather than one per message, as LIST_RECENT.
-  var slice = box.messages.slice(0, n);
+  // One Apple Event per property rather than one per message, as LIST_RECENT —
+  // including its inclusive-range correction, and here it matters more than
+  // anywhere else: this is the read that decides whether a reply was SENT. A
+  // Sent mailbox holding fewer messages than the limit raised "Invalid index.",
+  // every subject came back empty, and the answer was "it does NOT appear to
+  // have been sent" for a mail that had gone — which invites sending it twice.
+  var slice = box.messages.slice(0, n - 1);
   var subjects = prop(function () { return slice.subject(); }, []);
   var sent = prop(function () { return slice.dateSent(); }, []);
   var received = prop(function () { return slice.dateReceived(); }, []);

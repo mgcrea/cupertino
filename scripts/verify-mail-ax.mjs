@@ -377,37 +377,27 @@ async function composeCheck() {
  */
 async function reviseCheck(mail, subject) {
   /*
-   * Finding the draft again is the unreliable step, and it is unreliable for
-   * reasons that have nothing to do with the rewrite. MEASURED on an Exchange
-   * account, macOS 27.0:
+   * Listed, not searched. The AppleScript lane sees a draft the moment Mail
+   * saves it; the index lane does not, and MEASURED here it was still missing
+   * three minutes later. That is a property of Mail's Envelope Index, not a
+   * problem to wait out.
    *
-   *   * `apple_mail_list_messages` over its Drafts comes back through the
-   *     AppleScript lane with `subject: null` and `id: null` on every row, and
-   *     `count_messages` says 2 for a mailbox that holds more.
-   *   * The index lane sometimes has the row within ~114s of the save and
-   *     sometimes not within 180s, and `search_messages` narrowed to that
-   *     account and mailbox reported 0 while the row was demonstrably there.
-   *
-   * So this polls, and its failure says which step failed. **A failure here is
-   * NOT a failure of the in-place rewrite** — it means the draft could not be
-   * addressed to try it on. The rewrite itself is handed a ref by its caller.
+   * This listing is also what found the off-by-one in `LIST_RECENT`: it used to
+   * come back with a null subject and a `#null` ref for every row of any mailbox
+   * holding fewer messages than the limit, which is nearly every Drafts mailbox.
+   * A short poll remains because the save is a keystroke, not a transaction.
    */
   let draft = null;
-  for (let attempt = 0; attempt < 30 && !draft; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
-    const found = await mail.call("apple_mail_search_messages", {
-      mailbox: "Drafts",
-      subject,
-      limit: 10,
-    });
-    draft = (found?.messages ?? []).find((m) => m.subject === subject) ?? null;
+  for (let attempt = 0; attempt < 10 && !draft; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
+    draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
   }
   if (!draft?.ref) {
     check(
       "the draft could be addressed, to rewrite it",
       false,
-      `no draft titled "${subject}" after 60s — NOT a failure of the rewrite: neither lane ` +
-        `could name a just-saved draft in this account. See the note above this function.`,
+      `no draft titled "${subject}" in Drafts after 10s`,
     );
     return;
   }
