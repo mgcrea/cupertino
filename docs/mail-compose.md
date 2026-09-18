@@ -404,7 +404,27 @@ per call, so there is nothing to tell them apart by.
 Change the **subject**. The composer's subject field is not typed into by this path, so a rewrite
 that changes the subject goes the recreate way — which then refuses a reply, correctly.
 
-### A bug this found on the way
+### Two bugs this found on the way
+
+**The clipboard was not UTF-8.** `pbcopy` and `pbpaste` encode in the locale's character set, and
+the app spawns this server with an environment naming none, so they fell back to MacRoman:
+
+    pasted "...the draft — which is..."   read back as   "...the draft ‚Äî which is..."
+
+Those are the UTF-8 bytes of the em dash read as MacRoman, and it is what went into the DRAFT, not
+just into the read-back. It surfaced here because the rewrite compares what it pasted with what the
+composer shows and the two could not match; it had been corrupting every reply and forward carrying
+an accent all along. The read direction is worse in kind: this clipboard is borrowed and put back,
+so replying to a mail handed the person back a mangled copy of whatever they had copied. Both verbs
+now name `LC_CTYPE=UTF-8`.
+
+**A quote-level read can time out, and busy is not no.** On a composer quoting a long thread, one
+`AXBlockQuoteLevel` read answered `did not answer in time. The app may be busy; retry.` — WebKit
+still digesting the paste that had just landed. That failed the whole body read, which failed the
+verification, which refused a rewrite that had gone in perfectly. The app says to retry, so it
+retries; a read that never answers still counts as unknown rather than as level zero.
+
+### A third, in the listing this leans on
 
 `reply_to_message` read the composer back ONCE, immediately after posting command-V.
 `apple_desktop_key` returns when the event is posted; WebKit has still to take it, edit the document
@@ -415,6 +435,12 @@ and the tool reported:
 
 for a body that was in fact perfect — and that message tells its reader not to retry. The read-back
 is now polled. Same lesson as the focus poll above it, one level further down.
+
+And finding the draft again to rewrite it turned up a fourth, in `LIST_RECENT`: `slice(from, to)`
+on an Apple Events specifier is INCLUSIVE, so asking for the whole of a small mailbox ran one past
+the end, raised `Invalid index.` and returned a null subject and an unusable `#null` ref for every
+row. A Drafts mailbox almost always holds fewer messages than the limit, so an agent that had just
+written a reply could not address it. `jxa/read.ts` carries the readings.
 
 ## Still open
 
