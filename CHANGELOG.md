@@ -6,13 +6,13 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.22.1`,
-`notes-v1.22.1`, `reminders-v1.22.1`, `core-v1.22.1` for the npm packages, and `app-v1.22.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.23.0`,
+`notes-v1.23.0`, `reminders-v1.23.0`, `core-v1.23.0` for the npm packages, and `app-v1.23.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.23.0] - 2026-09-18
 
 ### Changed
 
@@ -42,6 +42,18 @@ summary.
   readings, and `node scripts/verify-mail-ax.mjs --compose` re-runs the whole thing.
 
 ### Fixed
+
+- **Opening or resizing a window could abort the app.** Diagnosed from a crash report: naming a
+  window for AppKit's frame autosave makes it write the frame out from inside `-[NSWindow
+  _setFrameCommon:]` — so a resize SwiftUI itself performs during the window's own layout pass
+  persists a frame, persisting posts `NSUserDefaultsDidChange`, an `@AppStorage` observer reads that
+  as a settings change and dirties the hosting view, and the `setNeedsUpdateConstraints` that
+  follows lands inside the layout pass that is still running. AppKit throws rather than re-enter,
+  nobody catches it, and the process takes SIGABRT. It needs no bad frame and no bad window: one
+  `@AppStorage` anywhere in the app is fuel enough. The frame is still remembered, but it is read
+  with `setFrameUsingName` and written a turn later by a saver that only believes a person's own
+  resize or move — never a size SwiftUI tried on its own. The key and its format are unchanged, so a
+  frame saved by an earlier build still restores.
 
 - **Every accent, em dash and curly quote in a composed mail was corrupted.** `pbcopy` and
   `pbpaste` encode in the LOCALE's character set, and this server is spawned by the app with an
@@ -2511,7 +2523,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.22.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.23.0...HEAD
+[1.23.0]: https://github.com/mgcrea/cupertino/compare/app-v1.22.1...app-v1.23.0
 [1.22.1]: https://github.com/mgcrea/cupertino/compare/app-v1.22.0...app-v1.22.1
 [1.22.0]: https://github.com/mgcrea/cupertino/compare/app-v1.21.1...app-v1.22.0
 [1.21.1]: https://github.com/mgcrea/cupertino/compare/app-v1.21.0...app-v1.21.1

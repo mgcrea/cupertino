@@ -220,7 +220,57 @@ enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_22_1, v1_22_0, v1_21_1, v1_21_0, v1_20_1]
+  static let releases: [Release] = [v1_23_0, v1_22_1, v1_22_0, v1_21_1, v1_21_0]
+
+  // swift-format-ignore
+  private static let v1_23_0: Release = Release(
+    version: "1.23.0",
+    date: "2026-09-18",
+    sections: [
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_mail_update_draft` now edits a reply draft instead of refusing it.",
+            body: [
+              "Revising a draft is the most common thing asked of this server — \"draft a reply, now change this line\" — and it was the one thing the tool would not do. Rewriting a draft meant RECREATING it, which cannot carry `In-Reply-To` across, so a reply draft was refused outright and the only way through was deleting it in Mail by hand.",
+              "Recreating was never the only option; it was the only one reachable from Apple Events. The draft's own composer window is still on screen — nothing in this server closes one — and a body replaced in that window saves back to the same draft, so threading, attachments and the quoted original all survive because nothing is remade. `update_draft` now does that first and falls back to recreating only when no composer is open. The result says which route it took in `method`, and a ref stays valid across an in-place edit.",
+              "Telling the draft's own text from the message it quotes is the whole difficulty, and `AXBlockQuoteLevel` answers it exactly: the sender's paragraphs read 0, and the attribution line and everything below it read 1 — for a forward as well as a reply, which was measured rather than assumed. The selection is then proved before anything is replaced: it is copied back and must equal the composer's own text exactly, because `AXSelectedText` reads null on Mail's composer and the pasteboard is the only place a selection is legible. Selecting and copying change nothing, so a selection that cannot be made to match costs a refusal rather than somebody's draft. Measured on macOS 27.0 (build 26A428) and verified end to end against a live Mail on a forward draft — the kind recreation refuses — which came back with one draft, its `References` header intact and the forwarded message still under the new text. `docs/mail-compose.md` carries the sequence and the readings, and `node scripts/verify-mail-ax.mjs --compose` re-runs the whole thing.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Opening or resizing a window could abort the app.",
+            body: [
+              "Diagnosed from a crash report: naming a window for AppKit's frame autosave makes it write the frame out from inside `-[NSWindow _setFrameCommon:]` — so a resize SwiftUI itself performs during the window's own layout pass persists a frame, persisting posts `NSUserDefaultsDidChange`, an `@AppStorage` observer reads that as a settings change and dirties the hosting view, and the `setNeedsUpdateConstraints` that follows lands inside the layout pass that is still running. AppKit throws rather than re-enter, nobody catches it, and the process takes SIGABRT. It needs no bad frame and no bad window: one `@AppStorage` anywhere in the app is fuel enough. The frame is still remembered, but it is read with `setFrameUsingName` and written a turn later by a saver that only believes a person's own resize or move — never a size SwiftUI tried on its own. The key and its format are unchanged, so a frame saved by an earlier build still restores.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Every accent, em dash and curly quote in a composed mail was corrupted.",
+            body: [
+              "`pbcopy` and `pbpaste` encode in the LOCALE's character set, and this server is spawned by the app with an environment naming none — so they fell back to MacRoman, and every byte outside ASCII was wrong in both directions. A body pasted into a composer arrived with `—` turned into `‚Äî`. Not a display artefact: that is what went into the draft, and what would have gone into the mail. The read is worse in kind, because the clipboard is BORROWED — read, overwritten, put back — so replying to a mail handed back a corrupted copy of whatever the person had copied. Both verbs now name `LC_CTYPE=UTF-8`, which sets the encoding and nothing else. Found by a live rewrite whose read-back would not match, and verified end to end: `é à ç œ « »` and `—` now reach the stored draft intact.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "A mailbox holding fewer messages than the limit could not be listed at all.",
+            body: [
+              "`apple_mail_list_messages` came back with a null subject, null sender and an unusable `#null` ref on every row — so nothing else could act on any of them. `slice(from, to)` on an Apple Events specifier is INCLUSIVE of `to`, not exclusive like JavaScript's, so asking for `n` messages asked for `n + 1`; when `n` was the whole mailbox that ran one past the end, raised `Invalid index.`, and left every batched property read empty. Drafts is where it was found, because a Drafts mailbox almost always holds fewer messages than the limit — an agent that had just written a reply could not find the draft again to revise it. The same off-by-one was in `SENT_SINCE`, where it matters most: that is the read deciding whether a reply was SENT, and on a Sent mailbox smaller than the limit it answered \"it does NOT appear to have been sent\" for a mail that had gone, inviting a second send. Measured against a live Mail: `slice(0, 303)` on a 303-message mailbox raises, `slice(0, 302)` returns all 303.",
+              "The stubs had hidden it by being kinder than Mail — they modelled `Array.prototype.slice`, which is exclusive and forgiving of an index past the end. They now raise where Mail raises, and 7 of the 9 existing `sent-since` tests fail without the fix.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a failure.",
+            body: [
+              "The composer was read back once, immediately after the paste — but `apple_desktop_key` returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and republish an accessibility tree. On a long message the read lost that race and the reply came back `bodyVerified: false` with \"SOMETHING DID land in it that could not be read back\", for a body that was in fact perfect. Worse, that message tells its reader not to retry. Measured against a reply quoting a 322-element newsletter. The read-back is now polled, the same way the focus poll above it already was.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_22_1: Release = Release(
@@ -407,35 +457,6 @@ enum Changelog {
             headline: "Listing Safari's tabs opened Safari.",
             body: [
               "`apple_safari_list_tabs` asked Safari for its windows by Apple Event, and an Apple Event launches an application that is not running, so a question about open tabs could put a browser on someone's screen. It now asks whether Safari is running first, which launches nothing. When it is not, the tool says so in words, with `running: false`, rather than returning an empty list that reads as a Safari with every window closed or as a missing permission.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_20_1: Release = Release(
-    version: "1.20.1",
-    date: "2026-09-09",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Cupertino crashed while driving the keyboard, taking every connected client down with it.",
-            body: [
-              "Four crash reports carry one signature: an `EXC_BREAKPOINT` inside HIToolbox on a `cupertino.session` thread, under `AccessibilityDriver.layoutKeyCodes()`. Measured on 1.18.0 twice, on 1.19.1, and on 1.20.0 — it has been shipping since key codes first started resolving against the real keyboard layout rather than a fixed table.",
-              "The lookup asked Text Input Services which layout was current on whatever thread the RPC arrived on, and HIToolbox enumerates the input source list under a `dispatch_assert_queue`. An off-main call trips a runtime trap and the process dies, so a single `apple_desktop_key` took down every surface's connection at once, not only the one that asked.",
-              "It was intermittent, which is how it shipped in three releases: the assertion fires only in the branch that rebuilds the current source ref, never in the one serving a cached one, so probes calling TIS off the main thread came back fine. The reliable trigger is the Mail composer, where `paste()` and `selectAll()` send single-character shortcuts — exactly the key names that miss the position-keyed table and fall through to the layout. Named keys never touch TIS, so most driving looked healthy.",
-              "The TIS half now runs main-thread-only behind a `dispatchPrecondition`, warmed at launch before the host opens its socket and refreshed when the selected input source changes. The per-call lookup is a cache read that asserts no queue, and a caller on the wrong thread now fails in its own frame instead of inside HIToolbox on a machine that is only sometimes unlucky.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A mail body stopped at its first run, so anything below an inline image was missing.",
-            body: [
-              "A message whose text is interrupted — a screenshot pasted mid-mail, a file between two paragraphs — was read down to its first `text/plain` part and no further. `apple_mail_get_message` returned the opening and dropped the rest, and a `body:` search in `apple_mail_search_messages` could not match a word that sat below the image. Nothing reported a truncation; the message simply read as though it ended early.",
-              "The body is now assembled in document order across the whole tree, with an `[image: shot.png]` marker standing where a file separated two runs, and `multipart/alternative` still resolving to a single rendering so a plain-and-html message is not emitted twice. A body that came through the tag stripper for any of its runs now says so, rather than reporting the type of whichever run happened to be first.",
-              "Two parsing faults surfaced with it. A boundary was matched anywhere in the body instead of at the start of a line, so `--B` also matched inside `--B2` and flattened a nested multipart into its parent's sibling list — harmless while only one part was ever read, a doubled body the moment the parts are joined. And `htmlToText` left a `<style>` block's CSS behind as prose whenever the closing tag fell outside the scan's read window, which is routine at the window's size and made a body search for a font name match a newsletter that never said it.",
             ]),
         ]),
     ])
