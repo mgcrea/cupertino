@@ -45,7 +45,7 @@ summary.
 
 - **Opening or resizing a window could abort the app.** Diagnosed from a crash report: naming a
   window for AppKit's frame autosave makes it write the frame out from inside `-[NSWindow
-  _setFrameCommon:]` — so a resize SwiftUI itself performs during the window's own layout pass
+_setFrameCommon:]` — so a resize SwiftUI itself performs during the window's own layout pass
   persists a frame, persisting posts `NSUserDefaultsDidChange`, an `@AppStorage` observer reads that
   as a settings change and dirties the hosting view, and the `setNeedsUpdateConstraints` that
   follows lands inside the layout pass that is still running. AppKit throws rather than re-enter,
