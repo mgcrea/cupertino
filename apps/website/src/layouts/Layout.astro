@@ -151,14 +151,12 @@ const schemaEntries = Array.isArray(schema) ? schema : schema ? [schema] : [];
         });
       }
     </script>
-    {/* Cloudflare Web Analytics. Cookieless and stores nothing on the visitor's
-        device, so it needs no consent banner — see /privacy. The token is public
-        by design: it ships in the HTML of every page. */}
-    <script
-      is:inline
-      defer
-      src="https://static.cloudflareinsights.com/beacon.min.js"
-      data-cf-beacon='{"token": "1e718f006bc343e385dff365ba44b327"}'
-    ></script>
+    {/* Cloudflare Web Analytics is no longer rendered here. The beacon is injected at
+        the edge for the whole mgcrea.io zone, so a second one in this HTML would report
+        the same visit twice, under two different site tags.
+
+        The content security policy must still name static.cloudflareinsights.com. The
+        injected script is subject to it exactly as a local one would be, so dropping the
+        entry as "unused" would silently stop counting this site. */}
   </body>
 </html>
