@@ -6,12 +6,18 @@ import SectionHeader from "./SectionHeader.astro";
  *
  * This section exists because the capability is unremarkable and the way it is
  * obtained is not. Anything can read a web page; what matters is what you had
- * to hand over to get it. macOS offers exactly one built-in route — Safari's
- * "Allow JavaScript from Apple Events" — and it is a skeleton key: one switch,
- * no scope, and afterwards ANY process that can send Apple Events runs script
- * in ANY tab, including whatever is logged in. That is the same shape as
- * granting Full Disk Access to a terminal, which is the argument this whole
- * site is built on, so it is worth making twice.
+ * to hand over to get it. macOS offers two built-in routes. Safari's "Allow
+ * JavaScript from Apple Events" is a skeleton key: one switch, no scope, and
+ * afterwards ANY process that can send Apple Events runs script in ANY tab,
+ * including whatever is logged in. That is the same shape as granting Full
+ * Disk Access to a terminal, which is the argument this whole site is built
+ * on, so it is worth making twice. The other is Apple's own Safari MCP server
+ * (`safaridriver --mcp`, Safari 27), which takes the opposite trade: it runs
+ * in an isolated automation window that starts from a clean slate, so it sees
+ * the page you are building and none of the browsing you have done. It is
+ * named below because it is the platform rather than a competitor, and because
+ * the two are complementary — theirs is the page you are debugging, this is
+ * your history, tabs and Reading List.
  *
  * The honest caveat is stated as prominently as the capability, following the
  * body-search section: a capture is a snapshot from page load, not a live read.
@@ -44,6 +50,13 @@ const ROUTES = [
     revoke: "one hidden switch",
     tone: "danger",
     note: "Safari's built-in route, and a skeleton key. Any process that can send Apple Events can then run script in any tab. Its state cannot even be read, so nothing can tell you whether it is on.",
+  },
+  {
+    route: "Apple's Safari MCP server",
+    scope: "a separate automation window",
+    revoke: "one switch, Developer settings",
+    tone: "dim",
+    note: "safaridriver --mcp, in Safari 27. Built for the page you are developing: it opens its own automation window with none of your logins, history or tabs, so it cannot read what you are browsing and does not try to.",
   },
   {
     route: "Accessibility",
@@ -103,6 +116,13 @@ const LANES = [
       </tbody>
     </table>
   </div>
+
+  <p class="mt-5 mb-0 max-w-[72ch] text-[13.5px] leading-[1.7] text-fg-muted">
+    Apple's server and this one are not rivals for the same job. Theirs drives a fresh WebKit window
+    for the page you are building; nothing in it is yours yet. This one reads the Safari you already
+    use — what you visited, what is open, what you saved for later — and hands an assistant the page
+    in front of you. Run both: one for the code, one for the browser.
+  </p>
 
   <h3 class="mt-14 mb-5 text-[15px] font-medium text-fg">Three lanes, three permissions</h3>
 
