@@ -707,6 +707,96 @@ with Cupertino's own banner across it is noise at best. The cost is real and wor
 can screenshot the indicator, including whoever next tries to verify it. The verification above is
 therefore the harness, not a picture.
 
+## The notice is placeable, sizeable and optionally audible, 2026-09-21
+
+Preferences in Settings → General, read through `NoticeStyle`: which of six places along the top or
+bottom edge the card sits in, how large it is drawn, and which of the Mac's alert sounds it makes
+arriving and leaving, at what volume.
+
+All of it is appearance, and the line matters more than the controls. **None of it can stop the
+card appearing, change what it says, or move it off the display holding the application being
+driven.** This is the only warning the person at the keyboard gets, and the section above is a
+record of what happens when it is absent — three failures blamed on the application that were
+somebody at the keyboard, and two blamed on the keyboard that were bugs. A preference that could
+silence it would put that back. The sound is the one addition that can only ADD a signal.
+
+|                | Key                    | Default    | What it may not do                     |
+| -------------- | ---------------------- | ---------- | -------------------------------------- |
+| Position       | `notice.placement`     | `topRight` | leave the driven application's display |
+| Size           | `notice.size`          | `medium`   | reach zero, or the vertical middle     |
+| Sound arriving | `notice.soundArriving` | none       | replace the card                       |
+| Sound leaving  | `notice.soundLeaving`  | none       | replace the card                       |
+| Volume         | `notice.soundVolume`   | 0.35       | exceed the Mac's own output            |
+
+Six places rather than eight: the vertical middle is where the person is looking, which is the one
+place a notice must not cover. Top right is the default because it is where the card shipped, and
+`medium` is scale 1 exactly, so a Mac that never opens the setting sees no change at all.
+
+The size is **a scale applied to every length** — the panel, the padding, the dot and both type
+sizes — rather than `scaleEffect` on the hosting view. That shortcut looks identical in a screenshot
+and wrong on the screen: it transforms a rasterised layer, so a 1.3× card would be a blown-up 1×
+bitmap of the text. Measured across all three sizes and all five phases through the same harness the
+focus rule was checked with, reading the panel frame back and rendering its content view:
+
+    small-topLeft     frame 20,1591   272x51     large-topRight  frame 2572,1564  416x78
+    small-bottomRight frame 2716,20   272x51     large-asking    frame 2442,20    546x78
+
+The placement arithmetic lives in `NoticeStyle.frame` with no dependency beyond `CGRect`, and `make
+unit` pins it, for the reason `DrivingPolicy` gives about its own: it is **silent when wrong**. A
+card placed off the bottom of a display looks exactly like a card that never appeared — which is the
+failure this whole class was written to fix, reintroduced by a sign error. AppKit's y grows upward,
+so "top" is `maxY` and getting it backwards puts the card under the Dock.
+
+The sounds are the Mac's own alert sounds, **listed from `/System/Library/Sounds` rather than
+written out**, so the menu is whatever this macOS has rather than whatever the last one had;
+`NoticeSounds.fallbackNames` covers a folder that cannot be listed, because an empty list would
+leave a picker holding nothing but None with no reason visible for why. They are off by default and
+silent under a capture run whatever is chosen — a run that beeps is a run somebody turns the volume
+down for, which is how the next one gets taken with the volume down as well.
+
+There is **no separate switch**, and "None" is a row in each menu. A switch beside two menus has a
+fourth state — on, with both set to None — that says nothing the menus do not already say, and
+somebody who picked a sound and heard nothing would have two places to look instead of one. The
+volume slider is disabled rather than hidden while both are None, so the row does not appear and
+disappear as the menus above it change.
+
+A sound fires when the card ARRIVES and when it GOES, not on each phase change: an agent working
+through a sequence shows one card, so it is twice a session rather than twice a keystroke. Measured
+through the same harness, reading `NSSound.isPlaying` back rather than asking anybody to listen —
+the middle line is the one that matters, and it is checked after silencing the first play so that
+what it measures is a new sound and not the tail of the old one:
+
+    arriving sound is playing: true
+    a phase change on the same card is silent: true
+    leaving sound is playing: true
+    silent card plays nothing: true
+
+Picking
+one plays it, because a sound is chosen by ear, and the volume plays a sample when the slider is
+LET GO rather than on every step — which would stack a few dozen restarts of one file into a buzz.
+The default volume is a third of full, relative to the Mac's own output, where an alert sound reads
+as a cue under what you are doing rather than as an alert.
+
+The volume is the one number a launch argument or a `defaults write` can get wrong invisibly, in
+either direction: `NSArgumentDomain` hands back strings, so `-notice.soundVolume 0` read through
+`as? Double` would be nil and fall through to a default that is a third of full — the opposite of
+what was asked for. It is parsed like `DrivingPolicy.seconds`, clamped to 0…1, and NaN falls back
+rather than reaching `NSSound`.
+
+`NoticeSounds` is where the names and the playing live, separate from `NoticeStyle` because it needs
+AppKit and `NoticeStyle` is pinned by `make unit`. It is not the `sound` SURFACE, which records a
+microphone; this plays fourteen files that come with the operating system.
+
+Settings carries a **Preview** button, because the setting is otherwise unanswerable from the
+window it is set in: the card only appears while an agent is working, so choosing a corner meant
+choosing one and finding out later. A real notice outranks the sample in both directions.
+
+The controls are in General rather than beside "Before driving" in the Desktop and Simulator panes,
+where every other decision about driving lives. The split is on scope: that control governs what
+happens before an agent takes the keyboard, which only those two surfaces do, and this governs a
+card nine surfaces can light — Safari opening a page and Notes launching draw the same window in the
+same corner.
+
 ## Hover is a ninth driving verb, and a click could never have done it
 
 Driving a SwiftUI chart's hover readout found the gap: this surface could press, click, type and
