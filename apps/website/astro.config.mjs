@@ -32,7 +32,7 @@ export default defineConfig({
        * `'self'` has to be repeated here. The per-script hashes are still appended.
        */
       scriptDirective: {
-        resources: ["'self'", "https://static.cloudflareinsights.com/beacon.min.js"],
+        resources: ["'self'", "https://static.cloudflareinsights.com"],
       },
       // The latency bars, the grant diagram's connector lanes and the tool
       // marquee carry computed widths and delays in per-element `style`
