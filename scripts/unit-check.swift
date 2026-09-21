@@ -768,6 +768,129 @@ struct UnitCheck {
           idleRelease: TimeInterval(DrivingPolicy.idleReleaseRange.lowerBound)))
     UserDefaults.standard.removePersistentDomain(forName: suite)
 
+    print("\nNotice style: where the card lands and how big it is")
+
+    // Silent when wrong, which is the whole reason this is arithmetic in its
+    // own type: a card placed off the bottom of a display looks exactly like a
+    // card that never appeared.
+    //
+    // A 1440x900 display with the menu bar gone: y runs UPWARD from 0, so the
+    // visible frame starts at 0 and the top edge is 875.
+    let display = CGRect(x: 0, y: 0, width: 1440, height: 875)
+    let noticeCard = CGSize(width: 320, height: 60)
+    let m = NoticeStyle.margin
+    func at(
+      _ placement: NoticeStyle.Placement, _ frame: CGRect = display, _ size: CGSize = noticeCard
+    )
+      -> CGRect
+    {
+      NoticeStyle.frame(for: size, in: frame, placement: placement)
+    }
+    check(
+      "top right is where the card shipped, and is still the default",
+      NoticeStyle.defaults.placement == .topRight
+        && at(.topRight) == CGRect(x: 1440 - 320 - m, y: 875 - 60 - m, width: 320, height: 60))
+    check("top left hugs the other side", at(.topLeft).minX == m)
+    check("the two top corners sit at the same height", at(.topLeft).minY == at(.topRight).minY)
+    check("top centres the card", at(.top).midX == display.midX)
+    check(
+      "bottom is measured UP from the visible frame, not down from the top",
+      at(.bottom).minY == m && at(.bottomLeft).minY == m && at(.bottomRight).minY == m)
+    check("and bottom centres it too", at(.bottom).midX == display.midX)
+    check(
+      "every placement stays inside the display",
+      NoticeStyle.Placement.allCases.allSatisfy { display.contains(at($0)) })
+
+    // A display offset from the origin is the two-screen case, and the one an
+    // `NSRect` built from width and height alone gets wrong.
+    let leftDisplay = CGRect(x: -1512, y: 300, width: 1512, height: 900)
+    check(
+      "a display left of the primary is placed in ITS coordinates",
+      at(.topRight, leftDisplay).maxX == leftDisplay.maxX - m
+        && at(.topRight, leftDisplay).maxY == leftDisplay.maxY - m)
+    check(
+      "and its bottom row is its own bottom",
+      at(.bottomLeft, leftDisplay).minY == leftDisplay.minY + m)
+
+    // The clamp. Not reachable today — the widest card is 546pt — but a card
+    // hanging off the side of the screen is the failure this type exists for.
+    let tiny = CGRect(x: 0, y: 0, width: 200, height: 100)
+    check(
+      "a card wider than the display is pinned to its leading edge rather than off it",
+      at(.topRight, tiny).minX == tiny.minX && at(.top, tiny).minX == tiny.minX)
+    check(
+      "and the axis that still fits is placed normally",
+      at(.topRight, tiny).maxY == tiny.maxY - m)
+
+    check("medium is exactly the card that shipped", NoticeStyle.Size.medium.scale == 1)
+    check(
+      "the sizes are ordered and distinct",
+      NoticeStyle.Size.small.scale < 1 && NoticeStyle.Size.large.scale > 1)
+    check(
+      "type grows with the panel rather than staying put",
+      NoticeStyle.Size.large.titlePoints > NoticeStyle.Size.medium.titlePoints
+        && NoticeStyle.Size.small.titlePoints < NoticeStyle.Size.medium.titlePoints)
+    check(
+      "the title is always larger than the detail under it",
+      NoticeStyle.Size.allCases.allSatisfy { $0.titlePoints > $0.detailPoints })
+    check(
+      "and the smallest detail line is still legible",
+      NoticeStyle.Size.small.detailPoints >= 8)
+
+    check("the card is silent until somebody picks a sound", NoticeStyle.defaults.isSilent)
+    check(
+      "and the volume it would play at is a cue rather than an alert",
+      NoticeStyle.defaults.volume > 0 && NoticeStyle.defaults.volume <= 0.5)
+
+    let styleSuite = "cupertino-unit-notice-\(UUID().uuidString)"
+    let styles = UserDefaults(suiteName: styleSuite)!
+    check(
+      "nothing stored reads as the card that shipped",
+      NoticeStyle.read(styles) == NoticeStyle.defaults)
+    styles.set("bottom", forKey: NoticeStyle.Keys.placement)
+    styles.set("large", forKey: NoticeStyle.Keys.size)
+    styles.set("Submarine", forKey: NoticeStyle.Keys.arriving)
+    styles.set("Pop", forKey: NoticeStyle.Keys.leaving)
+    styles.set(0.6, forKey: NoticeStyle.Keys.volume)
+    check(
+      "a stored choice reads back",
+      NoticeStyle.read(styles)
+        == NoticeStyle.Settings(
+          placement: .bottom, size: .large, arriving: "Submarine", leaving: "Pop", volume: 0.6))
+    check("and a card with either sound set is not silent", !NoticeStyle.read(styles).isSilent)
+    styles.set("", forKey: NoticeStyle.Keys.arriving)
+    check(
+      "one sound alone is still not silence",
+      !NoticeStyle.read(styles).isSilent && NoticeStyle.read(styles).arriving.isEmpty)
+    styles.set("", forKey: NoticeStyle.Keys.leaving)
+    check("both set to None is", NoticeStyle.read(styles).isSilent)
+
+    // The volume is the one number a launch argument or a `defaults write` can
+    // get wrong in a way that is not obvious: silently loud, or silently gone.
+    // `NSArgumentDomain` hands back strings, so `-notice.soundVolume 0` must
+    // read as 0 and not fall through to a default that is a third of full.
+    styles.set("0", forKey: NoticeStyle.Keys.volume)
+    check("a volume stored as a launch argument reads as one", NoticeStyle.read(styles).volume == 0)
+    styles.set(1.4, forKey: NoticeStyle.Keys.volume)
+    check("a volume above full is clamped", NoticeStyle.read(styles).volume == 1)
+    styles.set(-0.2, forKey: NoticeStyle.Keys.volume)
+    check("and one below silence is too", NoticeStyle.read(styles).volume == 0)
+    styles.set("loud", forKey: NoticeStyle.Keys.volume)
+    check(
+      "a volume nobody could have chosen falls back",
+      NoticeStyle.read(styles).volume == NoticeStyle.defaults.volume)
+    check(
+      "and so does a NaN, rather than reaching NSSound",
+      NoticeStyle.fraction(Double.nan, fallback: 0.35) == 0.35)
+
+    styles.set("middle", forKey: NoticeStyle.Keys.placement)
+    styles.set("enormous", forKey: NoticeStyle.Keys.size)
+    check(
+      "a placement or size nobody could have chosen falls back",
+      NoticeStyle.read(styles).placement == NoticeStyle.defaults.placement
+        && NoticeStyle.read(styles).size == NoticeStyle.defaults.size)
+    UserDefaults.standard.removePersistentDomain(forName: styleSuite)
+
     print("\nServer resolution: which cli.js a surface runs")
 
     // Built on disk rather than described, because every rule here is about
