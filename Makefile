@@ -271,6 +271,8 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
@@ -297,6 +299,8 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
@@ -317,6 +321,8 @@ simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by 
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
@@ -375,6 +381,8 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingOverlay.swift \
@@ -397,6 +405,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
 		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check

@@ -287,6 +287,29 @@ struct GeneralPane: View {
       }
 
       Section {
+        NoticeStyleControl()
+      } header: {
+        Text("On-screen notice")
+      } footer: {
+        Text(
+          "The card Cupertino shows while it is driving an application, or changing what is on "
+            + "screen. It always appears, on the display holding that application."
+        )
+      }
+
+      Section {
+        NoticeSoundControl()
+      } header: {
+        Text("Notice sounds")
+      } footer: {
+        Text(
+          "For when you are not looking at the screen the card is on. The volume is relative to "
+            + "the Mac's own output. An agent working through a sequence shows one card rather "
+            + "than one per step, so these play twice a session and not twice a keystroke."
+        )
+      }
+
+      Section {
         Toggle(isOn: $launchAtLogin) {
           Text("Launch at login")
           Text(
@@ -329,6 +352,151 @@ struct GeneralPane: View {
       }
     }
     .formStyle(.grouped)
+  }
+}
+
+/// Where the driving notice sits, how big it is, and whether it is audible.
+///
+/// In General rather than beside "Before driving" in the Desktop and Simulator
+/// panes, which is where every other decision about driving lives. The split is
+/// on scope: that control governs what happens before an agent takes the
+/// keyboard, which only those two surfaces do, and this governs a card nine
+/// surfaces can light — Safari opening a page and Notes launching draw the same
+/// window in the same corner.
+///
+/// A change applies to the card ON SCREEN, not the next one: `DriveActivity`
+/// re-renders twice a second while a notice is up and `DrivingOverlay` compares
+/// the style it drew with the one stored, so a corner picked while an agent is
+/// working moves the card within half a second.
+private struct NoticeStyleControl: View {
+  @AppStorage(NoticeStyle.Keys.placement)
+  private var placement = NoticeStyle.defaults.placement.rawValue
+  @AppStorage(NoticeStyle.Keys.size) private var size = NoticeStyle.defaults.size.rawValue
+
+  var body: some View {
+    LabeledContent {
+      screen
+    } label: {
+      Text("Position")
+      Text("Which corner or edge of the display the card sits in.")
+    }
+
+    Picker("Size", selection: $size) {
+      ForEach(NoticeStyle.Size.allCases, id: \.self) { option in
+        Text(option.label).tag(option.rawValue)
+      }
+    }
+    .pickerStyle(.segmented)
+
+    // The setting is otherwise unanswerable from here: the card only appears
+    // while an agent is working, so a corner picked in Settings is a corner
+    // found out about later.
+    LabeledContent {
+      Button("Show the card") { DrivingOverlay.shared.preview() }
+    } label: {
+      Text("Preview")
+      Text("Puts a sample card where the real one would go, for a couple of seconds.")
+    }
+  }
+
+  /// Six tiles inside the outline of a display.
+  ///
+  /// A picture rather than a `Picker`, because the answer is a position and a
+  /// menu listing "Top left, Top, Top right…" makes somebody read six phrases
+  /// to answer a question about geometry. The outline is what makes the two
+  /// rows of three read as corners at all — without it they are six rectangles
+  /// — and the gap down the middle is the part of the screen this control
+  /// cannot put the card in, which is the part somebody is looking at.
+  ///
+  /// Every tile still carries its written name, in the tooltip and to
+  /// VoiceOver, because a picture is not a label.
+  private var screen: some View {
+    VStack(spacing: 0) {
+      row([.topLeft, .top, .topRight])
+      Spacer(minLength: 6)
+      row([.bottomLeft, .bottom, .bottomRight])
+    }
+    .padding(5)
+    .frame(width: 98, height: 62)
+    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
+    .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(.separator) }
+  }
+
+  private func row(_ places: [NoticeStyle.Placement]) -> some View {
+    HStack(spacing: 4) {
+      ForEach(places, id: \.self) { place in
+        let chosen = placement == place.rawValue
+        Button {
+          placement = place.rawValue
+        } label: {
+          RoundedRectangle(cornerRadius: 2)
+            .fill(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+            .frame(width: 26, height: 12)
+            .overlay {
+              RoundedRectangle(cornerRadius: 2)
+                .strokeBorder(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator))
+            }
+        }
+        .buttonStyle(.plain)
+        .help(place.label)
+        .accessibilityLabel(place.label)
+        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+      }
+    }
+  }
+}
+
+/// Which of the Mac's alert sounds the notice makes, and how loudly.
+///
+/// Two menus and no switch. A switch beside them would have a fourth state —
+/// on, with both set to None — that says nothing the menus do not already say,
+/// and somebody who set a sound and heard nothing would have two places to look
+/// instead of one. Silence is a row in the list.
+///
+/// The names are read off `/System/Library/Sounds` rather than written out, so
+/// this is whatever this macOS has. See `NoticeSounds`.
+private struct NoticeSoundControl: View {
+  @AppStorage(NoticeStyle.Keys.arriving) private var arriving = NoticeStyle.defaults.arriving
+  @AppStorage(NoticeStyle.Keys.leaving) private var leaving = NoticeStyle.defaults.leaving
+  @AppStorage(NoticeStyle.Keys.volume) private var volume = NoticeStyle.defaults.volume
+
+  private var silent: Bool { arriving.isEmpty && leaving.isEmpty }
+
+  var body: some View {
+    picker("When the card appears", selection: $arriving)
+    picker("When it goes", selection: $leaving)
+
+    // Played when the slider is LET GO rather than on every step, which would
+    // stack a few dozen restarts of one file into a buzz.
+    Slider(value: $volume, in: 0...1) {
+      Text("Volume")
+    } minimumValueLabel: {
+      Image(systemName: "speaker.fill")
+    } maximumValueLabel: {
+      Image(systemName: "speaker.wave.3.fill")
+    } onEditingChanged: { editing in
+      guard !editing else { return }
+      NoticeSounds.play(arriving.isEmpty ? leaving : arriving, volume: volume)
+    }
+    // Nothing to set the volume of. Left visible rather than hidden, so the
+    // row does not appear and disappear as the menus above it change.
+    .disabled(silent)
+    .accessibilityLabel("Volume")
+  }
+
+  private func picker(_ title: String, selection: Binding<String>) -> some View {
+    Picker(title, selection: selection) {
+      Text("None").tag("")
+      Divider()
+      ForEach(NoticeSounds.names, id: \.self) { name in
+        Text(name).tag(name)
+      }
+    }
+    // A sound is chosen by ear, so picking one plays it. Choosing None plays
+    // nothing, which is the correct preview of None.
+    .onChange(of: selection.wrappedValue) { _, name in
+      NoticeSounds.play(name, volume: volume)
+    }
   }
 }
 

@@ -54,6 +54,19 @@ import SwiftUI
 /// because a window that is not key otherwise spends that first click on
 /// nothing.
 ///
+/// ## What is settable about it, and what is not
+///
+/// `NoticeStyle` holds what somebody chose: which of six places along the top
+/// or bottom edge the card sits in, how large it is drawn, and which of the
+/// Mac's alert sounds it makes arriving and leaving, at what volume. All of it
+/// is appearance. None of it can stop the card appearing, change what it says,
+/// or move it off the display holding the application being driven — this is
+/// the only warning the person at the keyboard gets, and a preference that
+/// could silence it would be a preference that reintroduces the failure this
+/// class was written for. The sound is the one addition that can only ADD a
+/// signal: silence is where it starts, and the card is the same card either
+/// way.
+///
 /// ## It is hidden from capture, deliberately
 ///
 /// `sharingType = .none` keeps it out of `apple_screen_capture` and out of the
@@ -83,46 +96,135 @@ final class DrivingOverlay {
       }
     }
 
-    /// Wider when there are buttons to fit beside the words.
-    var size: NSSize {
+    /// Wider when there are buttons to fit beside the words, at the medium size
+    /// `NoticeStyle.Size` scales from.
+    var baseSize: NSSize {
       switch self {
       case .countdown: NSSize(width: 390, height: 60)
       case .asking: NSSize(width: 420, height: 60)
       case .notice, .done: NSSize(width: 320, height: 60)
       }
     }
+
+    func size(_ size: NoticeStyle.Size) -> NSSize {
+      NSSize(width: size.scaled(baseSize.width), height: size.scaled(baseSize.height))
+    }
   }
 
   private var panel: NSPanel?
   /// What the visible panel currently says, so a burst of presses against one
   /// application does not rebuild and re-place it on every call. The phase is
-  /// part of it: an info card becoming a driving one must redraw.
-  private var showing: (bundleId: String, phase: Phase)?
+  /// part of it: an info card becoming a driving one must redraw. So is the
+  /// style: `DriveActivity` re-renders twice a second while a notice is up, so
+  /// carrying it here is what makes a placement chosen in Settings move a card
+  /// that is already on screen instead of waiting for the next one.
+  private var showing: (bundleId: String, phase: Phase, style: NoticeStyle.Settings)?
 
-  private static let margin: CGFloat = 20
+  /// The style the sample card was drawn with, while one is up, and the timer
+  /// that takes it down. Kept apart from `showing`, which means a notice about
+  /// something real — see `preview()`.
+  private var previewing: NoticeStyle.Settings?
+  private var previewTimer: Timer?
 
   func show(bundleId: String, name: String, phase: Phase) {
+    let style = NoticeStyle.current
+    guard
+      showing?.bundleId != bundleId || showing?.phase != phase || showing?.style != style
+    else { return }
+    // Nothing new arrives when the panel is already up, whether it was holding
+    // a notice or the sample.
+    let arriving = showing == nil && previewing == nil
+    endPreview(silently: true)
+    showing = (bundleId, phase, style)
+    present(
+      DrivingCard(name: name, phase: phase, size: style.size), phase: phase, style: style,
+      on: screenShowing(bundleId))
+    if arriving { play(.arriving, style) }
+  }
+
+  func hide() {
+    endPreview(silently: false)
+    guard let showing else { return }
+    self.showing = nil
+    panel?.orderOut(nil)
+    play(.leaving, showing.style)
+  }
+
+  /// Put the card on screen for a couple of seconds, so somebody choosing a
+  /// corner in Settings can see where it lands.
+  ///
+  /// It exists because the setting is otherwise unanswerable from the window it
+  /// is set in: the card only appears while an agent is working, so picking a
+  /// corner meant choosing one, waiting for a session, and finding out then.
+  ///
+  /// A real notice outranks it in both directions — this refuses to draw over
+  /// one, and `show` takes the panel back from it without a sound — because the
+  /// sample says "Cupertino is driving Safari" and nothing is being driven.
+  func preview() {
+    guard showing == nil else { return }
+    let style = NoticeStyle.current
+    let phase = Phase.notice(.driving)
+    let arriving = previewing == nil
+    previewing = style
+    present(
+      DrivingCard(name: "Safari", phase: phase, size: style.size), phase: phase, style: style,
+      on: NSScreen.main)
+    if arriving { play(.arriving, style) }
+    previewTimer?.invalidate()
+    previewTimer = Timer.scheduledTimer(withTimeInterval: 2.2, repeats: false) { [weak self] _ in
+      Task { @MainActor in self?.endPreview(silently: false) }
+    }
+  }
+
+  /// Take the sample down, if one is up.
+  ///
+  /// `silently` when a real notice is about to take the panel: the sample
+  /// leaving is not an event, and the panel must not be ordered out from under
+  /// the card that is replacing it. This runs from `hide` as well as from the
+  /// timer, because a `hide` that only cancelled the timer would leave the
+  /// sample on screen for good.
+  private func endPreview(silently: Bool) {
+    previewTimer?.invalidate()
+    previewTimer = nil
+    guard let style = previewing else { return }
+    previewing = nil
+    guard !silently else { return }
+    panel?.orderOut(nil)
+    play(.leaving, style)
+  }
+
+  private func present(
+    _ card: DrivingCard, phase: Phase, style: NoticeStyle.Settings, on screen: NSScreen?
+  ) {
     let panel = panel ?? make()
     self.panel = panel
-    guard showing?.bundleId != bundleId || showing?.phase != phase else { return }
-    showing = (bundleId, phase)
-    panel.contentView = FirstClickHostingView(rootView: DrivingCard(name: name, phase: phase))
+    panel.contentView = FirstClickHostingView(rootView: card)
     // See "The two cards that take clicks" above.
     panel.ignoresMouseEvents = !phase.takesClicks
-    place(panel, near: bundleId, size: phase.size)
+    place(panel, on: screen, size: phase.size(style.size), placement: style.placement)
     // NEVER makeKeyAndOrderFront — see the focus rule above.
     panel.orderFrontRegardless()
   }
 
-  func hide() {
-    guard showing != nil else { return }
-    showing = nil
-    panel?.orderOut(nil)
+  private enum Cue { case arriving, leaving }
+
+  /// The card arriving and leaving, for somebody who is not looking at it.
+  ///
+  /// Silent by default, and silent under a capture run whatever is chosen. A
+  /// screenshot is taken on a developer's Mac with whatever defaults it happens
+  /// to hold, and a run that beeps is a run somebody turns the volume down for
+  /// — which is how the next one gets taken with the volume down as well.
+  ///
+  /// The style is the one the card was DRAWN with, not the one stored now, so a
+  /// card that went up while a sound was chosen is still audible going away.
+  private func play(_ cue: Cue, _ style: NoticeStyle.Settings) {
+    guard !DemoSeed.isEnabled else { return }
+    NoticeSounds.play(cue == .arriving ? style.arriving : style.leaving, volume: style.volume)
   }
 
   private func make() -> NSPanel {
     let panel = NSPanel(
-      contentRect: NSRect(origin: .zero, size: Phase.notice(.driving).size),
+      contentRect: NSRect(origin: .zero, size: Phase.notice(.driving).baseSize),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false)
@@ -139,20 +241,19 @@ final class DrivingOverlay {
     return panel
   }
 
-  /// Top-right of the display holding the application being driven.
+  /// The chosen corner of the display holding the application being driven.
   ///
-  /// The driven window is what the user is about to watch move, and on a
-  /// two-display Mac a notice pinned to the main screen can be on the other one
-  /// entirely — which is the same failure as no notice.
-  private func place(_ panel: NSPanel, near bundleId: String, size: NSSize) {
-    let screen = screenShowing(bundleId) ?? NSScreen.main
-    guard let frame = screen?.visibleFrame else { return }
+  /// The DISPLAY is not a preference and the corner is. The driven window is
+  /// what the user is about to watch move, and on a two-display Mac a notice
+  /// pinned to the main screen can be on the other one entirely — which is the
+  /// same failure as no notice. The corner within it is
+  /// `NoticeStyle.frame`, which is where the arithmetic and its test live.
+  private func place(
+    _ panel: NSPanel, on screen: NSScreen?, size: NSSize, placement: NoticeStyle.Placement
+  ) {
+    guard let frame = (screen ?? NSScreen.main)?.visibleFrame else { return }
     panel.setFrame(
-      NSRect(
-        x: frame.maxX - size.width - Self.margin,
-        y: frame.maxY - size.height - Self.margin,
-        width: size.width, height: size.height),
-      display: false)
+      NoticeStyle.frame(for: size, in: frame, placement: placement), display: false)
   }
 
   /// The screen holding that application's largest on-screen window.
@@ -260,14 +361,21 @@ func drivingSecondsLeft(until endsAt: Date, at now: Date) -> Int {
 private struct DrivingCard: View {
   let name: String
   let phase: DrivingOverlay.Phase
+  /// Every length below comes from here rather than from a text style, so the
+  /// panel and what is drawn in it grow together. See `NoticeStyle.Size`.
+  let size: NoticeStyle.Size
 
   var body: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: size.scaled(10)) {
       content
     }
-    .padding(.horizontal, 14)
+    .padding(.horizontal, size.scaled(14))
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: size.scaled(14)))
+    // The buttons are the one thing that cannot be given a point size, so they
+    // take the nearest control size instead. `.small` under a 15.6pt title
+    // looks like a mistake rather than a choice.
+    .controlSize(size == .large ? .regular : .small)
   }
 
   @ViewBuilder private var content: some View {
@@ -293,16 +401,13 @@ private struct DrivingCard: View {
       }
       Spacer(minLength: 0)
       Button("Cancel") { DrivingSession.respond(.stop) }
-        .controlSize(.small)
 
     case .asking:
       glyph("hand.raised.fill", .orange)
       lines("Cupertino wants to drive \(name)", "It will use the keyboard and mouse.")
       Spacer(minLength: 0)
       Button("Don't") { DrivingSession.respond(.stop) }
-        .controlSize(.small)
       Button("Allow") { DrivingSession.respond(.go) }
-        .controlSize(.small)
 
     case .done(let restoredName):
       glyph("checkmark.circle.fill", .green)
@@ -316,22 +421,22 @@ private struct DrivingCard: View {
   private func dot(_ color: Color) -> some View {
     Circle()
       .fill(color)
-      .frame(width: 10, height: 10)
+      .frame(width: size.scaled(10), height: size.scaled(10))
   }
 
   private func glyph(_ symbol: String, _ color: Color) -> some View {
     Image(systemName: symbol)
       .foregroundStyle(color)
-      .font(.callout.weight(.semibold))
-      .frame(width: 16)
+      .font(.system(size: size.titlePoints, weight: .semibold))
+      .frame(width: size.scaled(16))
   }
 
   private func lines(_ title: String, _ detail: String) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
+    VStack(alignment: .leading, spacing: size.scaled(2)) {
       Text(title)
-        .font(.callout.weight(.semibold))
+        .font(.system(size: size.titlePoints, weight: .semibold))
       Text(detail)
-        .font(.caption)
+        .font(.system(size: size.detailPoints))
         .foregroundStyle(.secondary)
     }
   }
