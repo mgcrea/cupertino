@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where a surface's server actually lives.
-struct ServerBinaries {
+nonisolated struct ServerBinaries {
   let node: URL
   let script: URL
   /// True when these came from the dev override rather than the bundle.
@@ -41,7 +41,7 @@ enum LocateError: LocalizedError {
 ///
 /// So an explicit opt-in that cannot be honoured is an error, never a quiet fall
 /// back to the bundle. The quiet fall back is precisely the failure above.
-enum ServerResolution {
+nonisolated enum ServerResolution {
   /// - Parameter devConfig: where a Debug build reads `dev.json`. Nil in a
   ///   Release build, which therefore resolves exactly as it always has.
   static func resolve(id: String, resources: URL?, devConfig: URL?) throws -> ServerBinaries {

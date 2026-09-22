@@ -60,7 +60,7 @@ final class DriveActivity {
   /// The info tier, kept apart so it can never answer `current()`.
   private nonisolated(unsafe) static var info:
     (target: String, kind: VisibleTools.Notice, until: Date)?
-  private static let stateLock = NSLock()
+  private nonisolated static let stateLock = NSLock()
 
   /// What is being driven right now, for callers off the main actor.
   ///
@@ -147,7 +147,7 @@ final class DriveActivity {
   /// cycle spends most of its time waiting for an application to redraw — and
   /// short enough that it is obviously over when it is over. Measured against
   /// the Maps card work, which spent up to ~2 s between presses.
-  static let linger: TimeInterval = 4
+  nonisolated static let linger: TimeInterval = 4
 
   private(set) var target: String?
   private(set) var kind: VisibleTools.Notice?

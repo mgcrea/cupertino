@@ -16,7 +16,7 @@ import Foundation
 /// rule over `readOnlyHint`: most writes change a store and nothing on screen.
 ///
 /// No dependency on the rest of the app, so `make unit` can compile it.
-enum VisibleTools {
+nonisolated enum VisibleTools {
   enum Notice: Equatable {
     /// Takes the foreground and posts input. The orange card: hands off.
     case driving

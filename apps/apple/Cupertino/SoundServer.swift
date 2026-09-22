@@ -24,7 +24,7 @@ import Foundation
 /// Both are pure functions of static configuration. A tool behind a gate that
 /// is off is **not registered** — invisible rather than refused, which is what
 /// `docs/alternatives.md` claims as a differentiator.
-enum SoundServer {
+nonisolated enum SoundServer {
 
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion
@@ -53,7 +53,7 @@ enum SoundServer {
 
   // ─── tools ─────────────────────────────────────────────────────────────────
 
-  private static let deviceArg: [String: Any] = [
+  nonisolated(unsafe) private static let deviceArg: [String: Any] = [
     "type": "string",
     "description":
       "The device's uid from apple_sound_list_devices. Omitted means the current default. "

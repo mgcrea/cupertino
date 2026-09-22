@@ -8,7 +8,7 @@ import Foundation
 /// test story for a project with no test target. Everything policy-shaped —
 /// which clients exist, which key they use, where the bridge lives — stays in
 /// `ClientWiring`, which can keep importing AppKit.
-enum ClientWiringMerge {
+nonisolated enum ClientWiringMerge {
   /// The tail of every `command` this app has ever written into a config.
   static let bridgeSuffix = "/Contents/Helpers/cupertino-bridge"
 

@@ -14,7 +14,7 @@ import Foundation
 /// in its own header — *nothing here knows about a surface* — and this file is
 /// nothing but that knowledge. The wire is shared; the table of servers is not
 /// the wire.
-enum InProcessServers {
+nonisolated enum InProcessServers {
 
   /// What one request produced.
   ///

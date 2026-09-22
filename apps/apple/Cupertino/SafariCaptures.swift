@@ -20,7 +20,7 @@ import Foundation
 /// time, so "enabled" and "never allowed anywhere" are the same picture. This
 /// is what separates them, and it is the difference between the Safari pane and
 /// the Settings row it would otherwise duplicate.
-struct SafariCaptures: Equatable {
+nonisolated struct SafariCaptures: Equatable {
   let count: Int
   /// Age of the freshest capture. `nil` when there are none.
   let newestAge: TimeInterval?

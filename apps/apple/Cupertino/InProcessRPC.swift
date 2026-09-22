@@ -11,7 +11,7 @@ import Foundation
 /// Nothing here knows about a surface. What varies per server is the tool list,
 /// the tool bodies and the resources; what does not vary is the wire, so only
 /// the wire lives here.
-enum InProcessRPC {
+nonisolated enum InProcessRPC {
 
   /// Matches what the node servers negotiate, so a host sees one protocol
   /// across every Cupertino surface.
@@ -185,7 +185,7 @@ enum InProcessRPC {
   /// connection, so blocking it waits on nothing the work needs. The same
   /// pattern on the main thread would deadlock — and both current callers hop
   /// TO the main actor, which is exactly the deadlock this arrangement avoids.
-  static func blocking<T>(_ body: @escaping () async throws -> T) throws -> T {
+  static func blocking<T>(_ body: sending @escaping () async throws -> T) throws -> T {
     let box = ResultBox<T>()
     let sem = DispatchSemaphore(value: 0)
     Task {
@@ -203,6 +203,6 @@ enum InProcessRPC {
 /// `@unchecked Sendable` is honest rather than a shrug: exactly one write
 /// happens before the semaphore is signalled and exactly one read after it, so
 /// the semaphore is the synchronisation and the box never races itself.
-final class ResultBox<T>: @unchecked Sendable {
+nonisolated final class ResultBox<T>: @unchecked Sendable {
   var result: Result<T, Error>?
 }

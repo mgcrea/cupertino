@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// What a licence key says about itself, once it has proved it.
-struct License {
+nonisolated struct License {
   let id: String
   let email: String
   let major: Int
@@ -15,7 +15,7 @@ struct License {
 /// needs: *why*. The bridge relays this sentence to the MCP host, the menu bar
 /// renders it, and a support reply is mostly this sentence — so it is produced
 /// once, here, rather than reconstructed at each of the three.
-enum LicenseCheck {
+nonisolated enum LicenseCheck {
   case valid(License)
   case refused(String)
 
@@ -47,7 +47,7 @@ enum LicenseCheck {
 /// deterrent is legal and social, never technical. This buys a key that cannot
 /// be forged. It does not buy — and must not pretend to buy — a binary that
 /// cannot be modified.
-enum LicenseKey {
+nonisolated enum LicenseKey {
   /// Namespaces the format. A v2 key would carry a different one and be refused
   /// by name here rather than failing somewhere less legible.
   static let prefix = "cup1"

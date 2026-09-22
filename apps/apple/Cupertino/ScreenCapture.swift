@@ -87,7 +87,7 @@ enum ScreenCapture {
   /// works, because they disagree on a machine holding several TCC rows for one
   /// identifier — the "one identifier, four grants" state recorded in
   /// scripts/spike-app-tcc/README.md.
-  static func isGranted() -> Bool { CGPreflightScreenCaptureAccess() }
+  nonisolated static func isGranted() -> Bool { CGPreflightScreenCaptureAccess() }
 
   // ─── targets ───────────────────────────────────────────────────────────────
 
@@ -244,7 +244,7 @@ enum ScreenCapture {
 
   /// Where captures may be written. The same confinement the three
   /// `save_attachment` tools use: a root, and a caller may only SELECT inside it.
-  static var root: URL {
+  nonisolated static var root: URL {
     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
   }
 

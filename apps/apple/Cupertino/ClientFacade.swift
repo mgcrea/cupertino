@@ -28,7 +28,7 @@ import Foundation
 /// The escape hatch runs both ways, which is why it is a tri-state rather than
 /// a boolean. A client that starts deferring before this list is updated can be
 /// marked by hand; one that stops can be unmarked.
-enum ClientFacade {
+nonisolated enum ClientFacade {
   /// Clients known to fetch tool schemas on demand.
   ///
   /// Two entries. Claude Code has done this since 2.1.191; Claude Desktop was

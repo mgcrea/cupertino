@@ -24,8 +24,10 @@ import Synchronization
 /// nonisolated — `MainView`'s `pane` property initialiser and
 /// `StatusModel.refresh()` — and isolating the type would push `await` into
 /// both for values that are a `UserDefaults` read and a constant. The members
-/// that touch AppKit carry the annotation individually.
-enum DemoSeed {
+/// that touch AppKit carry the annotation individually. `nonisolated` says so
+/// out loud: the target's default isolation would otherwise make it `@MainActor`
+/// as a whole anyway, which is the one thing this comment rules out.
+nonisolated enum DemoSeed {
   // MARK: - Launch arguments
 
   /// The names `appshot` passes by default. Changing one means changing the
@@ -699,7 +701,7 @@ enum DemoSeed {
   /// this Mac's appex container, so a marketing image would publish how many
   /// pages the person holding the camera had just been reading, and the count
   /// would differ on every machine that ran the capture.
-  nonisolated static let safariCaptures = SafariCaptures(
+  static let safariCaptures = SafariCaptures(
     count: 3, newestAge: 2 * 60)
 
   /// The version the marketing images show.
@@ -720,7 +722,7 @@ enum DemoSeed {
   /// otherwise report from the capturing Mac — and it is the grant the popover
   /// now paints, so an ungranted laptop would put an orange Screen row into the
   /// App Store.
-  nonisolated static let storeGrant: StoreGrant = .granted
+  static let storeGrant: StoreGrant = .granted
 
   /// The store row in `SurfaceDetail`, which otherwise prints an absolute path
   /// under the developer's real home directory into a public image.
@@ -970,7 +972,7 @@ enum DemoSeed {
   }
 }
 
-extension DemoSeed.Stage {
+nonisolated extension DemoSeed.Stage {
   /// Derived from `allCases`, not restated. The hand-written list this replaced
   /// had to be edited in lockstep with the enum, and the only thing that reads
   /// it is the `fatalError` that fires when a stage does not parse — so the one

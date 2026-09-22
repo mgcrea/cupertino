@@ -17,7 +17,7 @@ import Foundation
 /// Hand-rolled rather than built on the MCP SDK for the reason `ScreenServer`
 /// gives: there is no Swift SDK in this project and the surface needs six
 /// methods. The shape is pinned by `make desktop-check`.
-enum DesktopServer {
+nonisolated enum DesktopServer {
 
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion

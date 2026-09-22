@@ -35,7 +35,7 @@ import Carbon.HIToolbox
 /// walk hands back opaque handles into `HandleStore` and every follow-up press,
 /// read or set is nearly free. A fork-per-call CLI cannot do this, which is half
 /// the reason this surface is served in-process.
-enum AccessibilityDriver {
+nonisolated enum AccessibilityDriver {
 
   // ─── errors: only two of them are worth a caller's attention ───────────────
 
@@ -1603,7 +1603,7 @@ enum AccessibilityDriver {
   ///
   /// Cheap on the common path — the id compare is one TIS call, and the 128
   /// `UCKeyTranslate` calls run only when the layout actually changed.
-  static func refreshLayout() {
+  @MainActor static func refreshLayout() {
     dispatchPrecondition(condition: .onQueue(.main))
     guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return }
     let idPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
@@ -1657,13 +1657,13 @@ enum AccessibilityDriver {
   /// which matters more than it sounds. A map for the previous layout does not
   /// fail — it presses a DIFFERENT PHYSICAL KEY, which is the destructive
   /// failure this whole lookup exists to prevent.
-  static func watchLayout() {
+  @MainActor static func watchLayout() {
     dispatchPrecondition(condition: .onQueue(.main))
     refreshLayout()
     DistributedNotificationCenter.default.addObserver(
       forName: Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
       object: nil, queue: .main
-    ) { _ in refreshLayout() }
+    ) { _ in MainActor.assumeIsolated { refreshLayout() } }
   }
 
   /// The map, read from the cache. Touches nothing that asserts a queue.
@@ -1687,7 +1687,7 @@ enum AccessibilityDriver {
     // alternative to bounding it is parking a session thread on a main thread
     // that may be busy.
     if Thread.isMainThread {
-      refreshLayout()
+      MainActor.assumeIsolated { refreshLayout() }
     } else {
       let ready = DispatchSemaphore(value: 0)
       DispatchQueue.main.async {
@@ -1720,7 +1720,7 @@ enum AccessibilityDriver {
   }
 }
 
-extension String {
+nonisolated extension String {
   fileprivate func chunked(into size: Int) -> [String] {
     guard size > 0, count > size else { return isEmpty ? [] : [self] }
     var out: [String] = []

@@ -239,7 +239,7 @@ nonisolated func hostLog(_ surface: String, _ level: LogStore.Level, _ text: Str
 /// on the calling thread rather than inside the hop, so the pump can hold on to
 /// it without waiting for the main actor.
 @discardableResult
-func hostCall(_ surface: String, _ text: String, arguments: String?) -> UUID {
+nonisolated func hostCall(_ surface: String, _ text: String, arguments: String?) -> UUID {
   let id = UUID()
   let bytes = Array("[\(surface)] call: \(text)\n".utf8)
   var offset = 0
@@ -264,7 +264,7 @@ func hostCall(_ surface: String, _ text: String, arguments: String?) -> UUID {
 }
 
 /// Attach a reply from any thread.
-func hostCallResult(_ id: UUID, _ result: String?, failed: Bool) {
+nonisolated func hostCallResult(_ id: UUID, _ result: String?, failed: Bool) {
   guard result != nil || failed else { return }
   Task(priority: .userInitiated) { @MainActor in
     LogStore.shared.attachResult(id, result, failed: failed)

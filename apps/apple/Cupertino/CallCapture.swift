@@ -310,7 +310,7 @@ nonisolated enum CallCapture {
 ///
 /// Here rather than beside its callers so `make unit` can compile it: that bug
 /// is exactly the kind a test holds still, and it needs no app to reproduce.
-struct FrameSplitter {
+nonisolated struct FrameSplitter {
   /// The tail of a chunk that ended mid-line.
   private var pending = Data()
 

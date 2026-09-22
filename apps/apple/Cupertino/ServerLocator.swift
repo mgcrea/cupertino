@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerLocator {
+nonisolated enum ServerLocator {
   /// Production layout, per `docs/distribution.md`:
   ///
   ///     Cupertino.app/Contents/Resources/node

@@ -136,7 +136,7 @@ nonisolated enum BridgeProtocol {
 }
 
 /// Fill a `sockaddr_un` for `path`, or nil if it will not fit.
-func unixAddress(_ path: String) -> sockaddr_un? {
+nonisolated func unixAddress(_ path: String) -> sockaddr_un? {
   guard BridgeProtocol.isAddressable(path) else { return nil }
   var addr = sockaddr_un()
   addr.sun_family = sa_family_t(AF_UNIX)
@@ -151,7 +151,7 @@ func unixAddress(_ path: String) -> sockaddr_un? {
   return addr
 }
 
-extension sockaddr_un {
+nonisolated extension sockaddr_un {
   /// Call `body` with this address cast to `sockaddr`, as the socket API wants.
   func withSockaddr<R>(_ body: (UnsafePointer<sockaddr>, socklen_t) -> R) -> R {
     var copy = self

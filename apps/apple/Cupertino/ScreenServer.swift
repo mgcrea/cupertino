@@ -17,7 +17,7 @@ import Foundation
 /// Hand-rolled rather than built on the MCP SDK because there is no Swift SDK in
 /// this project and the surface needs six methods. The shape is pinned by
 /// `test/…` on the node side and by `make smoke` here.
-enum ScreenServer {
+nonisolated enum ScreenServer {
 
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion
@@ -344,7 +344,7 @@ enum ScreenServer {
   // ─── plumbing ──────────────────────────────────────────────────────────────
 
   /// Shared with every other in-process surface — see `InProcessRPC.blocking`.
-  private static func blocking<T>(_ body: @escaping () async throws -> T) throws -> T {
+  private static func blocking<T>(_ body: sending @escaping () async throws -> T) throws -> T {
     try InProcessRPC.blocking(body)
   }
 

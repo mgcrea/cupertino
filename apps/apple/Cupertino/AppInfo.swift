@@ -9,7 +9,7 @@ import ServiceManagement
 /// check, and docs/licensing.md sells "no network anywhere in app/" — a claim
 /// scripts/audit-network.sh gates in CI. `make install-release` validates the
 /// staple before installing, which is the right place for it.
-enum AppInfo {
+nonisolated enum AppInfo {
   static var version: String {
     let info = Bundle.main.infoDictionary
     let short = info?["CFBundleShortVersionString"] as? String ?? "?"

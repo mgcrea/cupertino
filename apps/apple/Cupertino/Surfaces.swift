@@ -14,7 +14,7 @@ import Foundation
 /// Edit the manifest, not the array — CI regenerates and fails on any drift. The
 /// list used to live in ten places by hand, and the fifth surface is what made
 /// that untenable.
-struct Surface: Identifiable, Hashable {
+nonisolated struct Surface: Identifiable, Hashable {
   /// The wire name. `cupertino-bridge --server=<id>` matches on this and
   /// nothing else.
   let id: String

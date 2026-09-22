@@ -40,7 +40,7 @@ import Foundation
 /// - The **value parser** is best effort and never throws. A value it cannot
 ///   type is omitted rather than guessed; `identity(of:)` returning nil is
 ///   already a case the pane knows how to render.
-enum ClientWiringTOML {
+nonisolated enum ClientWiringTOML {
   /// Where Codex keeps its servers. The TOML analogue of a client's `rootKey`.
   static let rootKey = "mcp_servers"
 
@@ -90,8 +90,13 @@ enum ClientWiringTOML {
   }
 
   /// For a config that does not exist yet.
-  static let empty = Document(
-    text: "", lines: [], newline: "\n", tables: [:], anchor: 0)
+  ///
+  /// Computed, not stored: `Document` carries parsed values as `Any`, so it cannot be
+  /// `Sendable`, and a stored static of it is shared state the checker cannot vouch for.
+  /// An empty one costs nothing to build.
+  static var empty: Document {
+    Document(text: "", lines: [], newline: "\n", tables: [:], anchor: 0)
+  }
 
   enum ScanError: LocalizedError {
     case notUTF8(URL)

@@ -22,7 +22,11 @@ import os
 /// It is also where a Node call that changes the screen lights the notice,
 /// because it is the one place the app sees every such call before the child
 /// acts on it. `VisibleTools` says which calls those are.
-final class RequestObserver {
+/// `@unchecked` because the checker cannot see the arrangement that makes it true: state
+/// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
+/// `FrameSplitter` is fed by exactly one pump — `requests` by `saw`, `responses` by
+/// `answered` — so neither is ever reached from two threads.
+nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
   private let session: UUID
 

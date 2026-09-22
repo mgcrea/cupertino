@@ -14,7 +14,7 @@ import Foundation
 /// pointing into a build directory breaks the moment that directory is cleaned,
 /// and the failure surfaces inside someone else's app as a server that will not
 /// start.
-enum InstallLocation {
+nonisolated enum InstallLocation {
   case applications(URL)
   /// Gatekeeper ran the app from a read-only disk image copy. Nothing granted
   /// here survives, because the path does not even outlive the session.

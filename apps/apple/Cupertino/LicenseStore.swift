@@ -20,7 +20,7 @@ import Synchronization
 /// every read means entering a key takes effect immediately with no
 /// invalidation to get wrong — the bug `WritesToggle` records at the top of
 /// `CupertinoApp.swift`, avoided by not having state to invalidate.
-enum LicenseStore {
+nonisolated enum LicenseStore {
   private static let defaultsKey = "license"
 
   /// The stored key as typed, or nil. Kept separate from `check()` so the entry

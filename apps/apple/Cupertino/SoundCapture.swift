@@ -80,7 +80,7 @@ final class SoundCapture: NSObject {
     }
   }
 
-  struct Status {
+  nonisolated struct Status {
     let recording: Bool
     let path: String?
     let seconds: Double

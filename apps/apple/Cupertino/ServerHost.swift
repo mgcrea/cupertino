@@ -989,8 +989,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// ownership is now explicit: whoever created a descriptor closes it, once.
   private func pump(
     from source: Int32, to sink: Int32, group: DispatchGroup,
-    observe: ((Data) -> Void)? = nil,
-    onFinish: @escaping () -> Void
+    observe: (@Sendable (Data) -> Void)? = nil,
+    onFinish: @escaping @Sendable () -> Void
   ) {
     group.enter()
     onDedicatedThread("cupertino.pump") {
@@ -1045,7 +1045,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
 }
 
 @discardableResult
-func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+nonisolated func writeAll(_ fd: Int32, _ data: Data) -> Bool {
   data.withUnsafeBytes { raw -> Bool in
     guard let base = raw.baseAddress else { return true }
     var offset = 0
@@ -1061,7 +1061,7 @@ func writeAll(_ fd: Int32, _ data: Data) -> Bool {
   }
 }
 
-func errnoText() -> String { String(cString: strerror(errno)) }
+nonisolated func errnoText() -> String { String(cString: strerror(errno)) }
 
 /// The pid on the other end of a unix domain socket, as the kernel sees it.
 ///
@@ -1076,7 +1076,7 @@ func errnoText() -> String { String(cString: strerror(errno)) }
 /// nil rather than a fatal error: a peer that has already exited has no pid to
 /// report, and that is a refusal like any other rather than something to crash
 /// the host over.
-func peerPID(_ fd: Int32) -> Int32? {
+nonisolated func peerPID(_ fd: Int32) -> Int32? {
   var pid: pid_t = 0
   var len = socklen_t(MemoryLayout<pid_t>.size)
   guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) == 0 else { return nil }
@@ -1108,7 +1108,7 @@ func peerPID(_ fd: Int32) -> Int32? {
 ///
 /// A pump is a long-lived blocking task. That is what a thread is for, and
 /// precisely what a bounded work queue is not.
-func onDedicatedThread(_ name: String, _ body: @escaping () -> Void) {
+nonisolated func onDedicatedThread(_ name: String, _ body: @escaping @Sendable () -> Void) {
   let thread = Thread(block: body)
   thread.name = name
   // The default is 512 KB and these frames are shallow — a 64 KB read buffer
@@ -1119,7 +1119,7 @@ func onDedicatedThread(_ name: String, _ body: @escaping () -> Void) {
 }
 
 /// Mark `fd` FD_CLOEXEC, so spawned servers do not inherit it.
-func closeOnExec(_ fd: Int32) {
+nonisolated func closeOnExec(_ fd: Int32) {
   let flags = fcntl(fd, F_GETFD)
   if flags >= 0 { _ = fcntl(fd, F_SETFD, flags | FD_CLOEXEC) }
 }
@@ -1130,7 +1130,7 @@ func closeOnExec(_ fd: Int32) {
 /// collision is invisible until someone writes one and gets "cannot be
 /// constructed because it has no accessible initializers" pointing at the
 /// wrong file.
-enum SurfaceSettings {
+nonisolated enum SurfaceSettings {
   static func allowWrites(_ surface: Surface) -> Bool {
     UserDefaults.standard.bool(forKey: "allowWrites.\(surface.id)")
   }

@@ -21,7 +21,7 @@ import SwiftUI
 /// The list is capped — see `SHOWN` in `scripts/generate-changelog.mjs` —
 /// because this is the pane you open after updating, not an archive. The full
 /// history is a link away, and `CHANGELOG.md` remains the source of truth.
-enum Changelog {
+nonisolated enum Changelog {
   /// One released version.
   struct Release: Identifiable, Hashable {
     /// `"1.17.0"`. Compared against the marketing version and the seen key.

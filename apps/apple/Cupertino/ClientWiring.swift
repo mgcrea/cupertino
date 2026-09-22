@@ -56,7 +56,7 @@ enum ClientWiring {
   /// `context_servers` entry whose shape has moved between versions and Goose a
   /// YAML `extensions:` block; neither is JSON, neither is TOML, and the honest
   /// way to add them is a third case here rather than a snippet maintained blind.
-  enum Wiring: Hashable {
+  nonisolated enum Wiring: Hashable {
     /// A strict-JSON file we merge into. `rootKey` is the object servers live
     /// under: `mcpServers` for five of the seven, `servers` for VS Code. A
     /// parameter rather than an assumption, because the previous version of this
@@ -87,7 +87,7 @@ enum ClientWiring {
     }
   }
 
-  struct Client: Identifiable, Hashable {
+  nonisolated struct Client: Identifiable, Hashable {
     let id: String
     let displayName: String
     /// An app glyph for GUI clients, `terminal` for the CLIs.
@@ -125,7 +125,7 @@ enum ClientWiring {
     var revealTarget: URL? { wiring.path }
   }
 
-  private static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
+  private nonisolated static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
   /// Two clients keep their config here rather than in a dotfile.
   private static var support: URL { home.appendingPathComponent("Library/Application Support") }
 
@@ -133,7 +133,7 @@ enum ClientWiring {
   /// four places that touch it: the client row writes its top-level
   /// `mcpServers`, the folder feature writes a project block inside the same
   /// file, and each reads it back to draw a status.
-  static var claudeCodeConfig: URL { home.appendingPathComponent(".claude.json") }
+  nonisolated static var claudeCodeConfig: URL { home.appendingPathComponent(".claude.json") }
 
   /// Both halves are deliberate, and the split is not about how popular a
   /// client is. It is about whether its config is a file we can rewrite
@@ -276,7 +276,7 @@ enum ClientWiring {
   /// copy of Cupertino is doing the configuring is the copy the client should
   /// talk to. It also means this keeps working when the app moves to
   /// /Applications.
-  static var bridgePath: String {
+  nonisolated static var bridgePath: String {
     // Seeded for a capture, and this one is not cosmetic: under screenshot mode
     // the app runs out of a build directory, so the real answer is an absolute
     // path through whoever built the image. It was invisible while the only
@@ -299,7 +299,7 @@ enum ClientWiring {
   /// `ClientWiringMerge.state` compares the `command` and explicitly never the
   /// `args`, so a config written before this still reports as matching. It
   /// simply carries no client id until the next Configure.
-  static func entry(for surface: Surface, client: String) -> [String: Any] {
+  nonisolated static func entry(for surface: Surface, client: String) -> [String: Any] {
     // No `env` block. Writes are the app's toggle now, not a client-side
     // variable that every client would carry its own stale copy of.
     ["command": bridgePath, "args": ["--server=\(surface.id)", "--client=\(client)"]]
@@ -318,7 +318,7 @@ enum ClientWiring {
   /// after the app would misdescribe them. Someone wiring the package up by
   /// hand still calls it `apple-mail`, and that is right — it is a different
   /// deployment, running under their own grant rather than Cupertino's.
-  static func serverKey(for surface: Surface) -> String { "cupertino-\(surface.id)" }
+  nonisolated static func serverKey(for surface: Surface) -> String { "cupertino-\(surface.id)" }
 
   /// Both project scopes below write into Claude Code's own files, so the
   /// client they are wiring is not in doubt. Named rather than spelled twice.
@@ -565,7 +565,7 @@ enum ClientWiring {
   /// per-folder blocks are four questions about one file, and they used to be
   /// four separate reads — each opening a 130 KB JSON file on every redraw, and
   /// each free to disagree with the others about what was in it.
-  struct Config {
+  nonisolated struct Config {
     /// The servers under this client's own root key.
     let servers: [String: Any]
     /// The whole file, for the one card that needs a key beside `mcpServers`:
@@ -634,7 +634,7 @@ enum ClientWiring {
   /// config is not an MCP scope, and drawing a card from it would be a
   /// straightforward lie about what the file says. Matched on the PATH rather
   /// than on the client id, because the id is a label and the path is the fact.
-  static func hasLocalScope(_ client: Client) -> Bool {
+  nonisolated static func hasLocalScope(_ client: Client) -> Bool {
     client.wiring.path.standardizedFileURL == claudeCodeConfig.standardizedFileURL
   }
 

@@ -23,7 +23,7 @@ import Foundation
 /// control at all, because HDMI, DisplayPort and most inputs genuinely have
 /// none. Reporting that per device is the honest answer; failing the call is
 /// not.
-enum SoundDevices {
+nonisolated enum SoundDevices {
 
   // ─── model ────────────────────────────────────────────────────────────────
 

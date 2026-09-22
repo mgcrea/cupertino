@@ -31,7 +31,7 @@ import os
 /// launches Cupertino with `--background` while somebody is mid-sentence at an
 /// assistant, and a trial that armed itself there would burn silently in a
 /// window nobody was watching.
-enum Trial {
+nonisolated enum Trial {
   static let duration: TimeInterval = 30 * 60
 
   /// The lock is not ceremony. `ServerHost` reads this from its connection
@@ -110,7 +110,7 @@ enum Trial {
 /// needs the same three-way answer. Joining a key and a trial window at each of
 /// them separately is how the banner ends up saying "unlicensed" while the
 /// servers are happily running.
-enum Entitlement {
+nonisolated enum Entitlement {
   case licensed(License)
   case trial
   case refused(String)

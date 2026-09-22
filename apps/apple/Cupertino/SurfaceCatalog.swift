@@ -66,7 +66,7 @@ enum SurfaceCatalog {
   /// A server given longer than this is not slow, it is stuck. The handshake and
   /// three list calls are pure in-process work — no store is opened, no Apple
   /// Event is sent — so a healthy server answers in well under a second.
-  private static let deadline: TimeInterval = 8
+  nonisolated private static let deadline: TimeInterval = 8
 
   /// Results already paid for.
   ///
@@ -88,7 +88,7 @@ enum SurfaceCatalog {
   /// `find_codes` does not exist after the user had just switched it on, which
   /// is precisely the "demonstrated, not claimed" property this type exists to
   /// provide. Sorted so two identical sets cannot produce two keys.
-  private static func key(_ surface: Surface, _ allowWrites: Bool, _ gates: [String]) -> String {
+  nonisolated private static func key(_ surface: Surface, _ allowWrites: Bool, _ gates: [String]) -> String {
     "\(surface.id)/\(allowWrites)/\(gates.sorted().joined(separator: "+"))"
   }
 
@@ -101,7 +101,7 @@ enum SurfaceCatalog {
   static func read(_ surface: Surface, allowWrites: Bool, gates: [String] = []) async throws
     -> Capabilities
   {
-    if let hit = await cached(surface, allowWrites: allowWrites, gates: gates) { return hit }
+    if let hit = cached(surface, allowWrites: allowWrites, gates: gates) { return hit }
 
     // A capability is served in-process, so there is nothing to locate and
     // nothing to spawn. Asking `ServerLocator` produced "dev.json is unusable"
@@ -194,7 +194,7 @@ enum SurfaceCatalog {
 
   // ─── the probe ─────────────────────────────────────────────────────────────
 
-  private static func probe(
+  nonisolated private static func probe(
     _ surface: Surface, _ binaries: ServerBinaries, allowWrites: Bool, gates: [String]
   ) throws -> Capabilities {
     let process = Process()
@@ -319,7 +319,7 @@ enum SurfaceCatalog {
   /// Descriptions in this repo are paragraphs — deliberately, they are where the
   /// constraints live — and a pane is not where you read one. The first sentence
   /// identifies; the rest is for the model.
-  private static func firstSentence(_ text: String?) -> String? {
+  nonisolated private static func firstSentence(_ text: String?) -> String? {
     guard let text, !text.isEmpty else { return nil }
     let flattened = text.replacingOccurrences(of: "\n", with: " ")
     guard let end = flattened.firstIndex(of: ".") else { return flattened }
@@ -332,7 +332,7 @@ enum SurfaceCatalog {
 /// The same framing problem `RequestObserver` documents: reads come back in
 /// chunks with no regard for line boundaries, so a response that straddles two
 /// of them is lost by anything that splits each chunk on its own.
-private final class LineReader {
+nonisolated private final class LineReader {
   private let handle: FileHandle
   /// Asked each time a poll comes back empty. True means stop waiting for EOF.
   private let giveUp: () -> Bool

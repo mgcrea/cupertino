@@ -12,7 +12,7 @@ import SafariServices
 /// is already a grant for Messages, Safari history and SSH keys." So this is
 /// deliberately one status for the whole app, not one per surface — reporting
 /// it per surface would imply a containment that does not exist.
-enum DiskAccessStatus: Equatable {
+nonisolated enum DiskAccessStatus: Equatable {
   case granted
   case denied
   /// The store is not on this machine at all, so readability says nothing.
@@ -25,7 +25,7 @@ enum DiskAccessStatus: Equatable {
 /// `packages/core/src/osascript.ts` translates, which is not a coincidence —
 /// both are reading the same TCC decision, one through `osascript`'s exit and
 /// one directly.
-enum AutomationStatus: Equatable {
+nonisolated enum AutomationStatus: Equatable {
   case granted
   case denied  // -1743 errAEEventNotPermitted
   case notDetermined  // -1744 errAEEventWouldRequireUserConsent
@@ -44,7 +44,7 @@ enum AutomationStatus: Equatable {
 ///
 /// Two rather than three for the same reason `AccessibilityStatus` has two: TCC
 /// cannot distinguish "denied" from "never asked" for this service either.
-enum ScreenRecordingStatus: Hashable {
+nonisolated enum ScreenRecordingStatus: Hashable {
   case granted
   case denied
 }
@@ -58,7 +58,7 @@ enum ScreenRecordingStatus: Hashable {
 /// them, and the difference is worth surfacing: `notDetermined` means the app
 /// can still raise the prompt itself, while `denied` means only System Settings
 /// will do. Collapsing them would send someone to the wrong place.
-enum MicrophoneStatus: Hashable {
+nonisolated enum MicrophoneStatus: Hashable {
   case granted
   case denied
   /// Nobody has been asked yet. The prompt is still available.
@@ -77,7 +77,7 @@ enum MicrophoneStatus: Hashable {
   }
 }
 
-enum AccessibilityStatus: Equatable {
+nonisolated enum AccessibilityStatus: Equatable {
   case granted
   case denied
 }
@@ -91,7 +91,7 @@ enum AccessibilityStatus: Equatable {
 /// refusal from a question never asked. Full Disk Access has a third case of its
 /// own — `storeMissing`, a fact about the machine rather than about permission —
 /// which `storeGrant(for:diskAccess:)` folds in deliberately.
-enum StoreGrant: Equatable {
+nonisolated enum StoreGrant: Equatable {
   case granted
   case missing
 }
@@ -103,7 +103,7 @@ enum StoreGrant: Equatable {
 /// Makefile), so on a locally built copy this is the correct and expected
 /// answer. Reporting it as "disabled" would send someone to Safari to enable
 /// something that is not there.
-enum SafariExtensionStatus: Equatable {
+nonisolated enum SafariExtensionStatus: Equatable {
   case enabled
   case disabled
   /// Safari does not know this extension. A Debug build, or an app that has
@@ -114,7 +114,9 @@ enum SafariExtensionStatus: Equatable {
   case unknown
 }
 
-enum Permissions {
+/// Stateless system probes, several of which `refresh()` deliberately runs from a
+/// detached task: store globs and Apple Events checks that block.
+nonisolated enum Permissions {
   /// The app whose UI the composer is read out of.
   ///
   /// Automation to System Events is a SEPARATE grant from Automation to Mail,
@@ -637,7 +639,8 @@ enum Permissions {
   ///
   /// Returns immediately; the prompt is not modal to us.
   static func requestAccessibility() {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+    // `kAXTrustedCheckOptionPrompt` imports as a mutable global; its value is fixed.
+    let options = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
     _ = AXIsProcessTrustedWithOptions(options)
   }
 

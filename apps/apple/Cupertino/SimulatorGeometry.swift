@@ -19,7 +19,7 @@ import Foundation
 /// space `CGEvent` posts into. iOS points are top-left of the device screen.
 /// Both directions are one affine step, and a caller that has to do it by hand
 /// will get the origin wrong once and click the bezel.
-enum SimulatorGeometry {
+nonisolated enum SimulatorGeometry {
 
   /// Where the device screen is on the Mac, and how big a point is there.
   struct DeviceFrame: Equatable {
@@ -97,7 +97,7 @@ enum SimulatorGeometry {
 /// `@mgcrea/mcp-ios-simulator` reads the same files (its `client/display.ts`)
 /// through `plutil`; this reads them with `PropertyListSerialization`, which is
 /// the only difference. Neither file is behind a TCC grant.
-enum CoreSimulatorCatalog {
+nonisolated enum CoreSimulatorCatalog {
 
   struct Device: Equatable {
     let udid: String

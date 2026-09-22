@@ -239,12 +239,17 @@ final class ChatConversation {
     self.isLoading = true
 
     let id = surface.id
+    // Built here, on the main actor, rather than inside the thread below. Written there, its
+    // `[weak self]` re-captures the thread closure's own weak `self` two closures deep, and
+    // the obvious repair — `[self]` — compiles and turns it strong: the client keeps this
+    // callback for its whole life and this object keeps the client, so that is a cycle.
+    let onClosed: @Sendable () -> Void = { [weak self] in
+      Task { @MainActor [weak self] in self?.lost(id) }
+    }
     onDedicatedThread("cupertino.chat.open") { [weak self] in
       let outcome: Result<(MCPChatClient, [ChatTool]), Error>
       do {
-        let client = try MCPChatClient.open(surface: surface) {
-          Task { @MainActor [weak self] in self?.lost(id) }
-        }
+        let client = try MCPChatClient.open(surface: surface, onClosed: onClosed)
         outcome = .success((client, try client.listTools()))
       } catch {
         outcome = .failure(error)

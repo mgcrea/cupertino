@@ -35,7 +35,7 @@ import os
 /// `read(2)` waiting for the reply deadlocks the app outright, with no watchdog
 /// and nothing in the log. `ChatConversation` hops through `onDedicatedThread`
 /// for exactly this, and the hop is load-bearing rather than tidy.
-final class MCPChatClient: @unchecked Sendable {
+nonisolated final class MCPChatClient: @unchecked Sendable {
   enum Failure: LocalizedError {
     case notHosting(String)
     case unaddressable(String)
@@ -89,7 +89,8 @@ final class MCPChatClient: @unchecked Sendable {
     var closed = false
   }
 
-  private final class Waiter {
+  /// Written by the read thread before it signals `ready`, read only after the wait.
+  private final class Waiter: @unchecked Sendable {
     let ready = DispatchSemaphore(value: 0)
     var result: Result<[String: Any], Failure>?
   }
@@ -235,7 +236,8 @@ final class MCPChatClient: @unchecked Sendable {
       ])
     else { return }
     line.append(0x0A)
-    writing.withLock { _ = writeAll(fd, line) }
+    let frame = line
+    writing.withLock { _ = writeAll(fd, frame) }
   }
 
   /// One request, blocking until its own reply arrives.
@@ -258,7 +260,8 @@ final class MCPChatClient: @unchecked Sendable {
       "jsonrpc": "2.0", "id": id, "method": method, "params": params,
     ])
     line.append(0x0A)
-    guard writing.withLock({ writeAll(fd, line) }) else {
+    let frame = line
+    guard writing.withLock({ writeAll(fd, frame) }) else {
       state.withLock { $0.waiting[id] = nil }
       throw Failure.disconnected
     }
@@ -338,7 +341,8 @@ final class MCPChatClient: @unchecked Sendable {
 /// both document — reads come back in chunks with no regard for line
 /// boundaries — but over a descriptor rather than a `FileHandle`, because this
 /// one is a socket and it has to survive `shutdown` from another thread.
-private final class SocketLineReader {
+/// Owned by the one read thread `startReading` hands it to, from then until EOF.
+nonisolated private final class SocketLineReader: @unchecked Sendable {
   private let fd: Int32
   private var pending = Data()
   private var done = false

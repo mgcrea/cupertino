@@ -38,7 +38,7 @@ import Foundation
 /// capabilities card, which renders a name and one sentence; fattening its
 /// permanently-cached list with ~1.8 KB of schema per tool to serve a different
 /// feature would make one list answer to two masters.
-struct ChatTool: Identifiable, Sendable, Hashable {
+nonisolated struct ChatTool: Identifiable, Sendable, Hashable {
   let name: String
   let summary: String
   /// The server's own JSON Schema for this tool's arguments, as it arrived.
@@ -335,7 +335,7 @@ struct ChatCall: Identifiable, Sendable {
 /// that overflows a 4096-token window — which is survivable, because the
 /// transcript trim catches it, but a trim that fires every other turn means the
 /// model has forgotten the question.
-func renderMCPResult(_ result: [String: Any], limit: Int = 1200) -> String {
+nonisolated func renderMCPResult(_ result: [String: Any], limit: Int = 1200) -> String {
   var text = ""
   if let content = result["content"] as? [[String: Any]] {
     text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")

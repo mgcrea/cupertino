@@ -27,7 +27,7 @@ import Foundation
 /// a grant, and `@mgcrea/mcp-ios-simulator` already does them through
 /// `simctl`; a copy of that behind Accessibility would be a worse copy. What
 /// this adds is the one lane that server cannot have.
-enum SimulatorServer {
+nonisolated enum SimulatorServer {
 
   static let protocolVersion = InProcessRPC.protocolVersion
 
