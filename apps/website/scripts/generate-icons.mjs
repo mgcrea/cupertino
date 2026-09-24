@@ -130,6 +130,12 @@ const card = composeCard(icon, JSON.parse(await source("colors.json")), {
 });
 await writeFile(
   join(pub, "og-image.png"),
-  await sharp(Buffer.from(card), { density: 200 }).png({ palette: true }).toBuffer(),
+  // Rasterised at density 200 for clean edges, then resized back down: without
+  // the resize the PNG comes out 3333×1750, while Layout.astro declares
+  // og:image:width and height as 1200×630 from the same SOCIAL_CARD.
+  await sharp(Buffer.from(card), { density: 200 })
+    .resize(SOCIAL_CARD.width, SOCIAL_CARD.height)
+    .png({ palette: true })
+    .toBuffer(),
 );
 console.log(`  og-image.png  ${SOCIAL_CARD.width}×${SOCIAL_CARD.height}`);

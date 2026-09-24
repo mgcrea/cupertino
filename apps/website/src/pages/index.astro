@@ -94,6 +94,7 @@ const schema = {
   license: DOCS.appLicense,
   description: `MCP servers for Apple ${surfaceList} — ${total} tools across ${surfaceCount} surfaces — and the signed menu-bar app that holds their one Full Disk Access grant.`,
   author: { "@type": "Person", name: "Olivier Louvignes" },
+  publisher: { "@id": `${SITE_URL}/#organization` },
   ...(SHIPPED
     ? {
         // Alongside downloadUrl on purpose: a softwareVersion is a claim about

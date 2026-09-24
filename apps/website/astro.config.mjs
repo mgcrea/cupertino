@@ -6,6 +6,9 @@ import { defineConfig } from "astro/config";
 export default defineConfig({
   site: "https://cupertino.mgcrea.io",
   integrations: [sitemap()],
+  // Astro 7 defaults to 'jsx', which drops whitespace between inline elements:
+  // "contact us at <a>support@…</a>" renders welded together.
+  compressHTML: true,
   security: {
     csp: {
       directives: [

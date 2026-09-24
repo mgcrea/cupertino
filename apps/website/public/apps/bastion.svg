@@ -10,25 +10,28 @@
   <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#appshot-plate)"/>
   <g clip-path="url(#c)" transform="translate(0 0) scale(1)">
 
-  <title>Bastion — icon mark (a fort on a ridge, transparent sky)</title>
+  <title>Bastion — icon mark (a fort behind a ridge, transparent sky)</title>
 
   <!-- The fort has no curtain wall around it any more. The wall moved to the
        menu bar, where it is the running-server state (`bastion-menubar-active.svg`)
        rather than part of the mark, so the Dock and an idle menu bar draw one
        silhouette and the wall means something when it appears.
 
-       The fort grew into the space the wall left. Dropping the stroke alone
-       would have left it spanning 34% of the canvas — an island in a large
-       field — so it is scaled to 580 wide, roughly the wall's old footprint,
-       and seated at y850 rather than the wall's old 776.8. That last number is
-       the composition: at 850 the front hill crosses the fort's feet and the
-       back hill runs behind it, so it stands *on* the ridge. Raise it and it
-       floats above the hills instead. -->
+       The fort sits behind the back hill. Its base is not a line but the ridge
+       itself — the exact span of `Q512 609.1` between the feet, re-expressed as
+       `Q512 721.5` — so fort and hill share one edge and never overlap. That is
+       what keeps the fort's 90% ink from laying a pale band across the hill,
+       which the previous seat at y850, in front of both hills, did.
+
+       The walls keep their old slopes; the fort is 24/29 of its old size,
+       466.8 wide at the feet, with its apex at y426.1. Move a foot and
+       re-solve the ridge under it rather than nudging the base by eye: a base
+       that leaves the ridge shows either a strip of sky or a lighter overlap. -->
 
   <path d="M-39.7 882.8 Q512 609.1 1063.7 882.8 V1063.7 H-39.7 Z" fill="#B0532F" opacity=".9"></path>
 
   <path d="M-39.7 935.7 Q282.5 829.8 582.6 918.1 T1121.1 891.6 V1063.7 H-39.7 Z" fill="#7A2F1C"></path>
 
-  <path d="M512 386.1 L758.5 589.1 L802 850 L222 850 L265.5 589.1 Z" fill="#FDEFDC" fill-opacity=".9"></path>
+  <path d="M512 426.1 L716 594.1 L745.4 770.4 Q512 721.5 278.6 770.4 L308 594.1 Z" fill="#FDEFDC" fill-opacity=".9"></path>
   </g>
 </svg>
