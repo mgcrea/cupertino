@@ -1,12 +1,14 @@
 # Cupertino
 
 > MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar,
-> Contacts, Messages and Safari — and the signed menu-bar app that holds their one Full Disk Access
-> grant instead of handing it to every editor.
+> Contacts, Messages, Safari and Maps — plus the Mac's screen, sound, desktop and Simulator — and
+> the signed menu-bar app that holds their permission grants once instead of handing them to every
+> editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
-1.2.0 as of August 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
-packages are MIT, and apart from `-core` they are not on npm yet — the app carries them.
+1.23.0 as of September 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+packages are MIT and on npm; the app carries Screen, Sound, Desktop and Simulator instead, which
+have no npm package because they need permissions and frameworks only the signed app can hold.
 
 ## The argument
 
@@ -22,33 +24,68 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
 
 ## Surfaces
 
-- Mail — 18 tools (10 always registered, 8 write-gated). `@mgcrea/mcp-apple-mail`
-- Notes — 12 tools (7 always registered, 5 write-gated). `@mgcrea/mcp-apple-notes`
+Twelve now. The first seven are Apple apps; the last five are the Mac itself, and four of those
+ship inside the app because they need a permission or a framework no published npm package can
+hold.
+
+- Mail — 21 tools (11 always registered, 10 write-gated). `@mgcrea/mcp-apple-mail`
+- Notes — 13 tools (7 always registered, 6 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
-- Calendar — 9 tools (6 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`
+- Calendar — 10 tools (7 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`
 - Contacts — 7 tools (5 always registered, 2 write-gated). `@mgcrea/mcp-apple-contacts`. Turns a
   phone number or an email address into a name, which is what makes the Messages server readable.
   Its reads need no Automation grant — only the two write tools reach Apple Events. There is
   no delete tool because Contacts' scripting dictionary has no delete command.
-- Messages — 6 tools (5 always registered, 1 write-gated). `@mgcrea/mcp-apple-messages`. iMessage,
-  SMS and RCS out of chat.db, with names resolved through Contacts. The only surface with no read
-  fallback at all: every read through Messages' own scripting interface fails, so Full Disk Access
-  is mandatory rather than an upgrade. It is also the only one where Apple Events is a write lane
-  and nothing else — `send` is the single mutating command the dictionary offers, and with writes
-  off no Apple Event is ever sent. Roughly 3% of messages across all history keep their text only
-  in an archived blob that SQL cannot reach, and since Apple stopped writing the plain column in
-  early 2026 that is ~100% of recent ones, so the server decodes them.
-- Safari — 7 tools, all always registered. `@mgcrea/mcp-apple-safari`. History, live tabs, bookmarks
-  and the Reading List, read-only. The one surface whose two lanes see almost disjoint things rather
-  than the same thing at different speeds: Apple Events sees what is open right now, the file lane
-  sees everything except that. `list_tabs` is the only tool in the bundle that works with no Full
-  Disk Access at all — it needs an Automation grant instead. Page content comes from a bundled
-  Safari extension, enabled in Safari and allowed per website, and `apple_safari_read_page` returns
-  it as text or HTML — a snapshot from when the page loaded, always carrying its age. There is no
-  write tool and no `do JavaScript` tool: that verb needs a developer-menu toggle that is not a TCC
-  grant, whose state cannot be read, and which is global rather than per-site. Safari exposes no
-  AXWebArea for page content either, so the extension is the only route.
-- Maps — 10 tools, 2 behind the write gate. Favourites, Guides, recents and places filed in no Guide, with coordinates; saves and removes favourites. `@mgcrea/mcp-apple-maps`
+- Messages — 9 tools (6 always registered, 2 write-gated, 1 behind its own flag for reading 2FA
+  codes). `@mgcrea/mcp-apple-messages`. iMessage, SMS and RCS out of chat.db, with names resolved
+  through Contacts. The only surface with no read fallback at all: every read through Messages' own
+  scripting interface fails, so Full Disk Access is mandatory rather than an upgrade. `send` and
+  `save_attachment` are the two mutating tools; there is no edit, delete, mark-as-read or reaction
+  verb to expose. Roughly 3% of messages across all history keep their text only in an archived
+  blob that SQL cannot reach, and since Apple stopped writing the plain column in early 2026 that is
+  ~100% of recent ones, so the server decodes them.
+- Maps — 13 tools, 5 behind the write gate. Favourites, Guides, recents and places filed in no
+  Guide, with coordinates. The write tools save and remove favourites through a store write, and —
+  when Cupertino is hosting the server — save places and file them into Guides through the app's own
+  interface. `@mgcrea/mcp-apple-maps`
+- Safari — 14 tools (8 always registered, 5 write-gated, 1 behind its own flag for reading 2FA
+  codes). `@mgcrea/mcp-apple-safari`. History, live tabs, bookmarks and the Reading List, plus a
+  bundled Safari extension you enable per website that reads what a page actually says and lets the
+  write-gated tools click, fill and scroll. The write tools also open a URL and save one to the
+  Reading List. There is still no `do JavaScript` tool: that verb needs a developer-menu toggle that
+  is not a TCC grant and whose state cannot be read. Live tabs and page contents are the only things
+  in the whole bundle that work with no Full Disk Access at all — tabs need an Automation grant, and
+  page contents need the extension.
+
+The app itself hosts four more surfaces, none of them a separate npm install:
+
+- Screen — 3 tools (2 always registered, 1 behind its own flag). A picture of a window Cupertino is
+  already brokering — Mail, Safari, Calendar — written to disk as a PNG. Never an arbitrary app,
+  window, display or region.
+- Sound — 10 tools (3 need no permission at all, 4 always registered, 3 behind their own flag for
+  microphone recording). Devices, volume and mute work with no grant; recording needs the
+  Microphone permission and shows macOS's orange indicator, naming Cupertino, the whole time.
+- Desktop — 20 tools (8 always registered, 12 write-gated). Drives any app through the Accessibility
+  API — reads a window as named, addressable controls, and behind the write gate presses, types and
+  runs a whole session (`apple_desktop_run`) before releasing control back to whoever was using the
+  Mac. Scoped to the apps Cupertino brokers unless you widen it.
+- Simulator — 11 tools (4 always registered, 7 write-gated). The same idea for an iOS Simulator
+  window: reads an app's own controls in iOS points and, behind the write gate, presses, taps,
+  swipes and types, with no WebDriverAgent runner to keep alive.
+
+## The app
+
+- Wires itself into seven clients automatically — Claude Code, Claude Desktop, Cursor, LM Studio,
+  Windsurf, Visual Studio Code, and ChatGPT & Codex — by merging its entries into each client's own
+  config and keeping a backup.
+- Load tools on demand swaps the full tool list for a small, searchable index, for the clients whose
+  context a hundred-plus tool schemas would otherwise crowd out.
+- A Chat pane, so the surfaces can be tried without wiring an editor first. It answers through
+  Apple's on-device model, which keeps `scripts/audit-network.sh` true: the pane adds no network
+  reach, no API key and nothing to send.
+- An Activity log you can keep, search and export, with a signature, plus per-surface on/off
+  switches and a What's New view after updating.
+- Every server also publishes to the MCP Registry.
 
 ## Price
 
@@ -57,8 +94,8 @@ packages are MIT, and apart from `-core` they are not on npm yet — the app car
   dollar figure, which is quoted tax-exclusive.
 - There is no price ladder and no announced rise. There was one — three rungs tied to surfaces
   shipping — and every rung came due and was held: Calendar, Contacts, Messages and Safari all landed
-  without moving the price. All seven surfaces now cost $14.99. If a rise ever happens it is
-  announced beforehand and never applied to a licence already sold.
+  without moving the price, and so did the five surfaces after them. All twelve now cost $14.99. If
+  a rise ever happens it is announced beforehand and never applied to a licence already sold.
 - A 30-minute trial, started by pressing a button and never armed on its own. Every surface at full
   function, with the write toggles behaving exactly as they will after paying. It is held in memory
   and never written to disk, so quitting and reopening starts another one; nothing prevents that and
