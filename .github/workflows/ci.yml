@@ -22,17 +22,13 @@ permissions:
   contents: read
 
 jobs:
+  # The fast gate, on ubuntu, and the only verify job the deploys need. Lint,
+  # format, the site build and every manifest check are platform-independent, so
+  # they run here once; `test-macos` below re-runs the build and the suite on
+  # darwin, and carries the checks that need Xcode.
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # ubuntu is the fast gate. macos matters because this package is
-        # darwin-only in practice: the osascript layer, the .emlx paths and
-        # node:sqlite's URI handling only really exist there, and a suite that
-        # never runs on macOS would let a darwin-only break reach a release.
-        os: [ubuntu-latest, macos-latest]
+    name: Test on ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v5
@@ -44,11 +40,14 @@ jobs:
           # format rather than about the checkout.
           lfs: true
       - name: Setup pnpm 🔧
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      # `24`, not `lts/*`: the app embeds a Node runtime, and `lts/*` moves to the
+      # next major every October, which would put CI on a runtime no shipped build
+      # has run.
       - name: Setup node 🔧
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           check-latest: true
           cache: "pnpm"
       - name: Install 🪄
@@ -112,12 +111,63 @@ jobs:
       # either fail or, worse, pass for the wrong reason.
       - name: Test 🧪
         run: pnpm run test
-      # swift-format ships inside Xcode, so it exists on the macos leg of this
-      # matrix and nowhere else -- unguarded, this step fails on ubuntu with
-      # "xcrun: command not found", which reads like a broken runner rather than
-      # a misplaced check.
+
+  # The darwin half of what used to be one `test` matrix over [ubuntu-latest,
+  # macos-latest]. It matters because this package is darwin-only in practice:
+  # the osascript layer, the .emlx paths and node:sqlite's URI handling only
+  # really exist here, and a suite that never runs on macOS would let a
+  # darwin-only break reach a release. So the releases (publish-npm, release-app)
+  # still need it.
+  #
+  # The deploys do not. A matrix is one job to `needs:`, so as a matrix leg this
+  # held deploy-website and deploy-api behind the scarcest queue, and behind every
+  # Swift check here, none of which the site or the Worker ships. As its own job,
+  # the deploys can name the ubuntu `test` alone. The name is the old leg's, so a
+  # required status check keyed on it keeps matching.
+  test-macos:
+    name: Test on macos-latest
+    runs-on: macos-latest
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+        with:
+          # The website imports apps/website/src/assets/shots/*.png through
+          # astro:assets, and those are LFS-tracked. A checkout without this
+          # gets 131-byte pointer files that are still named .png, so the
+          # `Build` step below fails inside sharp with an error about the image
+          # format rather than about the checkout.
+          lfs: true
+      - name: Setup pnpm 🔧
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup node 🔧
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+          cache: "pnpm"
+      - name: Install 🪄
+        run: pnpm install --frozen-lockfile
+      # Build BEFORE typecheck and test, not after. packages/core resolves to
+      # `./dist/index.d.ts`, and dist is gitignored — so on a clean checkout
+      # every package importing @mgcrea/mcp-apple-core fails with TS2307 until
+      # core has been built. This passes locally either way, because a developer
+      # already has a dist/ lying around from the last build; only a cold clone
+      # shows it. `pnpm -r build` orders the workspace topologically, so core
+      # comes first without naming it here.
+      - name: Build 📦
+        run: pnpm run build
+      # The suite is entirely offline: osascript is faked, the Envelope Index is
+      # a fixture built with node:sqlite, and .emlx files are written to a temp
+      # dir. APPLE_MAIL_INTEGRATION is deliberately never set here — a runner
+      # has no configured Mail and no TCC grants, so an integration test would
+      # either fail or, worse, pass for the wrong reason.
+      - name: Test 🧪
+        run: pnpm run test
+      # swift-format ships inside Xcode, so it exists on this runner and nowhere
+      # else. It used to be a guarded step in a matrix shared with ubuntu, where
+      # unguarded it failed with "xcrun: command not found", which reads like a
+      # broken runner rather than a misplaced check.
       - name: Format (swift) 🔍
-        if: runner.os == 'macOS'
         run: make format-swift-check
       # `native/launcher.c` is NOT shipped — docs/distribution.md records that the
       # app inherits its grants two levels deep, so there is nothing left to
@@ -125,7 +175,6 @@ jobs:
       # responsible-process problem, and it is compiled here so that statement
       # is a working program rather than a file nobody can build any more.
       - name: Launcher compiles 🔨
-        if: runner.os == 'macOS'
         run: |
           clang -O2 -Wall -Wextra -Werror \
             -DNODE_PATH='"/usr/bin/false"' \
@@ -138,7 +187,6 @@ jobs:
       # the Xcode project has no test target and adding one costs more than
       # the code under test.
       - name: Wiring merge 🔧
-        if: runner.os == 'macOS'
         run: make wiring-check
       # Beside the wiring check and for the same reasons: standalone swiftc, no
       # app, no network. `unit` covers what a recorded call is allowed to carry
@@ -149,21 +197,18 @@ jobs:
       # Both are new since this file last listed its checks, and a check CI does
       # not run is a check that rots.
       - name: Unit checks 🔍
-        if: runner.os == 'macOS'
         run: make unit
       # The screen surface's equivalent of the MCP handshake below, which cannot
       # cover it: that step runs `node packages/<id>/dist/cli.js`, and this
       # surface has no package. Needs no app, no socket, no licence and no TCC
       # grant, so it is a build gate rather than a thing a developer remembers.
       - name: Screen server 🔍
-        if: runner.os == 'macOS'
         run: make screen-check
       # Same reasoning for the second in-process surface. Its gate is CI-safe by
       # construction: it drives SoundServer.handle directly and asserts the gated
       # half stays invisible on a machine with no microphone permission, which is
       # exactly what a runner is.
       - name: Sound server 🔍
-        if: runner.os == 'macOS'
         run: make sound-check
       # The third in-process surface, and the one with the most to be careful
       # about, because it can click. It is CI-safe by construction and the check
@@ -174,7 +219,6 @@ jobs:
       # exactly what a runner has — and it is the only gate on the refusals that
       # keep an unbrokered application out of reach.
       - name: Desktop server 🔍
-        if: runner.os == 'macOS'
         run: make desktop-check
       # Same shape as the Desktop check, one step stricter: a runner has Xcode,
       # so CoreSimulator's device types are there to read, and no count is
@@ -182,23 +226,19 @@ jobs:
       # business. Every driving call runs with writes off and is answered by
       # the refusal path; the geometry is pinned on numbers, not on a window.
       - name: Simulator server 🔍
-        if: runner.os == 'macOS'
         run: make simulator-check
       # The two steps above each drive ONE server. This one covers the code
       # that picks which, which had two copies and shipped with the second one
       # wrong — invisibly, because a list of the wrong surface's tools still
       # looks like a list of tools.
       - name: In-process dispatch 🔀
-        if: runner.os == 'macOS'
         run: make dispatch-check
       - name: Audit export signing 🔍
-        if: runner.os == 'macOS'
         run: make audit-check
       # docs/licensing.md sells the app partly on it being unable to reach the
       # network, so that claim is a gate rather than a sentence in a README.
       # Unsigned is fine: the audit reads symbols, and signing does not add any.
       - name: No network 🔌
-        if: runner.os == 'macOS'
         run: |
           make app XCARGS="CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO"
           scripts/audit-network.sh
@@ -211,7 +251,6 @@ jobs:
       # step can never pass — and it failed silently for a while, because
       # `2>/dev/null` hides the very message that says why.
       - name: MCP handshake 🤝
-        if: runner.os == 'macOS'
         run: |
           # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
           for server in mail notes reminders calendar contacts messages safari maps; do
@@ -224,7 +263,9 @@ jobs:
   publish-npm:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: test
+    # Both test jobs, as when they were one matrix: the darwin suite is the one
+    # that exercises what these packages actually do.
+    needs: [test, test-macos]
     # `contains(github.ref, '-v')` also matched branches, and matched `app-v*`,
     # whose slug resolves to a packages/app that does not exist — so the app tag
     # would have hard-failed here and never reached a release at all. The app has
@@ -244,11 +285,11 @@ jobs:
       - name: Checkout 🛎️
         uses: actions/checkout@v5
       - name: Setup pnpm 🔧
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           cache: "pnpm"
           registry-url: https://registry.npmjs.org
       - name: Install 🪄
@@ -461,31 +502,67 @@ jobs:
   deploy-api:
     name: Deploy the licence API
     runs-on: ubuntu-latest
+    # The ubuntu `test` only, never `test-macos`: a deploy never waits on the
+    # macOS queue, and nothing the Swift checks cover ships in the Worker.
     needs: test
     # Its own tag namespace, like the app's. Both are excluded from publish-npm
     # above, because the tag glob `*-v*.*.*` would otherwise route them there.
+    # DIVERGES from bastion and armada, which deploy the Worker on every push to
+    # main: here the Worker ships when an `api-v*` tag says so, and applies its
+    # own migrations rather than refusing on them.
     if: startsWith(github.ref, 'refs/tags/api-v')
+    # CLOUDFLARE_API_TOKEN is an environment secret, not a repository one, so a
+    # job without this line reads an empty token. The environment has no branch
+    # policy, which is what lets a tag ref deploy through it.
+    environment: production
     steps:
+      # The token gate is a step rather than a job-level `if:`, for the reason
+      # deploy-website gives below: `secrets` is not available in `if:`, and a job
+      # that vanishes is invisible.
+      - name: Token present? 🔑
+        id: token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          # An annotation, not a plain line: every step below is gated on this
+          # output, so without a warning a rotated or renamed secret leaves a
+          # green "Deploy" on every api tag while production stays frozen, and
+          # the health curl that would notice is skipped by the same condition.
+          else echo "::warning::No CLOUDFLARE_API_TOKEN secret; nothing was deployed."; fi
       - name: Checkout 🛎️
+        if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v5
       - name: Setup pnpm 🔧
-        uses: pnpm/action-setup@v6
+        if: steps.token.outputs.present == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
+        if: steps.token.outputs.present == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           check-latest: true
           cache: "pnpm"
       - name: Install 🪄
+        if: steps.token.outputs.present == 'true'
         run: pnpm install --frozen-lockfile
       # Before the deploy, not after: a Worker that is live against a database
       # missing a column it reads fails on a real payment. Migrations here are
-      # additive by construction — see apps/api/migrations.
+      # additive by construction — see apps/api/migrations. `make api-deploy`
+      # then finds nothing unapplied, so its migration guard passes.
+      #
+      # CLOUDFLARE_ACCOUNT_ID for the Makefile's CF_ACCOUNT_ID reason: wrangler's
+      # d1 subcommands do not read `account_id` from wrangler.jsonc, and this token
+      # reaches three accounts, so without it they stop to ask, which in CI is a
+      # failure. Same value as wrangler.jsonc, which documents it as public.
       - name: Migrate D1 🗄️
+        if: steps.token.outputs.present == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 0121e8859874c6fc0d674676e17d9f18
         run: pnpm --filter @mgcrea/cupertino-api exec wrangler d1 migrations apply cupertino-licenses --remote
       - name: Deploy 🚀
+        if: steps.token.outputs.present == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         # `make api-deploy` rather than the pnpm line it wraps. The Makefile holds
@@ -496,7 +573,9 @@ jobs:
         # follows.
         run: make api-deploy
 
-  # Deploys the marketing site on every push to main, once `test` is green.
+  # Deploys the marketing site on every push to main, once `test` is green —
+  # the ubuntu one, never `test-macos`, so the site does not wait on the macOS
+  # queue or on a Swift check it ships none of.
   #
   # The token gate is a step rather than a job-level `if:`, because `secrets` is
   # not available in `if:` and because a job that vanishes is invisible: a green
@@ -526,12 +605,12 @@ jobs:
           lfs: true
       - name: Setup pnpm 🔧
         if: steps.token.outputs.present == 'true'
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
         if: steps.token.outputs.present == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           check-latest: true
           cache: "pnpm"
       - name: Install 🪄
@@ -552,7 +631,8 @@ jobs:
   release-app:
     name: Release Cupertino.app
     runs-on: macos-latest
-    needs: test
+    # Both test jobs, as when they were one matrix.
+    needs: [test, test-macos]
     if: startsWith(github.ref, 'refs/tags/app-v')
     permissions:
       contents: write
@@ -566,11 +646,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup pnpm 🔧
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           cache: "pnpm"
       - name: Install 🪄
         run: pnpm install --frozen-lockfile

@@ -15,6 +15,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
+    "check": "pnpm -r --if-present check",
     "test": "pnpm -r test && pnpm test:scripts",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "typecheck": "pnpm -r typecheck",
