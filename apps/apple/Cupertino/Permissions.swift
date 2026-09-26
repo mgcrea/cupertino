@@ -363,30 +363,35 @@ nonisolated enum Permissions {
   /// error 1`, which is measured: a standalone probe binary built from the same
   /// call site was refused, and this succeeds only because it runs inside the
   /// bundle that ships the extension.
+  ///
+  /// Through the async import, not the completion handler. The header marks the
+  /// handler `NS_SWIFT_UI_ACTOR`, but Safari calls it on an XPC queue, so under
+  /// Swift 6 the runtime isolation check on that closure trapped the app on
+  /// launch (`_dispatch_assert_queue_fail`) — measured on Xcode 27.0, and neither
+  /// `@Sendable` on the closure nor `@concurrent` on this function avoided it,
+  /// because the isolation is the SDK's, not the caller's. The async import's
+  /// continuation is the compiler's own and resumes from any queue.
   static func safariExtension() async -> SafariExtensionStatus {
-    await withCheckedContinuation { continuation in
-      SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: safariExtensionID) {
-        state, error in
-        if let state {
-          continuation.resume(returning: state.isEnabled ? .enabled : .disabled)
-        } else if let error = error as NSError?, error.domain == SFErrorDomain,
-          error.code == SFErrorCode.noExtensionFound.rawValue
-        {
-          // Safari has no record of it. On a Debug build that is correct: the
-          // Makefile strips the appex, because Safari will not list an
-          // extension whose container is not notarized and stapled.
-          //
-          // The CODE is checked, not just the domain. `SFErrorCode` has three
-          // values and only this one means "no such extension" — 2 is
-          // `noAttachmentFound` and 3 is `loadingInterrupted`, which are both
-          // "we could not ask" and belong in `.unknown`. Matching the domain
-          // alone reported them as an extension that is not installed, which
-          // is the one answer that sends someone to reinstall the app.
-          continuation.resume(returning: .notInstalled)
-        } else {
-          continuation.resume(returning: .unknown)
-        }
-      }
+    do {
+      let state = try await SFSafariExtensionManager.stateOfSafariExtension(
+        withIdentifier: safariExtensionID)
+      return state.isEnabled ? .enabled : .disabled
+    } catch let error as NSError
+      where error.domain == SFErrorDomain && error.code == SFErrorCode.noExtensionFound.rawValue
+    {
+      // Safari has no record of it. On a Debug build that is correct: the
+      // Makefile strips the appex, because Safari will not list an extension
+      // whose container is not notarized and stapled.
+      //
+      // The CODE is checked, not just the domain. `SFErrorCode` has three values
+      // and only this one means "no such extension" — 2 is `noAttachmentFound`
+      // and 3 is `loadingInterrupted`, which are both "we could not ask" and
+      // belong in `.unknown`. Matching the domain alone reported them as an
+      // extension that is not installed, which is the one answer that sends
+      // someone to reinstall the app.
+      return .notInstalled
+    } catch {
+      return .unknown
     }
   }
 
