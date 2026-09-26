@@ -16,6 +16,21 @@ summary.
 
 ### Added
 
+- **The Simulator surface works on Xcode 27, through DeviceHub.** Xcode 27 ships no Simulator.app;
+  the simulator's window belongs to DeviceHub, which bridges the device's accessibility tree the
+  same way. The surface now drives whichever of the two is showing the simulator, finds the device
+  screen DeviceHub nests beside its sidebar and inspector, and still reaches those two applications
+  and nothing else. Every tool was measured working against an iPhone 18 Pro on iOS 27.0, including
+  rotation, which DeviceHub's menus no longer list but whose shortcuts it keeps.
+
+  Two Xcode 27 changes had to be worked around, and both fail without a sign. AppKit reports
+  DeviceHub's process id as -1, so every Accessibility call went to no process and answered like an
+  app with no accessibility at all; the driver now finds the process by its executable. And device
+  types no longer carry their screen size in `profile.plist`, so the point size is read from
+  `capabilities.plist`, where Xcode 27 moved it. An earlier entry claimed the surface was working on
+  Xcode 27; only its icon was. A physical device shown in DeviceHub remains out of reach: its screen
+  is a video with no tree behind it.
+
 - **The on-screen notice can be placed, resized and given a sound.** Three settings in Settings →
   General: which of six places along the top or bottom edge of the display the card sits in, how
   large it is drawn, and whether it plays a sound arriving and leaving. The top-right corner it

@@ -271,7 +271,7 @@ final class DrivingOverlay {
         as? [[String: Any]]
     else { return nil }
 
-    let pid = app.processIdentifier
+    let pid = AccessibilityDriver.pid(of: app)
     var best: CGRect?
     for window in listed {
       guard

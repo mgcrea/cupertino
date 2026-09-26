@@ -39,10 +39,33 @@ nonisolated enum SimulatorServer {
     surface.bundleID ?? "com.apple.iphonesimulator"
   }
 
+  /// Xcode 27's home for the simulator's window. It ships no Simulator.app;
+  /// DeviceHub draws the device inside its own window and bridges the device's
+  /// accessibility tree the same way, under an `AXGroup` whose subrole is
+  /// `iOSContentGroup` — measured on Xcode 27.0 (27A266a), docs/simulator.md.
+  static let deviceHub = "com.apple.dt.Devices"
+
+  /// The application showing the simulator right now: Simulator.app where it
+  /// runs, which is every Xcode before 27; DeviceHub where it does not.
+  /// Falls back to the Simulator's own id, so a Mac with neither says so in the
+  /// words it would have used before.
+  static func host(_ surface: Surface) -> String {
+    let simulator = bundleId(surface)
+    let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    if running.contains(simulator) { return simulator }
+    if running.contains(deviceHub) { return deviceHub }
+    return simulator
+  }
+
+  static func hostName(_ host: String) -> String {
+    host == deviceHub ? "DeviceHub" : "Simulator.app"
+  }
+
   /// Pinned. Not `.brokered`, which would let a handle minted here address
   /// Mail, and not `.any`. The same value a lend gets, for the same reason.
+  /// Two ids because the simulator has two possible hosts, and nothing else.
   static func scope(_ surface: Surface) -> AccessibilityDriver.Scope {
-    .only([bundleId(surface)])
+    .only([bundleId(surface), deviceHub])
   }
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
@@ -121,7 +144,8 @@ nonisolated enum SimulatorServer {
         "name": "apple_simulator_list_devices",
         "description":
           "The simulators CoreSimulator knows, which are booted, and which have a window open in "
-          + "Simulator.app — with each window's device screen located: origin on the Mac, point "
+          + "Simulator.app, or in DeviceHub on Xcode 27 — with each window's device screen "
+          + "located: origin on the Mac, point "
           + "size, window scale and orientation. The device list needs no grant; the windows need "
           + "Accessibility, and the answer says so rather than reporting none.",
         "inputSchema": empty,
@@ -171,7 +195,8 @@ nonisolated enum SimulatorServer {
       [
         "name": "apple_simulator_diagnostics",
         "description":
-          "Report whether Accessibility is granted, whether Simulator.app is running, which "
+          "Report whether Accessibility is granted, which app hosts the simulator (Simulator.app, "
+          + "or DeviceHub on Xcode 27), which "
           + "device windows resolve to a device screen and at what scale, and whether the "
           + "driving tools are registered. Answers on a Mac with no grant and no Xcode.",
         "inputSchema": empty,
@@ -236,8 +261,9 @@ nonisolated enum SimulatorServer {
           "Type into whatever field the device has focused, one key at a time on the Mac's "
           + "current keyboard layout. The Simulator forwards key codes, not characters, so a "
           + "character this layout has no key for is reported back rather than typed. Brings "
-          + "the Simulator to the front. Needs I/O › Keyboard › Send Keyboard Input to Device "
-          + "left on, which is its default.",
+          + "the Simulator to the front. On Simulator.app it needs I/O › Keyboard › Send Keyboard "
+          + "Input to Device left on, which is its default. Focus the field with "
+          + "apple_simulator_press first: a tap does not always focus a floating search bar.",
         "inputSchema": [
           "type": "object",
           "properties": ["text": ["type": "string"], "device": deviceProperty],
@@ -348,7 +374,7 @@ nonisolated enum SimulatorServer {
   /// is a frame for a window that may have been dragged, resized or rotated
   /// since. Re-reading is cheaper than being wrong.
   static func targets(surface: Surface) throws -> [Target] {
-    let id = bundleId(surface)
+    let id = host(surface)
     let reach = scope(surface)
     let windows = try AccessibilityDriver.windows(bundleId: id, scope: reach)
     let devices: [CoreSimulatorCatalog.Device]
@@ -369,21 +395,24 @@ nonisolated enum SimulatorServer {
       // Candidates for the point size: the titled device, else every booted one.
       let candidates = byTitle.map { [$0] } ?? booted
 
-      let children: [AccessibilityDriver.Element]
+      let groups: [AccessibilityDriver.Element]
       do {
-        let tree = try AccessibilityDriver.tree(
-          bundleId: id, windowIndex: window.index, detail: .all,
-          bounds: .init(depth: 1, nodes: 200, seconds: 2), scope: reach)
-        children = tree.elements.filter { $0.depth == 1 }
+        groups = try screenGroups(host: id, windowIndex: window.index, scope: reach)
       } catch {
         return Target(
           window: window, device: byTitle, screen: nil, problem: error.localizedDescription)
       }
-      let groups = children.filter { $0.role == "AXGroup" && $0.rect != nil }
       guard !groups.isEmpty else {
+        // DeviceHub keeps a window titled for a device after that device shuts
+        // down, where Simulator.app closed it. "Poll" would wait forever.
+        if let byTitle, !byTitle.booted {
+          return Target(
+            window: window, device: byTitle, screen: nil,
+            problem: "\(byTitle.name) is not booted — the window still carries its name")
+        }
         return Target(
           window: window, device: byTitle, screen: nil,
-          problem: "no AXGroup in the window — the device has not drawn yet; poll")
+          problem: "no device screen in the window — the device has not drawn yet; poll")
       }
       guard !candidates.isEmpty else {
         return Target(
@@ -418,6 +447,43 @@ nonisolated enum SimulatorServer {
     }
   }
 
+  /// The groups that may be the device screen, cheapest walk first.
+  ///
+  /// Simulator.app puts the screen directly under the window, so a depth-1 walk
+  /// finds it. DeviceHub nests it about seven levels down, beside a sidebar,
+  /// an inspector and its own toolbar, and marks it with the subrole
+  /// `iOSContentGroup`; the same group is reachable along two paths, so it is
+  /// deduped by frame. Only groups with that subrole are taken there — a
+  /// DeviceHub pane that happens to have a device's proportions is not a screen.
+  static func screenGroups(host: String, windowIndex: Int, scope: AccessibilityDriver.Scope)
+    throws -> [AccessibilityDriver.Element]
+  {
+    if host != deviceHub {
+      let tree = try AccessibilityDriver.tree(
+        bundleId: host, windowIndex: windowIndex, detail: .all,
+        bounds: .init(depth: 1, nodes: 200, seconds: 2), scope: scope)
+      return tree.elements.filter { $0.depth == 1 && $0.role == "AXGroup" && $0.rect != nil }
+    }
+    let tree = try AccessibilityDriver.tree(
+      bundleId: host, windowIndex: windowIndex, detail: .all,
+      bounds: .init(depth: 10, nodes: 1500, seconds: 3), scope: scope)
+    return deviceHubScreens(tree.elements)
+  }
+
+  /// Split out so simulator-check can pin it with no DeviceHub running.
+  static func deviceHubScreens(_ elements: [AccessibilityDriver.Element])
+    -> [AccessibilityDriver.Element]
+  {
+    var seen: [[Double]] = []
+    return elements.filter { element in
+      guard element.role == "AXGroup", element.subrole == "iOSContentGroup",
+        let rect = element.rect, rect.allSatisfy(\.isFinite), !seen.contains(rect)
+      else { return false }
+      seen.append(rect)
+      return true
+    }
+  }
+
   /// The one target a call addresses.
   private static func target(surface: Surface, args: [String: Any]) throws -> Target {
     let all = try targets(surface: surface)
@@ -446,7 +512,7 @@ nonisolated enum SimulatorServer {
       let reasons = all.map { "window \($0.window.index): \($0.problem ?? "?")" }
       throw AccessibilityDriver.Failure.refused(
         all.isEmpty
-          ? "Simulator.app has no window."
+          ? "\(hostName(host(surface))) has no window."
           : "No window resolves to a device screen. " + reasons.joined(separator: "; "))
     default:
       let names = resolved.compactMap { $0.device?.name }
@@ -504,7 +570,7 @@ nonisolated enum SimulatorServer {
           + "Cupertino.")
     }
     let reach = scope(surface)
-    let simulator = bundleId(surface)
+    let simulator = host(surface)
 
     do {
       switch name {
@@ -656,13 +722,14 @@ nonisolated enum SimulatorServer {
     }
   }
 
-  /// Bring the Simulator to the front and WAIT for it, refusing to post when
-  /// it did not come. Measured: a click posted before activation reached
+  /// Bring the simulator's host to the front and WAIT for it, refusing to post
+  /// when it did not come. Measured: a click posted before activation reached
   /// nothing — or worse, whatever covered the window.
   private static func front(_ simulator: String, scope: AccessibilityDriver.Scope) throws {
     guard try AccessibilityDriver.activateAndWait(bundleId: simulator, scope: scope) else {
       throw AccessibilityDriver.Failure.refused(
-        "Simulator.app did not come to the front, so nothing was posted — a synthetic event "
+        "\(hostName(simulator)) did not come to the front, so nothing was "
+          + "posted — a synthetic event "
           + "lands in whatever is frontmost, which would have been someone else's window.")
     }
   }
@@ -716,7 +783,7 @@ nonisolated enum SimulatorServer {
 
   private static func diagnostics(surface: Surface, writesAllowed: Bool) -> [String: Any] {
     let trusted = AccessibilityDriver.isTrusted()
-    let simulator = bundleId(surface)
+    let simulator = host(surface)
     let running = NSWorkspace.shared.runningApplications.contains {
       $0.bundleIdentifier == simulator
     }
@@ -751,18 +818,19 @@ nonisolated enum SimulatorServer {
         windows = error.localizedDescription
       }
     } else if !running {
-      windows = "Simulator.app is not running"
+      windows = "Neither Simulator.app nor DeviceHub is running"
     }
 
     return [
       "accessibility": trusted ? "granted" : "not granted",
       "simulatorRunning": running,
+      "host": running ? simulator : NSNull(),
       "coreSimulator": coreSimulator,
       "windows": windows,
       "driving": DrivingSession.diagnostics().map { $0 as Any }
         ?? (DriveActivity.current() ?? "nothing"),
       "writes": writesAllowed ? "enabled" : "disabled — the driving tools are not registered",
-      "reach": "\(simulator) only — no switch widens it",
+      "reach": "\(bundleId(surface)) and \(deviceHub) only — no switch widens it",
       "wda": "not used here; for the WebDriverAgent lane run ios_simulator_diagnostics",
       "note":
         "A granted flag over a failed window read means duplicate Accessibility entries for one "
@@ -851,7 +919,11 @@ nonisolated enum SimulatorServer {
 
     Simulator.app bridges the simulated device's accessibility tree into the Mac's, so an
     iOS app's own controls are readable and pressable here with no WebDriverAgent and no
-    runner process to keep alive.
+    runner process to keep alive. Xcode 27 ships no Simulator.app: DeviceHub hosts the
+    window instead and bridges the same tree, so this lane follows it there. DeviceHub shows
+    one device per window — select it in DeviceHub's sidebar, or Open in New Window for a
+    second — and quitting DeviceHub shuts the booted simulators down. A physical device in
+    DeviceHub is a video of its screen with no tree behind it, so it is not reachable here.
 
     ## Coordinates are iOS points
 

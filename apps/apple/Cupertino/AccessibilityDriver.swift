@@ -440,9 +440,42 @@ nonisolated enum AccessibilityDriver {
         guard let bundleId = app.bundleIdentifier else { return nil }
         return RunningApp(
           name: app.localizedName ?? bundleId, bundleId: bundleId,
-          pid: app.processIdentifier, active: app.isActive)
+          pid: pid(of: app), active: app.isActive)
       }
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+  }
+
+  /// The pid to address an application by, which `processIdentifier` does not
+  /// always give.
+  ///
+  /// Measured on macOS 27 with Xcode 27.0 (27A266a): DeviceHub, which now hosts
+  /// the simulator's window, comes back from `NSWorkspace` — and from
+  /// `NSRunningApplication(processIdentifier:)` given its real pid — with a
+  /// `processIdentifier` of -1, on a fresh launch too, while LaunchServices
+  /// (`lsappinfo`) and the window server have the real one. Every AX call on -1
+  /// answers `kAXErrorInvalidUIElement`, which reads exactly like an app with no
+  /// accessibility at all. The executable path is still right, so the process
+  /// running it is looked up instead.
+  static func pid(of app: NSRunningApplication) -> pid_t {
+    if app.processIdentifier > 0 { return app.processIdentifier }
+    guard let executable = app.executableURL?.resolvingSymlinksInPath().path else {
+      return app.processIdentifier
+    }
+    return pids(runningExecutable: executable).first ?? app.processIdentifier
+  }
+
+  static func pids(runningExecutable executable: String) -> [pid_t] {
+    let count = proc_listallpids(nil, 0)
+    guard count > 0 else { return [] }
+    // Doubled: processes started between the two calls must not be cut off.
+    var all = [pid_t](repeating: 0, count: Int(count) * 2)
+    let listed = proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size))
+    guard listed > 0 else { return [] }
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    return all.prefix(Int(listed)).filter { candidate in
+      candidate > 0 && proc_pidpath(candidate, &path, UInt32(path.count)) > 0
+        && String(cString: path) == executable
+    }
   }
 
   private static func app(forBundleId bundleId: String) throws -> NSRunningApplication {
@@ -501,7 +534,7 @@ nonisolated enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
-    let appElement = element(for: running.processIdentifier)
+    let appElement = element(for: pid(of: running))
 
     var raw: AnyObject?
     let err = AXUIElementCopyAttributeValue(
@@ -977,7 +1010,7 @@ nonisolated enum AccessibilityDriver {
     guard let running = try? app(forBundleId: bundleId) else { return false }
     var raw: AnyObject?
     let read = AXUIElementCopyAttributeValue(
-      element(for: running.processIdentifier), kAXFocusedUIElementAttribute as CFString, &raw)
+      element(for: pid(of: running)), kAXFocusedUIElementAttribute as CFString, &raw)
     guard read == .success, let focused = raw else { return false }
     return CFEqual(focused, target)
   }
@@ -1038,7 +1071,7 @@ nonisolated enum AccessibilityDriver {
 
     if !asked {
       AXUIElementSetAttributeValue(
-        element(for: running.processIdentifier), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        element(for: pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     }
     guard frontmostSettled(on: bundleId) else {
       throw Failure.refused("\(bundleId) refused to come to the front.")
@@ -1141,7 +1174,7 @@ nonisolated enum AccessibilityDriver {
     guard isTrusted() else { return asked }
     if !asked {
       AXUIElementSetAttributeValue(
-        element(for: running.processIdentifier), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        element(for: pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     }
     return frontmostSettled(on: bundleId, timeout: 1)
   }

@@ -11,6 +11,38 @@ Measured **2026-09-06, macOS 26.6 (Darwin 25.6.0)**, against an **iPhone 17 Pro 
 answering on 8100 for the comparison. Two walks on the Photos grid, stable between them; one on
 Settings.
 
+> **Xcode 27: the lane moved to DeviceHub.** Measured 2026-09-26 on Xcode 27.0 (27A266a), macOS
+> 27, an iPhone 18 Pro on iOS 27.0. There is no Simulator.app; DeviceHub (`com.apple.dt.Devices`)
+> draws the device inside one window beside a sidebar and an inspector, and bridges the same tree
+> under an `AXGroup` with subrole **`iOSContentGroup`**, about seven levels down and reachable along
+> two paths (deduped by frame). Its window title keeps the Simulator's `iPhone 18 Pro – iOS 27.0`
+> form, so title matching is unchanged. At DeviceHub's default zoom the group is 297x647 for a
+> 402x874-point device, a scale of 0.74; rotated, 0.607.
+>
+> Measured through the running app: `list_devices`, `ui_tree`, `press`, `tap`, `swipe`, `type`,
+> `key` and `press_button` (home, rotate_left, rotate_right — DeviceHub keeps ⌘⇧H and ⌘-arrows
+> though its menus list no rotation) all work. A tap did not focus Settings' floating search bar;
+> `press` on its handle did, and typing then landed. One swipe issued right after `press` reopened
+> Settings did not scroll, and the same swipe repeated from a settled screen did, twice.
+>
+> Four traps, each silent:
+>
+> - **AppKit reports DeviceHub's pid as -1** — from `NSWorkspace`, and from
+>   `NSRunningApplication(processIdentifier:)` given its real pid — on a fresh launch too, while
+>   `lsappinfo` has the real one. AX on -1 answers `kAXErrorInvalidUIElement` to everything, which
+>   is exactly what an app with no accessibility looks like; that is how this lane was first
+>   declared dead. `AccessibilityDriver.pid(of:)` looks the process up by executable path instead.
+> - **Xcode 27 moved the screen out of `profile.plist`**, for every device type: the numbers are
+>   under `capabilities.ScreenDimensionsCapability` in `capabilities.plist`.
+> - **DeviceHub keeps a window titled for a device after it shuts down**, where Simulator.app
+>   closed it, so "no screen yet, poll" is the wrong answer there.
+> - **Quitting DeviceHub shuts every booted simulator down.** "Quit and Keep Simulators Running" is
+>   a separate menu item.
+>
+> A physical iOS 27 device selected in DeviceHub streams its screen, but its view has no
+> `iOSContentGroup` and no iOS elements — it is a picture. The walk also meets elements whose frame
+> is NaN there, which a reader has to survive.
+
 **Verdict: a real capability, and NOT a replacement for WebDriverAgent.** It reaches a strict subset
 of what WDA reaches — but a subset that is 100% named, an order of magnitude smaller, and that
 contradicts WDA on the one thing WDA gets wrong. ~~The simulator is not in the brokered table, so all

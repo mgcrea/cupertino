@@ -194,8 +194,9 @@ struct SimulatorCheck {
       "diagnostics reports the grant state rather than assuming it",
       ["granted", "not granted"].contains(diag?["accessibility"] as? String ?? ""))
     check(
-      "diagnostics pins the reach to the Simulator and says nothing widens it",
-      (diag?["reach"] as? String) == "com.apple.iphonesimulator only — no switch widens it")
+      "diagnostics pins the reach to the Simulator and DeviceHub and says nothing widens it",
+      (diag?["reach"] as? String)
+        == "com.apple.iphonesimulator and com.apple.dt.Devices only — no switch widens it")
     check(
       "diagnostics points at the WebDriverAgent lane's own diagnostics",
       (diag?["wda"] as? String)?.contains("ios_simulator_diagnostics") == true)
@@ -336,6 +337,55 @@ struct SimulatorCheck {
       "a profile's pixels become points",
       CoreSimulatorCatalog.Profile(pixelWidth: 1206, pixelHeight: 2622, scale: 3).points
         == CGSize(width: 402, height: 874))
+    // Xcode 27 moved the screen out of profile.plist for every device type.
+    let xcode27 = CoreSimulatorCatalog.screen(
+      profile: ["modelIdentifier": "iPhone19,2"],
+      capabilities: [
+        "capabilities": [
+          "ScreenDimensionsCapability": [
+            "main-screen-width": 1206, "main-screen-height": 2622, "main-screen-scale": 3,
+          ]
+        ]
+      ])
+    check(
+      "an Xcode 27 device type's screen comes from capabilities.plist",
+      xcode27?.points == CGSize(width: 402, height: 874))
+    check(
+      "and an older one's still comes from profile.plist",
+      CoreSimulatorCatalog.screen(
+        profile: ["mainScreenWidth": 1206, "mainScreenHeight": 2622, "mainScreenScale": 3],
+        capabilities: nil)?.points == CGSize(width: 402, height: 874))
+    check(
+      "a device type with neither shape has no screen, rather than a scale of 1",
+      CoreSimulatorCatalog.screen(profile: [:], capabilities: [:]) == nil)
+
+    // DeviceHub reaches the same group along two paths, and nests it beside
+    // panes of its own; only the iOSContentGroup subrole is a screen.
+    func element(_ role: String, _ subrole: String?, _ rect: [Double])
+      -> AccessibilityDriver.Element
+    {
+      AccessibilityDriver.Element(
+        handle: "e", role: role, subrole: subrole, identifier: nil, name: nil, value: nil,
+        rect: rect, point: nil, pressable: false, depth: 7)
+    }
+    let screens = SimulatorServer.deviceHubScreens([
+      element("AXGroup", "AXHostingView", [746, 491, 1100, 800]),
+      element("AXGroup", "iOSContentGroup", [1127, 571, 297, 647]),
+      element("AXGroup", "iOSContentGroup", [1127, 571, 297, 647]),
+      element("AXGroup", nil, [1574, 551, 264, 574]),
+      element("AXGroup", "iOSContentGroup", [.nan, .nan, 0, 0]),
+    ])
+    check(
+      "DeviceHub's screen is its iOSContentGroup, once, and never a NaN frame",
+      screens.count == 1 && screens.first?.rect == [1127, 571, 297, 647])
+    check(
+      "that group resolves to the device at DeviceHub's zoom",
+      SimulatorGeometry.resolve(
+        groupOrigin: CGPoint(x: 1127, y: 571), groupSize: CGSize(width: 297, height: 647),
+        portraitPoints: CGSize(width: 402, height: 874))?.orientation == "portrait")
+    check(
+      "DeviceHub is not brokered either",
+      !AccessibilityDriver.inScope(SimulatorServer.deviceHub, scope: .brokered))
     // Absent and unreadable are different answers. A path that does not exist
     // is the Xcode-less Mac; nothing is created to test it.
     let nowhere = FileManager.default.temporaryDirectory

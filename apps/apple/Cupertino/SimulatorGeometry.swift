@@ -182,14 +182,37 @@ nonisolated enum CoreSimulatorCatalog {
       guard let info = read(bundle.appendingPathComponent("Contents/Info.plist")),
         info["CFBundleIdentifier"] as? String == deviceType
       else { continue }
-      guard let profile = read(bundle.appendingPathComponent("Contents/Resources/profile.plist")),
-        let width = number(profile["mainScreenWidth"]),
-        let height = number(profile["mainScreenHeight"]),
-        let scale = number(profile["mainScreenScale"]), scale > 0
-      else { return nil }
-      return Profile(pixelWidth: width, pixelHeight: height, scale: scale)
+      let resources = bundle.appendingPathComponent("Contents/Resources")
+      return screen(
+        profile: read(resources.appendingPathComponent("profile.plist")),
+        capabilities: read(resources.appendingPathComponent("capabilities.plist")))
     }
     return nil
+  }
+
+  /// The screen out of a device type's two plists.
+  ///
+  /// **Xcode 27 moved it.** No device type's `profile.plist` carries
+  /// `mainScreen*` any more — the old types included — and the same three
+  /// numbers sit under `capabilities.ScreenDimensionsCapability` in
+  /// `capabilities.plist` as `main-screen-width`, `-height` and `-scale`.
+  /// The profile is still read first, because it is what every earlier Xcode
+  /// has. Split out so simulator-check can pin both shapes with no Xcode.
+  static func screen(profile: [String: Any]?, capabilities: [String: Any]?) -> Profile? {
+    if let profile, let width = number(profile["mainScreenWidth"]),
+      let height = number(profile["mainScreenHeight"]),
+      let scale = number(profile["mainScreenScale"]), scale > 0
+    {
+      return Profile(pixelWidth: width, pixelHeight: height, scale: scale)
+    }
+    guard
+      let dims = (capabilities?["capabilities"] as? [String: Any])?["ScreenDimensionsCapability"]
+        as? [String: Any],
+      let width = number(dims["main-screen-width"]),
+      let height = number(dims["main-screen-height"]),
+      let scale = number(dims["main-screen-scale"]), scale > 0
+    else { return nil }
+    return Profile(pixelWidth: width, pixelHeight: height, scale: scale)
   }
 
   /// What the Simulator's preferences say the window scale is, per display
