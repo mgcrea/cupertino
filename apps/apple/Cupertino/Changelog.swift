@@ -220,7 +220,37 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_23_0, v1_22_1, v1_22_0, v1_21_1, v1_21_0]
+  static let releases: [Release] = [v1_24_0, v1_23_0, v1_22_1, v1_22_0, v1_21_1]
+
+  // swift-format-ignore
+  private static let v1_24_0: Release = Release(
+    version: "1.24.0",
+    date: "2026-09-26",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "The Simulator surface works on Xcode 27, through DeviceHub.",
+            body: [
+              "Xcode 27 ships no Simulator.app; the simulator's window belongs to DeviceHub, which bridges the device's accessibility tree the same way. The surface now drives whichever of the two is showing the simulator, finds the device screen DeviceHub nests beside its sidebar and inspector, and still reaches those two applications and nothing else. Every tool was measured working against an iPhone 18 Pro on iOS 27.0, including rotation, which DeviceHub's menus no longer list but whose shortcuts it keeps.",
+              "Two Xcode 27 changes had to be worked around, and both fail without a sign. AppKit reports DeviceHub's process id as -1, so every Accessibility call went to no process and answered like an app with no accessibility at all; the driver now finds the process by its executable. And device types no longer carry their screen size in `profile.plist`, so the point size is read from `capabilities.plist`, where Xcode 27 moved it. An earlier entry claimed the surface was working on Xcode 27; only its icon was. A physical device shown in DeviceHub remains out of reach: its screen is a video with no tree behind it.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "The on-screen notice can be placed, resized and given a sound.",
+            body: [
+              "Three settings in Settings → General: which of six places along the top or bottom edge of the display the card sits in, how large it is drawn, and whether it plays a sound arriving and leaving. The top-right corner it shipped in is not free for everyone — it is where menu bar apps drop their panels, where Xcode parks its inspector, and on a laptop with a notch it is the narrowest part of the visible frame.",
+              "Six places rather than eight, because the vertical middle is where the person is looking and is the one place a notice must not cover. The position control draws them inside the outline of a display rather than listing them in a menu, since the answer is a geometry rather than a phrase, and a Preview button puts a sample card where the real one would go — the setting is otherwise unanswerable from the window it is set in, because the card only appears while an agent is working.",
+              "The size is a scale applied to every length in the card, the panel and padding as well as both type sizes, rather than a transform on the rendered layer — which looks identical in a screenshot and wrong on the screen, because it would blow up a bitmap of the text. Medium is scale 1 exactly, so a Mac that never opens the setting sees no change.",
+              "The sound is a choice of the Mac's own alert sounds, one for the card arriving and one for it going, with a volume slider. They ship with every Mac, so there is nothing to bundle, and the menu is read from `/System/Library/Sounds` rather than written out — it is whatever this macOS has. There is no separate switch: \"None\" is a row in each menu, because a switch beside two menus has a fourth state that says nothing the menus do not already say. Picking a sound plays it, since a sound is chosen by ear, and the volume plays a sample when the slider is let go rather than on every step. It starts silent, at a third of full if chosen, where an alert sound reads as a cue under what you are doing rather than as an alert.",
+              "All of it is appearance and none of it can stop the card appearing, change what it says, or move it off the display holding the application being driven. This is the only warning the person at the keyboard gets, and `docs/desktop.md` records what happened without one. Sounds are silent under a screenshot run whatever is chosen, and fire when the card arrives and when it goes rather than on each step — an agent working through a sequence shows one card, so it is twice a session and not twice a keystroke.",
+              "The placement arithmetic lives in `NoticeStyle` with no dependency beyond `CGRect` and `make unit` pins it, because it is silent when wrong: AppKit's y grows upward, and a sign error puts the card under the Dock, where it looks exactly like a card that never appeared. So is the volume, which is the other value that can be wrong invisibly — `NSArgumentDomain` hands back strings, so a volume of 0 read as a `Double` is nil and falls through to a default that is a third of full, which is the opposite of what was asked for.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_23_0: Release = Release(
@@ -413,90 +443,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_21_0: Release = Release(
-    version: "1.21.0",
-    date: "2026-09-10",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_click`, `apple_desktop_type` and `apple_desktop_key` can name the application they are meant for.",
-            body: [
-              "An agent that opened an application and clicked into it, while the person at the keyboard had switched to their editor, clicked into the editor — and the driving notice said so, \"Cupertino is driving com.microsoft.VSCode\", because it was true. These three verbs post into the session and took no target, so the event went to whatever was in front.",
-              "`click` now takes `bundleId`, and `type` and `key` take `bundleId` or the `handle` of the field that was focused. The application is brought to the front and waited for; if it does not come, nothing is posted and the call says so, and the notice names the application meant. Leaving it out keeps the old behaviour. `hover` already worked this way and now shares the same refusal.",
-              "Mail and Maps pass one. Mail's paste and its send and save shortcuts name the composer they are meant for, so Mail is brought forward or nothing is pressed, rather than ⌘V landing in whatever window someone switched to. Maps names itself when it closes its menu with Escape: its card opens behind whatever is in front, so a bare Escape went to that other application instead.",
-              "One scope hole closed along the way: bringing an application forward skipped the reach check when that application was already in front, so `hover` could drive an application outside \"Reach any application\" as long as it happened to be frontmost.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Mail, Safari, Notes and the other Node surfaces now say when they change the screen.",
-            body: [
-              "The notice naming what Cupertino is driving was lit only by the in-process surfaces, because that is where synthetic input is posted. Everything else reaches its app by Apple Event, System Events or the Safari extension, so a Safari tab switching under someone, or Notes starting up because a note was written, came with no word from Cupertino at all.",
-              "The app now decides from each call's tool name, before the server has acted on it, and the notice comes in tiers. Mail's compose tools raise Mail and press keys, so they get the orange card that asks for hands off the keyboard and mouse. Safari's page verbs and adding a Maps favourite change what is on screen without touching either, and get a quieter blue card that says you can keep working. A write to Notes, Reminders, Calendar, Contacts or Messages gets one only when it had to start the app, since that is all a person sees. A call that outlasts the notice's usual linger holds it until the reply arrives.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "A reply that was sent came back as a reply that failed, and the note argued against the wrong retry.",
-            body: [
-              "`apple_mail_reply_to_message` composed a reply correctly and it went out — and then reported `ok: false`, `bodyVerified: false`, \"the body did not go in\", and \"SOMETHING DID land in it that could not be read back, a retry would paste the reply in twice\". Every part of that was false. What actually happened is that the person at the keyboard pressed Send while the call was still running.",
-              "A composer that closes takes its Accessibility handle with it, so every read after that is a refusal — and `bodySize()` answered `-1` for a refusal while the caller compared it as an element count. `-1` against a real count reads as \"the body changed\", which is the signature of a paste that landed and cannot be matched. The same sentinel had a second edge in the System Events fallback: `-1` against `-1` reads as \"nothing landed\", which is the one branch that DISCARDS the composer, so an unreadable body could be thrown away rather than left on screen.",
-              "Blind and different are now different answers. Before blaming the body, both compose paths ask whether the composer window is still there at all — nothing in them ever closes one, so a missing composer was taken by whoever is using the Mac. The native path then asks Mail whether the message reached Sent and says so with the timestamp, because sending and discarding leave the same empty screen and guessing wrong in either direction is expensive: a sent reply called a failure invites a retry that sends it twice. The Sent lookup deliberately does not use the envelope index, which is rebuilt on a schedule and was 47 minutes stale when this was found.",
-              "Two smaller holes closed along the way. A composer that vanished before the paste's second attempt escaped as a bare channel error with no note at all; it now returns a described failure. And the send shortcut was posted without re-raising the composer, so a person who changed the foreground between the verifying read and the send took ⌘⇧D into their own window — it is raised again first, and if it cannot be raised nothing is pressed.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Listing Safari's tabs opened Safari.",
-            body: [
-              "`apple_safari_list_tabs` asked Safari for its windows by Apple Event, and an Apple Event launches an application that is not running, so a question about open tabs could put a browser on someone's screen. It now asks whether Safari is running first, which launches nothing. When it is not, the tool says so in words, with `running: false`, rather than returning an empty list that reads as a Safari with every window closed or as a missing permission.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "The Simulator surface works on Xcode 27, through DeviceHub.",
-            body: [
-              "Xcode 27 ships no Simulator.app; the simulator's window belongs to DeviceHub, which bridges the device's accessibility tree the same way. The surface now drives whichever of the two is showing the simulator, finds the device screen DeviceHub nests beside its sidebar and inspector, and still reaches those two applications and nothing else. Every tool was measured working against an iPhone 18 Pro on iOS 27.0, including rotation, which DeviceHub's menus no longer list but whose shortcuts it keeps.",
-              "Two Xcode 27 changes had to be worked around, and both fail without a sign. AppKit reports DeviceHub's process id as -1, so every Accessibility call went to no process and answered like an app with no accessibility at all; the driver now finds the process by its executable. And device types no longer carry their screen size in `profile.plist`, so the point size is read from `capabilities.plist`, where Xcode 27 moved it. An earlier entry claimed the surface was working on Xcode 27; only its icon was. A physical device shown in DeviceHub remains out of reach: its screen is a video with no tree behind it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "The on-screen notice can be placed, resized and given a sound.",
-            body: [
-              "Three settings in Settings → General: which of six places along the top or bottom edge of the display the card sits in, how large it is drawn, and whether it plays a sound arriving and leaving. The top-right corner it shipped in is not free for everyone — it is where menu bar apps drop their panels, where Xcode parks its inspector, and on a laptop with a notch it is the narrowest part of the visible frame.",
-              "Six places rather than eight, because the vertical middle is where the person is looking and is the one place a notice must not cover. The position control draws them inside the outline of a display rather than listing them in a menu, since the answer is a geometry rather than a phrase, and a Preview button puts a sample card where the real one would go — the setting is otherwise unanswerable from the window it is set in, because the card only appears while an agent is working.",
-              "The size is a scale applied to every length in the card, the panel and padding as well as both type sizes, rather than a transform on the rendered layer — which looks identical in a screenshot and wrong on the screen, because it would blow up a bitmap of the text. Medium is scale 1 exactly, so a Mac that never opens the setting sees no change.",
-              "The sound is a choice of the Mac's own alert sounds, one for the card arriving and one for it going, with a volume slider. They ship with every Mac, so there is nothing to bundle, and the menu is read from `/System/Library/Sounds` rather than written out — it is whatever this macOS has. There is no separate switch: \"None\" is a row in each menu, because a switch beside two menus has a fourth state that says nothing the menus do not already say. Picking a sound plays it, since a sound is chosen by ear, and the volume plays a sample when the slider is let go rather than on every step. It starts silent, at a third of full if chosen, where an alert sound reads as a cue under what you are doing rather than as an alert.",
-              "All of it is appearance and none of it can stop the card appearing, change what it says, or move it off the display holding the application being driven. This is the only warning the person at the keyboard gets, and `docs/desktop.md` records what happened without one. Sounds are silent under a screenshot run whatever is chosen, and fire when the card arrives and when it goes rather than on each step — an agent working through a sequence shows one card, so it is twice a session and not twice a keystroke.",
-              "The placement arithmetic lives in `NoticeStyle` with no dependency beyond `CGRect` and `make unit` pins it, because it is silent when wrong: AppKit's y grows upward, and a sign error puts the card under the Dock, where it looks exactly like a card that never appeared. So is the volume, which is the other value that can be wrong invisibly — `NSArgumentDomain` hands back strings, so a volume of 0 read as a `Double` is nil and falls through to a default that is a third of full, which is the opposite of what was asked for.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
