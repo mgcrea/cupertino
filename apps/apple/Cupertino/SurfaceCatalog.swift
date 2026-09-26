@@ -88,7 +88,9 @@ enum SurfaceCatalog {
   /// `find_codes` does not exist after the user had just switched it on, which
   /// is precisely the "demonstrated, not claimed" property this type exists to
   /// provide. Sorted so two identical sets cannot produce two keys.
-  nonisolated private static func key(_ surface: Surface, _ allowWrites: Bool, _ gates: [String]) -> String {
+  nonisolated private static func key(
+    _ surface: Surface, _ allowWrites: Bool, _ gates: [String]
+  ) -> String {
     "\(surface.id)/\(allowWrites)/\(gates.sorted().joined(separator: "+"))"
   }
 
