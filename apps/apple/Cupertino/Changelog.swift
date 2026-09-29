@@ -220,7 +220,37 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_24_0, v1_23_0, v1_22_1, v1_22_0, v1_21_1]
+  static let releases: [Release] = [v1_24_1, v1_24_0, v1_23_0, v1_22_1, v1_22_0]
+
+  // swift-format-ignore
+  private static let v1_24_1: Release = Release(
+    version: "1.24.1",
+    date: "2026-09-29",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_safari_read_page` reads the tab as it is now, not as it looked while loading.",
+            body: [
+              "A single-page app that renders its frame and then fetches its content was stored as the empty frame: Shopify's app-listing form came back as \"Skip to content\" for as long as the tab was open, while `page_elements` could see every field on it. The read now asks the open tab first and says `source: \"live\"`; a tab that cannot answer within a couple of seconds — in the background, or closed — still gets the stored capture, marked `source: \"capture\"` with a `liveRead` line saying why. The stored capture itself also stopped giving up at the first quiet moment, so it now catches a page that renders after a fetch. The new wait is `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`. Tabs open across the update need a reload before they answer live.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "`apple_safari_page_elements` can read a form.",
+            body: [
+              "Checkboxes and radios now say whether they are ticked, radios are reported as radios rather than checkboxes, a select reports the option it shows, and a greyed-out control is listed with `disabled: true` instead of being left out. A field value cut at the 200-character default now says so, with its full length, and `maxValueChars` raises the cap. A select asking for a card's expiry is withheld like any other card field.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "`apple_safari_fill` works on React forms.",
+            body: [
+              "It used to put the text in the box without React noticing, so the form kept its old value and a Save sent that instead; Shopify's app-listing form was the case that showed it. It now writes the value the way a keystroke does. It can also choose an option in a select, by the text the option shows, and it refuses a checkbox or radio with a pointer to `apple_safari_click` rather than doing something a caller cannot predict.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_24_0: Release = Release(
@@ -418,67 +448,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_21_1: Release = Release(
-    version: "1.21.1",
-    date: "2026-09-11",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A reply that went in fine came back as \"SOMETHING DID land in it that could not be read back\", and the same mix-up could have sent the wrong draft.",
-            body: [
-              "`apple_mail_reply_to_message` finds the composer it opened by its title, and a composer from an earlier attempt was still open under the same subject. Nothing in the native path closes one, so that is routine. Mail keeps composers as tabs, and the leftover was readable before the new one, so the title matched it first. ⌘V went to the composer Mail had in front, the read-back went to the leftover, and a correct reply was reported as a failure that a retry would paste twice. With `sendNow`, the send shortcut would have named the leftover as well.",
-              "The call now checks the window list it takes before opening anything. If a composer with the reply's subject was already there, nothing is pasted, pressed or sent, and the note says to close the extra window and deal with the older one first. Handles are minted per call, so there is nothing to tell the two composers apart by, and guessing here means guessing which message to send.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Driven sequences blamed \"someone using this Mac\" for Cupertino's own keystrokes.",
-            body: [
-              "The idle reading behind `apple_desktop_user_activity` counts synthetic events, deliberately, so a sequence that posted a key always found input a moment ago. A native Mail reply reported \"Someone used this Mac 0.2s ago\" for its own ⌘V and sent the reader looking for a person who was not there. The tool now also returns `secondsSinceOwnInput`, the time since Cupertino last posted input, and Mail and Maps only name interference when the input came after that. A host too old to report it keeps the old comparison.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_safari_read_page` reads the tab as it is now, not as it looked while loading.",
-            body: [
-              "A single-page app that renders its frame and then fetches its content was stored as the empty frame: Shopify's app-listing form came back as \"Skip to content\" for as long as the tab was open, while `page_elements` could see every field on it. The read now asks the open tab first and says `source: \"live\"`; a tab that cannot answer within a couple of seconds — in the background, or closed — still gets the stored capture, marked `source: \"capture\"` with a `liveRead` line saying why. The stored capture itself also stopped giving up at the first quiet moment, so it now catches a page that renders after a fetch. The new wait is `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`. Tabs open across the update need a reload before they answer live.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "`apple_safari_page_elements` can read a form.",
-            body: [
-              "Checkboxes and radios now say whether they are ticked, radios are reported as radios rather than checkboxes, a select reports the option it shows, and a greyed-out control is listed with `disabled: true` instead of being left out. A field value cut at the 200-character default now says so, with its full length, and `maxValueChars` raises the cap. A select asking for a card's expiry is withheld like any other card field.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "`apple_safari_fill` works on React forms.",
-            body: [
-              "It used to put the text in the box without React noticing, so the form kept its old value and a Save sent that instead; Shopify's app-listing form was the case that showed it. It now writes the value the way a keystroke does. It can also choose an option in a select, by the text the option shows, and it refuses a checkbox or radio with a pointer to `apple_safari_click` rather than doing something a caller cannot predict.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
