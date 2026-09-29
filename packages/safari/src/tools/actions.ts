@@ -160,10 +160,14 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
     {
       description: describeReach(
         "Type text into a field on an open page, by an id from apple_safari_page_elements. " +
-          "Replaces whatever the field held; it does not append. Fires the input and change " +
-          "events a real keystroke would, so pages built on React or Vue see the value rather " +
-          "than overwriting it on their next render. It does NOT submit — click the submit " +
-          "button separately, which keeps the decision to send explicit.\n\n" +
+          "Replaces whatever the field held; it does not append. Writes the value the way a " +
+          "keystroke does and fires the input and change events, so React and Vue forms register " +
+          "the change rather than keeping the old value. It does NOT submit — click the submit " +
+          "or save button separately, which keeps the decision to send explicit.\n\n" +
+          "On a SELECT, pass the option's text as page_elements shows it (its hidden value also " +
+          "works); a text that matches no option fails and lists the real ones. A checkbox or " +
+          "radio is refused — click it instead, after checking `checked`, since a click " +
+          "toggles. A disabled field is refused too.\n\n" +
           "A one-time 2FA code IS a legitimate thing to put through this, and is the case it " +
           "was built for: read one with apple_safari_find_codes or apple_messages_find_codes, " +
           "then fill it. Check the code is still current first — neither tool can tell an " +

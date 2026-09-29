@@ -357,25 +357,119 @@
   }
 
   /**
-   * Type into a field.
+   * Type into a field, or choose an option in a select.
    *
-   * The events are the point. Setting `.value` alone updates the DOM and tells
-   * no framework about it — React, Vue and every controlled input keep their own
-   * copy and will overwrite it on the next render. `input` and `change`, bubbling,
-   * are what make the page believe a person typed.
+   * ## The value goes through the PROTOTYPE's setter, not `el.value =`
+   *
+   * The first version assigned `el.value` and fired `input` and `change`, on
+   * the theory that the events are what make a framework notice. For React —
+   * Shopify, and most of the forms anyone asks to have filled — that is
+   * silently wrong. React installs its own `value` accessor on each input
+   * INSTANCE and records every value written through it; when `input` fires,
+   * it compares that record against the DOM and calls `onChange` only if they
+   * differ. An `el.value =` writes the record too, so they never differ: the
+   * text appears in the box, React's state keeps the old value, and a Save
+   * sends the old one.
+   *
+   * The setter on the element's prototype (`HTMLInputElement.prototype`,
+   * `HTMLTextAreaElement.prototype`) changes the DOM without touching the
+   * record, which is exactly what a person's keystroke does. Frameworks with
+   * no such tracking see the same write, so nothing is lost for them.
+   *
+   * ## The events are still the point
+   *
+   * `input` and `change`, bubbling, are what make a page believe a person
+   * typed. React reads `input`; plenty of hand-written forms only read
+   * `change`.
    */
   function fill(id, text) {
     const el = resolve(id);
+    const k = kind(el);
+    // Refused rather than approximated: "fill" a checkbox with "true" has no
+    // meaning a caller could rely on, and clicking is already the exact verb.
+    if (k === "checkbox" || k === "radio") {
+      throw new Error(
+        'Element "' +
+          id +
+          '" is a ' +
+          k +
+          ", which is set by clicking, not by typing. Read its `checked` from page_elements, " +
+          "then click it only if it is not already what you want — a click toggles.",
+      );
+    }
+    if (el.disabled === true) {
+      throw new Error(
+        'Element "' + id + '" is disabled on the page; a person could not type in it either.',
+      );
+    }
     el.scrollIntoView({ block: "center", behavior: "instant" });
     el.focus();
-    if (el.isContentEditable) {
+    let chose;
+    if (k === "select") {
+      chose = choose(el, text);
+    } else if (el.isContentEditable) {
       el.textContent = text;
     } else {
-      el.value = text;
+      setValue(el, text);
     }
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
-    return { filled: id, label: label(el) };
+    return chose === undefined
+      ? { filled: id, label: label(el) }
+      : { filled: id, label: label(el), chose };
+  }
+
+  /**
+   * Write `value` the way the browser does, past any accessor a framework has
+   * put on the instance. See `fill`.
+   *
+   * The nearest setter up the prototype chain rather than a named prototype,
+   * so a custom element that subclasses an input still reaches the native one.
+   */
+  function setValue(el, text) {
+    for (let proto = Object.getPrototypeOf(el); proto; proto = Object.getPrototypeOf(proto)) {
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) {
+        setter.call(el, text);
+        return;
+      }
+    }
+    el.value = text;
+  }
+
+  /**
+   * Pick the option a person would pick: by the words they see.
+   *
+   * `page_elements` reports a select's value as its option TEXT, so that is
+   * what a caller has to hand back. The hidden `value` attribute is accepted
+   * too, and a case-insensitive match last, but nothing looser — a near-miss
+   * that chose the wrong option would be a wrong answer submitted with
+   * confidence, where an error listing the real options costs one more call.
+   */
+  function choose(el, text) {
+    const options = Array.from(el.options || []);
+    const shown = (o) => (o.label || o.text || "").trim();
+    const wanted = text.trim();
+    const match =
+      options.find((o) => shown(o) === wanted) ||
+      options.find((o) => o.value === text) ||
+      options.find((o) => shown(o).toLowerCase() === wanted.toLowerCase());
+    if (!match) {
+      const offered = options.slice(0, 25).map((o) => '"' + shown(o) + '"');
+      throw new Error(
+        'No option "' +
+          text +
+          '" in this select. It offers ' +
+          offered.join(", ") +
+          (options.length > 25 ? ", and " + (options.length - 25) + " more." : "."),
+      );
+    }
+    if (match.disabled) {
+      throw new Error('The option "' + shown(match) + '" is disabled on the page.');
+    }
+    // By index, so two options sharing a `value` still choose the one named.
+    el.selectedIndex = options.indexOf(match);
+    return shown(match);
   }
 
   function scroll(direction) {

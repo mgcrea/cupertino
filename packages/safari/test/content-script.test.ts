@@ -596,3 +596,167 @@ describe("read", () => {
     expect(typeof shared).toBe("function");
   });
 });
+
+/**
+ * `fill`, executed against the thing that broke it: React's value tracker.
+ *
+ * React defines its own `value` accessor on each input INSTANCE, records every
+ * value written through it, and on `input` calls `onChange` only when the DOM
+ * disagrees with that record. The stand-in below does exactly that, so a fill
+ * that writes `el.value` directly — the first version — shows the text and
+ * changes nothing React knows about.
+ */
+describe("fill", () => {
+  class FakeEvent {
+    readonly type: string;
+    constructor(type: string) {
+      this.type = type;
+    }
+  }
+
+  const runFill = (elements: unknown[], id: string, text: string) => {
+    const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
+    const context = createContext({
+      window,
+      Event: FakeEvent,
+      document: { querySelectorAll: () => elements, getElementById: () => null },
+      getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
+    });
+    runInContext(SOURCE, context);
+    const run = window.cupertinoRunCommand as (c: unknown) => {
+      ok: boolean;
+      data: Record<string, unknown>;
+      error?: string;
+    };
+    expect(run({ action: "elements", limit: 50 }).ok).toBe(true);
+    return run({ action: "fill", elementId: id, text });
+  };
+
+  /** Browser-like DOM behaviour an element needs for `fill` to act on it. */
+  const acting = (events: string[]) => ({
+    scrollIntoView: () => {},
+    focus: () => {},
+    dispatchEvent: (e: FakeEvent) => void events.push(e.type),
+  });
+
+  /** An input the way React leaves it: a native prototype accessor, and its own on top. */
+  const reactInput = (initial: string) => {
+    const dom = { value: initial };
+    const proto = {};
+    Object.defineProperty(proto, "value", {
+      get: () => dom.value,
+      set: (v: string) => void (dom.value = String(v)),
+    });
+    const node: Record<string, unknown> = Object.assign(Object.create(proto) as object, {
+      ...el("textarea"),
+      ...acting([]),
+    });
+    delete node.value;
+
+    let tracked = initial;
+    const onChange: string[] = [];
+    Object.defineProperty(node, "value", {
+      get: () => dom.value,
+      set: (v: string) => {
+        tracked = String(v);
+        dom.value = String(v);
+      },
+    });
+    node.dispatchEvent = (e: FakeEvent) => {
+      if (e.type === "input" && tracked !== dom.value) {
+        tracked = dom.value;
+        onChange.push(dom.value);
+      }
+    };
+    return { node, dom, onChange };
+  };
+
+  it("reaches React's onChange, not just the DOM", () => {
+    const input = reactInput("old details");
+    const out = runFill([input.node], "e1", "new details");
+
+    expect(out.ok, out.error).toBe(true);
+    expect(input.dom.value).toBe("new details");
+    expect(input.onChange).toEqual(["new details"]);
+  });
+
+  it("still fills an ordinary field that has no framework on it", () => {
+    const events: string[] = [];
+    const plain = { ...el("input", { name: "q" }), ...acting(events) };
+    const out = runFill([plain], "e1", "hello");
+
+    expect(out.ok, out.error).toBe(true);
+    expect(plain.value).toBe("hello");
+    expect(events).toEqual(["input", "change"]);
+  });
+
+  const select = (events: string[], options: Record<string, unknown>[]) => ({
+    ...el("select", { name: "category" }),
+    ...acting(events),
+    options,
+    selectedOptions: [],
+    selectedIndex: -1,
+  });
+  const OPTIONS = [
+    { label: "Choose one", value: "" },
+    { label: "Gift cards", value: "gift_cards" },
+    { label: "Discounts", value: "discounts" },
+    { label: "Loyalty", value: "loyalty", disabled: true },
+  ];
+
+  it("chooses a select option by the text a person sees", () => {
+    const events: string[] = [];
+    const s = select(events, OPTIONS);
+    const out = runFill([s], "e1", "Discounts");
+
+    expect(out.ok, out.error).toBe(true);
+    expect(s.selectedIndex).toBe(2);
+    expect(out.data.chose).toBe("Discounts");
+    expect(events).toContain("change");
+  });
+
+  it("accepts the option's hidden value too", () => {
+    const s = select([], OPTIONS);
+    expect(runFill([s], "e1", "gift_cards").ok).toBe(true);
+    expect(s.selectedIndex).toBe(1);
+  });
+
+  it("names the real options instead of guessing at a near miss", () => {
+    const s = select([], OPTIONS);
+    const out = runFill([s], "e1", "Discount");
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain('"Discounts"');
+    expect(s.selectedIndex).toBe(-1);
+  });
+
+  it("refuses a disabled option", () => {
+    const out = runFill([select([], OPTIONS)], "e1", "Loyalty");
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("disabled");
+  });
+
+  it.each(["checkbox", "radio"])("sends a %s to click rather than typing into it", (type) => {
+    const events: string[] = [];
+    const box: Record<string, unknown> = {
+      ...el("input", { type }, { checked: false }),
+      ...acting(events),
+    };
+    const out = runFill([box], "e1", "true");
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("click");
+    expect(box.checked).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it("refuses a disabled field, as the page would a person", () => {
+    const events: string[] = [];
+    const field = { ...el("input", {}, { disabled: true }), ...acting(events) };
+    const out = runFill([field], "e1", "x");
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("disabled");
+    expect(field.value).toBe("");
+  });
+});
