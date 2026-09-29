@@ -43,16 +43,34 @@
    * zero-height collapsed row — are all laid out and none of them are
    * `display: none`. An element nobody can see must not be offered as clickable.
    */
-  function interactive(el) {
+  function visible(el) {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
     const style = getComputedStyle(el);
     if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0") {
       return false;
     }
-    if (el.disabled === true) return false;
     if (el.getAttribute("aria-hidden") === "true") return false;
     return true;
+  }
+
+  function interactive(el) {
+    return visible(el) && !isDisabled(el);
+  }
+
+  /**
+   * Greyed out, but still on screen and still part of the form.
+   *
+   * `enumerate` used to drop these with the invisible ones, and that lost the
+   * answer to a real question. On a Shopify listing form, "Shopify Online
+   * Store" and "Shopify POS" are checkboxes disabled by the radio above them;
+   * the enumeration showed their label links and not the boxes, so the form
+   * could not be read without falling back to Accessibility. A disabled control
+   * is reported and marked instead — clicking one does nothing, which is the
+   * same thing a person gets.
+   */
+  function isDisabled(el) {
+    return el.disabled === true || el.getAttribute("aria-disabled") === "true";
   }
 
   /**
@@ -178,11 +196,18 @@
     if (tag === "input") {
       const type = (el.getAttribute("type") || "text").toLowerCase();
       if (["button", "submit", "reset", "image"].includes(type)) return "button";
-      if (["checkbox", "radio"].includes(type)) return "checkbox";
+      // Told apart because the question differs: a radio is one answer out
+      // of a group, and reading it as an independent checkbox gets the form
+      // wrong.
+      if (type === "checkbox") return "checkbox";
+      if (type === "radio") return "radio";
       return "textfield";
     }
     if (tag === "button") return "button";
-    if (el.getAttribute("role") === "button") return "button";
+    const role = el.getAttribute("role");
+    if (role === "button") return "button";
+    if (role === "checkbox" || role === "switch") return "checkbox";
+    if (role === "radio") return "radio";
     if (el.isContentEditable) return "textfield";
     return "control";
   }
@@ -196,6 +221,8 @@
     "[role=button]",
     "[role=link]",
     "[role=checkbox]",
+    "[role=radio]",
+    "[role=switch]",
     "[role=tab]",
     "[contenteditable=true]",
     "[onclick]",
@@ -208,15 +235,50 @@
    * only question a caller legitimately has about a withheld field, and a
    * password's length is a weak leak bought for nothing.
    */
-  function describeValue(el, includeCodes) {
-    if (kind(el) !== "textfield") return { value: null };
-    const held = el.value || "";
+  function describeValue(el, includeCodes, maxValueChars) {
+    const k = kind(el);
+    if (k === "checkbox" || k === "radio") return { value: null, checked: isChecked(el) };
+    if (k !== "textfield" && k !== "select") return { value: null };
+    // A select goes through the same classification as an input:
+    // `<select autocomplete="cc-exp-month">` is how most checkouts ask for a
+    // card's expiry, and reporting its choice would be a card field leaking
+    // through the one element kind the redaction never looked at.
+    const held = k === "select" ? selectedText(el) : el.value || "";
     const secrecy = classifyField(el);
     if (secrecy === "credential" || (secrecy === "code" && !includeCodes)) {
       return { value: null, redacted: secrecy, hasValue: held.length > 0 };
     }
-    return { value: held.slice(0, 200) };
+    if (held.length <= maxValueChars) return { value: held };
+    // Said rather than left to be inferred. A value cut at exactly the cap is
+    // otherwise indistinguishable from a field whose own maxlength stopped it,
+    // and "is this the page's limit or ours" is exactly the question a caller
+    // reviewing a form needs answered.
+    return { value: held.slice(0, maxValueChars), valueTruncated: true, valueLength: held.length };
   }
+
+  /**
+   * Ticked or not. `"mixed"` for a tri-state box, because rounding it to either
+   * boolean would misreport a "select all" that is partly selected.
+   */
+  function isChecked(el) {
+    if (el.tagName.toLowerCase() === "input") {
+      if (el.indeterminate === true) return "mixed";
+      return el.checked === true;
+    }
+    const aria = el.getAttribute("aria-checked");
+    return aria === "mixed" ? "mixed" : aria === "true";
+  }
+
+  /** The option text a person sees, not the `value` attribute behind it. */
+  function selectedText(el) {
+    const options = Array.from(el.selectedOptions || []);
+    return options.map((o) => (o.label || o.text || "").trim()).join(", ");
+  }
+
+  /** What `elements` returns of a field's value when the caller names no cap. */
+  const DEFAULT_VALUE_CHARS = 200;
+  /** And the most it will return when one does. */
+  const MAX_VALUE_CHARS = 20000;
 
   /**
    * Enumerate what can be acted on, newest ids winning.
@@ -227,12 +289,12 @@
    * them; a bounded list with a `truncated` flag is more useful than a complete
    * one nobody reads.
    */
-  function enumerate(limit, includeCodes) {
+  function enumerate(limit, includeCodes, maxValueChars) {
     handles.clear();
     const found = [];
     const all = document.querySelectorAll(SELECTOR);
     for (const el of all) {
-      if (!interactive(el)) continue;
+      if (!visible(el)) continue;
       const id = "e" + nextId++;
       handles.set(id, el);
       const rect = el.getBoundingClientRect();
@@ -249,7 +311,9 @@
           rect.bottom <= (window.innerHeight || 0) &&
           rect.right <= (window.innerWidth || 0),
         href: el.tagName.toLowerCase() === "a" ? el.href || null : null,
-        ...describeValue(el, includeCodes),
+        ...describeValue(el, includeCodes, maxValueChars),
+        // Only when true, so the ordinary element carries no extra key.
+        ...(isDisabled(el) ? { disabled: true } : {}),
       });
       if (found.length >= limit) break;
     }
@@ -431,6 +495,67 @@
   }
 
   /**
+   * The page's readable text: script and style removed, whitespace collapsed.
+   *
+   * Shared with `content.js`, which stores the same extraction as a capture —
+   * the manifest loads this file first, so it can. One implementation, so a
+   * live read and a capture of the same page can never disagree about what
+   * "the text" is.
+   *
+   * innerText on a detached clone, so removing script/style cannot disturb the
+   * page the user is actually looking at.
+   */
+  function readableText() {
+    const clone = document.body?.cloneNode(true);
+    if (!clone) return "";
+    for (const n of clone.querySelectorAll("script,style,noscript,template")) n.remove();
+    return (clone.innerText || "")
+      .replace(/[ \t\u00a0]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  window.cupertinoReadableText = readableText;
+
+  /** The ceiling on a live read, whatever the server asks for — the capture's own html cap. */
+  const READ_HARD_CAP = 1024 * 1024;
+
+  /**
+   * The page as it is NOW, for `read_page`.
+   *
+   * ## Why the capture was not enough
+   *
+   * A capture is taken at load and again once the DOM settles, and then never
+   * again until the route changes. Shopify's app-submission form showed what
+   * that misses: the React shell rendered, went quiet while it fetched the
+   * form, the settle watcher took the quiet for "done" — and the stored page was
+   * "Skip to content" for as long as the tab stayed open, while this very lane
+   * could enumerate every field on it.
+   *
+   * So a read asks the page directly when the page is there to ask, and the
+   * capture becomes what it should have been all along: the answer for a tab
+   * that cannot answer.
+   *
+   * Clipped HERE rather than on the server so a 300 KB page does not cross the
+   * native boundary for a caller that asked for 32 K of it.
+   */
+  function read(format, maxChars) {
+    const html = format === "html";
+    const body = html ? document.documentElement?.outerHTML || "" : readableText();
+    const cap = Math.min(Math.max(1, Number(maxChars) || READ_HARD_CAP), READ_HARD_CAP);
+    const cut = body.length > cap;
+    return {
+      url: location.href,
+      title: document.title || "",
+      format: html ? "html" : "text",
+      content: cut ? body.slice(0, cap) : body,
+      totalChars: body.length,
+      truncated: cut,
+      readAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Run one command and describe what happened.
    *
    * Never throws into the caller: a command that fails comes back as
@@ -446,8 +571,14 @@
         case "elements":
           return {
             ok: true,
-            data: enumerate(Math.min(command.limit || 60, 200), command.includeCodes === true),
+            data: enumerate(
+              Math.min(command.limit || 60, 200),
+              command.includeCodes === true,
+              Math.min(Math.max(1, command.maxValueChars || DEFAULT_VALUE_CHARS), MAX_VALUE_CHARS),
+            ),
           };
+        case "read":
+          return { ok: true, data: read(command.format, command.maxChars) };
         case "click":
           return { ok: true, data: click(command.elementId) };
         case "fill":

@@ -392,3 +392,207 @@ describe("findCodes", () => {
     expect(Date.parse(found.scannedAt)).toBeGreaterThan(0);
   });
 });
+
+/** Run one command against a fixed element list, with the whole result back. */
+const commandWith = (elements: unknown[], command: Record<string, unknown>) => {
+  const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
+  const context = createContext({
+    window,
+    document: { querySelectorAll: () => elements, getElementById: () => null },
+    getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
+  });
+  runInContext(SOURCE, context);
+  const run = window.cupertinoRunCommand as (c: unknown) => {
+    ok: boolean;
+    data: { elements: Record<string, unknown>[] };
+    error?: string;
+  };
+  const out = run({ action: "elements", limit: 50, includeCodes: false, ...command });
+  expect(out.ok, out.error).toBe(true);
+  return out.data.elements;
+};
+
+/**
+ * Reading a form, which is what the Shopify listing review needed and could
+ * not do: every checkbox came back `value: null`, radios were reported as
+ * checkboxes, and two disabled boxes were missing altogether.
+ */
+describe("form state", () => {
+  it("reports whether a checkbox is ticked", () => {
+    const [on, off] = commandWith(
+      [
+        el("input", { type: "checkbox" }, { checked: true }),
+        el("input", { type: "checkbox" }, { checked: false }),
+      ],
+      {},
+    );
+    expect(on).toMatchObject({ kind: "checkbox", checked: true });
+    expect(off).toMatchObject({ kind: "checkbox", checked: false });
+  });
+
+  it("reports a radio as a radio, with its state", () => {
+    const [found] = commandWith([el("input", { type: "radio" }, { checked: true })], {});
+    expect(found).toMatchObject({ kind: "radio", checked: true });
+  });
+
+  it("reports a tri-state box as mixed rather than rounding it", () => {
+    const [found] = commandWith(
+      [el("input", { type: "checkbox" }, { checked: false, indeterminate: true })],
+      {},
+    );
+    expect(found?.checked).toBe("mixed");
+  });
+
+  it("reads an ARIA checkbox, switch and radio from aria-checked", () => {
+    const found = commandWith(
+      [
+        el("div", { role: "checkbox", "aria-checked": "true" }),
+        el("div", { role: "switch", "aria-checked": "false" }),
+        el("div", { role: "radio", "aria-checked": "true" }),
+      ],
+      {},
+    );
+    expect(found.map((f) => [f.kind, f.checked])).toEqual([
+      ["checkbox", true],
+      ["checkbox", false],
+      ["radio", true],
+    ]);
+  });
+
+  it("lists a disabled control and marks it, instead of dropping it", () => {
+    const [found] = commandWith(
+      [el("input", { type: "checkbox" }, { checked: false, disabled: true })],
+      {},
+    );
+    expect(found).toMatchObject({ kind: "checkbox", checked: false, disabled: true });
+  });
+
+  it("marks aria-disabled the same way", () => {
+    const [found] = commandWith([el("button", { "aria-disabled": "true" })], {});
+    expect(found?.disabled).toBe(true);
+  });
+
+  it("carries no disabled key on an ordinary control", () => {
+    const [found] = commandWith([el("button")], {});
+    expect(found).not.toHaveProperty("disabled");
+  });
+
+  /** Disabled is on screen; zero-size is not. Only the second is still dropped. */
+  it("still drops an element nobody can see", () => {
+    const hidden = el("input", { type: "checkbox" });
+    hidden.getBoundingClientRect = () => ({
+      width: 0,
+      height: 0,
+      top: 0,
+      left: 0,
+      bottom: 0,
+      right: 0,
+    });
+    expect(commandWith([hidden], {})).toEqual([]);
+  });
+
+  it("reports the option text a select shows", () => {
+    const [found] = commandWith(
+      [el("select", { name: "category" }, { selectedOptions: [{ label: "Gift cards" }] })],
+      {},
+    );
+    expect(found).toMatchObject({ kind: "select", value: "Gift cards" });
+  });
+
+  /** The redaction must not have a hole shaped like the one kind it never looked at. */
+  it("withholds a card field that happens to be a select", () => {
+    const [found] = commandWith(
+      [
+        el(
+          "select",
+          { autocomplete: "cc-exp-month" },
+          { selectedOptions: [{ label: "SELECT-LEAKED" }] },
+        ),
+      ],
+      {},
+    );
+    expect(found?.redacted).toBe("credential");
+    expect(JSON.stringify(found)).not.toContain("SELECT-LEAKED");
+  });
+});
+
+describe("value truncation", () => {
+  const long = "x".repeat(250);
+
+  it("says when a value was cut, and how long it really is", () => {
+    const [found] = commandWith([el("textarea", {}, { value: long })], {});
+    expect(found).toMatchObject({ valueTruncated: true, valueLength: 250 });
+    expect(String(found?.value)).toHaveLength(200);
+  });
+
+  it("returns the whole value under a raised cap, with no flag", () => {
+    const [found] = commandWith([el("textarea", {}, { value: long })], { maxValueChars: 1000 });
+    expect(found?.value).toBe(long);
+    expect(found).not.toHaveProperty("valueTruncated");
+  });
+
+  /** A value cut by the page's own maxlength is whole as far as we are concerned. */
+  it("does not flag a value that fits", () => {
+    const [found] = commandWith([el("input", {}, { value: "x".repeat(62) })], {});
+    expect(found).not.toHaveProperty("valueTruncated");
+  });
+});
+
+/** The live read `read_page` now tries before the capture. */
+describe("read", () => {
+  const readWith = (command: Record<string, unknown>) => {
+    const removed: string[] = [];
+    const clone = {
+      innerText: "Skip to content\n\n\n\nApp name   Prepaid Credits",
+      querySelectorAll: () => [{ remove: () => removed.push("script") }],
+    };
+    const window: Record<string, unknown> = {};
+    const context = createContext({
+      window,
+      location: { href: "https://apps.example/form" },
+      document: {
+        title: "App Listing Submission",
+        body: { cloneNode: () => clone },
+        documentElement: { outerHTML: "<html><body>form</body></html>" },
+      },
+    });
+    runInContext(SOURCE, context);
+    const run = window.cupertinoRunCommand as (c: unknown) => {
+      ok: boolean;
+      data: Record<string, unknown>;
+      error?: string;
+    };
+    const out = run({ action: "read", ...command });
+    expect(out.ok, out.error).toBe(true);
+    return { data: out.data, removed, shared: window.cupertinoReadableText };
+  };
+
+  it("returns the readable text, script stripped and whitespace collapsed", () => {
+    const { data, removed } = readWith({ format: "text", maxChars: 1000 });
+    expect(data).toMatchObject({
+      url: "https://apps.example/form",
+      title: "App Listing Submission",
+      format: "text",
+      content: "Skip to content\n\nApp name Prepaid Credits",
+      truncated: false,
+    });
+    expect(removed).toEqual(["script"]);
+    expect(typeof data.readAt).toBe("string");
+  });
+
+  it("returns the html when asked", () => {
+    const { data } = readWith({ format: "html", maxChars: 1000 });
+    expect(data).toMatchObject({ format: "html", content: "<html><body>form</body></html>" });
+  });
+
+  it("clips to the cap in the page, and says how much there was", () => {
+    const { data } = readWith({ format: "text", maxChars: 4 });
+    expect(data).toMatchObject({ content: "Skip", truncated: true, totalChars: 41 });
+  });
+
+  /** content.js stores captures through this, so the two cannot disagree. */
+  it("exposes the extraction for the capture to share", () => {
+    const { shared } = readWith({});
+    expect(typeof shared).toBe("function");
+  });
+});

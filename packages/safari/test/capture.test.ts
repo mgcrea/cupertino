@@ -24,12 +24,21 @@ import { describe, expect, it } from "vitest";
  * on; every assertion below is about ordering.
  */
 
-const SOURCE = readFileSync(
-  fileURLToPath(
-    new URL("../../../apps/apple/CupertinoSafariExtension/Resources/content.js", import.meta.url),
-  ),
-  "utf8",
-);
+const resource = (name: string) =>
+  readFileSync(
+    fileURLToPath(
+      new URL(`../../../apps/apple/CupertinoSafariExtension/Resources/${name}`, import.meta.url),
+    ),
+    "utf8",
+  );
+
+/**
+ * Both scripts, in manifest order. `content.js` extracts text through the
+ * function `actions.js` defines, so evaluating it alone would test a capture
+ * that can never happen in Safari.
+ */
+const ACTIONS = resource("actions.js");
+const SOURCE = resource("content.js");
 
 type Capture = { kind: string; url: string; title: string; text: string; html: string };
 
@@ -127,6 +136,7 @@ const boot = (initial: { title: string; text: string }) => {
     window: {} as Record<string, unknown>,
   });
 
+  runInContext(ACTIONS, context);
   runInContext(SOURCE, context);
 
   return {
@@ -188,13 +198,38 @@ describe("capture timing", () => {
     const page = boot(SHELL);
     page.advance(300);
     page.render(HYDRATED);
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       page.advance(200);
       page.render({ text: `${HYDRATED.text} ${i}` });
     }
 
     expect(page.captures.length).toBeGreaterThan(1);
     expect(page.captures.at(-1)!.text).toContain(HYDRATED.text);
+  });
+
+  /**
+   * The second regression, from Shopify's app-submission form. The app renders
+   * its frame, then goes quiet while it FETCHES the form — longer than the
+   * quiet window. The first settle watcher stopped at that first silence, so
+   * the frame was the stored page for as long as the tab stayed open.
+   */
+  it("keeps watching past a quiet moment while the app is still fetching", () => {
+    const page = boot({ title: "App Listing Submission", text: "" });
+    page.render({ text: "Skip to content" });
+    page.advance(1500); // the fetch: nothing moves for three quiet windows
+    page.render({ text: "Skip to content\nApp name\nPrepaid Credits" });
+    page.advance(1000);
+
+    expect(page.captures.at(-1)!.text).toContain("Prepaid Credits");
+  });
+
+  it("stops watching at the deadline", () => {
+    const page = boot({ title: "App", text: "Skip to content" });
+    page.advance(11_000);
+    const before = page.captures.length;
+    page.render({ text: "rendered far too late for a capture" });
+    page.advance(2000);
+    expect(page.captures).toHaveLength(before);
   });
 
   /** A settle capture identical to the stored one is a round trip for nothing. */

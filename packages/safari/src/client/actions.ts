@@ -51,7 +51,7 @@ import { PreconditionError } from "./errors.js";
 /** One instruction for a page. */
 export type Command = {
   id: string;
-  action: "elements" | "click" | "fill" | "scroll" | "codes";
+  action: "elements" | "click" | "fill" | "scroll" | "codes" | "read";
   /**
    * The page this is for. A command with no URL is answered by whichever
    * allowed page polls first, which is only ever right for a question about
@@ -62,6 +62,12 @@ export type Command = {
   text?: string | undefined;
   direction?: "up" | "down" | undefined;
   limit?: number | undefined;
+  /** `read` only: which rendering of the page to return. */
+  format?: "text" | "html" | undefined;
+  /** `read` only: the most characters the page may send back. */
+  maxChars?: number | undefined;
+  /** `elements` only: how much of each field's value to return. */
+  maxValueChars?: number | undefined;
   /**
    * Whether the page may return the value of a one-time-code field.
    *

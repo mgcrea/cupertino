@@ -48,6 +48,9 @@ const connect = async (pagesPath: string) => {
   const config = loadConfig({
     APPLE_SAFARI_INDEX_MODE: "off",
     APPLE_SAFARI_PAGES: pagesPath,
+    // No tab will ever answer in this suite; it is about the capture store.
+    // The live read is exercised against a fake extension in actions.test.ts.
+    APPLE_SAFARI_LIVE_READ_TIMEOUT_MS: "0",
   });
   const { server } = createServer({ config, home: "/nonexistent-home" });
   const client = new Client({ name: "test", version: "0" });

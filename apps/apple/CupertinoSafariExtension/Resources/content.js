@@ -27,16 +27,11 @@
   // amounts of context: a Reddit thread is tens of KB of text and hundreds of
   // KB of markup. Extracting here rather than in the server keeps the large
   // one from crossing the boundary when nobody asked for it.
+  //
+  // The extraction itself lives in actions.js, which the manifest loads first,
+  // so a capture and a live read of the same page agree on what its text is.
   function readableText() {
-    // innerText on a detached clone, so removing script/style cannot disturb
-    // the page the user is actually looking at.
-    const clone = document.body?.cloneNode(true);
-    if (!clone) return "";
-    for (const n of clone.querySelectorAll("script,style,noscript,template")) n.remove();
-    return (clone.innerText || "")
-      .replace(/[ \t ]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    return window.cupertinoReadableText ? window.cupertinoReadableText() : "";
   }
 
   /**
@@ -54,9 +49,18 @@
    * The deadline is not a safety net, it is the common case. A live timeline —
    * video, ads, ticking timestamps — never goes quiet, so a debounce on its own
    * would wait forever on exactly the pages this exists for.
+   *
+   * A quiet moment is NOT the end. The first version stopped watching at the
+   * first 500 ms of stillness, and a single-page app is still during its data
+   * fetch: Shopify's app-submission form rendered its frame, went quiet while
+   * it loaded, and the frame — "Skip to content" and nothing else — was the
+   * stored page for as long as the tab stayed open. So each quiet moment
+   * captures and the watch goes on to the deadline; a capture identical to the
+   * last one costs no round trip, so a page that has finished costs one
+   * extraction per quiet moment and nothing more.
    */
   const SETTLE_QUIET_MS = 500;
-  const SETTLE_DEADLINE_MS = 5000;
+  const SETTLE_DEADLINE_MS = 10000;
 
   /**
    * The text of the last capture that left this page.
@@ -109,8 +113,8 @@
   }
 
   /**
-   * Capture again once the page stops changing, or once it has had long enough
-   * — whichever comes first.
+   * Capture again every time the page stops changing, until it has had long
+   * enough.
    *
    * Only one watcher runs at a time: a route change replaces the one in flight
    * rather than racing it, so a capture can never be attributed to the route
@@ -124,7 +128,7 @@
     };
     const restart = () => {
       clearTimeout(quietTimer);
-      quietTimer = setTimeout(done, SETTLE_QUIET_MS);
+      quietTimer = setTimeout(capture, SETTLE_QUIET_MS);
     };
     try {
       observer = new MutationObserver(restart);
@@ -136,10 +140,10 @@
         characterData: true,
       });
     } catch {
-      // Nothing observable. The deadline below still runs, so a page that
-      // renders late is still captured — just not early.
+      // Nothing observable. The timers below still run, so a page that renders
+      // late is still captured — just not as promptly.
     }
-    quietTimer = setTimeout(done, SETTLE_QUIET_MS);
+    quietTimer = setTimeout(capture, SETTLE_QUIET_MS);
     deadlineTimer = setTimeout(done, SETTLE_DEADLINE_MS);
   }
 

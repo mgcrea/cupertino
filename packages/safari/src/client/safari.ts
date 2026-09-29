@@ -567,17 +567,28 @@ export class AppleSafariClient {
    * that fails most legibly: with no grant nothing polls, and the caller gets a
    * timeout that says exactly which of the three conditions is missing.
    */
-  async pageAction(input: {
-    action: "elements" | "click" | "fill" | "scroll" | "codes";
-    url?: string | undefined;
-    elementId?: string | undefined;
-    text?: string | undefined;
-    direction?: "up" | "down" | undefined;
-    limit?: number | undefined;
-  }): Promise<CommandResult> {
+  async pageAction(
+    input: {
+      action: "elements" | "click" | "fill" | "scroll" | "codes" | "read";
+      url?: string | undefined;
+      elementId?: string | undefined;
+      text?: string | undefined;
+      direction?: "up" | "down" | undefined;
+      limit?: number | undefined;
+      format?: "text" | "html" | undefined;
+      maxChars?: number | undefined;
+      maxValueChars?: number | undefined;
+    },
+    // A caller with a fallback waits less than one without: `read_page` has
+    // the capture to return, a click has nothing.
+    opts: { timeoutMs?: number } = {},
+  ): Promise<CommandResult> {
     try {
       return await runCommand(
-        { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
+        {
+          pagesDirectory: this.pagesDirectory,
+          timeoutMs: opts.timeoutMs ?? this.#config.actionTimeoutMs,
+        },
         // `includeCodes` is attached HERE rather than by the caller, so there is
         // one place the setting can enter the channel and no tool can pass it.
         { ...input, includeCodes: this.#config.allowCodes },

@@ -67,6 +67,10 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
           "construct ids. `inView` says whether the user can currently see it, which is the " +
           "tiebreaker when two elements share a label. The list is capped and `truncated` says " +
           "when it was cut.\n\n" +
+          "This is also how you READ a form. A checkbox or radio carries `checked` (true, false, " +
+          'or "mixed"); a select carries the option text it shows in `value`; a greyed-out ' +
+          'control is still listed, with `disabled: true`. Radios are `kind: "radio"`, ' +
+          "separate from checkboxes, because each group has one answer.\n\n" +
           "A text field also carries what it currently holds, in `value` — EXCEPT where the " +
           "field looks like it holds a secret, and then `value` is null and `redacted` says " +
           'which kind. `redacted: "credential"` is a password or a card number and is never ' +
@@ -84,12 +88,28 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
           .max(200)
           .optional()
           .describe("Maximum elements to return. Defaults to 60."),
+        maxValueChars: z
+          .number()
+          .int()
+          .min(1)
+          .max(20_000)
+          .optional()
+          .describe(
+            "How much of each field's value to return. Defaults to 200, which is enough to " +
+              "recognise a field; raise it to read a long textarea whole. A value cut by this " +
+              "cap carries `valueTruncated: true` and its full `valueLength`.",
+          ),
       },
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ url, limit }) =>
+    async ({ url, limit, maxValueChars }) =>
       wrapResult(async () => {
-        const result = await client.pageAction({ action: "elements", url, limit });
+        const result = await client.pageAction({
+          action: "elements",
+          url,
+          limit,
+          maxValueChars,
+        });
         if (!result.ok) return fail(result.error ?? "The page could not enumerate its elements.");
         return ok(
           compact({

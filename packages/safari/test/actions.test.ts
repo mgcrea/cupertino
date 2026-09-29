@@ -456,3 +456,145 @@ describe("find_codes", () => {
     expect(res.text).not.toContain("Automation");
   });
 });
+
+/**
+ * `read_page` asks the tab first and falls back to the capture.
+ *
+ * The case this exists for is the one that was broken: a single-page app whose
+ * capture is its pre-render shell, while the tab itself holds the real page.
+ * The fallback cases matter as much — a capture returned in place of a live
+ * read must say that it is one, and why.
+ */
+describe("read_page, live", () => {
+  const url = "https://apps.example/form";
+  const shell = (pages: string) => {
+    capture(pages, url, "1.0.0");
+    // `capture` writes an empty text; give the shell its real signature.
+    const file = join(pages, `${createHash("sha256").update(url).digest("hex")}.json`);
+    const entry = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    writeFileSync(file, JSON.stringify({ ...entry, text: "Skip to content" }));
+  };
+  const liveData = {
+    url,
+    title: "App Listing Submission",
+    format: "text",
+    content: "Skip to content\nApp name\nPrepaid Credits",
+    totalChars: 41,
+    truncated: false,
+    readAt: new Date().toISOString(),
+  };
+
+  it("returns what the tab holds now, over the capture", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: liveData }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_read_page", { url });
+
+    expect(r.isError).toBe(false);
+    expect(r.json()).toMatchObject({
+      source: "live",
+      ageSeconds: 0,
+      content: liveData.content,
+      title: "App Listing Submission",
+    });
+    expect(r.text).not.toContain("liveRead");
+  });
+
+  it("asks for the format and the cap the caller named", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { ...liveData, format: "html" } }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    await call(c, "apple_safari_read_page", { url, format: "html", maxChars: 500 });
+
+    expect(ext.seen[0]).toMatchObject({ action: "read", url, format: "html", maxChars: 500 });
+  });
+
+  it("works for a URL that was never captured", async () => {
+    const dirs = paths();
+    running = fakeExtension(dirs, () => ({ ok: true, data: liveData }));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_read_page", { url });
+    expect(r.isError).toBe(false);
+    expect(r.json()).toMatchObject({ source: "live" });
+  });
+
+  it("falls back to the capture, and says to reload, when the tab predates live reads", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    running = fakeExtension(dirs, (cmd) => ({
+      ok: false,
+      error: `Unknown action "${String(cmd.action)}".`,
+    }));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_read_page", { url });
+
+    expect(r.isError).toBe(false);
+    const body = r.json() as { source: string; content: string; liveRead: string };
+    expect(body.source).toBe("capture");
+    expect(body.content).toBe("Skip to content");
+    expect(body.liveRead).toContain("reload");
+  });
+
+  it("falls back to the capture when no tab answers, and says why", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    const c = await connect(dirs.pages, { APPLE_SAFARI_LIVE_READ_TIMEOUT_MS: "300" });
+    const r = await call(c, "apple_safari_read_page", { url });
+
+    expect(r.isError).toBe(false);
+    const body = r.json() as { source: string; liveRead: string };
+    expect(body.source).toBe("capture");
+    expect(body.liveRead).toContain("did not answer within 0.3s");
+    // The unanswered command is taken back rather than left to run later.
+    expect(readdirSync(dirs.commands)).toEqual([]);
+  });
+
+  /** A failure on this side is not the tab's fault, and must not read as one. */
+  it("does not blame the tab when the command could not even be written", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    // A FILE where the command directory should be, so the write fails at once.
+    writeFileSync(dirs.commands, "");
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_read_page", { url });
+
+    const body = r.json() as { source: string; liveRead: string };
+    expect(body.source).toBe("capture");
+    expect(body.liveRead).toContain("could not be asked");
+    expect(body.liveRead).not.toContain("did not answer");
+  });
+
+  it("still fails legibly when there is neither a tab nor a capture", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    const c = await connect(dirs.pages, { APPLE_SAFARI_LIVE_READ_TIMEOUT_MS: "300" });
+    const r = await call(c, "apple_safari_read_page", { url: "https://elsewhere.example/" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("No capture for that exact URL");
+  });
+
+  it("does not wait on a tab when live reads are switched off", async () => {
+    const dirs = paths();
+    shell(dirs.pages);
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: liveData }));
+    running = ext;
+    const c = await connect(dirs.pages, { APPLE_SAFARI_LIVE_READ_TIMEOUT_MS: "0" });
+    const r = await call(c, "apple_safari_read_page", { url });
+    expect(r.json()).toMatchObject({ source: "capture" });
+    expect(ext.seen).toEqual([]);
+  });
+});
+
+describe("page_elements value cap", () => {
+  it("passes the caller's maxValueChars to the page", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { elements: [], truncated: false } }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    await call(c, "apple_safari_page_elements", { url: "https://x.example/", maxValueChars: 5000 });
+    expect(ext.seen[0]).toMatchObject({ action: "elements", maxValueChars: 5000 });
+  });
+});

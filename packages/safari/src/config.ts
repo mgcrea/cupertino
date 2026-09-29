@@ -66,6 +66,20 @@ const ConfigSchema = BaseConfigSchema.extend({
    * unreachable when it was merely asleep.
    */
   actionTimeoutMs: z.number().int().min(500).max(60_000).default(12_000),
+  /**
+   * How long `read_page` waits for the open tab to answer a LIVE read before
+   * falling back to the stored capture.
+   *
+   * Short where `actionTimeoutMs` is long, because a miss here costs nothing
+   * but freshness: the capture is still there to return. A visible tab polls
+   * every second, so this covers it with room to spare; a hidden one polls
+   * every ten and deliberately falls through to the capture rather than making
+   * every read of a background tab take ten seconds.
+   *
+   * Zero disables the live read, which is how the capture-store tests avoid
+   * waiting on a page that will never answer.
+   */
+  liveReadTimeoutMs: z.number().int().min(0).max(15_000).default(2_500),
   indexMode: z.enum(["auto", "ro", "immutable", "off"]).default("auto"),
   /**
    * Read live tabs through Apple Events.
@@ -126,6 +140,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     pagesPath: trimmed(env.APPLE_SAFARI_PAGES),
     readingListConfirmMs: parseIntOpt(env.APPLE_SAFARI_READING_LIST_CONFIRM_MS),
     actionTimeoutMs: parseIntOpt(env.APPLE_SAFARI_ACTION_TIMEOUT_MS),
+    liveReadTimeoutMs: parseIntOpt(env.APPLE_SAFARI_LIVE_READ_TIMEOUT_MS),
     indexMode: trimmed(env.APPLE_SAFARI_INDEX_MODE),
     liveTabs: parseBool(env.APPLE_SAFARI_LIVE_TABS),
     defaultRangeDays: parseIntOpt(env.APPLE_SAFARI_DEFAULT_RANGE_DAYS),

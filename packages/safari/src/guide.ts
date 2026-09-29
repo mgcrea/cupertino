@@ -13,10 +13,15 @@ page. Behind the write gate it also opens a URL and saves one to the Reading
 List. If the gate is off, say plainly that it cannot rather than trying.
 
 Page content comes from the extension, for websites the user has allowed it
-on. \`apple_safari_read_page\` returns a SNAPSHOT from when the page loaded —
-check \`ageSeconds\` before calling it the current page. The acting tools
-(\`page_elements\`, \`click\`, \`fill\`, \`scroll\`) go to the live page instead,
-and cost about a second on a visible tab and up to ten on a hidden one.
+on. \`apple_safari_read_page\` asks the open tab for its content first and
+says \`source: "live"\` when it answered; a hidden or closed tab gets the
+snapshot the extension stored instead, with \`source: "capture"\` and a
+\`liveRead\` line saying why — check \`ageSeconds\` before calling that the
+current page. The acting tools (\`page_elements\`, \`click\`, \`fill\`,
+\`scroll\`) always go to the live page, and cost about a second on a visible
+tab and up to ten on a hidden one. To read a FORM — what a field holds,
+whether a box is ticked — use \`page_elements\`: field values are not page
+text.
 
 There is still no \`do JavaScript\` verb, and Safari exposes no AXWebArea for
 page content, so the extension is the only route — which is the point: Safari
