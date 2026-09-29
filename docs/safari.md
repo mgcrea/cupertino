@@ -448,7 +448,8 @@ its sub-pages 17, while Hacker News, `mg-crea.com` and `cupertino.mgcrea.io` cap
 `documentElement` re-captures once the DOM has held still for 500 ms — cheap, because it costs
 nothing while a page is quiet, and precise, because the `<title>` a framework sets on boot is itself
 a mutation. But a debounce alone would never fire on a live timeline: video, ads and ticking
-timestamps mean x.com's feed is never quiet for 500 ms. So a 5 s deadline captures regardless. The
+timestamps mean x.com's feed is never quiet for 500 ms. So a deadline captures regardless (5 s at
+first, 10 s since the change below). The
 deadline is the common case on exactly the pages this lane is for, not a safety net.
 
 The rejected alternative was folding the check into the command poll, which already runs every
@@ -459,9 +460,37 @@ reflow every second on a page like x.com, forever, to notice one change in the f
 **The immediate capture stays.** It costs one message, it is already correct for most of the web,
 and a tab closed within the second still leaves something behind. The settle capture overwrites it.
 
-**What this still does not fix:** a read issued a second after `open_url` can land before the settle
-capture. `apple_safari_open_url` says the page was asked for and not waited for, and `read_page`
-reports `ageSeconds`; on a slow page the answer is still the shell, and the caller has to look.
+**What this still did not fix — and the second version.** Measured on 2026-09-29 against Shopify's
+app-submission form (`apps.shopify.com/services/partner-app-submissions/…`), open for over five
+minutes: `read_page` returned "Skip to content" and nothing else, while `page_elements` on the same
+tab enumerated 183 fields. The stored HTML was Polaris's frame with an empty
+`<div class="Polaris-Frame__Content"></div>`. The app had rendered its frame and then gone quiet
+while it fetched the form, the 500 ms debounce read that silence as "settled", and the watcher
+stopped for good — the next capture would have come only from a route change. X never hit this
+because its timeline never goes quiet; an app that renders in two phases with a fetch between them
+hits it every time.
+
+Two changes, because each covers the other's gap:
+
+- **A quiet moment no longer ends the watch.** Each 500 ms of stillness captures, and the watcher
+  keeps going to the deadline, now 10 s. A capture identical to the last costs no round trip, so a
+  finished page pays one extraction per quiet moment and nothing more. Pinned in
+  `packages/safari/test/capture.test.ts`, whose new case fails against the first version.
+- **`read_page` asks the tab first.** A `read` command over the channel `page_elements` already
+  uses returns the text as it is now, clipped in the page to the caller's `maxChars`. It waits
+  `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS` (2.5 s): a visible tab polls every second, so it answers; a
+  hidden one polls every ten and deliberately falls through to the capture rather than making every
+  background read slow. The fallback says so in `source: "capture"` and `liveRead`, including "reload
+  the tab" when it is running a content script from before `read` existed. Unlike the rejected
+  poll-folded check above, this extracts only when someone asks.
+
+The extraction is one function, defined in `actions.js` and used by `content.js`, so a live read
+and a capture of the same page cannot disagree about what its text is. That relies on the manifest
+loading `actions.js` first, and `capture.test.ts` now evaluates both in that order.
+
+The live read still cannot help a page that has not rendered yet: a read issued a second after
+`open_url` gets whatever the tab holds at that second. `apple_safari_open_url` says the page was
+asked for and not waited for.
 
 ### Replacing the app under a running Safari can crash Safari
 
@@ -774,12 +803,14 @@ A 2FA code on a web page is in one of two places, and they need different mechan
 webmail message, an issuer's dashboard, a bank's confirmation panel. There is no input to enumerate,
 so no amount of toggling makes `page_elements` see it.
 
-**And `read_page` cannot substitute for it.** That reads the capture store, written at
-`document_idle`, again when the DOM settles, and again after a route change. A code delivered by
-XHR into an already-open tab
+**And `read_page` could not substitute for it.** When this was written it read only the capture
+store, written at `document_idle`, again when the DOM settles, and again after a route change. A
+code delivered by XHR into an already-open tab
 **was never captured**. The `codes` action scans the DOM at command time, which is the only thing
 that sees it — and is the reason this is a new action rather than server-side extraction over a
-capture. The cheap version was considered and is strictly worse: stale by up to 30 minutes, blind to
+capture. `read_page` now reads the tab live when it can (see "What this still did not fix"), but
+that hands back the whole page for the caller to search, where this returns bounded excerpts judged
+on the server. The cheap version was considered and is strictly worse: stale by up to 30 minutes, blind to
 post-load codes, and it drags a page of text through `results/` for a six-digit answer.
 
 **The page returns text and judges nothing.** `findCodes` walks text nodes and hands back bounded

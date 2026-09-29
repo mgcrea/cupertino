@@ -69,6 +69,7 @@ which the user can see and revoke per site.
 | `APPLE_SAFARI_BOOKMARKS`               | auto    | Explicit `Bookmarks.plist` path.                      |
 | `APPLE_SAFARI_PAGES`                   | auto    | Explicit extension capture directory.                 |
 | `APPLE_SAFARI_ACTION_TIMEOUT_MS`       | `12000` | How long an action waits for the page to answer.      |
+| `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`    | `2500`  | How long `read_page` waits on the tab. `0` = capture. |
 | `APPLE_SAFARI_READING_LIST_CONFIRM_MS` | `1500`  | Beat before re-reading to confirm a Reading List add. |
 | `APPLE_SAFARI_INDEX_MODE`              | `auto`  | `auto` \| `ro` \| `immutable` \| `off`.               |
 | `APPLE_SAFARI_DEFAULT_RANGE_DAYS`      | `30`    | Window when only a start is given.                    |
@@ -106,10 +107,16 @@ why reading a code a _website shows_ is a different question from reading the va
 - **An exact URL match is not proof the row is about that page.** One measured tab on
   `http://localhost:4321/` matched a history row for an entirely different project. Any local
   address carries this.
-- **`read_page` is a SNAPSHOT, not a live read.** The extension captures when the page loads and
-  after a route change; nothing can ask Safari for a fresh copy. Check `ageSeconds`. The acting
-  tools go to the live page instead, which is why they cost about a second on a visible tab and up
-  to ten on a hidden one.
+- **`read_page` is live when the tab can answer, and a snapshot when it cannot.** It asks the open
+  tab first and waits `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`; a visible tab answers within a second. A
+  hidden tab checks in only every ten, so it — like a closed one — gets the capture the extension
+  stored at load and as the page settled, with `source: "capture"`, `ageSeconds`, and `liveRead`
+  saying why. The acting tools always go to the live page, which is why they cost about a second on
+  a visible tab and up to ten on a hidden one.
+- **Read a form with `page_elements`, not `read_page`.** Field values are not page text. Elements
+  carry `value` (a select's shown option too), `checked` on checkboxes and radios, and
+  `disabled: true` on greyed-out controls, which are listed rather than dropped. Values are cut at
+  200 characters unless `maxValueChars` raises it, and a cut one says so with `valueTruncated`.
 - **A timeout from an action means nothing was listening** — the extension off, not allowed on that
   site, or the page closed. It never means the page refused. Commands are at-most-once: one that is
   handed out and lost is not retried, because a click that MIGHT have landed must not be repeated.

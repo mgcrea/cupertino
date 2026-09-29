@@ -448,6 +448,31 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_safari_read_page` reads the tab as it is now, not as it looked while loading.",
+            body: [
+              "A single-page app that renders its frame and then fetches its content was stored as the empty frame: Shopify's app-listing form came back as \"Skip to content\" for as long as the tab was open, while `page_elements` could see every field on it. The read now asks the open tab first and says `source: \"live\"`; a tab that cannot answer within a couple of seconds — in the background, or closed — still gets the stored capture, marked `source: \"capture\"` with a `liveRead` line saying why. The stored capture itself also stopped giving up at the first quiet moment, so it now catches a page that renders after a fetch. The new wait is `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`. Tabs open across the update need a reload before they answer live.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "`apple_safari_page_elements` can read a form.",
+            body: [
+              "Checkboxes and radios now say whether they are ticked, radios are reported as radios rather than checkboxes, a select reports the option it shows, and a greyed-out control is listed with `disabled: true` instead of being left out. A field value cut at the 200-character default now says so, with its full length, and `maxValueChars` raises the cap. A select asking for a card's expiry is withheld like any other card field.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

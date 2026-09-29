@@ -332,9 +332,10 @@ pushState commits no history row at all. Each match reports `historyMatch`, and 
 can be a different site when the address is reused, as any `localhost` URL is.
 
 **Page content comes from a Safari extension, and only for websites you allow it on.**
-`apple_safari_read_page` returns a page as readable text or raw HTML. It is a snapshot taken when
-the page loaded rather than a live read, so every result says when it was captured and how old it
-is — a page you have navigated away from still answers, and saying so is the point.
+`apple_safari_read_page` returns a page as readable text or raw HTML. It asks the open tab for what
+it shows now; a tab that cannot answer — in the background, or already closed — gets the snapshot
+the extension stored instead, and the result says which it is, when it was captured and how old it
+is. A page you have navigated away from still answers, and saying so is the point.
 
 **There is still no `do JavaScript` tool.** That verb needs "Allow JavaScript from Apple Events", a
 developer-menu toggle which is not a TCC grant and whose own state cannot be read, so diagnostics
