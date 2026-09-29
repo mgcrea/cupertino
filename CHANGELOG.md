@@ -33,6 +33,12 @@ summary.
   `maxValueChars` raises the cap. A select asking for a card's expiry is withheld like any other
   card field.
 
+- **`apple_safari_fill` works on React forms.** It used to put the text in the box without React
+  noticing, so the form kept its old value and a Save sent that instead; Shopify's app-listing form
+  was the case that showed it. It now writes the value the way a keystroke does. It can also choose
+  an option in a select, by the text the option shows, and it refuses a checkbox or radio with a
+  pointer to `apple_safari_click` rather than doing something a caller cannot predict.
+
 ## [1.24.0] - 2026-09-26
 
 ### Added

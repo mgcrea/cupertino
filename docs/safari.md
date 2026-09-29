@@ -743,6 +743,27 @@ directions, including creating a subdirectory. So the server writes `commands/<u
 content script's poll claims it, runs it, and the answer lands in `results/<uuid>.json`. Three
 directories in one container, no Apple Event anywhere in the path.
 
+### `fill` has to get past React, and the first version did not
+
+The first `fill` assigned `el.value` and fired `input` and `change`, and its own comment claimed that
+made React and Vue see the value. For React it does not, and nothing shows it: React installs a
+`value` accessor on each input instance that records every write, and on `input` it calls `onChange`
+only when the DOM disagrees with that record. `el.value =` goes through the accessor, so the record
+and the DOM always agree — the text appears in the box, the component's state keeps the old value,
+and a Save sends the old one. Shopify's app-listing form, the case that prompted this, is React.
+
+`fill` now writes through the setter on the element's PROTOTYPE, the nearest one up the chain, which
+changes the DOM without touching React's record — what a keystroke does. The events still fire, and
+a page with no tracking sees the same write. `content-script.test.ts` stands in for the tracker, and
+its React case fails against the first version.
+
+Two more refusals came with it. A select is chosen by its option text, the words `page_elements`
+reports, with the hidden `value` accepted too and nothing looser: a near miss fails and lists the
+real options, because a wrong option submitted with confidence is worse than one more call. A
+checkbox or radio is refused with a pointer to `click`, since "fill with true" is not a verb a
+caller could rely on and a click toggles. File inputs remain out of reach — a content script cannot
+read a file from disk, and nothing on this lane can hand it one.
+
 ### The page polls, and what that costs
 
 Nothing outside Safari can wake a content script, and both push routes are the ones ruled out above.

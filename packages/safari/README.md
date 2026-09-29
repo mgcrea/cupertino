@@ -117,6 +117,11 @@ why reading a code a _website shows_ is a different question from reading the va
   carry `value` (a select's shown option too), `checked` on checkboxes and radios, and
   `disabled: true` on greyed-out controls, which are listed rather than dropped. Values are cut at
   200 characters unless `maxValueChars` raises it, and a cut one says so with `valueTruncated`.
+- **Set a form with `fill` and `click`.** `fill` writes through the element's native setter, which
+  is what makes React register the change — a plain `el.value =` shows the text and leaves React's
+  state on the old value. On a select it takes the option text `page_elements` reports. Checkboxes
+  and radios are clicked, not filled, and a click toggles, so read `checked` first. File inputs
+  cannot be set: a content script has no way to reach a file on disk.
 - **A timeout from an action means nothing was listening** — the extension off, not allowed on that
   site, or the page closed. It never means the page refused. Commands are at-most-once: one that is
   handed out and lost is not retried, because a click that MIGHT have landed must not be repeated.

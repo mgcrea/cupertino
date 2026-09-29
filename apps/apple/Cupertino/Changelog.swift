@@ -469,6 +469,12 @@ nonisolated enum Changelog {
             body: [
               "Checkboxes and radios now say whether they are ticked, radios are reported as radios rather than checkboxes, a select reports the option it shows, and a greyed-out control is listed with `disabled: true` instead of being left out. A field value cut at the 200-character default now says so, with its full length, and `maxValueChars` raises the cap. A select asking for a card's expiry is withheld like any other card field.",
             ]),
+          Entry(
+            ordinal: 2,
+            headline: "`apple_safari_fill` works on React forms.",
+            body: [
+              "It used to put the text in the box without React noticing, so the form kept its old value and a Save sent that instead; Shopify's app-listing form was the case that showed it. It now writes the value the way a keystroke does. It can also choose an option in a select, by the text the option shows, and it refuses a checkbox or radio with a pointer to `apple_safari_click` rather than doing something a caller cannot predict.",
+            ]),
         ]),
     ])
 
