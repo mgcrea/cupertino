@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { encodeRef } from "../src/client/ref.js";
 import { AppleRemindersClient } from "../src/client/reminders.js";
 import { loadConfig } from "../src/config.js";
 
@@ -251,5 +252,26 @@ describe("date bounds", () => {
     expect(from.reminders.map((r) => r.name)).toEqual(["From the index"]);
     const after = await client().listReminders({ dueAfter: "2026-08-22", limit: 10 });
     expect(after.reminders).toEqual([]);
+  });
+});
+
+describe("moving", () => {
+  /**
+   * The move script copies exactly one due date, so it has to know which kind
+   * the reminder carries. ZALLDAY decides that, and only the index has it.
+   */
+  it("hands the move script the index's all-day flag", async () => {
+    const osascript = runner();
+    const c = new AppleRemindersClient({
+      config: loadConfig({ APPLE_REMINDERS_STORE: storePath }),
+      osascript,
+    });
+    // The list lookup is not what is under test, and this runner has no lists.
+    vi.spyOn(c, "resolveList").mockResolvedValue("list-1");
+    await c.moveReminders([encodeRef(`x-apple-reminder://${uuid(1)}`)], "Work");
+    const call = vi
+      .mocked(osascript.run)
+      .mock.calls.find(([script]) => String(script).includes("the copy could not be read back"));
+    expect(call?.[1]).toMatchObject({ allDay: { [`x-apple-reminder://${uuid(1)}`]: true } });
   });
 });

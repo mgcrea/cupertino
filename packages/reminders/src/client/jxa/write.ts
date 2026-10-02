@@ -140,12 +140,21 @@ export const MOVE_REMINDERS = script(
     if (!src) { out.push({ id: id, found: false }); continue; }
 
     var snapshot = readback(src);
+    // Reminders fills BOTH date properties for every dated reminder, and the
+    // last one assigned wins: setting alldayDueDate after dueDate kept only the
+    // day, so a reminder due at 16:40 arrived all-day. Copy exactly one, chosen
+    // by ZALLDAY when the caller had the index, else by the local-midnight guess.
+    var known = p.allDay ? p.allDay[id] : undefined;
+    var dueSource = snapshot.dueDate || snapshot.alldayDueDate;
+    var allDay = known === true || known === false
+      ? known
+      : isMidnight(dueSource ? new Date(dueSource) : null);
     var copy = R.Reminder({ name: snapshot.name === null ? "" : snapshot.name });
     target.reminders.push(copy);
     applyFields(copy, {
       body: snapshot.body,
-      dueDate: snapshot.dueDate,
-      alldayDueDate: snapshot.alldayDueDate,
+      dueDate: allDay ? null : dueSource,
+      alldayDueDate: allDay ? dueSource : null,
       remindMeDate: snapshot.remindMeDate,
       priority: snapshot.priority,
       flagged: snapshot.flagged,

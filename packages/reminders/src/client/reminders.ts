@@ -817,7 +817,16 @@ export class AppleRemindersClient {
     list: string,
   ): Promise<{ ref: string | null; previousRef: string; moved: boolean; error?: string }[]> {
     const listId = await this.resolveList(list);
-    const ids = refs.map((r) => decodeRef(r).id);
+    const decoded = refs.map((r) => decodeRef(r));
+    const ids = decoded.map((d) => d.id);
+    // ZALLDAY is the only authoritative all-day flag, and only the index has
+    // it. Ids it cannot answer for are left out, and the script guesses.
+    const store = this.index();
+    const allDay: Record<string, boolean> = {};
+    for (const { id, uuid } of decoded) {
+      const indexed = store && uuid ? store.byUuid(uuid) : null;
+      if (indexed) allDay[id] = indexed.allDay;
+    }
     const rows = await withBusyRetry(() =>
       this.runner.run<
         {
@@ -827,7 +836,7 @@ export class AppleRemindersClient {
           moved?: boolean;
           error?: string;
         }[]
-      >(MOVE_REMINDERS, { ids, listId }),
+      >(MOVE_REMINDERS, { ids, listId, allDay }),
     );
     this.invalidate();
     return rows.map((r, i) => ({
