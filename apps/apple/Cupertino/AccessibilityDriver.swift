@@ -61,6 +61,10 @@ nonisolated enum AccessibilityDriver {
           + "Accessibility. If Cupertino is already listed and switched on, the grant is a stale "
           + "duplicate: run `tccutil reset Accessibility io.mgcrea.cupertino` and grant it once "
           + "from the running copy."
+      case .outOfScope(let bundleId) where Scope.isCupertino(bundleId):
+        return
+          "'\(bundleId)' is Cupertino itself, which no surface drives — its Settings hold the "
+          + "switches that bound this one."
       case .outOfScope(let bundleId):
         return
           "'\(bundleId)' is not one of the applications Cupertino brokers, and this surface is "
@@ -410,7 +414,21 @@ nonisolated enum AccessibilityDriver {
     /// Exactly these, and nothing else. Never widened by a gate.
     case only(Set<String>)
 
+    /// Never Cupertino itself, whatever the reach.
+    ///
+    /// `.any` used to mean literally any, which included the app holding the
+    /// gates: an agent given "Reach any application" could open Cupertino's own
+    /// Settings and switch on the writes it had been refused. Here rather than in
+    /// a verb so it holds for every verb, a handle minted before this existed
+    /// included. Both identities, and the debug one, so a dev build cannot drive
+    /// the installed copy either.
+    static func isCupertino(_ bundleId: String) -> Bool {
+      bundleId == Bundle.main.bundleIdentifier || bundleId == "io.mgcrea.cupertino"
+        || bundleId.hasPrefix("io.mgcrea.cupertino.")
+    }
+
     func admits(_ bundleId: String) -> Bool {
+      if Scope.isCupertino(bundleId) { return false }
       switch self {
       case .brokered: return AccessibilityDriver.brokeredBundleIds.contains(bundleId)
       case .any: return true
@@ -1193,7 +1211,7 @@ nonisolated enum AccessibilityDriver {
   /// Returns the characters this layout has no key for, so the caller can say
   /// which part of the text did not arrive rather than reporting a success it
   /// did not have. Nothing is posted for those characters.
-  static func typeByKeyCodes(_ text: String, announcing target: String? = nil) throws
+  static func typeByKeyCodes(_ text: String, scope: Scope, announcing target: String? = nil) throws
     -> [Character]
   {
     guard isTrusted() else { throw Failure.notTrusted }
@@ -1223,7 +1241,7 @@ nonisolated enum AccessibilityDriver {
       events.append((down, up))
     }
     guard !events.isEmpty else { return unmapped }
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     for (down, up) in events {
       down.post(tap: .cghidEventTap)
       up.post(tap: .cghidEventTap)
@@ -1284,8 +1302,15 @@ nonisolated enum AccessibilityDriver {
   /// Admission first. `DrivingSession.admit` is where the person is warned or
   /// asked before the first verb of a session, and it throws when they said no,
   /// so the verb that called this never acts.
+  ///
+  /// A handle that is gone by now is a refusal, not a skip. Every caller
+  /// resolved it a moment ago, so this only bites when the store evicted it in
+  /// between — and returning quietly there let the verb act with no admission
+  /// at all, which is failing open on the one check that asks the person.
   private static func announce(_ handle: String) throws {
-    guard let bundleId = handles.get(handle)?.bundleId else { return }
+    guard let bundleId = handles.get(handle)?.bundleId else {
+      throw Failure.staleHandle(handle)
+    }
     try DrivingSession.admit(bundleId)
     DriveActivity.record(bundleId)
   }
@@ -1309,11 +1334,100 @@ nonisolated enum AccessibilityDriver {
   /// simulator surface posts into a window it has just activated, and the
   /// notice should name the Simulator rather than whatever `NSWorkspace` still
   /// reports as frontmost in the same millisecond.
-  private static func announceSessionInput(_ target: String? = nil) throws {
-    let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-    let who = target ?? frontmost ?? "the frontmost application"
+  ///
+  /// **The scope check lives here, for every session verb.** It used to live
+  /// only in `activateAndWait`, which a caller reached by naming a target — so
+  /// a `type` that named none admitted whatever was in front, and with the
+  /// default reach `{"text": "rm -rf ~\n"}` went into Terminal if Terminal was
+  /// frontmost. The lent channel had the same hole under its one-app scope.
+  /// Checked BEFORE admission, so a card never names an application this
+  /// surface may not touch, and read off the window server rather than
+  /// `NSWorkspace`, because that is where the event is about to land.
+  ///
+  /// And again AFTER: admission can hold the verb for a countdown, which is
+  /// exactly when the person is at the keyboard and may switch applications.
+  /// What was admitted must still be in front when the event goes out.
+  private static func announceSessionInput(_ target: String?, scope: Scope) throws {
+    let who: String
+    if let target {
+      guard scope.admits(target) else { throw Failure.outOfScope(target) }
+      who = target
+    } else {
+      who = try frontmostInReach(scope)
+    }
     try DrivingSession.admit(who)
+    guard frontmostBundleId() == who else {
+      throw Failure.refused(
+        "\(DrivingSession.appName(who)) is no longer frontmost, so nothing was posted — the "
+          + "event would have landed in whatever replaced it. Name the application with "
+          + "'bundleId' and it is brought back to the front first.")
+    }
     DriveActivity.record(who)
+  }
+
+  /// The frontmost application, refused unless `scope` admits it.
+  ///
+  /// For a session verb that names no target, where the frontmost application
+  /// IS the target. Split from the read so `desktop-check` can pin the refusal
+  /// without a grant and without anything in front.
+  static func frontmostInReach(_ scope: Scope) throws -> String {
+    // Without a grant the read below is nil, and "could not tell" would hide
+    // the reason that matters.
+    guard isTrusted() else { throw Failure.notTrusted }
+    return try sessionReach(frontmost: frontmostBundleId(), scope: scope)
+  }
+
+  static func sessionReach(frontmost: String?, scope: Scope) throws -> String {
+    guard let frontmost else {
+      throw Failure.refused(
+        "Cupertino could not tell which application is frontmost, so nothing was posted. Pass "
+          + "'bundleId' (or a 'handle' from that application) to name where this is meant to go.")
+    }
+    guard scope.admits(frontmost) else {
+      let why =
+        Scope.isCupertino(frontmost)
+        ? "no surface drives Cupertino itself"
+        : "this surface reaches \(scope.described) and not it"
+      throw Failure.refused(
+        "\(DrivingSession.appName(frontmost)) (\(frontmost)) is frontmost and \(why), so nothing "
+          + "was posted. Pass 'bundleId' (or a 'handle' from that application) to name where "
+          + "this is meant to go; it is brought to the front first.")
+    }
+    return frontmost
+  }
+
+  /// Whether a click or a sweep at `point` lands on one of `bundleId`'s windows.
+  ///
+  /// Bringing an application forward does not put it under a point. A click
+  /// goes to whichever window is on top THERE, and naming Mail then clicking
+  /// where Terminal sits clicked Terminal — with a notice that said Mail.
+  ///
+  /// `CGWindowListCopyWindowInfo` for `DrivingOverlay.screenShowing`'s reasons:
+  /// no handle, no AX round trip, and its bounds are already in the top-left
+  /// space a click is posted in. Walked front to back. The first window under
+  /// the point that belongs to the application answers yes; a NORMAL window
+  /// (layer 0) of anybody else above it answers no, because that is what the
+  /// click would hit. Higher layers — the menu bar, the Dock, a notice — are
+  /// stepped over rather than trusted either way: the list cannot say whether
+  /// they take clicks, and refusing on every one would refuse most of the screen.
+  static func pointOnWindow(of bundleId: String, at point: CGPoint) -> Bool {
+    let pids = Set(
+      NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).map(pid(of:)))
+    guard !pids.isEmpty,
+      let listed = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+    else { return false }
+    for window in listed {
+      guard let raw = window[kCGWindowBounds as String] as? [String: Any],
+        let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
+        rect.contains(point)
+      else { continue }
+      if let owner = window[kCGWindowOwnerPID as String] as? pid_t, pids.contains(owner) {
+        return true
+      }
+      if (window[kCGWindowLayer as String] as? Int) == 0 { return false }
+    }
+    return false
   }
 
   // ─── the other direction: what the PERSON is doing ─────────────────────────
@@ -1371,7 +1485,7 @@ nonisolated enum AccessibilityDriver {
     return made
   }
 
-  static func click(x: Double, y: Double, announcing target: String? = nil) throws {
+  static func click(x: Double, y: Double, scope: Scope, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
@@ -1379,7 +1493,7 @@ nonisolated enum AccessibilityDriver {
     // cannot leave the button held down — the property `drag` states below.
     let down = try mouseEvent(.leftMouseDown, at: point, from: source, doing: "a click")
     let up = try mouseEvent(.leftMouseUp, at: point, from: source, doing: "a click")
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()
@@ -1395,7 +1509,7 @@ nonisolated enum AccessibilityDriver {
   /// The duration is honoured as wall-clock, so a caller asking for a fling
   /// gets fewer, faster steps rather than the same steps spaced closer.
   static func drag(
-    from: CGPoint, to: CGPoint, durationMs: Int, announcing target: String? = nil
+    from: CGPoint, to: CGPoint, durationMs: Int, scope: Scope, announcing target: String? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
@@ -1416,7 +1530,7 @@ nonisolated enum AccessibilityDriver {
     let up = try event(.leftMouseUp, at: to)
     // Every event is built before the first is posted, so a failure to
     // synthesise one cannot leave the button held down.
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     moved.post(tap: .cghidEventTap)
     down.post(tap: .cghidEventTap)
     let pause = UInt32(max(1, durationMs * 1000 / steps))
@@ -1478,7 +1592,8 @@ nonisolated enum AccessibilityDriver {
   /// Steps are derived as `drag` derives them, at ~60 Hz, so a duration means
   /// wall-clock in both and the two read the same.
   static func hover(
-    to point: CGPoint, durationMs: Int = 600, settleMs: Int = 0, announcing target: String? = nil
+    to point: CGPoint, durationMs: Int = 600, settleMs: Int = 0, scope: Scope,
+    announcing target: String? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     // Admitted BEFORE the pointer's position is read. If the person is using
@@ -1488,7 +1603,7 @@ nonisolated enum AccessibilityDriver {
     // This replaced a refusal of its own: hover used to throw whenever somebody
     // had touched the Mac in the last two seconds, which put no card on screen
     // at all. The admission every verb now shares warns them instead.
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     let source = CGEventSource(stateID: .hidSystemState)
     let from = cursorLocation()
     let steps = max(2, durationMs / 16)
@@ -1524,10 +1639,10 @@ nonisolated enum AccessibilityDriver {
   /// of driving System Events with a per-character Apple Event. Setting the
   /// unicode string on one event carries any character correctly and costs one
   /// round trip, so neither the pasteboard borrow nor a key-code table is needed.
-  static func type(text: String, announcing target: String? = nil) throws {
+  static func type(text: String, scope: Scope, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     // Chunked: the unicode string on a single event is not meant for unbounded
     // input, and a long paste-like burst is better delivered as several events.
     for chunk in text.chunked(into: 20) {
@@ -1546,7 +1661,9 @@ nonisolated enum AccessibilityDriver {
   }
 
   /// A named key with modifiers — what `type` cannot express.
-  static func key(_ name: String, modifiers: [String], announcing target: String? = nil) throws {
+  static func key(
+    _ name: String, modifiers: [String], scope: Scope, announcing target: String? = nil
+  ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     guard let code = keyCode(for: name) else {
       throw Failure.refused(
@@ -1569,7 +1686,7 @@ nonisolated enum AccessibilityDriver {
     else { throw Failure.refused("Could not synthesise a key press.") }
     down.flags = flags
     up.flags = flags
-    try announceSessionInput(target)
+    try announceSessionInput(target, scope: scope)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()

@@ -302,8 +302,9 @@ nonisolated enum DesktopServer {
           "Click at a screen point. The fallback for a control that offers no press action — "
           + "prefer apple_desktop_press whenever the element has one. Pass 'bundleId' for the "
           + "application the point belongs to: it is brought to the front first, and nothing is "
-          + "clicked if it does not come. Without it the click lands on whatever window is on top "
-          + "at that point, which may be one the person at the keyboard has since put there.",
+          + "clicked if it does not come. Without it the frontmost application stands in, and is "
+          + "refused when it is out of reach. Either way nothing is clicked unless the point is on "
+          + "one of that application's windows.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -356,8 +357,8 @@ nonisolated enum DesktopServer {
           "Type text into whatever has keyboard focus. Sent as unicode, so accented and "
           + "non-Latin characters arrive intact. Pass 'handle' (the field you focused) or "
           + "'bundleId': that application is brought to the front first, and nothing is typed if "
-          + "it does not come. Without either, the text goes to whatever is frontmost, which may "
-          + "be someone else's window.",
+          + "it does not come. Without either, the text goes to the frontmost application, and is "
+          + "refused when that application is out of reach.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -773,18 +774,16 @@ nonisolated enum DesktopServer {
         // A point has no owner, so the caller names one. Brought forward first
         // because a click lands on whatever window is on top at that point, and
         // the person at the keyboard may have put their own there since.
-        let owner = args["bundleId"] as? String
-        if let owner { try bringForward(owner, verb: "click", scope: scope) }
-        try AccessibilityDriver.click(x: x, y: y, announcing: owner)
-        var clicked: [String: Any] = ["clicked": [x, y]]
-        if let owner { clicked["target"] = owner }
-        return ok(id, clicked)
+        let owner = try pointOwner(
+          args, at: CGPoint(x: x, y: y), verb: "click", scope: scope)
+        try AccessibilityDriver.click(x: x, y: y, scope: scope, announcing: owner)
+        return ok(id, ["clicked": [x, y], "target": owner])
 
       case "apple_desktop_hover":
         let durationMs = min(5000, max(0, (args["durationMs"] as? Int) ?? 600))
         let settleMs = min(5000, max(0, (args["settleMs"] as? Int) ?? 0))
         let target: CGPoint
-        let owner: String?
+        let owner: String
         if let handle = args["handle"] as? String {
           // Re-read rather than trusting the point the tree reported, and take
           // the owner from the handle rather than from the arguments: the store
@@ -792,26 +791,26 @@ nonisolated enum DesktopServer {
           let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
           target = live.point
           owner = live.bundleId
+          // A hover reaches only the frontmost application, so posting into an
+          // app that is behind sweeps the pointer across somebody else's window
+          // and reports a success that never happened. Refused rather than
+          // posted, as the simulator surface refuses for the same reason.
+          try bringForward(owner, verb: "hover", scope: scope)
         } else if let x = args["x"] as? Double, let y = args["y"] as? Double {
           target = CGPoint(x: x, y: y)
-          owner = args["bundleId"] as? String
+          owner = try pointOwner(args, at: target, verb: "hover", scope: scope)
         } else {
           return failure(
             id,
             "Either 'handle', or both 'x' and 'y', are required. Prefer 'handle': its point is "
               + "re-read at call time, so a window that has moved cannot make the hover miss.")
         }
-        // A hover reaches only the frontmost application, so posting into an app
-        // that is behind sweeps the pointer across somebody else's window and
-        // reports a success that never happened. Refused rather than posted, as
-        // the simulator surface refuses for the same reason.
-        if let owner { try bringForward(owner, verb: "hover", scope: scope) }
         // Read BEFORE the sweep: afterwards it reports our own mouse-moved
         // events. The caller compares it against how long its sequence took, the
         // comparison apple_desktop_user_activity describes.
         let idle = (AccessibilityDriver.secondsSinceUserInput() * 1000).rounded() / 1000
         try AccessibilityDriver.hover(
-          to: target, durationMs: durationMs, settleMs: settleMs, announcing: owner)
+          to: target, durationMs: durationMs, settleMs: settleMs, scope: scope, announcing: owner)
         return ok(
           id,
           [
@@ -826,7 +825,7 @@ nonisolated enum DesktopServer {
         }
         let owner = try sessionTarget(args, scope: scope)
         if let owner { try bringForward(owner, verb: "text", scope: scope) }
-        try AccessibilityDriver.type(text: text, announcing: owner)
+        try AccessibilityDriver.type(text: text, scope: scope, announcing: owner)
         var typed: [String: Any] = ["typed": text.count]
         if let owner { typed["target"] = owner }
         return ok(id, typed)
@@ -838,7 +837,7 @@ nonisolated enum DesktopServer {
         let modifiers = (args["modifiers"] as? [String]) ?? []
         let owner = try sessionTarget(args, scope: scope)
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
-        try AccessibilityDriver.key(key, modifiers: modifiers, announcing: owner)
+        try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)
         var sent: [String: Any] = ["key": key, "modifiers": modifiers]
         if let owner { sent["target"] = owner }
         return ok(id, sent)
@@ -1079,7 +1078,10 @@ nonisolated enum DesktopServer {
   // ─── the application a session verb is meant for ───────────────────────────
 
   /// Which application `type` or `key` is meant for, or nil when the caller
-  /// named none — in which case the event goes wherever it always went.
+  /// named none — in which case the event goes to the frontmost application,
+  /// and only if this surface's scope admits it. That check is in
+  /// `AccessibilityDriver.announceSessionInput`, under every session verb,
+  /// rather than here where a verb could be added without it.
   ///
   /// A handle wins over a bundle id, as in `hover`: the store knows which
   /// application the handle came from, and a caller can be wrong. A stale or
@@ -1092,6 +1094,34 @@ nonisolated enum DesktopServer {
       return try AccessibilityDriver.owner(of: handle, scope: scope)
     }
     return args["bundleId"] as? String
+  }
+
+  /// The application a `click` or `hover` at a point is meant for, brought
+  /// forward when named, and refused unless the point is on one of its windows.
+  ///
+  /// Unlike a keystroke, a point event does not go to the frontmost
+  /// application: it goes to whichever window is under the point. So neither
+  /// half of the scope check is enough alone. Naming Mail and clicking where
+  /// Terminal sits clicked Terminal, and so did naming nothing while Mail was
+  /// in front. With no `bundleId` the frontmost application stands in, under
+  /// the same scope refusal `type` and `key` get.
+  private static func pointOwner(
+    _ args: [String: Any], at point: CGPoint, verb: String, scope: AccessibilityDriver.Scope
+  ) throws -> String {
+    let owner: String
+    if let named = args["bundleId"] as? String {
+      try bringForward(named, verb: verb, scope: scope)
+      owner = named
+    } else {
+      owner = try AccessibilityDriver.frontmostInReach(scope)
+    }
+    guard AccessibilityDriver.pointOnWindow(of: owner, at: point) else {
+      throw AccessibilityDriver.Failure.refused(
+        "(\(Int(point.x)), \(Int(point.y))) is not on a window of \(owner), so nothing was posted "
+          + "— the \(verb) would have landed in whatever is on top there. Read the window's frame "
+          + "again, or prefer 'handle' with apple_desktop_press or hover.")
+    }
+    return owner
   }
 
   /// Bring `owner` to the front and WAIT for it, refusing when it did not come.
@@ -1288,8 +1318,9 @@ nonisolated enum DesktopServer {
       necessarily the application you opened a moment ago, because somebody may be using
       this Mac. Pass `bundleId` (or, for type and key, the `handle` of the field you
       focused) and that application is brought to the front first; if it does not come,
-      nothing is posted and the call says so. Leave it out and the event goes wherever the
-      focus happens to be.
+      nothing is posted and the call says so. Leave it out and the event goes to whatever
+      is frontmost, and is refused when that is out of this surface's reach. A click or a
+      hover at a point is also refused unless the point is on a window of that application.
 
       ## Driving is a session the person can see
 

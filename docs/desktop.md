@@ -325,7 +325,7 @@ shaped this way — Sound's two gates are both capability tiers, these are **cap
 |               | off (shipped)                                                                              | on                                                    |
 | ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
 | `allowWrites` | reads structure; the twelve driving tools are not registered                               | can press, type, click, hover, raise, focus, activate |
-| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application                       |
+| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application but Cupertino itself  |
 
 **Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
 Maps place card reads anything on the Mac, so the bound comes from the closed table or from nowhere —
@@ -865,8 +865,8 @@ Mail's send path raises the composer again before ⌘⇧D. The session verbs wer
 **Now** `click` takes `bundleId`, and `type` and `key` take `bundleId` or `handle` — a handle wins,
 because the store knows which application it came from. The application is brought to the front and
 **waited for**, and when it does not come nothing is posted. The name goes to the notice, so it names
-the application meant rather than a frontmost read. Optional: leaving it out is the old behaviour,
-unchanged.
+the application meant rather than a frontmost read. Optional: leaving it out posts to the
+frontmost application, which is scope-checked since 2026-10-02 (below).
 
 **A scope hole closed on the way.** `activateAndWait` returned early when the application was already
 in front, and its scope check lived inside `activate`, below that return. An application outside this
@@ -884,9 +884,10 @@ What it does not do:
   somebody types takes their focus. That is deliberate: the alternative was the keystroke landing in
   their window. _Superseded 2026-09-16: activation now waits for the admission described below._
 - **The borrowers pass nothing yet.** `packages/mail` and `packages/maps` call `key` and `type` without
-  a target; Mail raises its own composer.
+  a target; Mail raises its own composer. _Since superseded: both pass a handle or `bundleId` now, and
+  the one untargeted call left, Mail's `selectAll`, has no caller._
 - **A call with no target** still names the frontmost application through `NSWorkspace`, which lags an
-  activation.
+  activation. _Superseded 2026-10-02: it reads the window server, and refuses what is out of reach._
 
 ## Driving is a session, and the explicit end came back, 2026-09-16
 
@@ -920,7 +921,8 @@ own checks and before it acts**. After, so a refused verb (no grant, out of reac
 an application that is not running) opens no session and shows no card. Before, so a "no" means
 nothing was posted. `activateAndWait` admits before its already-frontmost early return, because the
 target being in front does not mean nobody is typing into it. A verb that names no target admits
-whatever is frontmost, which is also where its event lands.
+whatever is frontmost, which is also where its event lands, once scope has admitted it: see "An
+untargeted verb was not scope-checked" below.
 
 When no session is open, `DrivingPolicy.decide` settles what happens:
 
@@ -1004,6 +1006,45 @@ steps, because their answers would swamp the run's own.
   through, Allow lets it through, and Cancel refuses it and leaves the cooldown. Whether the Cancel
   button takes a first click in a panel that is never key, and whether the hand-back lands, still
   need a person to watch them.
+
+## An untargeted verb was not scope-checked, 2026-10-02
+
+The finding: with the default reach, `apple_desktop_type {"text": "rm -rf ~\n"}` went into Terminal
+whenever Terminal was in front. Scope was checked in `activateAndWait`, which a session verb reached
+only by naming a target. Named or not, the event was posted, and `announceSessionInput` admitted
+whatever `NSWorkspace` reported as frontmost. The lent channel had the same hole under its one-app
+scope, and `click` and `hover` at a bare point had it too.
+
+**Now `announceSessionInput` takes the scope, and every session verb passes it.** `click`, `drag`,
+`hover`, `type`, `key` and the simulator's `typeByKeyCodes` cannot post without going through it,
+which is the point of putting it there. With no target, the frontmost application is read off the
+window server, where the event is about to land, and refused unless the scope admits it. The
+refusal names it and says to pass `bundleId` or `handle`. It comes before admission, so a card never
+names an application this surface may not touch. A second read comes after it: a countdown is
+exactly when the person is at the keyboard and may switch, so the application admitted has to still
+be in front when the event goes out.
+
+Three more on the way:
+
+- **A point is checked against the windows under it.** A click goes to whichever window is on top
+  at the point, not to the frontmost application, so `click` and `hover` at `x`/`y` refuse unless
+  the point is on one of the named application's windows (the frontmost one when none is named).
+  The check walks `CGWindowListCopyWindowInfo` front to back. A normal window of another application
+  above the point refuses, and a higher layer such as the menu bar, the Dock or a notice is stepped
+  over, because the list cannot say whether it takes clicks. A click on the menu bar is therefore
+  refused. Menus are for `press`.
+- **No reach includes Cupertino.** `.any` admitted everything, Cupertino included, so an agent
+  allowed to reach any application could open Cupertino's Settings and switch on the writes it had
+  been refused. `Scope.admits` now excludes this bundle id, the release one and the debug one, so a
+  dev build cannot drive the installed copy either, and the exclusion covers every verb and handle.
+- **A handle that vanished before admission is refused.** `announce` looked the handle up again
+  and returned without admitting when it was gone. That was failing open on the one check that asks
+  the person.
+
+`desktop-check` pins the refusals on the pure half, `sessionReach`, with the frontmost application
+passed in. A live call would post into whatever is in front of the machine running it. It also pins
+the Cupertino exclusion under every reach, and a point off every display. What has not been watched
+by hand is the window walk against a real overlap, and the second frontmost read after a countdown.
 
 ## Still open
 

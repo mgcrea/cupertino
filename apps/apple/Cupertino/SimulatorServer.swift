@@ -635,7 +635,7 @@ nonisolated enum SimulatorServer {
         }
         try front(simulator, scope: reach)
         let at = frame.toScreen(point)
-        try AccessibilityDriver.click(x: at.x, y: at.y, announcing: simulator)
+        try AccessibilityDriver.click(x: at.x, y: at.y, scope: reach, announcing: simulator)
         return ok(
           id,
           [
@@ -664,7 +664,7 @@ nonisolated enum SimulatorServer {
         try front(simulator, scope: reach)
         try AccessibilityDriver.drag(
           from: frame.toScreen(from), to: frame.toScreen(to), durationMs: durationMs,
-          announcing: simulator)
+          scope: reach, announcing: simulator)
         return ok(
           id, ["swiped": ["from": [fromX, fromY], "to": [toX, toY], "durationMs": durationMs]])
 
@@ -674,7 +674,8 @@ nonisolated enum SimulatorServer {
         }
         _ = try target(surface: surface, args: args)
         try front(simulator, scope: reach)
-        let unmapped = try AccessibilityDriver.typeByKeyCodes(text, announcing: simulator)
+        let unmapped = try AccessibilityDriver.typeByKeyCodes(
+          text, scope: reach, announcing: simulator)
         var out: [String: Any] = ["typed": text.count - unmapped.count]
         if !unmapped.isEmpty {
           out["notTyped"] = String(unmapped)
@@ -694,7 +695,7 @@ nonisolated enum SimulatorServer {
         }
         _ = try target(surface: surface, args: args)
         try front(simulator, scope: reach)
-        try AccessibilityDriver.key(key, modifiers: [], announcing: simulator)
+        try AccessibilityDriver.key(key, modifiers: [], scope: reach, announcing: simulator)
         return ok(id, ["key": key])
 
       case "apple_simulator_release":
@@ -711,7 +712,8 @@ nonisolated enum SimulatorServer {
         }
         _ = try target(surface: surface, args: args)
         try front(simulator, scope: reach)
-        try AccessibilityDriver.key(chord.key, modifiers: chord.modifiers, announcing: simulator)
+        try AccessibilityDriver.key(
+          chord.key, modifiers: chord.modifiers, scope: reach, announcing: simulator)
         return ok(id, ["pressed": button])
 
       default:

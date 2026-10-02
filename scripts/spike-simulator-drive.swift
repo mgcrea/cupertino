@@ -436,7 +436,7 @@ struct SimulatorDriveSpike {
         "click at (device)",
         "(\(fmt(centre.x)),\(fmt(centre.y))) -> screen (\(fmt(at.x)),\(fmt(at.y)))")
       let t0 = Date()
-      try? AccessibilityDriver.click(x: at.x, y: at.y)
+      try? AccessibilityDriver.click(x: at.x, y: at.y, scope: scope)
       let landed = poll(4) { find(group, named: "About") != nil }
       row("'About' appeared", landed.map { "after \(fmt($0 * 1000)) ms" } ?? "NO within 4 s")
       row("frontmost after", frontmostBundleId() ?? "?")
@@ -526,7 +526,7 @@ struct SimulatorDriveSpike {
         exit(2)
       }
       let centre = CGPoint(x: rect[0] + rect[2] / 2, y: rect[1] + rect[3] / 2)
-      try? AccessibilityDriver.click(x: centre.x, y: centre.y)
+      try? AccessibilityDriver.click(x: centre.x, y: centre.y, scope: scope)
       usleep(600_000)
       let unmapped = typeByKeys("Acc 7")
       row("unmapped characters", unmapped.isEmpty ? "none" : String(unmapped))
@@ -562,7 +562,7 @@ struct SimulatorDriveSpike {
         exit(2)
       }
       row("activated", "after \(fmt(took * 1000)) ms")
-      try? AccessibilityDriver.key("h", modifiers: ["command", "shift"])
+      try? AccessibilityDriver.key("h", modifiers: ["command", "shift"], scope: scope)
       let landed = poll(4) {
         find(group, named: "General") == nil && find(group, named: "Settings") != nil
       }
@@ -579,14 +579,14 @@ struct SimulatorDriveSpike {
       }
       row("activated", "after \(fmt(took * 1000)) ms")
       let before = screen(group, detail: .all).count
-      try? AccessibilityDriver.key("l", modifiers: ["command"])
+      try? AccessibilityDriver.key("l", modifiers: ["command"], scope: scope)
       usleep(1_500_000)
       row("elements before/after", "\(before) / \(screen(group, detail: .all).count)")
       row(
         "screen now",
         screen(group, detail: .all).prefix(8).map { $0.name ?? $0.role }.joined(separator: ", "))
       // Unlock again: home on the lock screen unlocks a device with no passcode.
-      try? AccessibilityDriver.key("h", modifiers: ["command", "shift"])
+      try? AccessibilityDriver.key("h", modifiers: ["command", "shift"], scope: scope)
       row(
         "unlocked by home",
         poll(4) {

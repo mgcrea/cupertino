@@ -848,6 +848,53 @@ struct DesktopCheck {
         && !AccessibilityDriver.inScope("com.apple.Maps", scope: .only(["com.apple.mail"]))
         && !AccessibilityDriver.inScope("com.microsoft.VSCode", scope: .only(["com.apple.mail"])))
 
+    // Cupertino holds the gates, so no reach includes it — `.any` used to, and an
+    // agent with "Reach any application" could open its Settings and flip them.
+    check(
+      "no reach admits Cupertino itself, not even any",
+      ["io.mgcrea.cupertino", "io.mgcrea.cupertino.debug", BridgeProtocol.appIdentifier].allSatisfy
+      {
+        !AccessibilityDriver.inScope($0, scope: .any)
+          && !AccessibilityDriver.inScope($0, scope: .only([$0]))
+      })
+
+    // A session verb with no target goes to the frontmost application, and used
+    // to admit it whatever the scope: `type {"text":"rm -rf ~\n"}` reached
+    // Terminal under the default reach. Pinned on the pure half, with the
+    // frontmost application passed in, because the live half would post into
+    // whatever is in front of the machine running this.
+    func reach(_ frontmost: String?, _ scope: AccessibilityDriver.Scope) -> Result<String, Error> {
+      Result { try AccessibilityDriver.sessionReach(frontmost: frontmost, scope: scope) }
+    }
+    func refusal(_ result: Result<String, Error>) -> String? {
+      if case .failure(let error) = result { return error.localizedDescription }
+      return nil
+    }
+    let terminal = refusal(reach("com.apple.Terminal", .brokered))
+    check(
+      "an untargeted session verb is refused when the frontmost app is out of reach",
+      terminal?.contains("com.apple.Terminal") == true && terminal?.contains("'bundleId'") == true
+        && terminal?.contains("nothing was posted") == true)
+    check(
+      "the lent scope refuses an untargeted verb unless its own app is in front",
+      refusal(reach("com.apple.Terminal", .only(["com.apple.mail"]))) != nil
+        && (try? reach("com.apple.mail", .only(["com.apple.mail"])).get()) == "com.apple.mail")
+    check(
+      "an untargeted verb is refused when nothing is known to be in front",
+      refusal(reach(nil, .any)) != nil)
+    check(
+      "an untargeted verb is refused with Cupertino in front, under any reach",
+      refusal(reach("io.mgcrea.cupertino", .any))?.contains("Cupertino itself") == true)
+    check(
+      "an untargeted verb goes ahead when the frontmost app is in reach",
+      (try? reach("com.apple.Maps", .brokered).get()) == "com.apple.Maps")
+    // No application has a window at a point far off every display, so this
+    // is a refusal whatever is running — and it reads the window list only.
+    check(
+      "a point on none of an application's windows is not on its window",
+      !AccessibilityDriver.pointOnWindow(of: "com.apple.finder", at: CGPoint(x: -1e6, y: -1e6))
+        && !AccessibilityDriver.pointOnWindow(of: "com.example.not-running", at: .zero))
+
     let (scopedApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: false)
     let (wideApps, _) = callText("apple_desktop_list_apps", [:], writes: false, anyApp: true)
     check(
