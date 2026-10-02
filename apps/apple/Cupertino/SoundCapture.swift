@@ -99,6 +99,9 @@ final class SoundCapture: NSObject {
   private var recorder: AVAudioRecorder?
   private var target: URL?
   private var deviceUID: String?
+  /// The connection that started this recording, so `connectionClosed` can end
+  /// it. nil for a caller that has no connection — `sound-check`.
+  private var owner: UUID?
   /// Peak is sampled while running because `AVAudioRecorder` only reports the
   /// level at the instant it is asked. A single reading at `stop` would say
   /// whatever the last moment happened to be.
@@ -140,7 +143,7 @@ final class SoundCapture: NSObject {
 
   // ─── lifecycle ────────────────────────────────────────────────────────────
 
-  func start(deviceUID uid: String?, directory: URL?) throws -> String {
+  func start(deviceUID uid: String?, directory: URL?, owner: UUID? = nil) throws -> String {
     if let recorder, recorder.isRecording {
       throw Failure.alreadyRecording(path: target?.path ?? "an unknown path")
     }
@@ -171,6 +174,13 @@ final class SoundCapture: NSObject {
       AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
     ]
 
+    // 0600, as a screen capture is: a recording is whatever was said in the
+    // room. The recorder creates the file itself and with the default mode, so
+    // the umask covers its creation — process-wide and briefly, the trade
+    // `ServerHost.openSocket` makes around `bind` — and the chmod after `record`
+    // and again after `stop` covers a writer that creates it later than that.
+    let inheritedMask = umask(0o077)
+    defer { umask(inheritedMask) }
     let made: AVAudioRecorder
     do {
       made = try AVAudioRecorder(url: url, settings: settings)
@@ -183,10 +193,12 @@ final class SoundCapture: NSObject {
         "AVAudioRecorder.record() returned false. The grant may belong to a different copy of "
           + "this bundle.")
     }
+    Self.makePrivate(url)
 
     recorder = made
     target = url
     deviceUID = uid
+    self.owner = owner
     peak = -160
     let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.sampleMeter() }
@@ -230,12 +242,14 @@ final class SoundCapture: NSObject {
     // `stop()` is what finalises the container. Everything after this line is
     // reporting; everything before it is a file that does not exist yet.
     recorder.stop()
+    Self.makePrivate(url)
     releaseSleepAssertion()
     meterTimer?.invalidate()
     meterTimer = nil
     self.recorder = nil
     self.target = nil
     self.deviceUID = nil
+    self.owner = nil
 
     let bytes =
       (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
@@ -263,6 +277,50 @@ final class SoundCapture: NSObject {
       deviceUID: deviceUID)
   }
 
+  // ─── ending without a stop call ───────────────────────────────────────────
+
+  /// The connection that started a recording has gone.
+  ///
+  /// Until this, a recording outlived everything that could end it except the
+  /// app quitting: the client that asked for it could disconnect, the editor
+  /// could close, and the microphone stayed live with the orange indicator up
+  /// and nobody left holding a `stop_recording` to call. Finalised rather than
+  /// discarded — the file is what somebody asked for, and the log line says
+  /// where it is.
+  nonisolated static func connectionClosed(_ connection: UUID) {
+    Task { @MainActor in
+      guard shared.owner == connection else { return }
+      shared.end(because: "its client disconnected")
+    }
+  }
+
+  /// The settings no longer allow a recording: Sound was switched off, or
+  /// `allowRecording` was.
+  ///
+  /// The gate going off is the case that needed this most. It unregisters
+  /// `apple_sound_stop_recording` along with the rest, so a recording running
+  /// when somebody switched recording OFF could no longer be stopped by the
+  /// agent either — the switch read as "no more recording" and did the opposite
+  /// of stopping one.
+  nonisolated static func revoke(_ reason: String) {
+    Task { @MainActor in shared.end(because: reason) }
+  }
+
+  private func end(because reason: String) {
+    guard recorder != nil, let done = try? stop() else { return }
+    hostLog(
+      "sound", .info,
+      "recording stopped — \(reason). Kept at \(done.path) "
+        + "(\(String(format: "%.1f", done.seconds)) s, \(done.bytes) bytes"
+        + (done.silent ? ", silent" : "") + ")")
+  }
+
+  /// 0600, as `ScreenCapture.writePNG` sets on a capture. Best effort: a file
+  /// the recorder has not created yet is caught by the call after `stop`.
+  private nonisolated static func makePrivate(_ url: URL) {
+    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+  }
+
   /// Called from the app's termination handler. Without this a quit during a
   /// recording leaves an unfinalised file — and for the m4a container this
   /// project deliberately does NOT use, that would be a total loss rather than
@@ -271,6 +329,7 @@ final class SoundCapture: NSObject {
     releaseSleepAssertion()
     guard let recorder, recorder.isRecording else { return }
     recorder.stop()
+    if let target { Self.makePrivate(target) }
     meterTimer?.invalidate()
     meterTimer = nil
   }

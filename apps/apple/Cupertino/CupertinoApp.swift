@@ -905,6 +905,11 @@ struct GateToggle: View {
       Toggle(gate.label, isOn: $isOn)
         .toggleStyle(.checkbox)
         .font(.caption)
+        // Off means off for a recording already running, not only for the next
+        // one — see `enforceRecordingGate`.
+        .onChange(of: isOn) { _, on in
+          if !on, surface.id == "sound" { ServerHost.shared.enforceRecordingGate() }
+        }
       Text(gate.description)
         .font(.caption2)
         .foregroundStyle(.secondary)

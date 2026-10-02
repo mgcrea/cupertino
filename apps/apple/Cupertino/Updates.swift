@@ -106,7 +106,7 @@ extension UpdateController: SPUUpdaterDelegate {
   ///
   /// The EOF is still real; it is just handled a few milliseconds later and
   /// unconditionally, in `updaterWillRelaunchApplication` below, which SIGTERMs
-  /// every server so the clients see an ordinary shutdown.
+  /// every Node server so the clients see an ordinary shutdown.
   nonisolated func updater(
     _ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
     untilInvokingBlock installHandler: @escaping () -> Void
@@ -119,12 +119,13 @@ extension UpdateController: SPUUpdaterDelegate {
   /// SIGTERM for the same reasons `endTrialSessions` gives: the child exits on
   /// its own, the pumps see EOF, and the session leaves the Activity window by
   /// the ordinary path.
+  ///
+  /// The host's own pid map, not `Sessions.shared.live`. Every in-process
+  /// session is listed there under Cupertino's own pid, so walking that list
+  /// sent SIGTERM to this process mid-loop — see `terminateChildren`.
   nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
     MainActor.assumeIsolated {
-      for session in Sessions.shared.live {
-        hostLog("update", .info, "updating — stopping server (pid \(session.pid))")
-        kill(session.pid, SIGTERM)
-      }
+      ServerHost.shared.terminateChildren()
       ServerHost.shared.stop()
     }
   }

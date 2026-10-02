@@ -33,8 +33,11 @@ nonisolated enum SoundServer {
 
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
+  /// `connection` is the session a recording started here belongs to, so the
+  /// host can end it when that session does. nil from a check, which has none.
   static func handle(
-    _ line: String, surface: Surface, writesAllowed: Bool, recordingAllowed: Bool
+    _ line: String, surface: Surface, writesAllowed: Bool, recordingAllowed: Bool,
+    connection: UUID? = nil
   ) -> String? {
     InProcessRPC.dispatch(
       line,
@@ -47,7 +50,7 @@ nonisolated enum SoundServer {
       call: { name, args, id in
         call(
           name, args: args, id: id, writesAllowed: writesAllowed,
-          recordingAllowed: recordingAllowed)
+          recordingAllowed: recordingAllowed, connection: connection)
       })
   }
 
@@ -224,7 +227,8 @@ nonisolated enum SoundServer {
   // ─── calls ─────────────────────────────────────────────────────────────────
 
   private static func call(
-    _ name: String, args: [String: Any], id: Any?, writesAllowed: Bool, recordingAllowed: Bool
+    _ name: String, args: [String: Any], id: Any?, writesAllowed: Bool, recordingAllowed: Bool,
+    connection: UUID?
   ) -> String {
     // A gated tool is not registered, so reaching one here means the caller
     // guessed the name. Refusing by the same sentence the list would have given
@@ -301,7 +305,7 @@ nonisolated enum SoundServer {
       do {
         let path = try InProcessRPC.blocking {
           try await MainActor.run {
-            try SoundCapture.shared.start(deviceUID: uid, directory: directory)
+            try SoundCapture.shared.start(deviceUID: uid, directory: directory, owner: connection)
           }
         }
         return InProcessRPC.ok(id, ["recording": true, "path": path])

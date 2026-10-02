@@ -64,9 +64,13 @@ nonisolated enum InProcessServers {
   /// that surface's bundle id and must not be widened by the Desktop surface's
   /// own gate. Passed rather than derived here for the same reason gates are:
   /// a check can then pin every combination without touching a preference.
+  ///
+  /// `connection` is the session the request arrived on. Only Sound reads it,
+  /// to tie a recording to the client that started it — see
+  /// `SoundCapture.connectionClosed`. nil from a check or a capability probe.
   static func handle(
     _ line: String, surface: Surface, allowWrites: Bool, gateOn: (String) -> Bool,
-    lentScope: AccessibilityDriver.Scope? = nil
+    lentScope: AccessibilityDriver.Scope? = nil, connection: UUID? = nil
   ) -> Reply {
     switch surface.id {
     case "screen":
@@ -80,7 +84,8 @@ nonisolated enum InProcessServers {
         SoundServer.handle(
           line, surface: surface,
           writesAllowed: allowWrites,
-          recordingAllowed: gateOn("allowRecording")))
+          recordingAllowed: gateOn("allowRecording"),
+          connection: connection))
     // `desktop` has a write flag AND a gate, and the two are orthogonal in a way
     // neither other surface's are: `allowWrites` bounds what it can DO,
     // `allowAnyApp` bounds how far it can REACH. Sound's two gates are both

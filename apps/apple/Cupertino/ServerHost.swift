@@ -17,14 +17,32 @@ import os
 nonisolated final class ServerHost: @unchecked Sendable {
   static let shared = ServerHost()
 
-  private var listenFD: Int32 = -1
   /// Held for the lifetime of the process. `flock` releases on close, and on
   /// death — which is the whole reason it can replace the unlink dance below.
+  /// Main thread only: `start` and `stop` are its only readers and writers.
   private var lockFD: Int32 = -1
-  /// The socket we actually bound, by inode. Anything else answering on our
-  /// path means we were evicted, and `socketWatch` is what notices.
-  private var boundIdentity: (dev: dev_t, ino: ino_t)?
-  private var socketWatch: DispatchSourceTimer?
+
+  /// The listener, and everything about it that more than one thread reads.
+  ///
+  /// Locked because it is genuinely shared: `stop` and the Settings window run
+  /// on the main thread, `acceptLoop` on its own, and `checkStillBound` on
+  /// `queue`. The watch used to share a serial queue with `acceptLoop`, which
+  /// blocks in `accept` forever — so the timer never fired, no race was ever
+  /// observed, and the eviction it exists to catch went uncaught.
+  private struct Listener {
+    var fd: Int32 = -1
+    /// The socket we actually bound, by inode. Anything else answering on our
+    /// path means we were evicted, and `socketWatch` is what notices.
+    var boundIdentity: (dev: dev_t, ino: ino_t)?
+    var socketWatch: DispatchSourceTimer?
+    /// Why the socket never came up, or stopped serving. See `startupError`.
+    var startupError: String?
+  }
+  private let listener = OSAllocatedUnfairLock(uncheckedState: Listener())
+
+  /// The socket watch's queue, and nothing else's. `acceptLoop` is a thread of
+  /// its own for the reason `onDedicatedThread` gives; on this queue it starved
+  /// the timer of the only thread a serial queue has.
   private let queue = DispatchQueue(label: "io.mgcrea.cupertino.host", qos: .userInitiated)
 
   /// Servers admitted on a trial, so the window can actually close on them.
@@ -46,10 +64,25 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// comment above says why the host must not start reading from it.
   private let serverPIDs = OSAllocatedUnfairLock<[Int32: String]>(initialState: [:])
 
+  /// In-process connections admitted on a trial, by session, with the socket
+  /// each is served on.
+  ///
+  /// `trialPIDs`' counterpart for the surfaces that have no pid of their own to
+  /// signal. Without it `endTrialSessions` reaped every Node server and left a
+  /// Desktop, Simulator, Screen or Sound session admitted on the same trial
+  /// running for the life of the editor — the exact "thirty minutes that close
+  /// whenever somebody next quits Cursor" the reaper was written to prevent.
+  ///
+  /// The descriptor is only ever touched under this lock, and `serveInProcess`
+  /// removes its entry before `serve` closes it, so a `shutdown` here can never
+  /// land on a number `accept` has since handed to somebody else.
+  private let trialClients = OSAllocatedUnfairLock<[UUID: (surface: String, fd: Int32)]>(
+    initialState: [:])
+
   /// Why the socket never came up, if it did not. Kept rather than only logged:
   /// a host that failed to listen is the one state where nothing will ever
   /// work, and stderr is invisible to someone who launched the app from Finder.
-  private(set) var startupError: String?
+  var startupError: String? { listener.withLock { $0.startupError } }
 
   enum HostError: LocalizedError {
     case pathTooLong(String)
@@ -106,9 +139,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     do {
       try openSocket()
-      startupError = nil
+      listener.withLock { $0.startupError = nil }
     } catch {
-      startupError = error.localizedDescription
+      listener.withLock { $0.startupError = error.localizedDescription }
       throw error
     }
   }
@@ -279,27 +312,66 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Remember which inode we bound, so `socketWatch` can tell our socket from
     // somebody else's file at the same path.
     var bound = stat()
-    if stat(path, &bound) == 0 { boundIdentity = (bound.st_dev, bound.st_ino) }
-
-    listenFD = fd
+    let identity = stat(path, &bound) == 0 ? (dev: bound.st_dev, ino: bound.st_ino) : nil
+    listener.withLock {
+      $0.fd = fd
+      $0.boundIdentity = identity
+    }
     hostLog("cupertino", .info, "listening at \(path)")
-    queue.async { [weak self] in self?.acceptLoop(fd) }
+    onDedicatedThread("cupertino.accept") { [weak self] in self?.acceptLoop(fd) }
     startSocketWatch()
   }
 
   func stop() {
-    socketWatch?.cancel()
-    socketWatch = nil
-    if listenFD >= 0 {
-      close(listenFD)
-      listenFD = -1
+    // Taken out under the lock and closed outside it, so the watch and this
+    // cannot both close the same descriptor.
+    let (fd, watch, identity) = listener.withLock { state in
+      let taken = (state.fd, state.socketWatch, state.boundIdentity)
+      state.fd = -1  // read by acceptLoop to tell a deliberate stop from a failure
+      state.socketWatch = nil
+      state.boundIdentity = nil
+      return taken
     }
-    unlink(BridgeProtocol.socketPath)
+    watch?.cancel()
+    if fd >= 0 { close(fd) }
+
+    // Only OUR socket, and only while it is still ours. This used to unlink the
+    // path unconditionally, so quitting a second copy — one whose `start` threw
+    // `lockHeld` and never bound anything — deleted the running copy's socket on
+    // the way out, and every bridge after that found nothing to connect to. Not
+    // holding the lock means we never bound; a different inode at the path means
+    // somebody bound over us and the file is theirs.
+    if lockFD >= 0, let identity {
+      var now = stat()
+      if stat(BridgeProtocol.socketPath, &now) == 0, now.st_dev == identity.dev,
+        now.st_ino == identity.ino
+      {
+        unlink(BridgeProtocol.socketPath)
+      }
+    }
+
     // Closing releases the flock. The file itself stays: unlinking a lock file
     // is how two processes end up locking two different inodes and both winning.
     if lockFD >= 0 {
       close(lockFD)
       lockFD = -1
+    }
+  }
+
+  /// SIGTERM every server process this host spawned, for an update relaunch.
+  ///
+  /// From `serverPIDs`, never from `Sessions`. That list is observation for the
+  /// Activity window, and an in-process session is filed there under the app's
+  /// OWN pid — so signalling everything in it had Cupertino SIGTERM itself
+  /// partway through the loop, before `stop` ran. A demo-seeded session's pid is
+  /// a number somebody made up, which is worse. In-process sessions need no
+  /// signal: they are threads of this process and end with it.
+  func terminateChildren() {
+    let me = getpid()
+    let pids = serverPIDs.withLock { Array($0.keys) }
+    for pid in pids where pid != me {
+      hostLog("update", .info, "updating — stopping server (pid \(pid))")
+      kill(pid, SIGTERM)
     }
   }
 
@@ -320,12 +392,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let timer = DispatchSource.makeTimerSource(queue: queue)
     timer.schedule(deadline: .now() + 5, repeating: 5)
     timer.setEventHandler { [weak self] in self?.checkStillBound() }
+    listener.withLock { $0.socketWatch = timer }
     timer.resume()
-    socketWatch = timer
   }
 
   private func checkStillBound() {
-    guard listenFD >= 0, let want = boundIdentity else { return }
+    guard let want = listener.withLock({ $0.fd >= 0 ? $0.boundIdentity : nil }) else { return }
 
     var now = stat()
     let lost: String?
@@ -344,14 +416,21 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let detail =
       "\(reason) — this copy is no longer reachable and has stopped serving. "
       + "Quit any other copy of Cupertino, then reopen this one."
+    // `boundIdentity` is kept: `stop` compares the path against it, and a path
+    // that now names somebody else's socket is not ours to unlink.
+    let taken = listener.withLock { state -> (fd: Int32, watch: DispatchSourceTimer?)? in
+      // `stop` got here first, and there is nothing left to retire.
+      guard state.fd >= 0 else { return nil }
+      let taken = (fd: state.fd, watch: state.socketWatch)
+      state.fd = -1  // read by acceptLoop to tell a deliberate stop from a failure
+      state.socketWatch = nil
+      state.startupError = detail
+      return taken
+    }
+    guard let taken else { return }
     hostLog("cupertino", .error, detail)
-    startupError = detail
-
-    socketWatch?.cancel()
-    socketWatch = nil
-    let fd = listenFD
-    listenFD = -1  // read by acceptLoop to tell a deliberate stop from a failure
-    if fd >= 0 { close(fd) }
+    taken.watch?.cancel()
+    close(taken.fd)
   }
 
   /// Accept forever, and treat "forever" literally.
@@ -366,7 +445,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       let client = accept(fd, nil, nil)
       if client < 0 {
         let failure = errno  // read before hostLog, which may clobber it
-        if listenFD < 0 { return }  // stopped deliberately
+        // Stopped deliberately. Compared with `fd` rather than with -1, so a
+        // listener retired and replaced never keeps this loop alive.
+        if listener.withLock({ $0.fd }) != fd { return }
         switch failure {
         case EINTR, ECONNABORTED:
           continue
@@ -644,7 +725,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // arrives by exactly the path `--server=mail` does.
     if surface.runtime == .swift {
       reply(client, BridgeProtocol.ok)
-      serveInProcess(surface: surface, client: client, lentTo: lentTo)
+      serveInProcess(surface: surface, client: client, onTrial: onTrial, lentTo: lentTo)
       return
     }
 
@@ -672,20 +753,39 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// same path as any other. The MCP host sees its server exit and reports a
   /// dropped connection; reconnecting lands on the refusal above, which is the
   /// sentence that explains why.
+  ///
+  /// An in-process session has no child to signal, so its socket is shut down
+  /// instead: `nextLine` reads end of stream, the loop in `serveInProcess` ends,
+  /// and the session closes by its ordinary path — the same outcome by the
+  /// route that surface has.
   func endTrialSessions() {
+    // A key entered during the window keeps everything running. The half hour
+    // bought the answer it was for; taking the servers away from somebody who
+    // has just paid because a timer they have already satisfied went off would
+    // be indefensible.
+    let licensed = LicenseStore.isLicensed
     let pids = trialPIDs.withLock { live -> Set<Int32> in
       let taken = live
       live.removeAll()
       return taken
     }
-    // A key entered during the window keeps everything running. The half hour
-    // bought the answer it was for; taking the servers away from somebody who
-    // has just paid because a timer they have already satisfied went off would
-    // be indefensible.
-    guard !LicenseStore.isLicensed else { return }
+    // Shut down under the lock, not after it: once an entry is out of the map
+    // `serveInProcess` no longer waits for anything before `serve` closes the
+    // descriptor, and a shutdown landing after that close could reach a socket
+    // `accept` has since given the same number to.
+    let closed = trialClients.withLock { live -> [String] in
+      defer { live.removeAll() }
+      guard !licensed else { return [] }
+      for entry in live.values { shutdown(entry.fd, SHUT_RDWR) }
+      return live.values.map(\.surface)
+    }
+    guard !licensed else { return }
     for pid in pids {
       hostLog("host", .info, "trial ended — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
+    }
+    for surface in closed {
+      hostLog(surface, .info, "trial ended — closing in-process session")
     }
   }
 
@@ -707,6 +807,27 @@ nonisolated final class ServerHost: @unchecked Sendable {
       hostLog(surface.id, .info, "switched off — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
     }
+    if surface.id == "sound" { enforceRecordingGate() }
+  }
+
+  /// End a microphone recording the settings no longer allow.
+  ///
+  /// The enablement check in `serveInProcess` is per request, which is enough
+  /// for a tool that answers and is done, and not for the one that keeps going. A
+  /// recording outlives its call by design, so switching Sound or
+  /// `allowRecording` off would otherwise leave the microphone live — and
+  /// turning the gate off unregisters `stop_recording`, so nothing could end it.
+  ///
+  /// Reads the settings rather than trusting the caller's word for what
+  /// changed, so a caller that only knows "something about Sound moved" can
+  /// call it and be right. `stopSessions(for:)` and `GateToggle` are the two.
+  func enforceRecordingGate() {
+    guard let sound = Surface.named("sound") else { return }
+    if !SurfaceSettings.isEnabled(sound) {
+      SoundCapture.revoke("Sound was switched off")
+    } else if !SurfaceSettings.isGateOn(sound, id: "allowRecording") {
+      SoundCapture.revoke("recording was switched off")
+    }
   }
 
   /// `lentTo` non-nil means the internal channel — see `serve`.
@@ -714,7 +835,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// The surface being SERVED and the surface whose switches GOVERN are then
   /// two different things, which is why they are two parameters rather than
   /// one. Everything read per request below reads the governing one.
-  private func serveInProcess(surface: Surface, client: Int32, lentTo: Surface? = nil) {
+  private func serveInProcess(
+    surface: Surface, client: Int32, onTrial: Bool, lentTo: Surface? = nil
+  ) {
     let authority = lentTo ?? surface
     // The reach a borrower gets, fixed for the life of the connection because
     // it is a property of WHO is asking rather than of a preference. `.only`
@@ -736,10 +859,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: authority.id, pid: pid)
     }
+    if onTrial { trialClients.withLock { $0[session] = (authority.id, client) } }
     defer {
+      // First, and before `serve` closes the descriptor: see `trialClients`.
+      if onTrial { _ = trialClients.withLock { $0.removeValue(forKey: session) } }
       // The disconnect `DriveActivity` once said was invisible. A session this
       // connection drove in ends shortly after, and the Mac is handed back.
       DrivingSession.connectionClosed(session)
+      // A recording is this connection's as much as a driving session is. One
+      // left running after its client went had nobody left to stop it — and if
+      // the gate went off too, no tool left to stop it with.
+      if surface.id == "sound" { SoundCapture.connectionClosed(session) }
       Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey)
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
       hostLog(authority.id, .info, "server stopped")
@@ -753,6 +883,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
         + (lentTo.map { _ in
           " — borrowed \(surface.id), scoped to \(authority.bundleID ?? "?")"
         } ?? ""))
+
+    // The same observer `run` gives a Node server, fed one whole frame at a time
+    // instead of by pumps. Nothing on this path used to call it, so every
+    // Desktop, Simulator, Screen and Sound call was missing from the Activity
+    // log and the audit file, and their sessions read zero calls.
+    //
+    // Not for a lend. Those verbs are how one Mail tool call does its work, and
+    // that call is already recorded — by the observer on Mail's own connection,
+    // against Mail. Recording its parts as well would count one request from the
+    // agent as a dozen, filed under a surface the agent never called.
+    let observer = lentTo == nil ? RequestObserver(surface: surface, session: session) : nil
 
     while let line = InProcessRPC.nextLine(client) {
       if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
@@ -768,6 +909,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
 
+      // After the enablement check, so a request refused by closing is not
+      // recorded as a call that was made.
+      observer?.saw(Data("\(line)\n".utf8))
+
       // Read per request, so flipping a toggle takes effect without restarting
       // the editor — the same guarantee `stopSessions` gives a node server by
       // signalling it.
@@ -780,10 +925,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
         line, surface: surface,
         allowWrites: SurfaceSettings.allowWrites(authority),
         gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
-        lentScope: lentScope)
+        lentScope: lentScope, connection: session)
       {
       case .message(let response):
-        _ = writeAll(client, Data("\(response)\n".utf8))
+        let frame = Data("\(response)\n".utf8)
+        observer?.answered(frame)
+        _ = writeAll(client, frame)
       case .noReply:
         continue
       case .noServer:
