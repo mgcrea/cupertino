@@ -40,15 +40,24 @@ enum KeyStore {
     }
   }
 
-  static func read(_ account: String) -> String? {
+  /// The stored value, nil only when there is none.
+  ///
+  /// Every other failure throws. A denied prompt, a locked keychain and an
+  /// unreadable item used to come back as nil too, and the caller could not
+  /// tell any of them from "no key yet" — so it minted one and wrote it over
+  /// the key that was there.
+  static func read(_ account: String) throws -> String? {
     var query = base(account)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-      let data = item as? Data
-    else { return nil }
-    return String(data: data, encoding: .utf8)
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    if status == errSecItemNotFound { return nil }
+    guard status == errSecSuccess else { throw StoreError.keychain(status) }
+    guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
+      throw StoreError.keychain(errSecDecode)
+    }
+    return value
   }
 
   static func write(_ account: String, value: String) throws {

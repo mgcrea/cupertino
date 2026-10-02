@@ -22,7 +22,13 @@ import Foundation
 enum KeyStore {
 
   nonisolated(unsafe) static var items: [String: String] = [:]
-  static func read(_ account: String) -> String? { items[account] }
+  /// Set to make the next reads fail the way a denied prompt or a locked
+  /// keychain does.
+  nonisolated(unsafe) static var readFailure: Error?
+  static func read(_ account: String) throws -> String? {
+    if let readFailure { throw readFailure }
+    return items[account]
+  }
   static func write(_ account: String, value: String) throws { items[account] = value }
   static func delete(_ account: String) throws { items[account] = nil }
   static func exists(_ account: String) -> Bool { items[account] != nil }
@@ -107,6 +113,27 @@ struct AuditCheck {
     check(
       "while the old signature fails against the new key",
       !AuditSigning.verify(manifest, signature: signature, publicKey: minted))
+
+    // A dismissed prompt or a locked keychain is not "no key yet". Minting
+    // there wrote over the key recipients pinned.
+    struct Denied: Error {}
+    let stored = KeyStore.items
+    KeyStore.readFailure = Denied()
+    check("a failed read refuses to sign", (try? AuditSigning.sign(manifest)) == nil)
+    KeyStore.readFailure = nil
+    check("and leaves the stored key alone", KeyStore.items == stored)
+    check("which still signs afterwards", (try? AuditSigning.publicKey()) == minted)
+
+    KeyStore.items["export"] = "not a key"
+    check("an undecodable key refuses to sign", (try? AuditSigning.sign(manifest)) == nil)
+    check("and is not replaced", KeyStore.items["export"] == "not a key")
+    KeyStore.items = stored
+
+    let pair = try AuditSigning.signed(manifest)
+    check(
+      "a signed pair verifies against its own key",
+      pair.publicKey == minted
+        && AuditSigning.verify(manifest, signature: pair.signature, publicKey: pair.publicKey))
 
     print("\nAudit signing: the fingerprint")
 

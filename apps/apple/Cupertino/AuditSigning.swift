@@ -35,15 +35,30 @@ import Foundation
 enum AuditSigning {
   private static let account = "export"
 
-  /// The key, minted on first use.
+  enum SigningError: LocalizedError {
+    case unreadableKey
+
+    var errorDescription: String? {
+      "The audit signing key in the Keychain could not be decoded. It was left in place; "
+        + "forget it in Settings to mint a new one."
+    }
+  }
+
+  /// The key, minted on first use — and ONLY on first use.
   ///
   /// Stored base64 because `KeyStore` holds strings. Raw representation rather
   /// than a PEM: it is 32 bytes and never leaves this file.
+  ///
+  /// A read that fails, or a value that does not decode, throws rather than
+  /// minting. Minting writes over the stored item, and the stored item is the
+  /// key recipients pinned: replacing it because a prompt was dismissed would
+  /// orphan every export signed so far, silently. Replacing a key is `forget()`,
+  /// which a person asks for.
   static func key() throws -> Curve25519.Signing.PrivateKey {
-    if let stored = KeyStore.read(account),
-      let raw = Data(base64Encoded: stored),
-      let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw)
-    {
+    if let stored = try KeyStore.read(account) {
+      guard let raw = Data(base64Encoded: stored),
+        let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+      else { throw SigningError.unreadableKey }
       return key
     }
     let fresh = Curve25519.Signing.PrivateKey()
@@ -89,6 +104,18 @@ enum AuditSigning {
 
   static func sign(_ bytes: Data) throws -> String {
     try key().signature(for: bytes).base64EncodedString()
+  }
+
+  /// A signature and the public key that checks it, from ONE read of the key.
+  ///
+  /// What an export writes. Two separate reads could straddle a failure or a
+  /// `forget()` and ship a sidecar whose key does not verify its own signature.
+  static func signed(_ bytes: Data) throws -> (signature: String, publicKey: String) {
+    let key = try key()
+    return (
+      try key.signature(for: bytes).base64EncodedString(),
+      key.publicKey.rawRepresentation.base64EncodedString()
+    )
   }
 
   /// The other half, so the round trip can be asserted without an app.

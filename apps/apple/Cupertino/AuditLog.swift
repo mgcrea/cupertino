@@ -469,9 +469,9 @@ final class AuditLog {
     try bytes.write(to: folder.appendingPathComponent("manifest.json"))
 
     if sign {
-      let signature = try AuditSigning.sign(bytes)
+      let signed = try AuditSigning.signed(bytes)
       let sidecar = """
-        {"algorithm":"ed25519","publicKey":\(AuditChain.quote(try AuditSigning.publicKey())),        "signature":\(AuditChain.quote(signature)),"signs":"manifest.json"}
+        {"algorithm":"ed25519","publicKey":\(AuditChain.quote(signed.publicKey)),        "signature":\(AuditChain.quote(signed.signature)),"signs":"manifest.json"}
         """
       try Data(sidecar.utf8).write(to: folder.appendingPathComponent("signature.json"))
     }
