@@ -55,7 +55,9 @@ The whole sequence, and the order matters less than it looks:
 Reading a code does NOT invalidate ids from step 1: ids die on navigation or on
 a re-enumeration of THAT page, and neither scanning a different page nor
 scanning the same one enumerates anything. Only \`page_elements\` hands out ids,
-and only it clears the old ones.
+and only it clears the old ones. An id also belongs to the one tab that answered
+— with two tabs on the same URL the other refuses it — and a reload kills it
+just as a navigation does.
 
 \`fill\` does not submit. Click the submit button separately.
 

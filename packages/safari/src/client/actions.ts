@@ -58,6 +58,12 @@ export type Command = {
    * "the page" — anything that ACTS names one.
    */
   url?: string | undefined;
+  /**
+   * The page load this is for, taken from `elementId`. The handler gives a
+   * command carrying one ONLY to the tab whose content script minted it, and
+   * that script refuses any other — see `pageOfElement`.
+   */
+  page?: string | undefined;
   elementId?: string | undefined;
   text?: string | undefined;
   direction?: "up" | "down" | undefined;
@@ -87,6 +93,22 @@ export type CommandResult = {
   data?: unknown;
   error?: string;
 };
+
+/**
+ * An element id as `actions.js` hands one out: its page load's token, then the
+ * element's number — `3f9a2c1d-e12`.
+ *
+ * The token is the fix for a wrong click. Ids used to be `e12` alone, counted
+ * from 1 in every tab, and a command found its tab by URL — so with two tabs on
+ * one URL, `click e12` from tab A's enumeration could be claimed by tab B and
+ * click B's `e12`. Now the id says which page load it came from, the handler
+ * routes on that, and the content script refuses one that is not its own.
+ */
+const ELEMENT_ID = /^([0-9a-f]{8})-e\d+$/;
+
+/** The page token an element id carries, or null when it is not an id at all. */
+export const pageOfElement = (elementId: string): string | null =>
+  ELEMENT_ID.exec(elementId)?.[1] ?? null;
 
 /** `commands/` and `results/` sit beside `pages/` in the appex container. */
 export const channelDirectory = (pagesDirectory: string, name: string): string =>
@@ -172,6 +194,13 @@ export const runCommand = async (
     `No page answered within ${Math.round(opts.timeoutMs / 1000)}s. The Cupertino extension has ` +
       `to be enabled in Safari AND allowed on this specific website — Safari grants it one site ` +
       `at a time — and the page has to be open. A hidden tab polls once every 10s, so a ` +
-      `background tab can legitimately be slower than this. Check with apple_safari_diagnostics.`,
+      `background tab can legitimately be slower than this. Check with apple_safari_diagnostics.` +
+      // The cause a page-addressed command adds, and the likeliest one: the
+      // load that minted the id is gone, and no other tab will take it.
+      (command.page
+        ? ` This command could only run on the page load that handed out "${command.elementId}" ` +
+          `— no other tab, even on the same URL, will take it. If that tab has reloaded, ` +
+          `navigated or closed since apple_safari_page_elements, enumerate again.`
+        : ""),
   );
 };

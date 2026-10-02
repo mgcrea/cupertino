@@ -1,3 +1,4 @@
+import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -52,6 +53,7 @@ type Capture = { kind: string; url: string; title: string; text: string; html: s
 const boot = (initial: { title: string; text: string }) => {
   const page = { title: initial.title, text: initial.text, href: "https://x.com/i/article/1" };
   const captures: Capture[] = [];
+  const polls: Record<string, unknown>[] = [];
   const observers: (() => void)[] = [];
 
   let now = 0;
@@ -90,11 +92,13 @@ const boot = (initial: { title: string; text: string }) => {
   const history: Record<string, unknown> = { pushState: () => {} };
 
   const context = createContext({
+    crypto: webcrypto,
     browser: {
       runtime: {
         getManifest: () => ({ version: "1.19.0" }),
         sendMessage: (message: Capture) => {
           if (message.kind === "capture") captures.push(message);
+          if (message.kind === "poll") polls.push(message);
           return Promise.resolve({ commands: [] });
         },
       },
@@ -141,6 +145,8 @@ const boot = (initial: { title: string; text: string }) => {
 
   return {
     captures,
+    polls,
+    window: context.window as Record<string, unknown>,
     advance,
     /** Change what the page says, and tell anyone observing that it changed. */
     render(next: Partial<{ title: string; text: string }>) {
@@ -250,5 +256,24 @@ describe("capture timing", () => {
     const last = page.captures.at(-1)!;
     expect(last.url).toBe("https://x.com/mgcrea/status/2097319903967539446");
     expect(last.text).toBe("the post body");
+  });
+});
+
+/**
+ * The poll is how the handler learns which page load is asking, and a click is
+ * routed to the load whose token its element id carries. A poll that named no
+ * token — or a different one from the ids — would strand every click.
+ */
+describe("the poll", () => {
+  it("names the page load that hands out this page's element ids", () => {
+    const page = boot({ title: "Cart", text: "Checkout" });
+    const token = page.window.cupertinoPageToken;
+
+    expect(token).toMatch(/^[0-9a-f]{8}$/);
+    expect(page.polls[0]).toMatchObject({
+      kind: "poll",
+      url: "https://x.com/i/article/1",
+      page: token,
+    });
   });
 });

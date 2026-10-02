@@ -66,8 +66,12 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     case "poll":
       // The command channel's only inbound step. Commands are claimed as they
       // are handed out — see `claimCommands` — so two tabs on the same URL
-      // cannot both run one.
-      payload = ["commands": claimCommands(for: message?["url"] as? String ?? "")]
+      // cannot both run one, and one that names a page load goes to that load
+      // alone.
+      payload = [
+        "commands": claimCommands(
+          for: message?["url"] as? String ?? "", page: message?["page"] as? String)
+      ]
     case "result":
       payload = ["stored": storeResult(message ?? [:])]
     default:
@@ -116,7 +120,18 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
   /// A command with no `url` is unscoped and goes to whoever polls first. That
   /// is deliberate for `elements`-style questions about "the page", and it is
   /// why the server names a URL for anything that acts.
-  private func claimCommands(for url: String) -> [[String: Any]] {
+  ///
+  /// A URL is not enough for a click, though. Two tabs on one URL are two
+  /// content scripts that each number their elements from `e1`, and the first
+  /// version handed `click e12` to whichever of them polled first — the other
+  /// tab's `e12` was clicked. So a command carrying a `page` token goes ONLY to
+  /// the page load that minted it, which the content script names on every
+  /// poll, and its URL is not consulted for routing at all: the token already
+  /// picks out one tab, and the content script checks the URL itself so a
+  /// mismatch comes back as an error rather than a timeout. A poll with no
+  /// token claims no such command, so the failure is a timeout, never a click
+  /// on the wrong tab.
+  private func claimCommands(for url: String, page: String?) -> [[String: Any]] {
     guard let dir = channelDirectory("commands") else { return [] }
     let fm = FileManager.default
     guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
@@ -143,8 +158,12 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         continue
       }
 
-      let wanted = command["url"] as? String
-      guard wanted == nil || wanted == url else { continue }
+      if let owner = command["page"] as? String {
+        guard let page, owner == page else { continue }
+      } else {
+        let wanted = command["url"] as? String
+        guard wanted == nil || wanted == url else { continue }
+      }
 
       try? fm.removeItem(at: file)
       claimed.append(command)

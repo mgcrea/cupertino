@@ -220,6 +220,11 @@
       const response = await browser.runtime.sendMessage({
         kind: "poll",
         url: location.href,
+        // Which page load is asking. A click or fill names the load that
+        // handed out its element id, and the handler gives it to that load
+        // and no other — two tabs on one URL each have an `e12`, and routing
+        // by URL alone once clicked the wrong one. `actions.js` mints it.
+        page: window.cupertinoPageToken ?? null,
         extensionVersion: manifestVersion(),
       });
       for (const command of response?.commands ?? []) {

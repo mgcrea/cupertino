@@ -1,3 +1,4 @@
+import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -75,6 +76,7 @@ const textNode = (value: string, parentAttrs: Attrs = {}) => ({
 const runWith = (opts: { elements?: unknown[]; nodes?: ReturnType<typeof textNode>[] }) => {
   const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
   const context = createContext({
+    crypto: webcrypto,
     window,
     performance: { now: () => 4000 },
     NodeFilter: { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
@@ -106,6 +108,7 @@ const runWith = (opts: { elements?: unknown[]; nodes?: ReturnType<typeof textNod
 const enumerateWith = (elements: unknown[], includeCodes: boolean) => {
   const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
   const context = createContext({
+    crypto: webcrypto,
     window,
     document: {
       querySelectorAll: () => elements,
@@ -369,6 +372,7 @@ describe("findCodes", () => {
   it("returns an empty scan on a document with no body", () => {
     const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
     const context = createContext({
+      crypto: webcrypto,
       window,
       performance: { now: () => 4000 },
       NodeFilter: { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
@@ -397,6 +401,7 @@ describe("findCodes", () => {
 const commandWith = (elements: unknown[], command: Record<string, unknown>) => {
   const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
   const context = createContext({
+    crypto: webcrypto,
     window,
     document: { querySelectorAll: () => elements, getElementById: () => null },
     getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
@@ -548,6 +553,7 @@ describe("read", () => {
     };
     const window: Record<string, unknown> = {};
     const context = createContext({
+      crypto: webcrypto,
       window,
       location: { href: "https://apps.example/form" },
       document: {
@@ -614,9 +620,11 @@ describe("fill", () => {
     }
   }
 
-  const runFill = (elements: unknown[], id: string, text: string) => {
+  /** Enumerate, then fill the first element by the id the enumeration handed out. */
+  const runFill = (elements: unknown[], text: string) => {
     const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
     const context = createContext({
+      crypto: webcrypto,
       window,
       Event: FakeEvent,
       document: { querySelectorAll: () => elements, getElementById: () => null },
@@ -628,8 +636,12 @@ describe("fill", () => {
       data: Record<string, unknown>;
       error?: string;
     };
-    expect(run({ action: "elements", limit: 50 }).ok).toBe(true);
-    return run({ action: "fill", elementId: id, text });
+    const listed = run({ action: "elements", limit: 50 }) as {
+      ok: boolean;
+      data: { elements: { id: string }[] };
+    };
+    expect(listed.ok).toBe(true);
+    return run({ action: "fill", elementId: listed.data.elements[0]!.id, text });
   };
 
   /** Browser-like DOM behaviour an element needs for `fill` to act on it. */
@@ -673,7 +685,7 @@ describe("fill", () => {
 
   it("reaches React's onChange, not just the DOM", () => {
     const input = reactInput("old details");
-    const out = runFill([input.node], "e1", "new details");
+    const out = runFill([input.node], "new details");
 
     expect(out.ok, out.error).toBe(true);
     expect(input.dom.value).toBe("new details");
@@ -683,7 +695,7 @@ describe("fill", () => {
   it("still fills an ordinary field that has no framework on it", () => {
     const events: string[] = [];
     const plain = { ...el("input", { name: "q" }), ...acting(events) };
-    const out = runFill([plain], "e1", "hello");
+    const out = runFill([plain], "hello");
 
     expect(out.ok, out.error).toBe(true);
     expect(plain.value).toBe("hello");
@@ -707,7 +719,7 @@ describe("fill", () => {
   it("chooses a select option by the text a person sees", () => {
     const events: string[] = [];
     const s = select(events, OPTIONS);
-    const out = runFill([s], "e1", "Discounts");
+    const out = runFill([s], "Discounts");
 
     expect(out.ok, out.error).toBe(true);
     expect(s.selectedIndex).toBe(2);
@@ -717,13 +729,13 @@ describe("fill", () => {
 
   it("accepts the option's hidden value too", () => {
     const s = select([], OPTIONS);
-    expect(runFill([s], "e1", "gift_cards").ok).toBe(true);
+    expect(runFill([s], "gift_cards").ok).toBe(true);
     expect(s.selectedIndex).toBe(1);
   });
 
   it("names the real options instead of guessing at a near miss", () => {
     const s = select([], OPTIONS);
-    const out = runFill([s], "e1", "Discount");
+    const out = runFill([s], "Discount");
 
     expect(out.ok).toBe(false);
     expect(out.error).toContain('"Discounts"');
@@ -731,7 +743,7 @@ describe("fill", () => {
   });
 
   it("refuses a disabled option", () => {
-    const out = runFill([select([], OPTIONS)], "e1", "Loyalty");
+    const out = runFill([select([], OPTIONS)], "Loyalty");
     expect(out.ok).toBe(false);
     expect(out.error).toContain("disabled");
   });
@@ -742,7 +754,7 @@ describe("fill", () => {
       ...el("input", { type }, { checked: false }),
       ...acting(events),
     };
-    const out = runFill([box], "e1", "true");
+    const out = runFill([box], "true");
 
     expect(out.ok).toBe(false);
     expect(out.error).toContain("click");
@@ -750,13 +762,158 @@ describe("fill", () => {
     expect(events).toEqual([]);
   });
 
+  /**
+   * The write would SUCCEED on these, which is the problem: a link, a button or
+   * a clickable div takes `el.value = text` without complaint, nothing visible
+   * changes, and the old answer was `{filled}` for a field that does not exist.
+   */
+  it.each([
+    ["link", el("a", { href: "/checkout" })],
+    ["button", el("button")],
+    ["role=button div", el("div", { role: "button" })],
+    ["div with an onclick", el("div", { onclick: "go()" })],
+  ])("refuses a %s, which has nothing to type into", (_, node) => {
+    const events: string[] = [];
+    const target: Record<string, unknown> = { ...node, ...acting(events) };
+    const out = runFill([target], "hello");
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("not a field");
+    expect(out.error).toContain("click it");
+    expect(target.value).toBe("");
+    expect(events).toEqual([]);
+  });
+
   it("refuses a disabled field, as the page would a person", () => {
     const events: string[] = [];
     const field = { ...el("input", {}, { disabled: true }), ...acting(events) };
-    const out = runFill([field], "e1", "x");
+    const out = runFill([field], "x");
 
     expect(out.ok).toBe(false);
     expect(out.error).toContain("disabled");
     expect(field.value).toBe("");
+  });
+});
+
+/**
+ * Two tabs on the same URL, which is the case that clicked the wrong button.
+ *
+ * Every content script numbered its elements from 1 and a command found its
+ * tab by URL, so `click e12` from tab A's enumeration could be claimed by tab B
+ * and click B's own `e12` — irreversibly, with nothing in the result to say
+ * which tab had acted. Each instance now draws a page token at load and puts it
+ * in every id it hands out. The handler routes on that token, and these tests
+ * pin the half that does not depend on routing being right: a page refuses
+ * anything minted by a different load, so a misrouted command is an error and
+ * never a click.
+ *
+ * Two `node:vm` contexts are two content-script instances — two isolated
+ * worlds, each with its own element list, exactly as Safari runs them.
+ */
+describe("page tokens", () => {
+  const CART = "https://shop.example/cart";
+
+  type Run = (c: unknown) => { ok: boolean; data: Record<string, unknown>; error?: string };
+
+  /** One tab: actions.js loaded over its own page, its button counting clicks. */
+  const tab = (name: string, clicks: string[], href = CART) => {
+    const button = {
+      ...el("button", {}, { innerText: name }),
+      scrollIntoView: () => {},
+      click: () => void clicks.push(name),
+    };
+    const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
+    const context = createContext({
+      crypto: webcrypto,
+      window,
+      location: { href },
+      document: { querySelectorAll: () => [button], getElementById: () => null },
+      getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
+    });
+    runInContext(SOURCE, context);
+    const run = window.cupertinoRunCommand as Run;
+    const listed = run({ action: "elements", limit: 50 });
+    expect(listed.ok, listed.error).toBe(true);
+    const elements = listed.data.elements as unknown as { id: string; label: string }[];
+    return {
+      run,
+      token: window.cupertinoPageToken as string,
+      page: listed.data.page as unknown as string,
+      id: elements[0]!.id,
+    };
+  };
+
+  it("gives each page load its own token, and puts it in every id", () => {
+    const a = tab("Buy", []);
+    const b = tab("Delete account", []);
+
+    expect(a.token).toMatch(/^[0-9a-f]{8}$/);
+    expect(b.token).toMatch(/^[0-9a-f]{8}$/);
+    expect(a.token).not.toBe(b.token);
+    // The same element number on both, which is exactly what used to collide.
+    expect(a.id).toBe(`${a.token}-e1`);
+    expect(b.id).toBe(`${b.token}-e1`);
+    // And said once in the answer, so a caller need not parse an id for it.
+    expect(a.page).toBe(a.token);
+  });
+
+  /** The bug, as the server now sends it: a click addressed to A's page load. */
+  it("refuses a click minted on page A when page B is the one that receives it", () => {
+    const clicks: string[] = [];
+    const a = tab("Buy", clicks);
+    const b = tab("Delete account", clicks);
+    const command = { action: "click", url: CART, page: a.token, elementId: a.id };
+
+    const onB = b.run(command);
+    expect(onB.ok).toBe(false);
+    expect(onB.error).toContain("different page load");
+    expect(clicks).toEqual([]);
+
+    const onA = a.run(command);
+    expect(onA.ok, onA.error).toBe(true);
+    expect(onA.data.clicked).toBe(a.id);
+    expect(clicks).toEqual(["Buy"]);
+  });
+
+  /**
+   * Without the command's `page` too. The id alone carries its load, so even a
+   * command that lost its routing token cannot reach B's element of the same
+   * number — the lookup never sees it.
+   */
+  it.each(["click", "fill"])("refuses A's id on B by the id alone, for a %s", (action) => {
+    const clicks: string[] = [];
+    const a = tab("Buy", clicks);
+    const b = tab("Delete account", clicks);
+
+    const out = b.run({ action, elementId: a.id, text: "x" });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("different page load");
+    expect(clicks).toEqual([]);
+  });
+
+  it("does not answer to a bare element number", () => {
+    const clicks: string[] = [];
+    const a = tab("Buy", clicks);
+
+    const out = a.run({ action: "click", elementId: "e1" });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("not an element id");
+    expect(clicks).toEqual([]);
+  });
+
+  /**
+   * The token pins the tab; the URL is what the caller believes it shows. A
+   * single-page app that has moved on since the enumeration is the ordinary
+   * way the two disagree, and the click is refused with the page's real URL
+   * rather than landing on whatever the route now renders.
+   */
+  it("refuses a click when its page has moved to another URL", () => {
+    const clicks: string[] = [];
+    const a = tab("Buy", clicks, "https://shop.example/cart/confirm");
+
+    const out = a.run({ action: "click", url: CART, page: a.token, elementId: a.id });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("now at https://shop.example/cart/confirm");
+    expect(clicks).toEqual([]);
   });
 });

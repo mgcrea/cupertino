@@ -24,6 +24,10 @@ import { compact, fail, ok, wrapResult } from "./util.js";
  * page itself just performed, and a stale one is an error rather than a
  * different element.
  *
+ * An id also names the page LOAD that performed it — `3f9a2c1d-e12`, not
+ * `e12` — because two tabs on one URL each number their elements from 1, and
+ * routing a click by URL once ran tab A's `e12` on tab B. See `pageOfElement`.
+ *
  * ## The split between the read and the writes here
  *
  * `page_elements` is registered always: it changes nothing, and asking what is
@@ -35,9 +39,11 @@ const elementIdArg = z
   .string()
   .min(1)
   .describe(
-    'An element id from apple_safari_page_elements, like "e12". IDs are handed out per ' +
-      "enumeration and DIE on navigation — never construct one, never reuse one across a page " +
-      "change, and re-enumerate after any click that loaded something.",
+    'An element id from apple_safari_page_elements, like "3f9a2c1d-e12", passed exactly as ' +
+      "given. The part before the dash names the page load that handed it out, and only that " +
+      "tab will act on it — another tab on the same URL refuses it. IDs DIE on navigation or " +
+      "reload: never construct one, never reuse one across a page change, and re-enumerate " +
+      "after any click that loaded something.",
   );
 
 const urlArg = z
@@ -45,7 +51,8 @@ const urlArg = z
   .min(1)
   .describe(
     "The exact URL of the page to act on, as apple_safari_list_tabs reports it. Required so a " +
-      "command cannot land on a different tab than the one you looked at.",
+      "command cannot land on a different page than the one you looked at; for a click or fill, " +
+      "the element id picks the tab and a page that has moved to another URL refuses.",
   );
 
 /** Shared by every action tool: the same failure means the same three things. */
@@ -62,7 +69,9 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
     {
       description: describeReach(
         "List what can be clicked or typed into on an open page — links, buttons, form fields — " +
-          "each with a short id to use with apple_safari_click and apple_safari_fill. " +
+          "each with an id to use with apple_safari_click and apple_safari_fill. Every id " +
+          "carries a token for this page load (`page` in the result), so it acts on the tab that " +
+          "answered and no other, even when two tabs show the same URL. " +
           "This is how you find out what to click: do NOT guess a selector, and do not " +
           "construct ids. `inView` says whether the user can currently see it, which is the " +
           "tiebreaker when two elements share a label. The list is capped and `truncated` says " +
@@ -116,8 +125,8 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
             url,
             ...(result.data as Record<string, unknown>),
             idNote:
-              "These ids are valid for this page only, until it navigates or re-renders. " +
-              "Re-enumerate after anything that changes the page.",
+              "These ids are valid for this page load only — the tab that answered, until it " +
+              "navigates, reloads or re-renders. Re-enumerate after anything that changes the page.",
           }),
         );
       }),
@@ -134,7 +143,9 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "IRREVERSIBLE and NOT idempotent: a click can submit a form, send a message or " +
           "complete a purchase, and this server cannot undo one. If the call times out, the " +
           "click MAY still have happened — do not retry it; look at the page instead with " +
-          "apple_safari_read_page. After a click that navigates, previous element ids are dead.",
+          "apple_safari_read_page. After a click that navigates, previous element ids are dead. " +
+          "Only the tab whose page_elements handed out the id can run it; `clicked` echoes that " +
+          "id, so the result names the page load that acted.",
       ),
       inputSchema: { url: urlArg, elementId: elementIdArg },
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
@@ -167,7 +178,8 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "On a SELECT, pass the option's text as page_elements shows it (its hidden value also " +
           "works); a text that matches no option fails and lists the real ones. A checkbox or " +
           "radio is refused — click it instead, after checking `checked`, since a click " +
-          "toggles. A disabled field is refused too.\n\n" +
+          "toggles. A link, button or other control is refused as well — it has nothing to " +
+          "type into — and so is a disabled field.\n\n" +
           "A one-time 2FA code IS a legitimate thing to put through this, and is the case it " +
           "was built for: read one with apple_safari_find_codes or apple_messages_find_codes, " +
           "then fill it. Check the code is still current first — neither tool can tell an " +

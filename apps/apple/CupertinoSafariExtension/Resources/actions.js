@@ -29,8 +29,44 @@
 // IDs live only as long as the page. They are handed out per enumeration and
 // die with a navigation, which is correct: an id that survived a page change
 // would be an id that could act on a page nobody asked about.
+//
+// ## An id names its page load, not just its element
+//
+// The first ids were `e1`, `e2`, … counted from 1 in every content script, and
+// a command found its tab by URL. Two tabs on the same URL therefore both had
+// an `e12`, and a click minted from tab A's enumeration went to whichever tab
+// polled first — tab B's `e12` was clicked, irreversibly, and the result said
+// nothing about which tab had acted.
+//
+// So every instance of this script draws a random PAGE token at load and puts
+// it in every id it hands out: `3f9a2c1d-e12`. The native handler gives a
+// command carrying a token only to the tab that polls with that token, and this
+// script refuses one whose token is not its own anyway — so a misrouted
+// command, however it got here, is an error and never a click.
 
 (function () {
+  /**
+   * This page load's token, and the prefix of every id it hands out.
+   *
+   * 32 random bits. The space only has to keep apart the content scripts alive
+   * at one moment — tens, not millions — and the token is paid for once per id
+   * in every enumeration, so a longer one costs every caller on every call to
+   * guard against a collision that is already one in millions with fifty
+   * allowed tabs open.
+   *
+   * Not a secret and not a defence against the page: page scripts cannot see
+   * this world, and the token is only ever a routing label.
+   */
+  const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+
+  /** Read by `content.js`, which polls with it so the handler can route by it. */
+  window.cupertinoPageToken = PAGE;
+
+  /** `<page>-e<n>`, and nothing looser. */
+  const ID_SHAPE = /^([0-9a-f]{8})-e\d+$/;
+
   /** Every element handed out this page-lifetime, by id. */
   const handles = new Map();
   let nextId = 1;
@@ -272,7 +308,12 @@
   /** The option text a person sees, not the `value` attribute behind it. */
   function selectedText(el) {
     const options = Array.from(el.selectedOptions || []);
-    return options.map((o) => (o.label || o.text || "").trim()).join(", ");
+    return options.map(optionText).join(", ");
+  }
+
+  /** One option's text as a person reads it. */
+  function optionText(o) {
+    return (o.label || o.text || "").trim();
   }
 
   /** What `elements` returns of a field's value when the caller names no cap. */
@@ -295,7 +336,7 @@
     const all = document.querySelectorAll(SELECTOR);
     for (const el of all) {
       if (!visible(el)) continue;
-      const id = "e" + nextId++;
+      const id = PAGE + "-e" + nextId++;
       handles.set(id, el);
       const rect = el.getBoundingClientRect();
       found.push({
@@ -317,10 +358,38 @@
       });
       if (found.length >= limit) break;
     }
-    return { elements: found, truncated: found.length >= limit && all.length > found.length };
+    return {
+      // Said once as well as in every id, so the answer names which page load
+      // it came from without the caller having to parse one.
+      page: PAGE,
+      elements: found,
+      truncated: found.length >= limit && all.length > found.length,
+    };
   }
 
   function resolve(id) {
+    const owner = ID_SHAPE.exec(String(id))?.[1];
+    if (!owner) {
+      throw new Error(
+        '"' +
+          id +
+          '" is not an element id. IDs look like "' +
+          PAGE +
+          '-e12" and come only from an "elements" call — enumerate and use one as given.',
+      );
+    }
+    // The check that makes a misrouted command harmless. The handler should
+    // never deliver one, but an id from another page load must not reach the
+    // lookup below, where this page's own element of the same number would
+    // answer to it.
+    if (owner !== PAGE) {
+      throw new Error(
+        'Element "' +
+          id +
+          '" was handed out by a different page load, not this one, so this tab will not act ' +
+          "on it. Its page may have reloaded or navigated; enumerate again.",
+      );
+    }
     const el = handles.get(id);
     if (!el) {
       throw new Error(
@@ -397,6 +466,22 @@
           "then click it only if it is not already what you want — a click toggles.",
       );
     }
+    // Refused for the opposite reason: here the write WOULD succeed. A link, a
+    // button or a clickable div takes `el.value = text` without complaint, it
+    // changes nothing anyone can see, and the old answer — `{filled}` — told the
+    // caller it had typed into a field that does not exist.
+    if (k !== "textfield" && k !== "select") {
+      throw new Error(
+        'Element "' +
+          id +
+          '" is a ' +
+          k +
+          ", not a field, so there is nothing in it to type into. Fill takes a text field, a " +
+          "textarea, an editable region or a select; to act on a " +
+          k +
+          ", click it.",
+      );
+    }
     if (el.disabled === true) {
       throw new Error(
         'Element "' + id + '" is disabled on the page; a person could not type in it either.',
@@ -448,14 +533,13 @@
    */
   function choose(el, text) {
     const options = Array.from(el.options || []);
-    const shown = (o) => (o.label || o.text || "").trim();
     const wanted = text.trim();
     const match =
-      options.find((o) => shown(o) === wanted) ||
+      options.find((o) => optionText(o) === wanted) ||
       options.find((o) => o.value === text) ||
-      options.find((o) => shown(o).toLowerCase() === wanted.toLowerCase());
+      options.find((o) => optionText(o).toLowerCase() === wanted.toLowerCase());
     if (!match) {
-      const offered = options.slice(0, 25).map((o) => '"' + shown(o) + '"');
+      const offered = options.slice(0, 25).map((o) => '"' + optionText(o) + '"');
       throw new Error(
         'No option "' +
           text +
@@ -465,11 +549,11 @@
       );
     }
     if (match.disabled) {
-      throw new Error('The option "' + shown(match) + '" is disabled on the page.');
+      throw new Error('The option "' + optionText(match) + '" is disabled on the page.');
     }
     // By index, so two options sharing a `value` still choose the one named.
     el.selectedIndex = options.indexOf(match);
-    return shown(match);
+    return optionText(match);
   }
 
   function scroll(direction) {
@@ -661,6 +745,38 @@
    */
   window.cupertinoRunCommand = function (command) {
     try {
+      // A command addressed to a page load is for that load alone. The handler
+      // only hands one to the tab that polled with its token; this is the same
+      // rule enforced where the click would happen, so no routing mistake
+      // upstream can turn into an action here.
+      if (command.page != null && command.page !== PAGE) {
+        return {
+          ok: false,
+          error:
+            "This command was for a different page load (" +
+            command.page +
+            "), not this one, and was not run. Enumerate the page again.",
+        };
+      }
+      // The token pins the tab; the URL is what the caller BELIEVES that tab
+      // shows. When they disagree the caller is confused about something, and
+      // the click is the wrong place to find out what — a single-page app that
+      // has moved on since the enumeration lands here too, and says so.
+      if (
+        (command.action === "click" || command.action === "fill") &&
+        typeof command.url === "string" &&
+        command.url !== location.href
+      ) {
+        return {
+          ok: false,
+          error:
+            "The page that handed out this id is now at " +
+            location.href +
+            ", not " +
+            command.url +
+            ". Nothing was done. Enumerate it again before acting on it.",
+        };
+      }
       switch (command.action) {
         case "elements":
           return {

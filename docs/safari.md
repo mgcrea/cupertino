@@ -761,7 +761,9 @@ Two more refusals came with it. A select is chosen by its option text, the words
 reports, with the hidden `value` accepted too and nothing looser: a near miss fails and lists the
 real options, because a wrong option submitted with confidence is worse than one more call. A
 checkbox or radio is refused with a pointer to `click`, since "fill with true" is not a verb a
-caller could rely on and a click toggles. File inputs remain out of reach — a content script cannot
+caller could rely on and a click toggles. A link, a button or any other non-field control is refused
+too: `el.value = text` succeeds on all of them and changes nothing anyone can see, and the old
+answer — `{filled}` — reported typing into a field that did not exist. File inputs remain out of reach — a content script cannot
 read a file from disk, and nothing on this lane can hand it one.
 
 ### The page polls, and what that costs
@@ -777,7 +779,8 @@ That is the floor on every action tool's latency, and it is why the timeout defa
 
 ### At-most-once, and never at-least-once
 
-A command is deleted as it is handed out, so two tabs on the same URL cannot both run one click. The
+A command is deleted as it is handed out, so two tabs on the same URL cannot both run one click —
+and a click or fill goes only to the tab whose ids it names (see "An id names its page load"). The
 consequence is deliberate: a page that dies mid-command loses it, and the server reports a timeout
 rather than retrying. **A click that MIGHT have landed must never be repeated automatically** — that
 is how one purchase becomes two. The tool descriptions say so, and the timeout message tells the
@@ -796,6 +799,38 @@ when it does not match, it does not fail, it matches something else and clicks t
 So the page hands out the list. `page_elements` enumerates the interactive nodes with a short id
 apiece, and the acting tools take one of those ids. **A stale id is an error rather than a different
 element**, which is the whole property: ids are handed out per enumeration and die on navigation.
+
+### An id names its page load, because a URL does not name a tab
+
+**The first ids broke that property for two tabs on one URL.** They were `e1`, `e2`, … counted from
+1 in every content script, and the handler gave a command to the first tab that polled with a
+matching URL. So `page_elements` answered by tab A, then `click e12`, could be claimed by tab B —
+which had its own `e12`. The wrong button was clicked, irreversibly, and the result said nothing
+about which tab had acted. Claiming by deletion stopped both tabs running it; it did nothing to
+choose the right one.
+
+Now every content-script instance draws a random page token at load (`crypto.getRandomValues`, 32
+bits) and every id carries it: `3f9a2c1d-e12`. Three places enforce it, so no one of them has to be
+right on its own:
+
+| Where              | What it does                                                                                                                                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The server         | Takes the token from the id and puts it on the command as `page`. An id with no token — a bare `e12`, or one a caller invented — is refused before anything is written.                                                             |
+| The native handler | Gives a command carrying `page` ONLY to the tab that polls with that token, which `content.js` sends on every poll. Its URL is not consulted for routing; a poll with no token claims no such command.                              |
+| The content script | Refuses a command whose `page`, or whose id's token, is not its own — so a misrouted command is an error and never a click. It also refuses a click or fill whose `url` is no longer `location.href`, saying where the page now is. |
+
+**A reload kills an id the way a navigation does**, because a reload is a new content script with a
+new token. Nothing then owns the old one, so the command goes unclaimed and the timeout says why.
+
+The `page_elements` result also carries `page` once, and a click's `clicked` echoes the id it ran,
+so an answer always names the page load that gave it. Thirty-two bits is enough because the token
+only has to separate the content scripts alive at one moment, and it is paid for once per id in
+every enumeration. `test/content-script.test.ts` runs two instances of `actions.js` side by side on
+the same URL and pins that a click minted on one is refused by the other.
+
+Commands that name no element — `elements`, `read`, `scroll`, `codes` — are still routed by URL, to
+whichever matching tab polls first. With two tabs on one URL, which one answers `page_elements` is
+not chosen; what changed is that everything after it goes to the same one.
 
 `page_elements` is ungated: it changes nothing, and asking what is on a page is the class of act
 this surface already performs when it reads one. The three that act are behind `allowWrites` — a

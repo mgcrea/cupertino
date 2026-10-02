@@ -7,7 +7,7 @@ import {
 
 import { BUILD_INFO } from "../build-info.js";
 import type { Config } from "../config.js";
-import { runCommand, type CommandResult } from "./actions.js";
+import { pageOfElement, runCommand, type CommandResult } from "./actions.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
@@ -583,6 +583,23 @@ export class AppleSafariClient {
     // the capture to return, a click has nothing.
     opts: { timeoutMs?: number } = {},
   ): Promise<CommandResult> {
+    // An element id names the page load that handed it out, and the command
+    // carries that token so only that load can claim it — see `pageOfElement`.
+    // Derived HERE, from the id, rather than taken as a separate argument: a
+    // caller cannot pair an id with the wrong page if it never says the page.
+    // Checked before anything is written, outside the silence diagnosis below,
+    // because a malformed id is the caller's mistake and no tab's.
+    let page: string | undefined;
+    if (input.elementId !== undefined) {
+      page = pageOfElement(input.elementId) ?? undefined;
+      if (!page) {
+        throw new PreconditionError(
+          `"${input.elementId}" is not an element id from apple_safari_page_elements. IDs look ` +
+            `like "3f9a2c1d-e12" — the part before the dash names the page load that handed it ` +
+            `out. Enumerate the page and pass an id exactly as given; never construct one.`,
+        );
+      }
+    }
     try {
       return await runCommand(
         {
@@ -591,7 +608,7 @@ export class AppleSafariClient {
         },
         // `includeCodes` is attached HERE rather than by the caller, so there is
         // one place the setting can enter the channel and no tool can pass it.
-        { ...input, includeCodes: this.#config.allowCodes },
+        { ...input, page, includeCodes: this.#config.allowCodes },
       );
     } catch (error) {
       throw this.#explainSilence(error, input.url);

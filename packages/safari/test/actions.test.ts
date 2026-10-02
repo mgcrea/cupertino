@@ -132,22 +132,24 @@ describe("apple_safari_click", () => {
     const dirs = paths();
     const ext = fakeExtension(dirs, () => ({
       ok: true,
-      data: { clicked: "e7", label: "Sign in", kind: "button" },
+      data: { clicked: "3f9a2c1d-e7", label: "Sign in", kind: "button" },
     }));
     running = ext;
 
     const c = await connect(dirs.pages);
     const r = await call(c, "apple_safari_click", {
       url: "https://example.com/",
-      elementId: "e7",
+      elementId: "3f9a2c1d-e7",
     });
 
     expect(r.isError).toBe(false);
-    expect(r.json()).toMatchObject({ clicked: "e7", label: "Sign in" });
+    expect(r.json()).toMatchObject({ clicked: "3f9a2c1d-e7", label: "Sign in" });
     expect(ext.seen[0]).toMatchObject({
       action: "click",
       url: "https://example.com/",
-      elementId: "e7",
+      elementId: "3f9a2c1d-e7",
+      // The page load the id came from, which is what the handler routes on.
+      page: "3f9a2c1d",
     });
     // The expiry is what stops a command running minutes after the caller gave
     // up, so it must actually be set rather than defaulted away.
@@ -163,9 +165,12 @@ describe("apple_safari_click", () => {
    */
   it("always warns that ids may now be stale", async () => {
     const dirs = paths();
-    running = fakeExtension(dirs, () => ({ ok: true, data: { clicked: "e1" } }));
+    running = fakeExtension(dirs, () => ({ ok: true, data: { clicked: "3f9a2c1d-e1" } }));
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
     expect(r.text).toContain("dead");
   });
 
@@ -173,15 +178,91 @@ describe("apple_safari_click", () => {
     const dirs = paths();
     running = fakeExtension(dirs, () => ({
       ok: false,
-      error: 'No element "e9" on this page.',
+      error: 'No element "3f9a2c1d-e9" on this page.',
     }));
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e9" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e9",
+    });
     expect(r.isError).toBe(true);
     // Parsed rather than matched as text: the tool renders JSON, so the quotes
     // in the page's own message arrive escaped and a substring check on the raw
     // output tests the serializer instead of the behaviour.
-    expect((r.json() as { error: string }).error).toContain('No element "e9"');
+    expect((r.json() as { error: string }).error).toContain('No element "3f9a2c1d-e9"');
+  });
+});
+
+/**
+ * The wrong-tab click, from the server's side.
+ *
+ * Ids were `e12` alone, counted from 1 in every tab, and a command found its
+ * tab by URL — so with two tabs on one URL, a click minted from tab A's
+ * enumeration could run on tab B's `e12`. The id now names its page load, and
+ * the server puts that token on the command for the handler to route by. The
+ * other half — the page refusing a token that is not its own — is executed
+ * against the real content script in `content-script.test.ts`.
+ */
+describe("page-addressed commands", () => {
+  it("puts the id's page token on a fill as well as a click", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { filled: "0badc0de-e3" } }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    await call(c, "apple_safari_fill", {
+      url: "https://x.example/",
+      elementId: "0badc0de-e3",
+      text: "hello",
+    });
+    expect(ext.seen[0]).toMatchObject({ action: "fill", page: "0badc0de" });
+  });
+
+  it("names no page on a command that has no element", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: {} }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    await call(c, "apple_safari_scroll", { url: "https://x.example/" });
+    expect(ext.seen[0]).not.toHaveProperty("page");
+  });
+
+  /**
+   * A bare `e12` is what the old ids looked like and what a caller that
+   * invents one writes. It names no page load, so there is no tab it could
+   * safely go to — and it must not fall back to "whichever tab polls first",
+   * which is the bug.
+   */
+  it.each(["e12", "12", "3f9a2c1d", "3F9A2C1D-e12", "3f9a2c1d-e12 "])(
+    "refuses %j before writing anything",
+    async (elementId) => {
+      const dirs = paths();
+      const ext = fakeExtension(dirs, () => ({ ok: true, data: { clicked: elementId } }));
+      running = ext;
+      const c = await connect(dirs.pages);
+      const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId });
+
+      expect(r.isError).toBe(true);
+      expect((r.json() as { error: string }).error).toContain("not an element id");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(ext.seen).toEqual([]);
+    },
+  );
+
+  /**
+   * The likeliest reason nothing claims a page-addressed command is that the
+   * load which minted it is gone, and no other tab will take it. Saying so is
+   * what keeps a caller from reading the timeout as a permission problem.
+   */
+  it("says why nothing claimed it when the id's page load has gone", async () => {
+    const dirs = paths();
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("no other tab");
+    expect(r.text).toContain("reloaded");
   });
 });
 
@@ -193,7 +274,10 @@ describe("when no page answers", () => {
   it("names all three conditions instead of blaming a permission", async () => {
     const dirs = paths();
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
 
     expect(r.isError).toBe(true);
     expect(r.text).toContain("enabled in Safari");
@@ -212,7 +296,7 @@ describe("when no page answers", () => {
   it("takes the command back", async () => {
     const dirs = paths();
     const c = await connect(dirs.pages);
-    await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "3f9a2c1d-e1" });
 
     const left = readdirSync(dirs.commands).filter((f) => f.endsWith(".json"));
     expect(left).toEqual([]);
@@ -233,7 +317,10 @@ describe("when the tab is running a pre-update content script", () => {
     const dirs = paths();
     capture(dirs.pages, "https://x.example/", "1.4.0");
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
 
     expect(r.isError).toBe(true);
     expect(r.text).toContain("RELOAD");
@@ -244,7 +331,10 @@ describe("when the tab is running a pre-update content script", () => {
     const dirs = paths();
     capture(dirs.pages, "https://x.example/", null);
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
     expect(r.text).toContain("too old to say which version");
   });
 
@@ -256,7 +346,10 @@ describe("when the tab is running a pre-update content script", () => {
   it("adds nothing when there is no capture to reason from", async () => {
     const dirs = paths();
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
     expect(r.text).not.toContain("RELOAD");
   });
 
@@ -265,7 +358,10 @@ describe("when the tab is running a pre-update content script", () => {
     const { BUILD_INFO } = await import("../src/build-info.js");
     capture(dirs.pages, "https://x.example/", BUILD_INFO.version);
     const c = await connect(dirs.pages);
-    const r = await call(c, "apple_safari_click", { url: "https://x.example/", elementId: "e1" });
+    const r = await call(c, "apple_safari_click", {
+      url: "https://x.example/",
+      elementId: "3f9a2c1d-e1",
+    });
     expect(r.text).not.toContain("RELOAD");
   });
 });
@@ -275,13 +371,13 @@ describe("apple_safari_page_elements", () => {
     const dirs = paths();
     running = fakeExtension(dirs, () => ({
       ok: true,
-      data: { elements: [{ id: "e1", kind: "button", label: "Buy" }], truncated: false },
+      data: { elements: [{ id: "3f9a2c1d-e1", kind: "button", label: "Buy" }], truncated: false },
     }));
     const c = await connect(dirs.pages, { APPLE_SAFARI_ALLOW_WRITES: "false" });
     const r = await call(c, "apple_safari_page_elements", { url: "https://shop.example/" });
 
     expect(r.isError).toBe(false);
-    expect(r.json()).toMatchObject({ elements: [{ id: "e1", label: "Buy" }] });
+    expect(r.json()).toMatchObject({ elements: [{ id: "3f9a2c1d-e1", label: "Buy" }] });
   });
 
   it("says the ids are page-scoped", async () => {
