@@ -22,10 +22,18 @@ import os
 /// It is also where a Node call that changes the screen lights the notice,
 /// because it is the one place the app sees every such call before the child
 /// acts on it. `VisibleTools` says which calls those are.
+///
+/// A surface served in-process feeds it too, one whole frame at a time from the
+/// thread serving the connection — see `ServerHost.serveInProcess`. Without that
+/// Desktop, Simulator, Screen and Sound calls reached neither the Activity log
+/// nor the audit file, and their sessions read zero calls however hard they
+/// were driven.
+///
 /// `@unchecked` because the checker cannot see the arrangement that makes it true: state
 /// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
-/// `FrameSplitter` is fed by exactly one pump — `requests` by `saw`, `responses` by
-/// `answered` — so neither is ever reached from two threads.
+/// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
+/// `answered`, or both by the one in-process serving thread — so neither is ever reached
+/// from two threads at once.
 nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
   private let session: UUID
@@ -99,9 +107,17 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// The one other reason to parse: a visible call is waiting for its reply, so
   /// the notice it holds up can be let go. That is rare and brief, so the parse
   /// is paid only while it is true.
+  ///
+  /// A chunk that is not parsed is still handed to the splitter. Returning
+  /// without it left a partial frame behind, the first chunk fed once a notice
+  /// was held was glued onto it, and the reply that should have let the notice
+  /// go never parsed — so it ran to its thirty-second cap.
   func answered(_ chunk: Data) {
     let holding = !visible.withLock { $0.flight.isEmpty }
-    guard mode >= .argumentsAndResults || holding else { return }
+    guard mode >= .argumentsAndResults || holding else {
+      responses.skip(chunk)
+      return
+    }
     for line in responses.lines(chunk) { reply(line) }
   }
 

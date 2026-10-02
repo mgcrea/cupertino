@@ -318,10 +318,21 @@ nonisolated struct FrameSplitter {
   /// without bound on a peer that never sends a newline.
   private let limit: Int
 
+  /// Set by `skip` when a chunk it was handed ended mid-frame: the bytes up to
+  /// the next newline are the tail of a frame nobody collected, not the start
+  /// of one.
+  private var discarding = false
+
   init(limit: Int = 1 << 20) { self.limit = limit }
 
   /// Every complete line in what has arrived so far.
   mutating func lines(_ chunk: Data) -> [Data] {
+    var chunk = chunk
+    if discarding {
+      guard let newline = chunk.firstIndex(of: UInt8(ascii: "\n")) else { return [] }
+      chunk = Data(chunk[chunk.index(after: newline)...])
+      discarding = false
+    }
     pending.append(chunk)
     guard let lastNewline = pending.lastIndex(of: UInt8(ascii: "\n")) else {
       if pending.count > limit { pending.removeAll(keepingCapacity: false) }
@@ -330,5 +341,34 @@ nonisolated struct FrameSplitter {
     let complete = pending[..<lastNewline]
     pending = Data(pending[pending.index(after: lastNewline)...])
     return complete.split(separator: UInt8(ascii: "\n")).filter { !$0.isEmpty }.map { Data($0) }
+  }
+
+  /// Account for a chunk without collecting what is in it.
+  ///
+  /// For a caller that only sometimes wants the lines — `RequestObserver`
+  /// parses responses only while a notice is held. Simply not calling `lines`
+  /// for the chunks in between left the last partial frame sitting in
+  /// `pending`, so the next chunk that WAS fed was glued onto a stale head,
+  /// parsed as garbage, and the reply that should have released the notice was
+  /// never seen. Skipping still has to know where frames end; it just does not
+  /// keep them.
+  mutating func skip(_ chunk: Data) {
+    guard let lastNewline = chunk.lastIndex(of: UInt8(ascii: "\n")) else {
+      // Still inside whatever frame was in progress. Its head is of no use now,
+      // and keeping it would grow without bound on a long uncollected frame.
+      if !chunk.isEmpty {
+        pending.removeAll(keepingCapacity: false)
+        discarding = true
+      }
+      return
+    }
+    // What follows the last newline is the start of a frame, and the next call
+    // to `lines` may want it.
+    pending = Data(chunk[chunk.index(after: lastNewline)...])
+    discarding = false
+    if pending.count > limit {
+      pending.removeAll(keepingCapacity: false)
+      discarding = true
+    }
   }
 }

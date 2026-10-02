@@ -279,6 +279,29 @@ struct UnitCheck {
       "a runaway line is dropped rather than buffered",
       runaway.lines(Data("y\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "y")
 
+    // `RequestObserver` collects responses only while a notice is held, and
+    // skips the chunks in between. Skipping by not calling at all left a partial
+    // frame behind, so the first collected chunk was glued onto a stale head and
+    // the reply that should have released the notice never parsed.
+    func text(_ lines: [Data]) -> [String] { lines.map { String(decoding: $0, as: UTF8.self) } }
+    var straddled = FrameSplitter()
+    _ = straddled.lines(Data("{\"id\":1,".utf8))
+    straddled.skip(Data("\"result\":{}}\n{\"id\":2,".utf8))
+    check(
+      "a frame begun in a skipped chunk is collected whole",
+      text(straddled.lines(Data("\"result\":{}}\n".utf8))) == ["{\"id\":2,\"result\":{}}"])
+    var midFrame = FrameSplitter()
+    _ = midFrame.lines(Data("{\"id\":1,".utf8))
+    midFrame.skip(Data("\"result\":\"still going".utf8))
+    check(
+      "the tail of a skipped frame is not taken for a frame",
+      text(midFrame.lines(Data("\"}\n{\"id\":3}\n".utf8))) == ["{\"id\":3}"])
+    var aligned = FrameSplitter()
+    aligned.skip(Data("{\"id\":1}\n".utf8))
+    check(
+      "a skip that ends on a boundary leaves nothing behind",
+      text(aligned.lines(Data("{\"id\":4}\n".utf8))) == ["{\"id\":4}"])
+
     print("\nSafari captures: what the extension has written")
 
     // The store this reads is written by the appex and read by the node server,
