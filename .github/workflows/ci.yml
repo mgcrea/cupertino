@@ -96,14 +96,10 @@ jobs:
       # package.json is the source now, and a forgotten copy is red here.
       - name: Version manifest 🔍
         run: make version-check
-      # Confirms the committed revocation list still matches D1. It does not
-      # regenerate: the file in git is what the build uses, and fetching it here
-      # would make a Cloudflare outage an outage in releases. With no token —
-      # a fork, a pull request, a clean clone — the script skips and exits 0.
-      - name: Revocation list 🔍
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: node scripts/generate-revocations.mjs --check
+      # The revocation list is checked by its own job, `revocations`, below. It
+      # used to be a step here, where it never ran: the token is an environment
+      # secret and this job has no environment, so it always read empty and the
+      # script skipped green.
       # The suite is entirely offline: osascript is faked, the Envelope Index is
       # a fixture built with node:sqlite, and .emlx files are written to a temp
       # dir. APPLE_MAIL_INTEGRATION is deliberately never set here — a runner
@@ -628,11 +624,49 @@ jobs:
         # follows.
         run: make site-deploy
 
+  # Confirms the committed revocation list still matches D1. It does not
+  # regenerate: the file in git is what the build uses, and fetching it here
+  # would make a Cloudflare outage an outage in releases.
+  #
+  # Its own job because CLOUDFLARE_API_TOKEN is an environment secret (see
+  # deploy-api), and giving `test` an environment would make every pull request
+  # a production deployment. As a step in `test` it read an empty token on every
+  # run and skipped green, so a refund nobody ran `make revocations` for shipped
+  # with the refunded key still working. On a main push a missing token only
+  # skips; on an app tag it fails, because that is the build that bakes the list.
+  revocations:
+    name: Revocation list
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/app-v'))
+    environment: production
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v5
+      - name: Setup pnpm 🔧
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup node 🔧
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+      - name: Install 🪄
+        run: pnpm install --frozen-lockfile
+      # CLOUDFLARE_ACCOUNT_ID for the reason the Migrate D1 step gives: wrangler's
+      # d1 subcommands do not read it from wrangler.jsonc, and without it they
+      # stop to ask, which is the failure the step would have hit had it ever run.
+      - name: Revocation list 🔍
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 0121e8859874c6fc0d674676e17d9f18
+          REQUIRE: ${{ startsWith(github.ref, 'refs/tags/app-v') && '--require' || '' }}
+        run: node scripts/generate-revocations.mjs --check $REQUIRE
+
   release-app:
     name: Release Cupertino.app
     runs-on: macos-latest
-    # Both test jobs, as when they were one matrix.
-    needs: [test, test-macos]
+    # Both test jobs, as when they were one matrix, and the revocation check:
+    # this is the build that bakes the list in.
+    needs: [test, test-macos, revocations]
     if: startsWith(github.ref, 'refs/tags/app-v')
     permissions:
       contents: write

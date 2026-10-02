@@ -17,6 +17,7 @@
 //
 //   node scripts/generate-revocations.mjs            # rewrite the Swift file
 //   node scripts/generate-revocations.mjs --check    # fail if it is stale
+//   node scripts/generate-revocations.mjs --check --require  # and if it cannot tell
 //   node scripts/generate-revocations.mjs --local    # against the local D1
 
 import { execFileSync } from "node:child_process";
@@ -30,6 +31,9 @@ const API = join(ROOT, "apps/api");
 const args = process.argv.slice(2);
 const check = args.includes("--check");
 const local = args.includes("--local");
+// For the release build, where "cannot confirm" must not pass: that is the
+// build the list is baked into.
+const mustConfirm = args.includes("--require");
 
 // The skip is for --check only, and only for CI. A pull request from a fork has
 // no secrets and neither does a clean clone; failing there would turn "we cannot
@@ -43,6 +47,10 @@ const local = args.includes("--local");
 // while looking like it had been handled. Let wrangler's own auth decide, and
 // let it fail loudly when there is none.
 if (check && !local && !process.env.CLOUDFLARE_API_TOKEN) {
+  if (mustConfirm) {
+    console.error("FATAL: no CLOUDFLARE_API_TOKEN, and --require says a release cannot skip this");
+    process.exit(2);
+  }
   console.log("skipped: no CLOUDFLARE_API_TOKEN, cannot confirm against D1");
   process.exit(0);
 }
