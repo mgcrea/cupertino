@@ -507,7 +507,7 @@ export const bestBody = (root: MimePart): { text: string; from: BodyFrom } => {
  * whitespace" is. A size threshold would work too but would be a magic number,
  * and would misjudge a genuinely tiny attachment.
  */
-const hasContent = (bytes: Buffer): boolean => {
+export const hasContent = (bytes: Buffer): boolean => {
   for (const byte of bytes) {
     // tab, LF, VT, FF, CR, space
     const isSpace =

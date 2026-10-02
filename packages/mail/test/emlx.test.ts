@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  extractAttachment,
   locateEmlx,
   lookupEmlx,
   readEmlx,
@@ -403,6 +404,15 @@ describe("reading", () => {
       retrievable: true,
       sizeBytes: 164_156,
     });
+  });
+
+  it("saves the sidecar bytes, not the delimiter whitespace a stripped part keeps", () => {
+    // Relies on the 196577 fixture above. The part's body is " \r\n", which a
+    // `length > 0` test took for the attachment and wrote out as a 3-byte PDF.
+    const found = locateEmlx({ accountDirectory: accountDir, mailbox: "INBOX", rowid: 196_577 });
+    const { bytes, from } = extractAttachment(found!.path, "Real.pdf", 196_577);
+    expect(from).toBe("sidecar");
+    expect(bytes.length).toBe(164_156);
   });
 
   it("keeps the body of a partial message and reports the stripped attachment", () => {

@@ -12,6 +12,7 @@ import { basename, dirname, join } from "node:path";
 import { PreconditionError } from "./errors.js";
 import {
   bestBody,
+  hasContent,
   listAttachments,
   parsePart,
   partBytes,
@@ -470,8 +471,11 @@ export const extractAttachment = (
     );
   }
 
+  // The same test listAttachments uses. `length > 0` let the delimiter
+  // whitespace a stripped part keeps pass as the attachment, so save wrote a
+  // 3-byte file and reported success without ever looking at the sidecar.
   const inline = partBytes(match);
-  if (inline.length > 0) return { bytes: inline, from: "inline" };
+  if (hasContent(inline)) return { bytes: inline, from: "inline" };
 
   // The stripped case — which is the NORMAL one, not an edge case: on a real
   // mail store none of the sampled attachments were inline. Mail moves the
