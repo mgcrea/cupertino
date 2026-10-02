@@ -3,12 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { encodeRef } from "../src/client/ref.js";
 import { loadConfig } from "../src/config.js";
+import { createServer } from "../src/server.js";
 
 /**
  * The message-file lane, end to end, on the shape that broke it.
@@ -117,8 +120,28 @@ const runner = (): OsascriptRunner => ({
   }) as OsascriptRunner["run"],
 });
 
+/**
+ * A .sql attachment Mail stripped out of the message file: the part keeps its
+ * headers and loses its body. The shape of the live repro.
+ */
+const STRIPPED = [
+  "From: sender@example.com",
+  "Subject: Nested in a container",
+  'Content-Type: multipart/mixed; boundary="M"',
+  "",
+  "--M",
+  "Content-Type: text/plain; charset=utf-8",
+  "",
+  "Attached: our failing queries.",
+  "--M",
+  'Content-Type: application/octet-stream; name="failures.sql"',
+  'Content-Disposition: attachment; filename="failures.sql"',
+  "",
+  "--M--",
+].join("\r\n");
+
 /** `container` omitted lays the mailbox flat, which is the regression guard. */
-const layDownMessage = (container?: string) => {
+const layDownMessage = (container?: string, mime = MESSAGE) => {
   const messages = join(
     accountDir,
     ...(container ? [`${container}.mbox`] : []),
@@ -129,7 +152,7 @@ const layDownMessage = (container?: string) => {
     "Messages",
   );
   mkdirSync(messages, { recursive: true });
-  writeFileSync(join(messages, `${ROWID}.emlx`), emlx(MESSAGE));
+  writeFileSync(join(messages, `${ROWID}.emlx`), emlx(mime));
   return join(messages, `${ROWID}.emlx`);
 };
 
@@ -151,15 +174,24 @@ const seedIndex = () => {
   db.close();
 };
 
-const client = () =>
-  new AppleMailClient({
-    config: loadConfig({
-      APPLE_MAIL_ENVELOPE_INDEX: dbPath,
-      APPLE_MAIL_ATTACHMENT_DIR: downloads,
-      APPLE_MAIL_ALLOW_WRITES: "1",
-    }),
-    osascript: runner(),
+const config = () =>
+  loadConfig({
+    APPLE_MAIL_ENVELOPE_INDEX: dbPath,
+    APPLE_MAIL_ATTACHMENT_DIR: downloads,
+    APPLE_MAIL_ALLOW_WRITES: "1",
   });
+
+const client = () => new AppleMailClient({ config: config(), osascript: runner() });
+
+/** Call a tool through the real server, for what the handler adds on top. */
+const callTool = async (name: string, args: Record<string, unknown>) => {
+  const { server } = createServer({ config: config(), osascript: runner() });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: "test", version: "0.0.0" });
+  await Promise.all([server.connect(serverTransport), mcp.connect(clientTransport)]);
+  const result = await mcp.callTool({ name, arguments: args });
+  return JSON.parse((result.content as { text: string }[])[0]?.text ?? "{}");
+};
 
 const ref = encodeRef({ accountUuid: GMAIL, mailbox: "All Mail", id: ROWID });
 
@@ -205,6 +237,40 @@ describe("a mailbox nested under [Gmail]", () => {
 
     expect(source).toBe("emlx");
     expect(parsed?.path).toBe(path);
+  });
+});
+
+/**
+ * get_message's note has to agree with what save_attachment will do. It used to
+ * fire on any stripped attachment, so an agent read "cannot retrieve them"
+ * beside `retrievable: true`, believed the note, and never tried the save that
+ * would have worked.
+ */
+describe("an attachment stripped out to the sidecar tree", () => {
+  const layDownSidecar = (messagePath: string) => {
+    // Mail's layout: Data/<shard>/Attachments/<rowid>/<part>/<filename>
+    const part = join(messagePath, "..", "..", "Attachments", String(ROWID), "2");
+    mkdirSync(part, { recursive: true });
+    writeFileSync(join(part, "failures.sql"), "SELECT 1;\n");
+  };
+
+  it("does not tell the caller to open Mail when the sidecar is on disk", async () => {
+    layDownSidecar(layDownMessage(undefined, STRIPPED));
+    const payload = await callTool("apple_mail_get_message", { ref });
+
+    expect(payload.attachments).toEqual([
+      expect.objectContaining({ filename: "failures.sql", sizeBytes: 10, retrievable: true }),
+    ]);
+    expect(payload.note).toBeUndefined();
+  });
+
+  it("names the attachment Mail has not downloaded yet", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const payload = await callTool("apple_mail_get_message", { ref });
+
+    expect(payload.attachments[0]).toMatchObject({ retrievable: false, sizeBytes: null });
+    expect(payload.note).toMatch(/failures\.sql/);
+    expect(payload.note).toMatch(/Open the message in Mail/);
   });
 });
 

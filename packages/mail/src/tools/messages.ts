@@ -67,6 +67,10 @@ export const registerMessageTools = (
           };
         }
 
+        const missing = parsed.attachments
+          .filter((a) => !a.retrievable && a.filename)
+          .map((a) => a.filename);
+
         return {
           ref: message.ref,
           source,
@@ -83,12 +87,16 @@ export const registerMessageTools = (
           // Derive the note from what was actually found, not from the file
           // layout. Keying it on `partial` alone produced a note saying sizes
           // read as 0 beside an attachment reporting 1 byte and inline: true.
-          ...(parsed.attachments.some((a) => !a.inline)
+          // Keying it on `inline` was the same mistake one level down: Mail
+          // strips nearly every attachment to a sidecar that save_attachment
+          // reads fine, so the note told agents to give up on files it could
+          // fetch. Only an attachment whose sidecar is missing earns it.
+          ...(missing.length > 0
             ? {
                 note:
-                  "Some attachments are stored outside this message file, so their sizes are " +
-                  "unknown and apple_mail_save_attachment cannot retrieve them. Open the message " +
-                  "in Mail to download them first.",
+                  `Not downloaded by Mail yet: ${missing.join(", ")}. Its bytes are not on ` +
+                  "disk, so apple_mail_save_attachment cannot retrieve it. Open the message " +
+                  "in Mail to download it first.",
               }
             : {}),
         };
