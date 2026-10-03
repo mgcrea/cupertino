@@ -45,11 +45,11 @@ export const checkoutSession = z.object({
    * is free-form, a link created by hand may carry none, and a missing key is
    * worth a blank column rather than a refused fulfilment.
    *
-   * The live Cupertino link carries `major` and `rung` but NOT `price_id`, so
-   * today this parses to a metadata object the price is absent from and
-   * `priceIdFor` still does the work. Adding the key to the link is what closes
-   * that round trip, and with it the one way a Stripe API outage still delays
-   * fulfilment: a failed lookup answers 500 and the sale waits for a retry.
+   * The live Cupertino link (plink_1U78HY…) carries `major`, `rung` and a
+   * `price_id` equal to EXPECTED_PRICE_ID, read back from the Stripe API on
+   * 2026-10-03, so a sale through it never needs `priceIdFor`. The lookup stays
+   * for a link or session without the key, and there a Stripe outage still
+   * delays fulfilment: a failed lookup answers 500 and the sale waits for a retry.
    */
   metadata: z.record(z.string(), z.string()).nullish(),
 });
