@@ -260,6 +260,12 @@ document promises are never shared.
 
 `CLOUDFLARE_API_TOKEN` is a secret of the `production` environment, not of the repository, which is
 why every job that reads it names that environment — a job without the line reads an empty token.
+In Cloudflare it is the **user** API token "Edit Cloudflare Workers" (My Profile → API Tokens — there
+are two by that name; it is the one CI keeps using), and it needs **Account → D1 → Edit** on Magenta
+Creations besides the Workers template's own permissions. Without D1 the `revocations` job fails with
+`7403 … not authorized to access this service`, which is what 1.25.0's first cut hit, and so would the
+`Migrate D1` step of `deploy-api`. Adding a permission does not change the token string, so the GitHub
+secret is left alone.
 `release-app` runs in a `release` environment so that the eight secrets it reads can be moved
 there, behind a tag-only deployment policy, where a workflow edited on a pull-request branch cannot
 read the signing or the update key.
