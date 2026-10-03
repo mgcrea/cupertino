@@ -205,12 +205,14 @@ if [ "$saw_sparkle" -eq 1 ]; then
   # plus get-task-allow, which only a Debug build carries. Anything else is a
   # claim nobody made.
   #
-  # Keep this in step with Cupertino.entitlements. The sound surface added
-  # audio-input there and not here, and the mismatch could not surface until the
-  # file parsed at all — signing died first, so the release job reached this
-  # check for the first time one commit later. Both halves of an entitlement
-  # change land together or the release fails at the step after the one you
-  # fixed. The names arrive sorted, so a new key goes in its alphabetical place.
+  # Keep this in step with Cupertino.entitlements, and with the source check in
+  # the Sources section below, which holds the same allowlist. The sound surface
+  # added audio-input there and not here, and the mismatch could not surface
+  # until the file parsed at all — signing died first, so the release job
+  # reached this check for the first time one commit later. Both halves of an
+  # entitlement change land together or the release fails at the step after the
+  # one you fixed. The names arrive sorted, so a new key goes in its
+  # alphabetical place.
   #
   # Skipped, loudly, on a bundle that carries no real signature. `codesign -dv`
   # cannot be the discriminator on its own: CODE_SIGNING_ALLOWED=NO does not
@@ -286,6 +288,36 @@ if [ -n "$inet" ]; then
 else
   printf '  ok    %-46s AF_UNIX only\n' "sockets"
 fi
+
+# The entitlements as SOURCE, which runs on every build, signed or not. The
+# bundle check above skips an ad-hoc build — which is what CI's PR build is — so
+# the entitlement set was first checked on a Developer ID artifact at release
+# time, one commit after the entitlement that broke it had landed. Same
+# allowlist, minus get-task-allow (which Xcode adds to a Debug signature and the
+# file never carries), read from the file the build signs with rather than from
+# the signature, so drift is red at the commit that introduces it. Repo-relative
+# like SOURCES, because it is an assertion about this checkout, not about $APP.
+ENTITLEMENTS="apps/apple/Cupertino.entitlements"
+if [ ! -f "$ENTITLEMENTS" ]; then
+  declared="__missing__"
+else
+  declared=$(plutil -convert json -o - "$ENTITLEMENTS" 2>/dev/null \
+    | python3 -c 'import json,sys; print(",".join(sorted(k for k, v in json.load(sys.stdin).items() if v)))' 2>/dev/null \
+    || true)
+fi
+case "$declared" in
+  "com.apple.security.automation.apple-events,com.apple.security.device.audio-input")
+    printf '  ok    %-46s %s\n' "entitlements (source)" "only what is measured" ;;
+  "__missing__")
+    printf '  FAIL  %-46s no such file: %s\n' "entitlements (source)" "$ENTITLEMENTS"
+    status=1 ;;
+  "")
+    printf '  FAIL  %-46s %s could not be parsed\n' "entitlements (source)" "$ENTITLEMENTS"
+    status=1 ;;
+  *)
+    printf '  FAIL  %-46s unexpected in %s: %s\n' "entitlements (source)" "$ENTITLEMENTS" "$declared"
+    status=1 ;;
+esac
 
 # A gate that passes when it inspected nothing is not a gate. If no binary was
 # found the build did not happen, and that is a failure here rather than a quiet

@@ -8,7 +8,10 @@ CONFIG  := Debug
 
 # The embedded runtime. nodejs.org, not Homebrew: the official darwin builds are
 # a single self-contained binary, Homebrew's needs libnode.dylib beside it.
-NODE_VERSION ?= 24.18.0
+# 24.20.0 is the same pin Bastion carries, and the newest 24.x LTS. Every
+# tarball is checked against nodejs.org's SHASUMS256.txt before it is unpacked,
+# the way Sparkle is checked below; see `node`.
+NODE_VERSION ?= 24.20.0
 # `arm64 x64` for a release; `arm64` alone builds far faster while iterating.
 NODE_ARCHS   ?= arm64 x64
 STAGED       := apps/apple/.build/staged
@@ -453,6 +456,15 @@ audit-log-check: ## Assert a write the audit log cannot make leaves the chain in
 		apps/apple/Cupertino/SafariCaptures.swift scripts/audit-log-check.swift
 	@apps/apple/.build/audit-log-check
 
+bridge-protocol-check: ## Fail if the two hand-copied BridgeProtocol.swift files have drifted
+	@# The file's own header says it is copied rather than shared and that a
+	@# change must land in both places. Nothing asserted that, and the two had
+	@# drifted: the app's copy gained `nonisolated` markers the bridge's lacked.
+	@cmp -s apps/apple/Cupertino/BridgeProtocol.swift apps/apple/CupertinoBridge/BridgeProtocol.swift \
+		&& echo "  ok    BridgeProtocol.swift is identical in the app and the bridge" \
+		|| { echo "  FAIL  apps/apple/Cupertino/BridgeProtocol.swift and apps/apple/CupertinoBridge/BridgeProtocol.swift differ" >&2; \
+		     diff apps/apple/Cupertino/BridgeProtocol.swift apps/apple/CupertinoBridge/BridgeProtocol.swift >&2 || true; exit 1; }
+
 audit-check: ## Prove an export signature survives a round trip, with no app and no Keychain
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/audit-check \
@@ -548,12 +560,28 @@ sparkle: ## Download and stage the pinned Sparkle.framework
 	@rm -rf $(SPARKLE_FRAMEWORK)/Versions/B/XPCServices
 	@echo "  Sparkle $(SPARKLE_VERSION) staged: $(SPARKLE_FRAMEWORK)"
 
-node: ## Download and lipo the embedded node runtime
+# The runtime ends up holding Full Disk Access, so it is not built from whatever
+# a cache or a mirror happened to return. The sums file is fetched over https
+# from the same host as the tarballs, so what this defends against is a
+# truncated or substituted download and a stale cache, not a compromised
+# nodejs.org. A tarball that fails is deleted together with the sums file, so
+# the next run fetches both again rather than failing forever on the same bytes
+# — an interrupted curl can leave a TRUNCATED sums file that `[ -f ]` accepts,
+# and `shasum -c` then reads no line for the tarball and correctly fails closed.
+NODE_SUMS := apps/apple/.build/node-cache/SHASUMS256-v$(NODE_VERSION).txt
+
+node: ## Download, verify and lipo the embedded node runtime
 	@mkdir -p $(STAGED) apps/apple/.build/node-cache
+	@[ -f "$(NODE_SUMS)" ] || curl -fsSL -o "$(NODE_SUMS)" \
+		"https://nodejs.org/dist/v$(NODE_VERSION)/SHASUMS256.txt"
 	@for arch in $(NODE_ARCHS); do \
-		tar="apps/apple/.build/node-cache/node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
-		[ -f "$$tar" ] || curl -fsSL -o "$$tar" \
-			"https://nodejs.org/dist/v$(NODE_VERSION)/node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
+		name="node-v$(NODE_VERSION)-darwin-$$arch.tar.gz"; \
+		tar="apps/apple/.build/node-cache/$$name"; \
+		[ -f "$$tar" ] || curl -fsSL -o "$$tar" "https://nodejs.org/dist/v$(NODE_VERSION)/$$name"; \
+		grep " $$name$$" "$(NODE_SUMS)" | sed "s|  .*|  $$tar|" | shasum -a 256 -c - >/dev/null \
+			|| { echo "  !! $$name does not match SHASUMS256.txt for v$(NODE_VERSION); deleted both, run 'make node' again" >&2; \
+			     rm -f "$$tar" "$(NODE_SUMS)"; exit 1; }; \
+		echo "  $$name verified"; \
 		tar -xzf "$$tar" -C apps/apple/.build/node-cache \
 			"node-v$(NODE_VERSION)-darwin-$$arch/bin/node"; \
 	done
@@ -1131,7 +1159,7 @@ screenshots-appstore: ## Compose the framed, captioned visuals
 	appshot compose appstore \
 		--config "$(SHOT_CONFIG)" --source "$(SHOT_SOURCE)" --out "$(SHOT_APPSTORE)"
 
-screenshots-website: ## Emit bare app captures into apps/website/public/shots
+screenshots-website: ## Emit bare app captures into apps/website/src/assets/shots
 	appshot compose website \
 		--config "$(SHOT_CONFIG)" --source "$(SHOT_SOURCE)" --out "$(SHOT_WEBSITE)"
 
@@ -1149,7 +1177,14 @@ screenshots-clean: ## Remove generated captures and composites (keeps the golden
 clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
-.PHONY: help build app run install build-release install-release install-from uninstall stop dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit revocations servers node bundle sign notarize surfaces surfaces-check changelog changelog-check version version-check format-swift format-swift-check swift-format-version blame-setup icon clean
+.PHONY: help build app run install build-release install-release install-from uninstall stop \
+	dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check \
+	simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit \
+	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
+	changelog-check version version-check format-swift format-swift-check swift-format-version \
+	blame-setup icon clean smoke-swift audit-log-check bridge-protocol-check wiring-check-real \
+	server-deps verify-servers verify-extension sparkle sparkle-keys sparkle-key-shred appcast \
+	readme-check demo-gif extension-icons
 
 # ─── deploy ──────────────────────────────────────────────────────────────────
 # The same two words in every repo: `make deploy`. WHAT it deploys differs — a

@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # The website imports apps/website/src/assets/shots/*.png through
           # astro:assets, and those are LFS-tracked. A checkout without this
@@ -45,7 +45,7 @@ jobs:
       # next major every October, which would put CI on a runtime no shipped build
       # has run.
       - name: Setup node 🔧
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           check-latest: true
@@ -96,6 +96,11 @@ jobs:
       # package.json is the source now, and a forgotten copy is red here.
       - name: Version manifest 🔍
         run: make version-check
+      # BridgeProtocol.swift is copied into the app and the bridge rather than
+      # shared, and its header says a change must land in both. Nothing asserted
+      # that, and the copies had drifted. `cmp` needs no Xcode, so it runs here.
+      - name: Bridge protocol copies 🔍
+        run: make bridge-protocol-check
       # The revocation list is checked by its own job, `revocations`, below. It
       # used to be a step here, where it never ran: the token is an environment
       # secret and this job has no environment, so it always read empty and the
@@ -125,7 +130,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # The website imports apps/website/src/assets/shots/*.png through
           # astro:assets, and those are LFS-tracked. A checkout without this
@@ -136,7 +141,7 @@ jobs:
       - name: Setup pnpm 🔧
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           check-latest: true
@@ -248,14 +253,15 @@ jobs:
       # refuses to start on any other platform and exits 1 before the transport
       # is connected, because these servers drive macOS apps. Run on ubuntu this
       # step can never pass — and it failed silently for a while, because
-      # `2>/dev/null` hides the very message that says why.
+      # `2>/dev/null` hid the very message that says why. stderr goes into the
+      # log now, so a server that dies before answering says what killed it.
       - name: MCP handshake 🤝
         run: |
           # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
           for server in mail notes reminders calendar contacts messages safari maps; do
           # </generated:surfaces>
             printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
-              | node "packages/$server/dist/cli.js" 2>/dev/null | tee "/tmp/handshake-$server.json"
+              | node "packages/$server/dist/cli.js" 2>&1 | tee "/tmp/handshake-$server.json"
             grep -q '"serverInfo"' "/tmp/handshake-$server.json"
           done
 
@@ -282,11 +288,11 @@ jobs:
       id-token: write
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm 🔧
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: "pnpm"
@@ -377,7 +383,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # `core` is published on the same lockstep version but is not a server and
       # has no server.json, so a `core-v*` tag reaches this job and correctly
       # finds nothing to do. Skipping is right; failing would make a green npm
@@ -474,11 +480,11 @@ jobs:
       contents: write
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Release 🚀
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           # NOT the latest release, and this is load-bearing rather than tidy.
@@ -531,13 +537,13 @@ jobs:
           else echo "::warning::No CLOUDFLARE_API_TOKEN secret; nothing was deployed."; fi
       - name: Checkout 🛎️
         if: steps.token.outputs.present == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm 🔧
         if: steps.token.outputs.present == 'true'
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
         if: steps.token.outputs.present == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           check-latest: true
@@ -597,7 +603,7 @@ jobs:
           else echo "::warning::No CLOUDFLARE_API_TOKEN secret; nothing was deployed."; fi
       - name: Checkout 🛎️
         if: steps.token.outputs.present == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         # apps/website/src/assets/shots/*.png are LFS-tracked. Without this astro
         # gets 131-byte pointer files and ships broken images.
         with:
@@ -607,7 +613,7 @@ jobs:
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
         if: steps.token.outputs.present == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           check-latest: true
@@ -644,11 +650,11 @@ jobs:
     environment: production
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm 🔧
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: "pnpm"
@@ -671,6 +677,12 @@ jobs:
     # this is the build that bakes the list in.
     needs: [test, test-macos, revocations]
     if: startsWith(github.ref, 'refs/tags/app-v')
+    # docs/succession.md §3b: the update-signing key is "never readable by a
+    # workflow that a pull request can trigger". The tag guard above is half of
+    # that; a named environment is the other half — SPARKLE_ED_PRIVATE_KEY and
+    # the signing secrets can be scoped to it, with a tag-only deployment policy,
+    # so a workflow edited on a PR branch cannot read them.
+    environment: release
     permissions:
       contents: write
       # attest-build-provenance signs the artifact's provenance, which is half of
@@ -679,13 +691,13 @@ jobs:
       attestations: write
     steps:
       - name: Checkout 🛎️
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Setup pnpm 🔧
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Setup node 🔧
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: "pnpm"
@@ -809,7 +821,7 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: make appcast
       - name: Attest provenance 🔏
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           # The feed too: it names the bytes Sparkle will install, so it is part
           # of what a user ends up trusting.
@@ -820,7 +832,7 @@ jobs:
       # /releases/latest/download/Cupertino.zip a permanent URL, which the website
       # redirect and the Homebrew cask both point at. The version lives in the tag.
       - name: Release 🚀
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           name: Cupertino ${{ steps.version.outputs.version }}
           generate_release_notes: true

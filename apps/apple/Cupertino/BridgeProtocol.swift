@@ -5,7 +5,8 @@ import Foundation
 /// Duplicated verbatim in `app/Cupertino/BridgeProtocol.swift`. The two targets
 /// are separate and Xcode's filesystem-synchronized groups make sharing one
 /// file across both awkward, so this is copied rather than shared — it is small
-/// and changes to it must be made in both places.
+/// and changes to it must be made in both places. `make bridge-protocol-check`
+/// asserts the two stay identical.
 nonisolated enum BridgeProtocol {
   /// Bumped only on a wire-incompatible change. The app refuses a version it
   /// does not know rather than guessing.

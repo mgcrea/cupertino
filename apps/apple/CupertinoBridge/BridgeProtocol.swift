@@ -5,7 +5,8 @@ import Foundation
 /// Duplicated verbatim in `app/Cupertino/BridgeProtocol.swift`. The two targets
 /// are separate and Xcode's filesystem-synchronized groups make sharing one
 /// file across both awkward, so this is copied rather than shared — it is small
-/// and changes to it must be made in both places.
+/// and changes to it must be made in both places. `make bridge-protocol-check`
+/// asserts the two stay identical.
 nonisolated enum BridgeProtocol {
   /// Bumped only on a wire-incompatible change. The app refuses a version it
   /// does not know rather than guessing.
@@ -136,7 +137,7 @@ nonisolated enum BridgeProtocol {
 }
 
 /// Fill a `sockaddr_un` for `path`, or nil if it will not fit.
-func unixAddress(_ path: String) -> sockaddr_un? {
+nonisolated func unixAddress(_ path: String) -> sockaddr_un? {
   guard BridgeProtocol.isAddressable(path) else { return nil }
   var addr = sockaddr_un()
   addr.sun_family = sa_family_t(AF_UNIX)
@@ -151,7 +152,7 @@ func unixAddress(_ path: String) -> sockaddr_un? {
   return addr
 }
 
-extension sockaddr_un {
+nonisolated extension sockaddr_un {
   /// Call `body` with this address cast to `sockaddr`, as the socket API wants.
   func withSockaddr<R>(_ body: (UnsafePointer<sockaddr>, socklen_t) -> R) -> R {
     var copy = self
