@@ -44,7 +44,11 @@ import Foundation
 /// corruption by something that was not trying at all. Claiming more than that
 /// would be the kind of unfalsifiable security sentence this project has gone
 /// out of its way not to ship.
-enum AuditChain {
+/// `nonisolated`: sealing and verifying are pure, and the writer queue seals
+/// on its own thread. `make unit` compiles this file standalone, where there
+/// is no default isolation — so this is also what makes the gate and the app
+/// agree about what they are testing.
+nonisolated enum AuditChain {
   /// The format, in the file, on every record.
   ///
   /// A version field rather than the additive-optional convention `profiles.json`
@@ -94,7 +98,13 @@ enum AuditChain {
   /// Fixed locale and fixed zone: a formatter that follows the user's calendar
   /// would write records that verify on the Mac that made them and nowhere
   /// else.
-  static let clock: ISO8601DateFormatter = {
+  ///
+  /// `nonisolated(unsafe)` rather than a formatter per record: it is configured
+  /// once here and afterwards only ever read, and Foundation documents its
+  /// formatters as safe to use concurrently once they are no longer being
+  /// mutated. The alternative — building one per sealed record, on the audit
+  /// write path — costs more than the guarantee is worth.
+  nonisolated(unsafe) static let clock: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     formatter.timeZone = TimeZone(secondsFromGMT: 0)

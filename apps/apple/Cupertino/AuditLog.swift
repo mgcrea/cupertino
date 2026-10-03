@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// The durable half of the activity log.
 ///
@@ -98,6 +99,47 @@ final class AuditLog {
   /// Touched only on `writer`. See `SegmentSink`.
   private let sink = SegmentSink()
 
+  /// Wait for every queued write to land. For `make audit-log-check`, which
+  /// has to look at the file after a record and cannot otherwise know when.
+  func flush() { writer.sync {} }
+
+  /// Close the open segment, so the next record opens it afresh. Also for
+  /// `make audit-log-check`: it simulates a failed write by locking the file,
+  /// and a lock is checked at open — a descriptor the sink already holds would
+  /// write straight through it, where a full disk would not.
+  func releaseSegment() { writer.sync { [sink] in sink.close() } }
+
+  // MARK: - What is on disk
+
+  /// The chain as the writer last left it in the file.
+  ///
+  /// The main actor seals every record against `head` above and hands it to
+  /// `writer`; this is the writer's own account of what actually landed.
+  /// `commit` appends only a record whose `prev` is the head HERE, so a write
+  /// that failed can never be followed by a record linking to a hash the file
+  /// never received. Reporting the failure alone did not prevent that: `seq`
+  /// and `head` marched on, the file did not, and the next record that did land
+  /// pointed at nothing. `verifyAll` then reported it, correctly and uselessly,
+  /// as tampering: a full disk read the same as a forger.
+  ///
+  /// Touched only on `writer`, a serial queue; `open` and `clear` seed it
+  /// through the same queue, so the order holds. The lock is what makes the
+  /// `nonisolated` static honest rather than a bet.
+  nonisolated private struct Disk {
+    var seq = 0
+    var head = AuditChain.genesis
+    /// Set for the length of one failure streak, so the streak is logged once
+    /// and marked in the file once — not once per record.
+    var failing = false
+    /// Records sealed and never written, since the streak began.
+    var lost = 0
+    var lastNotice: Date?
+  }
+  nonisolated private static let disk = OSAllocatedUnfairLock(initialState: Disk())
+
+  /// How often a streak of failures is worth a log line.
+  nonisolated private static let noticeInterval: TimeInterval = 30
+
   /// Call ids that have a `seq` on file, so a result can name the call it
   /// answers. Bounded: a reply that never comes would otherwise keep its entry
   /// for the life of the process.
@@ -154,12 +196,10 @@ final class AuditLog {
         result: result, failed: failed, ref: ref, prev: head))
     head = sealed.hash
 
-    let line = AuditChain.line(sealed) + "\n"
-    let bytes = Data(line.utf8)
-    segmentSize += bytes.count
+    segmentSize += (AuditChain.line(sealed) + "\n").utf8.count
     let url = Self.url(for: segment)
     let sink = self.sink
-    writer.async { sink.append(bytes, to: url) }
+    writer.async { Self.commit(sealed, to: url, through: sink) }
 
     // Rotate AFTER the write is queued, so the record that crossed the line is
     // the last one in the segment it was sealed against rather than the first
@@ -221,40 +261,38 @@ final class AuditLog {
   /// to 0644. An append-only log is appended to.
   ///
   /// A failed write used to be `try?`, so a full disk advanced `seq` and `head`
-  /// in memory while nothing reached the file. The gap then surfaced later as
-  /// "a record before N was removed" — the log accusing the disk of tampering
-  /// when it had simply been unable to write. It is reported once per segment,
-  /// because a disk that is full stays full and one row per call would be its
-  /// own denial of service.
+  /// in memory while nothing reached the file. Now it returns the reason, and
+  /// `commit` accounts for it — see `Disk`.
   nonisolated final class SegmentSink: @unchecked Sendable {
     private var handle: FileHandle?
     private var url: URL?
-    private var reported = false
 
-    func append(_ bytes: Data, to target: URL) {
+    /// Nil on success, else the reason.
+    func append(_ bytes: Data, to target: URL) -> String? {
       if url != target { close() }
       if handle == nil {
         let path = target.path
-        if !FileManager.default.fileExists(atPath: path) {
-          FileManager.default.createFile(
+        if !FileManager.default.fileExists(atPath: path),
+          !FileManager.default.createFile(
             atPath: path, contents: nil, attributes: [.posixPermissions: 0o600])
+        {
+          return "could not create \(target.lastPathComponent)"
         }
         guard let opened = try? FileHandle(forWritingTo: target) else {
-          report(target, "could not open it for writing")
-          return
+          return "could not open \(target.lastPathComponent) for writing"
         }
         _ = try? opened.seekToEnd()
         handle = opened
         url = target
-        reported = false
       }
       do {
         try handle?.write(contentsOf: bytes)
+        return nil
       } catch {
-        report(target, error.localizedDescription)
         // Drop the handle so the next record retries the open rather than
         // writing into one the file system has already given up on.
         close()
+        return "\(target.lastPathComponent): \(error.localizedDescription)"
       }
     }
 
@@ -263,14 +301,98 @@ final class AuditLog {
       handle = nil
       url = nil
     }
+  }
 
-    private func report(_ target: URL, _ reason: String) {
-      guard !reported else { return }
-      reported = true
-      hostLog(
-        "cupertino", .error,
-        "audit: could not write \(target.lastPathComponent): \(reason)")
+  /// Append one sealed record, or account for the fact that it did not land.
+  ///
+  /// On `writer`. The link is checked against `disk`, never against what the
+  /// main actor believes: a record sealed against a head that never reached
+  /// the file is dropped here rather than written, because writing it is what
+  /// breaks the chain. The rewind that follows puts the main actor back in
+  /// step, and the count of what was dropped goes into the file once the file
+  /// can be written to again.
+  nonisolated private static func commit(
+    _ record: AuditChain.Record, to url: URL, through sink: SegmentSink
+  ) {
+    let linked = disk.withLock { $0.head == record.prev }
+    guard linked else {
+      failed(record, reason: nil)
+      return
     }
+    let bytes = Data((AuditChain.line(record) + "\n").utf8)
+    if let reason = sink.append(bytes, to: url) {
+      failed(record, reason: reason)
+      return
+    }
+    let resumed = disk.withLock { state -> Int? in
+      state.seq = record.seq
+      state.head = record.hash
+      guard state.failing else { return nil }
+      state.failing = false
+      let lost = state.lost
+      state.lost = 0
+      return lost
+    }
+    if let lost = resumed {
+      hostLog("audit", .info, "audit log: writes resumed; \(lost) record(s) were not written")
+      Task(priority: .userInitiated) { @MainActor in shared.resumed(lost: lost) }
+    }
+  }
+
+  /// A record that did not land: because the write failed (`reason`), or
+  /// because it was sealed against a head that never reached the file (nil).
+  ///
+  /// Logged at most once per `noticeInterval`, because a disk that is full
+  /// stays full and one row per call would be its own denial of service. The
+  /// rewind is asked for every time — it is idempotent, and a rewind that
+  /// arrives late is harmless where a rewind that never arrives is not.
+  nonisolated private static func failed(_ record: AuditChain.Record, reason: String?) {
+    let (first, notice) = disk.withLock { state -> (Bool, Bool) in
+      let first = !state.failing
+      state.failing = true
+      state.lost += 1
+      let now = Date()
+      let notice = state.lastNotice.map { now.timeIntervalSince($0) > noticeInterval } ?? true
+      if notice { state.lastNotice = now }
+      return (first, notice)
+    }
+    if notice, let reason {
+      hostLog("audit", .error, "audit log: could not append — \(reason)")
+    }
+    Task(priority: .userInitiated) { @MainActor in shared.rewind(marking: first, reason: reason) }
+  }
+
+  /// Snap the sealed chain back to what is actually on disk.
+  ///
+  /// Idempotent: a second rewind for the same streak finds nothing to do. The
+  /// first one also files a record saying the gap begins here, so a log that
+  /// ends inside a streak — the app quit before the disk came back — still says
+  /// so in the file rather than only on stderr.
+  private func rewind(marking first: Bool, reason: String?) {
+    let onDisk = Self.disk.withLock { ($0.seq, $0.head) }
+    guard seq != onDisk.0 || head != onDisk.1 else { return }
+    seq = onDisk.0
+    head = onDisk.1
+    segmentSize = Self.size(of: Self.url(for: segment))
+    // A call whose record never landed cannot be answered on file either.
+    pending = pending.filter { $0.value <= seq }
+    pendingOrder.removeAll { pending[$0] == nil }
+    if first, let reason {
+      append(
+        kind: .error, surface: "audit",
+        text:
+          "audit log: the file could not be appended to (\(reason)); records until the next "
+          + "audit notice were not written")
+    }
+  }
+
+  /// The disk is writable again: say how much the file is missing.
+  private func resumed(lost: Int) {
+    append(
+      kind: .info, surface: "audit",
+      text:
+        "audit log: writes resumed; \(lost) record(s) were not written while the file could "
+        + "not be appended to. The chain continues from the last record on disk.")
   }
 
   /// Pick up where the last run left off.
@@ -288,6 +410,12 @@ final class AuditLog {
     // Once per launch, on the way in — `prune` never touches the segment being
     // written, which is the only file the writer queue appends to.
     defer { prune() }
+    defer {
+      // Seed the writer's view through its own queue, so it is in place before
+      // the first record reaches `commit`.
+      let (seq, head) = (seq, head)
+      writer.async { Self.disk.withLock { $0 = Disk(seq: seq, head: head) } }
+    }
     // The parent first, through the helper that also tightens an existing one.
     // withIntermediateDirectories sets the attributes on the leaf only, so
     // creating audit/ before its parent existed would leave the parent at the
@@ -466,14 +594,18 @@ final class AuditLog {
       segments: described, head: verification.head, intact: summary.report.isIntact,
       startsAtSegment: verification.startsAtSegment)
     let bytes = Data(manifest.utf8)
-    try bytes.write(to: folder.appendingPathComponent("manifest.json"))
+    // Atomic, both of them: a manifest that is half there describes nothing,
+    // and a signature file that is half there verifies nothing. These are the
+    // files handed to somebody else.
+    try bytes.write(to: folder.appendingPathComponent("manifest.json"), options: .atomic)
 
     if sign {
       let signed = try AuditSigning.signed(bytes)
       let sidecar = """
         {"algorithm":"ed25519","publicKey":\(AuditChain.quote(signed.publicKey)),        "signature":\(AuditChain.quote(signed.signature)),"signs":"manifest.json"}
         """
-      try Data(sidecar.utf8).write(to: folder.appendingPathComponent("signature.json"))
+      try Data(sidecar.utf8).write(
+        to: folder.appendingPathComponent("signature.json"), options: .atomic)
     }
     return summary
   }
@@ -482,7 +614,10 @@ final class AuditLog {
     // Before the files go, and synchronously: a record already queued would
     // otherwise land after the deletion and recreate audit-0001.jsonl holding
     // one orphaned record from the log that was just cleared.
-    writer.sync { [sink] in sink.close() }
+    writer.sync { [sink] in
+      sink.close()
+      Self.disk.withLock { $0 = Disk() }
+    }
     for url in Self.segments() { try? FileManager.default.removeItem(at: url) }
     seq = 0
     head = AuditChain.genesis

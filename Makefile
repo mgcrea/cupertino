@@ -435,6 +435,24 @@ chat-check-real: servers chat-check ## Prove every SHIPPED tool schema converts,
 	@# output rather than in a bug report.
 	@apps/apple/.build/chat-check $(wildcard packages/*/dist/cli.js)
 
+audit-log-check: ## Assert a write the audit log cannot make leaves the chain intact, not broken
+	@# `BridgeProtocol` is STUBBED by the check rather than compiled in, and that
+	@# is what keeps this off the real log: every path the audit log uses is
+	@# derived from `homeDirectoryForCurrentUser`, which ignores $$HOME, so
+	@# setting HOME here looked isolated and wrote to — and cleared — the log of
+	@# whoever ran it.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/audit-log-check \
+		apps/apple/Cupertino/AuditLog.swift \
+		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/AuditSigning.swift \
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/SafariCaptures.swift scripts/audit-log-check.swift
+	@apps/apple/.build/audit-log-check
+
 audit-check: ## Prove an export signature survives a round trip, with no app and no Keychain
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/audit-check \

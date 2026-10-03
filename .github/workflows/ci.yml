@@ -231,6 +231,9 @@ jobs:
         run: make dispatch-check
       - name: Audit export signing 🔍
         run: make audit-check
+      - name: Audit log survives a failed write 🔍
+        if: runner.os == 'macOS'
+        run: make audit-log-check
       # docs/licensing.md sells the app partly on it being unable to reach the
       # network, so that claim is a gate rather than a sentence in a README.
       # Unsigned is fine: the audit reads symbols, and signing does not add any.
