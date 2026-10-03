@@ -77,7 +77,7 @@ describe("parseDate", () => {
       parseDate("to", "whenever", NOW);
       expect.unreachable("should have thrown");
     } catch (err) {
-      expect((err as Error).message).toMatch(/Could not read to/);
+      expect((err as Error).message).toMatch(/^to: .* could not be read as a date/);
       expect((err as Error).message).toMatch(/next monday/);
     }
   });

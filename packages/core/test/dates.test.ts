@@ -88,7 +88,9 @@ describe("parseDate — ISO", () => {
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(InvalidDateError);
-      expect((err as InvalidDateError).message).toMatch(/Could not read dueBefore/);
+      expect((err as InvalidDateError).message).toMatch(
+        /^dueBefore: .* could not be read as a date/,
+      );
       expect((err as InvalidDateError).message).toMatch(/ISO-8601/);
       expect((err as { details?: unknown }).details).toMatchObject({
         field: "dueBefore",

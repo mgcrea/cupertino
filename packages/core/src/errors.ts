@@ -141,8 +141,11 @@ export class InvalidDateError extends AppleAutomationError {
   override readonly name: string = "InvalidDateError";
 
   constructor(field: string, raw: string, reason: string) {
+    // `<field>: "<raw>" …` rather than `Could not read <field> from <raw>`, which
+    // read as "Could not read from from …" on Safari and Calendar, whose range
+    // bounds are called `from` and `to`.
     super(
-      `Could not read ${field} from ${JSON.stringify(raw)}: ${reason}. ` +
+      `${field}: ${JSON.stringify(raw)} could not be read as a date — ${reason}. ` +
         `Accepted: an ISO-8601 date "2026-08-20" (a whole day, local) or date-time ` +
         `"2026-08-20T09:00" (local unless it carries an offset), a signed offset like ` +
         `"+2d", "-3h", "+45m", "+1w", "today", "yesterday", "tomorrow 09:00", ` +

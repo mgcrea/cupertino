@@ -215,7 +215,7 @@ describe("date bounds", () => {
       const env = lane === "index" ? {} : { APPLE_REMINDERS_ACCOUNTS: "iCloud" };
       await expect(
         client(env).listReminders({ dueBefore: "sometime soon", limit: 10 }),
-      ).rejects.toThrow(/Could not read dueBefore/);
+      ).rejects.toThrow(/dueBefore: .* could not be read as a date/);
     },
   );
 
@@ -224,7 +224,7 @@ describe("date bounds", () => {
     // reaches the date comparison. The refusal has to come from before it.
     await expect(
       client().listReminders({ dueBefore: "sometime soon", hasDueDate: false, limit: 10 }),
-    ).rejects.toThrow(/Could not read dueBefore/);
+    ).rejects.toThrow(/dueBefore: .* could not be read as a date/);
   });
 
   /**

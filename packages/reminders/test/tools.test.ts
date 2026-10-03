@@ -564,7 +564,7 @@ describe("writes", () => {
       due: "sometime soon",
     });
     expect(res.isError).toBe(true);
-    expect(res.text).toMatch(/Could not read due/);
+    expect(res.text).toMatch(/due(?:Date)?: .* could not be read as a date/);
   });
 
   it("names the available lists when the target does not exist", async () => {
