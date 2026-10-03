@@ -30,3 +30,16 @@ export const signingKeyProblem = async (privateKey: string | undefined): Promise
     return "LICENSE_SIGNING_KEY is not a base64 PKCS#8 Ed25519 private key";
   }
 };
+
+/**
+ * The major every key is minted for. A var rather than a secret, and checked for
+ * the same reason: `fulfil` used to read it with `Number(...) || 1`, which turned
+ * "1.5" or "2 beta" into a major the app, decoding it as an Int, refuses as "not
+ * a licence". Unset is fine; that is the 1 every key so far was minted with.
+ */
+export const currentMajorProblem = (major: string | undefined): string | null => {
+  if (major && !/^[1-9][0-9]*$/.test(major.trim())) {
+    return "CURRENT_MAJOR is not a whole number of 1 or more";
+  }
+  return null;
+};

@@ -10,7 +10,7 @@
 // Everything here is allowed to touch the network. The APP is the thing that
 // cannot, and nothing in this directory ships inside it.
 
-import { signingKeyProblem, webhookSecretProblem } from "./config";
+import { currentMajorProblem, signingKeyProblem, webhookSecretProblem } from "./config";
 import { sendLicense } from "./email";
 import type { LicenseRow } from "./env";
 import { mint } from "./license";
@@ -256,7 +256,15 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
       return new Response(`not configured: ${keyProblem}`, { status: 500 });
     }
 
-    const major = Number(env.CURRENT_MAJOR) || 1;
+    // Typed as the literal wrangler.jsonc holds, which is exactly the assumption
+    // being checked, so widened to what the binding can actually carry.
+    const configuredMajor: string | undefined = env.CURRENT_MAJOR;
+    const majorProblem = currentMajorProblem(configuredMajor);
+    if (majorProblem) {
+      console.error(`fulfil: not configured, ${majorProblem}`);
+      return new Response(`not configured: ${majorProblem}`, { status: 500 });
+    }
+    const major = configuredMajor ? Number(configuredMajor.trim()) : 1;
     const minted = await mint({ email, major, privateKey: env.LICENSE_SIGNING_KEY });
     await env.DB.prepare(
       `INSERT INTO licenses

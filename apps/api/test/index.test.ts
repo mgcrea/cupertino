@@ -551,6 +551,25 @@ describe("configuration", () => {
     expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
   });
 
+  // `Number(...) || 1` minted these as a fractional or unexpected major, and the
+  // app decodes `major` as an Int, so the buyer's key read "not a licence".
+  for (const major of ["1.5", "2 beta", "0", "-1"]) {
+    it(`answers 500 naming a CURRENT_MAJOR of ${JSON.stringify(major)}, and mints nothing`, async () => {
+      const t = setup({ CURRENT_MAJOR: major });
+      const response = await t.event("checkout.session.completed", session());
+      expect(response.status).toBe(500);
+      expect(logged()).toMatch(/CURRENT_MAJOR is not a whole number of 1 or more/);
+      expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+      expect(t.sent).toEqual([]);
+    });
+  }
+
+  it("mints major 1 when CURRENT_MAJOR is unset, as every key so far was", async () => {
+    const t = setup({ CURRENT_MAJOR: undefined });
+    expect((await t.event("checkout.session.completed", session())).status).toBe(200);
+    expect(t.d1.sql("SELECT major FROM licenses")).toEqual([{ major: 1 }]);
+  });
+
   it("answers 500 naming a malformed signing key, without its value", async () => {
     const malformed = "not*base64*at*all";
     const t = setup({ LICENSE_SIGNING_KEY: malformed });
