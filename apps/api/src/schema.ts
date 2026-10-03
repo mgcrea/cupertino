@@ -20,8 +20,8 @@ export const eventEnvelope = z.object({
   type: z.string(),
   // Recorded on the licence, not enforced here. One signing key and one database
   // serve both Stripe modes, so a test purchase mints a key that really works —
-  // which is what makes a rehearsal meaningful, and what makes it worth being
-  // able to find those rows afterwards.
+  // which is what makes a rehearsal meaningful, and why `make revocations` bakes
+  // every `livemode = 0` row into the next build's revocation list.
   livemode: z.boolean().default(true),
   data: z.object({ object: z.unknown() }),
 });

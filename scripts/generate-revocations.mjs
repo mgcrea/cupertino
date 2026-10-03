@@ -8,6 +8,10 @@
 // and then stops. EULA §4(a) says that to the buyer rather than leaving it to be
 // discovered.
 //
+// The list also carries every licence Stripe test mode minted, revoked or not:
+// one signing key and one database serve both modes, so a test purchase mints a
+// key the shipped app accepts. See REVOKED_QUERY in scripts/lib/revocations.mjs.
+//
 // Generated-and-committed rather than fetched by CI. Reading D1 from the release
 // job would put a network dependency in the path of shipping, so an outage at
 // Cloudflare would become an outage in releases — and it would buy nothing,
@@ -24,6 +28,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { REVOKED_QUERY } from "./lib/revocations.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = join(ROOT, "apps/apple/Cupertino/Revocations.swift");
@@ -56,7 +62,9 @@ if (check && !local && !process.env.CLOUDFLARE_API_TOKEN) {
   process.exit(0);
 }
 
-const query = "SELECT id FROM licenses WHERE revoked_at IS NOT NULL ORDER BY id";
+// Revoked licences AND every test-mode one, since test mode signs with the
+// production key. The why, and the test, live beside it in scripts/lib.
+const query = REVOKED_QUERY;
 let rows;
 try {
   const raw = execFileSync(
