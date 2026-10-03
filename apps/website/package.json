@@ -12,7 +12,8 @@
     "astro": "astro",
     "check": "astro check",
     "typecheck": "astro check",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "cards": "node scripts/generate-release-cards.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",

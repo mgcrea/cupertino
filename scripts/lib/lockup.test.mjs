@@ -16,7 +16,17 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { composeCard, composeLockup, LOCKUP, SOCIAL_CARD, wordmarkWidth } from "./lockup.mjs";
+import {
+  composeCard,
+  composeLockup,
+  composeReleaseCard,
+  estimateWidth,
+  LOCKUP,
+  RELEASE_CARD,
+  SOCIAL_CARD,
+  wordmarkWidth,
+  wrapLines,
+} from "./lockup.mjs";
 
 const design = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "design");
 const icon = readFileSync(join(design, "cupertino-icon.svg"), "utf8");
@@ -246,6 +256,72 @@ describe("composeCard", () => {
     ];
     for (const [name, run] of cases) {
       it(name, () => assert.throws(run, /cupertino-lockup:/));
+    }
+  });
+});
+
+describe("composeReleaseCard", () => {
+  const release = {
+    ground: "#0b0c0f",
+    version: "1.25.0",
+    date: "2026-10-03",
+    title: "Desktop driving can no longer type into the wrong app.",
+    footer: "cupertino.mgcrea.io/changelog",
+  };
+  const svg = composeReleaseCard(icon, palette, release);
+  const width = RELEASE_CARD.WIDTH - 2 * RELEASE_CARD.MARGIN;
+
+  it("is the size the og:image tags declare", () => {
+    assert.match(svg, /width="1200" height="630"/);
+  });
+
+  it("says the version, the date and the title", () => {
+    assert.match(svg, />Version 1\.25\.0</);
+    assert.match(svg, />October 3, 2026</);
+    assert.match(svg, />Desktop driving can no longer type</);
+    assert.match(svg, />into the wrong app\.</);
+  });
+
+  it("dates the card in UTC, whatever the zone it is rendered in", () => {
+    // A New Year's Day release rendered west of Greenwich read December 31
+    // under a local-time conversion.
+    const card = composeReleaseCard(icon, palette, { ...release, date: "2027-01-01" });
+    assert.match(card, />January 1, 2027</);
+  });
+
+  it("escapes the title, which comes from prose", () => {
+    const card = composeReleaseCard(icon, palette, { ...release, title: "Mail & <Notes>" });
+    assert.match(card, /Mail &amp; &lt;Notes&gt;/);
+  });
+
+  it("wraps on whole words and fits two lines", () => {
+    const lines = wrapLines(release.title, RELEASE_CARD.TITLE, width);
+    assert.equal(lines.length, 2);
+    assert.equal(lines.join(" "), release.title);
+    for (const line of lines) assert.ok(estimateWidth(line, RELEASE_CARD.TITLE) <= width);
+  });
+
+  it("refuses a title that needs a third line, rather than letting it run off", () => {
+    assert.throws(
+      () =>
+        composeReleaseCard(icon, palette, {
+          ...release,
+          title: "MOST WINDOWS NOW WORK WITH MAIL, MAPS AND MESSAGES, WOW WOW WOW.",
+        }),
+      /needs 3 lines on the card/,
+    );
+  });
+
+  it("refuses a version or a date that is not a release's", () => {
+    assert.throws(() => composeReleaseCard(icon, palette, { ...release, version: "Unreleased" }));
+    assert.throws(() => composeReleaseCard(icon, palette, { ...release, date: "" }));
+  });
+
+  it("keeps everything out of the band X crops", () => {
+    const ys = [...svg.matchAll(/<text x="[^"]+" y="(\d+)"/g)].map((m) => Number(m[1]));
+    assert.ok(ys.length >= 5);
+    for (const y of ys) {
+      assert.ok(y >= RELEASE_CARD.SAFE_INSET && y <= RELEASE_CARD.HEIGHT - RELEASE_CARD.SAFE_INSET);
     }
   });
 });

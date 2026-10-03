@@ -923,11 +923,18 @@ surfaces-check: ## Fail if any generated copy has drifted from surfaces.json
 # Release-day order matters: this runs AFTER the new section is written and
 # dated, and the result is committed with it — otherwise the release build fails
 # changelog-check on a file the release commit forgot.
-changelog: ## Regenerate the app's release notes from CHANGELOG.md
+#
+# It also renders the website's per-release social cards. Those are baked on a
+# Mac for the font, the same reason og-image.png is, so the check only proves
+# each card was rendered from the SVG its release would compose today — which
+# needs no font, and so runs on Linux CI too.
+changelog: ## Regenerate the app's release notes and the site's release cards from CHANGELOG.md
 	@node scripts/generate-changelog.mjs
+	@pnpm -s -C apps/website cards
 
-changelog-check: ## Fail if the app's release notes have drifted from CHANGELOG.md
+changelog-check: ## Fail if the app's release notes or release cards have drifted from CHANGELOG.md
 	@node scripts/generate-changelog.mjs --check
+	@pnpm -s -C apps/website cards --check
 
 readme-check: ## Fail if README's Surfaces table has drifted from the tree
 	@node scripts/readme-surfaces-check.mjs
