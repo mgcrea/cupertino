@@ -715,8 +715,13 @@ jobs:
         id: version
         run: |
           version="${GITHUB_REF_NAME#app-v}"
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not carry a semver version"
+          # A plain release only. This job publishes with make_latest, and the
+          # site's /appcast.xml redirects to releases/latest, so an
+          # app-v1.26.0-beta.1 tag would offer the beta to every installed copy
+          # through Sparkle. There is no beta channel; refuse here, before
+          # anything is signed.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::tag ${GITHUB_REF_NAME} is not a plain x.y.z release; a pre-release would reach every user through the appcast"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
