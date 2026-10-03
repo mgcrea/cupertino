@@ -1,0 +1,113 @@
+---
+/**
+ * One release, at a URL worth sharing.
+ *
+ * This is the page a post links to, so everything a link preview reads is the
+ * release's own: the title, the description, and a card with its version and
+ * title on it (`pnpm cards`). Releases from before summaries existed fall back
+ * to the release's first headline and the site card, and still get a page —
+ * an old version's notes are what somebody on that version wants to read.
+ */
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+import ShareRelease from "../../components/ShareRelease.astro";
+import { APP_NAME, DOWNLOAD } from "../../config";
+import { RELEASES, type Release } from "../../data/changelog";
+
+export function getStaticPaths() {
+  return RELEASES.map((release, index) => ({
+    params: { version: release.version },
+    props: { release, newer: RELEASES[index - 1], older: RELEASES[index + 1] },
+  }));
+}
+
+interface Props {
+  release: Release;
+  newer?: Release;
+  older?: Release;
+}
+
+const { release, newer, older } = Astro.props;
+const { summary } = release;
+
+const headline = summary?.title ?? `${APP_NAME} ${release.version}`;
+const description =
+  summary?.description ??
+  (release.highlights.length > 0
+    ? `${APP_NAME} ${release.version}: ${release.highlights
+        .slice(0, 3)
+        // Headlines are written as sentences but not all of them end like one.
+        .map((line) => (/[.!?]$/.test(line) ? line : `${line}.`))
+        .join(" ")}`
+    : `What changed in ${APP_NAME} ${release.version}, released ${release.longDate}.`);
+const url = new URL(release.path, Astro.site).href;
+// The release's own card when one was rendered, else the site card — and its
+// alt only with it, since Layout's default alt describes the site card.
+const cardProps = release.card
+  ? {
+      ogImage: release.card,
+      ogImageAlt: `${APP_NAME} ${release.version}, ${release.longDate}: ${headline}`,
+    }
+  : {};
+---
+
+<Layout
+  title={`${APP_NAME} ${release.version} — ${headline}`}
+  description={description}
+  {...cardProps}
+>
+  <Nav />
+  <main id="main" tabindex="-1" class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+    <a href="/changelog/" class="mono text-accent hover:text-accent-hi">sec · changelog</a>
+    <h1 class="mt-3 font-display text-[clamp(32px,4.6vw,48px)] leading-[1.08] font-semibold tracking-[-0.035em] text-balance">
+      {headline}
+    </h1>
+    <p class="mono mt-4 text-fg-muted">
+      Version {release.version} · <time datetime={release.date}>{release.longDate}</time>
+    </p>
+    {
+      summary && (
+        <p class="mt-6 text-[18px] leading-[1.6] text-fg-dim">{summary.description}</p>
+      )
+    }
+
+    {summary && <ShareRelease post={summary.post} url={url} />}
+
+    <div
+      class="mt-12 text-[16px] leading-[1.7] text-fg-dim
+             [&_h3]:mt-12 [&_h3]:mb-4 [&_h3]:font-display [&_h3]:text-[22px] [&_h3]:font-semibold [&_h3]:tracking-[-0.01em] [&_h3]:text-fg
+             [&_p]:mt-4 [&_li_p:first-child]:mt-0
+             [&_ul]:mt-4 [&_ul]:list-disc [&_ul]:space-y-5 [&_ul]:pl-5 [&_ul]:marker:text-fg-muted
+             [&_strong]:font-medium [&_strong]:text-fg
+             [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:text-fg
+             [&_a:not([class])]:text-fg [&_a:not([class])]:underline [&_a:not([class])]:decoration-rule-2 [&_a:not([class])]:underline-offset-4"
+      set:html={release.html}
+    />
+
+    <nav class="mt-16 flex flex-wrap items-center justify-between gap-4 border-t border-rule pt-6 text-[14px]" aria-label="Other releases">
+      {
+        older ? (
+          <a href={older.path} class="text-fg-dim hover:text-fg">
+            ← {older.version}
+          </a>
+        ) : (
+          <span />
+        )
+      }
+      <a href="/changelog/" class="text-fg-dim hover:text-fg">All releases</a>
+      {
+        newer ? (
+          <a href={newer.path} class="text-fg-dim hover:text-fg">
+            {newer.version} →
+          </a>
+        ) : (
+          <a href={DOWNLOAD.releases} class="text-fg-dim hover:text-fg" target="_blank" rel="noopener">
+            Download ↗
+          </a>
+        )
+      }
+    </nav>
+  </main>
+  <Footer />
+</Layout>

@@ -28,9 +28,9 @@ const links = [
       {/* The shipping version, beside the wordmark rather than in the button
           cluster: it is an identifying detail like the mark itself, not a call
           to action, and that cluster is already the whole funnel at every
-          width. It links to the releases list, which is where the number leads
-          anyway — someone reading it wants the notes for it or the build
-          itself, and both are on that one page.
+          width. It links to that version's page in the changelog: someone
+          reading the number wants to know what it brought, and the page links
+          on to the build.
 
           Gated on SHIPPED for the reason config.ts gives: before a release
           there is no version to name. Hidden below `sm`, where the wordmark and
@@ -39,9 +39,7 @@ const links = [
       {
         SHIPPED && (
           <a
-            href={DOWNLOAD.releases}
-            target="_blank"
-            rel="noopener"
+            href={`/changelog/${APP_VERSION}/`}
             class="hidden rounded-full border border-rule px-2 py-[3px] font-mono text-[10.5px] leading-none font-medium text-fg-muted transition-colors hover:border-accent hover:text-accent-hi sm:block"
           >
             {APP_VERSION}

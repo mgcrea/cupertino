@@ -198,3 +198,23 @@ banner, so the two cannot fork.
 - **`Layout.astro` declares the dimensions and the alt text**, and both `twitter:site` and
   `twitter:creator` carry `X_HANDLE`. A page passing its own `ogImage` must pass `ogImageAlt` with
   it and match the 1200×630 shape the width/height tags promise.
+
+## The changelog pages come from CHANGELOG.md
+
+`/changelog` and `/changelog/<version>` read the repository's `CHANGELOG.md` at build time
+(`src/data/changelog.ts`, `?raw`), through `scripts/lib/changelog.mjs` — the parser the appcast and
+the app's What's New pane use, so the three cannot disagree. `### Internal` is left out here as it
+is there. Nothing is copied into this app; a release appears when its section does.
+
+- **Each release from 1.25.0 on opens with a summary**: one paragraph, `**Title.** Description.`,
+  right under its `## [x.y.z]` heading. It is the version page's headline and standfirst, its
+  og:title and og:description, and the post the "Share this release" box offers. A test in
+  `scripts/lib/changelog.test.mjs` holds the title to two lines on the card and the post to 256
+  characters, which is X's 280 less the link.
+- **Each summary gets a social card**, `public/changelog/<version>.png`, rendered by `pnpm cards`
+  (`make changelog` runs it) through `composeReleaseCard` in `../../scripts/lib/lockup.mjs`. It is
+  baked on a Mac and committed for the reason `og-image.png` is. `src/data/release-cards.json`
+  records the hash of the SVG each PNG came from, so `make changelog-check` — which CI runs on
+  Linux — catches a card that has fallen behind its title, its date or the layout without needing
+  the font. A release with no summary falls back to the site card.
+- **The copy button's script is `public/copy-text.js`**, not inline, for the CSP reason above.

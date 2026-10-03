@@ -1,0 +1,74 @@
+---
+/**
+ * Every release, newest first — the page the nav's version badge points at.
+ *
+ * An index rather than the whole file: CHANGELOG.md is thousands of lines, and
+ * each release's notes live on its own page, which is also the page worth
+ * sharing. A release with a summary shows it; one from before summaries existed
+ * shows its entries' headlines instead, which say the same thing less well.
+ */
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+import { APP_NAME, DOWNLOAD } from "../../config";
+import { RELEASES } from "../../data/changelog";
+
+/** Headlines past this many are behind the release's own link. */
+const SHOWN = 4;
+---
+
+<Layout
+  title={`Changelog — ${APP_NAME}`}
+  description={`Every release of ${APP_NAME}, newest first: what changed in the app and in the MCP servers it ships.`}
+>
+  <Nav />
+  <main id="main" tabindex="-1" class="wrap mx-auto max-w-[72ch] px-6 py-20 md:py-28">
+    <div class="mono text-accent">sec · changelog</div>
+    <h1 class="mt-3 font-display text-[clamp(34px,5vw,52px)] leading-[1.05] font-semibold tracking-[-0.038em]">
+      Changelog
+    </h1>
+    <p class="mt-6 max-w-[62ch] text-[16px] leading-[1.7] text-fg-dim">
+      Every release of {APP_NAME}, newest first. These are the notes the app shows before it updates
+      itself; the builds are on
+      <a href={DOWNLOAD.releases} class="text-fg underline decoration-rule-2 underline-offset-4" target="_blank" rel="noopener">GitHub</a>.
+    </p>
+
+    <ol class="mt-14 space-y-12">
+      {
+        RELEASES.map((release) => (
+          <li id={`v${release.version}`} class="border-t border-rule pt-8">
+            <p class="mono text-fg-muted">
+              <a href={release.path} class="text-fg hover:text-accent-hi">
+                {release.version}
+              </a>
+              {" · "}
+              <time datetime={release.date}>{release.longDate}</time>
+            </p>
+            {release.summary ? (
+              <>
+                <h2 class="mt-3 font-display text-[22px] leading-[1.3] font-semibold tracking-[-0.01em] text-fg">
+                  <a href={release.path} class="hover:text-accent-hi">
+                    {release.summary.title}
+                  </a>
+                </h2>
+                <p class="mt-3 text-[16px] leading-[1.7] text-fg-dim">{release.summary.description}</p>
+              </>
+            ) : (
+              <ul class="mt-4 list-disc space-y-2 pl-5 text-[16px] leading-[1.6] text-fg-dim marker:text-fg-muted [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:text-fg">
+                {release.highlightsHtml.slice(0, SHOWN).map((headline) => (
+                  <li set:html={headline} />
+                ))}
+              </ul>
+            )}
+            <a href={release.path} class="mt-4 inline-block text-[14px] text-fg-dim hover:text-fg">
+              {release.highlights.length > SHOWN && !release.summary
+                ? `All ${release.highlights.length} changes in ${release.version} →`
+                : `Read the ${release.version} notes →`}
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </main>
+  <Footer />
+</Layout>
