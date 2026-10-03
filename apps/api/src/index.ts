@@ -517,6 +517,23 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
   switch (envelope.data.type) {
     case "checkout.session.completed":
       return fulfil(object, env, envelope.data.livemode);
+    // A delayed-notification method (SEPA Direct Debit, a bank transfer) sends
+    // `completed` with `payment_status: "unpaid"`, which `fulfil` answers "not
+    // paid", and settles days later with this. Unrouted, it fell to `ignored`:
+    // the buyer was charged and nothing ever minted their key. It goes through
+    // the same `fulfil`, so the payment_status check, the price guard, the early
+    // revocation and the send claim all hold, and the unique `stripe_session_id`
+    // keeps a session that somehow arrives both ways to one licence.
+    case "checkout.session.async_payment_succeeded":
+      return fulfil(object, env, envelope.data.livemode);
+    case "checkout.session.async_payment_failed": {
+      // Nothing was minted for the unpaid `completed`, so there is nothing to
+      // undo. Logged with the session id so the line can be traced to a buyer
+      // in the Stripe dashboard; 200, because no retry changes a failed debit.
+      const id = (object as { id?: unknown } | null)?.id;
+      console.error(`webhook: async payment failed for session ${String(id ?? "(no id)")}`);
+      return new Response("async payment failed", { status: 200 });
+    }
     case "charge.refunded":
       return refunded(object, env);
     case "charge.dispute.created":

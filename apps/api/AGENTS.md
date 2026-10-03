@@ -81,8 +81,12 @@ inclusive`. Inclusive because the site promises €14.99 and that has to be the 
    Link** with `automatic_tax`, `tax_id_collection` (B2B reverse charge) and `customer_creation:
 always`, redirecting to `/thanks?session_id={CHECKOUT_SESSION_ID}`. Its URL goes in
    `apps/website/public/_redirects` behind `/buy`, which is commented out until then. 4. **Webhook
-   endpoint** on `checkout.session.completed`, plus the refund and dispute events, at
-   `https://api.cupertino.mgcrea.io/stripe/webhook`. Its signing secret is `STRIPE_WEBHOOK_SECRET`.
+   endpoint** at `https://api.cupertino.mgcrea.io/stripe/webhook`, subscribed to
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created` and
+   `charge.dispute.closed`. The two `async_payment` events are what fulfil a delayed method such as
+   SEPA Direct Debit; without them such a buyer is charged and never gets a key. Its signing secret is
+   `STRIPE_WEBHOOK_SECRET`.
 
 ### Tax registrations are the part that silently does nothing
 
@@ -138,6 +142,10 @@ Changing the payload shape means changing all three. The field order in the obje
 - **Check `payment_status`.** A session completes for delayed payment methods before the money
   lands. Only `paid` and `no_payment_required` (a 100%-off code, still a sale) mint; an
   absent field is refused rather than read as paid.
+- **Fulfil the delayed payment when it lands.** A SEPA-style sale completes `unpaid`, then settles
+  days later as `checkout.session.async_payment_succeeded`, which goes through the same fulfilment
+  as `completed`, guards and all. `checkout.session.async_payment_failed` is logged with the session
+  id and mints nothing. Both only arrive if the endpoint subscribes to them.
 - **Cap the body before buffering it.** The signature needs the whole body, so until it holds the
   sender decides how much is allocated; anything over 256 KB answers 413.
 

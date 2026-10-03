@@ -233,6 +233,101 @@ describe("fulfilment", () => {
   });
 });
 
+// A delayed method (SEPA Direct Debit and its relatives) completes the session
+// with `payment_status: "unpaid"` and settles days later with a second event.
+// Unrouted, that second event fell to `ignored`: the buyer was charged and no
+// key was ever minted.
+describe("delayed payment methods", () => {
+  const settled = () => session({ id: "cs_sepa", payment_intent: "pi_sepa" });
+  const pending = () =>
+    session({ id: "cs_sepa", payment_intent: "pi_sepa", payment_status: "unpaid" });
+
+  it("mints nothing when the session completes unpaid", async () => {
+    const t = setup();
+    const response = await t.event("checkout.session.completed", pending());
+    expect(response.status).toBe(200);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("fulfils the session once the payment succeeds, exactly once", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", pending());
+
+    const succeeded = await t.event("checkout.session.async_payment_succeeded", settled());
+    expect(succeeded.status).toBe(200);
+    expect(await succeeded.text()).toBe("ok");
+    expect(t.sent).toEqual([BUYER]);
+    expect(t.d1.sql("SELECT stripe_session_id, payment_intent, price_id FROM licenses")).toEqual([
+      { stripe_session_id: "cs_sepa", payment_intent: "pi_sepa", price_id: PRICE },
+    ]);
+
+    // Stripe redelivers for days. A redelivery is the same licence, not a
+    // second one, and not a second email.
+    const redelivered = await t.event("checkout.session.async_payment_succeeded", settled());
+    expect(redelivered.status).toBe(200);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(1);
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  it("sends ONE email when two deliveries of the success race", async () => {
+    const t = setup();
+    const answers = await Promise.all([
+      t.event("checkout.session.async_payment_succeeded", settled()),
+      t.event("checkout.session.async_payment_succeeded", settled()),
+    ]);
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200]);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(1);
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  it("still ignores another product's sale when its payment succeeds", async () => {
+    const t = setup();
+    const response = await t.event(
+      "checkout.session.async_payment_succeeded",
+      session({ id: "cs_sepa", metadata: { price_id: "price_bastion" } }),
+    );
+    expect(response.status).toBe(200);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("records a refund that lands before the success, and mails nothing", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", pending());
+    await t.event("charge.refunded", { ...fullRefund, payment_intent: "pi_sepa" });
+
+    const succeeded = await t.event("checkout.session.async_payment_succeeded", settled());
+    expect(succeeded.status).toBe(200);
+    expect(await succeeded.text()).toMatch(/revoked \(refunded\)/);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("logs a failed payment with its session id, and mints nothing", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", pending());
+
+    const failed = await t.event(
+      "checkout.session.async_payment_failed",
+      session({ id: "cs_sepa", payment_intent: "pi_sepa", payment_status: "unpaid" }),
+    );
+    expect(failed.status).toBe(200);
+    expect(logged()).toMatch(/async payment failed for session cs_sepa/);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
+  // Logged, never fulfilled, whatever the payload claims: the event itself says
+  // the money did not arrive.
+  it("mints nothing on a failed payment even if the session reads as paid", async () => {
+    const t = setup();
+    const failed = await t.event("checkout.session.async_payment_failed", settled());
+    expect(failed.status).toBe(200);
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+});
+
 describe("price lookup", () => {
   const noPrice = session({ metadata: {} });
 
