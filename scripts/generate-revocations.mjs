@@ -95,9 +95,14 @@ const ids = rows
   .filter(Boolean)
   .toSorted();
 
-const header = readFileSync(TARGET, "utf8").split("\nenum Revocations")[0];
+// `nonisolated` since the app moved to the Swift 6 language mode, where the
+// target defaults to the main actor and the licence check reads this off it.
+// The split matches either spelling, so a file from before that move is still
+// recognised — splitting on the old one alone matched nothing, and the whole
+// file was taken for the header.
+const header = readFileSync(TARGET, "utf8").split(/\n(?:nonisolated )?enum Revocations/)[0];
 const list = ids.length === 0 ? "[]" : `[\n${ids.map((id) => `    "${id}",`).join("\n")}\n  ]`;
-const next = `${header}\nenum Revocations {\n  static let ids: Set<String> = ${list}\n}\n`;
+const next = `${header}\nnonisolated enum Revocations {\n  static let ids: Set<String> = ${list}\n}\n`;
 
 if (check) {
   if (readFileSync(TARGET, "utf8") === next) {
