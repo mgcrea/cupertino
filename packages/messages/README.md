@@ -64,6 +64,10 @@ will be wrong several times on any real inbox.
 If the Contacts permission has not been granted, resolution is skipped and handles come back raw.
 That is a capability downgrade reported through `diagnostics`, never a throw.
 
+The lookup runs with the Contacts package's defaults. The `APPLE_CONTACTS_*` settings configure the
+Contacts server, not this one: setting them here changes nothing, and
+`APPLE_MESSAGES_RESOLVE_CONTACTS` is the only switch Messages reads for it.
+
 ## Tools
 
 Read: `diagnostics`, `list_chats`, `list_messages`, `search_messages`, `get_message`,
