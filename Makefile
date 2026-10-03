@@ -438,6 +438,57 @@ chat-check-real: servers chat-check ## Prove every SHIPPED tool schema converts,
 	@# output rather than in a bug report.
 	@apps/apple/.build/chat-check $(wildcard packages/*/dist/cli.js)
 
+host-check: ## Drive the host's socket, handshake and teardown, with no app
+	@# The gate `ServerHost` never had. It binds a real socket under /tmp, drives
+	@# the handshake's refusals on real session threads, removes the socket to
+	@# make the eviction watchdog fire, and times `stop()`.
+	@#
+	@# BridgeProtocol.swift is compiled from a COPY whose one home-directory
+	@# lookup reads HostCheckHome.url instead: the real one ignores $$HOME, so
+	@# the shipped file would bind the installed Cupertino's socket and lock.
+	@# The check refuses to start if the path it got is not the scratch one.
+	@mkdir -p apps/apple/.build
+	@sed 's/FileManager\.default\.homeDirectoryForCurrentUser/HostCheckHome.url/' \
+		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
+	@swiftc -O -o apps/apple/.build/host-check \
+		apps/apple/Cupertino/ServerHost.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/Sessions.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/Trial.swift \
+		apps/apple/Cupertino/License.swift \
+		apps/apple/Cupertino/LicenseStore.swift \
+		apps/apple/Cupertino/Revocations.swift \
+		apps/apple/Cupertino/RequestObserver.swift \
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/SafariCaptures.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessServers.swift \
+		apps/apple/Cupertino/ScreenServer.swift \
+		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/SoundServer.swift \
+		apps/apple/Cupertino/SoundCapture.swift \
+		apps/apple/Cupertino/SoundDevices.swift \
+		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/SimulatorServer.swift \
+		apps/apple/Cupertino/SimulatorGeometry.swift \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
+		apps/apple/Cupertino/DrivingSession.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Permissions.swift \
+		apps/apple/Cupertino/ServerLocator.swift \
+		apps/apple/Cupertino/ServerResolution.swift \
+		apps/apple/Cupertino/ClientFacade.swift \
+		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
+	@apps/apple/.build/host-check
+
 audit-log-check: ## Assert a write the audit log cannot make leaves the chain intact, not broken
 	@# `BridgeProtocol` is STUBBED by the check rather than compiled in, and that
 	@# is what keeps this off the real log: every path the audit log uses is
@@ -1182,9 +1233,9 @@ clean: ## Remove the app build output
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
-	blame-setup icon clean smoke-swift audit-log-check bridge-protocol-check wiring-check-real \
-	server-deps verify-servers verify-extension sparkle sparkle-keys sparkle-key-shred appcast \
-	readme-check demo-gif extension-icons
+	blame-setup icon clean smoke-swift audit-log-check host-check bridge-protocol-check \
+	wiring-check-real server-deps verify-servers verify-extension sparkle sparkle-keys \
+	sparkle-key-shred appcast readme-check demo-gif extension-icons
 
 # ─── deploy ──────────────────────────────────────────────────────────────────
 # The same two words in every repo: `make deploy`. WHAT it deploys differs — a

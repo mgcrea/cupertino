@@ -239,6 +239,12 @@ jobs:
       - name: Audit log survives a failed write 🔍
         if: runner.os == 'macOS'
         run: make audit-log-check
+      # The gate ServerHost never had. It binds its own socket under /tmp, so it
+      # neither needs nor disturbs an installed copy, and it covers what nothing
+      # else did: the handshake's refusals, and that the eviction watchdog fires
+      # — which it did not while acceptLoop shared the watchdog's serial queue.
+      - name: Server host 🔌
+        run: make host-check
       # docs/licensing.md sells the app partly on it being unable to reach the
       # network, so that claim is a gate rather than a sentence in a README.
       # Unsigned is fine: the audit reads symbols, and signing does not add any.
