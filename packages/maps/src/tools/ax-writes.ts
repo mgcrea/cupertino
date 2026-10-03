@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { MapsAxLane } from "../client/ax.js";
-import { fail, ok, wrapResult } from "./util.js";
+import { confirmArg, fail, ok, wrapResult } from "./util.js";
 
 /**
  * The tools that go through Maps' own interface rather than its store.
@@ -109,8 +109,12 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
         "Remove a place from Maps' Places library, through the card's overflow menu. This does " +
         "NOT touch favourites — use apple_maps_remove_favorite for those. SIDE EFFECTS: opens " +
         "Maps, brings its window forward, and leaves the place in the user's Recents. Syncs to " +
-        "the user's other Apple devices. Needs Accessibility for Cupertino.",
-      inputSchema: place,
+        "the user's other Apple devices. Needs Accessibility for Cupertino, and an explicit " +
+        "confirm: the removal is not undoable from here.",
+      // `confirm`, as `apple_maps_remove_favorite` has: the one other tool on
+      // this surface that deletes, and with the same reach — every device on
+      // the account. This one arrived after the audit that added it there.
+      inputSchema: { ...place, confirm: confirmArg },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
     async (args) =>

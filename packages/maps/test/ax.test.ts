@@ -3,9 +3,13 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MapsAxLane, parseGuideRow } from "../src/client/ax.js";
+import { registerAxWriteTools } from "../src/tools/ax-writes.js";
 
 const open = new Set<Server>();
 const scratch = new Set<string>();
@@ -324,5 +328,51 @@ describe("chooseGuide", () => {
     await expect(lane.chooseGuide("Plage")).resolves.toBe(false);
     expect(seen.filter((c) => c.tool === "press")).toEqual([]);
     lane.close();
+  });
+});
+
+/** The Places-library write tools, over a lane that records what it was asked to open. */
+const connectRemoval = async () => {
+  const opened: unknown[] = [];
+  const lane = {
+    watch: () => ({ check: async () => null }),
+    openCard: async (place: unknown) => {
+      opened.push(place);
+      return false;
+    },
+    removePlace: async () => "not-saved",
+  } as unknown as MapsAxLane;
+  const server = new McpServer({ name: "maps-test", version: "0" });
+  registerAxWriteTools(server, lane);
+  const client = new Client({ name: "test", version: "0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(a), client.connect(b)]);
+  return { client, opened };
+};
+
+describe("apple_maps_remove_saved_place", () => {
+  /*
+   * The removal reaches every device on the account, so it takes `confirm`
+   * as apple_maps_remove_favorite does. Refused at the schema, before Maps is
+   * opened: a call without it must not even bring the window forward.
+   */
+  const place = { query: "Café de Flore", latitude: 48.854, longitude: 2.3326 };
+
+  it("refuses a call without confirm, and never opens Maps", async () => {
+    const { client, opened } = await connectRemoval();
+    const result = await client
+      .callTool({ name: "apple_maps_remove_saved_place", arguments: place })
+      .catch((error: unknown) => ({ isError: true, error }));
+    expect(result.isError).toBe(true);
+    expect(opened).toEqual([]);
+  });
+
+  it("goes ahead with confirm: true", async () => {
+    const { client, opened } = await connectRemoval();
+    await client.callTool({
+      name: "apple_maps_remove_saved_place",
+      arguments: { ...place, confirm: true },
+    });
+    expect(opened).toHaveLength(1);
   });
 });
