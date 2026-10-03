@@ -220,7 +220,108 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_24_1, v1_24_0, v1_23_0, v1_22_1, v1_22_0]
+  static let releases: [Release] = [v1_25_0, v1_24_1, v1_24_0, v1_23_0, v1_22_1]
+
+  // swift-format-ignore
+  private static let v1_25_0: Release = Release(
+    version: "1.25.0",
+    date: "2026-10-03",
+    sections: [
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Removing a place from Maps takes an explicit `confirm`.",
+            body: [
+              "`apple_maps_remove_favorite` and `apple_maps_remove_saved_place` both delete on every device signed in to the account, through iCloud, and now refuse a call without `confirm: true` — before Maps is opened, in the second case. Every other destructive tool on every surface already asked.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Safari element ids name the page load they came from.",
+            body: [
+              "An id now reads `3f9a2c1d-e12` rather than `e12`, and a click or fill goes only to the tab that handed it out. With two tabs on the same URL, `click e12` from one tab's list could be claimed by the other and press its `e12` instead, with nothing in the answer saying which tab had acted. An id whose page has since reloaded or closed is refused rather than guessed at; list the elements again. Tabs open across the update need a reload first.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Every surface's diagnostics report the same things in the same places.",
+            body: [
+              "`server` is which build is running, with its version and commit, and `settings` is how it is configured — the write gate, prompts, on-demand tools and the result cap. Notes, Reminders and Calendar used to file their lane report under `server` and so could not report their own version; their lanes now sit beside it, as everyone else's do. Contacts' diagnostics stopped saying its dictionary offers a delete.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "Desktop driving no longer types into whatever happens to be in front.",
+            body: [
+              "A `type`, `key`, `click` or `hover` that named no application went to the frontmost one, even when the surface's reach did not include it — so with Terminal in front, text meant for another app went into a shell. The frontmost application is now checked against the surface's reach before anything is posted, and checked again after the on-screen countdown, since that is when the person at the keyboard may switch apps. A click or hover is also refused unless the point is actually on one of that application's windows, and no surface can drive Cupertino itself, whatever its reach.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A recording ends when the client that started it goes.",
+            body: [
+              "A microphone recording outlived its client and its editor, with the indicator up and nobody left holding a `stop_recording`; switching Sound or recording off did not end one already running either. Both now finalise it. Recordings are written readable by you alone, as screen captures are.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "Screen capture honours a surface being switched off.",
+            body: [
+              "A surface switched off in Settings could still have its window photographed, by name or, with \"Capture any application\", by bundle id. Both are refused now, before anything is captured.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "The Activity window and the audit log see Desktop, Simulator, Screen and Sound.",
+            body: [
+              "Calls to the surfaces Cupertino serves itself were missing from both, and their sessions read zero calls however hard they were driven. A trial running out also closes those sessions now, as it already closed every other surface's.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "The audit log survives a disk that will not take a write.",
+            body: [
+              "A failed append used to advance the chain in memory anyway, so the next record that landed linked to one that never had, and verification reported a full disk as tampering. The log now continues from what is actually on disk and files a notice saying how many records were not written. A Keychain prompt dismissed while signing an export also no longer replaces the signing key recipients have pinned.",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "Installing an update with a Screen or Sound session open no longer kills the app mid-install.",
+            body: [
+              "The updater stopped every session's process, and those two report Cupertino's own.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "A second copy of Cupertino quitting no longer takes the running one's socket with it",
+            body: [
+              ", and the watch that notices the socket being replaced now actually runs.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "`apple_mail_save_attachment` writes the attachment, not three bytes of whitespace.",
+            body: [
+              "When Mail keeps an attachment beside the message rather than inside it, the blank part left in its place was taken for the file. And `apple_mail_get_message` stopped saying an attachment could not be fetched when `save_attachment` could fetch it; the note now names only the files Mail has not downloaded.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "Moving a reminder keeps its due time.",
+            body: [
+              "A reminder due at 16:40 arrived in the other list as due that day, all day.",
+            ]),
+          Entry(
+            ordinal: 12,
+            headline: "A server's own log output stays inside Cupertino.",
+            body: [
+              "Whatever a server wrote to stderr was also copied to the app's standard error, outside the redaction calls get, and into a file that outlives the process. It now stays in the in-app log only.",
+            ]),
+          Entry(
+            ordinal: 13,
+            headline: nil,
+            body: [
+              "`APPLE_*_DEBUG=0` turned debug logging on, like any other non-empty value; it now means off. Searching Messages no longer holds every recent message in memory at once to decode it; it reads one at a time and stops once it has a page.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_24_1: Release = Release(
@@ -347,103 +448,6 @@ nonisolated enum Changelog {
             body: [
               "Cupertino tells whether the grant is in place by asking whether one file that only Full Disk Access can open is readable, and on macOS 27 that file no longer exists. A missing file answered \"no\" either way, so the row said denied while every server's own diagnostics, reading their own stores, said granted — and it sent people off to grant a permission they already had.",
               "A file that is not there proves nothing about permission. When it is gone, Cupertino now asks the same question of the first Mail, Messages, Safari, Notes or Calendar store on the Mac, each of which has been measured as unreadable without the grant.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_22_0: Release = Release(
-    version: "1.22.0",
-    date: "2026-09-16",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_desktop_set_window_frame`, so the `rect` the surface reports can also be written.",
-            body: [
-              "`apple_desktop_list_windows` has always returned a window's position and size and nothing could set them, which left one ordinary thing — narrowing a window until its toolbar overflows — with no route through this surface at all. The alternative was `osascript` and System Events, and that is the one route this surface must not take: Accessibility attaches to the process RESPONSIBLE for `osascript`, so it would have meant granting a terminal the right to drive every application on the Mac. The write belongs in the app that already holds the grant. It needs no new permission and sits behind the writes and reach switches that were already there.",
-              "Every component is optional, so `width` alone narrows a window without deciding where it goes, and the numbers are the same screen points, top-left origin, that every other answer here uses.",
-              "**It reports what the window did, not what was asked.** AppKit enforces a window's own minimum size silently: a window with a 900-point floor asked for 600 lands at 900 with no error anywhere along the way. The answer carries `requested`, `actual` and `confirmed` so a caller can see the clamp instead of going on to measure a window it never got.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Agents now warn you before they take the keyboard and mouse.",
-            body: [
-              "Until now the orange card appeared in the same instant as the first click or keystroke, so somebody halfway through a sentence had no chance to stop. When you have used the Mac in the last 20 seconds, the first driving call of a Desktop or Simulator sequence now puts a card up first: \"Cupertino will drive Safari in 3 s\", with a Cancel button. Leave it and the agent goes ahead; cancel and nothing is posted, the agent is told you said no, and it cannot put the card back in front of you for 30 seconds. A Mac nobody has touched for 20 seconds is driven straight away, as before.",
-              "The Access card for Desktop and Simulator has a \"Before driving\" setting: count down, ask first (Allow or Don't, where no answer within 25 seconds is a no), or nothing, which is the old behaviour. The countdown length and how long an idle session lasts are set there too.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Driving is now a session that ends, and ending it gives you your app back.",
-            body: [
-              "The card used to vanish four seconds after each action, even while the agent was still thinking about the next one, and the driven app stayed in front afterwards, so there was no telling a pause from the end. The card now stays up for as long as the agent holds the screen. The session ends when the agent calls the new `apple_desktop_release` or `apple_simulator_release`, when you press Stop driving in the menu bar, when no call arrives for 45 seconds, or a few seconds after the client disconnects. When it ends, the app you were using comes back to the front, unless you had already switched to something yourself. A green card says the keyboard and mouse are yours again.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "`apple_desktop_run` takes a whole interaction in one call.",
-            body: [
-              "Steps are the desktop verbs (press, type, key, click, hover, focus and the rest), a few reads, and `wait`. Every step is checked before the first one runs, so a mistake in step five cannot leave a form half filled. The run stops at the first step that fails and says which one, and `releaseAfter` hands the Mac back when every step completed.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Settings has an About pane and a Help pane.",
-            body: [
-              "Which build this is — the version, the system, the model — used to be answered in the first section of General, the page about launching at login. It is a pane of its own now, with the app icon, the bundle id and the signing identity beside it, and the version line in the menu bar is a button that opens it rather than text that does nothing. Help is new as well: the same three links the Help menu carries, reachable when no window is open, which is when somebody is most likely to want them.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 5,
-            headline: "`apple_desktop_hover` no longer refuses while somebody is using the Mac.",
-            body: [
-              "It used to fail whenever there had been input in the last two seconds, and that refusal put no card on screen, which is why hovering looked like it never announced itself. It now waits for the same warning every other driving call gets.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "The Settings sidebar is grouped into what Cupertino does, then what it did.",
-            body: [
-              "General, Activity and Permissions are the panes you configure; What's New, Updates, About and Help are the ones you open when you want to know what this build is or something has gone wrong; License is last. No stored selection moves, so the first-run licence prompt still lands where it did.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "The menu bar panel matches the fleet's other apps.",
-            body: [
-              "The version sits at the trailing edge of the footer, as a button to the new About pane rather than as a suffix to the app's name, and the row finally carries ⌘O and ⌘Q. Tooltips lose their trailing clauses: \"Logs (⌘L) — what every client has called, live\" is now \"Logs (⌘L)\", built from the action's own name and shortcut so the two cannot disagree.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 8,
-            headline: "Every desktop call against Finder found no windows.",
-            body: [
-              "Finder answers `kAXWindows` with an empty list while a perfectly ordinary window is open on screen, and the same window is reachable only through `kAXChildren`. The window list is now the union of both, deduped, so Finder is drivable like anything else.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "A call could wait forever.",
-            body: [
-              "Killing a server does not guarantee the end of its output: a grandchild that inherited the pipe holds it open after the child is gone, and the read behind it waited indefinitely no matter what the watchdog did. Those reads now give up once the deadline has passed and the child has exited, whoever still holds the pipe, and the watchdog escalates to SIGKILL for a server that outlives its grace period. Sound's `say` and the bridge's `open`, which had no timeout at all, are bounded the same way.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "The Simulator row said Simulator was not installed, on a Mac running one.",
-            body: [
-              "Xcode 27 ships no `Simulator.app` — the simulator's window belongs to DeviceHub now — while LaunchServices goes on pointing at the path Xcode 26 used. The row fell back to the not-installed glyph with devices booted and the surface working. It now falls back to the app that owns that window today, and a Mac with no Xcode at all still says nothing is installed, which is still true.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "The app offered a licence while the store was closed.",
-            body: [
-              "The website already gated its buy copy on whether the payment link resolves; the app's two buy buttons did not, so a build made while the store is shut still invited people to a page that could not sell them anything.",
             ]),
         ]),
     ])
