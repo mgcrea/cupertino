@@ -138,3 +138,99 @@ test("the two lists are the same size, so a rename cannot hide in the totals", (
     "the site and the servers agree on names but not on how many — check for a duplicate",
   );
 });
+
+/*
+ * `llms.txt` is the same claim in prose, and it is served at /llms.txt to
+ * crawlers and to models that will repeat it verbatim. It is hand-maintained
+ * and nothing checked it, so it drifted further than any other file in the
+ * repo: at one point seven surfaces named when ten shipped, a version eight
+ * releases old, "not on npm yet" after every package had been published, wrong
+ * tool counts on five surfaces, and "Safari — 7 tools … read-only. There is no
+ * write tool", which is a false SAFETY claim in the one file written for
+ * machines to quote.
+ *
+ * Counted from the site's own list rather than from the servers, because
+ * `surfaces.ts` is already pinned to the servers by the three tests above. So a
+ * tool that ships reaches both files or neither.
+ */
+const LLMS = join(ROOT, "apps", "website", "public", "llms.txt");
+
+const surfaceBlocks = () => {
+  const src = readFileSync(SITE, "utf8");
+  const blocks = src.split(/\n  \{\n    id: "/).slice(1);
+  return blocks.map((block) => {
+    const id = block.slice(0, block.indexOf('"'));
+    // Non-greedy to the first `]`, so a short array written on one line counts
+    // the same as a long one written over many. Requiring a newline before the
+    // bracket read Contacts' two write tools as none.
+    const section = (key) => {
+      const m = block.match(new RegExp(`\\n    ${key}: \\[(.*?)\\]`, "s"));
+      return m ? [...m[1].matchAll(/"(apple_[a-z0-9_]+)"/g)].length : 0;
+    };
+    // The gated entries are objects written over several lines, so the name is
+    // on its own line rather than beside the brace.
+    const gatedBlock = block.match(/\n    gated: \[(.*?)\n    \],/s);
+    const gated = gatedBlock
+      ? [...gatedBlock[1].matchAll(/name: "(apple_[a-z0-9_]+)"/g)].length
+      : 0;
+    return { id, read: section("read"), write: section("write"), gated };
+  });
+};
+
+/** The bullet a surface gets in llms.txt, from its first line to the next blank line or bullet. */
+const llmsBullet = (text, id) => {
+  const name = id[0].toUpperCase() + id.slice(1);
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => l.startsWith(`- ${name} — `));
+  if (start < 0) return null;
+  const end = lines.findIndex((l, i) => i > start && (l === "" || l.startsWith("- ")));
+  return lines.slice(start, end < 0 ? undefined : end).join("\n");
+};
+
+test("llms.txt names every surface, with the tool count the site lists", () => {
+  const text = readFileSync(LLMS, "utf8");
+  const blocks = surfaceBlocks();
+  assert.ok(blocks.length > 0, "found no surfaces in surfaces.ts — the split is broken");
+  const problems = [];
+  for (const { id, read, write, gated } of blocks) {
+    const total = read + write + gated;
+    const bullet = llmsBullet(text, id);
+    if (!bullet) {
+      problems.push(`${id}: no bullet in llms.txt`);
+      continue;
+    }
+    const claimed = Number(bullet.match(/— (\d+) tools?/)?.[1]);
+    if (claimed !== total)
+      problems.push(`${id}: llms.txt says ${claimed} tools, the site lists ${total}`);
+  }
+  assert.deepEqual(problems, [], problems.join("; "));
+});
+
+test("llms.txt calls no surface read-only that has write tools", () => {
+  const text = readFileSync(LLMS, "utf8");
+  for (const { id, write } of surfaceBlocks()) {
+    if (write === 0) continue;
+    const bullet = llmsBullet(text, id) ?? "";
+    assert.ok(
+      !/read-only|no write tool/i.test(bullet),
+      `llms.txt calls ${id} read-only, but the site lists ${write} write-gated tool(s)`,
+    );
+  }
+});
+
+/*
+ * The minor version, not the full one. A patch release changes no surface and
+ * no tool, and a gate that demanded an llms.txt edit for every patch would be
+ * satisfied by bumping the number without reading the rest, which is the drift
+ * it exists to stop.
+ */
+test("llms.txt states the shipped minor version and does not claim npm is pending", () => {
+  const text = readFileSync(LLMS, "utf8");
+  const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
+  const minor = version.split(".").slice(0, 2).join(".");
+  assert.ok(
+    new RegExp(`\\b${minor.replace(".", "\\.")}\\.\\d+\\b`).test(text),
+    `llms.txt does not mention a ${minor}.x release; the shipped version is ${version}`,
+  );
+  assert.ok(!/not on npm yet/i.test(text), "llms.txt still says the packages are not on npm");
+});
