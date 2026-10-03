@@ -152,7 +152,10 @@ tells the buyer that rather than leaving it to be discovered. See [docs/licensin
 
 A refund or dispute can arrive before the licence does, while fulfilment is still answering 500 and
 Stripe is retrying it. That revocation finds no row, so it is written to `early_revocations` by
-payment intent, and the fulfilment that follows records the licence revoked and mails nothing.
+payment intent, and the fulfilment that follows records the licence revoked and mails nothing. A
+won dispute deletes its note there as well as restoring the row. An inquiry (a dispute whose status
+starts `warning_`) revokes nothing: it closes as `warning_closed`, never `won`, so nothing would
+ever restore it.
 
 ## What is not stored
 

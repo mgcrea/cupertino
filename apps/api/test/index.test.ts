@@ -386,6 +386,51 @@ describe("revocation", () => {
     expect(revocation(t)).toEqual({ revoked: 1, revoked_reason: "disputed" });
   });
 
+  it("restores a licence an early dispute revoked, once the dispute is won", async () => {
+    const t = setup();
+    await t.event("charge.dispute.created", { id: "dp_1", payment_intent: "pi_1" });
+    await t.event("checkout.session.completed", session());
+    await t.event("charge.dispute.closed", { id: "dp_1", payment_intent: "pi_1", status: "won" });
+    expect(revocation(t)).toEqual({ revoked: 0, revoked_reason: null });
+    expect(t.d1.sql("SELECT payment_intent FROM early_revocations")).toEqual([]);
+  });
+
+  // Won before the licence existed: the note has to go too, or the fulfilment
+  // that follows would still record a licence the bank found was paid for.
+  it("lets a dispute won before fulfilment leave the licence live", async () => {
+    const t = setup();
+    await t.event("charge.dispute.created", { id: "dp_1", payment_intent: "pi_1" });
+    await t.event("charge.dispute.closed", { id: "dp_1", payment_intent: "pi_1", status: "won" });
+    await t.event("checkout.session.completed", session());
+    expect(revocation(t)).toEqual({ revoked: 0, revoked_reason: null });
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  // An inquiry is the bank asking a question, not a chargeback. It arrives as
+  // `charge.dispute.created` with a `warning_` status and closes as
+  // `warning_closed`, never `won`, so revoking on it was for good.
+  it("leaves a licence alone on an inquiry", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", session());
+    const response = await t.event("charge.dispute.created", {
+      id: "dp_1",
+      payment_intent: "pi_1",
+      status: "warning_needs_response",
+    });
+    expect(await response.text()).toMatch(/inquiry/);
+    expect(revocation(t)).toEqual({ revoked: 0, revoked_reason: null });
+  });
+
+  it("and writes nothing early for an inquiry before the licence", async () => {
+    const t = setup();
+    await t.event("charge.dispute.created", {
+      id: "dp_1",
+      payment_intent: "pi_1",
+      status: "warning_needs_response",
+    });
+    expect(t.d1.sql("SELECT payment_intent FROM early_revocations")).toEqual([]);
+  });
+
   it("writes nothing early for a payment whose licence was already revoked", async () => {
     const t = setup();
     await t.event("checkout.session.completed", session());

@@ -87,7 +87,10 @@ export const charge = z.object({
 export const dispute = z.object({
   id: z.string().min(1),
   payment_intent: z.string().nullish(),
-  /** `won`, `lost`, `warning_closed`, … Only `won` restores a licence. */
+  /**
+   * `won`, `lost`, `warning_closed`, … Only `won` restores a licence, and a
+   * `warning_` status is an inquiry, which revokes nothing to begin with.
+   */
   status: z.string().nullish(),
 });
 
