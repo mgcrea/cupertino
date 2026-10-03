@@ -97,7 +97,9 @@ struct WiringCheck {
     staleIsDecidedByCommand()
     incompleteVersusNotConfigured()
     nonObjectJSONRefused()
+    anEmptyReadIsReadAgain()
     backupAndNoLitter()
+    aSymlinkedConfigIsWrittenThrough()
     localScopeIsReadCorrectly()
     projectFileIsJustAnotherMerge()
     disabledSurfacesArePruned()
@@ -483,6 +485,96 @@ struct WiringCheck {
     let empty = dir.appendingPathComponent("empty.json")
     try? "".write(to: empty, atomically: true, encoding: .utf8)
     check("an empty file reads as {}", (try? ClientWiringMerge.readJSON(empty))?.isEmpty == true)
+  }
+
+  /// An empty file is also what a config looks like halfway through another
+  /// process rewriting it: truncate, then write. Read as `{}` there, the merge
+  /// wrote back a file holding only Cupertino's entries, and the backup was of
+  /// the empty file. So an empty read is read once more, a moment later.
+  static func anEmptyReadIsReadAgain() {
+    print("a config that is empty when first read")
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("wiring-check-\(UUID().uuidString)")
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let json = dir.appendingPathComponent("mcp.json")
+    try? Data().write(to: json)
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+      try? Data(#"{"theirs":1}"#.utf8).write(to: json)
+    }
+    check(
+      "a JSON config that fills in a moment later is read as what it became",
+      (try? ClientWiringMerge.readJSON(json))?["theirs"] as? Int == 1)
+
+    // Codex's config.toml is read by its own function and has the same race.
+    let toml = dir.appendingPathComponent("config.toml")
+    try? Data().write(to: toml)
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+      try? Data("[mcp_servers.theirs]\ncommand = \"x\"\n".utf8).write(to: toml)
+    }
+    check(
+      "and so is a TOML one",
+      names(try? ClientWiringTOML.read(toml)) == ["theirs"])
+
+    try? Data().write(to: json)
+    check(
+      "a file that stays empty is still an empty config",
+      (try? ClientWiringMerge.readJSON(json))?.isEmpty == true)
+  }
+
+  /// A config that is a symlink into somebody's dotfiles repository.
+  ///
+  /// `replaceItemAt` refused to swap a symlink, so such a config could never be
+  /// written; the backup `copyItem` made first was itself a symlink to the live
+  /// file rather than a snapshot of it; and the stamp was the link's own, so
+  /// the changed-underneath check could not see the file change.
+  static func aSymlinkedConfigIsWrittenThrough() {
+    print("a config that is a symlink")
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("wiring-check-\(UUID().uuidString)")
+    let dotfiles = root.appendingPathComponent("dotfiles", isDirectory: true)
+    try? fm.createDirectory(at: dotfiles, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    let real = dotfiles.appendingPathComponent("mcp.json")
+    let link = root.appendingPathComponent("mcp.json")
+    try? Data(#"{"old":true}"#.utf8).write(to: real)
+    try? fm.createSymbolicLink(at: link, withDestinationURL: real)
+
+    let stamp = ClientWiringMerge.stamp(of: link)
+    var backup: URL?
+    var threw: Error?
+    do {
+      backup = try ClientWiringMerge.write(
+        Data(#"{"new":true}"#.utf8), to: link, backupSuffix: "cupertino-backup",
+        expecting: stamp)
+    } catch {
+      threw = error
+    }
+    check("it is written (\(threw.map { "\($0)" } ?? "no error"))", threw == nil)
+    check(
+      "through the link, into the file it points at",
+      (try? Data(contentsOf: real)) == Data(#"{"new":true}"#.utf8))
+    check(
+      "and the link is still a link",
+      (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil)
+    let backedUp =
+      backup.map { (try? fm.destinationOfSymbolicLink(atPath: $0.path)) == nil } ?? false
+    check(
+      "the backup is a copy of what was there, not a link to the live file",
+      backedUp && backup.flatMap { try? Data(contentsOf: $0) } == Data(#"{"old":true}"#.utf8))
+    // Inside a dotfiles repository a stray backup holding somebody's tokens is
+    // one `git add .` from being published.
+    check(
+      "and it sits beside the configured path, not inside the repository",
+      backup?.deletingLastPathComponent().standardizedFileURL.path
+        == root.standardizedFileURL.path)
+
+    let before = ClientWiringMerge.stamp(of: link)
+    try? Data(#"{"changed by someone else":true,"padding":"xxxxxxxx"}"#.utf8).write(to: real)
+    check(
+      "a change to the file behind the link moves its stamp",
+      ClientWiringMerge.stamp(of: link) != before)
   }
 
   // MARK: - 7. Backup kept, no temp files left behind

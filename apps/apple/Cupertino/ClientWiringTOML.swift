@@ -123,7 +123,7 @@ nonisolated enum ClientWiringTOML {
   // MARK: - Reading
 
   static func read(_ url: URL) throws -> Document {
-    let data = try Data(contentsOf: url)
+    let data = try ClientWiringMerge.contents(of: url)
     guard let text = String(data: data, encoding: .utf8) else {
       throw ScanError.notUTF8(url)
     }

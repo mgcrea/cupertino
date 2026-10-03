@@ -25,8 +25,22 @@ nonisolated enum ClientWiringMerge {
     }
   }
 
-  static func readJSON(_ url: URL) throws -> [String: Any] {
+  /// A config's bytes, looked at twice if the first look finds none.
+  ///
+  /// Empty is also what a config looks like halfway through another process
+  /// rewriting it (truncate, then write), and read as empty there the merge
+  /// wrote back a file holding only Cupertino's entries. A moment later tells
+  /// that apart from a file that really is empty. Shared with
+  /// `ClientWiringTOML.read`, which has the same race.
+  static func contents(of url: URL) throws -> Data {
     let data = try Data(contentsOf: url)
+    guard data.isEmpty else { return data }
+    Thread.sleep(forTimeInterval: 0.25)
+    return try Data(contentsOf: url)
+  }
+
+  static func readJSON(_ url: URL) throws -> [String: Any] {
+    let data = try contents(of: url)
     if data.isEmpty { return [:] }
     guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw ReadError.notJSONObject(url)
@@ -420,6 +434,9 @@ nonisolated enum ClientWiringMerge {
   /// this exists for silently passes. Measured — the first version of this
   /// function did exactly that.
   static func stamp(of url: URL) -> Stamp {
+    // Of the file, not of a symlink to it: `attributesOfItem` does not follow
+    // one, and a link's own size and date never move when the file does.
+    let url = url.resolvingSymlinksInPath()
     guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
       let size = attributes[.size] as? Int, let modified = attributes[.modificationDate] as? Date
     else { return .absent }
@@ -480,12 +497,21 @@ nonisolated enum ClientWiringMerge {
   ) throws -> URL? {
     let fm = FileManager.default
     var backup: URL?
+    // A config that is a symlink, into a dotfiles repository most often, is
+    // written through: swapped and stamped at the file it points at, and the
+    // link left as it was. Against the link itself `replaceItemAt` refused, and
+    // `copyItem` made a "backup" that was a second link to the live file rather
+    // than a copy of it. The backup stays beside the path the client reads, not
+    // beside the file: inside a dotfiles repository a stray backup of a config
+    // holding somebody's tokens is one `git add .` from being published.
+    let configured = url
+    let url = url.resolvingSymlinksInPath()
 
     if let expecting, stamp(of: url) != expecting { throw WriteError.changedUnderneath(url) }
 
     let existed = fm.fileExists(atPath: url.path)
     if existed {
-      backup = url.appendingPathExtension(backupSuffix)
+      backup = configured.appendingPathExtension(backupSuffix)
       try? fm.removeItem(at: backup!)
       try fm.copyItem(at: url, to: backup!)
     } else {
