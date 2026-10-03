@@ -82,6 +82,13 @@ list", "read the thread before you answer it", or "check what exists before you 
 | Messages  | `catch_up`              | `send`                  |
 | Safari    | `what_was_i_reading`    | — (no write prompt yet) |
 | Maps      | `where_was_that_place`  | — (no write prompt yet) |
+| Screen    | —                       | —                       |
+| Sound     | —                       | —                       |
+| Desktop   | —                       | —                       |
+| Simulator | —                       | —                       |
+
+The four Swift surfaces are served in-process by the app and answer `prompts/list` with an empty
+list.
 
 All are namespaced like the tools: `apple_mail_triage`, not `triage`.
 

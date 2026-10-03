@@ -32,6 +32,12 @@
           "description": "Restrict every read and write to these Reminders lists, by name.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_REMINDERS_ACCOUNTS",
+          "description": "Restrict every read and write to these Reminders accounts, by name or id. Bounds reading, not just writing.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

@@ -36,14 +36,26 @@ client that has not opted in is never told they exist.
 | `apple_maps_add_favorite`    | save a place as a favourite, seeding it through `maps://` |
 | `apple_maps_remove_favorite` | drop a favourite row                                      |
 
+Three more press controls on a place card through Accessibility rather than writing SQL, and are
+registered only when Cupertino.app hosts this server: the grant belongs to the app, so a package
+run from npm has no way to reach them and is never told they exist.
+
+| Tool                            | What                                                       |
+| ------------------------------- | ---------------------------------------------------------- |
+| `apple_maps_save_place`         | add a place to the Places library (not the same as Pinned) |
+| `apple_maps_remove_saved_place` | remove a place from the Places library                     |
+| `apple_maps_add_place_to_guide` | file a place in an existing Guide; Maps cannot confirm it  |
+
+Each opens Maps, brings its window forward and leaves the place in your Recents.
+
 ## What it does not do
 
 It reads what is **saved on this Mac**. It does not search Apple's map of the world, geocode an
 address, give directions or compute a travel time. Those are network calls to Apple's services,
 not data on your disk.
 
-It writes only **favourites**, and only with `APPLE_MAPS_ALLOW_WRITES` set. Everything else here is
-read-only. The store is mirrored to iCloud by `NSPersistentCloudKitContainer`, so a write is an edit
+It writes only with `APPLE_MAPS_ALLOW_WRITES` set: favourites through the store, and the Places
+library and Guide membership through Maps' own interface. Everything else here is read-only. The store is mirrored to iCloud by `NSPersistentCloudKitContainer`, so a write is an edit
 to one replica of a synchronising object graph underneath a running app — a malformed row reaches
 every device on the account. That is why a place record is never fabricated: adding a favourite opens
 `maps://` so that Maps itself mints the record, and only then is it copied. **The place is left in
@@ -69,7 +81,11 @@ If a listing comes back empty, that means you have saved nothing of that kind. R
 | `APPLE_MAPS_EXPOSE_PROMPTS` | on         | register the prompt and `cupertino://maps/*` resources |
 | `APPLE_MAPS_DEBUG`          | off        | verbose logging on stderr                              |
 
-`APPLE_MAPS_ALLOW_WRITES` is accepted and ignored: there is no mutating tool for it to gate.
+`APPLE_MAPS_ALLOW_WRITES` (off) registers the tools under [What it writes](#what-it-writes).
 
 See [docs/maps.md](../../docs/maps.md) for the phase-0 measurements, including the three separate
 occasions on which this store was declared not to exist.
+
+## Licence
+
+[MIT](LICENSE).

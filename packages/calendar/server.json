@@ -32,6 +32,12 @@
           "description": "Restrict every read and write to these calendars, by name.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_CALENDAR_ACCOUNTS",
+          "description": "Restrict every read and write to these Calendar accounts, by name or id. Bounds reading, not just writing.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

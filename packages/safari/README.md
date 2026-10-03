@@ -137,3 +137,7 @@ why reading a code a _website shows_ is a different question from reading the va
 - **`open_url` accepts `http` and `https` only.** A `javascript:` URL would be `do JavaScript`
   through the front door — measured: Safari accepts one through the navigation verb — and `file:`
   is a navigation verb that reads local files.
+
+## Licence
+
+[MIT](LICENSE).

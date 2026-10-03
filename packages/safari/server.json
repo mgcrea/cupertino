@@ -26,6 +26,12 @@
           "description": "Register the mutating tools. Off by default, and the gate decides whether the write tools exist at all rather than merely refusing — an agent with writes off cannot see them.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_SAFARI_ALLOW_CODES",
+          "description": "Return one-time codes: a one-time-code field in apple_safari_page_elements, and apple_safari_find_codes for a code a page shows as text. Its own gate rather than allowWrites, because it is a read. Credential fields stay redacted whatever this says.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

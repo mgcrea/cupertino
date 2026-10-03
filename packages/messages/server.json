@@ -26,6 +26,18 @@
           "description": "Register the mutating tools. Off by default, and the gate decides whether the write tools exist at all rather than merely refusing — an agent with writes off cannot see them.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_MESSAGES_ALLOW_CODES",
+          "description": "Register apple_messages_find_codes, which reads one-time codes out of recent messages. Its own gate rather than allowWrites: it is a read, and the one read most worth an explicit decision.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_MESSAGES_ALLOW_FILE_SEND",
+          "description": "Let apple_messages_send_message attach a local file. Off by default even with writes on, because a path argument is a way to send anything the server can read.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

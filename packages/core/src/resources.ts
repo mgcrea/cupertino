@@ -29,7 +29,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
  * - `diagnostics` is the live capability report.
  * - `inventory` is the set of containers you address by name: accounts, and
  *   whatever the surface calls its folders. Surfaces with no such containers
- *   (Messages, Safari) register two resources rather than inventing a third.
+ *   (Contacts, Messages, Safari, Maps) register two resources rather than
+ *   inventing a third.
  */
 
 export const RESOURCE_SCHEME = "cupertino";

@@ -45,7 +45,7 @@ Settled. Recorded so it is not re-opened.
    accessory or read live characteristic values, which no amount of file reading reaches because
    they never touch disk. It still loses. Points 1 and 4 apply unchanged, so the price is the file
    lane and every write verb on Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and
-   Maps. Seven surfaces for one, and the one is already shippable read-only without it — see
+   Maps. Eight surfaces for one, and the one is already shippable read-only without it — see
    [home.md](home.md).
 
 Apple Events to Mail _is_ shippable on the store, via
@@ -239,6 +239,30 @@ copy afterwards.
 
 The bump is automatic but not unconditional — the `release-app` job skips it with a notice when
 `HOMEBREW_TAP_TOKEN` is unset, so a silently stale cask looks exactly like a successful release.
+
+### The secrets the release needs
+
+Nine secrets, and until this table nothing listed them. A successor — see
+[succession.md](succession.md) — has to obtain every one, and two of them are exactly what that
+document promises are never shared.
+
+| Secret                      | Used by                                       | What it is                                                                                        |
+| --------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `DEVELOPER_ID_P12_BASE64`   | `release-app`                                 | The Developer ID Application certificate and private key, as a base64 `.p12`. Never shared.       |
+| `DEVELOPER_ID_P12_PASSWORD` | `release-app`                                 | The password that `.p12` was exported with.                                                       |
+| `KEYCHAIN_PASSWORD`         | `release-app`                                 | Any string; it locks the temporary keychain the job creates and deletes.                          |
+| `AC_KEY_ID`                 | `release-app`                                 | The App Store Connect API key id, for `notarytool`.                                               |
+| `AC_ISSUER_ID`              | `release-app`                                 | The issuer id of the same key.                                                                    |
+| `AC_KEY_P8_BASE64`          | `release-app`                                 | The `.p8` private key of that API key, base64. Notarization only; it can sign nothing.            |
+| `SPARKLE_ED_PRIVATE_KEY`    | `release-app`                                 | The EdDSA update key, exported once by `make sparkle-keys`. Never shared — see succession.md §3b. |
+| `HOMEBREW_TAP_TOKEN`        | `release-app`                                 | Write access to `mgcrea/homebrew-tap`. Optional: the cask bump is skipped without it.             |
+| `CLOUDFLARE_API_TOKEN`      | `deploy-api`, `deploy-website`, `revocations` | The Worker, D1 and the site. `revocations` only reads D1 through it.                              |
+
+`CLOUDFLARE_API_TOKEN` is a secret of the `production` environment, not of the repository, which is
+why every job that reads it names that environment — a job without the line reads an empty token.
+`release-app` runs in a `release` environment so that the eight secrets it reads can be moved
+there, behind a tag-only deployment policy, where a workflow edited on a pull-request branch cannot
+read the signing or the update key.
 
 ### The version number, and where it lives
 

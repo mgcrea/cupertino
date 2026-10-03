@@ -60,3 +60,7 @@ an attachment whose bytes Notes never loads — see [docs/notes.md](../../docs/n
 - **Search caches on a TTL, not on invalidation.** Checking whether the cache is stale costs _more_
   over Apple Events (128 ms) than redoing the scan (97 ms), so bounded staleness is the honest
   trade. See [docs/notes.md](../../docs/notes.md).
+
+## Licence
+
+[MIT](LICENSE).

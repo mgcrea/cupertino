@@ -136,7 +136,7 @@ write lane.
 
 So taking the entitlement costs Mail, Notes, Reminders, Calendar, Contacts,
 Messages, Safari and Maps — every write verb on every surface, and every file-lane
-read. It buys live state and control on one. That is seven surfaces for one, and
+read. It buys live state and control on one. That is eight surfaces for one, and
 it is not close.
 
 ### What the entitlement would actually buy
@@ -147,7 +147,7 @@ contact with the probe's results:
 | Claimed gain                         | Actually                                                                                                                                                                         |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "names would no longer be encrypted" | **Moot.** Nothing is encrypted. The probe measured 115,466 B of legible text across 146 columns and **zero sealed** name-bearing blobs. There is no constraint here to dissolve. |
-| "no Full Disk Access prompt"         | **Worth nothing incrementally.** Cupertino already requires the grant for seven surfaces, and it is indivisible. Home adds no permission cost whatsoever.                        |
+| "no Full Disk Access prompt"         | **Worth nothing incrementally.** Cupertino already requires the grant for eight surfaces, and it is indivisible. Home adds no permission cost whatsoever.                        |
 | "live state, and control"            | **True, and it is the only real gain.** Live characteristic values never touch disk, so no amount of file reading reaches them, and there is no write lane at all.               |
 
 One genuine benefit, purchasable only at a price that destroys the rest of the
