@@ -7,8 +7,12 @@
 # The Content-Security-Policy is deliberately NOT set here. Astro builds it per
 # page from hashes of that page's own scripts (`security.csp` in
 # astro.config.mjs), and one static header for every path cannot know them.
+#
+# No `preload` on Strict-Transport-Security. The preload list takes registrable
+# domains only, so on cupertino.mgcrea.io the token did nothing except suggest
+# the site was on the list. Preloading belongs on mgcrea.io itself, if anywhere.
 /*
-  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
