@@ -27,6 +27,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const fatal = (...lines) => {
   for (const line of lines) console.error(line);
@@ -51,7 +52,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!file) fatal("FATAL: name a dotenv file, e.g. .prod.vars");
 
-const API = join(dirname(new URL(import.meta.url).pathname), "..", "apps/api");
+const API = join(dirname(fileURLToPath(import.meta.url)), "..", "apps/api");
 const path = resolve(API, file);
 
 let entries;

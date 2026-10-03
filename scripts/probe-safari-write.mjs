@@ -47,6 +47,7 @@
 //   node scripts/probe-safari-write.mjs --all --json
 
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const args = new Set(process.argv.slice(2));
 const wantAll = args.has("--all");
@@ -248,7 +249,7 @@ if (want("--scheme-gate")) {
 function readScript(name) {
   const src = execFileSync(
     "/bin/cat",
-    [new URL("../packages/safari/src/client/jxa/writes.ts", import.meta.url).pathname],
+    [fileURLToPath(new URL("../packages/safari/src/client/jxa/writes.ts", import.meta.url))],
     { encoding: "utf8" },
   );
   const match = new RegExp(`export const ${name} = \`([\\s\\S]*?)\``).exec(src);
