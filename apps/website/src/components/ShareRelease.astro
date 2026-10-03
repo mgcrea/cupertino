@@ -20,7 +20,6 @@ interface Props {
 const { post, url } = Astro.props;
 
 const x = `https://x.com/intent/post?${new URLSearchParams({ text: post, url })}`;
-const bluesky = `https://bsky.app/intent/compose?${new URLSearchParams({ text: `${post} ${url}` })}`;
 ---
 
 <section class="mt-10 rounded-[16px] border border-rule bg-bg-2 p-5 md:p-6" aria-labelledby="share">
@@ -30,7 +29,6 @@ const bluesky = `https://bsky.app/intent/compose?${new URLSearchParams({ text: `
   </p>
   <div class="mt-5 flex flex-wrap gap-2.5">
     <Button href={x} variant="secondary" size="sm" external>Post on X</Button>
-    <Button href={bluesky} variant="secondary" size="sm" external>Post on Bluesky</Button>
     <button
       type="button"
       data-copy={`${post} ${url}`}
