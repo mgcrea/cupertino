@@ -136,7 +136,8 @@ Changing the payload shape means changing all three. The field order in the obje
 - **Never hand out a revoked key.** A redelivered `checkout.session.completed` after a refund is not
   re-sent, and `/thanks` shows a revoked page instead of the key.
 - **Check `payment_status`.** A session completes for delayed payment methods before the money
-  lands. Only `paid` mints; an absent field is refused rather than read as paid.
+  lands. Only `paid` and `no_payment_required` (a 100%-off code, still a sale) mint; an
+  absent field is refused rather than read as paid.
 - **Cap the body before buffering it.** The signature needs the whole body, so until it holds the
   sender decides how much is allocated; anything over 256 KB answers 413.
 

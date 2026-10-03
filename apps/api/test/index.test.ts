@@ -180,6 +180,21 @@ describe("fulfilment", () => {
     expect(t.sent).toEqual([BUYER]);
   });
 
+  // A 100%-off promotion code: nothing to pay, and still a sale. Stripe creates
+  // no PaymentIntent for it, so the row has none for a refund to find either.
+  it("mints and mails a key for a session that needed no payment", async () => {
+    const t = setup();
+    const response = await t.event(
+      "checkout.session.completed",
+      session({ payment_status: "no_payment_required", amount_total: 0, payment_intent: null }),
+    );
+    expect(response.status).toBe(200);
+    expect(t.sent).toEqual([BUYER]);
+    expect(t.d1.sql("SELECT payment_intent, amount_paid FROM licenses")).toEqual([
+      { payment_intent: "", amount_paid: 0 },
+    ]);
+  });
+
   it("mints nothing for a session that is not paid yet", async () => {
     const t = setup();
     const response = await t.event(

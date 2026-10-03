@@ -179,7 +179,11 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
   // or a mode where it is omitted, would mint a licence for an unpaid session. The
   // field is documented as always present on a completed checkout session; if it ever
   // is not, refusing is the failure worth having.
-  if (session.payment_status !== "paid") {
+  //
+  // `no_payment_required` is a 100%-off promotion code: nothing to pay, and still
+  // a sale. It used to fall in with "not paid yet" and be dropped with a 200, so
+  // the code's holder got no key and nothing said why.
+  if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
     return new Response(`not paid (payment_status: ${session.payment_status ?? "absent"})`, {
       status: 200,
     });
@@ -267,14 +271,12 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
         major,
         minted.key,
         session.id,
-        // Empty only when Stripe created no PaymentIntent, which for a session
-        // in payment mode means a no-cost order: a 100% discount or a zero
-        // price, so nothing was charged and nothing can ever be refunded or
-        // disputed. Those arrive as `no_payment_required` and stop at the
-        // `payment_status` check above, so in practice the empty rows are the
-        // ones that predate migration 0002. `revoke` and `disputeClosed` both
-        // return before querying when an event carries no payment intent, so an
-        // empty column is never matched.
+        // Empty when Stripe created no PaymentIntent, which for a session in
+        // payment mode means a no-cost order: a 100% discount or a zero price,
+        // arriving as `no_payment_required`. Nothing was charged, so nothing can
+        // ever be refunded or disputed. The other empty rows predate migration
+        // 0002. `revoke` and `disputeClosed` both return before querying when an
+        // event carries no payment intent, so an empty column is never matched.
         session.payment_intent ?? "",
         priceId,
         session.amount_total ?? 0,
