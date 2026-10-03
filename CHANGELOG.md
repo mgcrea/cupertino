@@ -6,11 +6,101 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.24.1`,
-`notes-v1.24.1`, `reminders-v1.24.1`, `core-v1.24.1` for the npm packages, and `app-v1.24.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.25.0`,
+`notes-v1.25.0`, `reminders-v1.25.0`, `core-v1.25.0` for the npm packages, and `app-v1.25.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.25.0] - 2026-10-03
+
+### Changed
+
+- **Removing a place from Maps takes an explicit `confirm`.** `apple_maps_remove_favorite` and
+  `apple_maps_remove_saved_place` both delete on every device signed in to the account, through
+  iCloud, and now refuse a call without `confirm: true` — before Maps is opened, in the second
+  case. Every other destructive tool on every surface already asked.
+
+- **Safari element ids name the page load they came from.** An id now reads `3f9a2c1d-e12` rather
+  than `e12`, and a click or fill goes only to the tab that handed it out. With two tabs on the same
+  URL, `click e12` from one tab's list could be claimed by the other and press its `e12` instead,
+  with nothing in the answer saying which tab had acted. An id whose page has since reloaded or
+  closed is refused rather than guessed at; list the elements again. Tabs open across the update
+  need a reload first.
+
+- **Every surface's diagnostics report the same things in the same places.** `server` is which
+  build is running, with its version and commit, and `settings` is how it is configured — the write
+  gate, prompts, on-demand tools and the result cap. Notes, Reminders and Calendar used to file their
+  lane report under `server` and so could not report their own version; their lanes now sit beside
+  it, as everyone else's do. Contacts' diagnostics stopped saying its dictionary offers a delete.
+
+### Fixed
+
+- **Desktop driving no longer types into whatever happens to be in front.** A `type`, `key`,
+  `click` or `hover` that named no application went to the frontmost one, even when the surface's
+  reach did not include it — so with Terminal in front, text meant for another app went into a
+  shell. The frontmost application is now checked against the surface's reach before anything is
+  posted, and checked again after the on-screen countdown, since that is when the person at the
+  keyboard may switch apps. A click or hover is also refused unless the point is actually on one of
+  that application's windows, and no surface can drive Cupertino itself, whatever its reach.
+
+- **A recording ends when the client that started it goes.** A microphone recording outlived its
+  client and its editor, with the indicator up and nobody left holding a `stop_recording`; switching
+  Sound or recording off did not end one already running either. Both now finalise it. Recordings
+  are written readable by you alone, as screen captures are.
+
+- **Screen capture honours a surface being switched off.** A surface switched off in Settings could
+  still have its window photographed, by name or, with "Capture any application", by bundle id.
+  Both are refused now, before anything is captured.
+
+- **The Activity window and the audit log see Desktop, Simulator, Screen and Sound.** Calls to the
+  surfaces Cupertino serves itself were missing from both, and their sessions read zero calls
+  however hard they were driven. A trial running out also closes those sessions now, as it already
+  closed every other surface's.
+
+- **The audit log survives a disk that will not take a write.** A failed append used to advance the
+  chain in memory anyway, so the next record that landed linked to one that never had, and
+  verification reported a full disk as tampering. The log now continues from what is actually on
+  disk and files a notice saying how many records were not written. A Keychain prompt dismissed while
+  signing an export also no longer replaces the signing key recipients have pinned.
+
+- **Installing an update with a Screen or Sound session open no longer kills the app mid-install.**
+  The updater stopped every session's process, and those two report Cupertino's own.
+
+- **A second copy of Cupertino quitting no longer takes the running one's socket with it**, and the
+  watch that notices the socket being replaced now actually runs.
+
+- **`apple_mail_save_attachment` writes the attachment, not three bytes of whitespace.** When Mail
+  keeps an attachment beside the message rather than inside it, the blank part left in its place
+  was taken for the file. And `apple_mail_get_message` stopped saying an attachment could not be fetched when
+  `save_attachment` could fetch it; the note now names only the files Mail has not downloaded.
+
+- **Moving a reminder keeps its due time.** A reminder due at 16:40 arrived in the other list as
+  due that day, all day.
+
+- **A server's own log output stays inside Cupertino.** Whatever a server wrote to stderr was also
+  copied to the app's standard error, outside the redaction calls get, and into a file that
+  outlives the process. It now stays in the in-app log only.
+
+- `APPLE_*_DEBUG=0` turned debug logging on, like any other non-empty value; it now means off.
+  Searching Messages no longer holds every recent message in memory at once to decode it; it reads
+  one at a time and stops once it has a page.
+
+### Internal
+
+- The licence API rate-limits its public routes per address, stops showing a key a week after it
+  was issued, refuses a checkout with no payment status rather than reading it as paid, and caps
+  the webhook body before reading it.
+- The revocation list is checked in a job that can read the Cloudflare token. As a step in the test
+  job it read an empty token on every run and skipped green; an app tag now fails without it.
+- CI actions are pinned to commits, every embedded Node tarball is checked against nodejs.org's
+  published checksums, and the bundled runtime moves to Node 24.20.0. `release-app` runs in a
+  `release` environment so the signing and update keys can be scoped away from pull requests.
+- New gates: `make audit-log-check`, `make host-check` (the socket, handshake and teardown, against
+  a socket under /tmp) and `make bridge-protocol-check`. `llms.txt` is checked against the shipped
+  surfaces, which caught it still naming 1.23.0. The linter can now fail the build.
+- One confined-write helper and one build config for every package, stricter TypeScript settings,
+  and a security policy rewritten for the surfaces that actually ship.
 
 ## [1.24.1] - 2026-09-29
 
@@ -2610,7 +2700,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.24.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.25.0...HEAD
+[1.25.0]: https://github.com/mgcrea/cupertino/compare/app-v1.24.1...app-v1.25.0
 [1.24.1]: https://github.com/mgcrea/cupertino/compare/app-v1.24.0...app-v1.24.1
 [1.24.0]: https://github.com/mgcrea/cupertino/compare/app-v1.23.0...app-v1.24.0
 [1.23.0]: https://github.com/mgcrea/cupertino/compare/app-v1.22.1...app-v1.23.0

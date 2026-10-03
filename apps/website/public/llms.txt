@@ -6,7 +6,7 @@
 > editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
-1.24.1 as of September 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+1.25.0 as of October 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
 packages are MIT and on npm; the app carries Screen, Sound, Desktop and Simulator instead, which
 have no npm package because they need permissions and frameworks only the signed app can hold.
 

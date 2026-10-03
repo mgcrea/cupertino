@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-safari",
-  "version": "1.24.1",
+  "version": "1.25.0",
   "description": "Read and act on Safari — history, tabs and reading list, writes off by default",
   "keywords": [
     "apple",
