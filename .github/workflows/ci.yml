@@ -790,6 +790,11 @@ jobs:
           # in the command being executed.
           AC_KEY_P8_BASE64: ${{ secrets.AC_KEY_P8_BASE64 }}
         run: |
+          # Gone when this step ends, pass or fail: nothing after notarization
+          # needs it, and the steps after this one run code this repo did not
+          # write. The cleanup at the end of the job was the only removal, so
+          # the key sat on disk through all of them.
+          trap 'rm -f "$RUNNER_TEMP/ac.p8"' EXIT
           printf '%s' "$AC_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/ac.p8"
           export AC_KEY_PATH="$RUNNER_TEMP/ac.p8"
           # CFBundleVersion is the commit count, not github.run_number, so that a
@@ -805,6 +810,14 @@ jobs:
           echo "CFBundleVersion=$build (from $(git rev-parse --short HEAD))"
           make build-release \
             XCARGS="MARKETING_VERSION=${{ steps.version.outputs.version }} CURRENT_PROJECT_VERSION=$build"
+      # Signing and notarization are done, and nothing below needs the Developer
+      # ID identity: the checks verify a signature rather than make one, and the
+      # appcast is signed from SPARKLE_ED_PRIVATE_KEY. What follows does include
+      # third-party actions (attest, release), so the identity goes now rather
+      # than staying one `security` call away until the cleanup at the end.
+      - name: Drop the signing keychain 🔒
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
       # Every claim the download page makes, checked against the artifact that is
       # about to be uploaded rather than against the tree it was built from.
       - name: Verify the artifact 🔍
@@ -886,6 +899,8 @@ jobs:
             -f message="cupertino $VERSION" \
             $( [ -n "$existing" ] && echo -f sha="$existing" ) \
             -f content="$(base64 -i "$RUNNER_TEMP/cupertino.rb")"
+      # Belt and braces: the two steps above already removed both, unless the
+      # job died before reaching them.
       - name: Clean up secrets 🧹
         if: always()
         run: |
