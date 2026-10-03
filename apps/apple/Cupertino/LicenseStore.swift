@@ -110,10 +110,12 @@ nonisolated enum LicenseStore {
   /// looks like the app losing it.
   @discardableResult
   static func store(_ key: String) -> LicenseCheck {
-    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-    let result = LicenseKey.check(trimmed)
+    // Stored without the breaks a mail client wrapped it at: the same
+    // characters `LicenseKey.check` reads, so `raw` holds the key itself.
+    let compact = key.filter { !$0.isWhitespace }
+    let result = LicenseKey.check(compact)
     if case .valid = result {
-      UserDefaults.standard.set(trimmed, forKey: defaultsKey)
+      UserDefaults.standard.set(compact, forKey: defaultsKey)
     }
     return result
   }

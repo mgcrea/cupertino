@@ -236,6 +236,8 @@ jobs:
         run: make dispatch-check
       - name: Audit export signing 🔍
         run: make audit-check
+      - name: Licence key parsing 🔑
+        run: make license-check
       - name: Audit log survives a failed write 🔍
         if: runner.os == 'macOS'
         run: make audit-log-check

@@ -132,8 +132,11 @@ export const mint = ({
 
 /** Split a key into its parts without judging them. Throws on anything malformed. */
 export const parse = (key) => {
+  // Every whitespace character, not just the ends: a mail client hard-wraps a
+  // key this long, and the breaks come back inside the payload and signature.
+  // None of the key's own alphabet is whitespace, so nothing real is lost.
   const parts = String(key ?? "")
-    .trim()
+    .replace(/\s+/g, "")
     .split(".");
   if (parts.length !== 3) throw new Error("expected three dot-separated parts");
   const [prefix, payload, signature] = parts;

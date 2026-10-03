@@ -65,13 +65,15 @@ nonisolated enum LicenseKey {
     major: Int = AppInfo.major,
     revoked: Set<String> = Revocations.ids
   ) -> LicenseCheck {
-    guard let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return .refused("no licence key")
-    }
+    // Every whitespace character, not just the ends: a key is a couple of
+    // hundred characters with no spaces in it, which a mail client hard-wraps,
+    // and the breaks come back with the paste, inside the payload and the
+    // signature, where `Data(base64Encoded:)` refuses them. None of the key's
+    // own alphabet is whitespace, so nothing real is lost.
+    let compact = (key ?? "").filter { !$0.isWhitespace }
+    guard !compact.isEmpty else { return .refused("no licence key") }
 
-    let parts = key.trimmingCharacters(in: .whitespacesAndNewlines).split(
-      separator: ".", omittingEmptySubsequences: false
-    ).map(String.init)
+    let parts = compact.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
     guard parts.count == 3 else { return .refused("expected three dot-separated parts") }
     guard parts[0] == prefix else { return .refused("unknown key format '\(parts[0])'") }
     guard !parts[1].isEmpty, !parts[2].isEmpty else {

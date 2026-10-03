@@ -523,6 +523,14 @@ audit-check: ## Prove an export signature survives a round trip, with no app and
 		scripts/audit-check.swift
 	@apps/apple/.build/audit-check
 
+license-check: ## Assert the app's licence check reads a key however it was pasted
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/license-check \
+		apps/apple/Cupertino/License.swift \
+		apps/apple/Cupertino/Revocations.swift \
+		scripts/license-check.swift
+	@apps/apple/.build/license-check
+
 wiring-check: ## Assert the config merge leaves other people's files alone
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/wiring-check \
@@ -1230,7 +1238,7 @@ clean: ## Remove the app build output
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
 	dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check \
-	simulator-spike dispatch-check unit chat-check chat-check-real audit-check audit \
+	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
 	blame-setup icon clean smoke-swift audit-log-check host-check bridge-protocol-check \
