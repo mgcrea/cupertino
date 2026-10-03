@@ -80,6 +80,13 @@ try {
   rows = JSON.parse(raw.slice(start))[0].results;
 } catch (error) {
   console.error(`FATAL: could not read D1: ${String(error?.message ?? error)}`);
+  // Captured above, so it has to be passed on here: wrangler puts its reason —
+  // an API error code, a missing permission — on stdout as JSON with `--json`,
+  // and on stderr otherwise. Without this a CI failure named only the command.
+  for (const stream of [error?.stdout, error?.stderr]) {
+    const text = String(stream ?? "").trim();
+    if (text) console.error(text);
+  }
   process.exit(2);
 }
 
