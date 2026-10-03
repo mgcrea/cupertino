@@ -709,7 +709,11 @@ bundle: servers node ## Build, stage and sign a Release Cupertino.app
 # precisely what this enumeration exists to avoid. Apple documents it as
 # unsuitable for signing. `codesign --verify --deep` below is a different verb.
 sign: ## Sign the Release bundle (Developer ID if present, else Apple Development)
-	@id=$$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $$2; exit}'); \
+	@# `set -e`: the codesign calls below are one shell line joined by `;`, so
+	@# without it a failed signature on Sparkle, node, the bridge or the
+	@# extension was hidden whenever the app's own, the last command, succeeded.
+	@set -e; \
+	id=$$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $$2; exit}'); \
 	if [ -z "$$id" ]; then \
 		id=$$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $$2; exit}'); \
 		echo "  !! no Developer ID Application certificate — signing with Apple Development."; \
@@ -729,7 +733,10 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		--entitlements apps/apple/SafariExtension.entitlements "$(RELEASE_EXTENSION)"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
-	@codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1 | sed 's/^/  /'
+	@# Captured rather than piped: through `| sed` the line's status was sed's,
+	@# and a bundle that failed verification passed this target.
+	@out=$$(codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1); status=$$?; \
+	printf '%s\n' "$$out" | sed 's/^/  /'; exit $$status
 	@# The hardened runtime is on and nothing disables library validation, so a
 	@# Sparkle signed by another team fails at dlopen — at launch, on a user's
 	@# Mac, long after this. Assert the team here, where the message is readable.
