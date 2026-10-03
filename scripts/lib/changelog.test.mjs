@@ -4,7 +4,16 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { HIDDEN_SECTIONS, parse, renderHTML } from "./changelog.mjs";
+import {
+  HIDDEN_SECTIONS,
+  parse,
+  plain,
+  postText,
+  renderHTML,
+  SUMMARY_POST_MAX,
+  SUMMARY_TITLE_MAX,
+} from "./changelog.mjs";
+import { RELEASE_CARD, wrapLines } from "./lockup.mjs";
 
 /**
  * The failures these guard against are silent in both directions.
@@ -232,6 +241,107 @@ Lead prose about the build.
           `${real.version}: ### ${name} reached the appcast`,
         );
       }
+    }
+  });
+});
+
+/** Whether a version is 1.25.0 or later — the first release written with a summary. */
+const fromSummaries = (version) => {
+  const [major, minor] = version.split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= 25);
+};
+
+describe("summaries", () => {
+  const SOURCE = `# Changelog
+
+## [2.0.0] - 2026-10-03
+
+**One line for the card.** Two sentences for the post, wrapped
+across lines the way the file wraps everything. With \`code\` and a [link](https://example.com).
+
+A second paragraph, which is lead prose but not the summary.
+
+### Fixed
+
+- **A fix.** Body.
+
+## [1.9.0] - 2026-09-01
+
+Lead prose with no bold title is prose, not a summary.
+
+### Fixed
+
+- **A fix.** Body.
+`;
+  const [withSummary, withoutSummary] = parse(SOURCE);
+
+  it("joins the release's wrapped lead lines into paragraphs", () => {
+    assert.equal(withSummary.lead.length, 2);
+    assert.match(withSummary.lead[0], /post, wrapped across lines/);
+  });
+
+  it("takes the first lead paragraph's bold title as the summary", () => {
+    assert.deepEqual(withSummary.summary, {
+      title: "One line for the card.",
+      description:
+        "Two sentences for the post, wrapped across lines the way the file wraps everything. " +
+        "With `code` and a [link](https://example.com).",
+    });
+  });
+
+  it("has no summary where the lead has no bold title", () => {
+    assert.equal(withoutSummary.summary, null);
+  });
+
+  it("renders a wrapped lead as one paragraph in the appcast, not one per line", () => {
+    const html = renderHTML(withSummary);
+    assert.equal((html.match(/<p>/g) ?? []).length, 2 + 1);
+    assert.match(html, /^<p><strong>One line for the card\.<\/strong> Two sentences/);
+  });
+
+  it("strips markdown for the post", () => {
+    assert.equal(
+      plain("**Bold** with `code`, a [link](https://x.y) and *emphasis*."),
+      "Bold with code, a link and emphasis.",
+    );
+    assert.equal(
+      postText(withSummary.summary),
+      "One line for the card. Two sentences for the post, wrapped across lines the way the file " +
+        "wraps everything. With code and a link.",
+    );
+  });
+
+  /*
+   * The website's per-version page, its card and the post all come from these,
+   * and each has a limit nothing else checks: the card lays the title out in at
+   * most two lines, and the post has to fit beside its link on X. 1.25.0 is the
+   * first release written with one, and every release after it owes one.
+   */
+  it("every release from 1.25.0 on has a summary that fits the card and the post", () => {
+    const real = parse(readFileSync(join(root, "CHANGELOG.md"), "utf8"));
+    for (const release of real.filter((r) => !r.unreleased && fromSummaries(r.version))) {
+      assert.ok(release.summary, `${release.version} has no **Title.** lead paragraph`);
+      const title = plain(release.summary.title);
+      assert.ok(
+        title.length <= SUMMARY_TITLE_MAX,
+        `${release.version}: the title is ${title.length} characters, over ${SUMMARY_TITLE_MAX}`,
+      );
+      // The card's own wrap, not just a character count: a short title of
+      // wide capitals can still need a third line.
+      const lines = wrapLines(
+        title,
+        RELEASE_CARD.TITLE,
+        RELEASE_CARD.WIDTH - 2 * RELEASE_CARD.MARGIN,
+      );
+      assert.ok(
+        lines.length <= 2,
+        `${release.version}: the title needs ${lines.length} lines on the card`,
+      );
+      const post = postText(release.summary);
+      assert.ok(
+        post.length <= SUMMARY_POST_MAX,
+        `${release.version}: the post is ${post.length} characters, over ${SUMMARY_POST_MAX}`,
+      );
     }
   });
 });

@@ -37,7 +37,28 @@
  * @typedef {{ name: string, lead: string[], entries: Entry[] }} Group
  */
 
-/** @typedef {{ version: string, date: string, unreleased: boolean, lead: string[], groups: Group[] }} Release */
+/**
+ * What a release is, in one line and a sentence or two — the first paragraph
+ * under its `## ` heading, when that paragraph opens with a `**…**` title.
+ *
+ * It is what the website's per-version page leads with, what its social card
+ * shows, and what gets posted with the link, so it is written for somebody who
+ * has never opened the app. Optional: releases before 1.25.0 have none, and a
+ * lead paragraph without a bold title is prose, not a summary.
+ *
+ * `title` and `description` are the source's markdown; `plain` strips it for
+ * the places markup cannot go — a post, an og:description, a PNG.
+ *
+ * @typedef {{ title: string, description: string }} Summary
+ */
+
+/**
+ * `lead` is the prose between the `## ` heading and the first `###`, one entry
+ * per PARAGRAPH — wrapped lines joined, blank lines separating. Unlike a group's
+ * lead, which the What's New pane renders line by line and so keeps its lines.
+ *
+ * @typedef {{ version: string, date: string, unreleased: boolean, lead: string[], summary: Summary | null, groups: Group[] }} Release
+ */
 
 /**
  * Sections that exist for the repository rather than for the user.
@@ -72,6 +93,15 @@ export const parse = (markdown) => {
   let bullet = null; // the paragraphs of the bullet being collected
   /** @type {string[]} */
   let paragraph = [];
+  /** @type {string[]} */
+  let leadParagraph = []; // the release-level lead paragraph being collected
+
+  const flushLead = () => {
+    if (release && leadParagraph.length) {
+      release.lead.push(leadParagraph.join(" "));
+      leadParagraph = [];
+    }
+  };
 
   const flushParagraph = () => {
     if (bullet && paragraph.length) {
@@ -99,6 +129,7 @@ export const parse = (markdown) => {
 
     if (line.startsWith("## ")) {
       flushBullet();
+      flushLead();
       // `## [1.17.0] - 2026-09-07`, or `## [Unreleased]` with no date.
       const heading = line.slice(3).trim();
       const version = /^\[([^\]]+)\]/.exec(heading)?.[1] ?? heading;
@@ -108,6 +139,7 @@ export const parse = (markdown) => {
         date,
         unreleased: version.toLowerCase() === "unreleased",
         lead: [],
+        summary: null,
         groups: [],
       };
       releases.push(release);
@@ -121,6 +153,7 @@ export const parse = (markdown) => {
 
     if (line.startsWith("### ")) {
       flushBullet();
+      flushLead();
       group = { name: line.slice(4).trim(), lead: [], entries: [] };
       release.groups.push(group);
     } else if (line.startsWith("- ")) {
@@ -129,19 +162,70 @@ export const parse = (markdown) => {
       paragraph = [line.slice(2)];
     } else if (line === "") {
       flushParagraph();
+      flushLead();
     } else if (bullet) {
       paragraph.push(line.trim());
+    } else if (group) {
+      // A group's prose, one entry per line, deliberately: the What's New pane
+      // renders it that way, and joining it here would move the pane.
+      group.lead.push(line.trim());
     } else {
-      // Prose outside any bullet. One paragraph per line, deliberately: that is
-      // what the HTML renderer has always emitted, and joining them here would
-      // change the appcast.
-      (group ?? release).lead.push(line.trim());
+      // The release's own prose. Joined into paragraphs: the appcast renders an
+      // entry per `<p>`, and one per source line broke a wrapped sentence into
+      // fragments in the update dialog — which no release noticed while none
+      // carried a lead long enough to wrap after 1.3.0.
+      leadParagraph.push(line.trim());
     }
   }
   flushBullet();
+  flushLead();
 
+  for (const each of releases) each.summary = summarise(each.lead[0]);
   return releases;
 };
+
+/**
+ * The longest title the social card lays out in two lines — see
+ * `composeReleaseCard`, which wraps at this many characters and no further.
+ */
+export const SUMMARY_TITLE_MAX = 64;
+
+/**
+ * The longest post the summary may make. 280 is X's limit; a link always counts
+ * as 23 characters there, plus the space before it.
+ */
+export const SUMMARY_POST_MAX = 280 - 24;
+
+/** @param {string | undefined} paragraph @returns {Summary | null} */
+const summarise = (paragraph) => {
+  const match = paragraph ? HEADLINE.exec(paragraph) : null;
+  if (!paragraph || !match) return null;
+  return { title: match[1], description: paragraph.slice(match[0].length).trim() };
+};
+
+/**
+ * Markdown out, for a post, a meta tag or a picture: code spans keep their text,
+ * a link keeps its words, emphasis goes.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export const plain = (text) =>
+  text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|\W)[*_]([^*_]+)[*_](?=\W|$)/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * The text to post with a release's link: its title, then its description.
+ *
+ * @param {Summary} summary
+ * @returns {string}
+ */
+export const postText = (summary) => `${plain(summary.title)} ${plain(summary.description)}`.trim();
 
 // ─── HTML, for the appcast ────────────────────────────────────────────────────
 //

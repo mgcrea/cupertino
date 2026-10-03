@@ -14,6 +14,10 @@ summary.
 
 ## [1.25.0] - 2026-10-03
 
+**Desktop driving can no longer type into the wrong app.** Keystrokes and clicks are checked against
+the apps you allowed, removing a Maps place asks for confirmation, Safari clicks land in the tab they
+were meant for, and the audit log survives a full disk.
+
 ### Changed
 
 - **Removing a place from Maps takes an explicit `confirm`.** `apple_maps_remove_favorite` and
