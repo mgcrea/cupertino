@@ -62,9 +62,11 @@ final class UpdateController: NSObject {
   /// them off.
   func checkNow() {
     start()
+    // No updater means no callback will ever clear the spinner.
+    guard let controller else { return }
     isChecking = true
     lastCheck = Date()
-    controller?.updater.checkForUpdates()
+    controller.updater.checkForUpdates()
   }
 
   func setAutomatic(_ on: Bool) {
@@ -123,11 +125,26 @@ extension UpdateController: SPUUpdaterDelegate {
   /// The host's own pid map, not `Sessions.shared.live`. Every in-process
   /// session is listed there under Cupertino's own pid, so walking that list
   /// sent SIGTERM to this process mid-loop — see `terminateChildren`.
+  ///
+  /// The listener first. It used to come second, so a bridge connecting between
+  /// the two had a server spawned from the outgoing bundle after the sweep, the
+  /// exact orphan this exists to prevent.
   nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
     MainActor.assumeIsolated {
-      ServerHost.shared.terminateChildren()
       ServerHost.shared.stop()
+      ServerHost.shared.terminateChildren()
     }
+  }
+
+  /// Every check ends here, found or not, failed or not. The user-driver
+  /// callbacks below only fire when there is something to show, so a check that
+  /// failed (no network, a feed that would not parse) or found nothing new left
+  /// the button saying "Checking…" until the app quit.
+  nonisolated func updater(
+    _ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
+    error: (any Error)?
+  ) {
+    Task { @MainActor in isChecking = false }
   }
 }
 
