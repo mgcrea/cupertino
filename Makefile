@@ -621,13 +621,23 @@ sparkle: ## Download and stage the pinned Sparkle.framework
 
 # The runtime ends up holding Full Disk Access, so it is not built from whatever
 # a cache or a mirror happened to return. The sums file is fetched over https
-# from the same host as the tarballs, so what this defends against is a
+# from the same host as the tarballs, so on its own it defends against a
 # truncated or substituted download and a stale cache, not a compromised
 # nodejs.org. A tarball that fails is deleted together with the sums file, so
 # the next run fetches both again rather than failing forever on the same bytes
 # — an interrupted curl can leave a TRUNCATED sums file that `[ -f ]` accepts,
 # and `shasum -c` then reads no line for the tarball and correctly fails closed.
 NODE_SUMS := apps/apple/.build/node-cache/SHASUMS256-v$(NODE_VERSION).txt
+
+# NODE_PINS is the half that does: the digest of each tarball, committed here the
+# way SPARKLE_SHA256 is, so a nodejs.org serving a different tarball AND a
+# matching sums file still fails. One entry per `<version>-<arch>`; bumping
+# NODE_VERSION means adding its lines (the digests are in that release's
+# SHASUMS256.txt), and a version or arch with no line fails rather than going
+# unpinned. A tarball that fails its pin is deleted, the sums file kept.
+NODE_PINS ?= \
+	24.20.0-arm64:40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8 \
+	24.20.0-x64:9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4
 
 node: ## Download, verify and lipo the embedded node runtime
 	@mkdir -p $(STAGED) apps/apple/.build/node-cache
@@ -640,6 +650,12 @@ node: ## Download, verify and lipo the embedded node runtime
 		grep " $$name$$" "$(NODE_SUMS)" | sed "s|  .*|  $$tar|" | shasum -a 256 -c - >/dev/null \
 			|| { echo "  !! $$name does not match SHASUMS256.txt for v$(NODE_VERSION); deleted both, run 'make node' again" >&2; \
 			     rm -f "$$tar" "$(NODE_SUMS)"; exit 1; }; \
+		pin=$$(printf '%s\n' $(NODE_PINS) | sed -n "s/^$(NODE_VERSION)-$$arch://p"); \
+		[ -n "$$pin" ] \
+			|| { echo "  !! no pinned digest for node v$(NODE_VERSION) $$arch; add it to NODE_PINS" >&2; exit 1; }; \
+		[ "$$(shasum -a 256 "$$tar" | cut -d' ' -f1)" = "$$pin" ] \
+			|| { echo "  !! $$name does not match its pinned digest; deleted it, run 'make node' again" >&2; \
+			     rm -f "$$tar"; exit 1; }; \
 		echo "  $$name verified"; \
 		tar -xzf "$$tar" -C apps/apple/.build/node-cache \
 			"node-v$(NODE_VERSION)-darwin-$$arch/bin/node"; \
