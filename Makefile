@@ -410,7 +410,8 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
-		apps/apple/Cupertino/ClientFacade.swift scripts/unit-check.swift
+		apps/apple/Cupertino/ClientFacade.swift \
+		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
 chat-check: ## Assert the chat pane's tool budget and schema subset, with no app and no model
@@ -452,6 +453,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
 	@swiftc -O -o apps/apple/.build/host-check \
 		apps/apple/Cupertino/ServerHost.swift \
+		apps/apple/Cupertino/ChildTermination.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/Sessions.swift \
 		apps/apple/Cupertino/LogStore.swift \

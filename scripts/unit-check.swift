@@ -1040,6 +1040,58 @@ struct UnitCheck {
       BridgeProtocol.handshake(server: "mail", client: "claude-desktop")
         == "cupertino/1 mail client=claude-desktop\n")
 
+    print("\nChildTermination: a server that will not stop")
+    // SIGTERM was the whole of it, at quit and at an update relaunch. A server
+    // that ignores it, or is wedged, outlived the app holding its permissions
+    // with nothing supervising it, or went on serving the outgoing bundle's
+    // code after Sparkle replaced it.
+    func stubborn() -> Process {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      // `exec`, so the ignored SIGTERM is the sleep's own: one process, no
+      // grandchild for the check to miss.
+      process.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+      try? process.run()
+      Thread.sleep(forTimeInterval: 0.2)
+      return process
+    }
+    func obliging() -> Process {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+      process.arguments = ["30"]
+      try? process.run()
+      return process
+    }
+    do {
+      let children = [stubborn(), stubborn(), obliging()]
+      let started = Date()
+      ChildTermination.terminateAll(children, grace: 0.5)
+      // `isRunning` turns false once the child is reaped, which Foundation does
+      // on its own queue, so a moment is allowed for it to notice.
+      let deadline = Date().addingTimeInterval(0.5)
+      while children.contains(where: \.isRunning), Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.05)
+      }
+      check(
+        "every child is gone, the ones that ignored SIGTERM included",
+        children.allSatisfy { !$0.isRunning })
+      check(
+        "and the call waited no longer than the grace and the kill",
+        Date().timeIntervalSince(started) < 2.5)
+      for process in children where process.isRunning {
+        kill(process.processIdentifier, SIGKILL)
+      }
+      let quick = [obliging(), obliging()]
+      let quickStart = Date()
+      ChildTermination.terminateAll(quick, grace: 3)
+      check(
+        "children that exit on SIGTERM cost nothing like the grace",
+        Date().timeIntervalSince(quickStart) < 1)
+      let emptyStart = Date()
+      ChildTermination.terminateAll([], grace: 3)
+      check("an empty list returns at once", Date().timeIntervalSince(emptyStart) < 0.1)
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")

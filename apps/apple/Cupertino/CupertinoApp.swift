@@ -139,7 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // either way, and it also drops the microphone indicator promptly rather
     // than at process teardown.
     SoundCapture.shared.finishForTermination()
+    // The listener, then the children, in that order: a connection arriving
+    // between the two would otherwise spawn a server after the sweep. The
+    // children used to be left to notice their stdin close when this process
+    // exited, and one that ignored it, or was wedged, outlived the app.
     ServerHost.shared.stop()
+    ServerHost.shared.terminateChildren()
   }
 }
 

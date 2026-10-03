@@ -120,7 +120,8 @@ extension UpdateController: SPUUpdaterDelegate {
   ///
   /// SIGTERM for the same reasons `endTrialSessions` gives: the child exits on
   /// its own, the pumps see EOF, and the session leaves the Activity window by
-  /// the ordinary path.
+  /// the ordinary path. SIGKILL after a short grace for one that does not, since
+  /// it would otherwise outlive the relaunch serving the old code.
   ///
   /// The host's own pid map, not `Sessions.shared.live`. Every in-process
   /// session is listed there under Cupertino's own pid, so walking that list

@@ -64,6 +64,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// comment above says why the host must not start reading from it.
   private let serverPIDs = OSAllocatedUnfairLock<[Int32: String]>(initialState: [:])
 
+  /// The same servers as `Process` objects, for `terminateChildren`, which has
+  /// to ask whether each is still running before it escalates to SIGKILL. A
+  /// bare pid cannot answer that safely: once the child is reaped, the number
+  /// belongs to whatever process the kernel hands it to next.
+  private let serverProcesses = OSAllocatedUnfairLock<[Int32: Process]>(initialState: [:])
+
   /// In-process connections admitted on a trial, by session, with the socket
   /// each is served on.
   ///
@@ -358,21 +364,26 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
-  /// SIGTERM every server process this host spawned, for an update relaunch.
+  /// Stop every server process this host spawned, for a quit or an update
+  /// relaunch: SIGTERM, then SIGKILL for any still there after a short grace.
+  /// Blocks for at most the grace and a second; see `ChildTermination`.
   ///
-  /// From `serverPIDs`, never from `Sessions`. That list is observation for the
-  /// Activity window, and an in-process session is filed there under the app's
-  /// OWN pid — so signalling everything in it had Cupertino SIGTERM itself
+  /// Call `stop` first, so no new connection spawns a server after the sweep.
+  ///
+  /// From the host's own table, never from `Sessions`. That list is observation
+  /// for the Activity window, and an in-process session is filed there under the
+  /// app's OWN pid — so signalling everything in it had Cupertino SIGTERM itself
   /// partway through the loop, before `stop` ran. A demo-seeded session's pid is
   /// a number somebody made up, which is worse. In-process sessions need no
   /// signal: they are threads of this process and end with it.
   func terminateChildren() {
     let me = getpid()
-    let pids = serverPIDs.withLock { Array($0.keys) }
-    for pid in pids where pid != me {
-      hostLog("update", .info, "updating — stopping server (pid \(pid))")
-      kill(pid, SIGTERM)
+    let processes = serverProcesses.withLock { Array($0.values) }
+      .filter { $0.processIdentifier != me }
+    for process in processes {
+      hostLog("cupertino", .info, "stopping server (pid \(process.processIdentifier))")
     }
+    ChildTermination.terminateAll(processes, grace: 3)
   }
 
   // MARK: - Noticing eviction
@@ -1012,6 +1023,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let pid = process.processIdentifier
     if onTrial { trialPIDs.withLock { $0.insert(pid) } }
     serverPIDs.withLock { $0[pid] = surface.id }
+    serverProcesses.withLock { $0[pid] = process }
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
     }
@@ -1087,6 +1099,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // whatever inherits the number.
     if onTrial { trialPIDs.withLock { $0.remove(pid) } }
     serverPIDs.withLock { $0[pid] = nil }
+    serverProcesses.withLock { $0[pid] = nil }
     Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
     hostLog(surface.id, .info, "server exited (\(process.terminationStatus))")
   }
