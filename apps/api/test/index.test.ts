@@ -362,6 +362,39 @@ describe("revocation", () => {
     expect(revocation(t)).toEqual({ revoked: 1, revoked_reason: "disputed" });
   });
 
+  // Fulfilment answers 500 until the key is mailed, and Stripe retries it for
+  // days. A refund inside that window matched no row, answered 200, and the
+  // retry then minted and mailed a working key for money already returned.
+  it("records a refund that arrives before the licence, and mails nothing later", async () => {
+    const t = setup();
+    const early = await t.event("charge.refunded", fullRefund);
+    expect(early.status).toBe(200);
+    expect(await early.text()).toMatch(/before the licence/);
+
+    const late = await t.event("checkout.session.completed", session());
+    expect(late.status).toBe(200);
+    expect(await late.text()).toMatch(/revoked \(refunded\)/);
+    expect(t.sent).toEqual([]);
+    expect(revocation(t)).toEqual({ revoked: 1, revoked_reason: "refunded" });
+  });
+
+  it("records an early dispute the same way", async () => {
+    const t = setup();
+    await t.event("charge.dispute.created", { id: "dp_1", payment_intent: "pi_1" });
+    await t.event("checkout.session.completed", session());
+    expect(t.sent).toEqual([]);
+    expect(revocation(t)).toEqual({ revoked: 1, revoked_reason: "disputed" });
+  });
+
+  it("writes nothing early for a payment whose licence was already revoked", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", session());
+    await t.event("charge.refunded", fullRefund);
+    const again = await t.event("charge.refunded", fullRefund);
+    expect(await again.text()).toBe("refunded: revoked 0");
+    expect(t.d1.sql("SELECT payment_intent FROM early_revocations")).toEqual([]);
+  });
+
   it("never matches a licence recorded with no payment intent", async () => {
     const t = setup();
     await t.event("checkout.session.completed", session({ payment_intent: null }));

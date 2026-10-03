@@ -150,6 +150,10 @@ run time — it makes no network connections at all, which `scripts/audit-networ
 so a refunded key keeps working until the next release and then stops. [EULA](../apple/EULA) §4(a)
 tells the buyer that rather than leaving it to be discovered. See [docs/licensing.md](../../docs/licensing.md).
 
+A refund or dispute can arrive before the licence does, while fulfilment is still answering 500 and
+Stripe is retrying it. That revocation finds no row, so it is written to `early_revocations` by
+payment intent, and the fulfilment that follows records the licence revoked and mails nothing.
+
 ## What is not stored
 
 There is no list of who has **not** paid. Stripe is the record of who paid; the one D1 table is the

@@ -293,6 +293,25 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
     return new Response("could not record the licence", { status: 500 });
   }
 
+  // Refunded or disputed before it got here (see `revoke`). Recorded all the
+  // same, so a won dispute can restore it and the resend route can deliver it
+  // then, but recorded revoked, so the check below does not mail it.
+  if (!row.revoked_at && session.payment_intent) {
+    const early = await env.DB.prepare(
+      "SELECT reason, revoked_at FROM early_revocations WHERE payment_intent = ?",
+    )
+      .bind(session.payment_intent)
+      .first<{ reason: string; revoked_at: string }>();
+    if (early) {
+      await env.DB.prepare(
+        "UPDATE licenses SET revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked_at IS NULL",
+      )
+        .bind(early.revoked_at, early.reason, row.id)
+        .run();
+      row = { ...row, revoked_at: early.revoked_at, revoked_reason: early.reason };
+    }
+  }
+
   // A revoked licence is not mailed again: the money went back. Without this, a
   // redelivery after a refund, or a "Resend" on the event in the Stripe
   // dashboard, would send the dead key under a note promising a refund.
@@ -340,13 +359,34 @@ const revoke = async (
     // log on the Stripe dashboard, where someone will see it.
     return new Response(`${why}: no payment intent on the event, nothing revoked`, { status: 200 });
   }
+  const now = new Date().toISOString();
   const result = await env.DB.prepare(
     "UPDATE licenses SET revoked_at = ?, revoked_reason = ?" +
       " WHERE payment_intent = ? AND revoked_at IS NULL",
   )
-    .bind(new Date().toISOString(), why, paymentIntent)
+    .bind(now, why, paymentIntent)
     .run();
-  return new Response(`${why}: revoked ${result.meta.changes ?? 0}`, { status: 200 });
+  const changes = result.meta.changes ?? 0;
+  if (changes > 0) return new Response(`${why}: revoked ${changes}`, { status: 200 });
+
+  // Nothing changed: either the licence is already revoked, or it does not
+  // exist YET. Fulfilment answers 500 until the key is mailed, and a buyer
+  // refunded inside that window used to get a working key from Stripe's retry.
+  // The second case is written down so `fulfil` records that licence revoked;
+  // the first needs nothing more.
+  const known = await env.DB.prepare("SELECT 1 FROM licenses WHERE payment_intent = ?")
+    .bind(paymentIntent)
+    .first();
+  if (known) return new Response(`${why}: revoked 0`, { status: 200 });
+  // DO NOTHING keeps the first reason, as the `revoked_at IS NULL` guard above
+  // does for a licence that exists.
+  await env.DB.prepare(
+    "INSERT INTO early_revocations (payment_intent, reason, revoked_at) VALUES (?, ?, ?)" +
+      " ON CONFLICT (payment_intent) DO NOTHING",
+  )
+    .bind(paymentIntent, why, now)
+    .run();
+  return new Response(`${why}: recorded before the licence existed`, { status: 200 });
 };
 
 /**
