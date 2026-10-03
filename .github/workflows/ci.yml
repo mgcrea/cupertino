@@ -408,11 +408,37 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "::notice::$dir/server.json does not exist — nothing to publish to the registry."
           fi
+      # Pinned exactly and checked against a committed digest before anything is
+      # unpacked, the way the Makefile pins Sparkle and the node runtime. This job
+      # holds an OIDC token that can publish anything under io.github.mgcrea/*,
+      # so the binary it runs is the one thing that must not be whatever
+      # `releases/latest` served that day. Bumping means changing all three
+      # lines together; the digests are in that release's
+      # registry_<version>_checksums.txt. An arch with no digest fails rather
+      # than going unpinned.
       - name: Install mcp-publisher 🔧
         if: steps.pkg.outputs.publish == 'true'
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256_AMD64: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+          MCP_PUBLISHER_SHA256_ARM64: 8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4
+        working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher
+          case "$(uname -m)" in
+            x86_64) arch=amd64; pin="$MCP_PUBLISHER_SHA256_AMD64" ;;
+            aarch64 | arm64) arch=arm64; pin="$MCP_PUBLISHER_SHA256_ARM64" ;;
+            *) echo "::error::No pinned mcp-publisher digest for $(uname -m)."; exit 1 ;;
+          esac
+          tarball="mcp-publisher_linux_${arch}.tar.gz"
+          curl -fsSL -o "$tarball" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${tarball}"
+          if ! echo "${pin}  ${tarball}" | sha256sum -c - >/dev/null; then
+            rm -f "$tarball"
+            echo "::error::${tarball} ${MCP_PUBLISHER_VERSION} does not match its pinned digest; refusing to run it."
+            exit 1
+          fi
+          tar xzf "$tarball" mcp-publisher
+          rm -f "$tarball"
           sudo mv mcp-publisher /usr/local/bin/
       # The version in server.json is generated from the root package.json by
       # `make version` and gated by the Version manifest check in `test`, so it
