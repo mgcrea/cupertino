@@ -284,6 +284,22 @@ struct ScreenCheck {
     check(
       "scoped: the enum key survives serialization",
       captureSchemaJSON(anyApp: false).contains("\"enum\""))
+    // The description has to follow the gate too. It said "never an arbitrary
+    // app" either way, and an agent with the gate on believed it and fell back
+    // to `screencapture`, activating the app for every look.
+    func captureDescription(anyApp: Bool) -> String {
+      let reply = ask("tools/list", gate: true, anyApp: anyApp)
+      let tools = (reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
+      let capture = tools.first { ($0["name"] as? String) == "apple_screen_capture_surface" }
+      return capture?["description"] as? String ?? ""
+    }
+    check(
+      "scoped: the description says only brokered surfaces",
+      captureDescription(anyApp: false).contains("never an arbitrary app"))
+    check(
+      "widened: the description says any application, and not the opposite",
+      captureDescription(anyApp: true).contains("any running application")
+        && !captureDescription(anyApp: true).contains("never an arbitrary app"))
     check(
       "the scope gate does not change WHICH tools exist",
       toolNames(gate: true, anyApp: false) == toolNames(gate: true, anyApp: true))

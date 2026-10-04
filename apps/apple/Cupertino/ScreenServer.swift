@@ -102,18 +102,30 @@ nonisolated enum ScreenServer {
     // either behaviour it is choosing between.
     var surfaceProperty: [String: Any] = [
       "type": "string",
-      "description": "Which surface's window to capture.",
+      "description": anyAppAllowed
+        ? "Which window to capture: a surface id, or the bundle identifier of any running "
+          + "application."
+        : "Which surface's window to capture.",
     ]
     if !anyAppAllowed {
       surfaceProperty["enum"] = Surface.all.filter { $0.bundleID != nil }.map(\.id)
     }
+    // The reach sentence follows the gate. It used to say "never an arbitrary
+    // app" with the gate on as well, and an agent driving a non-surface app
+    // believed it, fell back to `screencapture`, and activated the app for
+    // every look -- taking the focus from the person each time.
+    let reach =
+      anyAppAllowed
+      ? "Reaches any running application, named by its bundle identifier, as well as the "
+        + "surfaces Cupertino brokers, named by id. Use it to see what a desktop or simulator "
+        + "action did without bringing the application forward."
+      : "Captures only the surfaces Cupertino brokers — never an arbitrary app, window or region."
     list.append([
       "name": "apple_screen_capture_surface",
       "description":
-        "Capture the largest window of one surface app to a PNG and return its path. The window "
+        "Capture the largest window of one application to a PNG and return its path. The window "
         + "does not have to be visible: a window fully covered by another app captures its own "
-        + "content, and nothing is raised or focused. Captures only the surfaces Cupertino "
-        + "brokers — never an arbitrary app, window or region.",
+        + "content, and nothing is raised or focused. " + reach,
       "inputSchema": [
         "type": "object",
         "properties": [
