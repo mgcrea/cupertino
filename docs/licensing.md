@@ -459,7 +459,7 @@ produce byte-identical keys from identical input.
 | Question                                  | Lives in                  | Why there                                                 |
 | ----------------------------------------- | ------------------------- | --------------------------------------------------------- |
 | who paid, how much, what tax              | Stripe                    | already the system of record for money; do not rebuild    |
-| which key went to whom, and is it revoked | Cloudflare D1, one table  | needed to re-send a key, and to address 1.x buyers at 2.0 |
+| which key went to whom, and is it revoked | Cloudflare D1             | needed to re-send a key, and to address 1.x buyers at 2.0 |
 | is _this_ Mac licensed                    | this Mac's `UserDefaults` | offline by construction; never leaves the machine         |
 
 `UserDefaults` rather than the Keychain, which is what this table said first. The key is not a
@@ -480,7 +480,10 @@ on a disk we cannot see, and any design that needs the list has smuggled a phone
 D1 rather than deriving the key deterministically from the payment: derivation looks elegant until the
 payload format changes once, and then no old key can be reproduced and every re-send is wrong. It also
 has to be possible to ask which addresses hold a 1.x key on the day 2.0 ships, or the per-major model
-has no upgrade path. One table, and it is the only state this project keeps about anyone.
+has no upgrade path. One table, `licenses`, and it is the only state this project keeps about anyone.
+The two beside it are bookkeeping for the webhook and name no person: `early_revocations` holds the
+payment intents of refunds that arrived before their licence, and `stripe_events` the ids of the
+Stripe events already handled, so a redelivery does not mail a key twice.
 
 Revocation lands at build time rather than run time: a refund sets `revoked_at`, `make revocations`
 rewrites `apps/apple/Cupertino/Revocations.swift`, and the diff is committed like any other source

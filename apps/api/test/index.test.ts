@@ -82,8 +82,9 @@ const setup = (overrides: Record<string, unknown> = {}) => {
     );
   };
 
-  const event = (type: string, object: unknown) =>
-    post(JSON.stringify({ id: `evt_${Math.random()}`, type, livemode: true, data: { object } }));
+  /** A fresh event id unless one is given, so a test can redeliver the same event. */
+  const event = (type: string, object: unknown, id = `evt_${Math.random()}`) =>
+    post(JSON.stringify({ id, type, livemode: true, data: { object } }));
 
   return { d1, sent, waiting, state, env, call, post, event };
 };
@@ -229,6 +230,119 @@ describe("fulfilment", () => {
     );
     expect(response.status).toBe(200);
     expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+});
+
+const claims = (t: ReturnType<typeof setup>) =>
+  t.d1.sql("SELECT id, handled_at IS NOT NULL AS handled FROM stripe_events");
+
+const claimAt = (t: ReturnType<typeof setup>, id: string, agoMs: number) =>
+  t.d1.sql(
+    "INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)",
+    id,
+    "checkout.session.completed",
+    new Date(Date.now() - agoMs).toISOString(),
+  );
+
+// The outer layer: an event is claimed by its id before it is handled. Under it
+// the unique session, the send claim and the idempotent revoke and restore all
+// still hold; what the claim adds is that a redelivery past the send cooldown,
+// or a "Resend" from the Stripe dashboard, does not run a handler at all.
+describe("event claim", () => {
+  it("runs the handler once for an event delivered twice, past the send cooldown", async () => {
+    const t = setup();
+    expect(await (await t.event("checkout.session.completed", session(), "evt_a")).text()).toBe(
+      "ok",
+    );
+    anHourLater(t.d1);
+
+    const again = await t.event("checkout.session.completed", session(), "evt_a");
+    expect(again.status).toBe(200);
+    expect(await again.text()).toBe("duplicate");
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  it("lets exactly one of two overlapping deliveries of an event through", async () => {
+    const t = setup();
+    const answers = await Promise.all([
+      t.event("checkout.session.completed", session(), "evt_a"),
+      t.event("checkout.session.completed", session(), "evt_a"),
+    ]);
+    const texts = await Promise.all(answers.map((answer) => answer.text()));
+    expect(texts.toSorted()).toEqual(["duplicate", "ok"]);
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  it("stamps handled_at once the handler succeeds", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", session(), "evt_a");
+    expect(claims(t)).toEqual([{ id: "evt_a", handled: 1 }]);
+  });
+
+  it("gives the claim back when the handler answers 500, so Stripe's retry runs it", async () => {
+    const t = setup();
+    t.state.failSends = true;
+    expect((await t.event("checkout.session.completed", session(), "evt_a")).status).toBe(500);
+    expect(claims(t)).toEqual([]);
+
+    t.state.failSends = false;
+    const retry = await t.event("checkout.session.completed", session(), "evt_a");
+    expect(await retry.text()).toBe("ok");
+    expect(t.sent).toEqual([BUYER]);
+    expect(claims(t)).toEqual([{ id: "evt_a", handled: 1 }]);
+  });
+
+  it("gives the claim back when the handler throws", async () => {
+    const t = setup();
+    const real = t.env.DB;
+    let broken = true;
+    t.env.DB = {
+      prepare: (query: string) => {
+        if (broken && query.includes("INSERT INTO licenses"))
+          throw new Error("D1_ERROR: overloaded");
+        return real.prepare(query);
+      },
+    } as unknown as D1Database;
+    expect((await t.event("checkout.session.completed", session(), "evt_a")).status).toBe(500);
+    expect(claims(t)).toEqual([]);
+
+    broken = false;
+    expect(await (await t.event("checkout.session.completed", session(), "evt_a")).text()).toBe(
+      "ok",
+    );
+    expect(t.sent).toEqual([BUYER]);
+  });
+
+  // A Worker killed between the claim and its answer can never give the claim
+  // back. Without a way to take it over, Stripe's retries read as duplicates for
+  // the rest of its retry window, and the payment ends with no licence.
+  it("takes over an unhandled claim more than five minutes old", async () => {
+    const t = setup();
+    claimAt(t, "evt_a", 10 * 60 * 1000);
+    const retry = await t.event("checkout.session.completed", session(), "evt_a");
+    expect(await retry.text()).toBe("ok");
+    expect(t.sent).toEqual([BUYER]);
+    expect(claims(t)).toEqual([{ id: "evt_a", handled: 1 }]);
+  });
+
+  it("answers duplicate to an unhandled claim still in flight", async () => {
+    const t = setup();
+    claimAt(t, "evt_a", 30 * 1000);
+    const retry = await t.event("checkout.session.completed", session(), "evt_a");
+    expect(retry.status).toBe(200);
+    expect(await retry.text()).toBe("duplicate");
+    expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
+    expect(t.sent).toEqual([]);
+  });
+
+  it("never takes over a handled claim, however old", async () => {
+    const t = setup();
+    claimAt(t, "evt_a", 10 * 60 * 1000);
+    t.d1.sql("UPDATE stripe_events SET handled_at = received_at");
+    expect(await (await t.event("checkout.session.completed", session(), "evt_a")).text()).toBe(
+      "duplicate",
+    );
     expect(t.sent).toEqual([]);
   });
 });
@@ -384,23 +498,31 @@ describe("signed payloads that no retry can fix answer 200", () => {
     ["JSON that is not a Stripe event", JSON.stringify({ hello: "world" })],
     [
       "a session with no id",
-      JSON.stringify({ type: "checkout.session.completed", data: { object: { amount_total: 1 } } }),
+      JSON.stringify({
+        id: "evt_1",
+        type: "checkout.session.completed",
+        data: { object: { amount_total: 1 } },
+      }),
     ],
     [
       "a paid session with no email",
       JSON.stringify({
+        id: "evt_1",
         type: "checkout.session.completed",
         data: { object: session({ customer_details: null }) },
       }),
     ],
-    ["a charge with no id", JSON.stringify({ type: "charge.refunded", data: { object: {} } })],
+    [
+      "a charge with no id",
+      JSON.stringify({ id: "evt_1", type: "charge.refunded", data: { object: {} } }),
+    ],
     [
       "a dispute with no id",
-      JSON.stringify({ type: "charge.dispute.created", data: { object: {} } }),
+      JSON.stringify({ id: "evt_1", type: "charge.dispute.created", data: { object: {} } }),
     ],
     [
       "a closed dispute with no id",
-      JSON.stringify({ type: "charge.dispute.closed", data: { object: {} } }),
+      JSON.stringify({ id: "evt_1", type: "charge.dispute.closed", data: { object: {} } }),
     ],
   ];
 

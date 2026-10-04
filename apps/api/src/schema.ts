@@ -15,8 +15,11 @@
 
 import { z } from "zod";
 
-/** Just enough to route on. `object` stays unknown until the type is known. */
+/** Just enough to claim and route on. `object` stays unknown until the type is known. */
 export const eventEnvelope = z.object({
+  // What the webhook claims the event by in `stripe_events`. Stripe sets it on
+  // every event and keeps it across redeliveries, which is the whole point.
+  id: z.string().min(1),
   type: z.string(),
   // Recorded on the licence, not enforced here. One signing key and one database
   // serve both Stripe modes, so a test purchase mints a key that really works —

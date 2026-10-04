@@ -468,12 +468,61 @@ const disputeClosed = async (object: unknown, env: Env): Promise<Response> => {
   return new Response(`dispute won: restored ${result.meta.changes ?? 0}`, { status: 200 });
 };
 
+/** Longer than any handler runs, short of Stripe's first few retries. */
+const ABANDONED_CLAIM_MS = 5 * 60 * 1000;
+
 /**
- * Verify, then route on the event type.
+ * Route a verified event on its type.
  *
  * Every subscribed event lands here, not just the ones handled. Deciding that
  * BEFORE insisting on a shape is what keeps an unrelated event type from being
  * logged as a malformed one.
+ */
+const dispatch = (
+  type: string,
+  object: unknown,
+  env: Env,
+  livemode: boolean,
+): Promise<Response> | Response => {
+  switch (type) {
+    case "checkout.session.completed":
+      return fulfil(object, env, livemode);
+    // A delayed-notification method (SEPA Direct Debit, a bank transfer) sends
+    // `completed` with `payment_status: "unpaid"`, which `fulfil` answers "not
+    // paid", and settles days later with this. Unrouted, it fell to `ignored`:
+    // the buyer was charged and nothing ever minted their key. It goes through
+    // the same `fulfil`, so the payment_status check, the price guard, the early
+    // revocation and the send claim all hold, and the unique `stripe_session_id`
+    // keeps a session that somehow arrives both ways to one licence.
+    case "checkout.session.async_payment_succeeded":
+      return fulfil(object, env, livemode);
+    case "checkout.session.async_payment_failed": {
+      // Nothing was minted for the unpaid `completed`, so there is nothing to
+      // undo. Logged with the session id so the line can be traced to a buyer
+      // in the Stripe dashboard; 200, because no retry changes a failed debit.
+      const id = (object as { id?: unknown } | null)?.id;
+      console.error(`webhook: async payment failed for session ${String(id ?? "(no id)")}`);
+      return new Response("async payment failed", { status: 200 });
+    }
+    case "charge.refunded":
+      return refunded(object, env);
+    case "charge.dispute.created":
+      return disputed(object, env);
+    case "charge.dispute.closed":
+      return disputeClosed(object, env);
+    default:
+      return new Response("ignored", { status: 200 });
+  }
+};
+
+/**
+ * Verify, claim, then dispatch.
+ *
+ * The claim is the outer layer of idempotency. Under it, each handler still
+ * holds on its own: the unique `stripe_session_id` stops a second licence, the
+ * send claim stops two overlapping sends, and revoke and restore are written to
+ * run twice. What none of those stopped was a redelivery past the send
+ * cooldown, or a "Resend" from the Stripe dashboard, mailing the key again.
  */
 const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
   const secretProblem = webhookSecretProblem(env.STRIPE_WEBHOOK_SECRET);
@@ -512,37 +561,59 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
     return unactionable("body is not JSON");
   }
   if (!envelope.success) return unactionable(`not a Stripe event: ${explain(envelope.error)}`);
+  const event = envelope.data;
 
-  const object = envelope.data.data.object;
-  switch (envelope.data.type) {
-    case "checkout.session.completed":
-      return fulfil(object, env, envelope.data.livemode);
-    // A delayed-notification method (SEPA Direct Debit, a bank transfer) sends
-    // `completed` with `payment_status: "unpaid"`, which `fulfil` answers "not
-    // paid", and settles days later with this. Unrouted, it fell to `ignored`:
-    // the buyer was charged and nothing ever minted their key. It goes through
-    // the same `fulfil`, so the payment_status check, the price guard, the early
-    // revocation and the send claim all hold, and the unique `stripe_session_id`
-    // keeps a session that somehow arrives both ways to one licence.
-    case "checkout.session.async_payment_succeeded":
-      return fulfil(object, env, envelope.data.livemode);
-    case "checkout.session.async_payment_failed": {
-      // Nothing was minted for the unpaid `completed`, so there is nothing to
-      // undo. Logged with the session id so the line can be traced to a buyer
-      // in the Stripe dashboard; 200, because no retry changes a failed debit.
-      const id = (object as { id?: unknown } | null)?.id;
-      console.error(`webhook: async payment failed for session ${String(id ?? "(no id)")}`);
-      return new Response("async payment failed", { status: 200 });
+  // Claimed BY the insert, not by a read in front of it: of two deliveries that
+  // overlap (a retry of a slow first attempt, a "Resend" from the dashboard),
+  // `changes` is 1 for exactly one.
+  //
+  // Or by taking over a claim that was abandoned: no `handled_at`, and older
+  // than any handler runs. That is a Worker that died between the insert and its
+  // answer, which can never give its claim back; without this, Stripe's retries
+  // would read as duplicates for days and the payment end with no licence. A
+  // claim still in flight is younger than that and stays a duplicate.
+  const now = new Date();
+  const abandoned = new Date(now.getTime() - ABANDONED_CLAIM_MS).toISOString();
+  const claim = await env.DB.prepare(
+    "INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)" +
+      " ON CONFLICT (id) DO UPDATE SET received_at = excluded.received_at" +
+      " WHERE stripe_events.handled_at IS NULL AND stripe_events.received_at < ?",
+  )
+    .bind(event.id, event.type, now.toISOString(), abandoned)
+    .run();
+  if (claim.meta.changes !== 1) return new Response("duplicate", { status: 200 });
+
+  // A 500 must stay retryable, since that is what turns a failed send into a
+  // second attempt rather than a customer who paid and got nothing. So the claim
+  // is given back whenever the handler did not succeed, thrown errors included.
+  // A failure to give it back is not fatal: the claim goes stale and the retry
+  // after that takes it over.
+  const release = async () => {
+    try {
+      await env.DB.prepare("DELETE FROM stripe_events WHERE id = ?").bind(event.id).run();
+    } catch (error) {
+      console.error(
+        `webhook: could not release ${event.id}, retries read as duplicates for five minutes: ${describeError(error)}`,
+      );
     }
-    case "charge.refunded":
-      return refunded(object, env);
-    case "charge.dispute.created":
-      return disputed(object, env);
-    case "charge.dispute.closed":
-      return disputeClosed(object, env);
-    default:
-      return new Response("ignored", { status: 200 });
+  };
+  let response: Response;
+  try {
+    response = await dispatch(event.type, event.data.object, env, event.livemode);
+  } catch (error) {
+    await release();
+    throw error;
   }
+  if (response.status >= 300) {
+    await release();
+  } else {
+    // What makes the claim permanent: a handled event is a duplicate forever,
+    // an unhandled one only until it looks abandoned.
+    await env.DB.prepare("UPDATE stripe_events SET handled_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), event.id)
+      .run();
+  }
+  return response;
 };
 
 const handleThanks = async (request: Request, url: URL, env: Env): Promise<Response> => {

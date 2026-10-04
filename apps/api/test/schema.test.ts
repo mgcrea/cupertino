@@ -20,8 +20,19 @@ import {
 
 describe("eventEnvelope", () => {
   it("accepts an event type this Worker does not handle", () => {
-    const other = { type: "payment_intent.succeeded", data: { object: { id: "pi_1", odd: true } } };
+    const other = {
+      id: "evt_1",
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_1", odd: true } },
+    };
     expect(eventEnvelope.safeParse(other).success).toBe(true);
+  });
+
+  // The id is what the webhook claims the event by, so one without it cannot
+  // be told apart from its own redelivery.
+  it("rejects an event with no id", () => {
+    const anonymous = { type: "checkout.session.completed", data: { object: { id: "cs_1" } } };
+    expect(eventEnvelope.safeParse(anonymous).success).toBe(false);
   });
 
   it("rejects something that is not an event at all", () => {

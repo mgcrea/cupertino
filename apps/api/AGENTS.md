@@ -132,8 +132,15 @@ Changing the payload shape means changing all three. The field order in the obje
 - **Answer 200 to what no retry can fix, 500 to what one can.** Stripe retries every non-2xx, 4xx
   included, for three days. Once the signature holds, a payload that does not parse answers 200 with
   the reason and a `console.error`; a failed send, a failed price lookup or a missing secret answers 500. Only a bad signature is a 400, and its body says `invalid signature` and nothing more.
-- **Stay idempotent.** `stripe_session_id` is unique; Stripe redelivers for days and a redelivery
-  must not mean a second licence.
+- **Stay idempotent, in layers.** The outer one is `stripe_events`: a verified event is claimed by
+  inserting its id before any handler runs, so a redelivery, or a "Resend" from the Stripe
+  dashboard, answers 200 `duplicate` without running one. A handler that answers 300 or above, or
+  throws, deletes the claim so Stripe's retry runs it; one that succeeds stamps `handled_at`. A
+  claim with no `handled_at` more than five minutes old is a Worker that died mid-event, and the
+  next delivery takes it over. Under that, every handler still holds on its own: `stripe_session_id`
+  is unique so a redelivery never means a second licence, the send is claimed (below), and revoke
+  and restore are guarded to run twice. Keep all of them; the event claim is not a reason to drop
+  one.
 - **Return 500 when the email fails.** That is not an oversight — it is what makes Stripe retry, and
   the alternative is a customer who paid and got nothing. The send is claimed in D1 before it is
   attempted and handed back on failure, so two overlapping deliveries mail the key once.
@@ -168,8 +175,9 @@ ever restore it.
 
 ## What is not stored
 
-There is no list of who has **not** paid. Stripe is the record of who paid; the one D1 table is the
-record of which key went to whom; whether a given Mac is licensed lives in that Mac's `UserDefaults`
+There is no list of who has **not** paid. Stripe is the record of who paid; `licenses` is the
+record of which key went to whom (`early_revocations` and `stripe_events` beside it hold payment
+intents and event ids, nobody's address); whether a given Mac is licensed lives in that Mac's `UserDefaults`
 and is never transmitted. Any design that needs a not-paid list has smuggled a phone-home back in.
 
 `/license/resend` answers identically whether or not an address is a customer, on purpose — anything
