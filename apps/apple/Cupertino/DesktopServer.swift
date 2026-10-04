@@ -1226,7 +1226,8 @@ nonisolated enum DesktopServer {
       Driving is a session the person at the keyboard can see. The first driving call while they
       are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
       back saying they cancelled or said no, nothing happened: ask them in the conversation, do
-      not retry. Send a burst as one `apple_desktop_run`. When you are done, call
+      not retry. They can also stop a session part way through; a call refused because they
+      stopped it means the same. Send a burst as one `apple_desktop_run`. When you are done, call
       `apple_desktop_release` (or pass `releaseAfter` to `run`). It brings back the app they were
       in, and until then they cannot tell whether you have finished.
 
@@ -1330,6 +1331,10 @@ nonisolated enum DesktopServer {
       comes back saying they cancelled or said no, nothing was posted. Stop and ask them in
       the conversation rather than retrying; Cupertino will not ask them again for
       \(Int(DrivingPolicy.declineCooldown)) s anyway.
+
+      The person can also stop a session at any point, from the notice or the menu bar. The next
+      call is then refused saying they stopped it, and a `type` or `hover` under way is cut short.
+      What you did before the stop may be half done: do not carry on or start over, ask them.
 
       After that, every call goes straight through until the session ends. Call
       `apple_desktop_release` when you are done. It takes the notice down and brings back the

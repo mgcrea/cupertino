@@ -1241,8 +1241,10 @@ nonisolated enum AccessibilityDriver {
       events.append((down, up))
     }
     guard !events.isEmpty else { return unmapped }
-    try announceSessionInput(target, scope: scope)
+    let who = try announceSessionInput(target, scope: scope)
     for (down, up) in events {
+      // Between keys, never between a key's down and its up.
+      try DrivingSession.checkStillDriving(who)
       down.post(tap: .cghidEventTap)
       up.post(tap: .cghidEventTap)
       // A device keyboard drops keys that arrive faster than a person could
@@ -1347,7 +1349,11 @@ nonisolated enum AccessibilityDriver {
   /// And again AFTER: admission can hold the verb for a countdown, which is
   /// exactly when the person is at the keyboard and may switch applications.
   /// What was admitted must still be in front when the event goes out.
-  private static func announceSessionInput(_ target: String?, scope: Scope) throws {
+  ///
+  /// Returns the application it admitted, for a verb that posts in several
+  /// steps and has to check between them that it still holds the screen.
+  @discardableResult
+  private static func announceSessionInput(_ target: String?, scope: Scope) throws -> String {
     let who: String
     if let target {
       guard scope.admits(target) else { throw Failure.outOfScope(target) }
@@ -1363,6 +1369,7 @@ nonisolated enum AccessibilityDriver {
           + "'bundleId' and it is brought back to the front first.")
     }
     DriveActivity.record(who)
+    return who
   }
 
   /// The frontmost application, refused unless `scope` admits it.
@@ -1494,8 +1501,10 @@ nonisolated enum AccessibilityDriver {
     let down = try mouseEvent(.leftMouseDown, at: point, from: source, doing: "a click")
     let up = try mouseEvent(.leftMouseUp, at: point, from: source, doing: "a click")
     try announceSessionInput(target, scope: scope)
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
+    DrivingOverlay.postingPointer {
+      down.post(tap: .cghidEventTap)
+      up.post(tap: .cghidEventTap)
+    }
     DriveActivity.postedInput()
   }
 
@@ -1531,14 +1540,19 @@ nonisolated enum AccessibilityDriver {
     // Every event is built before the first is posted, so a failure to
     // synthesise one cannot leave the button held down.
     try announceSessionInput(target, scope: scope)
-    moved.post(tap: .cghidEventTap)
-    down.post(tap: .cghidEventTap)
-    let pause = UInt32(max(1, durationMs * 1000 / steps))
-    for drag in drags {
-      drag.post(tap: .cghidEventTap)
-      usleep(pause)
+    // Not cut short by a Stop, unlike `hover` and `type`: leaving here between
+    // the down and the up would leave the button held, and a drag is over in
+    // well under a second.
+    DrivingOverlay.postingPointer {
+      moved.post(tap: .cghidEventTap)
+      down.post(tap: .cghidEventTap)
+      let pause = UInt32(max(1, durationMs * 1000 / steps))
+      for drag in drags {
+        drag.post(tap: .cghidEventTap)
+        usleep(pause)
+      }
+      up.post(tap: .cghidEventTap)
     }
-    up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()
   }
 
@@ -1603,7 +1617,7 @@ nonisolated enum AccessibilityDriver {
     // This replaced a refusal of its own: hover used to throw whenever somebody
     // had touched the Mac in the last two seconds, which put no card on screen
     // at all. The admission every verb now shares warns them instead.
-    try announceSessionInput(target, scope: scope)
+    let who = try announceSessionInput(target, scope: scope)
     let source = CGEventSource(stateID: .hidSystemState)
     let from = cursorLocation()
     let steps = max(2, durationMs / 16)
@@ -1619,9 +1633,12 @@ nonisolated enum AccessibilityDriver {
     // Every event built before the first is posted, for `drag`'s reason: a sweep
     // that threw half way would leave the pointer stranded mid-path.
     let pause = UInt32(max(1, durationMs * 1000 / steps))
-    for move in moves {
-      move.post(tap: .cghidEventTap)
-      usleep(pause)
+    try DrivingOverlay.postingPointer {
+      for move in moves {
+        try DrivingSession.checkStillDriving(who)
+        move.post(tap: .cghidEventTap)
+        usleep(pause)
+      }
     }
     DriveActivity.postedInput()
     // The hover state is drawn by the OTHER application, so a caller that reads
@@ -1642,10 +1659,11 @@ nonisolated enum AccessibilityDriver {
   static func type(text: String, scope: Scope, announcing target: String? = nil) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
-    try announceSessionInput(target, scope: scope)
+    let who = try announceSessionInput(target, scope: scope)
     // Chunked: the unicode string on a single event is not meant for unbounded
     // input, and a long paste-like burst is better delivered as several events.
     for chunk in text.chunked(into: 20) {
+      try DrivingSession.checkStillDriving(who)
       guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
         let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
       else { throw Failure.refused("Could not synthesise typing.") }

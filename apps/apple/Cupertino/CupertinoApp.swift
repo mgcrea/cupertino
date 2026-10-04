@@ -1136,8 +1136,9 @@ struct DrivingNotice: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-          // The way out that is not the card. The card has to let the mouse
-          // through while input is being posted, so it can carry no button.
+          // The same Stop as the card's cross, for somebody who went to the
+          // menu bar instead. Both end the session and refuse the agent's next
+          // verb for a while, so it cannot simply start another.
           if driving.sessionTarget != nil {
             Button("Stop driving") {
               // Off the main actor: handing back waits up to a second for the

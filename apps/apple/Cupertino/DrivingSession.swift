@@ -85,7 +85,7 @@ nonisolated enum DrivingSession {
   enum Reason: String, Sendable {
     /// `apple_desktop_release`, `apple_simulator_release`, or `run` with `releaseAfter`.
     case agent
-    /// The Stop button in the menu bar.
+    /// Stop, on the card's cross or in the menu bar.
     case person
     case idle
     case disconnected
@@ -115,6 +115,11 @@ nonisolated enum DrivingSession {
   private nonisolated(unsafe) static var open: Open?
   private nonisolated(unsafe) static var pending: Pending?
   private nonisolated(unsafe) static var declinedUntil: Date?
+  /// What the person stopped, when the cooldown above came from a Stop in the
+  /// middle of a session rather than from a cancelled countdown or a no. The
+  /// refusal has to say which: "they turned you away" tells an agent that it
+  /// never started, and this one had.
+  private nonisolated(unsafe) static var stopped: String?
   private nonisolated(unsafe) static var sweeper: DispatchSourceTimer?
   private static let lock = NSLock()
 
@@ -177,12 +182,22 @@ nonisolated enum DrivingSession {
         return
 
       case .declined(let retryIn):
+        let wasStopped = stopped
         lock.unlock()
+        let ago = Int((DrivingPolicy.declineCooldown - retryIn).rounded())
+        let wait = Int(retryIn.rounded(.up))
+        if let wasStopped {
+          throw AccessibilityDriver.Failure.refused(
+            "The person at the keyboard stopped Cupertino driving \(appName(wasStopped)) \(ago) s "
+              + "ago, in the middle of the session, so nothing was posted to \(appName(target)). "
+              + "Do not carry on from where you were: what you did before the stop may be half "
+              + "done. Ask them in the conversation what they want. Cupertino will not drive for "
+              + "another \(wait) s.")
+        }
         throw AccessibilityDriver.Failure.refused(
-          "The person at the keyboard turned Cupertino away "
-            + "\(Int((DrivingPolicy.declineCooldown - retryIn).rounded())) s ago, so nothing was "
+          "The person at the keyboard turned Cupertino away \(ago) s ago, so nothing was "
             + "posted to \(appName(target)) and they were not asked again. Cupertino will not ask "
-            + "for another \(Int(retryIn.rounded(.up))) s. Ask them in the conversation first.")
+            + "for another \(wait) s. Ask them in the conversation first.")
 
       case .countdown, .ask:
         if Thread.isMainThread {
@@ -222,6 +237,7 @@ nonisolated enum DrivingSession {
           // Silence on a question is not a no. Nobody was there to say it.
           if !waiting.silent {
             declinedUntil = Date().addingTimeInterval(DrivingPolicy.declineCooldown)
+            stopped = nil
           }
         }
       }
@@ -269,11 +285,21 @@ nonisolated enum DrivingSession {
   // ─── ending ────────────────────────────────────────────────────────────────
 
   /// End the session now, and hand the Mac back. Nil when none was open.
+  ///
+  /// A release by the person is also a no, for `DrivingPolicy.declineCooldown`.
+  /// Without it Stop only ended the session: the agent's next verb found none
+  /// open and started another, behind a countdown at best and with no warning
+  /// at all under a policy of `.none`, so the person who said stop watched it
+  /// carry on.
   @discardableResult
   static func release(_ reason: Reason, now: Date = Date()) -> Released? {
     lock.lock()
     let session = open
     closeLocked()
+    if reason == .person, let session {
+      declinedUntil = now.addingTimeInterval(DrivingPolicy.declineCooldown)
+      stopped = session.target
+    }
     lock.unlock()
     guard let session else { return nil }
     return finish(session, reason, now: now)
@@ -340,6 +366,20 @@ nonisolated enum DrivingSession {
   }
 
   static func isOpen() -> Bool { target() != nil }
+
+  /// For a verb that posts in several steps: refuse the rest once the session
+  /// it was admitted into has ended.
+  ///
+  /// Admission is checked once, before the first event, so without this a long
+  /// `type` or a pointer sweep went on to the end after the person pressed Stop.
+  /// The events already posted are not taken back, and the refusal says so.
+  static func checkStillDriving(_ target: String) throws {
+    guard !isOpen() else { return }
+    throw AccessibilityDriver.Failure.refused(
+      "Cupertino stopped driving \(appName(target)) part of the way through this call, most "
+        + "likely because the person at the keyboard pressed Stop. Some of it was posted and the "
+        + "rest was not. Do not carry on or retry: ask them in the conversation what they want.")
+  }
 
   /// What `diagnostics` reports while a session is open.
   static func diagnostics(now: Date = Date()) -> [String: Any]? {

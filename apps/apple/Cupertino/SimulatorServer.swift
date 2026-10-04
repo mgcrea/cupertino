@@ -949,7 +949,9 @@ nonisolated enum SimulatorServer {
     The first driving call while somebody is using this Mac waits while Cupertino warns them,
     with a countdown they can cancel or a question they answer. A refusal saying they cancelled
     or said no means nothing was posted: ask them in the conversation rather than retrying.
-    After that every call goes straight through until the session ends. Call
+    After that every call goes straight through until the session ends, or until they stop it
+    from the notice or the menu bar: a refusal saying they stopped it means what you did before
+    may be half done, so ask them rather than carrying on. Call
     `apple_simulator_release` when you are done: it takes the notice down and brings back the
     application they were in, unless they have switched away themselves.
 

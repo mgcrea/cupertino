@@ -910,7 +910,7 @@ back. A session now ends in any of these ways, and none of them can strand the c
 | -------------------------------------------------- | ---------------------------------------------- |
 | `apple_desktop_release`, `apple_simulator_release` | the agent says it is done                      |
 | `apple_desktop_run` with `releaseAfter`            | every step of the run completed                |
-| Stop driving, in the menu bar                      | the person says it is done                     |
+| Stop: the card's cross, or the menu bar            | the person says stop; 30 s cooldown follows    |
 | idle                                               | no call of any kind for 45 s (15 to 300)       |
 | disconnected                                       | 4 s after the last connection that drove in it |
 
@@ -960,9 +960,25 @@ that never becomes key does not activate Cupertino or take the keyboard, so the 
 Cancel and keep typing. `FirstClickHostingView` accepts that first click, which a window that is
 not key would otherwise spend on nothing.
 
-The driving card itself cannot carry a button: it has to let the mouse through while input is being
-posted, or an agent's click aimed at the top-right corner would land on it. So Stop driving lives in
-the menu bar popover.
+The driving card carries a cross that stops the session, while one is open. This document used to
+say it could not: the card has to let the mouse through while input is being posted, or an agent's
+click aimed at its corner of the screen would land on it. That is true only while input is being
+posted, and a session is mostly the gaps between calls while a model thinks. So
+`DrivingOverlay.postingPointer` wraps every synthetic pointer event from `click`, `drag` and
+`hover`: it takes the card's clicks away on the main thread before the first event goes out, and
+gives them back 250 ms after the last. Keystrokes and AX actions are not aimed at a point and need
+none of it. Should one of our own clicks reach the card anyway, `FirstClickHostingView` drops any
+event whose source pid is Cupertino's, so an agent cannot press its own Stop. A `.notice(.driving)`
+lit by a Node tool, with no session behind it, has no cross: there is nothing for it to stop. The
+menu bar popover keeps its Stop driving button, which does the same thing.
+
+**Stop is a no, not only an end.** Releasing the session used to be all Stop did, and the agent's
+next verb found no session open and started another: behind a countdown by default, and with no
+warning under a policy of "Nothing". Now a release by the person leaves the same 30 s cooldown a
+cancelled countdown does, and the refusal says the person stopped the agent mid-session, so what it
+did before may be half done. A verb that posts in several steps, `type` and `hover`, checks between
+steps and refuses the rest. `drag` does not, because leaving between its down and its up would
+leave the button held, and it is over in well under a second.
 
 ### Handing back
 
@@ -1003,9 +1019,10 @@ steps, because their answers would swamp the run's own.
   cannot run a hands-off leg while somebody is at the keyboard. `desktop-check` pins the state
   machine without posting anything: a session opens, renames, releases, goes idle, outlives a
   disconnect for the grace and survives a reconnect; a countdown that runs out lets the verb
-  through, Allow lets it through, and Cancel refuses it and leaves the cooldown. Whether the Cancel
-  button takes a first click in a panel that is never key, and whether the hand-back lands, still
-  need a person to watch them.
+  through, Allow lets it through, and Cancel refuses it and leaves the cooldown; a Stop mid-session
+  refuses the next verb as a stop. Whether the Cancel button and the cross take a first click in a
+  panel that is never key, whether a synthetic click near the cross goes through to the application
+  underneath, and whether the hand-back lands, still need a person to watch them.
 
 ## An untargeted verb was not scope-checked, 2026-10-02
 

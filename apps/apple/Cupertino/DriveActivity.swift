@@ -153,7 +153,8 @@ final class DriveActivity {
   private(set) var kind: VisibleTools.Notice?
   /// The countdown or question on screen. Outranks every other card.
   private(set) var prompt: DrivingSession.Prompt?
-  /// What an open session is driving, which is what the menu bar's Stop acts on.
+  /// What an open session is driving, which is what Stop acts on, on the card
+  /// and in the menu bar.
   private(set) var sessionTarget: String?
   private var handedBack: (target: String, restored: String?, until: Date)?
   private var expiry: Date?
@@ -249,7 +250,10 @@ final class DriveActivity {
       overlay.show(
         bundleId: prompt.target, name: DrivingSession.appName(prompt.target), phase: prompt.phase)
     } else if let target, let kind {
-      overlay.show(bundleId: target, name: displayName ?? target, phase: .notice(kind))
+      // The cross only while a session is open: it is the session it stops.
+      let phase: DrivingOverlay.Phase =
+        kind == .driving && sessionTarget != nil ? .holding : .notice(kind)
+      overlay.show(bundleId: target, name: displayName ?? target, phase: phase)
     } else if let handedBack {
       overlay.show(
         bundleId: handedBack.target, name: DrivingSession.appName(handedBack.target),

@@ -609,6 +609,45 @@ struct DesktopCheck {
         && DrivingSession.target() == driven)
     DrivingSession.release(.agent)
 
+    // Stop, from the card's cross or the menu bar. It leaves a cooldown like a
+    // cancel does, so it is dated 29 s back: the cooldown is live for about a
+    // second, long enough to be refused by it, and gone before the half below.
+    func refusal(_ body: () throws -> Void) -> String {
+      do {
+        try body()
+        return ""
+      } catch {
+        return error.localizedDescription
+      }
+    }
+    check(
+      "Stop with nothing being driven leaves no cooldown behind",
+      DrivingSession.release(.person) == nil
+        && refusal { try DrivingSession.admit(driven, settings: quiet) }.isEmpty
+        && DrivingSession.target() == driven)
+    check(
+      "a verb part way through carries on while the session is open",
+      refusal { try DrivingSession.checkStillDriving(driven) }.isEmpty)
+    check(
+      "Stop ends the session as the person's doing",
+      DrivingSession.release(
+        .person, now: Date().addingTimeInterval(-(DrivingPolicy.declineCooldown - 1)))?.reason
+        == .person && DrivingSession.target() == nil)
+    check(
+      "a verb part way through is cut short once the person stopped it",
+      refusal { try DrivingSession.checkStillDriving(driven) }.contains("part of the way through"))
+    let stoppedMessage = refusal { try DrivingSession.admit(driven, settings: quiet) }
+    check(
+      "the next verb is refused saying the person stopped it, not that it never started",
+      stoppedMessage.contains("stopped Cupertino driving")
+        && !stoppedMessage.contains("turned Cupertino away") && DrivingSession.target() == nil)
+    Thread.sleep(forTimeInterval: 1.5)
+    check(
+      "and once the cooldown is over, a session can open again",
+      refusal { try DrivingSession.admit(driven, settings: quiet) }.isEmpty
+        && DrivingSession.target() == driven)
+    DrivingSession.release(.agent)
+
     // The half that waits. Last, because a cancel leaves a cooldown behind that
     // refuses every admission for the rest of this process.
     func admitOffMain(_ settings: DrivingPolicy.Settings) -> (DispatchSemaphore, () -> String) {

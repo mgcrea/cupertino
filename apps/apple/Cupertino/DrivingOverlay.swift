@@ -32,8 +32,8 @@ import SwiftUI
 ///   * `.nonactivatingPanel` in the style mask, and `orderFrontRegardless()`
 ///     rather than `makeKeyAndOrderFront` — the latter is exactly the mistake.
 ///   * `.screenSaver` level, so it sits above normal and full-screen windows.
-///   * `ignoresMouseEvents` while anything is being driven, so a synthetic click
-///     aimed at the corner of the screen goes to the window underneath.
+///   * `ignoresMouseEvents` whenever a synthetic pointer event is going out, so
+///     a click aimed at the corner of the screen goes to the window underneath.
 ///   * `.canJoinAllSpaces` / `.stationary` / `.fullScreenAuxiliary`, so it does
 ///     not disappear when the user changes Space.
 ///
@@ -42,12 +42,23 @@ import SwiftUI
 ///     frontmost before/after: Safari / Safari   unchanged: true
 ///     this process active: false   panel is key: false   panel visible: true
 ///
-/// ## The two cards that take clicks, and why that is still safe
+/// ## The three cards that take clicks, and why that is still safe
 ///
-/// The countdown and the question have buttons, so for as long as one of them
-/// is up the panel accepts mouse events. Two facts keep the rule above intact.
-/// Nothing is posted while they are up — every driving verb is waiting on the
-/// answer in `DrivingSession.admit` — so no synthetic click can land on them.
+/// The countdown and the question have buttons, and so does the card shown
+/// while a session holds the screen: a cross that stops it. For as long as one
+/// of them is up the panel accepts mouse events, and two facts keep the rule
+/// above intact.
+///
+/// No synthetic click can land on them. Nothing is posted while the countdown
+/// or the question is up — every driving verb is waiting on the answer in
+/// `DrivingSession.admit`. The session card is different, because a session is
+/// exactly when clicks are posted, so it lets the mouse through for as long as
+/// one is going out: `postingPointer` wraps every synthetic pointer event and
+/// takes the card's clicks away first. A session is mostly the gaps between
+/// calls while a model thinks, which is when the cross is there to be pressed.
+/// And should one of ours land on the card anyway, `FirstClickHostingView`
+/// drops it rather than let an agent press its own Stop.
+///
 /// And a click on a non-activating panel that never becomes key neither
 /// activates Cupertino nor takes the keyboard, so the person can press Cancel
 /// and keep typing into the window they were in. `FirstClickHostingView` exists
@@ -82,6 +93,11 @@ final class DrivingOverlay {
   enum Phase: Equatable {
     /// The driving notice, or one of the quieter info notices.
     case notice(VisibleTools.Notice)
+    /// The driving notice while a session holds the screen. The cross ends it.
+    ///
+    /// Apart from `.notice(.driving)` because a Node tool can light that one
+    /// with no session behind it, and a cross there would have nothing to stop.
+    case holding
     /// A session is about to open. Cancel stops it.
     case countdown(endsAt: Date)
     /// A session will open only if the person allows it.
@@ -91,7 +107,7 @@ final class DrivingOverlay {
 
     var takesClicks: Bool {
       switch self {
-      case .countdown, .asking: true
+      case .countdown, .asking, .holding: true
       case .notice, .done: false
       }
     }
@@ -102,6 +118,7 @@ final class DrivingOverlay {
       switch self {
       case .countdown: NSSize(width: 390, height: 60)
       case .asking: NSSize(width: 420, height: 60)
+      case .holding: NSSize(width: 350, height: 60)
       case .notice, .done: NSSize(width: 320, height: 60)
       }
     }
@@ -163,12 +180,15 @@ final class DrivingOverlay {
   func preview() {
     guard showing == nil else { return }
     let style = NoticeStyle.current
-    let phase = Phase.notice(.driving)
+    // The session card, cross included, because that is the one somebody
+    // choosing a corner will see. Its cross is drawn and not live: there is no
+    // session for it to stop.
+    let phase = Phase.holding
     let arriving = previewing == nil
     previewing = style
     present(
       DrivingCard(name: "Safari", phase: phase, size: style.size), phase: phase, style: style,
-      on: NSScreen.main)
+      on: NSScreen.main, clickable: false)
     if arriving { play(.arriving, style) }
     previewTimer?.invalidate()
     previewTimer = Timer.scheduledTimer(withTimeInterval: 2.2, repeats: false) { [weak self] _ in
@@ -194,16 +214,75 @@ final class DrivingOverlay {
   }
 
   private func present(
-    _ card: DrivingCard, phase: Phase, style: NoticeStyle.Settings, on screen: NSScreen?
+    _ card: DrivingCard, phase: Phase, style: NoticeStyle.Settings, on screen: NSScreen?,
+    clickable: Bool = true
   ) {
     let panel = panel ?? make()
     self.panel = panel
     panel.contentView = FirstClickHostingView(rootView: card)
-    // See "The two cards that take clicks" above.
-    panel.ignoresMouseEvents = !phase.takesClicks
+    takesClicks = clickable && phase.takesClicks
+    applyMouse()
     place(panel, on: screen, size: phase.size(style.size), placement: style.placement)
     // NEVER makeKeyAndOrderFront — see the focus rule above.
     panel.orderFrontRegardless()
+  }
+
+  // ─── letting synthetic pointer events through ──────────────────────────────
+
+  /// Whether the card on screen has buttons to press. `applyMouse` is the only
+  /// place that turns it into `ignoresMouseEvents`.
+  private var takesClicks = false
+
+  /// Synthetic pointer posts in flight, from any thread.
+  private nonisolated(unsafe) static var pointerPosts = 0
+  private nonisolated static let pointerLock = NSLock()
+
+  /// How long the card stays click-through after the last event went out. The
+  /// window server routes a posted event after `post` returns, so turning the
+  /// card's clicks back on in the same instant could still catch it.
+  private nonisolated static let pointerSettle: Duration = .milliseconds(250)
+
+  /// Post synthetic pointer events with the card out of their way.
+  ///
+  /// Every `click`, `drag` and `hover` goes through here. The card's clicks are
+  /// taken away on the main thread BEFORE the first event is posted — a hop
+  /// that waits, which is safe because the main thread never waits on a
+  /// driving thread (`DrivingSession`, "Blocking") — and given back a moment
+  /// after the last, once no other post is in flight. Keystrokes and AX
+  /// actions need none of this: they are not aimed at a point.
+  nonisolated static func postingPointer<T>(_ body: () throws -> T) rethrows -> T {
+    pointerLock.lock()
+    pointerPosts += 1
+    pointerLock.unlock()
+    if Thread.isMainThread {
+      MainActor.assumeIsolated { shared.applyMouse() }
+    } else {
+      DispatchQueue.main.sync { MainActor.assumeIsolated { shared.applyMouse() } }
+    }
+    defer {
+      pointerLock.lock()
+      pointerPosts -= 1
+      pointerLock.unlock()
+      Task { @MainActor in
+        try? await Task.sleep(for: pointerSettle)
+        shared.applyMouse()
+      }
+    }
+    return try body()
+  }
+
+  private nonisolated static var postingNow: Bool {
+    pointerLock.lock()
+    defer { pointerLock.unlock() }
+    return pointerPosts > 0
+  }
+
+  /// The one writer of `ignoresMouseEvents`. A card presented in the middle of
+  /// a post — the session's card, lit by the very verb that is clicking — must
+  /// not take its clicks back from under that post, so both facts are read
+  /// here, every time.
+  private func applyMouse() {
+    panel?.ignoresMouseEvents = !takesClicks || Self.postingNow
   }
 
   private enum Cue { case arriving, leaving }
@@ -298,8 +377,27 @@ final class DrivingOverlay {
 /// key normally treats the first click as "bring me forward" and does nothing
 /// else. That would make Cancel need two clicks, the second of which may come
 /// after the countdown has already ended.
+///
+/// It also drops any click Cupertino posted itself. `postingPointer` keeps the
+/// card out of the way of those, and this is the net under it: a synthetic
+/// click that reached the card anyway must not press its cross, which would be
+/// an agent stopping its own session and being told the person did.
 private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    guard !Self.isOurs(event) else { return }
+    super.mouseDown(with: event)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    guard !Self.isOurs(event) else { return }
+    super.mouseUp(with: event)
+  }
+
+  private static func isOurs(_ event: NSEvent) -> Bool {
+    event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid())
+  }
 }
 
 extension DrivingSession.Prompt {
@@ -384,6 +482,23 @@ private struct DrivingCard: View {
       dot(.orange)
       lines("Cupertino is driving \(name)", "Please don't use the keyboard or mouse.")
       Spacer(minLength: 0)
+
+    case .holding:
+      dot(.orange)
+      lines("Cupertino is driving \(name)", "Please don't use the keyboard or mouse.")
+      Spacer(minLength: 0)
+      Button {
+        // Off the main actor: handing back waits up to a second for the
+        // previous application to come forward.
+        Task.detached { DrivingSession.release(.person) }
+      } label: {
+        Image(systemName: "xmark.circle.fill")
+          .font(.system(size: size.titlePoints + size.scaled(4)))
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.borderless)
+      .help("Stop driving")
+      .accessibilityLabel("Stop driving \(name)")
 
     case .notice(let kind):
       // Same footprint as the driving card, so a tier change does not move
