@@ -118,7 +118,10 @@
       "poster": 7,
       "outputs": {
         "preview": false,
-        "promo": [[1920, 1080], [1200, 1200]],
+        "promo": [
+          [1920, 1080],
+          [1200, 1200]
+        ],
         "website": false
       },
       "motion": "kinetic",
