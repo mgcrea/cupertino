@@ -714,8 +714,10 @@ jobs:
     # docs/succession.md §3b: the update-signing key is "never readable by a
     # workflow that a pull request can trigger". The tag guard above is half of
     # that; a named environment is the other half — SPARKLE_ED_PRIVATE_KEY and
-    # the signing secrets can be scoped to it, with a tag-only deployment policy,
-    # so a workflow edited on a PR branch cannot read them.
+    # the signing secrets are scoped to it (since 2026-10-04), and its deployment
+    # policy admits only `app-v*` tags, so a workflow edited on a PR branch cannot
+    # read them. AC_ISSUER_ID, a team identifier, and HOMEBREW_TAP_TOKEN stay
+    # repository secrets.
     environment: release
     permissions:
       contents: write
