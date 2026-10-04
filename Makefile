@@ -1185,7 +1185,8 @@ SHOT_WEBSITE := $(abspath apps/website/src/assets/shots)
 
 .PHONY: screenshots screenshots-capture screenshots-check screenshots-update \
         screenshots-seal screenshots-selftest screenshots-appstore \
-        screenshots-website screenshots-compose screenshots-doctor screenshots-clean
+        screenshots-website screenshots-compose screenshots-doctor screenshots-clean \
+        site-video
 
 ## A capture run takes over the pointer and the active app at the moment of each
 ## shot — don't use the machine while it runs, and a stray click can land in an
@@ -1255,6 +1256,27 @@ screenshots-website: ## Emit bare app captures into apps/website/src/assets/shot
 		--config "$(SHOT_CONFIG)" --source "$(SHOT_SOURCE)" --out "$(SHOT_WEBSITE)"
 
 screenshots-compose: screenshots-appstore screenshots-website ## Recompose both sets (no re-capture)
+
+## The website's tour loop: the `tour` entry in videos[], rendered from the same
+## captures as the plates, so it goes stale exactly when they do and is rebuilt
+## by the same hand. No re-capture and no app launch. appshot writes ~10 Mbps
+## with a silent stereo track because App Store previews want both; a muted
+## autoplay loop wants neither, so ffmpeg takes it down to a size a page can
+## carry and drops the audio. +faststart puts the index first so it starts
+## playing before the download ends. The poster is the frame at `poster`.
+SHOT_VIDEOS := $(SHOT_DIR)/videos
+SITE_VIDEO  := $(abspath apps/website/public/video)
+
+site-video: ## Render the website's tour loop into apps/website/public/video
+	appshot compose video --config "$(SHOT_CONFIG)" --from-stills "$(SHOT_SOURCE)" \
+		--out "$(SHOT_VIDEOS)" --videos tour --appearances $(SHOT_APPEARANCES)
+	@mkdir -p "$(SITE_VIDEO)"
+	ffmpeg -loglevel error -y -i "$(SHOT_VIDEOS)/promo/tour~dark~1920x1080.mp4" -an \
+		-c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p -movflags +faststart \
+		"$(SITE_VIDEO)/tour.mp4"
+	ffmpeg -loglevel error -y -ss 1.5 -i "$(SHOT_VIDEOS)/promo/tour~dark~1920x1080.mp4" \
+		-frames:v 1 -q:v 3 "$(SITE_VIDEO)/tour.jpg"
+	@ls -l "$(SITE_VIDEO)"
 
 screenshots-doctor: ## Check what fails silently: font, Screen Recording, config
 	appshot doctor --config "$(SHOT_CONFIG)"

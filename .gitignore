@@ -51,6 +51,7 @@ apps/apple/.build/
 apps/apple/Screenshots/source/
 apps/apple/Screenshots/appstore/
 apps/apple/Screenshots/diff/
+apps/apple/Screenshots/videos/
 apps/apple/Vendor/
 
 # Internal planning, not for a public repo.

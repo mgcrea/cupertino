@@ -1,0 +1,67 @@
+---
+/**
+ * The app, moving, directly under the hero.
+ *
+ * The hero's card is drawn on purpose, so it reflows on a phone; this is the
+ * first thing on the page that is the real window. `make site-video` renders it
+ * from the `tour` entry in apps/apple/Screenshots/screenshots.config.json, out
+ * of the same captures `Screens.astro` and `SurfacePane.astro` show still, and
+ * writes it to public/video — so it goes stale exactly when they do, and a
+ * fresh `make screenshots` wants a `make site-video` after it. From public/
+ * and not astro:assets, which does nothing for video.
+ *
+ * `preload="none"` and no `autoplay`: the script below plays it only while it
+ * is on screen, and not at all under reduced motion, where it stays on its
+ * poster with the controls showing. The controls are the no-JS fallback too.
+ * Muted because it has no sound to lose.
+ *
+ * Same 1120 CSS px column and plate styling as the captures below, so the
+ * window in it reads at the scale they do.
+ */
+---
+
+{/* No vertical padding of its own: the hero's bottom padding is the gap
+    above, and `Examples` below brings its own top. */}
+<section class="wrap">
+  <figure id="tour" class="reveal m-0 scroll-mt-24">
+    <video
+      data-tour
+      src="/video/tour.mp4"
+      poster="/video/tour.jpg"
+      width="1920"
+      height="1080"
+      muted
+      loop
+      playsinline
+      controls
+      preload="none"
+      aria-label="A twenty-second loop of Cupertino's window: the sidebar of Apple apps under one grant, the activity log with a refused write, Notes with writes off and seven tools, and the on-device chat calling a Mail tool."
+      class="mx-auto block h-auto w-full max-w-[1120px] rounded-[14px] border border-rule-2 shadow-[0_24px_60px_-34px_rgba(0,0,0,.9)]"
+    >
+    </video>
+    <figcaption
+      class="mx-auto mt-5 max-w-[1120px] text-[14.5px] leading-[1.65] text-pretty text-fg-dim"
+    >
+      Twenty seconds of the app: every Apple app behind one grant, the log as calls land, a surface
+      with writes off, and the on-device chat. Each pane is shown still, and explained, further
+      down.
+    </figcaption>
+  </figure>
+</section>
+
+<script>
+  // Plays the tour only while it is on screen. Reduced motion, or no
+  // IntersectionObserver, leaves it as it rendered: paused, with controls.
+  const tour = document.querySelector<HTMLVideoElement>("video[data-tour]");
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (tour && !still && "IntersectionObserver" in window) {
+    tour.controls = false;
+    new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void tour.play().catch(() => (tour.controls = true));
+        else tour.pause();
+      },
+      { threshold: 0.4 },
+    ).observe(tour);
+  }
+</script>

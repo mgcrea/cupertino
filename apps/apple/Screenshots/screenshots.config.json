@@ -54,7 +54,8 @@
         ]
       },
       "title": "#F4F2EF",
-      "subtitle": "#9B9A96"
+      "subtitle": "#9B9A96",
+      "accent": "#F2895C"
     }
   },
   "//screens": "Order here IS the order of the framed set — it stamps the 01-, 02- prefix. The capture filenames stay unnumbered, so reordering never renames an image. `id` matches <id>~dark.png in source/, and it is also the -ScreenshotStage value DemoSeed.Stage parses.",
@@ -106,6 +107,169 @@
       "website": "chat",
       "title": "Try the tools without wiring anything.",
       "subtitle": "Ask in plain words and Apple's on-device model calls the same tools an editor would, over the same connection — every call shown with the arguments it invented. Nothing leaves the Mac."
+    }
+  ],
+  "//videos": "appshot compose video --from-stills, from the same captures as the plates; rect values are capture pixels, and every plate is 2240x1104. `intro` is the social cut: an opening line, an end card, square and 16:9. `tour` is the website's loop, built by `make site-video` into apps/website/public/video: no opening line and no card, because the page around it already says both, and it ends back on its first screen so the loop does not jump. A recorded take needs a cue handler in DemoSeed first. card-icon.png is design/cupertino-icon.svg at 512px, because appshot does not read SVG.",
+  "videos": [
+    {
+      "id": "intro",
+      "stage": "surface",
+      "duration": 22,
+      "poster": 7,
+      "outputs": {
+        "preview": false,
+        "promo": [[1920, 1080], [1200, 1200]],
+        "website": false
+      },
+      "motion": "kinetic",
+      "hook": "Your Apple apps. *One permission.*",
+      "card": {
+        "title": "Cupertino",
+        "subtitle": "Your Apple apps, for any AI client",
+        "icon": "card-icon.png",
+        "cta": "cupertino.mgcrea.io"
+      },
+      "beats": [
+        {
+          "at": 0,
+          "screen": "surface"
+        },
+        {
+          "at": 1.6,
+          "spotlight": {
+            "rect": [16, 80, 390, 620],
+            "until": 4.3
+          }
+        },
+        {
+          "at": 4.5,
+          "screen": "activity",
+          "caption": "Watch every tool call, *live*",
+          "focus": {
+            "rect": [430, 180, 900, 840]
+          }
+        },
+        {
+          "at": 6.4,
+          "pop": {
+            "rect": [436, 694, 800, 34],
+            "until": 9.2
+          }
+        },
+        {
+          "at": 9.5,
+          "screen": "writes",
+          "caption": "Writes stay *off* until you say so",
+          "focus": "home"
+        },
+        {
+          "at": 11,
+          "pop": {
+            "rect": [461, 818, 1737, 129],
+            "until": 14.2
+          },
+          "focus": {
+            "rect": [430, 220, 1790, 740]
+          }
+        },
+        {
+          "at": 14.5,
+          "screen": "chat",
+          "caption": "Try it on-device. *Nothing leaves the Mac.*"
+        },
+        {
+          "at": 15.6,
+          "pop": {
+            "rect": [437, 310, 1783, 250],
+            "until": 18.2
+          },
+          "focus": {
+            "rect": [400, 140, 1830, 440]
+          }
+        },
+        {
+          "at": 18.5,
+          "endCard": true
+        }
+      ]
+    },
+    {
+      "id": "tour",
+      "stage": "surface",
+      "duration": 20,
+      "poster": 1.5,
+      "outputs": {
+        "preview": false,
+        "promo": [[1920, 1080]],
+        "website": false
+      },
+      "motion": "kinetic",
+      "beats": [
+        {
+          "at": 0,
+          "screen": "surface",
+          "caption": "Your Apple apps. *One permission.*"
+        },
+        {
+          "at": 0.8,
+          "spotlight": {
+            "rect": [16, 80, 390, 620],
+            "until": 3.6
+          }
+        },
+        {
+          "at": 4,
+          "screen": "activity",
+          "caption": "Watch every tool call, *live*",
+          "focus": {
+            "rect": [430, 180, 900, 840]
+          }
+        },
+        {
+          "at": 5.8,
+          "pop": {
+            "rect": [436, 694, 800, 34],
+            "until": 8.6
+          }
+        },
+        {
+          "at": 9,
+          "screen": "writes",
+          "caption": "Writes stay *off* until you say so",
+          "focus": "home"
+        },
+        {
+          "at": 10.4,
+          "focus": {
+            "rect": [430, 220, 1790, 740]
+          },
+          "pop": {
+            "rect": [461, 818, 1737, 129],
+            "until": 13.4
+          }
+        },
+        {
+          "at": 14,
+          "screen": "chat",
+          "caption": "Try it on-device. *Nothing leaves the Mac.*",
+          "until": 18.6
+        },
+        {
+          "at": 15.1,
+          "focus": {
+            "rect": [400, 140, 1830, 440]
+          },
+          "pop": {
+            "rect": [437, 310, 1783, 250],
+            "until": 18
+          }
+        },
+        {
+          "at": 18.8,
+          "screen": "surface",
+          "focus": "home"
+        }
+      ]
     }
   ]
 }
