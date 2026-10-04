@@ -339,8 +339,9 @@ final class SoundCapture: NSObject {
   /// Idle sleep, held off for the length of a recording and not one second
   /// longer.
   ///
-  /// This is the only place in the project that touches the Mac's power
-  /// behaviour, and the narrowness is the point. Every other tool is
+  /// This is one of two places in the project that touch the Mac's power
+  /// behaviour, and the narrowness is the point. The other is a driving
+  /// session's display assertion (`DrivingSession`). Every other tool is
   /// request/response and finishes in the time a caller is waiting on it;
   /// a recording is the one thing that runs for an hour with nobody at the
   /// keyboard, which is precisely the condition idle sleep waits for. Sleeping

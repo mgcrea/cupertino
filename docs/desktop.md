@@ -914,6 +914,14 @@ back. A session now ends in any of these ways, and none of them can strand the c
 | idle                                               | no call of any kind for 45 s (15 to 300)       |
 | disconnected                                       | 4 s after the last connection that drove in it |
 
+**While a session is open the display stays awake**, under the assertion `caffeinate -d` takes
+(`PreventUserIdleDisplaySleep`, named "An agent is driving the screen" in `pmset -g assertions`). A
+press through the accessibility API is not input, so the idle timer runs on through a session as if
+nobody were there; on a Mac that asks for its password after the screen sleeps, the agent was then
+driving a locked screen, where presses fail and every capture is of the lock screen. The assertion
+starts and ends with the session, so every exit above lets it go, and `desktop-check` reads it back
+from IOKit on both edges.
+
 ### Admission
 
 `DrivingSession.admit` runs inside every driving verb in `AccessibilityDriver`, **after the verb's

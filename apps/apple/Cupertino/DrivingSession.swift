@@ -121,6 +121,20 @@ nonisolated enum DrivingSession {
   /// never started, and this one had.
   private nonisolated(unsafe) static var stopped: String?
   private nonisolated(unsafe) static var sweeper: DispatchSourceTimer?
+  /// The display assertion, `caffeinate -d`, held from the moment a session opens
+  /// until it ends, whichever way it ends.
+  ///
+  /// A press through the accessibility API is not input, so the idle timer runs
+  /// on through a session as if nobody were there, and on a Mac set to ask for
+  /// its password after the screen sleeps the agent is then driving a locked
+  /// screen: presses fail and every capture is of the lock screen. The display is
+  /// what has to stay up, so that is the assertion, and nothing wider. It lasts
+  /// exactly as long as the session, which idle release already ends 45 seconds
+  /// after the last verb, so a forgotten session cannot keep a screen lit for long.
+  /// The other place the project touches power is `SoundCapture`, for a recording.
+  private nonisolated(unsafe) static var awake: NSObjectProtocol?
+  /// What `pmset -g assertions` prints beside Cupertino while a session is open.
+  static let awakeReason = "An agent is driving the screen"
   private static let lock = NSLock()
 
   // ─── admission ─────────────────────────────────────────────────────────────
@@ -440,6 +454,10 @@ nonisolated enum DrivingSession {
     open = Open(
       target: target, driven: [target], since: now, lastCall: now, handsBackTo: back,
       connections: connection.map { [$0] } ?? [], orphanedAt: nil)
+    if awake == nil {
+      awake = ProcessInfo.processInfo.beginActivity(
+        options: .idleDisplaySleepDisabled, reason: awakeReason)
+    }
     guard sweeper == nil else { return }
     let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
     timer.schedule(deadline: .now() + 1, repeating: 1)
@@ -453,6 +471,8 @@ nonisolated enum DrivingSession {
     open = nil
     sweeper?.cancel()
     sweeper = nil
+    if let token = awake { ProcessInfo.processInfo.endActivity(token) }
+    awake = nil
   }
 
   private static func announce(_ target: String) {

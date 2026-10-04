@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IOKit.pwr_mgt
 
 /// Asserts that the in-process `desktop` server speaks MCP, and that its write
 /// gate holds in both directions.
@@ -535,8 +536,24 @@ struct DesktopCheck {
       "release with nothing driven is an answer, not an error",
       !idleReleaseFailed && json(idleRelease)?["released"] is NSNull)
 
+    // Read back from IOKit, as `pmset -g assertions` reads it, rather than from the
+    // token `DrivingSession` holds: the claim is about the Mac, not the variable.
+    func keepsDisplayAwake() -> Bool {
+      var byProcess: Unmanaged<CFDictionary>?
+      guard IOPMCopyAssertionsByProcess(&byProcess) == kIOReturnSuccess,
+        let all = byProcess?.takeRetainedValue() as NSDictionary?,
+        let mine = all[NSNumber(value: getpid())] as? [[String: Any]]
+      else { return false }
+      return mine.contains {
+        $0[kIOPMAssertionTypeKey] as? String == kIOPMAssertPreventUserIdleDisplaySleep
+          && $0[kIOPMAssertionNameKey] as? String == DrivingSession.awakeReason
+      }
+    }
+    check("with no session the display may sleep", !keepsDisplayAwake())
+
     try? DrivingSession.admit(driven, settings: quiet)
     check("the first admitted verb opens a session", DrivingSession.target() == driven)
+    check("an open session keeps the display awake", keepsDisplayAwake())
     check("an open session is what is being driven", DriveActivity.current() == driven)
     check(
       "diagnostics reports the session rather than a bare id",
@@ -560,6 +577,7 @@ struct DesktopCheck {
     check(
       "after release nothing is being driven",
       DrivingSession.target() == nil && DriveActivity.current() == nil)
+    check("and the display may sleep again", !keepsDisplayAwake())
 
     try? DrivingSession.admit(driven, settings: quiet)
     let opened = Date()
@@ -571,6 +589,7 @@ struct DesktopCheck {
       "a session with no call for the idle limit ends on its own",
       DrivingSession.sweep(now: opened.addingTimeInterval(quiet.idleRelease + 1), settings: quiet)?
         .reason == .idle && DrivingSession.target() == nil)
+    check("a session ended by idle release lets the display sleep", !keepsDisplayAwake())
 
     let client = UUID()
     Thread.current.threadDictionary[DrivingSession.connectionKey] = client
