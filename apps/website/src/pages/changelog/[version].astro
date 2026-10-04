@@ -32,6 +32,11 @@ const { release, newer, older } = Astro.props;
 const { summary } = release;
 
 const headline = summary?.title ?? `${APP_NAME} ${release.version}`;
+// Without a summary the headline is already the name and number; repeating it
+// after the dash would title the page "Cupertino 1.24.0 — Cupertino 1.24.0".
+const title = summary
+  ? `${APP_NAME} ${release.version} — ${headline}`
+  : `${APP_NAME} ${release.version} release notes`;
 const description =
   summary?.description ??
   (release.highlights.length > 0
@@ -53,7 +58,7 @@ const cardProps = release.card
 ---
 
 <Layout
-  title={`${APP_NAME} ${release.version} — ${headline}`}
+  title={title}
   description={description}
   {...cardProps}
 >
