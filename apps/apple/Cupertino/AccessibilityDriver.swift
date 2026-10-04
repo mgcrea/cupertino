@@ -843,6 +843,175 @@ nonisolated enum AccessibilityDriver {
     if let problem = failure(for: err, doing: "Pressing '\(handle)'") { throw problem }
   }
 
+  // ─── the menu bar ──────────────────────────────────────────────────────────
+
+  /// One row of a menu, as `menu` reports it. Separators are not rows.
+  struct MenuEntry {
+    let title: String
+    let enabled: Bool
+    let checked: Bool
+    let shortcut: String?
+    let submenu: Bool
+
+    var json: [String: Any] {
+      var out: [String: Any] = ["title": title, "enabled": enabled]
+      if checked { out["checked"] = true }
+      if let shortcut { out["shortcut"] = shortcut }
+      if submenu { out["submenu"] = true }
+      return out
+    }
+  }
+
+  /// The items of a menu, read by title path, with nothing opened.
+  ///
+  /// `windows` keeps only `AXWindow` children, so the menu bar never reached a
+  /// tree, a search or a handle, and the click guard refuses a point on it.
+  /// The menu bar was out of reach of every verb. It is not a window: it is the
+  /// application element's `AXMenuBar`, and a CLOSED menu's items are readable
+  /// beneath it. Measured 2026-10-04 on six running applications, all in the
+  /// background: the whole bar in 45-52 ms, frontmost application unchanged.
+  ///
+  /// An empty path lists the bar itself.
+  static func menu(bundleId: String, path: [String], scope: Scope) throws
+    -> (path: [String], entries: [MenuEntry])
+  {
+    let (element, resolved) = try menuElement(bundleId: bundleId, path: path, scope: scope)
+    if !path.isEmpty && !opensMenu(element) {
+      throw Failure.refused(
+        "'\(resolved.joined(separator: " > "))' is a menu item, not a menu. Press it with "
+          + "apple_desktop_press_menu.")
+    }
+    return (resolved, menuItems(of: element).compactMap(menuEntry))
+  }
+
+  /// Press a menu item by its title path, without opening the menu or bringing
+  /// the application forward.
+  ///
+  /// **Refuses a disabled item, because the application would not.** Measured
+  /// on Finder in the background: `AXPress` on an item reporting
+  /// `AXEnabled = false` returned `.success` and did nothing. Trusting the
+  /// return would report a press that never happened.
+  ///
+  /// The cost of that refusal falls on AppKit applications. They validate
+  /// their menus against the key window, and a background application has
+  /// none, so most of Finder's View menu reads disabled until Finder is in
+  /// front. Opening the menu through `AXPress` on its title did not revalidate
+  /// it either. SwiftUI keeps its command state current: Pupitre's toggles
+  /// read enabled with live checkmarks in the background, and a press there
+  /// flipped one and the next flipped it back, with the editor still in front.
+  ///
+  /// **No read-back.** The checkmark moved 0.1 s after one press and 1.0 s
+  /// after another, and an unchecked toggle looks exactly like a plain command,
+  /// so polling for a change would wait out its whole timeout on every
+  /// ordinary press. `wasChecked` says which way a toggle went; the caller
+  /// reads the menu again if it needs to see it land.
+  static func pressMenuItem(bundleId: String, path: [String], scope: Scope) throws
+    -> (path: [String], wasChecked: Bool)
+  {
+    let (element, resolved) = try menuElement(bundleId: bundleId, path: path, scope: scope)
+    let shown = resolved.joined(separator: " > ")
+    guard !opensMenu(element) else {
+      throw Failure.refused(
+        "'\(shown)' opens a submenu. Name one of its items, which apple_desktop_menu lists.")
+    }
+    guard (copy(element, kAXEnabledAttribute as String) as? Bool) ?? true else {
+      throw Failure.refused(
+        "'\(shown)' is disabled, so nothing was pressed. An AppKit application validates its "
+          + "menus against its key window, so many items read disabled while it is in the "
+          + "background: bring it forward with apple_desktop_activate, then check "
+          + "apple_desktop_menu again before pressing.")
+    }
+    let wasChecked = !(string(element, kAXMenuItemMarkCharAttribute as String) ?? "").isEmpty
+    // Admitted after every check, as `announce` is for a handle: a refused
+    // press puts no card on screen.
+    try DrivingSession.admit(bundleId)
+    DriveActivity.record(bundleId)
+    let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
+    if let problem = failure(for: err, doing: "Pressing '\(shown)'") { throw problem }
+    return (resolved, wasChecked)
+  }
+
+  /// Walk a title path down from the menu bar. Titles match exactly first,
+  /// then ignoring case and a trailing ellipsis, so "Settings" finds
+  /// "Settings…". A miss names what was there, which is what the caller needs
+  /// to correct the path.
+  private static func menuElement(bundleId: String, path: [String], scope: Scope) throws
+    -> (AXUIElement, [String])
+  {
+    guard isTrusted() else { throw Failure.notTrusted }
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    let running = try app(forBundleId: bundleId)
+    guard
+      let raw = copy(element(for: pid(of: running)), kAXMenuBarAttribute as String),
+      CFGetTypeID(raw) == AXUIElementGetTypeID()
+    else {
+      throw Failure.refused("\(running.localizedName ?? bundleId) publishes no menu bar.")
+    }
+    var current = raw as! AXUIElement
+    var resolved: [String] = []
+    for wanted in path {
+      let titled = menuItems(of: current).compactMap { item in
+        string(item, kAXTitleAttribute as String).map { (item, $0) }
+      }
+      let loose = { (title: String) in
+        title.lowercased().replacingOccurrences(of: "…", with: "")
+          .replacingOccurrences(of: "...", with: "")
+          .trimmingCharacters(in: .whitespaces)
+      }
+      guard
+        let (item, title) = titled.first(where: { $0.1 == wanted })
+          ?? titled.first(where: { loose($0.1) == loose(wanted) })
+      else {
+        let place = resolved.isEmpty ? "the menu bar" : "'\(resolved.joined(separator: " > "))'"
+        throw Failure.refused(
+          "No '\(wanted)' in \(place). It holds: "
+            + titled.map(\.1).joined(separator: ", ") + ".")
+      }
+      current = item
+      resolved.append(title)
+    }
+    return (current, resolved)
+  }
+
+  /// Whether an item opens a submenu. Asked of the `AXMenu` child rather than
+  /// of the items under it: File > Open Recent in Pupitre carries an empty
+  /// submenu until it has something to list, and counting items made it a
+  /// pressable leaf.
+  private static func opensMenu(_ item: AXUIElement) -> Bool {
+    children(item).contains {
+      string($0, kAXRoleAttribute as String) == (kAXMenuRole as String)
+    }
+  }
+
+  /// A menu bar's items are its children. A menu bar item's, or a submenu
+  /// item's, are one level further down, under the `AXMenu` it carries.
+  private static func menuItems(of element: AXUIElement) -> [AXUIElement] {
+    children(element).flatMap { child in
+      string(child, kAXRoleAttribute as String) == (kAXMenuRole as String)
+        ? children(child) : [child]
+    }
+  }
+
+  /// nil for a separator, which has no title.
+  private static func menuEntry(_ item: AXUIElement) -> MenuEntry? {
+    guard let title = string(item, kAXTitleAttribute as String) else { return nil }
+    var shortcut: String?
+    if let key = string(item, kAXMenuItemCmdCharAttribute as String) {
+      // kAXMenuItemModifier*: shift 1, option 2, control 4, and 8 for NO
+      // command, which is otherwise implied.
+      let mods = (copy(item, kAXMenuItemCmdModifiersAttribute as String) as? Int) ?? 0
+      shortcut =
+        (mods & 4 != 0 ? "⌃" : "") + (mods & 2 != 0 ? "⌥" : "") + (mods & 1 != 0 ? "⇧" : "")
+        + (mods & 8 == 0 ? "⌘" : "") + key
+    }
+    return MenuEntry(
+      title: title,
+      enabled: (copy(item, kAXEnabledAttribute as String) as? Bool) ?? true,
+      checked: !(string(item, kAXMenuItemMarkCharAttribute as String) ?? "").isEmpty,
+      shortcut: shortcut,
+      submenu: opensMenu(item))
+  }
+
   /// Set a value, and report the trap rather than hiding it.
   ///
   /// `packages/mail/src/client/jxa/core.ts:299` records a value that "reports

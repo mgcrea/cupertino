@@ -104,7 +104,7 @@ struct DesktopCheck {
     "apple_desktop_hover", "apple_desktop_key", "apple_desktop_press",
     "apple_desktop_raise_window", "apple_desktop_set_value",
     "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
-    "apple_desktop_release",
+    "apple_desktop_release", "apple_desktop_press_menu",
   ]
 
   static func json(_ text: String) -> [String: Any]? {
@@ -116,7 +116,7 @@ struct DesktopCheck {
   static let observing = [
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
     "apple_desktop_get_attribute", "apple_desktop_list_apps", "apple_desktop_list_windows",
-    "apple_desktop_ui_tree", "apple_desktop_user_activity",
+    "apple_desktop_menu", "apple_desktop_ui_tree", "apple_desktop_user_activity",
   ]
 
   static func main() {
@@ -446,6 +446,42 @@ struct DesktopCheck {
     check(
       "click naming an application outside the reach is refused by the switch's name",
       reachError && reachText.contains("Reach any application"))
+
+    // ─── the menu bar ───────────────────────────────────────────────────────
+    //
+    // Refusals only: each returns before a menu bar is read or an item pressed,
+    // so nothing on the machine running the check is chosen.
+    let (shortText, shortError) = callText(
+      "apple_desktop_press_menu", ["bundleId": "com.apple.Maps", "path": ["View"]],
+      writes: true)
+    check(
+      "press_menu with only a menu, no item, is refused before anything is read",
+      shortError && shortText.contains("at least two titles"))
+    let (blankText, blankError) = callText(
+      "apple_desktop_menu", ["bundleId": "com.apple.Maps", "path": ["View", ""]], writes: false)
+    check(
+      "menu refuses an empty title rather than matching it against a separator",
+      blankError && blankText.contains("none of them empty"))
+    let (menuReach, menuReachError) = callText(
+      "apple_desktop_menu", ["bundleId": "com.microsoft.VSCode", "path": ["View"]],
+      writes: false, anyApp: false)
+    check(
+      "menu outside the reach is refused by the switch's name",
+      menuReachError && menuReach.contains("Reach any application"))
+    let (pressReach, pressReachError) = callText(
+      "apple_desktop_press_menu",
+      ["bundleId": "com.microsoft.VSCode", "path": ["View", "Explorer"]], writes: true,
+      anyApp: false)
+    check(
+      "press_menu outside the reach is refused by the switch's name and lights no indicator",
+      pressReachError && pressReach.contains("Reach any application")
+        && DriveActivity.current() != "com.microsoft.VSCode")
+    let (_, absentMenuError) = callText(
+      "apple_desktop_press_menu", ["bundleId": "com.example.absent", "path": ["File", "Open"]],
+      writes: true, anyApp: true)
+    check(
+      "press_menu naming an application that is not running lights no indicator",
+      absentMenuError && DriveActivity.current() != "com.example.absent")
 
     // ─── run: validated whole, then stopped at the first failure ────────────
     //

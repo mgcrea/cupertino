@@ -1057,7 +1057,8 @@ Three more on the way:
   The check walks `CGWindowListCopyWindowInfo` front to back. A normal window of another application
   above the point refuses, and a higher layer such as the menu bar, the Dock or a notice is stepped
   over, because the list cannot say whether it takes clicks. A click on the menu bar is therefore
-  refused. Menus are for `press`.
+  refused. Menus are for `press_menu`, below. When this was written, they were for nothing: `press`
+  needed a handle, and no read ever minted one for the menu bar.
 - **No reach includes Cupertino.** `.any` admitted everything, Cupertino included, so an agent
   allowed to reach any application could open Cupertino's Settings and switch on the writes it had
   been refused. `Scope.admits` now excludes this bundle id, the release one and the debug one, so a
@@ -1070,6 +1071,64 @@ Three more on the way:
 passed in. A live call would post into whatever is in front of the machine running it. It also pins
 the Cupertino exclusion under every reach, and a point off every display. What has not been watched
 by hand is the window walk against a real overlap, and the second frontmost read after a countdown.
+
+## The menu bar, 2026-10-04
+
+The report came from an agent driving Parcelle: `find_elements` could not see View ▸ Show
+Cadastre, nor the items of an open menu, so it clicked at screen points and fell back to
+`osascript`. Both took the focus from the person at the keyboard, which is most of what made the
+session feel slow.
+
+**The menu bar was out of reach of every verb.** `windows` keeps the application element's
+`AXWindow` children, so the `AXMenuBar` beside them never reached a tree, a search or a handle,
+and the click guard above refuses a point on the menu bar. The refusal said "menus are for press",
+and press had nothing to press.
+
+The bar is the application element's `kAXMenuBarAttribute`, and a CLOSED menu's items are
+readable beneath it: bar item, then its `AXMenu`, then the items. Measured on six running
+applications, all in the background, with nothing opened:
+
+|                          |                                          |
+| ------------------------ | ---------------------------------------- |
+| whole bar, every menu    | 42-60 ms                                 |
+| frontmost application    | unchanged throughout (the editor)        |
+| `AXPress` on a menu item | `.success`, and it acts, in SwiftUI apps |
+
+So there are two verbs. `apple_desktop_menu` reads one menu by title path, `[]` being the bar
+itself, and reports each item's enabled state, checkmark, shortcut and whether it opens a submenu.
+`apple_desktop_press_menu` presses an item by title path. Both are `run` steps, so "choose the
+menu item, wait, read it back" is one call.
+
+**A disabled item answers `.success` and does nothing.** Finder in the background, View ▸ Hide
+Path Bar reporting `AXEnabled = false`: the press returned success and `ShowPathbar` stayed 1.
+So `press_menu` refuses a disabled item rather than reporting a press that did not happen.
+
+**And in AppKit, background is exactly when items read disabled.** AppKit validates a menu
+against the key window, and a background application has none: 18 of Finder's 21 View items read
+disabled, and none carried the checkmark "as Icons" has in front. Opening the menu with `AXPress`
+on its title did not revalidate it either. SwiftUI keeps command state current. Pupitre's View
+menu read with live checkmarks and real enabled states in the background, and pressing Rainbow
+Notes there turned it off and the next press turned it back on, with the editor in front the
+whole time. The refusal therefore says to `activate` the application and read the menu again.
+Whether an AppKit item then reads enabled with its menu still closed has **not been measured**:
+it needs the application in front, which is a hands-off leg.
+
+**A submenu is a child `AXMenu`, not a count of items.** File ▸ Open Recent in Pupitre carries an
+empty `AXMenu` until it has something to list. The first version counted items, called it a
+leaf, and pressed it. It is found by the menu's role now.
+
+**A checkmark moves late, and not by a fixed amount.** Read back in the same process after a
+press, the mark flipped after 0.1 s once and 1.0 s another time. A first probe read it at 0.5 s,
+saw no change, and looked like an in-process cache. It was the application still updating. So
+`press_menu` does not poll for a change: an unchecked toggle looks exactly like a plain command,
+and every ordinary press would wait out the timeout. It returns `wasChecked`, and the caller reads
+the menu again after a beat.
+
+`capture_surface`'s description had the same kind of hole, on the `screen` surface. With "Reach
+any application" on, it still said "never an arbitrary app". The agent believed it, captured with
+`screencapture`, which sees only the front window, and so activated Parcelle for every look. The
+description follows the gate now, `screen-check` pins both wordings, and this surface's guide
+points at it under "Seeing what you did".
 
 ## Still open
 

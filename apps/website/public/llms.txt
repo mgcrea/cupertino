@@ -65,7 +65,7 @@ The app itself hosts four more surfaces, none of them a separate npm install:
 - Sound — 10 tools (3 need no permission at all, 4 always registered, 3 behind their own flag for
   microphone recording). Devices, volume and mute work with no grant; recording needs the
   Microphone permission and shows macOS's orange indicator, naming Cupertino, the whole time.
-- Desktop — 20 tools (8 always registered, 12 write-gated). Drives any app through the Accessibility
+- Desktop — 22 tools (9 always registered, 13 write-gated). Drives any app through the Accessibility
   API — reads a window as named, addressable controls, and behind the write gate presses, types and
   runs a whole session (`apple_desktop_run`) before releasing control back to whoever was using the
   Mac. Scoped to the apps Cupertino brokers unless you widen it.

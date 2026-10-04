@@ -118,6 +118,13 @@ nonisolated enum DesktopServer {
         "interactive (default) returns only what a press can land on; labelled returns anything "
         + "carrying an identifier, title or description; all returns everything.",
     ]
+    let menuPathProperty: [String: Any] = [
+      "type": "array",
+      "items": ["type": "string"],
+      "description":
+        "Menu titles from the menu bar down, as the menu shows them: [\"View\"] for a menu, "
+        + "[\"View\", \"Show Sidebar\"] for an item in it. The Apple menu is \"Apple\".",
+    ]
     let boundsProperties: [String: Any] = [
       "maxDepth": [
         "type": "integer",
@@ -245,6 +252,26 @@ nonisolated enum DesktopServer {
         "annotations": ["readOnlyHint": true],
       ],
       [
+        "name": "apple_desktop_menu",
+        "description":
+          "List one of an application's menu-bar menus by title path, e.g. [\"View\"] or "
+          + "[\"File\", \"Open Recent\"]; an empty path lists the menu bar itself. The menu bar "
+          + "is not a window, so apple_desktop_ui_tree and apple_desktop_find_elements never "
+          + "see it. Nothing is opened and the application is not brought forward. Each item "
+          + "says whether it is enabled, checked, has a shortcut or opens a submenu. An AppKit "
+          + "application in the background reports many items disabled, because it validates "
+          + "its menus against a key window it does not have.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "bundleId": bundleIdProperty,
+            "path": menuPathProperty,
+          ],
+          "required": ["bundleId"],
+        ],
+        "annotations": ["readOnlyHint": true],
+      ],
+      [
         "name": "apple_desktop_user_activity",
         "description":
           "Seconds since a person last touched this machine — keyboard, mouse, trackpad or "
@@ -280,6 +307,26 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": ["handle": ["type": "string"]],
           "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
+      ],
+      [
+        "name": "apple_desktop_press_menu",
+        "description":
+          "Choose a menu-bar item by its title path, e.g. [\"View\", \"Show Sidebar\"] — "
+          + "what clicking through the menu bar does, without opening a menu, moving the pointer "
+          + "or bringing the application forward. Titles match exactly, then ignoring case and a "
+          + "trailing ellipsis. A disabled item is refused rather than pressed, since the "
+          + "application would ignore it; apple_desktop_menu shows which items are enabled. "
+          + "'wasChecked' says whether a toggle was on before the press; its checkmark can take "
+          + "a second to move, so wait before reading the menu again to confirm it.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "bundleId": bundleIdProperty,
+            "path": menuPathProperty.merging(["minItems": 2]) { _, new in new },
+          ],
+          "required": ["bundleId", "path"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
@@ -626,6 +673,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
       "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
+      "apple_desktop_press_menu",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -750,6 +798,30 @@ nonisolated enum DesktopServer {
         }
         try AccessibilityDriver.press(handle: handle, scope: scope)
         return ok(id, ["pressed": handle])
+
+      case "apple_desktop_menu":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        guard let path = menuPath(args["path"] ?? [String]()) else {
+          return failure(id, "'path' is an array of menu titles, none of them empty.")
+        }
+        let menu = try AccessibilityDriver.menu(bundleId: bundleId, path: path, scope: scope)
+        return ok(id, ["path": menu.path, "items": menu.entries.map(\.json)])
+
+      case "apple_desktop_press_menu":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        guard let path = args["path"].flatMap(menuPath), path.count >= 2 else {
+          return failure(
+            id,
+            "'path' names a menu and then an item in it, e.g. [\"View\", \"Show Sidebar\"]: at "
+              + "least two titles, none of them empty.")
+        }
+        let pressed = try AccessibilityDriver.pressMenuItem(
+          bundleId: bundleId, path: path, scope: scope)
+        return ok(id, ["pressed": pressed.path, "wasChecked": pressed.wasChecked])
 
       case "apple_desktop_set_value":
         guard let handle = args["handle"] as? String, let value = args["value"] as? String else {
@@ -934,8 +1006,9 @@ nonisolated enum DesktopServer {
   /// large enough to swamp the one this builds; not `run` or `release`, which are
   /// not steps of a sequence.
   static let runSteps = [
-    "press", "set_value", "click", "hover", "type", "key", "focus", "activate", "raise_window",
-    "set_window_frame", "find_elements", "get_attribute", "list_windows", "user_activity", "wait",
+    "press", "press_menu", "set_value", "click", "hover", "type", "key", "focus", "activate",
+    "raise_window", "set_window_frame", "find_elements", "get_attribute", "list_windows", "menu",
+    "user_activity", "wait",
   ]
   static let runStepCeiling = 25
   static let runWaitCeilingMs = 5000
@@ -1067,6 +1140,12 @@ nonisolated enum DesktopServer {
     }
     let text = (result["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
     return (text, result["isError"] as? Bool ?? false)
+  }
+
+  /// A title path, or nil when it is not an array of non-empty strings.
+  private static func menuPath(_ raw: Any) -> [String]? {
+    guard let titles = raw as? [String], !titles.contains(where: \.isEmpty) else { return nil }
+    return titles
   }
 
   private static func jsonObject(_ text: String) -> [String: Any]? {
@@ -1221,7 +1300,9 @@ nonisolated enum DesktopServer {
     }
     return """
       Reading and driving macOS applications through the Accessibility API. Prefer
-      `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point.
+      `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point,
+      and `apple_desktop_press_menu` over clicking the menu bar. Neither brings the application
+      forward; only click, hover, type and key do.
 
       Driving is a session the person at the keyboard can see. The first driving call while they
       are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
@@ -1311,6 +1392,26 @@ nonisolated enum DesktopServer {
       Omitting `window` walks every one of them, which is usually what you want.
       Asking for window 0 is how a search for a control that lives in a popover finds
       nothing at all.
+
+      ## The menu bar is not a window
+
+      `ui_tree` and `find_elements` walk windows, so they never see the menu bar. Read a
+      menu with `apple_desktop_menu` (`["View"]`) and choose an item with
+      `apple_desktop_press_menu` (`["View", "Show Sidebar"]`). Both work on an application in
+      the background, with no menu opened and nothing brought forward.
+
+      A disabled item is refused, because pressing it would report success and do nothing.
+      SwiftUI applications keep their menus current in the background. AppKit applications
+      validate theirs against the key window, so many items read disabled until the
+      application is in front: `apple_desktop_activate` it, then read the menu again.
+
+      ## Seeing what you did
+
+      This surface reads structure, never pixels. To look at a window, use
+      `apple_screen_capture_surface` on the `screen` surface: it captures a window even when
+      it is covered, without raising or focusing anything. Avoid `screencapture` and other
+      shell tools, which see only what is in front, so every look takes the focus from the
+      person at the keyboard.
       \(simulator)
       ## Name the application you are typing into
 
@@ -1354,7 +1455,7 @@ nonisolated enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, set_value, click, hover, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
+        ? "Writes are ON: press, press_menu, set_value, click, hover, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any
