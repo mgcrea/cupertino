@@ -160,9 +160,10 @@ install-from:
 	@test -d "$(SRC)" || { echo "no app at $(SRC) — run 'make bundle' first"; exit 1; }
 	@if [ -d "$(INSTALLED)" ]; then \
 		id=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(INSTALLED)/Contents/Info.plist" 2>/dev/null); \
-		if [ "$$id" != "io.mgcrea.cupertino" ]; then \
-			echo "refusing to replace $(INSTALLED): its identifier is '$$id', not io.mgcrea.cupertino"; exit 1; \
-		fi; \
+		case "$$id" in \
+			io.mgcrea.cupertino|io.mgcrea.cupertino.debug) ;; \
+			*) echo "refusing to replace $(INSTALLED): its identifier is '$$id', not io.mgcrea.cupertino or its .debug build"; exit 1 ;; \
+		esac; \
 	fi
 	@pkill -f 'Cupertino.app/Contents/MacOS/Cupertino' 2>/dev/null || true
 	@sleep 1
