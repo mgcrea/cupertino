@@ -6,11 +6,78 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.25.0`,
-`notes-v1.25.0`, `reminders-v1.25.0`, `core-v1.25.0` for the npm packages, and `app-v1.25.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.26.0`,
+`notes-v1.26.0`, `reminders-v1.26.0`, `core-v1.26.0` for the npm packages, and `app-v1.26.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.26.0] - 2026-10-06
+
+**Review your open Mail draft, and drive the menu bar.** Mail reads the compose windows you have
+open, Desktop reads and presses menu bar items without taking the focus, and a driving session can
+be stopped from its card.
+
+### Added
+
+- **`apple_mail_list_open_drafts` reads the drafts you have open in Mail.** Every compose window,
+  with its subject, From, the recipients as Mail shows them, your own text kept apart from the
+  message it quotes, and the opening of that quote. "Review my draft" now works without naming a
+  message, including a draft Mail has not yet saved anywhere a search could find. Each one carries
+  the refs Mail autosaved it under, for the recipients' addresses and for `apple_mail_update_draft`.
+  It only reads: nothing is focused or brought to the front.
+
+- **Desktop reads and presses menu bar items by title.** `apple_desktop_menu` reads one menu by its
+  title path, `[]` being the bar itself, with each item's enabled state, checkmark, shortcut and
+  submenu. `apple_desktop_press_menu` presses an item by path. Both work with the app in the
+  background, so choosing View ▸ Show Sidebar no longer means clicking at screen points and taking
+  the focus from you.
+
+- **The driving card has a cross that stops the session**, as Stop driving in the menu bar does. A
+  stop is a no, not only an end: the next action is refused for 30 seconds, saying you stopped it,
+  as a cancelled countdown already was. An agent cannot press the cross itself.
+
+- **A driving session keeps the display awake.** Accessibility presses are not input, so the idle
+  timer ran on, and a Mac that locks on display sleep left the agent driving the lock screen.
+
+### Fixed
+
+- **Searching mail by subject finds replies.** `apple_mail_search_messages` matched `subject` and
+  `query` against the subject without its "Re: " or "Fwd: ", so searching for a reply by the subject
+  Mail displays found nothing.
+
+- **Quitting Cupertino stops every server it started.** Servers were left to notice their input
+  closing, and one that was wedged outlived the app, still holding its permissions. Quitting and the
+  relaunch after an update now ask each one to stop, and force any still running three seconds
+  later. The relaunch also stops accepting connections first, so a client connecting mid-update no
+  longer starts a server from the outgoing version.
+
+- **Check for Updates no longer stays on "Checking…"** when a check ends with nothing to show.
+
+- **Wiring a client whose config file is a symlink works.** The write lands on the file the link
+  points to, the link stays a link, and the backup is a real copy. A config caught empty while
+  another program rewrites it is read once more before it is treated as empty.
+
+- **A licence key a mail client wrapped across lines is accepted.** The line breaks made a genuine
+  key read as malformed.
+
+- **Screen capture's description follows the "Capture any application" setting.** With it on, the
+  tool still said it could never capture an arbitrary app, so an agent fell back to `screencapture`
+  and brought the app forward for every look, taking the focus from you each time.
+
+### Internal
+
+- Every licence minted in Stripe test mode is now on the shipped revocation list, not only the
+  ones already marked revoked.
+- The licence API fulfils a delayed payment when it settles and a checkout a 100%-off code made
+  free, revokes a licence refunded before it existed, leaves one alone on a dispute inquiry, handles
+  each Stripe event once, and refuses a `CURRENT_MAJOR` the app cannot read.
+- The website has a changelog with a page and a social card per release, and a twenty-second tour
+  of the app under the hero.
+- CI refuses a pre-release app tag and reads the signing secrets from the `release` environment on
+  tags only, dropping them once signing is done; `mcp-publisher` and the Node runtime tarball are
+  checked against pinned digests, and `make sign` fails when any signature does. `make install`
+  can replace the Debug copy it installed.
 
 ## [1.25.0] - 2026-10-03
 
@@ -2704,7 +2771,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.25.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.26.0...HEAD
+[1.26.0]: https://github.com/mgcrea/cupertino/compare/app-v1.25.0...app-v1.26.0
 [1.25.0]: https://github.com/mgcrea/cupertino/compare/app-v1.24.1...app-v1.25.0
 [1.24.1]: https://github.com/mgcrea/cupertino/compare/app-v1.24.0...app-v1.24.1
 [1.24.0]: https://github.com/mgcrea/cupertino/compare/app-v1.23.0...app-v1.24.0

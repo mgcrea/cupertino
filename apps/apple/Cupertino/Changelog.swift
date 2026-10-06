@@ -220,7 +220,84 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_25_0, v1_24_1, v1_24_0, v1_23_0, v1_22_1]
+  static let releases: [Release] = [v1_26_0, v1_25_0, v1_24_1, v1_24_0, v1_23_0]
+
+  // swift-format-ignore
+  private static let v1_26_0: Release = Release(
+    version: "1.26.0",
+    date: "2026-10-06",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "`apple_mail_list_open_drafts` reads the drafts you have open in Mail.",
+            body: [
+              "Every compose window, with its subject, From, the recipients as Mail shows them, your own text kept apart from the message it quotes, and the opening of that quote. \"Review my draft\" now works without naming a message, including a draft Mail has not yet saved anywhere a search could find. Each one carries the refs Mail autosaved it under, for the recipients' addresses and for `apple_mail_update_draft`. It only reads: nothing is focused or brought to the front.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Desktop reads and presses menu bar items by title.",
+            body: [
+              "`apple_desktop_menu` reads one menu by its title path, `[]` being the bar itself, with each item's enabled state, checkmark, shortcut and submenu. `apple_desktop_press_menu` presses an item by path. Both work with the app in the background, so choosing View ▸ Show Sidebar no longer means clicking at screen points and taking the focus from you.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "The driving card has a cross that stops the session",
+            body: [
+              ", as Stop driving in the menu bar does. A stop is a no, not only an end: the next action is refused for 30 seconds, saying you stopped it, as a cancelled countdown already was. An agent cannot press the cross itself.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "A driving session keeps the display awake.",
+            body: [
+              "Accessibility presses are not input, so the idle timer ran on, and a Mac that locks on display sleep left the agent driving the lock screen.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 4,
+            headline: "Searching mail by subject finds replies.",
+            body: [
+              "`apple_mail_search_messages` matched `subject` and `query` against the subject without its \"Re: \" or \"Fwd: \", so searching for a reply by the subject Mail displays found nothing.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "Quitting Cupertino stops every server it started.",
+            body: [
+              "Servers were left to notice their input closing, and one that was wedged outlived the app, still holding its permissions. Quitting and the relaunch after an update now ask each one to stop, and force any still running three seconds later. The relaunch also stops accepting connections first, so a client connecting mid-update no longer starts a server from the outgoing version.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "Check for Updates no longer stays on \"Checking…\"",
+            body: [
+              "when a check ends with nothing to show.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "Wiring a client whose config file is a symlink works.",
+            body: [
+              "The write lands on the file the link points to, the link stays a link, and the backup is a real copy. A config caught empty while another program rewrites it is read once more before it is treated as empty.",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "A licence key a mail client wrapped across lines is accepted.",
+            body: [
+              "The line breaks made a genuine key read as malformed.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "Screen capture's description follows the \"Capture any application\" setting.",
+            body: [
+              "With it on, the tool still said it could never capture an arbitrary app, so an agent fell back to `screencapture` and brought the app forward for every look, taking the focus from you each time.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_25_0: Release = Release(
@@ -429,25 +506,6 @@ nonisolated enum Changelog {
             headline: "`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a failure.",
             body: [
               "The composer was read back once, immediately after the paste — but `apple_desktop_key` returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and republish an accessibility tree. On a long message the read lost that race and the reply came back `bodyVerified: false` with \"SOMETHING DID land in it that could not be read back\", for a body that was in fact perfect. Worse, that message tells its reader not to retry. Measured against a reply quoting a 322-element newsletter. The read-back is now polled, the same way the focus poll above it already was.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_22_1: Release = Release(
-    version: "1.22.1",
-    date: "2026-09-16",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Full Disk Access read as denied on every Mac running macOS 27, whether it was granted or not.",
-            body: [
-              "Cupertino tells whether the grant is in place by asking whether one file that only Full Disk Access can open is readable, and on macOS 27 that file no longer exists. A missing file answered \"no\" either way, so the row said denied while every server's own diagnostics, reading their own stores, said granted — and it sent people off to grant a permission they already had.",
-              "A file that is not there proves nothing about permission. When it is gone, Cupertino now asks the same question of the first Mail, Messages, Safari, Notes or Calendar store on the Mac, each of which has been measured as unreadable without the grant.",
             ]),
         ]),
     ])
