@@ -182,6 +182,183 @@ describe("findComposer", () => {
   });
 });
 
+describe("listComposers", () => {
+  /*
+   * Three windows the way Mail had them when this was measured: an untitled
+   * 53×48 sliver, a reply composer, and the main viewer. Only the composer
+   * carries a subject FIELD, and that — not its title — is what makes it one.
+   */
+  const mail = (over: { bcc?: boolean; boundary?: "found" | "unreadable" } = {}) =>
+    hostStub({
+      list_windows: {
+        windows: [
+          { handle: "w0", index: 0 },
+          { handle: "w1", index: 1, title: "Re: lunch", main: true },
+          { handle: "w2", index: 2, title: "Inbox – 12 messages" },
+        ],
+      },
+      ui_tree: (args) => {
+        if (args.window !== 1)
+          return { elements: [el({ handle: "x", role: "AXToolbar", depth: 1 })] };
+        if (args.maxDepth === 1) {
+          return {
+            elements: [
+              el({ handle: "to", role: "AXTextField", id: "Mail.toField", value: "￼￼", depth: 1 }),
+              el({
+                handle: "cc",
+                role: "AXTextField",
+                id: "Mail.ccField",
+                value: "￼bob@ex",
+                depth: 1,
+              }),
+              ...(over.bcc
+                ? [
+                    el({
+                      handle: "bcc",
+                      role: "AXTextField",
+                      id: "Mail.bccField",
+                      value: "",
+                      depth: 1,
+                    }),
+                  ]
+                : []),
+              el({
+                handle: "subj",
+                role: "AXTextField",
+                id: "Mail.subjectField",
+                value: "Re: lunch",
+                depth: 1,
+              }),
+              el({
+                handle: "from",
+                role: "AXPopUpButton",
+                id: "popup_from",
+                value: "Me – me@ex",
+                depth: 1,
+              }),
+            ],
+          };
+        }
+        return { elements: [el({ handle: "body", role: "AXWebArea", depth: 4 })] };
+      },
+      expand: (args) => {
+        if (args.handle === "to") {
+          return {
+            elements: [
+              el({
+                handle: "t1",
+                role: "AXTextField",
+                subrole: "AXTextAttachment",
+                value: "Ann",
+                depth: 0,
+              }),
+              el({
+                handle: "t2",
+                role: "AXTextField",
+                subrole: "AXTextAttachment",
+                value: "Cy",
+                depth: 0,
+              }),
+            ],
+          };
+        }
+        if (args.handle === "cc") {
+          return {
+            elements: [
+              el({
+                handle: "c1",
+                role: "AXTextField",
+                subrole: "AXTextAttachment",
+                value: "Dee",
+                depth: 0,
+              }),
+            ],
+          };
+        }
+        return {
+          elements: [
+            el({ handle: "b1", value: "Tuesday works.", depth: 0 }),
+            el({ handle: "b2", role: "AXGroup", depth: 0 }),
+            el({ handle: "b3", value: "See you", depth: 1 }),
+            el({ handle: "q1", value: "On Mon, Ann wrote:", depth: 0 }),
+            el({ handle: "q2", role: "AXGroup", depth: 0 }),
+            el({ handle: "q3", value: "Lunch on ", depth: 1 }),
+            el({ handle: "q4", value: "Tuesday?", depth: 1 }),
+          ],
+        };
+      },
+      get_attribute: (args) =>
+        over.boundary === "unreadable"
+          ? { refusal: "busy" }
+          : { value: String(args.handle).startsWith("q") ? 1 : 0 },
+    });
+
+  it("finds composers by their subject field and reads them as a reviewer would", async () => {
+    const { env, seen } = await mail();
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.listComposers()).resolves.toEqual([
+      {
+        subject: "Re: lunch",
+        main: true,
+        from: "Me – me@ex",
+        to: ["Ann", "Cy"],
+        // A name still being typed has not become a token yet, and is kept.
+        cc: ["Dee", "bob@ex"],
+        bcc: null,
+        text: "Tuesday works.\nSee you",
+        quoted: true,
+        quote: "On Mon, Ann wrote:\nLunch on Tuesday?",
+        quoteTruncated: false,
+      },
+    ]);
+    // Reads only: nothing raised, focused or typed while someone may be writing.
+    for (const call of seen) {
+      expect(["list_windows", "ui_tree", "expand", "get_attribute"]).toContain(call.tool);
+    }
+    lane.close();
+  });
+
+  it("tells a hidden Bcc field from an empty one", async () => {
+    const { env } = await mail({ bcc: true });
+    const lane = MailAxLane.open(env)!;
+    const [composer] = await lane.listComposers();
+    expect(composer?.bcc).toEqual([]);
+    lane.close();
+  });
+
+  it("cuts the quote to the length asked for, and says so", async () => {
+    const { env } = await mail();
+    const lane = MailAxLane.open(env)!;
+    const [composer] = await lane.listComposers(7);
+    expect(composer).toMatchObject({ quote: "On Mon,", quoteTruncated: true });
+    lane.close();
+  });
+
+  /*
+   * A reviewer is not about to replace anything, so an unsplit body is still
+   * worth reading — but it must be labelled unsplit, or the quoted original
+   * would be reviewed as the user's own words.
+   */
+  it("returns the whole body, labelled unsplit, when the quote boundary cannot be read", async () => {
+    const { env } = await mail({ boundary: "unreadable" });
+    const lane = MailAxLane.open(env)!;
+    const [composer] = await lane.listComposers();
+    expect(composer).toMatchObject({ quoted: null, quote: null });
+    expect(composer?.text).toContain("On Mon, Ann wrote:");
+    lane.close();
+  });
+
+  it("is empty when no window is a composer", async () => {
+    const { env } = await hostStub({
+      list_windows: { windows: [{ handle: "w2", index: 0, title: "Inbox" }] },
+      ui_tree: { elements: [el({ handle: "x", role: "AXToolbar", depth: 1 })] },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.listComposers()).resolves.toEqual([]);
+    lane.close();
+  });
+});
+
 describe("bodyText", () => {
   it("joins the accessible values under the body", async () => {
     const { env } = await hostStub({

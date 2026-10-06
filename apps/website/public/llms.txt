@@ -28,7 +28,7 @@ Twelve now. The first seven are Apple apps; the last five are the Mac itself, an
 ship inside the app because they need a permission or a framework no published npm package can
 hold.
 
-- Mail — 21 tools (11 always registered, 10 write-gated). `@mgcrea/mcp-apple-mail`
+- Mail — 22 tools (12 always registered, 10 write-gated). `@mgcrea/mcp-apple-mail`
 - Notes — 13 tools (7 always registered, 6 write-gated). `@mgcrea/mcp-apple-notes`
 - Reminders — 11 tools (6 always registered, 5 write-gated). `@mgcrea/mcp-apple-reminders`
 - Calendar — 10 tools (7 always registered, 3 write-gated). `@mgcrea/mcp-apple-calendar`

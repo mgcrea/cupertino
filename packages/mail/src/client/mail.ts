@@ -48,6 +48,21 @@ import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref
 import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
 
 /**
+ * A subject as the index's subject filter can find it: reply and forward
+ * prefixes removed.
+ *
+ * MEASURED, 2026-10-06: the filter matches the deduplicated subject row, and
+ * Mail keeps `Re: ` / `Fwd: ` apart from it in `subject_prefix`, so searching
+ * for "Re: CR - Rendez-vous finalisation" found nothing while searching for
+ * "CR - Rendez-vous finalisation" found the draft. Any short word before a
+ * colon is taken as a prefix — "TR:", "AW:", "Re[2]:" — because the caller
+ * compares the full subject afterwards, so stripping too much only widens the
+ * search, never the answer.
+ */
+export const searchableSubject = (subject: string): string =>
+  subject.replace(/^(?:\s*[\p{L}]{1,5}(?:\[\d+\])?\s*:\s*)+/u, "").trim();
+
+/**
  * The facade every tool talks to. It owns three things the tools should not
  * each re-decide: which lane answers a question, what to say when a lane is
  * unavailable, and the read-after-write rule.
@@ -1315,6 +1330,90 @@ export class AppleMailClient {
         subject: opts.subject ?? null,
       }),
     );
+  }
+
+  /**
+   * The drafts being written right now: every compose window open in Mail.
+   *
+   * Read from the windows, because nothing else sees them all — see
+   * `MailAxLane.listComposers`. Each one is paired with the saved copies Mail
+   * has autosaved under the same subject in a Drafts mailbox, which is where
+   * the recipients' ADDRESSES are (the window only shows names) and what
+   * `updateDraft` takes. The pairing is by subject, so it is offered as
+   * candidates rather than asserted; `updateDraft` matches content before it
+   * touches anything, so a wrong candidate is refused rather than edited.
+   */
+  async listOpenDrafts(
+    opts: { quoteChars?: number | undefined } = {},
+  ): Promise<Record<string, unknown>> {
+    if (!this.#ax) {
+      return {
+        degraded: true,
+        capability: "accessibility",
+        drafts: [],
+        reason:
+          "Open compose windows can only be read through Cupertino's Accessibility lane, and " +
+          "this server was not started by Cupertino. Nothing was read, so this does NOT mean " +
+          "no draft is open.",
+        hint: "Run the Mail server from Cupertino.app to use this tool.",
+      };
+    }
+    const reach = await this.#ax.reach();
+    if (!reach.ok) {
+      return {
+        degraded: true,
+        capability: "accessibility",
+        drafts: [],
+        reason:
+          "Mail's windows could not be read, so nothing was checked — this does NOT mean no " +
+          "draft is open.",
+        hint:
+          "Grant Accessibility to Cupertino.app in System Settings > Privacy & Security > " +
+          "Accessibility, then run apple_mail_diagnostics.",
+      };
+    }
+
+    const composers = await this.#ax.listComposers(opts.quoteChars);
+    const index = composers.length > 0 ? await this.index() : null;
+    const drafts = [];
+    for (const composer of composers) {
+      drafts.push({
+        ...composer,
+        savedDrafts: index ? await this.#savedDrafts(composer.subject) : null,
+      });
+    }
+    return {
+      drafts,
+      note:
+        composers.length === 0
+          ? "No compose window is open in Mail."
+          : "Recipients are the names Mail shows in the window, not addresses — read a saved " +
+            "draft with apple_mail_get_message for those. `savedDrafts` are the copies Mail has " +
+            "autosaved under the same subject, newest first: a composer opened seconds ago may " +
+            "have none yet, and the newest one can lag what the window shows. The window is " +
+            "the current text." +
+            (index ? "" : " `savedDrafts` is null because the search index cannot be read."),
+    };
+  }
+
+  /** Drafts-mailbox messages carrying exactly this subject, newest first. */
+  async #savedDrafts(subject: string): Promise<{ ref: string; saved: string | null }[]> {
+    const base = searchableSubject(subject);
+    if (!base) return [];
+    try {
+      const found = await this.searchMessages({
+        subject: base,
+        mailbox: "Drafts",
+        limit: 10,
+        offset: 0,
+      });
+      return (found?.messages ?? [])
+        .filter((m) => m.subject === subject)
+        .map((m) => ({ ref: m.ref, saved: m.dateSent ?? m.dateReceived }));
+    } catch (err) {
+      this.#logger?.debug?.("listOpenDrafts: could not search Drafts", err);
+      return [];
+    }
   }
 
   async checkForNewMail(account?: string): Promise<unknown> {

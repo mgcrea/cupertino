@@ -122,6 +122,8 @@ const KEY_BURST = 20;
 type Element = {
   handle: string;
   role: string;
+  subrole?: string | null;
+  id?: string | null;
   name?: string | null;
   value?: string | null;
   depth: number;
@@ -133,7 +135,35 @@ type Tree = {
   returned?: number;
   truncated?: string;
 };
-type Windows = { windows?: { handle: string; index: number; title?: string | null }[] };
+type Windows = {
+  windows?: { handle: string; index: number; title?: string | null; main?: boolean }[];
+};
+
+/**
+ * The composer's header fields, by the identifiers Mail gives them.
+ *
+ * Identifiers rather than labels, because the labels are localised — a French
+ * Mail says "À :" — and the identifiers are not. `popup_from` is the account
+ * picker, whose value reads `Name – address`.
+ */
+const SUBJECT_FIELD = "Mail.subjectField";
+const FROM_FIELD = "popup_from";
+const RECIPIENT_FIELDS = { to: "Mail.toField", cc: "Mail.ccField", bcc: "Mail.bccField" } as const;
+
+/**
+ * What a recipient field holds in place of each recipient.
+ *
+ * MEASURED, macOS 27.0: a field holding one token reads `AXValue` "￼" —
+ * the object replacement character — and the token itself is a child
+ * `AXTextField` with subrole `AXTextAttachment` whose value is the DISPLAY NAME.
+ * No attribute on it carries the address: AXDescription, AXHelp, AXTitle,
+ * AXValueDescription and AXIdentifier all read null.
+ */
+const TOKEN_CHAR = "￼";
+const TOKEN_SUBROLE = "AXTextAttachment";
+
+/** How much of the quoted original to return by default. */
+const QUOTE_CHARS = 2_000;
 
 export type ComposerRef = { window: string; body: string; index: number };
 
@@ -165,6 +195,34 @@ export type ComposerBody = {
   blocks: number;
   /** Whether a quoted original follows. */
   quoted: boolean;
+};
+
+/**
+ * One compose window as a person would read it, for reviewing what they wrote.
+ *
+ * Recipients are display names, never addresses — see `TOKEN_CHAR`. A name
+ * still being typed, not yet turned into a token, is returned as typed.
+ */
+export type OpenComposer = {
+  subject: string;
+  /** The window Mail considers main — the one in front, when Mail is. */
+  main: boolean;
+  /** The account picker's value, `Name – address`. */
+  from: string | null;
+  to: string[];
+  cc: string[];
+  /** Null when the Bcc field is not shown, which is not the same as empty. */
+  bcc: string[] | null;
+  /**
+   * What the sender wrote. When `quoted` is null the boundary could not be
+   * found, and this is the readable text of the whole body instead.
+   */
+  text: string | null;
+  /** Whether a quoted original follows; null when that could not be established. */
+  quoted: boolean | null;
+  /** The opening of the quoted original, up to the requested length. */
+  quote: string | null;
+  quoteTruncated: boolean;
 };
 
 export type ReachReport = {
@@ -512,6 +570,17 @@ export class MailAxLane {
   }
 
   async composerBody(body: string): Promise<ComposerBody | null> {
+    const split = await this.#split(body);
+    return split ? split.own : null;
+  }
+
+  /**
+   * The body read once, split at the quote: the sender's own text, and the
+   * blocks from the boundary down. Null exactly when `composerBody` is.
+   */
+  async #split(
+    body: string,
+  ): Promise<{ own: ComposerBody; tree: Tree; quoteBlocks: string[] } | null> {
     let tree: Tree;
     try {
       tree = (await this.#call("expand", {
@@ -551,19 +620,127 @@ export class MailAxLane {
 
     // A block's text is its own value plus its descendants' — inline runs on one
     // line, so they join with nothing, and the blocks themselves with newlines.
+    const blockText = (block: number): string =>
+      elements
+        .slice(starts[block] as number, starts[block + 1] ?? elements.length)
+        .map((el) => el.value)
+        .filter((v): v is string => typeof v === "string")
+        .join("");
     const lines: string[] = [];
-    for (let block = 0; block < boundary; block += 1) {
-      const from = starts[block] as number;
-      const to = starts[block + 1] ?? elements.length;
-      lines.push(
-        elements
-          .slice(from, to)
-          .map((el) => el.value)
-          .filter((v): v is string => typeof v === "string")
-          .join(""),
+    for (let block = 0; block < boundary; block += 1) lines.push(blockText(block));
+    const quoteBlocks: string[] = [];
+    for (let block = boundary; block < starts.length; block += 1)
+      quoteBlocks.push(blockText(block));
+    return {
+      own: { text: lines.join("\n"), blocks: boundary, quoted: boundary < starts.length },
+      tree,
+      quoteBlocks,
+    };
+  }
+
+  /**
+   * Every compose window open in Mail, read the way a person reviewing it would.
+   *
+   * **Why this reads windows rather than asking Mail.** `outgoing messages` —
+   * the scripting class for a composer — came back EMPTY with a reply composer
+   * on screen that the person had opened by hand (measured 2026-10-06, macOS
+   * 27.0). It lists only the composers a script made. The window is the one
+   * place every draft being written can be seen.
+   *
+   * A composer is recognised by its subject FIELD, not its title: the title is
+   * the subject, so it cannot tell a composer from a viewer showing a message
+   * with the same one. The shallow walk that finds the field is cheap on Mail's
+   * main window, which is the one with thousands of rows under it.
+   *
+   * Pure reads. Nothing is raised, focused or typed, so it can run while
+   * someone is using the Mac.
+   */
+  async listComposers(quoteChars = QUOTE_CHARS): Promise<OpenComposer[]> {
+    const listed = (await this.#call("list_windows", {
+      bundleId: MAIL_BUNDLE,
+      includeTitles: true,
+    })) as Windows;
+    const found: OpenComposer[] = [];
+    for (const win of listed.windows ?? []) {
+      const header = (await this.#call("ui_tree", {
+        bundleId: MAIL_BUNDLE,
+        window: win.index,
+        detail: "labelled",
+        maxDepth: 1,
+      })) as Tree;
+      const fields = new Map(
+        (header.elements ?? []).flatMap((el) => (el.id ? [[el.id, el] as const] : [])),
       );
+      const subject = fields.get(SUBJECT_FIELD);
+      if (!subject) continue;
+
+      const body = await this.#bodyOf(win.index);
+      const reading = body ? await this.#readBody(body, quoteChars) : null;
+      const bccField = fields.get(RECIPIENT_FIELDS.bcc);
+      found.push({
+        subject: subject.value ?? win.title ?? "",
+        main: win.main === true,
+        from: fields.get(FROM_FIELD)?.value ?? null,
+        to: await this.#recipients(fields.get(RECIPIENT_FIELDS.to)),
+        cc: await this.#recipients(fields.get(RECIPIENT_FIELDS.cc)),
+        bcc: bccField ? await this.#recipients(bccField) : null,
+        ...(reading ?? { text: null, quoted: null, quote: null, quoteTruncated: false }),
+      });
     }
-    return { text: lines.join("\n"), blocks: boundary, quoted: boundary < starts.length };
+    return found;
+  }
+
+  /** The names in one recipient field: its tokens, then anything still being typed. */
+  async #recipients(field: Element | undefined): Promise<string[]> {
+    if (!field) return [];
+    const typed = (field.value ?? "").split(TOKEN_CHAR).map((s) => s.trim());
+    const names: string[] = [];
+    if ((field.value ?? "").includes(TOKEN_CHAR)) {
+      try {
+        const tokens = (await this.#call("expand", {
+          handle: field.handle,
+          detail: "all",
+          maxDepth: 2,
+        })) as Tree;
+        for (const el of tokens.elements ?? []) {
+          if (el.subrole === TOKEN_SUBROLE && el.value?.trim()) names.push(el.value.trim());
+        }
+      } catch {
+        // A field whose tokens cannot be read still has its typed text below.
+      }
+    }
+    return [...names, ...typed.filter((s) => s !== "")];
+  }
+
+  /**
+   * The body for a reader: own text, and the opening of the quote.
+   *
+   * When the quote boundary cannot be found the whole readable body is returned
+   * with `quoted: null` rather than nothing — a reviewer is not about to replace
+   * anything, so a body it cannot split is still worth reading, as long as it is
+   * labelled as unsplit.
+   */
+  async #readBody(
+    body: string,
+    quoteChars: number,
+  ): Promise<Pick<OpenComposer, "text" | "quoted" | "quote" | "quoteTruncated">> {
+    const split = await this.#split(body);
+    if (!split) {
+      return { text: await this.bodyText(body), quoted: null, quote: null, quoteTruncated: false };
+    }
+    if (!split.own.quoted) {
+      return { text: split.own.text, quoted: false, quote: null, quoteTruncated: false };
+    }
+    const whole = split.quoteBlocks.join("\n");
+    const treeCut =
+      split.tree.truncated !== undefined ||
+      (split.tree.matched ?? 0) > (split.tree.elements ?? []).length;
+    return {
+      text: split.own.text,
+      quoted: true,
+      quote: whole.slice(0, quoteChars),
+      quoteTruncated: whole.length > quoteChars || treeCut,
+    };
   }
 
   /**

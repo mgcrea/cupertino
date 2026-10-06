@@ -32,6 +32,10 @@ surfaces — a Mail ref means nothing to Notes or Calendar.
 - **A conversation** is \`apple_mail_get_thread\`, not several \`get_message\`
   calls.
 - **Counts** are \`apple_mail_count_messages\`. Do not count by paging a search.
+- **"My draft", unnamed** — the one the user is writing — is
+  \`apple_mail_list_open_drafts\`. It reads the compose windows themselves, so it
+  sees a draft no search would find yet, and it keeps the user's own words apart
+  from the message they quote.
 
 ## \`degraded: true\` is not an empty result
 

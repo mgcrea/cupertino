@@ -104,6 +104,37 @@ export const registerMessageTools = (
   );
 
   server.registerTool(
+    "apple_mail_list_open_drafts",
+    {
+      description:
+        "Read the drafts the user has open in Mail right now — every compose window, with its " +
+        "subject, From, the recipients' names as shown, the text they wrote separated from the " +
+        "quoted message below it, and the opening of that quote. Reach for this when the user " +
+        "says 'review my draft', 'check this email before I send it' or 'what do you think of " +
+        "my reply' without naming a message: the draft in front of them may never have been " +
+        "saved where a search finds it, and the window is the current text either way. " +
+        "`main: true` marks the window in front. Each draft carries `savedDrafts`, the refs Mail " +
+        "autosaved under the same subject: read one with apple_mail_get_message for recipient " +
+        "ADDRESSES, or pass it to apple_mail_update_draft to rewrite the body in place. " +
+        "Read-only: nothing is focused, typed or brought to the front. `degraded: true` means " +
+        "the windows could not be read, which is NOT the same as no draft being open.",
+      inputSchema: {
+        quoteChars: z
+          .number()
+          .int()
+          .min(0)
+          .max(20_000)
+          .optional()
+          .describe(
+            "How much of the quoted original to return per draft. Default 2000; 0 for none.",
+          ),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ quoteChars }) => wrap(async () => client.listOpenDrafts({ quoteChars })),
+  );
+
+  server.registerTool(
     "apple_mail_get_message_source",
     {
       description:

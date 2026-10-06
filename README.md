@@ -34,7 +34,7 @@ off cannot see that they exist.
 
 | Surface   | Package                                    | Status                                                                                         |
 | --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 21 tools, search/read/attachments + gated writes                                 |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 22 tools, search/read/attachments + gated writes                                 |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                 |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
@@ -224,11 +224,11 @@ merely refused.
 
 ### Mail
 
-| Always available                                                        | Write-gated                                                                |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `search_messages` `list_messages` `count_messages` `get_thread` `query` | `set_message_flags` `move_messages` `delete_messages` `check_for_new_mail` |
-| `get_message` `get_message_source` `list_attachments`                   | `send_message` `reply_to_message` `forward_message` `update_draft`         |
-| `list_accounts` `list_mailboxes` `diagnostics`                          | `save_attachment` `create_mailbox`                                         |
+| Always available                                                         | Write-gated                                                                |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `search_messages` `list_messages` `count_messages` `get_thread` `query`  | `set_message_flags` `move_messages` `delete_messages` `check_for_new_mail` |
+| `get_message` `get_message_source` `list_attachments` `list_open_drafts` | `send_message` `reply_to_message` `forward_message` `update_draft`         |
+| `list_accounts` `list_mailboxes` `diagnostics`                           | `save_attachment` `create_mailbox`                                         |
 
 ### Notes
 

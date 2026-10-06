@@ -134,6 +134,7 @@ export const SURFACES: readonly Surface[] = [
     read: [
       "apple_mail_search_messages",
       "apple_mail_list_messages",
+      "apple_mail_list_open_drafts",
       "apple_mail_count_messages",
       "apple_mail_query",
       "apple_mail_get_thread",

@@ -155,7 +155,8 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     {
       description:
         "Replace the body of an unsent draft — including a REPLY draft you have just written " +
-        "and been asked to revise, which is the usual reason to reach for this. " +
+        "and been asked to revise, which is the usual reason to reach for this. For a draft " +
+        "the user has open, apple_mail_list_open_drafts gives its ref under `savedDrafts`. " +
         "It takes one of two routes and the result says which in `method`. " +
         "`inPlace`: the draft's own composer window is still open in Mail, so the body is " +
         "edited in that window. Nothing is recreated, so threading, attachments and the quoted " +

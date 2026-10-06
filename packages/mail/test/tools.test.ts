@@ -64,6 +64,7 @@ const READ_TOOLS = [
   "apple_mail_list_attachments",
   "apple_mail_list_mailboxes",
   "apple_mail_list_messages",
+  "apple_mail_list_open_drafts",
   "apple_mail_query",
   "apple_mail_search_messages",
 ];
@@ -181,6 +182,18 @@ describe("read tools", () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("NoSuchMailbox");
+  });
+
+  /*
+   * Run by hand from npm there is no window lane at all. "No drafts" would be
+   * the worst possible answer to "review my draft" with one on screen.
+   */
+  it("says open drafts could not be read, never that there are none, without the window lane", async () => {
+    const client = await connect(loadConfig({}));
+    const result = await client.callTool({ name: "apple_mail_list_open_drafts", arguments: {} });
+    const payload = JSON.parse(textOf(result));
+    expect(payload).toMatchObject({ degraded: true, capability: "accessibility", drafts: [] });
+    expect(payload.reason).toMatch(/does NOT mean no draft is open/);
   });
 });
 

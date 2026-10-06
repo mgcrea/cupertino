@@ -138,14 +138,15 @@ npx @modelcontextprotocol/inspector node dist/cli.js
 
 ## Tools
 
-| Tool                         | Does                                                                                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apple_mail_diagnostics`     | What the server can currently do and why. **Call this first when anything looks wrong** — it names the exact System Settings pane to open. |
-| `apple_mail_list_accounts`   | Accounts with UUIDs, addresses and mailbox names. Start here.                                                                              |
-| `apple_mail_list_mailboxes`  | Mailboxes, optionally with counts (~0.3 s each).                                                                                           |
-| `apple_mail_list_messages`   | Newest N of one mailbox, with a `ref` per message.                                                                                         |
-| `apple_mail_search_messages` | Any combination of filters. `body` searches message text — see [Body search](#body-search).                                                |
-| `apple_mail_count_messages`  | Totals and unread, labelled by source.                                                                                                     |
+| Tool                          | Does                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apple_mail_diagnostics`      | What the server can currently do and why. **Call this first when anything looks wrong** — it names the exact System Settings pane to open. |
+| `apple_mail_list_accounts`    | Accounts with UUIDs, addresses and mailbox names. Start here.                                                                              |
+| `apple_mail_list_mailboxes`   | Mailboxes, optionally with counts (~0.3 s each).                                                                                           |
+| `apple_mail_list_messages`    | Newest N of one mailbox, with a `ref` per message.                                                                                         |
+| `apple_mail_search_messages`  | Any combination of filters. `body` searches message text — see [Body search](#body-search).                                                |
+| `apple_mail_count_messages`   | Totals and unread, labelled by source.                                                                                                     |
+| `apple_mail_list_open_drafts` | The drafts open in Mail right now, own text apart from the quote — for "review my draft".                                                  |
 
 Every message carries an opaque `ref` (`m1:<accountUuid>/<mailbox>#<id>`) which the read and action
 tools take. It is versioned and carries its mailbox, so a row id can never be applied to the wrong
