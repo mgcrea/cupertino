@@ -74,6 +74,28 @@ The word covers two different objects, and the tools do different things to them
 not tidiness: the ref for a sent message is shaped exactly like the ref for a draft, and
 "editing" a sent message by deleting it and writing a lookalike in its place is not editing.
 
+## Reading the drafts that are open
+
+"Review my draft" names no message, and the draft meant is the one on screen.
+`apple_mail_list_open_drafts` reads every compose window
+([`MailAxLane.listComposers`](../packages/mail/src/client/ax.ts)). Measured 2026-10-06 on macOS
+27.0, against a reply composer the user had opened by hand:
+
+| Tried                                   | Answer                                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Mail.outgoingMessages()` over JXA      | **`[]`**, with the composer on screen. The class lists only composers a script made, so Apple Events cannot answer this at all.                                                                         |
+| The window's depth-1 fields             | Found by identifier — `Mail.toField`, `Mail.ccField`, `Mail.subjectField`, `popup_from` — which do not change with the language, unlike the labels. The subject field, not the title, marks a composer. |
+| A recipient field's `AXValue`           | `"￼"`, one per recipient. Each token is a child with subrole `AXTextAttachment` whose value is the **display name**. AXDescription, AXHelp, AXTitle, AXValueDescription and AXIdentifier are null.      |
+| The body, split by `AXBlockQuoteLevel`  | The same exact split the in-place edit uses: 0 on the user's lines, 1 from `On <date>, <who> wrote:` down.                                                                                              |
+| The index, Drafts mailbox, same subject | One row, autosaved at the moment the composer was last saved. This is where the addresses are.                                                                                                          |
+
+So each draft comes back with the names the window shows, and with `savedDrafts`: the
+autosaved copies under the same subject, newest first. Those carry the addresses through
+`get_message` and are what `update_draft` takes. They are matched by subject alone and offered as
+candidates, not asserted. `update_draft` compares content before it edits, so a wrong candidate is
+refused rather than overwritten. A body whose quote boundary cannot be read comes back whole with
+`quoted: null`, so the quoted thread is never presented as the user's own text.
+
 ## Why the body still cannot go through the scripting interface
 
 Settled earlier and recorded here for completeness, because it is the same failure mode.
