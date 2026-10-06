@@ -181,6 +181,21 @@ describe("search", () => {
     index.close();
   });
 
+  /*
+   * MEASURED, 2026-10-06: the filter matched the deduplicated subject row, which
+   * has no prefix, so a reply draft searched by its own subject found nothing.
+   */
+  it("matches a subject by what is displayed, prefix included", () => {
+    const index = open();
+    expect(
+      index.search({ subject: "Re: Lunch on Friday?", limit: 5, offset: 0 }).map((r) => r.rowid),
+    ).toEqual([104]);
+    expect(index.search({ query: "Re: Lunch", limit: 5, offset: 0 }).map((r) => r.rowid)).toEqual([
+      104,
+    ]);
+    index.close();
+  });
+
   it("formats the sender as name plus address", () => {
     const index = open();
     const row = index.search({ sender: "domaine", limit: 5, offset: 0 })[0];

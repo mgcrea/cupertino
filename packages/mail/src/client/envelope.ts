@@ -220,12 +220,14 @@ export class EnvelopeIndex {
       // Free text spans subject and sender, which is what "search my mail for X"
       // means in practice. Body search is a separate, opt-in scan.
       where.push(
-        "(s.subject LIKE ? ESCAPE '\\' OR a.address LIKE ? ESCAPE '\\' OR a.comment LIKE ? ESCAPE '\\')",
+        `(${this.#subjectExpr} LIKE ? ESCAPE '\\' OR a.address LIKE ? ESCAPE '\\' OR a.comment LIKE ? ESCAPE '\\')`,
       );
       params.push(contains(filters.query), contains(filters.query), contains(filters.query));
     }
     if (filters.subject) {
-      where.push("s.subject LIKE ? ESCAPE '\\'");
+      // The displayed subject, prefix included: `s.subject` alone has no "Re: ",
+      // so searching for a reply's own subject found nothing.
+      where.push(`${this.#subjectExpr} LIKE ? ESCAPE '\\'`);
       params.push(contains(filters.subject));
     }
     if (filters.sender) {

@@ -48,21 +48,6 @@ import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref
 import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
 
 /**
- * A subject as the index's subject filter can find it: reply and forward
- * prefixes removed.
- *
- * MEASURED, 2026-10-06: the filter matches the deduplicated subject row, and
- * Mail keeps `Re: ` / `Fwd: ` apart from it in `subject_prefix`, so searching
- * for "Re: CR - Rendez-vous finalisation" found nothing while searching for
- * "CR - Rendez-vous finalisation" found the draft. Any short word before a
- * colon is taken as a prefix — "TR:", "AW:", "Re[2]:" — because the caller
- * compares the full subject afterwards, so stripping too much only widens the
- * search, never the answer.
- */
-export const searchableSubject = (subject: string): string =>
-  subject.replace(/^(?:\s*[\p{L}]{1,5}(?:\[\d+\])?\s*:\s*)+/u, "").trim();
-
-/**
  * The facade every tool talks to. It owns three things the tools should not
  * each re-decide: which lane answers a question, what to say when a lane is
  * unavailable, and the read-after-write rule.
@@ -1398,11 +1383,10 @@ export class AppleMailClient {
 
   /** Drafts-mailbox messages carrying exactly this subject, newest first. */
   async #savedDrafts(subject: string): Promise<{ ref: string; saved: string | null }[]> {
-    const base = searchableSubject(subject);
-    if (!base) return [];
+    if (!subject) return [];
     try {
       const found = await this.searchMessages({
-        subject: base,
+        subject,
         mailbox: "Drafts",
         limit: 10,
         offset: 0,
