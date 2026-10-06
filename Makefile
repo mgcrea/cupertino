@@ -1357,3 +1357,15 @@ deploy: ## Deploy both halves: the API Worker, then the website
 	@$(MAKE) --no-print-directory site-deploy
 
 .PHONY: deploy site-deploy api-deploy
+
+# ─── directory goals ─────────────────────────────────────────────────────────
+# A goal naming an existing directory is a target make considers already built, so
+# `make docs` printed "Nothing to be done" and exited 0 — the silent success a mistyped
+# goal must never have. Every root directory gets a rule that fails instead: phony, or
+# make would still call it up to date, and read from the tree, so a directory added
+# later is covered without editing this file.
+ROOT_DIRS := $(filter-out $(APPLE_TARGETS),$(patsubst %/,%,$(wildcard */)))
+$(ROOT_DIRS):
+	@echo "make: '$@' is a directory, not a target. Try 'make help'." >&2; exit 2
+
+.PHONY: $(ROOT_DIRS)
