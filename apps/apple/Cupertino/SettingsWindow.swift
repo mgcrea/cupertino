@@ -260,7 +260,12 @@ private struct AboutPane: View {
 /// four slightly different row heights and three different label widths.
 struct GeneralPane: View {
   let model: StatusModel
+  /// What the service reports, never what was last clicked. Read back after
+  /// every change, on appear, and whenever the app comes to the front — the
+  /// registration is changed from System Settings too, and by an update
+  /// replacing the bundle under it.
   @State private var launchAtLogin = LoginItem.isEnabled
+  @State private var loginNeedsApproval = LoginItem.requiresApproval
   @State private var loginError: String?
   @AppStorage(SurfaceSettings.appLazyToolsKey) private var lazyTools = false
 
@@ -310,24 +315,44 @@ struct GeneralPane: View {
       }
 
       Section {
-        Toggle(isOn: $launchAtLogin) {
+        // A binding whose setter is the click, rather than `onChange` on the
+        // state. Putting the box back to what the service says is a write to
+        // that same state, and `onChange` fired again for it: a registration
+        // that landed in `.requiresApproval` read back as off, the handler ran
+        // with `false`, and the click that asked for launch at login ended in
+        // `unregister()` with the intent recorded as not wanted. Here reading
+        // back is only a read.
+        Toggle(
+          isOn: Binding(
+            get: { launchAtLogin },
+            set: { value in
+              loginError = LoginItem.set(value)
+              // Trust the service, not the checkbox: a refused registration has
+              // to put the box back rather than claim something untrue.
+              readLoginItem()
+            })
+        ) {
           Text("Launch at login")
           Text(
             "Cupertino starts on demand when a client connects. This only removes the wait on the first call."
           )
         }
         .disabled(!model.location.isStable)
-        .onChange(of: launchAtLogin) { _, value in
-          loginError = LoginItem.set(value)
-          // Trust the service, not the checkbox: a refused registration has to
-          // put the box back rather than claim something untrue.
-          launchAtLogin = LoginItem.isEnabled
-        }
+        .onAppear(perform: readLoginItem)
+        .onReceive(
+          NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in readLoginItem() }
       } header: {
         Text("Startup")
       } footer: {
         if let loginError {
           Text(loginError).foregroundStyle(.red)
+        } else if loginNeedsApproval {
+          HStack(alignment: .firstTextBaseline) {
+            Text("Waiting for your approval in System Settings › General › Login Items.")
+            Button("Open Login Items") { LoginItem.openSettings() }
+              .buttonStyle(.link)
+          }
         }
       }
 
@@ -352,6 +377,11 @@ struct GeneralPane: View {
       }
     }
     .formStyle(.grouped)
+  }
+
+  private func readLoginItem() {
+    launchAtLogin = LoginItem.isEnabled
+    loginNeedsApproval = LoginItem.requiresApproval
   }
 }
 
