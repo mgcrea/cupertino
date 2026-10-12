@@ -1176,12 +1176,22 @@ point checked as a click's is. The release point is held to the same reach, beca
 write into whatever is under it: on the application's own windows, or on the in-reach application
 named in `to.bundleId`.
 
+**Then on the canvas itself.** A right-click on an exterior wall of "Maison Essique (perron)",
+through `click` with the right button and the real server path, opened Calque's wall menu. `ui_tree`
+answered `openMenus: 1` and led with `Anchor Corners` and `Detach This End` at depth 1, under the
+menu the hit-test found, each once. The menu selects the wall it was opened on, as a right-click by
+hand does.
+
+**The first try was refused, and the refusal was wrong.** "(432, 593) is not on a window of
+io.mgcrea.Calque", with Calque's window filling the screen. `bringForward` returns when
+Accessibility reports the application focused, and the window list can still have the previous
+application's window on top for a moment. Raising Calque from behind VS Code by `AXFrontmost`, polled
+every 20 ms: focus moved at 130 ms and the window at the point at 156 ms. `click` and `hover` had
+the same race, hidden because every earlier test clicked an application that was already in front.
+The point check now re-reads the window list for up to half a second before refusing.
+
 ## Still open
 
-- **A menu from a view that is not an element, read for real.** The hit-test is there for
-  Calque's canvas, and on TextEdit and Calque's sidebar it found the same menu the walk did. A
-  wall's menu on the canvas has not been opened yet, so the case the hit-test exists for is
-  reasoned rather than measured.
 - **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop
   across applications has been posted. Whether a Finder file dragged into Mail needs a pause after
   the press, as some drag sources do before starting a drag session, is not known.
