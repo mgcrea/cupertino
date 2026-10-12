@@ -44,6 +44,11 @@ enum HostCheckHome {
   nonisolated(unsafe) static var url = URL(fileURLWithPath: "/tmp", isDirectory: true)
 }
 
+/// Set by a SIGTERM handler, which can capture nothing.
+enum HostCheckSignals {
+  nonisolated(unsafe) static var terminated: sig_atomic_t = 0
+}
+
 /// `AppInfo` reaches for screenshot-mode state, and that pulls half the app in
 /// behind it.
 enum DemoSeed {
@@ -543,13 +548,56 @@ struct HostCheck {
       check("a switched-off surface closes the connection (could not connect)", false)
     }
 
+    // ─── a second copy ──────────────────────────────────────────────────────
+    //
+    // The lock, and the guarded unlink in `stop()` that goes with it. A second
+    // copy whose `start` lost the lock never bound anything, so quitting it must
+    // leave the first copy's socket alone — it used to unlink the path on the way
+    // out, and every bridge after that found nothing to connect to.
+    //
+    // Two `flock`s on one file conflict within one process as well as across
+    // two (each `open` is its own open file description), so a second
+    // `ServerHost` here is a faithful second copy for this purpose.
+
+    let second = ServerHost()
+    var heldBy: String??
+    do {
+      try second.start()
+    } catch let error as ServerHost.HostError {
+      if case .lockHeld(let holder) = error { heldBy = .some(holder) }
+    } catch {}
+    check("a second copy's start() is refused with lockHeld", heldBy != nil)
+    check(
+      "and the refusal names the holder it read from the lock file",
+      (heldBy ?? nil)?.contains("pid \(getpid())") == true)
+    second.stop()
+    check(
+      "stopping the second copy leaves the first copy's socket in place",
+      FileManager.default.fileExists(atPath: BridgeProtocol.socketPath))
+    check(
+      "and the first copy still answers on it",
+      handshake("nonsense\n")?.hasPrefix("err ") == true)
+
     // ─── the eviction watchdog ──────────────────────────────────────────────
     //
-    // The regression test. Remove the socket underneath the host: it must
-    // notice within a couple of ticks and say so, rather than going on
-    // accepting on an inode no path points at.
+    // The regression test. Put somebody else's file where the socket was: the
+    // host must notice within a couple of ticks and say so, rather than going
+    // on accepting on an inode no path points at.
+    //
+    // A REPLACEMENT rather than a bare unlink, and that is what gives `stop()`
+    // below something to get wrong. With the path simply gone, "the socket is
+    // gone afterwards" held whatever `stop` did. With a different inode at the
+    // path the file is not ours, and a `stop` that unlinked it anyway would
+    // delete another copy's socket — the exact bug its guard was written for.
+    //
+    // Created beside the socket and renamed over it, so the squatter exists
+    // while the socket still does and cannot be handed the socket's inode.
 
-    unlink(BridgeProtocol.socketPath)
+    let squatter = BridgeProtocol.socketPath + ".squatter"
+    FileManager.default.createFile(atPath: squatter, contents: Data("not a socket\n".utf8))
+    check(
+      "the socket is replaced by a regular file",
+      rename(squatter, BridgeProtocol.socketPath) == 0)
     var noticed = false
     let deadline = Date().addingTimeInterval(12)
     while Date() < deadline {
@@ -559,26 +607,59 @@ struct HostCheck {
       }
       Thread.sleep(forTimeInterval: 0.25)
     }
-    check("the watchdog notices the socket was removed", noticed)
+    check("the watchdog notices the socket was replaced", noticed)
     check(
-      "and says the copy is no longer reachable",
+      "and says another process replaced it",
+      ServerHost.shared.startupError?.contains("replaced the socket file") == true)
+    check(
+      "and that this copy is no longer reachable",
       ServerHost.shared.startupError?.contains("no longer reachable") == true)
 
     // ─── stopping ───────────────────────────────────────────────────────────
 
     // Stopping the reaped host must not signal this process. `serverPIDs` holds
     // node servers only — the app's own pid is in `Sessions` for display, and
-    // the updater used to walk THAT — so the assertion is simply that we are
-    // still here afterwards.
+    // the updater used to walk THAT. SIGTERM is caught for the length of the
+    // call, so a regression reads as a failed check rather than as this process
+    // dying with no report.
+    HostCheckSignals.terminated = 0
+    let previous = signal(SIGTERM) { _ in HostCheckSignals.terminated = 1 }
     ServerHost.shared.terminateChildren()
-    check("terminating every child does not signal this process", true)
+    Thread.sleep(forTimeInterval: 0.1)
+    signal(SIGTERM, previous)
+    check(
+      "terminating every child does not signal this process",
+      HostCheckSignals.terminated == 0)
 
     let started = Date()
     ServerHost.shared.stop()
     let elapsed = Date().timeIntervalSince(started)
     check("stop() returns rather than deadlocking (\(Int(elapsed * 1000))ms)", elapsed < 2)
+    var squatted = stat()
     check(
-      "the socket is gone afterwards",
+      "stop() leaves a file it did not bind in place",
+      stat(BridgeProtocol.socketPath, &squatted) == 0 && (squatted.st_mode & S_IFMT) == S_IFREG)
+
+    // ─── and again, cleanly ─────────────────────────────────────────────────
+    //
+    // The other half of the guard: a host that is still the one at the path
+    // DOES remove its socket. Starting over the squatter is also the state a
+    // crash leaves behind — holding the lock proves nothing live is there.
+
+    do {
+      try ServerHost.shared.start()
+    } catch {
+      print("  FAIL could not restart the host: \(error.localizedDescription)")
+      exit(1)
+    }
+    check("the host starts again once the lock is released", ServerHost.shared.startupError == nil)
+    var rebound = stat()
+    check(
+      "and binds a socket over the leftover file",
+      stat(BridgeProtocol.socketPath, &rebound) == 0 && (rebound.st_mode & S_IFMT) == S_IFSOCK)
+    ServerHost.shared.stop()
+    check(
+      "stop() removes the socket it bound",
       !FileManager.default.fileExists(atPath: BridgeProtocol.socketPath))
 
     print("\n\(checks - failures)/\(checks) passed\n")
