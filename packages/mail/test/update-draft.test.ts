@@ -41,6 +41,11 @@ type MailBehaviour = {
   staleAfterPolling?: boolean;
   /** What the draft holds. Read only by DRAFT_FACTS, for matching a window to it. */
   content?: string;
+  /**
+   * Drafts already in the mailbox beside the original. Mail keeps autosaved
+   * copies under one subject, so a second row carrying it is the ordinary case.
+   */
+  otherDrafts?: { id: number; subject: string }[];
 };
 
 const ORIGINAL_ID = 42;
@@ -64,6 +69,7 @@ const runScript = (
     allDraftsUnavailable = false,
     staleAfterPolling = false,
     content = "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
+    otherDrafts = [],
   } = behaviour;
 
   const state = {
@@ -76,7 +82,7 @@ const runScript = (
     sender: null as string | null,
     deleted: [] as number[],
     /** Rows the Drafts mailbox reports. The replacement is added on save.  */
-    draftRows: [{ id: ORIGINAL_ID, subject }],
+    draftRows: [{ id: ORIGINAL_ID, subject }, ...otherDrafts],
   };
 
   const original = {
@@ -284,6 +290,23 @@ describe("refusing rather than losing the draft", () => {
     expect(state.deleted).toEqual([]);
   });
 
+  /**
+   * A draft that already carried the subject is not the replacement. Taking it
+   * for one deleted the original with nothing saved in its place.
+   */
+  it("does not take an older draft with the same subject for the replacement", () => {
+    const { envelope, state } = runScript(
+      {},
+      {
+        saveThrows: true,
+        savedAfterPolls: Infinity,
+        otherDrafts: [{ id: 7, subject: "Quarterly numbers" }],
+      },
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
+  });
+
   it("refuses a reply draft, before composing anything", () => {
     const { envelope, state } = runScript({}, { headers: REPLY_HEADERS });
     expect(envelope.data.replaced).toBe(false);
@@ -392,6 +415,16 @@ describe("references that go stale mid-script", () => {
   /** The same rewrite can renumber the replacement between confirming and returning. */
   it("reports the id read back last, and the one it confirmed, separately", () => {
     const { envelope } = runScript({});
+    expect(envelope.data.newId).toBe(99);
+    expect(envelope.data.confirmedId).toBe(99);
+  });
+
+  /** An autosaved copy written after the original can outnumber the replacement. */
+  it("reports the replacement, not a draft that was already there", () => {
+    const { envelope } = runScript(
+      {},
+      { otherDrafts: [{ id: 120, subject: "Quarterly numbers" }] },
+    );
     expect(envelope.data.newId).toBe(99);
     expect(envelope.data.confirmedId).toBe(99);
   });

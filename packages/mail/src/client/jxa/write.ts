@@ -566,6 +566,19 @@ export const UPDATE_DRAFT = script(
     });
   }
 
+  // Every row already carrying the subject, so none of them can be mistaken for
+  // the replacement below: Mail keeps autosaved copies under one subject, and
+  // taking one of those for confirmation deletes the original with nothing
+  // saved in its place. Read before the composer exists, so an early autosave
+  // of the replacement itself is not counted among them.
+  var before = {};
+  before[p.id] = true;
+  var existing = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
+  for (var b = 0; b < existing.length; b++) {
+    var bid = prop(function () { return existing[b].id(); }, null);
+    if (bid !== null) before[bid] = true;
+  }
+
   var replacement = M.OutgoingMessage({ subject: subject, content: p.body || "", visible: true });
   M.outgoingMessages.push(replacement);
   if (sender) { try { replacement.sender = sender; } catch (e) {} }
@@ -597,7 +610,7 @@ export const UPDATE_DRAFT = script(
     var matches = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
     for (var k = 0; k < matches.length; k++) {
       var mid = prop(function () { return matches[k].id(); }, null);
-      if (mid === null || mid === p.id) continue;
+      if (mid === null || before[mid]) continue;
       if (newId === null || mid > newId) newId = mid;
     }
   }
@@ -642,7 +655,7 @@ export const UPDATE_DRAFT = script(
   var finals = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
   for (var f = 0; f < finals.length; f++) {
     var fid = prop(function () { return finals[f].id(); }, null);
-    if (fid !== null && fid !== p.id && (settledId === newId || fid > settledId)) settledId = fid;
+    if (fid !== null && !before[fid] && (settledId === newId || fid > settledId)) settledId = fid;
   }
 
   return ok({
