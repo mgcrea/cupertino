@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
-import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
+import { settleGroups, writeConfinedFile } from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
 import { MailAxLane } from "./ax.js";
@@ -191,6 +191,9 @@ const mailboxKey = (accountUuid: string, name: string): string => `${accountUuid
 const FDA_HINT =
   "The message file could not be read. Grant Full Disk Access to the app running this server " +
   "and restart it.";
+
+/** The refs a mailbox group was given, for the rows of a group whose script threw. */
+const refsOfGroup = (group: MessageRef[]): string[] => group.map((r) => encodeRef(r));
 
 export type AppleMailClientOptions = {
   config: Config;
@@ -1542,19 +1545,22 @@ export class AppleMailClient {
   // Every mutation reports the state Mail re-read after the change. Verifying a
   // write against the search index instead would race Mail's own update of it.
 
-  /** Set flags across refs, one Apple Event per distinct mailbox. */
+  /**
+   * Set flags across refs, one Apple Event per distinct mailbox.
+   *
+   * This and the move and delete below settle each mailbox on its own (see
+   * core's `settleGroups`): a mailbox whose script throws gets a failed row
+   * per ref while the mailboxes already changed keep theirs, and `unknown`
+   * counts refs whose script timed out mid-change.
+   */
   async setFlags(
     refs: string[],
     flags: { read?: boolean; flagged?: boolean; flagIndex?: number; junk?: boolean },
-  ): Promise<{ changed: number; failed: number; results: unknown[] }> {
+  ): Promise<{ changed: number; failed: number; unknown?: number; results: unknown[] }> {
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let changed = 0;
-    let failed = 0;
-
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{ mailbox: string; results: { id: number; ok: boolean }[] }>(SET_FLAGS, {
           accountUuid: first.accountUuid,
@@ -1563,34 +1569,38 @@ export class AppleMailClient {
           ...flags,
         }),
       );
-      for (const r of res.results) {
-        if (r.ok) changed += 1;
-        else failed += 1;
-        results.push({
-          ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
-          ...r,
-        });
-      }
-    }
-    return { changed, failed, results };
+      return res.results.map((r) => ({
+        ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
+        ...r,
+      }));
+    });
+    return {
+      changed: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      results: rows,
+    };
   }
 
   async moveMessages(
     refs: string[],
     opts: { destinationMailbox: string; destinationAccount?: string },
-  ): Promise<{ moved: number; failed: number; destination: string; results: unknown[] }> {
+  ): Promise<{
+    moved: number;
+    failed: number;
+    unknown?: number;
+    destination: string;
+    results: unknown[];
+  }> {
     const destAccount = opts.destinationAccount
       ? await this.mailboxes.resolveAccount(opts.destinationAccount)
       : null;
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let moved = 0;
-    let failed = 0;
     let destination = opts.destinationMailbox;
 
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{
           destination: string;
@@ -1605,47 +1615,52 @@ export class AppleMailClient {
         }),
       );
       destination = res.destination;
-      for (const r of res.results) {
-        if (r.ok) moved += 1;
-        else failed += 1;
-        results.push({
-          previousRef: encodeRef({
-            accountUuid: first.accountUuid,
-            mailbox: first.mailbox,
-            id: r.id,
-          }),
-          // A moved message has a new row id, so the old ref is dead. Null here
-          // means Mail moved it but we could not re-locate it by Message-ID.
-          ref:
-            r.ok && r.newId
-              ? encodeRef({
-                  accountUuid: res.destinationAccountUuid || first.accountUuid,
-                  mailbox: res.destination,
-                  id: r.newId,
-                })
-              : null,
-          ...r,
-        });
-      }
-    }
-    return { moved, failed, destination, results };
+      return res.results.map((r) => ({
+        previousRef: encodeRef({
+          accountUuid: first.accountUuid,
+          mailbox: first.mailbox,
+          id: r.id,
+        }),
+        // A moved message has a new row id, so the old ref is dead. Null here
+        // means Mail moved it but we could not re-locate it by Message-ID.
+        ref:
+          r.ok && r.newId
+            ? encodeRef({
+                accountUuid: res.destinationAccountUuid || first.accountUuid,
+                mailbox: res.destination,
+                id: r.newId,
+              })
+            : null,
+        ...r,
+      }));
+    });
+    // A row for a mailbox whose script threw names the message it was given,
+    // which is the previous ref here: `ref` is the fresh one, and there is none.
+    const results = rows.map((r) =>
+      "previousRef" in r ? r : { ...r, previousRef: r.ref, ref: null },
+    );
+    return {
+      moved: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      destination,
+      results,
+    };
   }
 
   async deleteMessages(refs: string[]): Promise<{
     deleted: number;
     failed: number;
+    unknown?: number;
     movedToTrash: boolean | null;
     results: unknown[];
   }> {
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let deleted = 0;
-    let failed = 0;
     let movedToTrash: boolean | null = null;
 
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{ movedToTrash: boolean | null; results: { id: number; ok: boolean }[] }>(
           DELETE_MESSAGES,
@@ -1653,13 +1668,18 @@ export class AppleMailClient {
         ),
       );
       movedToTrash = res.movedToTrash;
-      for (const r of res.results) {
-        if (r.ok) deleted += 1;
-        else failed += 1;
-        results.push(r);
-      }
-    }
-    return { deleted, failed, movedToTrash, results };
+      return res.results.map((r) => ({
+        ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
+        ...r,
+      }));
+    });
+    return {
+      deleted: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      movedToTrash,
+      results: rows,
+    };
   }
 
   /**
