@@ -1348,8 +1348,21 @@ nonisolated enum DesktopServer {
     return owner
   }
 
+  /// Polled rather than read once, because the window list trails the focus.
+  /// `bringForward` returns when Accessibility reports the application focused,
+  /// and the window server can still be stacking the old one on top for a
+  /// beat: measured 2026-10-12 raising Calque from behind VS Code, focus moved
+  /// at 130 ms and the window at the point at 156 ms. A click made in that gap
+  /// was refused as "not on a window of" an application whose window filled
+  /// the screen. A point that is really covered is refused half a second later.
   private static func requireOnWindow(of owner: String, at point: CGPoint, verb: String) throws {
-    guard AccessibilityDriver.pointOnWindow(of: owner, at: point) else {
+    let started = Date()
+    var onWindow = AccessibilityDriver.pointOnWindow(of: owner, at: point)
+    while !onWindow, Date().timeIntervalSince(started) < 0.5 {
+      usleep(20_000)
+      onWindow = AccessibilityDriver.pointOnWindow(of: owner, at: point)
+    }
+    guard onWindow else {
       throw AccessibilityDriver.Failure.refused(
         "(\(Int(point.x)), \(Int(point.y))) is not on a window of \(owner), so nothing was posted "
           + "— the \(verb) would have landed in whatever is on top there. Read the window's frame "
