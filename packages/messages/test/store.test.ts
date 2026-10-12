@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
+import { registerCaseFold } from "@mgcrea/mcp-apple-core";
 import { describe, expect, it } from "vitest";
 
 import { toAppleSeconds } from "../src/client/dates.js";
@@ -108,6 +109,8 @@ const HELLO_BLOB = Buffer.from(
 
 const store = (seedMore?: (db: DatabaseSync) => void): MessagesStore => {
   const db = new DatabaseSync(":memory:");
+  // What openReadOnly does to every real handle, so search folds as it does live.
+  registerCaseFold(db);
   db.exec(schema());
   seed(db);
   seedMore?.(db);
@@ -400,6 +403,20 @@ describe("search", () => {
       });
     });
     expect(s.search("see you", 10).map((m) => m.guid)).toEqual(["A"]);
+  });
+
+  /**
+   * SQLite folds ASCII only, so the column pass missed "ÉTÉ" against "été"
+   * while the blob pass, which lowers in JavaScript, would have caught it: one
+   * search, two answers depending on where Messages kept the text.
+   */
+  it("folds case beyond ASCII in the column", () => {
+    const s = store((db) => {
+      addMessage(db, { rowid: 1, guid: "A", chat: 1, text: "Bon été à tous" });
+      addMessage(db, { rowid: 2, guid: "B", chat: 1, text: "Hello world" });
+    });
+    expect(s.search("ÉTÉ", 10).map((m) => m.guid)).toEqual(["A"]);
+    expect(s.search("WORLD", 10).map((m) => m.guid)).toEqual(["B"]);
   });
 });
 
