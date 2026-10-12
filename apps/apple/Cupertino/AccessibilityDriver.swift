@@ -2594,7 +2594,7 @@ nonisolated enum AccessibilityDriver {
   /// string "acc" on virtual key 0 arrived in Settings' search field as a
   /// single "Q", which is key 0 on the AZERTY layout it was typed from. So a
   /// simulated device is typed into the way a person types, one key at a
-  /// time, with shift for an uppercase letter.
+  /// time, with shift where the layout puts the character on shift.
   ///
   /// Returns the characters this layout has no key for, so the caller can say
   /// which part of the text did not arrive rather than reporting a success it
@@ -2607,24 +2607,19 @@ nonisolated enum AccessibilityDriver {
     var unmapped: [Character] = []
     var events: [(CGEvent, CGEvent)] = []
     for character in text {
-      let lower = String(character).lowercased()
-      let name: String
-      switch lower {
-      case " ": name = "space"
-      case "\n": name = "return"
-      case "\t": name = "tab"
-      default: name = lower
-      }
-      guard let code = keyCode(for: name) else {
+      // The exact character, shift included — see `strokes(layout:)` for the
+      // uppercase guess this replaced and what it typed on AZERTY.
+      guard let stroke = stroke(for: character) else {
         unmapped.append(character)
         continue
       }
-      guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-        let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+      guard
+        let down = CGEvent(keyboardEventSource: source, virtualKey: stroke.code, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: stroke.code, keyDown: false)
       else { throw Failure.refused("Could not synthesise typing.") }
-      if String(character) != lower {
-        down.flags = .maskShift
-        up.flags = .maskShift
+      if !stroke.flags.isEmpty {
+        down.flags = stroke.flags
+        up.flags = stroke.flags
       }
       events.append((down, up))
     }
@@ -3296,11 +3291,12 @@ nonisolated enum AccessibilityDriver {
   /// found it, being the first single-character key anything sends.
   ///
   /// Hence the split: `refreshLayout` touches TIS and is main-thread-only,
-  /// `layoutKeyCodes` reads the cache and never touches TIS at all.
+  /// `layoutTables` reads the cache and never touches TIS at all.
   ///
   /// `nonisolated(unsafe)` is vouched for by `layoutLock` below: every read and
   /// every write of this var happens while holding it.
-  private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
+  private nonisolated(unsafe) static var layoutCache:
+    (id: String, map: [String: CGKeyCode], strokes: [Character: Stroke])?
   private static let layoutLock = NSLock()
 
   /// Ask TIS which layout is current, and rebuild the map if it moved.
@@ -3324,8 +3320,10 @@ nonisolated enum AccessibilityDriver {
     if let cached, cached.id == id { return }
 
     var map: [String: CGKeyCode] = [:]
+    var strokes: [Character: Stroke] = [:]
     if let layoutPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) {
       let data = Unmanaged<CFData>.fromOpaque(layoutPointer).takeUnretainedValue() as Data
+      strokes = Self.strokes(layout: data)
       data.withUnsafeBytes { raw in
         guard let base = raw.baseAddress else { return }
         let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
@@ -3350,7 +3348,7 @@ nonisolated enum AccessibilityDriver {
       }
     }
     layoutLock.lock()
-    layoutCache = (id: id, map: map)
+    layoutCache = (id: id, map: map, strokes: strokes)
     layoutLock.unlock()
   }
 
@@ -3374,8 +3372,8 @@ nonisolated enum AccessibilityDriver {
     ) { _ in MainActor.assumeIsolated { refreshLayout() } }
   }
 
-  /// The map, read from the cache. Touches nothing that asserts a queue.
-  private static func layoutKeyCodes() -> [String: CGKeyCode] {
+  /// The maps, read from the cache. Touches nothing that asserts a queue.
+  private static func layoutTables() -> (map: [String: CGKeyCode], strokes: [Character: Stroke]) {
     layoutLock.lock()
     let cached = layoutCache
     layoutLock.unlock()
@@ -3385,7 +3383,7 @@ nonisolated enum AccessibilityDriver {
       // notification is ever missed, a stale map survives ONE lookup rather
       // than until the next time the layout changes.
       DispatchQueue.main.async { refreshLayout() }
-      return cached.map
+      return (cached.map, cached.strokes)
     }
 
     // Cold, which in the app means something asked before `watchLayout` ran.
@@ -3410,7 +3408,7 @@ nonisolated enum AccessibilityDriver {
     layoutLock.unlock()
     // Empty rather than fatal: `key` turns this into its "Unknown key" refusal,
     // which is a bad answer where the trap was a dead app.
-    return filled?.map ?? [:]
+    return (filled?.map ?? [:], filled?.strokes ?? [:])
   }
 
   /// The code for a named key, position-keyed first and layout-resolved second.
@@ -3418,13 +3416,80 @@ nonisolated enum AccessibilityDriver {
     let wanted = name.lowercased()
     if let fixed = keyCodes[wanted] { return fixed }
     guard wanted.count == 1 else { return nil }
-    return layoutKeyCodes()[wanted]
+    return layoutTables().map[wanted]
+  }
+
+  /// One key press that types a character: the key, and shift or nothing.
+  struct Stroke: Equatable {
+    let code: CGKeyCode
+    let flags: CGEventFlags
+  }
+
+  /// Which keystroke types each character on a layout, keyed by the EXACT
+  /// character the key produces.
+  ///
+  /// `typeByKeyCodes` used to lowercase a character, look it up in the
+  /// unshifted map above and add shift when the character had changed —
+  /// assuming shift on a key gives that key's uppercase. On AZERTY it gives
+  /// the digit row: É went out as "2", È as "7", À as "0", Ç as "9" and Ù as
+  /// "%", each counted as typed. And a character only shift produces, `@ ! ?`
+  /// on a US layout, had no unshifted key and was never typeable at all.
+  ///
+  /// So both states are asked, and what each key produces in each is kept as
+  /// produced. Unshifted is asked first and the first key wins, so a character
+  /// is typed with the fewest modifiers and from the main block before the
+  /// keypad, whose codes come later. A dead key is left out: on the device it
+  /// starts a composition rather than typing its own mark. What no key in
+  /// either state produces — É on AZERTY, which takes caps lock — is absent,
+  /// and the caller reports it untyped.
+  ///
+  /// Pure over the layout's data, so a check can build it for a layout this
+  /// Mac is not using. `refreshLayout` builds it for the one it is.
+  static func strokes(layout data: Data) -> [Character: Stroke] {
+    var out: [Character: Stroke] = [:]
+    data.withUnsafeBytes { raw in
+      guard let base = raw.baseAddress else { return }
+      let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+      // `UCKeyTranslate` takes the Carbon modifier bits shifted down a byte.
+      let shift = UInt32(shiftKey >> 8) & 0xFF
+      for (state, flags) in [(UInt32(0), CGEventFlags()), (shift, CGEventFlags.maskShift)] {
+        for code in 0..<128 as Range<UInt16> {
+          var deadKeys: UInt32 = 0
+          var chars = [UniChar](repeating: 0, count: 4)
+          var length = 0
+          let err = UCKeyTranslate(
+            layout, code, UInt16(kUCKeyActionDown), state, UInt32(LMGetKbdType()), 0,
+            &deadKeys, 4, &length, &chars)
+          // A dead key produces nothing and leaves state behind.
+          guard err == noErr, deadKeys == 0, length > 0 else { continue }
+          let produced = String(utf16CodeUnits: chars, count: length)
+          guard produced.count == 1, let character = produced.first, out[character] == nil
+          else { continue }
+          out[character] = Stroke(code: CGKeyCode(code), flags: flags)
+        }
+      }
+    }
+    return out
+  }
+
+  /// The keystroke that types `character` on the Mac's layout, or nil when
+  /// none does. Read from the cache, so safe off the main thread.
+  ///
+  /// The whitespace keys are positions, like `keyCodes`, and answer whatever
+  /// the cache holds. A line break is return, which no layout produces as `\n`.
+  static func stroke(for character: Character) -> Stroke? {
+    switch character {
+    case " ": return Stroke(code: 49, flags: [])
+    case "\t": return Stroke(code: 48, flags: [])
+    case "\n", "\r", "\r\n": return Stroke(code: 36, flags: [])
+    default: return layoutTables().strokes[character]
+    }
   }
 
   /// Every key this driver can name right now, for a refusal that is worth
   /// reading. Layout-dependent, which is the point.
   static func knownKeys() -> [String] {
-    (Set(keyCodes.keys).union(layoutKeyCodes().keys)).sorted()
+    (Set(keyCodes.keys).union(layoutTables().map.keys)).sorted()
   }
 }
 

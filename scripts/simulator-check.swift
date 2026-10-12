@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 
 /// Asserts that the in-process `simulator` server speaks MCP, answers in iOS
@@ -472,6 +473,39 @@ struct SimulatorCheck {
         check(label, minted <= found.count * (found.count + 4))
       }
     }
+
+    // ─── typing resolves the exact character, shift included ────────────────
+    // `type` lowercased each character, looked up an unshifted-only map and
+    // added shift when the character had changed. On AZERTY, shift is the digit
+    // row: É went out as "2", À as "0", and both were counted as typed. On a US
+    // layout `@ ! ?` were never typeable. The map is built from two named
+    // layouts here rather than the Mac's own, so it holds whatever this Mac
+    // types on; TIS is asked on the main thread, which is where main() runs.
+    func layoutData(_ id: String) -> Data? {
+      let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
+      guard
+        let sources = TISCreateInputSourceList(filter, true)?.takeRetainedValue()
+          as? [TISInputSource],
+        let source = sources.first,
+        let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+      else { return nil }
+      return Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
+    }
+    typealias Stroke = AccessibilityDriver.Stroke
+    if let french = layoutData("com.apple.keylayout.French").map(AccessibilityDriver.strokes) {
+      check(
+        "on AZERTY, É has no key, so it is not typed rather than typed as 2", french["É"] == nil)
+      check("on AZERTY, é is its own key", french["é"] == Stroke(code: 19, flags: []))
+      check("on AZERTY, A is shift on Q's key", french["A"] == Stroke(code: 12, flags: .maskShift))
+    } else {
+      skip("typing on AZERTY resolves exact characters", "the French layout could not be loaded")
+    }
+    if let abc = layoutData("com.apple.keylayout.ABC").map(AccessibilityDriver.strokes) {
+      check("on ABC, ! is shift-1", abc["!"] == Stroke(code: 18, flags: .maskShift))
+    } else {
+      skip("typing on ABC resolves exact characters", "the ABC layout could not be loaded")
+    }
+
     check(
       "DeviceHub is not brokered either",
       !AccessibilityDriver.inScope(SimulatorServer.deviceHub, scope: .brokered))
