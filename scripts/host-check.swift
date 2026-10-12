@@ -597,6 +597,47 @@ struct HostCheck {
         isSelf: false, lent: false, borrowerOnTrial: false, entitlement: licensed)
         == .admit(onTrial: false))
 
+    // ─── a setting narrowed under a running server ──────────────────────────
+    //
+    // A node server reads its settings once, at spawn, and registers its tools
+    // once. Switching writes or a gate off used to leave every running session
+    // on the old setting until its editor restarted — `send_message` and
+    // `find_codes` still there after the switch said otherwise. `exceeds` is
+    // the decision `settingsChanged` acts on: narrower stops, wider never does.
+
+    let spawned = SpawnConfig(
+      surface: "messages", enabled: true, allowWrites: true, gates: ["allowCodes"])
+    check(
+      "writes switched off is a narrowing",
+      spawned.exceeds(
+        SpawnConfig(surface: "messages", enabled: true, allowWrites: false, gates: ["allowCodes"])))
+    check(
+      "a gate switched off is a narrowing",
+      spawned.exceeds(
+        SpawnConfig(surface: "messages", enabled: true, allowWrites: true, gates: [])))
+    check(
+      "the surface switched off is a narrowing",
+      spawned.exceeds(
+        SpawnConfig(
+          surface: "messages", enabled: false, allowWrites: true, gates: ["allowCodes"])))
+    check(
+      "nothing changed is not",
+      !spawned.exceeds(spawned))
+    let narrow = SpawnConfig(surface: "messages", enabled: true, allowWrites: false, gates: [])
+    check(
+      "writes and a gate switched ON is not — a server is never restarted to widen",
+      !narrow.exceeds(spawned))
+    check(
+      "the reason names what was switched off",
+      spawned.narrowing(
+        to: SpawnConfig(surface: "messages", enabled: true, allowWrites: false, gates: []))
+        == "writes switched off")
+    check(
+      "and names the gate",
+      spawned.narrowing(
+        to: SpawnConfig(surface: "messages", enabled: true, allowWrites: true, gates: []))
+        == "allowCodes switched off")
+
     // ─── a second copy ──────────────────────────────────────────────────────
     //
     // The lock, and the guarded unlink in `stop()` that goes with it. A second

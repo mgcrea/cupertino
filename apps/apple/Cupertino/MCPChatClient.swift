@@ -210,8 +210,9 @@ nonisolated final class MCPChatClient: @unchecked Sendable {
     }
   }
 
-  /// End of stream: the child exited, or the surface was switched off and
-  /// `stopSessions` sent it a SIGTERM. Everything still waiting fails, once.
+  /// End of stream: the child exited, or the surface — or a setting it was
+  /// spawned with — was switched off and the host sent it a SIGTERM. Everything
+  /// still waiting fails, once.
   private func finish() {
     let stranded: [Waiter] = state.withLock {
       guard !$0.closed else { return [] }

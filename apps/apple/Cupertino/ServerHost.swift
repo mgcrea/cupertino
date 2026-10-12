@@ -55,14 +55,20 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// the first thing that does would quietly turn a view model into a registry.
   private let trialPIDs = OSAllocatedUnfairLock<Set<Int32>>(initialState: [])
 
-  /// Every live server, by pid, so `stopSessions(for:)` can find one surface's.
+  /// Every live server, by pid, with the settings it was spawned with — so
+  /// `stopSessions(for:)` can find one surface's, and `settingsChanged` the ones
+  /// holding a setting that has since been switched off.
   ///
   /// The second exception to "the host keeps no state", and it exists for the
   /// same reason `trialPIDs` does: a preference changed in the UI has to reach
   /// connections that were admitted before it changed. Deliberately not a reach
   /// into `Sessions` — that type is observation for the Activity window, and the
   /// comment above says why the host must not start reading from it.
-  private let serverPIDs = OSAllocatedUnfairLock<[Int32: String]>(initialState: [:])
+  private let serverPIDs = OSAllocatedUnfairLock<[Int32: SpawnConfig]>(initialState: [:])
+
+  /// The one observer that turns a preference switched off into servers
+  /// stopped. Main thread only, like `lockFD`: `start` adds it, `stop` removes it.
+  private var defaultsObserver: (any NSObjectProtocol)?
 
   /// The same servers as `Process` objects, for `terminateChildren`, which has
   /// to ask whether each is still running before it escalates to SIGKILL. A
@@ -149,6 +155,23 @@ nonisolated final class ServerHost: @unchecked Sendable {
     } catch {
       listener.withLock { $0.startupError = error.localizedDescription }
       throw error
+    }
+
+    // One observer for every switch, rather than a call from each toggle. The
+    // toggles are `@AppStorage` views spread over several panes, and the bug this closes
+    // lived in the gap between them: the enable switch called `stopSessions`,
+    // while "Allow writes" and every gate called nothing, so a node server kept
+    // `send_message` or `find_codes` until its editor restarted. A defaults
+    // write from anywhere arrives here, including one no view has been
+    // written for yet.
+    //
+    // Posted for every defaults write in the process, window frames included,
+    // which is fine: `settingsChanged` is a few reads per live server and
+    // signals nothing unless a setting actually narrowed.
+    if defaultsObserver == nil {
+      defaultsObserver = NotificationCenter.default.addObserver(
+        forName: UserDefaults.didChangeNotification, object: nil, queue: nil
+      ) { [weak self] _ in self?.settingsChanged() }
     }
   }
 
@@ -329,6 +352,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
   }
 
   func stop() {
+    if let defaultsObserver {
+      NotificationCenter.default.removeObserver(defaultsObserver)
+      self.defaultsObserver = nil
+    }
+
     // Taken out under the lock and closed outside it, so the watch and this
     // cannot both close the same descriptor.
     let (fd, watch, identity) = listener.withLock { state in
@@ -572,7 +600,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
       let borrowerId = String(parts[2].dropFirst(BridgeProtocol.onBehalfOfPrefix.count))
-      let peerSurface = peerPID(client).flatMap { pid in serverPIDs.withLock { $0[pid] } }
+      let peerSurface = peerPID(client).flatMap { pid in serverPIDs.withLock { $0[pid]?.surface } }
       if let refusal = StoreLane.admit(borrowerId: borrowerId, peerSurface: peerSurface) {
         hostLog(
           StoreLane.surfaces.contains(borrowerId) ? borrowerId : "cupertino", .error,
@@ -668,7 +696,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
         reply(client, "err unknown or app-less borrower '\(borrowerId)'")
         return
       }
-      guard let peer = peerPID(client), serverPIDs.withLock({ $0[peer] }) == borrower.id else {
+      guard let peer = peerPID(client), serverPIDs.withLock({ $0[peer]?.surface }) == borrower.id
+      else {
         hostLog(
           surface.id, .error,
           "refused a lend to '\(borrowerId)': the caller is not a \(borrowerId) server")
@@ -940,13 +969,54 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// window and the exit is logged by the same path as any other.
   func stopSessions(for surface: Surface) {
     let pids = serverPIDs.withLock { live in
-      live.filter { $0.value == surface.id }.map(\.key)
+      live.filter { $0.value.surface == surface.id }.map(\.key)
     }
     for pid in pids {
       hostLog(surface.id, .info, "switched off — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
     }
     if surface.id == "sound" { enforceRecordingGate() }
+  }
+
+  /// Stop every node server holding a setting that has since been switched off.
+  ///
+  /// The `stopSessions` guarantee, extended from the enable switch to "Allow
+  /// writes" and to every gate. A node server reads its settings once at spawn
+  /// and registers its tools once, so switching writes off left an editor that
+  /// was already connected holding `send_message` until it restarted — while
+  /// the in-process surfaces, which read per request, had already stopped. The
+  /// only way to tell a node server is to stop it; its MCP host reconnects and
+  /// gets a server spawned under the settings as they now are.
+  ///
+  /// Narrowing only — see `SpawnConfig.exceeds`. Each server is taken out of
+  /// `serverPIDs` as it is chosen, so the stream of unrelated defaults writes
+  /// that follows does not signal it again while it exits.
+  ///
+  /// Through the `Process`, not a bare pid, for the reason `endAfterGrace`
+  /// gives: by the time this runs the child may have exited and been reaped,
+  /// and its number may already be somebody else's.
+  ///
+  /// A lend has no spawn config of its own and needs none: it is served
+  /// in-process and reads its BORROWER's switches per request.
+  func settingsChanged() {
+    let spawned = serverPIDs.withLock { $0 }
+    let narrowed = spawned.compactMapValues { config in
+      Surface.named(config.surface).flatMap { config.narrowing(to: .current($0)) }
+    }
+    guard !narrowed.isEmpty else { return }
+
+    // Claimed under the lock, so two observers racing each other — or this and
+    // `run`'s own check — signal a server once.
+    let claimed = serverPIDs.withLock { live in
+      narrowed.compactMap { pid, reason in
+        live.removeValue(forKey: pid).map { (pid: pid, surface: $0.surface, reason: reason) }
+      }
+    }
+    for (pid, surface, reason) in claimed {
+      guard let process = serverProcesses.withLock({ $0[pid] }), process.isRunning else { continue }
+      hostLog(surface, .info, "\(reason) — stopping server (pid \(pid))")
+      process.terminate()
+    }
   }
 
   /// End a microphone recording the settings no longer allow.
@@ -1067,7 +1137,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
       while let line = pending.next() {
         // Switching a surface off has to take effect without restarting every
-        // editor. A node server is stopped with SIGTERM by `stopSessions`; this
+        // editor. A node server is stopped with SIGTERM by `settingsChanged`; this
         // one has no pid of its own to signal — the app's own pid is in that map
         // for display only, and signalling it would kill Cupertino — so the check
         // lives here, on the request, which is the same guarantee by a different
@@ -1083,8 +1153,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
         observer?.saw(Data("\(line)\n".utf8))
 
         // Read per request, so flipping a toggle takes effect without restarting
-        // the editor — the same guarantee `stopSessions` gives a node server by
-        // signalling it.
+        // the editor, in either direction. A node server cannot re-read anything,
+        // so its half of this is narrower: `settingsChanged` stops one when a
+        // setting it was spawned with is switched OFF, and switching one on
+        // reaches it only at the next spawn.
         //
         // WHICH server, and what each one has to be told, is `InProcessServers`'
         // single copy of that fact. It used to be spelled here and a second time
@@ -1232,7 +1304,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let process = Process()
     process.executableURL = binaries.node
     process.arguments = [binaries.script.path]
-    let gates = SurfaceSettings.enabledGates(surface)
+    // One read of the settings, and everything below follows it: the
+    // environment the server reads, the log lines, and the record
+    // `settingsChanged` compares against later. Read once because three reads
+    // could straddle a toggle and record a server as narrower than it is.
+    let spawnConfig = SpawnConfig.current(surface)
+    let gates = surface.gates.filter { spawnConfig.gates.contains($0.id) }.map(\.envSuffix)
     // Never lazy for the Chat pane, and `SurfaceCatalog.probe` gives the reason
     // in full: a lazy server answers `tools/list` with a search tool and a
     // dispatcher, so honouring the setting here would hand the model four tools
@@ -1250,11 +1327,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
       ? false
       : SurfaceSettings.lazyTools(surface) && !ClientFacade.defersSchemas(wiredClient)
     process.environment = ServerLocator.environment(
-      for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates,
-      values: SurfaceSettings.gateValues(surface), lazyTools: lazyTools)
+      for: surface, allowWrites: spawnConfig.allowWrites, gates: gates,
+      values: ServerLocator.gateValues(
+        for: surface, isOn: { spawnConfig.gates.contains($0.id) },
+        text: { UserDefaults.standard.string(forKey: SurfaceSettings.gateValueKey(surface, $0)) }),
+      lazyTools: lazyTools)
 
-    let writes = SurfaceSettings.allowWrites(surface)
-    hostLog(surface.id, .info, "allowWrites=\(writes)")
+    hostLog(surface.id, .info, "allowWrites=\(spawnConfig.allowWrites)")
     if !surface.gates.isEmpty {
       hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
     }
@@ -1290,8 +1369,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let session = UUID()
     let pid = process.processIdentifier
     if onTrial { trialPIDs.withLock { $0.insert(pid) } }
-    serverPIDs.withLock { $0[pid] = surface.id }
     serverProcesses.withLock { $0[pid] = process }
+    serverPIDs.withLock { $0[pid] = spawnConfig }
+    // A switch turned off between the read above and this line found no pid
+    // to stop. Asking once more now that there is one closes that window.
+    settingsChanged()
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
     }
@@ -1592,6 +1674,58 @@ nonisolated private final class PendingLines: @unchecked Sendable {
 nonisolated func closeOnExec(_ fd: Int32) {
   let flags = fcntl(fd, F_GETFD)
   if flags >= 0 { _ = fcntl(fd, F_SETFD, flags | FD_CLOEXEC) }
+}
+
+/// The settings a node server was spawned with, which are the settings it
+/// keeps for the rest of its life.
+///
+/// A node server reads its environment once and registers its tools once
+/// (`packages/*/src/cli.ts`), so nothing that changes in the app afterwards
+/// reaches it. The in-process surfaces read their settings per request and
+/// need none of this; a node server can only be told by being stopped, and
+/// this is what the host remembers per pid so `ServerHost.settingsChanged` can
+/// tell which ones to stop.
+///
+/// `lazyTools` is deliberately not here. It decides how the same tools are
+/// presented, not which tools exist, so a server spawned under the other value
+/// is not holding anything the user has taken away.
+nonisolated struct SpawnConfig: Equatable {
+  let surface: String
+  /// Always true at spawn — the host refuses a switched-off surface before it
+  /// gets that far — and carried so "switched off since" is one comparison
+  /// with the rest.
+  let enabled: Bool
+  let allowWrites: Bool
+  /// Gate IDs, as in `gate.<surface>.<id>`.
+  let gates: Set<String>
+
+  /// The settings a server for `surface` would be spawned with now.
+  static func current(_ surface: Surface) -> SpawnConfig {
+    SpawnConfig(
+      surface: surface.id,
+      enabled: SurfaceSettings.isEnabled(surface),
+      allowWrites: SurfaceSettings.allowWrites(surface),
+      gates: Set(surface.gates.filter { SurfaceSettings.isGateOn(surface, $0) }.map(\.id)))
+  }
+
+  /// Whether a server spawned with these settings holds something `now` no
+  /// longer allows.
+  ///
+  /// Narrowing only, and that asymmetry is the decision. Turning a setting ON
+  /// does not restart a running server: it costs whoever is mid-session their
+  /// connection to buy them a tool they did not have a moment ago and can get
+  /// by reconnecting. Turning one OFF has to reach the running session, or the
+  /// switch is a promise about the next editor launch rather than about now.
+  func exceeds(_ now: SpawnConfig) -> Bool { narrowing(to: now) != nil }
+
+  /// What was switched off since spawn, as the log says it; nil when nothing
+  /// was.
+  func narrowing(to now: SpawnConfig) -> String? {
+    if enabled, !now.enabled { return "switched off" }
+    if allowWrites, !now.allowWrites { return "writes switched off" }
+    if let gate = gates.subtracting(now.gates).sorted().first { return "\(gate) switched off" }
+    return nil
+  }
 }
 
 /// Per-surface user settings.
