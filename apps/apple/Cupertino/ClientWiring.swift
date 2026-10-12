@@ -918,10 +918,7 @@ enum ClientWiring {
       // with nothing of ours in it goes through the audit like any other.
       guard let servers = ClientWiringMerge.localScopeServers(in: root, folder: folder.path)
       else { return .notConfigured }
-      return status(
-        from: ClientWiringMerge.audit(
-          servers: servers, expectedCommand: bridgePath, expected: expected,
-          unexpected: unexpected))
+      return audit(servers: servers)
     }
   }
 
