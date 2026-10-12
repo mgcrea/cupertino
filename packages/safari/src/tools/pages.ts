@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { QUIET_AFTER_SECONDS } from "../client/pages.js";
+import { isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { compact, fail, ok, wrapResult } from "./util.js";
 
@@ -149,8 +149,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
           // them. With nothing recent, the likelier story is that it was
           // switched off — and telling someone their URL is unpermitted when
           // the extension is off sends them to the wrong setting.
-          const quiet =
-            status.newestAgeSeconds !== null && status.newestAgeSeconds > QUIET_AFTER_SECONDS;
+          const quiet = isQuiet(status);
           return fail(
             quiet
               ? `No capture for that URL, and nothing has been captured for ` +

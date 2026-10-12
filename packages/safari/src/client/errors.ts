@@ -4,7 +4,11 @@
  * failures no other surface has.
  */
 
-import { AppleAutomationError, type SurfaceContext } from "@mgcrea/mcp-apple-core";
+import {
+  AppleAutomationError,
+  PreconditionError,
+  type SurfaceContext,
+} from "@mgcrea/mcp-apple-core";
 
 export const SAFARI_SURFACE: SurfaceContext = {
   appName: "Safari",
@@ -32,6 +36,17 @@ export {
   TccDeniedError,
   WritesDisabledError,
 } from "@mgcrea/mcp-apple-core";
+
+/**
+ * A page command nobody answered in time.
+ *
+ * Still a precondition — the remedy is on the user's side, in Safari — but its
+ * own class, so the silence diagnosis can tell a timeout from a failure before
+ * any tab was asked without matching on the wording of the message.
+ */
+export class PageCommandTimeoutError extends PreconditionError {
+  override readonly name = "PageCommandTimeoutError";
+}
 
 /** A ref no longer resolves — history was cleared, or the row aged out. */
 export class HistoryItemNotFoundError extends AppleAutomationError {

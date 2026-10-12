@@ -100,6 +100,10 @@ export type PagesStatus = {
  */
 export const QUIET_AFTER_SECONDS = 30 * 60;
 
+/** The freshest capture is older than the extension keeps one: the lane has gone quiet. */
+export const isQuiet = ({ newestAgeSeconds }: Pick<PagesStatus, "newestAgeSeconds">): boolean =>
+  newestAgeSeconds !== null && newestAgeSeconds > QUIET_AFTER_SECONDS;
+
 const isPage = (v: unknown): v is CapturedPage =>
   typeof v === "object" &&
   v !== null &&

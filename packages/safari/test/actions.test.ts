@@ -104,11 +104,16 @@ const fakeExtension = (
  * A capture as the extension writes one, stamped with the build that wrote it.
  * Named by the SHA-256 of the URL, which is how the appex keys these files.
  */
-const capture = (pages: string, url: string, extensionVersion: string | null) => {
+const capture = (
+  pages: string,
+  url: string,
+  extensionVersion: string | null,
+  capturedAt = new Date().toISOString(),
+) => {
   const entry = {
     url,
     title: "Old",
-    capturedAt: new Date().toISOString(),
+    capturedAt,
     text: "",
     html: "",
     textTruncated: false,
@@ -120,6 +125,8 @@ const capture = (pages: string, url: string, extensionVersion: string | null) =>
     JSON.stringify(entry),
   );
 };
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
 let running: { stop: () => void } | null = null;
 afterEach(() => {
@@ -363,6 +370,118 @@ describe("when the tab is running a pre-update content script", () => {
       elementId: "3f9a2c1d-e1",
     });
     expect(r.text).not.toContain("RELOAD");
+  });
+});
+
+/**
+ * The cause that looks like a missing permission and is not one.
+ *
+ * Seen 2026-10-09: nothing captured on any site for four hours, the extension
+ * still enabled, and every command timing out. Restarting Cupertino did nothing,
+ * because the extension runs inside Safari; quitting and reopening Safari, then
+ * reloading the tab, brought it back. The site's permission was never the issue,
+ * so a timeout that only names permissions sent the search the wrong way.
+ */
+describe("when the whole lane has gone quiet", () => {
+  /**
+   * This URL's own capture shows the site was allowed, but only as of when it
+   * was taken: a stale capture outlives a lapsed grant or a closed tab, so the
+   * advice stays conditional on both.
+   */
+  it("says the extension is not running, and to reopen Safari, when this page was captured before", async () => {
+    const dirs = paths();
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    capture(dirs.pages, "https://x.example/", BUILD_INFO.version, hoursAgo(4));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("captured 240 minutes ago, so the extension was allowed on it then");
+    expect(r.text).toContain("If the tab is open");
+    expect(r.text).toContain("240 minutes");
+    expect(r.text).toContain("quit and reopen Safari");
+    expect(r.text).toContain("restarting Cupertino");
+  });
+
+  /**
+   * The extension captures only on a page load, so a healthy one allowed site
+   * by site goes just as quiet when no allowed page has loaded for a while. With
+   * no capture of this URL the permission is not ruled out, and must stay named.
+   */
+  it("keeps the permission in the running when this page was never captured", async () => {
+    const dirs = paths();
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    capture(dirs.pages, "https://elsewhere.example/", BUILD_INFO.version, hoursAgo(4));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("240 minutes");
+    expect(r.text).toContain("allowed on no site loaded since");
+    expect(r.text).toContain("If it is allowed on this site");
+    expect(r.text).not.toContain("allowed on it,");
+  });
+
+  it("adds nothing while another page captured recently", async () => {
+    const dirs = paths();
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    capture(dirs.pages, "https://elsewhere.example/", BUILD_INFO.version);
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toContain("reopen Safari");
+  });
+
+  /** The threshold is the extension's own TTL: inside it, the lane is not quiet. */
+  it("adds nothing until the newest capture is older than the TTL", async () => {
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    for (const [minutes, quiet] of [
+      [29, false],
+      [31, true],
+    ] as const) {
+      const dirs = paths();
+      capture(dirs.pages, "https://x.example/", BUILD_INFO.version, hoursAgo(minutes / 60));
+      const c = await connect(dirs.pages);
+      const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+      expect(r.text.includes("reopen Safari")).toBe(quiet);
+    }
+  });
+
+  /** A failure on this side is not Safari's, and must not send anyone there. */
+  it("adds nothing when the command could not even be written", async () => {
+    const dirs = paths();
+    const { BUILD_INFO } = await import("../src/build-info.js");
+    capture(dirs.pages, "https://x.example/", BUILD_INFO.version, hoursAgo(4));
+    // A FILE where the command directory should be, so the write fails at once.
+    writeFileSync(dirs.commands, "");
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("Could not reach");
+    expect(r.text).not.toContain("reopen Safari");
+  });
+
+  it("adds nothing when there are no captures at all", async () => {
+    const dirs = paths();
+    const c = await connect(join(dirname(dirs.pages), "missing"));
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("No page answered");
+    expect(r.text).not.toContain("reopen Safari");
+  });
+
+  /** The tab's own evidence is more specific than the lane's, so it wins. */
+  it("still says RELOAD when this tab's capture predates the update", async () => {
+    const dirs = paths();
+    capture(dirs.pages, "https://x.example/", "1.4.0", hoursAgo(4));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.text).toContain("RELOAD");
+    expect(r.text).not.toContain("reopen Safari");
   });
 });
 

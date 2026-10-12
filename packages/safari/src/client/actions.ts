@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { PreconditionError } from "./errors.js";
+import { PageCommandTimeoutError, PreconditionError } from "./errors.js";
 
 /**
  * The command channel: how a tool asks a page to do something.
@@ -190,7 +190,7 @@ export const runCommand = async (
   // immediately rather than at the next poll.
   rmSync(file, { force: true });
 
-  throw new PreconditionError(
+  throw new PageCommandTimeoutError(
     `No page answered within ${Math.round(opts.timeoutMs / 1000)}s. The Cupertino extension has ` +
       `to be enabled in Safari AND allowed on this specific website — Safari grants it one site ` +
       `at a time — and the page has to be open. A hidden tab polls once every 10s, so a ` +

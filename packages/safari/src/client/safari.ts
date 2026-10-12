@@ -11,6 +11,7 @@ import { pageOfElement, runCommand, type CommandResult } from "./actions.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
+  PageCommandTimeoutError,
   PreconditionError,
   SAFARI_SURFACE,
   SafariHistoryUnavailableError,
@@ -23,6 +24,7 @@ import { urlVariants, type MatchKind } from "./match.js";
 import {
   ageSeconds,
   defaultPagesDirectory,
+  isQuiet,
   pagesStatus,
   readPages,
   type CapturedPage,
@@ -629,24 +631,61 @@ export class AppleSafariClient {
    * version whenever they are the same build; a difference means the tab
    * predates an update. Absent evidence, nothing is added — a guess here would
    * send someone reloading tabs to fix a permission they never granted.
+   *
+   * A fifth is the lane going quiet everywhere: no capture from ANY site for
+   * longer than the extension keeps one. Seen 2026-10-09 with the extension
+   * still enabled: restarting Cupertino did nothing, quitting and reopening
+   * Safari brought it back. But the extension captures only on a page load, so
+   * a healthy one also goes quiet when no ALLOWED page has loaded in that time
+   * — and then the missing permission is the right answer. Only this URL's own
+   * capture argues against the permission, and only as of when it was taken: a
+   * stale capture survives precisely because nothing has written since, so the
+   * grant may have lapsed or the tab closed after it. The tab's own version
+   * evidence is more specific, so it is checked first.
    */
   #explainSilence(error: unknown, url: string | undefined): unknown {
-    if (!(error instanceof PreconditionError) || !url) return error;
+    // Only a timeout is silence. Anything else — the command directory
+    // unwritable, say — failed before any tab was asked, and blaming Safari
+    // would send someone there for a problem on this side.
+    if (!(error instanceof PageCommandTimeoutError)) return error;
 
-    const hit = this.page(url);
-    // No capture at all says nothing either way: a page that was never allowed
-    // and a page whose capture aged out look the same from here.
-    if (!hit) return error;
+    // No capture of this URL says nothing about its version: a page that was
+    // never allowed and a page whose capture aged out look the same from here.
+    const hit = url ? this.page(url) : null;
+    if (hit) {
+      const seen = hit.page.extensionVersion ?? null;
+      if (seen !== BUILD_INFO.version) {
+        return new PageCommandTimeoutError(
+          `${error.message} This page was last captured by ` +
+            `${seen === null ? "an extension too old to say which version" : `extension ${seen}`}, ` +
+            `and this server is ${BUILD_INFO.version} — both ship inside the same app, so they only ` +
+            `differ when a tab has been open across an update. That tab is still running the ` +
+            `previous content script and cannot answer. RELOAD it and try again.`,
+        );
+      }
+    }
 
-    const seen = hit.page.extensionVersion ?? null;
-    if (seen === BUILD_INFO.version) return error;
-
-    return new PreconditionError(
-      `${error.message} This page was last captured by ` +
-        `${seen === null ? "an extension too old to say which version" : `extension ${seen}`}, ` +
-        `and this server is ${BUILD_INFO.version} — both ship inside the same app, so they only ` +
-        `differ when a tab has been open across an update. That tab is still running the previous ` +
-        `content script and cannot answer. RELOAD it and try again.`,
+    const status = this.pagesStatus();
+    if (!isQuiet(status)) return error;
+    const quietMinutes = Math.round((status.newestAgeSeconds ?? 0) / 60);
+    const quietFor = `captured on ANY site for ${quietMinutes} minutes`;
+    const quiet = `Nothing has been ${quietFor}`;
+    const reopen =
+      `quit and reopen Safari — restarting Cupertino does not reach it, the extension runs ` +
+      `inside Safari — then reload the tab.`;
+    if (hit) {
+      return new PageCommandTimeoutError(
+        `${error.message} This page was captured ${Math.round(hit.ageSeconds / 60)} minutes ` +
+          `ago, so the extension was allowed on it then, and nothing has been ${quietFor}: ` +
+          `unless the tab has closed or the site's permission lapsed since, the extension looks ` +
+          `not to be running in Safari at all. If the tab is open and the extension still ` +
+          `enabled in Safari > Settings > Extensions, ${reopen}`,
+      );
+    }
+    return new PageCommandTimeoutError(
+      `${error.message} ${quiet} either: the extension is not running in Safari, or it is ` +
+        `allowed on no site loaded since. If it is allowed on this site and still enabled in ` +
+        `Safari > Settings > Extensions, ${reopen}`,
     );
   }
 

@@ -2,7 +2,7 @@ import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { BUILD_INFO } from "../build-info.js";
-import { QUIET_AFTER_SECONDS } from "../client/pages.js";
+import { isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { wrap } from "./util.js";
 
@@ -62,12 +62,11 @@ export const buildDiagnostics = async (
         // in Safari that only the containing app can read, and a value handed
         // to this process at spawn would be a snapshot of something the user
         // can flip a second later. Silence is what CAN be measured here.
-        quiet:
-          pages.newestAgeSeconds !== null && pages.newestAgeSeconds > QUIET_AFTER_SECONDS
-            ? "Nothing captured recently. The extension is probably switched off, or allowed " +
-              "on no site visited since — check Safari > Settings > Extensions. Anything still " +
-              "on disk is stale."
-            : undefined,
+        quiet: isQuiet(pages)
+          ? "Nothing captured recently. The extension is probably switched off, or allowed " +
+            "on no site visited since — check Safari > Settings > Extensions. Anything still " +
+            "on disk is stale."
+          : undefined,
         directory: pages.directory,
         note:
           "A capture is a SNAPSHOT taken when the page loaded, not a live read. Nothing here can " +
