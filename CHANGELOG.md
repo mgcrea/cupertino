@@ -25,6 +25,13 @@ summary.
   slider or a splitter; the press and the drop are both refused unless they land on a window of an
   app within reach. Both are `run` steps.
 
+### Fixed
+
+- **A Desktop click right after bringing an app forward is no longer refused.** `click` and `hover`
+  at a point, given the app's `bundleId`, could answer that the point was "not on a window of" an
+  app whose window covered it. The app had come to the front, but its window had not yet been
+  stacked on top. The check now waits up to half a second for the window to arrive.
+
 ## [1.26.0] - 2026-10-06
 
 **Review your open Mail draft, and drive the menu bar.** Mail reads the compose windows you have
