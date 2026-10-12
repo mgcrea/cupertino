@@ -1130,7 +1130,61 @@ any application" on, it still said "never an arbitrary app". The agent believed 
 description follows the gate now, `screen-check` pins both wordings, and this surface's guide
 points at it under "Seeing what you did".
 
+## Right-click and drag, 2026-10-12
+
+The report came from an agent checking a Calque plan, "Perron check": it could not right-click a
+wall for its menu, nor drag one, because the surface had neither verb. `drag` existed, written for
+the simulator's `swipe`, and nothing on this surface called it. Calque's canvas is the hard case
+for both. It is one `NSView` that is not an accessibility element, so walls and dimensions have no
+handle, and its menu comes from `PlanCanvasView.menu(for:)`, offered only over a wall or a
+dimension. A right-click on bare canvas correctly opens nothing.
+
+So there are two ways to open a context menu and one way to read it. Measured on a scratch TextEdit
+document, then on Calque's sidebar:
+
+|                                      |                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| `AXShowMenu` on the text area        | `.success` in under 1 ms: it does not wait for the menu           |
+| the same with TextEdit in background | the menu opens over the editor, frontmost app unchanged           |
+| right button posted at a point       | the same menu                                                     |
+| where the menu lands                 | `AXMenu` child of the element: `AXTextArea`, Calque's `AXOutline` |
+| hit-testing inside the menu's window | `AXMenuItem` → parent `AXMenu`, at every point tried              |
+| `AXPress` on an item                 | `.success` in 1.5 ms, it acts, the menu closes                    |
+| activate, then Escape                | the menu stays open through the activation, Escape closes it      |
+
+**`show_menu` is `AXShowMenu` on a handle**, and like `press` it moves nothing and brings nothing
+forward. **`click` takes `button: "right"`** for a view with nothing to ask, which is the canvas.
+
+**An open menu is found through the window server, not the walk.** Where it hangs is the
+application's choice, and a view that is not an element has nowhere to hang it, so a walk from the
+windows cannot be trusted to reach it. Every open menu is a window of its own on the pop-up menu
+layer, owned by the application, so `ui_tree` and `find_elements` hit-test inside each one and walk
+up to its `AXMenu`, as `orphans(of:)` does for the Simulator's tab bar. The menus walk first, ahead of
+every window and whichever window was asked for, because a menu is modal and the byte cap should
+cut a window short rather than the menu. Where the walk reaches the same menu again from below, it
+skips it, so no item carries two handles. The answer says `openMenus` and how to close one.
+
+**`showsMenu` marks what `show_menu` can open, and `interactive` did not widen to include it.**
+Every element the Simulator bridges from iOS offers `AXShowMenu`, containers included (the tab bar
+in [simulator.md](simulator.md)), so the default tree would have filled with groups nobody can press.
+
+**`drag` needed no change to post on a Mac app.** Its press, interpolated drags at ~60 Hz, and
+release selected exactly the dragged range of TextEdit text, with no pause after the press. So
+there is no `holdMs`. The desktop verb adds what the simulator's did not need. Each end is a handle,
+re-read at call time as `hover`'s is, or a point. The application is brought forward and the press
+point checked as a click's is. The release point is held to the same reach, because a drop is a
+write into whatever is under it: on the application's own windows, or on the in-reach application
+named in `to.bundleId`.
+
 ## Still open
+
+- **A menu from a view that is not an element, read for real.** The hit-test is there for
+  Calque's canvas, and on TextEdit and Calque's sidebar it found the same menu the walk did. A
+  wall's menu on the canvas has not been opened yet, so the case the hit-test exists for is
+  reasoned rather than measured.
+- **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop
+  across applications has been posted. Whether a Finder file dragged into Mail needs a pause after
+  the press, as some drag sources do before starting a drag session, is not known.
 
 - **Whether the sweep needs to be a sweep.** `hover` walks the pointer over `durationMs` (default 600) because that is the shape proven by hand against a SwiftUI chart — 24 steps 25 ms apart.
   Whether a single `mouseMoved` would have fired `onContinuousHover` just as well was **never
