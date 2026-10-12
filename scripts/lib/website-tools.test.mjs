@@ -244,19 +244,12 @@ test("llms.txt calls no surface read-only that has write tools", () => {
 });
 
 /*
- * The minor version, not the full one. A patch release changes no surface and
- * no tool, and a gate that demanded an llms.txt edit for every patch would be
- * satisfied by bumping the number without reading the rest, which is the drift
- * it exists to stop.
+ * The version llms.txt names is written by `make version` and held by
+ * `make version-check` (see scripts/lib/llms-version.mjs). This used to demand
+ * the current minor by hand, which cost a follow-up commit every minor release.
  */
-test("llms.txt states the shipped minor version and does not claim npm is pending", () => {
+test("llms.txt does not claim npm is pending", () => {
   const text = readFileSync(LLMS, "utf8");
-  const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
-  const minor = version.split(".").slice(0, 2).join(".");
-  assert.ok(
-    new RegExp(`\\b${minor.replace(".", "\\.")}\\.\\d+\\b`).test(text),
-    `llms.txt does not mention a ${minor}.x release; the shipped version is ${version}`,
-  );
   assert.ok(!/not on npm yet/i.test(text), "llms.txt still says the packages are not on npm");
 });
 

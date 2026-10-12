@@ -48,6 +48,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { stampLlmsVersion } from "./lib/llms-version.mjs";
 import { region } from "./lib/region.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -252,6 +253,21 @@ target("CHANGELOG.md", (src) =>
     "CHANGELOG.md",
   ),
 );
+
+// ─── llms.txt's version sentence ─────────────────────────────────────────────
+
+/**
+ * Plain text, so a line pattern rather than a region; `stampLlmsVersion` says
+ * why, and what it refuses.
+ */
+target("apps/website/public/llms.txt", (src) => {
+  try {
+    return stampLlmsVersion(src, VERSION, read("CHANGELOG.md"));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(3);
+  }
+});
 
 // ─── run ─────────────────────────────────────────────────────────────────────
 
