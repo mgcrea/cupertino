@@ -532,11 +532,22 @@ nonisolated enum Changelog {
             ]),
         ]),
       Section(
-        name: "Fixed",
+        name: "Changed",
         lead: [],
         entries: [
           Entry(
             ordinal: 1,
+            headline: "Clients you have configured stay current.",
+            body: [
+              "Switching a surface on adds it to every client already wired to Cupertino, and switching one off takes it out, without a visit to each client's pane. A surface that arrives in an update and starts switched on is added at the next launch, and an entry still pointing at a copy of Cupertino that is no longer there is pointed at this one. A client that has never been configured is left alone, and so is one wired to another copy of Cupertino that is still installed. Entries that are already right are not rewritten. A folder's `.mcp.json` is never touched. It is off in a copy that is not in an Applications folder, and `defaults write io.mgcrea.cupertino autoWireClients -bool NO` turns it off altogether.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
             headline: "A Desktop click right after bringing an app forward is no longer refused.",
             body: [
               "`click` and `hover` at a point, given the app's `bundleId`, could answer that the point was \"not on a window of\" an app whose window covered it. The app had come to the front, but its window had not yet been stacked on top. The check now waits up to half a second for the window to arrive.",
