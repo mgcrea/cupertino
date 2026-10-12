@@ -596,7 +596,8 @@ nonisolated enum SimulatorServer {
     if host != deviceHub {
       let tree = try AccessibilityDriver.tree(
         bundleId: host, windowIndex: windowIndex, detail: .all,
-        bounds: .init(depth: 1, nodes: 200, seconds: 2), scope: scope)
+        bounds: .init(depth: 1, nodes: 200, seconds: 2), scope: scope,
+        match: screenCandidate(host: host))
       return tree.elements.filter { $0.depth == 1 && $0.role == "AXGroup" && $0.rect != nil }
     }
     // Depth 8 first. Measured 2026-10-25, Xcode 27.1: the group sat at depth 6
@@ -608,11 +609,26 @@ nonisolated enum SimulatorServer {
     for depth in [8, 10] {
       let tree = try AccessibilityDriver.tree(
         bundleId: host, windowIndex: windowIndex, detail: .all,
-        bounds: .init(depth: depth, nodes: 1500, seconds: 3), scope: scope)
+        bounds: .init(depth: depth, nodes: 1500, seconds: 3), scope: scope,
+        match: screenCandidate(host: host))
       let screens = deviceHubScreens(tree.elements)
       if !screens.isEmpty || depth == 10 { return screens }
     }
     return []
+  }
+
+  /// What a screen walk keeps, tested INSIDE the walk, as `find_elements`
+  /// tests its filter: a handle is minted for every node a walk keeps.
+  ///
+  /// Kept with `.all` and filtered afterwards, a DeviceHub window minted up to
+  /// 1,500 handles a call, every call, to use one. The store keeps the newest
+  /// 10,000, so a caller's `ui_tree` handles were evicted after about a dozen
+  /// simulator calls. The tests are the ones the filters above and
+  /// `deviceHubScreens` apply, so the selection is what it was; the subrole is
+  /// read only of a node that is already a group.
+  static func screenCandidate(host: String) -> (AccessibilityDriver.Candidate) -> Bool {
+    guard host == deviceHub else { return { $0.role == "AXGroup" } }
+    return { $0.role == "AXGroup" && $0.subrole == "iOSContentGroup" }
   }
 
   /// Split out so simulator-check can pin it with no DeviceHub running.

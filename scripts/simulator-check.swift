@@ -39,6 +39,17 @@ struct SimulatorCheck {
     }
   }
 
+  static var skipped = 0
+
+  /// A check that could not run, counted and named rather than omitted — the
+  /// reason desktop-check gives: a check that vanishes when its subject is
+  /// absent drops the total while the suite still says "passed".
+  static func skip(_ label: String, _ reason: String) {
+    checks += 1
+    skipped += 1
+    print("  SKIP \(label) — \(reason)")
+  }
+
   static let surface = Surface.named("simulator")!
 
   static func ask(_ method: String, id: Int = 1, params: [String: Any]? = nil, writes: Bool = false)
@@ -415,6 +426,52 @@ struct SimulatorCheck {
       SimulatorGeometry.resolve(
         groupOrigin: CGPoint(x: 1127, y: 571), groupSize: CGSize(width: 297, height: 647),
         portraitPoints: CGSize(width: 402, height: 874))?.orientation == "portrait")
+
+    // Finding the screen walks up to 1,500 nodes of a DeviceHub window, and
+    // every node the walk keeps is minted a handle. Kept with `.all`, that was
+    // every node, on every call — and the store keeps the newest 10,000, so a
+    // caller's ui_tree handles were evicted after a dozen simulator calls. The
+    // test goes inside the walk, so only a candidate screen earns a handle.
+    func candidate(_ role: String, _ subrole: String?) -> AccessibilityDriver.Candidate {
+      AccessibilityDriver.Candidate(
+        role: role, identifier: nil, name: nil, pressable: false, subrole: { subrole })
+    }
+    let hubTest = SimulatorServer.screenCandidate(host: SimulatorServer.deviceHub)
+    let appTest = SimulatorServer.screenCandidate(host: "com.apple.iphonesimulator")
+    check(
+      "a DeviceHub walk keeps only iOSContentGroup groups",
+      hubTest(candidate("AXGroup", "iOSContentGroup"))
+        && !hubTest(candidate("AXGroup", "AXHostingView")) && !hubTest(candidate("AXGroup", nil))
+        && !hubTest(candidate("AXButton", nil)))
+    check(
+      "a Simulator.app walk keeps only groups",
+      appTest(candidate("AXGroup", nil)) && !appTest(candidate("AXButton", nil))
+        && !appTest(candidate("AXWindow", nil)))
+
+    // The same, live, where there is a window to read: counted by minting a
+    // sentinel handle on either side of the call. Reads only.
+    func sentinel() -> Int {
+      Int(
+        AccessibilityDriver.handles.put(
+          AXUIElementCreateSystemWide(), bundleId: "com.example.sentinel"
+        ).dropFirst()) ?? 0
+    }
+    let label = "resolving the device screens mints a handful of handles, not one per node"
+    if !AccessibilityDriver.isTrusted() {
+      skip(label, "Accessibility is not granted")
+    } else {
+      let before = sentinel()
+      let found = (try? SimulatorServer.targets(surface: surface)) ?? []
+      let minted = sentinel() - before - 1
+      if found.isEmpty {
+        skip(label, "no Simulator or DeviceHub window is open")
+      } else {
+        // Each window is listed once by targets and once per screen walk, and
+        // keeps at most a few screen groups (DeviceHub reaches one along two
+        // paths); everything above that is a node nobody asked for.
+        check(label, minted <= found.count * (found.count + 4))
+      }
+    }
     check(
       "DeviceHub is not brokered either",
       !AccessibilityDriver.inScope(SimulatorServer.deviceHub, scope: .brokered))
@@ -517,7 +574,8 @@ struct SimulatorCheck {
       DriveActivity.notice()?.kind == .driving
         && DriveActivity.notice()?.target == "com.apple.mail")
 
-    print("\n\(checks - failures)/\(checks) passed\n")
+    let summary = "\(checks - failures - skipped)/\(checks) passed"
+    print("\n" + (skipped > 0 ? "\(summary), \(skipped) skipped" : summary) + "\n")
     if failures > 0 { exit(1) }
   }
 }

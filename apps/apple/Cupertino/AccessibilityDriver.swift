@@ -971,7 +971,8 @@ nonisolated enum AccessibilityDriver {
   ///
   /// A search visits everything and returns almost nothing, so minting a handle
   /// per visited node spends the store's whole capacity on elements the caller
-  /// will never be given. This is the same four fields the search filters on.
+  /// will never be given. This is the same four fields the search filters on,
+  /// and the subrole the simulator surface finds a device screen by.
   struct Candidate {
     let role: String
     let identifier: String?
@@ -979,7 +980,24 @@ nonisolated enum AccessibilityDriver {
     let pressable: Bool
     /// `AXValue`, read only for a walk asked to (`readValue`): one more round
     /// trip per node, which a search that does not test it should not pay.
-    var value: String? = nil
+    var value: String?
+    /// Read only when a test asks for it, and a test that checks the role
+    /// first asks only of the nodes that pass: a round trip per visited node
+    /// would cost a walk that nothing else asks it of.
+    private let readSubrole: () -> String?
+    var subrole: String? { readSubrole() }
+
+    init(
+      role: String, identifier: String?, name: String?, pressable: Bool, value: String? = nil,
+      subrole: @escaping () -> String? = { nil }
+    ) {
+      self.role = role
+      self.identifier = identifier
+      self.name = name
+      self.pressable = pressable
+      self.value = value
+      self.readSubrole = subrole
+    }
   }
 
   /// What `find_elements`, `wait_for` and a `run` step's `match` look for. `id`
@@ -1159,7 +1177,8 @@ nonisolated enum AccessibilityDriver {
         keep = match(
           Candidate(
             role: role, identifier: identifier, name: title ?? description, pressable: pressable,
-            value: readValue ? string(el, kAXValueAttribute as String) : nil))
+            value: readValue ? string(el, kAXValueAttribute as String) : nil,
+            subrole: { string(el, kAXSubroleAttribute as String) }))
       }
 
       if keep {
