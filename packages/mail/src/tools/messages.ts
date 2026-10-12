@@ -150,7 +150,8 @@ export const registerMessageTools = (
         "Get the raw RFC 5322 source of a message — every header and the undecoded body. Use this " +
         "for header forensics (Received chains, SPF/DKIM/DMARC results, List-Unsubscribe), not for " +
         "reading mail: apple_mail_get_message gives you the readable version without the noise. " +
-        "Capped and pageable via offset.",
+        "Capped and pageable in UTF-8 bytes: while truncated is true, pass the returned " +
+        "nextOffset as offset for the next page. Pages never split a character.",
       inputSchema: z.object({
         ref: messageRefArg,
         offset: z

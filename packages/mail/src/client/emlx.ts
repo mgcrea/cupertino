@@ -430,19 +430,52 @@ export const readEmlxBodyText = (path: string, opts: { maxBytes: number }): stri
   }
 };
 
+export type SourcePage = {
+  source: string;
+  totalBytes: number;
+  truncated: boolean;
+  /** Where the next page starts, in bytes. Pass it back as `offset`. */
+  nextOffset: number;
+};
+
+/**
+ * One page of a UTF-8 message, in bytes, never cut inside a character.
+ *
+ * Both source lanes page through this, so an offset names the same place
+ * whether the bytes came from the `.emlx` file or from Mail. Each page is
+ * decoded on its own, so a boundary inside a multibyte character turned both
+ * halves into U+FFFD and the pages no longer joined back into the message.
+ * Both ends therefore back off to the start of the character they land in
+ * (a UTF-8 character has at most three continuation bytes), and `nextOffset`
+ * carries the adjusted end, so paging by it reassembles the source exactly.
+ * A page can come back up to three bytes short of `maxBytes` for that reason.
+ */
+export const pageUtf8 = (buf: Buffer, offset: number, maxBytes: number): SourcePage => {
+  const startOf = (at: number): number => {
+    let i = Math.min(at, buf.length);
+    for (let n = 0; n < 3 && i > 0 && i < buf.length; n++) {
+      if (((buf[i] ?? 0) & 0xc0) !== 0x80) break;
+      i--;
+    }
+    return i;
+  };
+  const start = startOf(offset);
+  // A page too small to hold the character it starts on still has to move.
+  let end = startOf(offset + maxBytes);
+  if (end <= start) end = Math.min(buf.length, offset + maxBytes);
+  return {
+    source: buf.subarray(start, end).toString("utf8"),
+    totalBytes: buf.length,
+    truncated: end < buf.length,
+    nextOffset: end,
+  };
+};
+
 /** Raw RFC 5322 source, for header forensics. Capped and offsettable. */
 export const readEmlxSource = (
   path: string,
   opts: { offset: number; maxBytes: number },
-): { source: string; totalBytes: number; truncated: boolean } => {
-  const mime = splitEmlx(readFileSync(path));
-  const slice = mime.subarray(opts.offset, opts.offset + opts.maxBytes);
-  return {
-    source: slice.toString("utf8"),
-    totalBytes: mime.length,
-    truncated: opts.offset + slice.length < mime.length,
-  };
-};
+): SourcePage => pageUtf8(splitEmlx(readFileSync(path)), opts.offset, opts.maxBytes);
 
 // ─── attachment extraction ───────────────────────────────────────────────────
 

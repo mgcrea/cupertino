@@ -677,3 +677,43 @@ describe("diagnostics probing the lane", () => {
     expect(probe?.mailbox).toBe("All Mail");
   });
 });
+
+/*
+ * The raw source when no file is on disk and Mail has to supply it.
+ *
+ * The tool pages in bytes, as the `.emlx` lane does, but this lane sliced the
+ * JavaScript string Mail returned: its offsets and `totalBytes` were UTF-16
+ * code units, so one offset named a different place in each lane, and a page
+ * could end on half a surrogate pair.
+ */
+describe("the source Mail supplies when the file is not cached", () => {
+  const SOURCE = "Subject: Réunion été\r\n\r\nCafé \u{1F600} fin\r\n";
+
+  const sourceRunner = (): OsascriptRunner => {
+    const base = runner();
+    return {
+      run: vi.fn(async (script: string, params?: unknown) => {
+        const answer = await base.run<Record<string, unknown>[]>(script, params);
+        return script.includes("mb.messages.byId")
+          ? answer.map((m) => ({ ...m, source: SOURCE }))
+          : answer;
+      }) as OsascriptRunner["run"],
+    };
+  };
+
+  it("counts and pages in UTF-8 bytes, like the file lane", async () => {
+    const mail = new AppleMailClient({ config: config(), osascript: sourceRunner() });
+    const pages: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await mail.getMessageSource(ref, { offset, maxBytes: 11 });
+      expect(page.via).toBe("applescript");
+      expect(page.totalBytes).toBe(Buffer.byteLength(SOURCE, "utf8"));
+      pages.push(page.source);
+      if (!page.truncated) break;
+      offset = page.nextOffset;
+    }
+    expect(pages.join("")).toBe(SOURCE);
+    expect(pages.join("")).not.toContain("�");
+  });
+});

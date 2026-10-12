@@ -22,10 +22,12 @@ import { composeNatively } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
+  pageUtf8,
   readEmlx,
   readEmlxSource,
   type EmlxLookup,
   type ParsedMessage,
+  type SourcePage,
 } from "./emlx.js";
 import {
   EnvelopeIndex,
@@ -1066,13 +1068,12 @@ export class AppleMailClient {
   async getMessageSource(
     ref: string,
     opts: { offset: number; maxBytes: number },
-  ): Promise<{
-    source: string;
-    totalBytes: number | null;
-    truncated: boolean;
-    via: "emlx" | "applescript";
-    fallbackReason?: string;
-  }> {
+  ): Promise<
+    SourcePage & {
+      via: "emlx" | "applescript";
+      fallbackReason?: string;
+    }
+  > {
     const decoded = decodeRef(ref);
     const located = await this.#lookupMessageFile(decoded);
     if (located.found) {
@@ -1080,12 +1081,11 @@ export class AppleMailClient {
     }
     const [summary] = await this.getMessages(decoded, [decoded.id], { withSource: true });
     if (!summary) throw new MessageNotFoundError(ref);
-    const full = summary.source ?? "";
-    const slice = full.slice(opts.offset, opts.offset + opts.maxBytes);
+    // Paged in UTF-8 bytes like the file lane, not in the string's UTF-16
+    // units, so an offset means the same thing whichever lane answers.
+    const full = Buffer.from(summary.source ?? "", "utf8");
     return {
-      source: slice,
-      totalBytes: full.length,
-      truncated: opts.offset + slice.length < full.length,
+      ...pageUtf8(full, opts.offset, opts.maxBytes),
       via: "applescript",
       ...(located.found ? {} : { fallbackReason: located.explain }),
     };
