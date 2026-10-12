@@ -46,7 +46,12 @@ Settled. Recorded so it is not re-opened.
    they never touch disk. It still loses. Points 1 and 4 apply unchanged, so the price is the file
    lane and every write verb on Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and
    Maps. Eight surfaces for one, and the one is already shippable read-only without it — see
-   [home.md](home.md).
+   [home.md](home.md). That prices the entitlement _in this app_. A separate store-distributed
+   companion holding only HomeKit would not pay it, and is the one route to live state left open;
+   its costs are unmeasured — see
+   [A separate store companion](home.md#a-separate-store-companion). Either way, live
+   characteristic reads need a window on screen: `homed` answers a background process with
+   `HMError 80`, and the entitlement that lifts that is held by Home.app and Shortcuts.app only.
 
 Apple Events to Mail _is_ shippable on the store, via
 `com.apple.security.temporary-exception.apple-events`. That buys point 2 and nothing else.

@@ -153,15 +153,77 @@ contact with the probe's results:
 One genuine benefit, purchasable only at a price that destroys the rest of the
 app. That is the whole calculation.
 
-Two things this does NOT rule out, kept honest: the private framework loads —
-`dlopen` on `/System/Library/PrivateFrameworks/HomeKit.framework/HomeKit`
-succeeds and `HMHomeManager`, `HMHome`, `HMAccessory`, `HMRoom`, `HMService` and
-`HMCharacteristic` all resolve. But `homed` gates on the entitlement, and AMFI
-validates `com.apple.developer.*` against the provisioning profile at launch, so
-the expected result is a notarized app that ships fine and returns zero homes on
-every user's Mac. That last step is **inferred, not measured** — settling it means
-instantiating `HMHomeManager` under three signings, which may raise a TCC dialog.
-Nobody has run it.
+### The private framework, measured
+
+The private framework loads — `dlopen` on
+`/System/Library/PrivateFrameworks/HomeKit.framework/HomeKit` succeeds and
+`HMHomeManager`, `HMHome`, `HMAccessory`, `HMRoom`, `HMService` and
+`HMCharacteristic` all resolve. The binary itself is plain macOS, not Catalyst —
+the "Catalyst only" above is the public header's annotation, not the dylib's
+platform — and Shortcuts.app (`platform MACOS`) is its in-box client. What gates
+it is `homed`,
+and that is now **measured, not inferred** — macOS 27.0, `HMHomeManager`
+instantiated by a native binary under three signings:
+
+| Signing                                                      | Result                                                                                                                 |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Ad-hoc, no entitlements                                      | `homed`: `Rejecting connection missing entitlements … Entitlements: None`. Zero homes, no delegate callback, no error. |
+| Ad-hoc, `com.apple.developer.homekit`                        | SIGKILL at launch. AMFI refuses a `com.apple.developer.*` entitlement no profile backs.                                |
+| Apple Development + a `DEVELOPMENT` profile granting HomeKit | `homed` accepts it as `Entitlements: API` and returns every home, room and accessory.                                  |
+
+Developer ID was not one of the three, but no Developer ID profile can grant the
+entitlement, so a Developer ID build lands on one of the first two rows: with the
+entitlement it is killed at launch, and without it — what `homed` sees as
+`Entitlements: None` — a notarized build ships fine and returns **zero homes,
+silently**, on every user's Mac. The failure is a missing delegate callback, not
+an error a diagnostic could report. The third row is not a way out: a `DEVELOPMENT` profile
+runs only on Macs registered to the team, and a development-signed app cannot be
+notarized.
+
+Two preconditions surfaced on the way, observed under the signings that got past
+launch — the second, necessarily, only under the third row, the one that returns
+homes:
+
+- **TCC charges the responsible process.** A bare executable launched from a
+  terminal aborts in `__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__` even with an
+  embedded `__info_plist`, because the host has no `NSHomeKitUsageDescription`. A
+  `.app` started with `open` gets its own identity, and the grant.
+- **Live characteristic I/O needs a visible process.** The home graph loads in the
+  background, but `readValue` from a process `homed` sees as background answers
+  `HMError 80`, logged as `Handler does not support background access`. Measured:
+  a menu bar item alone fails; a window on screen that is **not frontmost** —
+  focus left in another app — succeeds; an activated window succeeds. The bypass,
+  `com.apple.developer.homekit.background-mode`, is held by Home.app and
+  Shortcuts.app and offered to no one else.
+
+### A separate store companion
+
+The eight-for-one trade above prices taking the entitlement _in Cupertino_. A
+second, App Store-distributed app holding only the HomeKit entitlement pays none
+of it: it reads no other app's files and execs nothing, so the sandbox costs it
+nothing, and as a Catalyst app it uses the public framework, so App Review's
+public-API-only rule (guideline 2.5.1), which rejects linking the private one,
+does not apply either. It would hand live state and control to
+Cupertino over a socket in a shared App Group container, and keep a window on
+screen while it does live I/O.
+
+This is an option, not a decision. The first three of its costs are unmeasured;
+the fourth is known:
+
+- **App Review.** Guideline 5.1.2(vi) restricts what HomeKit data may be used for,
+  and this app's whole purpose is handing a home's layout to an MCP host, and from
+  there possibly to a cloud model. A companion that only serves another app also
+  invites a minimum-functionality objection.
+- **The App Group.** Whether one team-prefixed group is shared between a Developer
+  ID app and a store app from the same team has not been tried.
+- **Catalyst visibility.** The not-frontmost-window result was measured on a
+  native binary. `homed` decides on process visibility, so a Catalyst build should
+  behave the same; it has not been run.
+- **Two installs, two grants.** The companion is a second download, with its own
+  HomeKit prompt.
+
+The file lane does not wait on any of this. It ships to everyone through
+Cupertino; the companion would add live state and control on top.
 
 ## Running the probe
 
@@ -364,13 +426,10 @@ have to reconstruct which questions were actually closed.
   recorded. If one was, configuration-only is settled outright. If not, the run shows only that an
   idle home does not write to disk, which is unsurprising. The structural evidence points the same
   way, so this is confirmation rather than a blocker.
-- **Whether `homed` refuses an unentitled client is inferred, not measured.** The private framework
-  loads: `dlopen` on `/System/Library/PrivateFrameworks/HomeKit.framework/HomeKit` succeeds and
-  `HMHomeManager`, `HMHome`, `HMAccessory`, `HMRoom`, `HMService` and `HMCharacteristic` all
-  resolve. The expectation that `homed` then hands back zero homes rests on AMFI validating
-  `com.apple.developer.*` against the provisioning profile, not on a run. Settling it means
-  instantiating `HMHomeManager` under three signings and may raise a TCC dialog. The file-lane GO
-  does not depend on it.
+- **The store companion's three unknowns** — App Review under 5.1.2(vi), one App Group across a
+  Developer ID app and a store app, and whether a Catalyst build passes `homed`'s visibility check
+  as the native probe did. See [A separate store companion](#a-separate-store-companion). None of
+  them blocks the file lane.
 - **`datastore3.sqlite` is unexamined.** 13.9 MB, not Core Data at all — a generic `record_v2` /
   `store_v2` store whose `model_data` and `external_data` are plain bplist. It holds nothing in
   role-bearing tables, so it is not the surface, but 13.9 MB of legible bplist is not nothing
@@ -378,7 +437,8 @@ have to reconstruct which questions were actually closed.
 - **The eight MAC-address-named bplist files have never been opened.** They are per-accessory, they
   are legible, and their names alone were enough to stop a report (see Privacy).
 
-What is NOT open: the store is legible, Full Disk Access is sufficient, `core.sqlite` is the store,
-the object graph resolves, the epoch is `apple-seconds`, and `eventstore-beta.sqlite` is unusable in
-a v1 — no date column, integer keys that join nothing by reference, and a name Apple has labelled
-beta.
+What is NOT open: `homed` refuses an unentitled client (measured, see
+[The private framework, measured](#the-private-framework-measured)), the store is legible, Full Disk
+Access is sufficient, `core.sqlite` is the store, the object graph resolves, the epoch is
+`apple-seconds`, and `eventstore-beta.sqlite` is unusable in a v1 — no date column, integer keys that
+join nothing by reference, and a name Apple has labelled beta.
