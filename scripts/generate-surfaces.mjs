@@ -35,6 +35,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { region } from "./lib/region.mjs";
+
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
 
@@ -221,23 +223,6 @@ const andList = (names) =>
 // ─── marked regions ──────────────────────────────────────────────────────────
 
 const BANNER = "generated from surfaces.json by `make surfaces` — do not edit by hand";
-
-/**
- * Replace the content between the markers, preserving everything outside them.
- *
- * The markers stay in the file so the boundary is visible to a reader who has
- * never heard of this script, and so a merge conflict lands inside a region
- * rather than silently reordering it.
- */
-const region = (source, open, close, body, label) => {
-  const start = source.indexOf(open);
-  const end = source.indexOf(close);
-  if (start === -1 || end === -1 || end < start) {
-    console.error(`${label}: could not find the generated region (${open.trim()})`);
-    process.exit(3);
-  }
-  return source.slice(0, start + open.length) + body + source.slice(end);
-};
 
 const targets = [];
 /**

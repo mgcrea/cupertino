@@ -37,6 +37,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HIDDEN_SECTIONS, parse } from "./lib/changelog.mjs";
+import { region } from "./lib/region.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
@@ -47,24 +48,6 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
 const SHOWN = 5;
 
 const BANNER = "generated from CHANGELOG.md by `make changelog` — do not edit by hand";
-
-/**
- * Replace a marked region, leaving the prose around it alone.
- *
- * Twelve lines copied from `generate-surfaces.mjs` rather than imported from it:
- * that module validates `surfaces.json` at import time and exits the process on
- * a bad manifest, which is not a thing an unrelated generator should inherit.
- * If a third generator ever wants this, it moves to `lib/`.
- */
-const region = (source, open, close, body, label) => {
-  const start = source.indexOf(open);
-  const end = source.indexOf(close);
-  if (start === -1 || end === -1 || end < start) {
-    console.error(`${label}: could not find the generated region (${open.trim()})`);
-    process.exit(3);
-  }
-  return source.slice(0, start + open.length) + body + source.slice(end);
-};
 
 // ─── the parse ───────────────────────────────────────────────────────────────
 
