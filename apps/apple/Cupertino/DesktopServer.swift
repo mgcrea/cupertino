@@ -1100,11 +1100,22 @@ nonisolated enum DesktopServer {
         }
         let written = try AccessibilityDriver.setValue(
           handle: handle, value: value, scope: scope)
+        // `actual` is what was read back, so a caller told it did not land can
+        // see what is there — the value it replaced, or the application's own
+        // rewrite of it — rather than being told only that it differs.
+        let shown: String
+        switch written.actual {
+        case nil: shown = "no value"
+        case let text as String: shown = "\"\(text)\""
+        case let other?: shown = "\(other)"
+        }
         var answer: [String: Any] = [
           "handle": handle, "confirmed": written.confirmed,
+          "actual": written.actual ?? NSNull(),
           "note": !written.confirmed
-            ? "The application accepted the write and the value did not change. It reported "
-              + "itself settable and dropped it; try focusing the field and typing instead."
+            ? "The application accepted the write and the value read back as \(shown), not as "
+              + "written. It reported itself settable and dropped or changed it; try focusing "
+              + "the field and typing instead."
             : written.focused == false
               ? "The field shows the value, but it would not take the focus, and an application "
                 + "built on SwiftUI only hears a write into a focused field. If the application "

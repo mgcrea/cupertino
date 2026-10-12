@@ -1575,6 +1575,28 @@ struct DesktopCheck {
       (try? AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 500, y: 400)))
         != nil)
 
+    // ─── set_value reads back what it wrote ─────────────────────────────────
+    // The read-back trimmed, dropped an empty string and read only strings, so
+    // clearing a field, a trailing space, a slider and a checkbox all reported
+    // "the value did not change" after writes that landed. Pure: nothing is set.
+    let decomposed = "e\u{301}"
+    let readBacks: [(String, Any?, Bool, String)] = [
+      ("", nil, true, "an empty write, read back as no value"),
+      ("", "", true, "an empty write, read back empty"),
+      ("a ", "a ", true, "a trailing space, kept"),
+      ("a ", "a", false, "a trailing space, dropped"),
+      ("0.5", NSNumber(value: 0.5), true, "a number, read back as one"),
+      ("1", kCFBooleanTrue as Any, true, "1, read back as a checked box"),
+      ("true", kCFBooleanTrue as Any, true, "true, read back as a checked box"),
+      ("abc", NSNumber(value: 1), false, "text, read back as a number"),
+      ("\u{e9}", decomposed, true, "é, read back decomposed"),
+    ]
+    for (written, readBack, expected, label) in readBacks {
+      check(
+        "set_value's read-back: \(label)",
+        AccessibilityDriver.valueConfirms(written: written, readBack: readBack) == expected)
+    }
+
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:
     // generate-surfaces.mjs refuses a swift surface with a non-null npmName, so

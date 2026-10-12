@@ -1750,9 +1750,12 @@ nonisolated enum AccessibilityDriver {
   /// with no settle between the two, without bringing the app forward.
   /// `focused` is nil for anything that is not a text element, which is written
   /// exactly as before.
+  ///
+  /// Returns whether it confirmed and what was read back, as `scalar` renders
+  /// it, so a caller told "not as written" can see what is there instead.
   static func setValue(
     handle: String, value: String, scope: Scope
-  ) throws -> (confirmed: Bool, focused: Bool?) {
+  ) throws -> (confirmed: Bool, focused: Bool?, actual: Any?) {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
     try announce(handle)
@@ -1781,7 +1784,66 @@ nonisolated enum AccessibilityDriver {
       throw problem
     }
 
-    return (string(element, kAXValueAttribute as String) == value, focused)
+    // The raw value, not `string()`: that trims and calls an empty field no
+    // value, which is right for a tree and wrong for checking a write.
+    let readBack = copy(element, kAXValueAttribute as String)
+    return (valueConfirms(written: value, readBack: readBack), focused, scalar(readBack))
+  }
+
+  /// Whether what an element reads back is what `set_value` wrote.
+  ///
+  /// The comparison this replaced was `string(element) == value`, and every
+  /// part of it was wrong for a write. `string()` trims and answers nil for an
+  /// empty value, so clearing a field and a value ending in a space never
+  /// confirmed; and it reads strings only, so a slider (an `NSNumber`) and a
+  /// checkbox (a `CFBoolean`) never confirmed either. Each was reported as a
+  /// write the application dropped, when it had landed.
+  ///
+  /// The boolean is tested before the number because a `CFBoolean` bridges to
+  /// `NSNumber` too, and `"true"` is not a number. Line endings are compared as
+  /// `\n`, since a text view hands back `\r\n` for what it was given as either;
+  /// nothing else is forgiven.
+  static func valueConfirms(written: String, readBack: Any?) -> Bool {
+    guard let readBack else { return written.isEmpty }
+    if let text = readBack as? String {
+      func normal(_ s: String) -> String {
+        s.replacingOccurrences(of: "\r\n", with: "\n").precomposedStringWithCanonicalMapping
+      }
+      return normal(text) == normal(written)
+    }
+    if let flag = readBack as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() {
+      let wanted = written.lowercased()
+      return flag.boolValue
+        ? ["1", "true", "yes"].contains(wanted) : ["0", "false", "no"].contains(wanted)
+    }
+    if let number = readBack as? NSNumber, let wanted = Double(written) {
+      let actual = number.doubleValue
+      return actual == wanted
+        || abs(actual - wanted) <= 1e-9 * max(abs(actual), abs(wanted))
+    }
+    return false
+  }
+
+  /// A value read off an element, as something JSON can carry: a string or a
+  /// number as itself, anything else described.
+  ///
+  /// Only the scalars a caller can act on. An `AXUIElement` answer would need a
+  /// handle minted for it, and returning one would make this a second and
+  /// undocumented way to walk the tree — `expand` is that, and it carries the
+  /// bounds this does not. A non-finite number is described too: one reaching
+  /// `JSONSerialization` raises an exception `try?` does not catch, for the
+  /// reason `frame(point:size:)` gives.
+  static func scalar(_ raw: Any?) -> Any? {
+    switch raw {
+    case let value as String: return value
+    case let value as NSNumber where CFGetTypeID(value) == CFBooleanGetTypeID():
+      return value
+    case let value as NSNumber where !value.doubleValue.isFinite: return "\(value)"
+    case let value as NSNumber: return value
+    case let value as [Any]: return "<\(value.count) values>"
+    case .some(let other): return "<\(Swift.type(of: other))>"
+    case nil: return nil
+    }
   }
 
   /// The roles that edit through a field editor. A search field is an
@@ -2586,17 +2648,7 @@ nonisolated enum AccessibilityDriver {
       throw problem
     }
 
-    // Only the scalars a caller can act on. An `AXUIElement` answer would need a
-    // handle minted for it, and returning one from here would make this a second
-    // and undocumented way to walk the tree — `expand` is that, and it carries
-    // the bounds this does not.
-    switch raw {
-    case let value as String: return value
-    case let value as NSNumber: return value
-    case let value as [Any]: return "<\(value.count) values>"
-    case .some(let other): return "<\(Swift.type(of: other))>"
-    case nil: return nil
-    }
+    return scalar(raw)
   }
 
   /// Tell the app that something on somebody's screen is being driven.
