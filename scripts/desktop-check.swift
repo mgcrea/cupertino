@@ -104,7 +104,8 @@ struct DesktopCheck {
     "apple_desktop_hover", "apple_desktop_key", "apple_desktop_press",
     "apple_desktop_raise_window", "apple_desktop_set_value",
     "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
-    "apple_desktop_release", "apple_desktop_press_menu",
+    "apple_desktop_release", "apple_desktop_press_menu", "apple_desktop_show_menu",
+    "apple_desktop_drag",
   ]
 
   static func json(_ text: String) -> [String: Any]? {
@@ -858,6 +859,53 @@ struct DesktopCheck {
     check(
       "hover with neither a handle nor a point is refused, naming both",
       hoverError && hoverText.contains("handle") && hoverText.contains("'x'"))
+    // Each of these is refused before the application is named, let alone
+    // brought forward, which is what makes them safe on a machine that HAS a
+    // grant — a developer's, where this check is usually run.
+    let (buttonText, buttonError) = callText(
+      "apple_desktop_click", ["x": 1, "y": 1, "button": "middle"], writes: true)
+    check(
+      "a click with an unknown button is refused rather than sent as a left click",
+      buttonError && buttonText.contains("\"right\""))
+    let (dragText, dragError) = callText(
+      "apple_desktop_drag", ["from": ["x": 1, "y": 1], "to": [String: Any]()], writes: true)
+    check(
+      "a drag with an end that is neither a handle nor a point is refused, naming both forms",
+      dragError && dragText.contains("'from' and 'to'") && dragText.contains("handle"))
+    let (menuText, menuError) = callText(
+      "apple_desktop_show_menu", ["handle": "e999999"], writes: true)
+    check(
+      "show_menu on a handle nobody minted is refused",
+      menuError && !menuText.isEmpty)
+    let (dragStep, dragStepFailed) = runText([
+      ["tool": "wait", "ms": 0], ["tool": "drag", "from": ["handle": "e1"], "to": ["x": 1]],
+    ])
+    check(
+      "a drag step needs both ends whole, and nothing runs when it does not",
+      dragStepFailed && dragStep.contains("Step 2") && dragStep.contains("Nothing was run"))
+    check(
+      "show_menu and drag are steps a run can take",
+      DesktopServer.runSteps.contains("show_menu") && DesktopServer.runSteps.contains("drag"))
+
+    // What the tree says about menus, without opening one.
+    let menuElement = AccessibilityDriver.Element(
+      handle: "e1", role: "AXTextField", subrole: nil, identifier: nil, name: nil, value: nil,
+      rect: nil, point: nil, pressable: false, depth: 0, showsMenu: true)
+    check("an element offering AXShowMenu says so", menuElement.json["showsMenu"] as? Bool == true)
+    let plainElement = AccessibilityDriver.Element(
+      handle: "e2", role: "AXButton", subrole: nil, identifier: nil, name: nil, value: nil,
+      rect: nil, point: nil, pressable: true, depth: 0)
+    check("and one that does not carries no key for it", plainElement.json["showsMenu"] == nil)
+    var withMenu = AccessibilityDriver.Tree(
+      elements: [], visited: 0, seconds: 0, stoppedBy: nil, recovered: 0)
+    check(
+      "a tree with no menu open says nothing about menus",
+      DesktopServer.treeBody(withMenu)["openMenus"] == nil)
+    withMenu.menus = 1
+    check(
+      "a tree read while a menu is open says so, and how to close it",
+      DesktopServer.treeBody(withMenu)["openMenus"] as? Int == 1
+        && (DesktopServer.treeBody(withMenu)["menuNote"] as? String)?.contains("escape") == true)
     // Non-destructive and idempotent, unlike click: moving the pointer twice to
     // the same place leaves the same state, and it presses nothing.
     let hoverAnnotations =
