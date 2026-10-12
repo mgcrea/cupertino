@@ -31,8 +31,6 @@ nonisolated enum SimulatorServer {
 
   static let protocolVersion = InProcessRPC.protocolVersion
 
-  static func nextLine(_ fd: Int32) -> String? { InProcessRPC.nextLine(fd) }
-
   /// The one application this surface reaches. Read off the table rather than
   /// spelled here, so the manifest stays the only copy of the bundle id.
   static func bundleId(_ surface: Surface) -> String {
@@ -543,11 +541,9 @@ nonisolated enum SimulatorServer {
   private static let coordinateSpace =
     "iOS points, top-left of the device screen — the space ios_simulator_tap uses"
 
-  private static func body(_ tree: AccessibilityDriver.Tree, target: Target, filtered: Bool)
-    -> [String: Any]
-  {
+  private static func body(_ tree: AccessibilityDriver.Tree, target: Target) -> [String: Any] {
     var out = DesktopServer.treeBody(
-      tree, elements: filtered ? tree.elements : nil, render: render(target.screen!.frame),
+      tree, render: render(target.screen!.frame),
       coordinateSpace: coordinateSpace)
     if let device = target.device {
       out["device"] = ["udid": device.udid, "name": device.name, "runtime": device.runtimeLabel]
@@ -582,7 +578,7 @@ nonisolated enum SimulatorServer {
         let tree = try AccessibilityDriver.expand(
           handle: target.screen!.handle, detail: DesktopServer.detail(args),
           bounds: DesktopServer.bounds(args), scope: reach)
-        return ok(id, body(tree, target: target, filtered: false))
+        return ok(id, body(tree, target: target))
 
       case "apple_simulator_find_elements":
         let wantedId = args["id"] as? String
@@ -607,7 +603,7 @@ nonisolated enum SimulatorServer {
             }
             return true
           })
-        return ok(id, body(tree, target: target, filtered: true))
+        return ok(id, body(tree, target: target))
 
       case "apple_simulator_diagnostics":
         return ok(id, diagnostics(surface: surface, writesAllowed: writesAllowed))

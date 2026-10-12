@@ -157,12 +157,6 @@ nonisolated enum AccessibilityDriver {
       guard handle.hasPrefix("e"), let number = Int(handle.dropFirst()) else { return nil }
       return elements[number]
     }
-
-    func clear() {
-      lock.lock()
-      defer { lock.unlock() }
-      elements.removeAll()
-    }
   }
 
   static let handles = HandleStore()
