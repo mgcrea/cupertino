@@ -149,7 +149,7 @@ const releaseSend = async (env: Env, row: LicenseRow, stamp: string): Promise<vo
 
 const findBySession = (env: Env, sessionId: string): Promise<LicenseRow | null> =>
   env.DB.prepare(
-    "SELECT id, email, key, issued_at, last_sent_at, revoked_at, revoked_reason" +
+    "SELECT id, email, major, key, issued_at, last_sent_at, revoked_at, revoked_reason" +
       " FROM licenses WHERE stripe_session_id = ?",
   )
     .bind(sessionId)
@@ -337,7 +337,7 @@ const fulfil = async (object: unknown, env: Env, livemode: boolean): Promise<Res
   // 200: the request holding the claim answers for this send, with a 500 of its
   // own if the email fails.
   if (!stamp) return new Response("already being sent", { status: 200 });
-  const sent = await sendLicense(env, row.email, row.key);
+  const sent = await sendLicense(env, row.email, row.key, row.major);
   if (!sent.ok) {
     await releaseSend(env, row, stamp);
     console.error(`fulfil: email failed for licence ${row.id}, ${sent.reason}`);
@@ -632,7 +632,7 @@ const handleThanks = async (request: Request, url: URL, env: Env): Promise<Respo
   if (Date.now() - Date.parse(row.issued_at) > THANKS_TTL_MS) {
     return html(expiredPage(row.email));
   }
-  return html(thanksPage(row.key, row.email));
+  return html(thanksPage(row.key, row.email, row.major));
 };
 
 /**
@@ -644,7 +644,7 @@ const handleThanks = async (request: Request, url: URL, env: Env): Promise<Respo
 const resendTo = async (env: Env, email: string): Promise<void> => {
   try {
     const row = await env.DB.prepare(
-      `SELECT id, email, key, issued_at, last_sent_at, revoked_at, revoked_reason FROM licenses
+      `SELECT id, email, major, key, issued_at, last_sent_at, revoked_at, revoked_reason FROM licenses
          WHERE email = ? AND revoked_at IS NULL
          ORDER BY issued_at DESC LIMIT 1`,
     )
@@ -656,7 +656,7 @@ const resendTo = async (env: Env, email: string): Promise<void> => {
     // as for ones that follow each other. See `claimSend`.
     const stamp = await claimSend(env, row);
     if (!stamp) return;
-    const sent = await sendLicense(env, row.email, row.key);
+    const sent = await sendLicense(env, row.email, row.key, row.major);
     if (!sent.ok) {
       await releaseSend(env, row, stamp);
       console.error(`resend: email failed for licence ${row.id}, ${sent.reason}`);

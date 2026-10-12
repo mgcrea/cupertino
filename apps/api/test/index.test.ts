@@ -40,16 +40,19 @@ const hmacHex = async (secret: string, message: string): Promise<string> => {
 const setup = (overrides: Record<string, unknown> = {}) => {
   const d1 = createD1();
   const sent: string[] = [];
+  /** The body of each mail, in the order of `sent`. */
+  const texts: string[] = [];
   const waiting: Promise<unknown>[] = [];
   const state = { failSends: false };
   const env = {
     DB: d1.binding,
     EMAIL: {
-      send: async (message: { to: string }) => {
+      send: async (message: { to: string; text: string }) => {
         // Long enough that a second request reaches its own send first.
         await new Promise((resolve) => setTimeout(resolve, 15));
         if (state.failSends) throw new Error("E_SENDER_NOT_VERIFIED");
         sent.push(message.to);
+        texts.push(message.text);
         return { messageId: `m${sent.length}` };
       },
     },
@@ -86,7 +89,7 @@ const setup = (overrides: Record<string, unknown> = {}) => {
   const event = (type: string, object: unknown, id = `evt_${Math.random()}`) =>
     post(JSON.stringify({ id, type, livemode: true, data: { object } }));
 
-  return { d1, sent, waiting, state, env, call, post, event };
+  return { d1, sent, texts, waiting, state, env, call, post, event };
 };
 
 const session = (overrides: Record<string, unknown> = {}) => ({
@@ -850,6 +853,35 @@ describe("configuration", () => {
     expect(logged()).toMatch(/LICENSE_SIGNING_KEY/);
     expect(logged()).not.toContain(malformed);
     expect(await response.text()).not.toContain(malformed);
+  });
+});
+
+// The mail and /thanks both told the buyer which releases the key covers, as a
+// literal "1.x", while the major minted into the key comes from CURRENT_MAJOR.
+// Right until the day 2.0 ships, and wrong from then on for every new key AND,
+// fixed the wrong way, for every 1.x key re-sent after it.
+describe("the major a licence covers", () => {
+  it("is the one minted into it, in the mail and on /thanks", async () => {
+    const t = setup({ CURRENT_MAJOR: "2" });
+    await t.event("checkout.session.completed", session());
+    expect(t.d1.sql("SELECT major FROM licenses")).toEqual([{ major: 2 }]);
+    expect(t.texts[0]).toContain("every 2.x release");
+    expect(t.texts[0]).not.toContain("1.x");
+    const page = await (await thanks(t)).text();
+    expect(page).toContain("every 2.x release");
+    expect(page).not.toContain("1.x");
+  });
+
+  it("stays the licence's own when a later major is current", async () => {
+    const t = setup();
+    await t.event("checkout.session.completed", session());
+    anHourLater(t.d1);
+    const later = setup({ DB: t.env.DB, EMAIL: t.env.EMAIL, CURRENT_MAJOR: "2" });
+    await resend(later, BUYER);
+    await Promise.all(later.waiting);
+    expect(t.texts).toHaveLength(2);
+    expect(t.texts[1]).toContain("every 1.x release");
+    expect(await (await thanks(later)).text()).toContain("every 1.x release");
   });
 });
 
