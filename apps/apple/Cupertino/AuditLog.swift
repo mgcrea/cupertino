@@ -433,10 +433,29 @@ final class AuditLog {
     segment = Self.number(of: last)
     segmentSize = text.utf8.count
     let lines = text.split(separator: "\n").map(String.init)
-    guard let tail = lines.last,
-      let object = try? JSONSerialization.jsonObject(with: Data(tail.utf8)) as? [String: Any],
-      let lastSeq = object["seq"] as? Int, let lastHash = object["hash"] as? String
-    else {
+    func link(_ line: String?) -> (seq: Int, hash: String)? {
+      guard let line,
+        let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        let seq = object["seq"] as? Int, let hash = object["hash"] as? String
+      else { return nil }
+      return (seq, hash)
+    }
+    // An empty segment is undamaged: the sink creates the file before its first
+    // write, and a write that failed then (a full disk) leaves it behind. It is
+    // written into, carrying on from the segment before it. Restarting from
+    // genesis here made the next record a broken link, on a log nothing was
+    // removed from.
+    if lines.isEmpty {
+      let previous = Self.segments().dropLast().last
+      let previousTail = previous.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
+        .split(separator: "\n").last.map(String.init)
+      if let carried = link(previousTail) {
+        seq = carried.seq
+        head = carried.hash
+      }
+      return
+    }
+    guard let (lastSeq, lastHash) = link(lines.last) else {
       // A truncated final line — a crash mid-write, most likely. Start a new
       // segment rather than appending to a record that is half there: the
       // damaged segment stays on disk and the verifier will name it.
