@@ -909,15 +909,24 @@ private struct LogRow: View {
   /// past the preview. Empty when nothing is being searched for.
   var highlight: String = ""
 
-  @State private var expanded = false
+  /// What the reader asked for with the button, when they have; nil follows
+  /// the search.
+  ///
+  /// An override rather than an `expanded` flag OR'd with the search, because
+  /// the OR made "Show less" a button that could not do what it said: while the
+  /// match sat past the preview the search term held the row open, and the
+  /// button flipped a flag nothing was reading. Reset when the search changes,
+  /// so a new query gets to open the rows it needs to.
+  @State private var override: Bool?
 
   /// How much of a payload shows before the row is opened.
   private static let preview = 160
 
-  /// Open either because the reader asked, or because the match is out of
-  /// sight and a row listed for no visible reason reads as a bug.
+  /// Open because the reader asked, or — until they say otherwise — because the
+  /// match is out of sight and a row listed for no visible reason reads as a
+  /// bug.
   private var isOpen: Bool {
-    expanded || entry.matchIsHidden(highlight, preview: Self.preview)
+    override ?? entry.matchIsHidden(highlight, preview: Self.preview)
   }
 
   var body: some View {
@@ -945,13 +954,14 @@ private struct LogRow: View {
         payload("result", result, tint: entry.failed ? .red : .secondary)
       }
       if longest > Self.preview {
-        Button(isOpen ? "Show less" : "Show all \(longest) characters") { expanded.toggle() }
+        Button(isOpen ? "Show less" : "Show all \(longest) characters") { override = !isOpen }
           .buttonStyle(.link)
           .font(.caption2)
           .padding(.leading, 84)
       }
     }
     .font(.system(.caption, design: .monospaced))
+    .onChange(of: highlight) { override = nil }
   }
 
   private var longest: Int { max(entry.arguments?.count ?? 0, entry.result?.count ?? 0) }
