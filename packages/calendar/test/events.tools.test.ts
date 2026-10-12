@@ -535,3 +535,66 @@ describe("a window crowded with hidden events", () => {
     expect(seen.filter((s) => s.startsWith("Real meeting"))).toHaveLength(5);
   });
 });
+
+/**
+ * A crowd that all starts at one instant.
+ *
+ * Paging is by start time, so a full leg whose rows share a start cannot be
+ * paged past: the resume point is that instant again. Handing it back sent a
+ * caller round the same page forever. Where the next page would not move, the
+ * resume field is left out, so a caller following it stops.
+ */
+describe("a crowd sharing one start", () => {
+  let samePath: string;
+
+  beforeAll(() => {
+    samePath = join(mkdtempSync(join(tmpdir(), "mcp-apple-calendar-")), "Calendar.sqlitedb");
+    const db = new DatabaseSync(samePath);
+    db.exec(readFileSync(FIXTURE, "utf8"));
+    db.exec(`INSERT INTO Store (ROWID, name, type) VALUES (1, 'iCloud', 0)`);
+    db.exec(
+      `INSERT INTO Calendar (ROWID, store_id, title, UUID, color, type, display_order, subcal_url)
+       VALUES (1, 1, 'Work', 'CAL-1', '#f00', 'CalDAV', 0, NULL)`,
+    );
+    const item = db.prepare(
+      `INSERT INTO CalendarItem
+         (ROWID, UUID, summary, description, start_date, end_date, all_day, start_tz,
+          calendar_id, entity_type, has_recurrences, status, invitation_status)
+       VALUES (?,?,?,?,?,?,?,?,?,2,0,1,?)`,
+    );
+    const at = apple("2026-08-23T09:00:00Z");
+    for (let id = 1; id <= 300; id++) {
+      item.run(id, `SAME-${id}`, `Standup ${id}`, null, at, at + 1800, 0, "Europe/Paris", 1, 3);
+    }
+    db.close();
+  });
+
+  type Paged = Page & { nextFrom?: string; nextTo?: string };
+
+  it("never hands back a list resume point that does not move", async () => {
+    const env = { APPLE_CALENDAR_STORE: samePath };
+    let from = "2026-08-22";
+    for (let n = 0; n < 5; n++) {
+      const page = (await call("apple_calendar_list_events", { from, to: "2026-08-28" }, env))
+        .json as Paged;
+      if (page.nextFrom === undefined) return;
+      expect(Date.parse(page.nextFrom)).toBeGreaterThan(Date.parse(from));
+      from = page.nextFrom;
+    }
+    throw new Error("still paging after five pages");
+  });
+
+  it("never hands back a search resume point that does not move", async () => {
+    const env = { APPLE_CALENDAR_STORE: samePath };
+    let to: string | undefined;
+    for (let n = 0; n < 5; n++) {
+      const page = (
+        await call("apple_calendar_search_events", { query: "standup", ...(to ? { to } : {}) }, env)
+      ).json as Paged;
+      if (page.nextTo === undefined) return;
+      if (to !== undefined) expect(Date.parse(page.nextTo)).toBeLessThan(Date.parse(to));
+      to = page.nextTo;
+    }
+    throw new Error("still paging after five pages");
+  });
+});

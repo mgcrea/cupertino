@@ -174,9 +174,14 @@ export type EventPage = {
    */
   hasMore: boolean;
   /**
-   * Where the next page of a list starts, set whenever `hasMore` is. Pass it
-   * back as `from` with the same `to`. Events that overlap it and were already
-   * listed come back again; none are skipped.
+   * Where the next page of a list starts. Pass it back as `from` with the same
+   * `to`. Events that overlap it and were already listed come back again; none
+   * are skipped.
+   *
+   * Absent while `hasMore` is true when no later `from` would move: paging is by
+   * start time, and a full page whose events all start at or before `from` (a
+   * crowd sharing one start) has no later one to give. Narrow the window or the
+   * calendars instead.
    */
   nextFrom?: string;
   /** The same for search, which runs newest first: pass it back as `to`. */
@@ -547,9 +552,14 @@ export class AppleCalendarClient {
     // sent back for them. Without the cut, 300 declined invites filled a leg,
     // the status filter below hid them all, and the five real meetings after
     // them were lost with `hasMore: false`.
+    //
+    // A cut at or before `from` would empty the page without moving the next
+    // one: every row the leg held starts at one instant, or before the window.
+    // Those rows are kept instead, and no resume point is offered below.
     const cutoff = legCutoff([items, occurrences, merged.rows], legLimit, "asc");
+    const cutAt = cutoff !== null && cutoff > fromApple ? cutoff : null;
     const complete =
-      cutoff === null ? merged.rows : merged.rows.filter((r) => (r.startApple ?? 0) < cutoff);
+      cutAt === null ? merged.rows : merged.rows.filter((r) => (r.startApple ?? 0) < cutAt);
 
     const declined = filters.includeDeclined ?? this.config.includeDeclined;
     const cancelled = filters.includeCancelled ?? this.config.includeCancelled;
@@ -562,12 +572,15 @@ export class AppleCalendarClient {
     // an empty tail there reads as free time. A dense day of 80 events answered
     // with the default 50 and looked like the whole day.
     const hasMore = visible.length > filters.limit || cutoff !== null;
-    const resumeAt = visible[filters.limit]?.startApple ?? cutoff;
+    const resumeAt = visible[filters.limit]?.startApple ?? cutAt;
+    // Only a resume point that moves: handing back `from` again sent a caller
+    // following it round the same page forever.
+    const advances = resumeAt !== null && resumeAt > fromApple;
 
     return {
       events,
       hasMore,
-      ...(hasMore && resumeAt !== null ? { nextFrom: this.#fromApple(resumeAt, store) } : {}),
+      ...(hasMore && advances ? { nextFrom: this.#fromApple(resumeAt, store) } : {}),
       expansion: merged.expansion,
       ...(merged.expansionReason ? { expansionReason: merged.expansionReason } : {}),
       window: {
@@ -642,21 +655,24 @@ export class AppleCalendarClient {
     // The mirror of listEvents: the leg runs newest first, so a full one may
     // have dropped the OLDEST matches. Rows at or before its last start are
     // cut, and `nextTo` sends the caller back for them.
+    // As there, a cut that could not move `to` back is not made.
     const cutoff = legCutoff([rows], legLimit, "desc");
+    const cutAt = cutoff !== null && cutoff + 1 < toApple ? cutoff : null;
     const complete =
-      cutoff === null ? rows : rows.filter((r) => r.startApple !== null && r.startApple > cutoff);
+      cutAt === null ? rows : rows.filter((r) => r.startApple !== null && r.startApple > cutAt);
 
     const declined = args.includeDeclined ?? this.config.includeDeclined;
     const cancelled = args.includeCancelled ?? this.config.includeCancelled;
     const visible = complete.filter((r) => this.#visible(r, { declined, cancelled }));
     const hasMore = visible.length > args.limit || cutoff !== null;
-    const resumeAt = visible[args.limit]?.startApple ?? cutoff;
+    const resumeAt = visible[args.limit]?.startApple ?? cutAt;
+    const advances = resumeAt !== null && resumeAt + 1 < toApple;
     return {
       events: visible.slice(0, args.limit).map((r) => this.#summarise(r, store)),
       hasMore,
       // `to` is exclusive (`start_date < ?`), so one second past the row it
       // must still reach.
-      ...(hasMore && resumeAt !== null ? { nextTo: this.#fromApple(resumeAt + 1, store) } : {}),
+      ...(hasMore && advances ? { nextTo: this.#fromApple(resumeAt + 1, store) } : {}),
       // Search does not expand, and says so rather than implying it did.
       expansion: "unavailable",
       expansionReason:

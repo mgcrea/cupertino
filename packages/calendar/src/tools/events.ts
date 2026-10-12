@@ -33,7 +33,9 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "range runs past it, `truncated` is set and says what is missing rather than returning a " +
         "short list silently. `hasMore` is the other reason a list can be partial: more events " +
         "matched than `limit` allowed; pass the returned `nextFrom` as `from` (same `to`) for " +
-        "the rest. Returns a `ref` per event for get_event.",
+        "the rest. Without `nextFrom`, the page cannot be advanced by start time (its events " +
+        "share one start): narrow the window or the calendars. Returns a `ref` per event for " +
+        "get_event.",
       inputSchema: z.object({ from: fromArg, to: toArg, ...filterSchema }),
       annotations: { readOnlyHint: true },
     },
@@ -53,7 +55,8 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "Search events by text, most recent first. Unbounded in time unless you give `from` or " +
         "`to`. Matches each event ONCE at its series start — it does not expand occurrences, so " +
         "use list_events with a range to see individual instances of a repeating event. When " +
-        "`hasMore` is set, pass the returned `nextTo` as `to` for older matches.",
+        "`hasMore` is set, pass the returned `nextTo` as `to` for older matches; without " +
+        "`nextTo`, narrow the window instead.",
       inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for. Matched case-insensitively."),
         scope: z
