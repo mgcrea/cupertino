@@ -535,6 +535,29 @@ struct DesktopCheck {
       "a bundle is read for its quarantine flag, and one without it is not held back",
       !unflagged && flagged)
 
+    // Bringing an application forward for a click, hover, type or key needs the
+    // grant: the read-back that decides whether it came is Accessibility. Without
+    // one, the verb used to look the application up, open a session (a card, a
+    // countdown) and activate it, then blame the application for "not coming to
+    // the front". The grant is refused first, so nothing is admitted. Which half
+    // asserts depends on the machine; an absent application keeps both from
+    // posting or activating anything.
+    var forwardFailure: AccessibilityDriver.Failure?
+    do {
+      _ = try AccessibilityDriver.activateAndWait(bundleId: "com.example.absent", scope: .any)
+    } catch let failure as AccessibilityDriver.Failure {
+      forwardFailure = failure
+    } catch {}
+    if AccessibilityDriver.isTrusted() {
+      check(
+        "with the grant, bringing forward an application that is not running says so",
+        { if case .appNotRunning = forwardFailure { return true } else { return false } }())
+    } else {
+      check(
+        "without the grant, bringing an application forward is refused for the grant first",
+        { if case .notTrusted = forwardFailure { return true } else { return false } }())
+    }
+
     // The same rule for the session verbs, which name their target now. Each of
     // these is refused BEFORE an event is built — a stale handle, a target that
     // is not running, a target outside the reach — and that is the only reason

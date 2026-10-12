@@ -2215,6 +2215,13 @@ nonisolated enum AccessibilityDriver {
     // so an application outside this surface's reach passed unrefused whenever
     // it happened to be in front — and the caller then posted into it.
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    // The grant before anything else moves. Every caller of this posts input
+    // next, which needs Accessibility, and so does the read-back below: without
+    // it `frontmostBundleId` answers nil whatever is in front. Ungated, a call
+    // with no grant opened a session — card, countdown — activated the app,
+    // waited two seconds and then blamed the APPLICATION for not coming to the
+    // front. `activate` itself stays ungated; it is LaunchServices, see there.
+    guard isTrusted() else { throw Failure.notTrusted }
     // Admitted before the early return and after the lookup. Before, because
     // the application already being in front does not mean nobody is typing
     // into it. After, because a countdown for an application that is not
