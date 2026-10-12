@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 
 import { HIDDEN_SECTIONS, parse } from "./lib/changelog.mjs";
 import { region } from "./lib/region.mjs";
+import { swiftString } from "./lib/swift-string.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
@@ -89,11 +90,6 @@ const shown = released.slice(0, SHOWN).map(visible);
 // `v1_13_0` names, which read as versions precisely because they are not
 // camelCase. The prose and the types above the region stay formatted and linted
 // exactly like the rest of the app — only the generated text is exempt.
-
-// JSON and Swift agree on `\"`, `\\`, `\n` and `\uXXXX`, which is what the
-// catalog generator relies on too. Non-ASCII (em dashes, «», typographic
-// quotes) is emitted literally as UTF-8.
-const swiftString = (v) => JSON.stringify(v);
 
 const swiftStrings = (xs, indent) =>
   xs.length === 0
