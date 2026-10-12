@@ -1,5 +1,6 @@
 import {
   createOsascriptRunner,
+  settleGroups,
   withBusyRetry,
   type Logger,
   type OsascriptRunner,
@@ -1226,7 +1227,9 @@ export class AppleCalendarClient {
    * rather than silently deleting the whole series, which is the same shape of
    * refusal `updateEvent` makes and for the same underlying reason.
    */
-  async deleteEvents(refs: readonly string[]): Promise<{ results: unknown[]; scope: string }> {
+  async deleteEvents(
+    refs: readonly string[],
+  ): Promise<{ results: unknown[]; unknown?: number; scope: string }> {
     const decoded = refs.map((r, i) => ({ ref: refs[i]!, parsed: decodeRef(r) }));
 
     const occurrence = decoded.find((d) => d.parsed.isOccurrence);
@@ -1243,21 +1246,39 @@ export class AppleCalendarClient {
 
     // Grouped by calendar: findEvent costs one bulk uid fetch per calendar, so
     // deleting five events from one calendar should pay that once, not five times.
-    const byCalendar = new Map<string, string[]>();
-    for (const { parsed } of decoded) {
+    const byCalendar = new Map<string, { ref: string; uid: string }[]>();
+    for (const { ref, parsed } of decoded) {
       const key = parsed.calendarUid || "";
-      byCalendar.set(key, [...(byCalendar.get(key) ?? []), parsed.eventUid]);
+      byCalendar.set(key, [...(byCalendar.get(key) ?? []), { ref, uid: parsed.eventUid }]);
     }
-    const results: unknown[] = [];
-    for (const [calendar, uids] of byCalendar) {
-      const data = await this.#run<{ results: unknown[] }>(DELETE_EVENTS, {
-        calendar: this.#nameForRefCalendar(calendar) ?? null,
-        uids,
-      });
-      results.push(...(data.results ?? []));
+
+    // One script per calendar, and each one deletes before the next starts, so
+    // a calendar that throws (a read-only one, say) must not erase the record
+    // of the calendars already done; core's `settleGroups` keeps it. The store
+    // is invalidated whatever happened, since any of them may have changed it.
+    try {
+      const { rows, unknown } = await settleGroups(
+        byCalendar,
+        ([, events]) => events.map((e) => e.ref),
+        async ([calendar, events]) => {
+          const data = await this.#run<{ results?: { uid?: unknown }[] }>(DELETE_EVENTS, {
+            calendar: this.#nameForRefCalendar(calendar) ?? null,
+            uids: events.map((e) => e.uid),
+          });
+          const refOf = new Map(events.map((e) => [e.uid, e.ref]));
+          return (data.results ?? []).map((r) => ({
+            ref: refOf.get(String(r.uid)) ?? null,
+            ...r,
+          }));
+        },
+      );
+      // A row for a calendar whose script threw says `deleted` as the rest do:
+      // false when it failed, null when it timed out and may have gone through.
+      const results = rows.map((r) => ("ok" in r ? { ...r, deleted: r.ok } : r));
+      return { results, ...(unknown ? { unknown } : {}), scope: "series" };
+    } finally {
+      this.invalidate();
     }
-    this.invalidate();
-    return { results, scope: "series" };
   }
 
   lanes(): LaneStatus {
