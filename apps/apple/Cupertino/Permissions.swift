@@ -512,12 +512,6 @@ nonisolated enum Permissions {
     CGPreflightScreenCaptureAccess() ? .granted : .denied
   }
 
-  /// Unlike Full Disk Access, this one CAN be requested — and unlike Contacts,
-  /// the grant only takes effect on relaunch, which the UI has to say.
-  static func requestScreenRecording() {
-    CGRequestScreenCaptureAccess()
-  }
-
   /// The microphone, for THIS process's responsible identity.
   ///
   /// MEASURED, macOS 26.6 through scripts/spike-app-tcc lane 2d: the grant lands

@@ -93,22 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return true
   }
 
-  /// Show the main window when a person opened the app, and never when a tool
-  /// call did.
-  ///
-  /// The obvious test — is the app active — does not work: an `.accessory` app
-  /// never becomes active, so `NSApp.isActive` is false for a double-click and
-  /// for `open -g` alike. The bridge therefore says so outright.
-  ///
-  /// Launch at login is the other quiet start. Someone who asked for the app to
-  /// be there at login did not ask for a window at login, and the menu bar item
-  /// and the Dock icon are each one click away.
-  private func openMainWindowIfLaunchedByHand() {
-    guard !CommandLine.arguments.contains(BridgeProtocol.backgroundFlag) else { return }
-    guard !LoginItem.isEnabled else { return }
-    MainWindowController.show()
-  }
-
   static let licencePromptShown = "licencePromptShown"
 
   /// Open the licence pane once, and only when there is nothing to run with.
@@ -302,7 +286,6 @@ final class StatusModel {
   private(set) var safariExtension: SafariExtensionStatus = .unknown
   private(set) var location: InstallLocation = .current
   private(set) var clients: [ClientWiring.Client: ClientWiring.Status] = [:]
-  private(set) var lastError: String?
   /// The socket never came up. Nothing works in this state, and until now it
   /// was only ever written to stderr.
   private(set) var hostError: String?
@@ -465,17 +448,6 @@ final class StatusModel {
         ? (automation[surface.id] ?? .notDetermined) : nil,
       grant: grant,
       store: stores[surface.id] ?? .checking)
-  }
-
-  func configure(_ client: ClientWiring.Client) {
-    do {
-      try ClientWiring.configure(client)
-      lastError = nil
-    } catch {
-      lastError = error.localizedDescription
-      hostLog("cupertino", .error, error.localizedDescription)
-    }
-    refresh()
   }
 
   /// Off the main thread: the prompt blocks until answered, and so does the
@@ -695,11 +667,6 @@ struct StatusMenu: View {
       Divider()
 
       ConnectionsSection(model: model)
-
-      if let error = model.lastError {
-        Text(error).font(.caption).foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
-      }
     }
     // Permission state changes in System Settings, not here, so a menu drawn
     // once at launch is a menu that lies. `Permissions.automation` is the
