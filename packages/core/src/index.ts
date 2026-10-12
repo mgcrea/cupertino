@@ -98,7 +98,9 @@ export {
 } from "./schema.js";
 export {
   escapeLike,
+  likeContains,
   openReadOnly,
+  registerCaseFold,
   toFileUri,
   type OpenedStore,
   type OpenOptions,
