@@ -539,7 +539,7 @@ final class AuditLog {
 
   // MARK: - Reading back
 
-  struct Summary {
+  nonisolated struct Summary: Sendable {
     var segments = 0
     var records = 0
     var bytes = 0
@@ -568,10 +568,17 @@ final class AuditLog {
 
   /// Verify every segment in order, carrying the head across.
   ///
-  /// Off the main actor would be nicer, and it is deliberately not: this runs
-  /// when somebody presses a button, and a verifier racing the writer would
-  /// report a torn last line as tampering.
-  static func verifyAll() -> Summary {
+  /// Reads files and nothing else, so it can run anywhere — and it should not
+  /// run on the main thread, which is where the Activity pane used to call it,
+  /// on every open: about 13 s of CPU at the default 100 MB names-only cap.
+  ///
+  /// This used to say the main actor was what kept a verifier from racing the
+  /// writer and reading a torn last line as tampering. It never was: records
+  /// are SEALED on the main actor but COMMITTED on `writer`, a background
+  /// queue, so a verify on main raced the commits exactly as one anywhere else
+  /// would. What keeps the last line whole is running on `writer` itself —
+  /// `verifyInBackground` below — behind every commit already queued.
+  nonisolated static func verifyAll() -> Summary {
     let loaded = load()
     let verification = AuditChain.verify(segments: chainSegments(loaded))
     var summary = Summary()
@@ -583,6 +590,18 @@ final class AuditLog {
     summary.report.head = verification.head
     summary.startsAtSegment = verification.startsAtSegment
     return summary
+  }
+
+  /// `verifyAll`, on the writer's serial queue: off the main thread, after
+  /// every record queued before the call has landed, and with no commit able to
+  /// start until it is done — so no torn last line.
+  ///
+  /// It holds the writer for as long as it reads, which is fine: records keep
+  /// being sealed on the main actor and queue behind it, in order.
+  func verifyInBackground() async -> Summary {
+    await withCheckedContinuation { done in
+      writer.async { done.resume(returning: Self.verifyAll()) }
+    }
   }
 
   // MARK: - Export

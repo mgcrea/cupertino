@@ -989,6 +989,9 @@ private struct AuditPane: View {
   @AppStorage(AuditLog.maxMegabytesKey) private var maxMegabytes = AuditLog.defaultMaxMegabytes
 
   @State private var summary: AuditLog.Summary?
+  /// While a verification is running. It reads every segment, which takes
+  /// seconds on a full log, so it runs off the main thread and says so.
+  @State private var verifying = false
   @State private var note: String?
   @State private var fingerprint = AuditSigning.currentFingerprint()
   @State private var copied = false
@@ -1073,7 +1076,8 @@ private struct AuditPane: View {
 
       Section {
         HStack {
-          Button("Verify") { verify() }
+          Button(verifying ? "Verifying…" : "Verify") { Task { await verify() } }
+            .disabled(verifying)
           Button("Export…") { export() }
           Button("Delete the log") { erase() }
             .disabled((summary?.records ?? 0) == 0)
@@ -1163,11 +1167,13 @@ private struct AuditPane: View {
       NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
         .receive(on: DispatchQueue.main)
     ) { _ in defaultsRevision += 1 }
-    .onAppear { summary = AuditLog.verifyAll() }
+    .task { await verify() }
   }
 
-  private func verify() {
-    summary = AuditLog.verifyAll()
+  private func verify() async {
+    verifying = true
+    defer { verifying = false }
+    summary = await AuditLog.shared.verifyInBackground()
     note = nil
   }
 
@@ -1180,8 +1186,12 @@ private struct AuditPane: View {
 
   private func erase() {
     AuditLog.shared.clear()
-    summary = AuditLog.verifyAll()
-    note = "The log on disk is gone."
+    // Nothing left to read, so this is instant — but through the same path,
+    // so there is one way the pane learns what is on disk.
+    Task {
+      await verify()
+      note = "The log on disk is gone."
+    }
   }
 
   /// The surfaces whose own settings record contents: what this switch puts
