@@ -1048,6 +1048,22 @@ struct DesktopCheck {
       check("and answers from the cache rather than waiting on main", box.elapsed < 0.1)
     }
 
+    // ─── a frame that is not a number is no frame ───────────────────────────
+    // DeviceHub publishes NaN frames (docs/simulator.md), and JSONSerialization
+    // raises an Objective-C exception on one that `try?` cannot catch, which
+    // ends the whole app rather than one answer.
+    check(
+      "a NaN position reads as no frame",
+      AccessibilityDriver.frame(point: CGPoint(x: CGFloat.nan, y: CGFloat.nan), size: .zero) == nil)
+    check(
+      "an infinite size reads as no frame",
+      AccessibilityDriver.frame(
+        point: .zero, size: CGSize(width: CGFloat.infinity, height: 10)) == nil)
+    check(
+      "a finite frame reads as itself",
+      AccessibilityDriver.frame(point: CGPoint(x: 1, y: 2), size: CGSize(width: 3, height: 4))
+        == [1, 2, 3, 4])
+
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:
     // generate-surfaces.mjs refuses a swift surface with a non-null npmName, so
