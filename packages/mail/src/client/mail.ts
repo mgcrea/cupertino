@@ -323,6 +323,9 @@ export class AppleMailClient {
     const allowed = opts.accountUuids?.length
       ? accounts.filter((a) => opts.accountUuids?.includes(a.id)).map((a) => a.id)
       : accounts.map((a) => a.id);
+    // LIST_MAILBOXES reads an empty list as "every account", which is the
+    // opposite of what an allowlist admitting none of them means.
+    if (!allowed.length) return [];
     return withBusyRetry(() =>
       this.runner.run(LIST_MAILBOXES, { accountUuids: allowed, withCounts: opts.withCounts }),
     );
