@@ -220,9 +220,16 @@ nonisolated enum AppSupport {
 nonisolated func hostLog(
   _ surface: String, _ level: LogStore.Level, _ text: String, mirror: Bool = true
 ) {
-  let bytes = Array("[\(surface)] \(level.rawValue): \(text)\n".utf8)
+  if mirror { writeStderr("[\(surface)] \(level.rawValue): \(text)\n") }
+  Task { @MainActor in LogStore.shared.append(surface: surface, level: level, text) }
+}
+
+/// One line to stderr through `write(2)`, retried on EINTR and otherwise
+/// dropped: see `hostLog` for why a failed write must not raise.
+nonisolated private func writeStderr(_ line: String) {
+  let bytes = Array(line.utf8)
   var offset = 0
-  while mirror && offset < bytes.count {
+  while offset < bytes.count {
     let written = bytes.withUnsafeBufferPointer {
       write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
     }
@@ -232,7 +239,6 @@ nonisolated func hostLog(
     }
     offset += written
   }
-  Task { @MainActor in LogStore.shared.append(surface: surface, level: level, text) }
 }
 
 /// Post a call line, with its arguments kept out of the stderr mirror.
@@ -250,18 +256,7 @@ nonisolated func hostLog(
 @discardableResult
 nonisolated func hostCall(_ surface: String, _ text: String, arguments: String?) -> UUID {
   let id = UUID()
-  let bytes = Array("[\(surface)] call: \(text)\n".utf8)
-  var offset = 0
-  while offset < bytes.count {
-    let written = bytes.withUnsafeBufferPointer {
-      write(STDERR_FILENO, $0.baseAddress! + offset, bytes.count - offset)
-    }
-    if written <= 0 {
-      if errno == EINTR { continue }
-      break
-    }
-    offset += written
-  }
+  writeStderr("[\(surface)] call: \(text)\n")
   // Pinned to one priority, and the same one `Sessions` uses. The main actor's
   // executor only guarantees FIFO *within* a priority, so a hop left to inherit
   // could overtake the one before it — and a result attaching to a row that has
