@@ -108,6 +108,7 @@ struct WiringCheck {
     nonObjectJSONRefused()
     anEmptyReadIsReadAgain()
     backupAndNoLitter()
+    anUnchangedMergeWritesNothing()
     aSymlinkedConfigIsWrittenThrough()
     localScopeIsReadCorrectly()
     projectFileIsJustAnotherMerge()
@@ -624,6 +625,85 @@ struct WiringCheck {
       ["mcpServers": [:]], to: fresh, backupSuffix: "cupertino-backup")
     check("no backup for a new file", none == nil)
     check("parent directories created", fm.fileExists(atPath: fresh.path))
+  }
+
+  // MARK: - 7b. A merge that changes nothing writes nothing
+
+  /// Configure run twice on a JSON client used to write twice, and the second
+  /// write replaced `<file>.cupertino-backup` with a copy of the file the
+  /// first write made — so the only backup of the config as it was before
+  /// Cupertino touched it was gone after one extra click. A client that had
+  /// since reformatted the file had it re-sorted under it for nothing.
+  ///
+  /// The TOML path already skipped an unchanged splice. This is the same
+  /// promise for JSON, decided on the parsed objects rather than the bytes:
+  /// a reformatted file is the same config.
+  static func anUnchangedMergeWritesNothing() {
+    print("a merge that changes nothing writes nothing")
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("wiring-check-\(UUID().uuidString)")
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let config = dir.appendingPathComponent("mcp.json")
+    let backupURL = config.appendingPathExtension("cupertino-backup")
+    // Hand-formatted, the way no serialiser here would write it.
+    let original = """
+      {
+        "theme" : "dark",
+        "mcpServers" : {
+          "other" : {"command" : "npx"}
+        }
+      }
+
+      """
+    try? original.write(to: config, atomically: true, encoding: .utf8)
+    let bytes = { (url: URL) in try? String(contentsOf: url, encoding: .utf8) }
+
+    // `switchedOff` is a surface turned off since: not written, and pruned.
+    func configure(switchedOff: String? = nil) -> ClientWiringMerge.WriteOutcome? {
+      guard let root = try? ClientWiringMerge.readJSON(config) else { return nil }
+      let merged = ClientWiringMerge.merged(
+        into: root, rootKey: "mcpServers", entries: entries().filter { $0.key != switchedOff },
+        legacy: legacy, remove: Set([switchedOff].compactMap { $0 }))
+      return try? ClientWiringMerge.writeMerged(
+        merged, over: root, to: config, backupSuffix: "cupertino-backup")
+    }
+
+    let first = configure()
+    check("the first Configure writes", first?.backup != nil)
+    check("and backs up the original bytes", bytes(backupURL) == original)
+    let configured = bytes(config)
+
+    check("a second Configure reports there was nothing to write", configure() == .unchanged)
+    check("and leaves the config's bytes alone", bytes(config) == configured)
+    check("and keeps the backup of the original", bytes(backupURL) == original)
+
+    // The client rewrote the file its own way: compact, keys in its own order.
+    // The same config, so the same answer — and its formatting is not ours to
+    // re-sort.
+    guard let root = try? ClientWiringMerge.readJSON(config),
+      let compact = try? JSONSerialization.data(withJSONObject: root),
+      let reformatted = String(data: compact, encoding: .utf8)
+    else { return check("fixture reformats", false) }
+    try? reformatted.write(to: config, atomically: true, encoding: .utf8)
+    check(
+      "a client-reformatted config with nothing to merge is left as the client wrote it",
+      configure() == .unchanged && bytes(config) == reformatted)
+    check("and the original's backup survives that too", bytes(backupURL) == original)
+
+    // A real change still writes, and still backs up what it replaced.
+    let changed = configure(switchedOff: "cupertino-mail")
+    check("a merge that changes something still writes", changed?.backup != nil)
+    check("and backs up the bytes it replaced", bytes(backupURL) == reformatted)
+
+    // Nothing there at all is a write, and has nothing to back up.
+    let fresh = dir.appendingPathComponent("fresh/mcp.json")
+    let created = try? ClientWiringMerge.writeMerged(
+      ["mcpServers": [:]], over: nil, to: fresh, backupSuffix: "cupertino-backup")
+    check(
+      "a config that does not exist yet is written, with no backup",
+      created == .written(backup: nil) && fm.fileExists(atPath: fresh.path))
   }
 
   /// Local scope, which lives at `projects["<dir>"].mcpServers`.

@@ -720,13 +720,22 @@ struct ClientDetail: View {
 
   private func configure(force: Bool = false) {
     do {
-      let backup = try ClientWiring.configure(client, force: force)
+      let outcome = try ClientWiring.configure(client, force: force)
       collision = []
       let count = SurfaceSettings.enabledSurfaces.count
+      // Said apart, because "Wrote N entries" for a file nothing was written to
+      // is the sentence that sent somebody looking for a change that did not
+      // happen — and there is no restart to do either.
+      guard outcome != .unchanged else {
+        result =
+          "Already up to date — nothing written to "
+          + "\(ClientWiring.configFile(of: client).path.path)."
+        return
+      }
       result =
         "Wrote \(count) entr\(count == 1 ? "y" : "ies") to "
         + "\(ClientWiring.configFile(of: client).path.path)."
-        + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
+        + (outcome.backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick them up."
     } catch ClientWiring.WriteError.collision(let name, let keys) {
       // The refusal is the feature. It also lands in `result`, so the reason
@@ -740,10 +749,16 @@ struct ClientDetail: View {
 
   private func unwire() {
     do {
-      let backup = try ClientWiring.unwire(client)
+      let outcome = try ClientWiring.unwire(client)
+      guard outcome != .unchanged else {
+        result =
+          "Nothing to remove — \(ClientWiring.configFile(of: client).path.path) holds no "
+          + "entries of Cupertino's."
+        return
+      }
       result =
         "Removed Cupertino's entries from \(ClientWiring.configFile(of: client).path.path)."
-        + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
+        + (outcome.backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick it up."
     } catch {
       result = "Could not write the config: \(error.localizedDescription)"
@@ -752,13 +767,22 @@ struct ClientDetail: View {
 
   private func remove(_ removal: Removal) {
     do {
-      let backup = try ClientWiring.removeEntry(
+      let outcome = try ClientWiring.removeEntry(
         removal.key, from: client, inLocalScope: removal.folder)
       let scope = removal.folder.map { " in \(abbreviate($0))" } ?? ""
+      if outcome == .unchanged {
+        // Absent, or one of ours now — `ClientWiringMerge.removing` treats both
+        // as nothing to do, and so does this sentence.
+        result =
+          "Nothing written: \u{2018}\(removal.key)\u{2019}\(scope) is no longer a "
+          + "hand-written entry in \(ClientWiring.configFile(of: client).path.path)."
+        pending = nil
+        return
+      }
       result =
         "Removed \u{2018}\(removal.key)\u{2019}\(scope) from "
         + "\(ClientWiring.configFile(of: client).path.path)."
-        + (backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
+        + (outcome.backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
         + " Restart \(client.displayName) to pick it up."
     } catch {
       result = "Could not write the config: \(error.localizedDescription)"

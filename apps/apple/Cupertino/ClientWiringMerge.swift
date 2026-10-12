@@ -539,6 +539,55 @@ nonisolated enum ClientWiringMerge {
       to: url, backupSuffix: backupSuffix, expecting: expecting, newFileMode: newFileMode)
   }
 
+  /// What a write that may have had nothing to do did.
+  ///
+  /// An enum rather than the `URL?` `write` returns, because that optional
+  /// already means something: nil is "written, and there was nothing before it
+  /// to back up". "Nothing written" is a third answer, and the pane says a
+  /// different sentence for each.
+  enum WriteOutcome: Equatable {
+    /// The merge left the config as it was, so nothing was written.
+    case unchanged
+    /// Written; the backup of the previous contents, if there were any.
+    case written(backup: URL?)
+
+    var backup: URL? {
+      if case .written(let backup) = self { return backup }
+      return nil
+    }
+  }
+
+  /// `write`, unless the merge changed nothing.
+  ///
+  /// `original` is the object the merge was computed from, nil when there was
+  /// no file. A file that exists and already says what the merge says is not
+  /// written — and that is the point, not an optimisation: every write replaces
+  /// `<file>.cupertino-backup`, so a second Configure on a configured client
+  /// replaced the backup of the config as it was before Cupertino with a copy
+  /// of the configured one. The TOML path has always skipped an unchanged
+  /// splice; this is the JSON half of the same promise.
+  ///
+  /// Compared as parsed objects rather than as the bytes `write` would emit. A
+  /// client that rewrites its own config compactly, or in its own key order,
+  /// holds the same config, and re-sorting it under the client for nothing is a
+  /// diff in somebody's dotfiles with no change in it. `NSDictionary` equality
+  /// is what makes that comparison over `Any` honest: nested dictionaries and
+  /// arrays compare by contents, and numbers by value.
+  static func writeMerged(
+    _ merged: [String: Any],
+    over original: [String: Any]?,
+    to url: URL,
+    backupSuffix: String,
+    expecting: Stamp? = nil,
+    newFileMode: Int? = nil
+  ) throws -> WriteOutcome {
+    if let original, NSDictionary(dictionary: merged).isEqual(to: original) { return .unchanged }
+    return .written(
+      backup: try write(
+        merged, to: url, backupSuffix: backupSuffix, expecting: expecting,
+        newFileMode: newFileMode))
+  }
+
   /// The same write, given bytes somebody else produced.
   ///
   /// Split out when the TOML client landed. A spliced `config.toml` is not
