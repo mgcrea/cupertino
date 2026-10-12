@@ -127,15 +127,39 @@ nonisolated enum AccessibilityDriver {
   /// still answered `kAXErrorCannotComplete` at 2.01 s, and a second press sent
   /// straight after waited behind the first and landed too. Telling the caller
   /// to retry was telling it to press twice.
-  static func failure(for err: AXError, doing what: String, wrote: Bool = false) -> Failure? {
+  ///
+  /// `handle` is the handle the call addressed, when it addressed one: a stale
+  /// element is named by it. It used to be named by `what`, which read "Element
+  /// 'Pressing 'e5'' no longer exists". It also tells a busy application from
+  /// one that quit while the call was in flight, which answer the same code —
+  /// see `quitFailure`; `resolveEntry` asks the same before the call.
+  static func failure(
+    for err: AXError, doing what: String, handle: String? = nil, wrote: Bool = false
+  ) -> Failure? {
     switch err {
     case .success, .attributeUnsupported, .noValue, .actionUnsupported: return nil
     case .apiDisabled: return .notTrusted
-    case .invalidUIElement: return .staleHandle(what)
-    case .cannotComplete where wrote: return .unconfirmed(what)
-    case .cannotComplete: return .busy(what)
+    case .invalidUIElement: return gone(what, handle: handle)
+    case .cannotComplete:
+      if let handle, let quit = quitFailure(handle: handle) { return quit }
+      return wrote ? .unconfirmed(what) : .busy(what)
     default: return .refused("\(what) failed (AXError \(err.rawValue)).")
     }
+  }
+
+  private static func gone(_ what: String, handle: String?) -> Failure {
+    guard let handle else {
+      return .refused("\(what) failed: what it addressed no longer exists.")
+    }
+    return .staleHandle(handle)
+  }
+
+  /// `quitFailure` for the process behind a handle, when the store still has it.
+  private static func quitFailure(handle: String) -> Failure? {
+    guard let entry = handles.get(handle) else { return nil }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(entry.element, &pid) == .success else { return nil }
+    return quitFailure(pid: pid, bundleId: entry.bundleId)
   }
 
   // ─── permission ────────────────────────────────────────────────────────────
@@ -1036,10 +1060,18 @@ nonisolated enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
     let element = try resolve(handle, scope: scope)
+    // Read loudly, unlike every read inside the walk. The handle is the one
+    // thing here the caller chose, and the silent read turned a closed window
+    // into an empty tree that looked complete: no error, no `stoppedBy`.
+    var raw: AnyObject?
+    let err = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
+    if let problem = failure(for: err, doing: "Expanding '\(handle)'", handle: handle) {
+      throw problem
+    }
     // The same recovery the walk applies below: expanding the Simulator's tab
     // bar by handle used to answer nothing for the same reason walking into it
     // did.
-    var roots = children(element)
+    var roots = (raw as? [AXUIElement]) ?? []
     var recovered = 0
     if roots.isEmpty {
       let role = string(element, kAXRoleAttribute as String) ?? "AXUnknown"
@@ -1365,7 +1397,9 @@ nonisolated enum AccessibilityDriver {
       }
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
     }
-    if let problem = failure(for: err, doing: "Pressing '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Pressing '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
   }
 
   // ─── rows ──────────────────────────────────────────────────────────────────
@@ -1405,7 +1439,8 @@ nonisolated enum AccessibilityDriver {
         "The application does not let that row be selected through Accessibility. Click its "
           + "point instead.")
     }
-    if let problem = failure(for: err, doing: "Selecting '\(handle)'", wrote: true) {
+    if let problem = failure(for: err, doing: "Selecting '\(handle)'", handle: handle, wrote: true)
+    {
       throw problem
     }
 
@@ -1465,7 +1500,9 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused(
         "That element has no AXShowMenu. Use click with button \"right\" at its point instead.")
     }
-    if let problem = failure(for: err, doing: "Opening the menu of '\(handle)'", wrote: true) {
+    if let problem = failure(
+      for: err, doing: "Opening the menu of '\(handle)'", handle: handle, wrote: true)
+    {
       throw problem
     }
   }
@@ -1723,7 +1760,9 @@ nonisolated enum AccessibilityDriver {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
       element, kAXValueAttribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused("That element's value is not settable.")
     }
@@ -1738,7 +1777,9 @@ nonisolated enum AccessibilityDriver {
 
     let err = AXUIElementSetAttributeValue(
       element, kAXValueAttribute as CFString, value as CFTypeRef)
-    if let problem = failure(for: err, doing: "Setting '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Setting '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
 
     return (string(element, kAXValueAttribute as String) == value, focused)
   }
@@ -1754,7 +1795,9 @@ nonisolated enum AccessibilityDriver {
     let element = try resolve(handle, scope: scope)
     try announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-    if let problem = failure(for: err, doing: "Raising '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Raising '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
   }
 
   /// Move or resize a window, and report what the window actually did.
@@ -1822,14 +1865,18 @@ nonisolated enum AccessibilityDriver {
   ) throws {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused(
         "That window's \(what) is not settable. A window with no resize control reports this, and "
           + "so does a full-screen one.")
     }
     let err = AXUIElementSetAttributeValue(element, attribute as CFString, value)
-    if let problem = failure(for: err, doing: "Setting '\(handle)' \(what)", wrote: true) {
+    if let problem = failure(
+      for: err, doing: "Setting '\(handle)' \(what)", handle: handle, wrote: true)
+    {
       throw problem
     }
   }
@@ -1887,14 +1934,18 @@ nonisolated enum AccessibilityDriver {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
       target, kAXFocusedAttribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused("That element cannot take the keyboard focus.")
     }
 
     let err = AXUIElementSetAttributeValue(
       target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    if let problem = failure(for: err, doing: "Focusing '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Focusing '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
 
     if holdsFocus(target, in: bundleId) { return true }
 
@@ -2329,7 +2380,8 @@ nonisolated enum AccessibilityDriver {
     // Asked of Launch Services directly: `NSWorkspace.runningApplications` is kept
     // current by the main run loop, and from a thread or a process without one it
     // missed a copy started a moment earlier, which then got a second launch.
-    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
+    {
       var already = Launched(launched: false)
       already.runningAt = running.bundleURL?.path
       return already
@@ -2530,7 +2582,9 @@ nonisolated enum AccessibilityDriver {
     var raw: AnyObject?
     let err = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
     if err == .attributeUnsupported || err == .noValue { return nil }
-    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'", handle: handle) {
+      throw problem
+    }
 
     // Only the scalars a caller can act on. An `AXUIElement` answer would need a
     // handle minted for it, and returning one from here would make this a second

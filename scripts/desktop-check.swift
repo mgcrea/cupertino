@@ -472,7 +472,8 @@ struct DesktopCheck {
       "launch by a path whose bundle is not the bundleId given is refused, starting nothing",
       pathMismatchError && pathMismatch.contains("not com.apple.TextEdit")
         && NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit")
-          .allSatisfy { !$0.isActive })
+          .allSatisfy { !$0.isActive }
+    )
     let (pathSelf, pathSelfError) = callText(
       "apple_desktop_launch", ["path": Bundle.main.bundlePath], writes: true, anyApp: true)
     check(
@@ -568,6 +569,45 @@ struct DesktopCheck {
     check(
       "type naming a stale handle is refused rather than typed into whatever is in front",
       staleError && staleText.contains("no longer exists"))
+
+    // A handle whose application has quit. `expand` used to read its children
+    // through the walk's silent read, get nothing, and answer an empty tree
+    // that looked complete — no error, no `stoppedBy`. The application here is
+    // /usr/bin/true, gone before the handle is minted, so expand reads from a
+    // process that no longer exists and nothing on screen is touched.
+    if AccessibilityDriver.isTrusted() {
+      let gone = Process()
+      gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+      try? gone.run()
+      gone.waitUntilExit()
+      let deadHandle = AccessibilityDriver.handles.put(
+        AXUIElementCreateApplication(gone.processIdentifier), bundleId: "com.example.quit")
+      let (expandText, expandError) = callText(
+        "apple_desktop_expand", ["handle": deadHandle], writes: false, anyApp: true)
+      check(
+        "expand on a handle whose application has quit says it quit, not an empty tree",
+        expandError && expandText.contains("quit (pid \(gone.processIdentifier))"))
+    } else {
+      skip(
+        "expand on a handle whose application has quit says it quit, not an empty tree",
+        "Accessibility is not granted, so expand refuses before it reads anything")
+    }
+    // A closed window in a live application answers `invalidUIElement`, which
+    // expand now reads loudly. The failure names the handle: it used to name
+    // the description, "Element 'Pressing 'e5'' no longer exists".
+    let closed =
+      AccessibilityDriver.failure(
+        for: .invalidUIElement, doing: "Expanding 'e5'", handle: "e5")?.errorDescription ?? ""
+    check(
+      "an element that is gone is named by its handle, not by what was being done",
+      closed.contains("Element 'e5' no longer exists") && !closed.contains("'Expanding"))
+    let closedUnhandled =
+      AccessibilityDriver.failure(
+        for: .invalidUIElement, doing: "Pressing 'File > Close'")?.errorDescription ?? ""
+    check(
+      "and one reached by a menu path, with no handle, says what failed without a handle",
+      closedUnhandled.contains("Pressing 'File > Close' failed")
+        && !closedUnhandled.contains("Take a fresh ui_tree"))
     let (_, absentError) = callText(
       "apple_desktop_key", ["key": "return", "bundleId": "com.example.absent"], writes: true,
       anyApp: true)
