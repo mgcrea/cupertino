@@ -4,7 +4,7 @@ import {
   columnsOf,
   CORE_DATA_EPOCH_OFFSET,
   fingerprintSchema,
-  escapeLike,
+  likeContains,
   openReadOnly,
   SchemaDriftError,
   type Logger,
@@ -367,17 +367,17 @@ export class CalendarStore {
   searchItems(q: SearchQuery): EventRow[] {
     const c = this.caps.itemColumns;
     const cal = this.#calendarFilter(q.calendarUuids);
-    const needle = `%${escapeLike(q.text)}%`;
     const fields = ["summary"];
     if (q.scope === "full") {
       if (c.has("description")) fields.push("description");
       if (this.caps.hasLocation) fields.push("__location");
     }
-    const match = fields
-      .map((f) =>
-        f === "__location" ? `loc."title" LIKE ? ESCAPE '\\'` : `ci."${f}" LIKE ? ESCAPE '\\'`,
-      )
-      .join(" OR ");
+    // Folded beyond ASCII when the query needs it: SQLite's LIKE alone missed
+    // "Été" for "été".
+    const likes = fields.map((f) =>
+      likeContains(f === "__location" ? `loc."title"` : `ci."${f}"`, q.text),
+    );
+    const match = likes.map((l) => l.sql).join(" OR ");
     const sql = `
       SELECT ci."start_date" AS startApple,
              ${c.has("end_date") ? `ci."end_date"` : `NULL`} AS endApple,
@@ -391,7 +391,7 @@ export class CalendarStore {
          ${cal.sql}
        ORDER BY ci."start_date" DESC
        LIMIT ?`;
-    const params = [...fields.map(() => needle), q.toApple, q.fromApple, ...cal.params, q.limit];
+    const params = [...likes.map((l) => l.param), q.toApple, q.fromApple, ...cal.params, q.limit];
     return this.#rowsFrom(sql, params, "item");
   }
 

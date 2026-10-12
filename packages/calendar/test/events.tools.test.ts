@@ -125,6 +125,21 @@ beforeAll(() => {
     3,
     2,
   );
+  // A title with an accented capital, well outside the listing windows above.
+  item.run(
+    6,
+    "E-ACCENT",
+    "Été indien",
+    null,
+    apple("2026-10-01T09:00:00Z"),
+    apple("2026-10-01T10:00:00Z"),
+    0,
+    "Europe/Paris",
+    1,
+    0,
+    1,
+    2,
+  );
   const occ = db.prepare(
     `INSERT INTO OccurrenceCache (event_id, calendar_id, store_id, day, occurrence_date,
        occurrence_start_date, occurrence_end_date) VALUES (2, 1, 1, ?, ?, ?, ?)`,
@@ -339,6 +354,15 @@ describe("apple_calendar_search_events", () => {
     const p = (await call("apple_calendar_search_events", { query: "standup" })).json as Page;
     expect(p.events).toHaveLength(1);
     expect(p.expansion).toBe("unavailable");
+  });
+
+  /**
+   * The query is "matched case-insensitively", but SQLite's LIKE folds ASCII
+   * only, so "été" missed "Été" while "design" found "Design".
+   */
+  it("matches case-insensitively beyond ASCII", async () => {
+    const p = (await call("apple_calendar_search_events", { query: "été" })).json as Page;
+    expect(p.events.map((e) => e.summary)).toEqual(["Été indien"]);
   });
 });
 
