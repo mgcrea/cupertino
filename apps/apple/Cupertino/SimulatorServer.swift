@@ -689,14 +689,14 @@ nonisolated enum SimulatorServer {
     "iOS points, top-left of the device screen — the space ios_simulator_tap uses"
 
   private static func body(_ tree: AccessibilityDriver.Tree, target: Target) -> [String: Any] {
-    var out = DesktopServer.treeBody(
-      tree, render: render(target.screen!.frame),
-      coordinateSpace: coordinateSpace)
+    // Handed to treeBody rather than added to its answer, so the byte cap
+    // measures them along with the elements.
+    var extra: [String: Any] = ["screen": target.screen!.frame.json]
     if let device = target.device {
-      out["device"] = ["udid": device.udid, "name": device.name, "runtime": device.runtimeLabel]
+      extra["device"] = ["udid": device.udid, "name": device.name, "runtime": device.runtimeLabel]
     }
-    out["screen"] = target.screen!.frame.json
-    return out
+    return DesktopServer.treeBody(
+      tree, render: render(target.screen!.frame), coordinateSpace: coordinateSpace, extra: extra)
   }
 
   // ─── calls ─────────────────────────────────────────────────────────────────

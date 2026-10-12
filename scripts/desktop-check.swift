@@ -1266,6 +1266,32 @@ struct DesktopCheck {
       "a tree read while a menu is open says so, and how to close it",
       DesktopServer.treeBody(withMenu)["openMenus"] as? Int == 1
         && (DesktopServer.treeBody(withMenu)["menuNote"] as? String)?.contains("escape") == true)
+
+    // The byte cap holds for the text that is SENT. Each element used to be
+    // measured on its own, at the top level, and then emitted two levels deep
+    // inside `"elements": [ ]`, where every line carries four more spaces: a
+    // 40,000 cap emitted 52,130 bytes. Synthetic elements, so nothing is walked.
+    let many = (0..<2000).map { i -> AccessibilityDriver.Element in
+      let x = Double(100 + (i * 37) % 1400) + 0.5
+      let y = Double(80 + (i * 53) % 800) + 0.25
+      return AccessibilityDriver.Element(
+        handle: "e\(10000 + i)", role: i % 3 == 0 ? "AXButton" : "AXStaticText",
+        subrole: i % 5 == 0 ? "AXCloseButton" : nil,
+        identifier: i % 2 == 0 ? "toolbar.item.\(i)" : nil, name: "Message from Somebody \(i)",
+        value: i % 4 == 0 ? "Value \(i)" : nil, rect: [x, y, 120.5, 22],
+        point: [x + 60.25, y + 11], pressable: i % 3 == 0, depth: 3 + i % 6)
+    }
+    let capped = DesktopServer.treeBody(
+      AccessibilityDriver.Tree(
+        elements: many, visited: many.count, seconds: 0.5, stoppedBy: nil, recovered: 0),
+      extra: ["screen": ["note": String(repeating: "x", count: 2000)]])
+    let cappedBytes = InProcessRPC.jsonText(capped).utf8.count
+    check(
+      "a capped tree's emitted text, extra fields included, is within the cap",
+      cappedBytes <= DesktopServer.maxBytes && capped["screen"] != nil)
+    check(
+      "and says it was cut, having used most of the room rather than a fraction",
+      capped["truncated"] != nil && cappedBytes >= DesktopServer.maxBytes - 2000)
     // Non-destructive and idempotent, unlike click: moving the pointer twice to
     // the same place leaves the same state, and it presses nothing.
     let hoverAnnotations =

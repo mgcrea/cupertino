@@ -786,7 +786,7 @@ nonisolated enum DesktopServer {
   /// line — a 60,000-byte compact budget produced **129,420 characters** on the
   /// wire, 2.2x over. Budgeting against a serialisation nobody sends is a cap
   /// that does not cap.
-  private static let maxBytes = 40_000
+  static let maxBytes = 40_000
 
   /// `matched` counts what the walk kept, which for `find_elements` is what
   /// matched rather than everything visited: the filter runs inside the walk.
@@ -797,67 +797,91 @@ nonisolated enum DesktopServer {
   /// `render` and `coordinateSpace` exist for the simulator surface, which
   /// answers the same walk in iOS points: the byte cap and the `matched` /
   /// `returned` / `truncated` contract are one implementation here rather
-  /// than a copy that would drift.
+  /// than a copy that would drift. `extra` is the rest of that surface's
+  /// answer — the device and its screen — passed in rather than added after,
+  /// so it is inside the text the cap measures.
   static func treeBody(
     _ tree: AccessibilityDriver.Tree,
     render: ((AccessibilityDriver.Element) -> [String: Any])? = nil,
-    coordinateSpace: String = "screen points, top-left origin"
+    coordinateSpace: String = "screen points, top-left origin",
+    extra: [String: Any] = [:]
   ) -> [String: Any] {
     let answering = tree.elements
+
+    func compose(_ kept: [[String: Any]]) -> [String: Any] {
+      var body: [String: Any] = [
+        "elements": kept,
+        "returned": kept.count,
+        // What MATCHED, so a truncated answer is obviously partial rather than
+        // looking like a small window.
+        "matched": answering.count,
+        "visited": tree.visited,
+        "seconds": (tree.seconds * 1000).rounded() / 1000,
+        "coordinateSpace": coordinateSpace,
+      ]
+      // Present only when it happened: elements that arrived by hit-testing a
+      // container whose children link was empty (the Simulator's tab bar). A
+      // caller who sees it knows those nodes exist because they are on screen,
+      // and that a scrolled-away sibling would not have been found the same way.
+      if tree.recovered > 0 { body["recovered"] = tree.recovered }
+      // Present only when one is: an open menu is modal, so a caller that reads
+      // past it and presses something in the window underneath is pressing into
+      // a window that will not take it until the menu closes.
+      if tree.menus > 0 {
+        body["openMenus"] = tree.menus
+        body["menuNote"] =
+          "A menu is open and its items come first. Press one, or key escape with the bundleId "
+          + "to close it."
+      }
+
+      // Named rather than implied. A truncated answer that does not say so is
+      // worse than a slow one, and which bound stopped it tells the caller what
+      // to raise — or, for this one, that raising a bound is not the answer.
+      var stops: [String] = []
+      if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
+      if kept.count < answering.count {
+        stops.append("bytes(\(maxBytes))")
+        body["truncated"] =
+          "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
+          + "with find_elements, or walk down with expand — raising maxNodes will not return more."
+      }
+      if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
+      body.merge(extra) { _, new in new }
+      return body
+    }
+
+    // Everything but the elements, at its largest — truncated, which is the
+    // case where the room runs out — is room the elements cannot have.
+    var room = maxBytes - InProcessRPC.jsonText(compose([])).utf8.count
     var kept: [[String: Any]] = []
-    var bytes = 0
     for element in answering {
       let json = render?(element) ?? element.json
       // Measured rather than estimated: an element with a long name and a rect
       // is several times the size of a bare button, so a per-element budget
       // would be wrong in both directions. Serialised with the SAME options
-      // `InProcessRPC.jsonText` will use, so the number counted is the number
-      // sent.
-      let size =
-        (try? JSONSerialization.data(
-          withJSONObject: json, options: [.prettyPrinted, .sortedKeys]))?.count ?? 400
-      if bytes + size > maxBytes { break }
-      bytes += size
+      // `InProcessRPC.jsonText` will use — but on its own, at the top level,
+      // while it is emitted two levels deep inside `"elements": [ ]`, where
+      // every line carries four more spaces and a `,\n` follows it. Counting
+      // the bare serialisation let a 40,000 cap emit 52,130 bytes.
+      guard
+        let data = try? JSONSerialization.data(
+          withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+      else { break }
+      let lines = data.reduce(1) { $1 == UInt8(ascii: "\n") ? $0 + 1 : $0 }
+      let size = data.count + 4 * lines + 2
+      if size > room { break }
+      room -= size
       kept.append(json)
     }
 
-    var body: [String: Any] = [
-      "elements": kept,
-      "returned": kept.count,
-      // What MATCHED, so a truncated answer is obviously partial rather than
-      // looking like a small window.
-      "matched": answering.count,
-      "visited": tree.visited,
-      "seconds": (tree.seconds * 1000).rounded() / 1000,
-      "coordinateSpace": coordinateSpace,
-    ]
-    // Present only when it happened: elements that arrived by hit-testing a
-    // container whose children link was empty (the Simulator's tab bar). A
-    // caller who sees it knows those nodes exist because they are on screen,
-    // and that a scrolled-away sibling would not have been found the same way.
-    if tree.recovered > 0 { body["recovered"] = tree.recovered }
-    // Present only when one is: an open menu is modal, so a caller that reads
-    // past it and presses something in the window underneath is pressing into
-    // a window that will not take it until the menu closes.
-    if tree.menus > 0 {
-      body["openMenus"] = tree.menus
-      body["menuNote"] =
-        "A menu is open and its items come first. Press one, or key escape with the bundleId to "
-        + "close it."
+    // The estimate is close, not exact — `returned` and the truncation note
+    // change length with the count — so the text actually sent has the last
+    // word. That is one more serialisation when the estimate held.
+    var body = compose(kept)
+    while !kept.isEmpty, InProcessRPC.jsonText(body).utf8.count > maxBytes {
+      kept.removeLast()
+      body = compose(kept)
     }
-
-    // Named rather than implied. A truncated answer that does not say so is
-    // worse than a slow one, and which bound stopped it tells the caller what to
-    // raise — or, for this one, that raising a bound is not the answer.
-    var stops: [String] = []
-    if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
-    if kept.count < answering.count {
-      stops.append("bytes(\(maxBytes))")
-      body["truncated"] =
-        "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
-        + "with find_elements, or walk down with expand — raising maxNodes will not return more."
-    }
-    if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
     return body
   }
 
@@ -996,14 +1020,17 @@ nonisolated enum DesktopServer {
           bundleId: bundleId, windowIndex: args["window"] as? Int, matcher: matcher, state: state,
           timeout: Double(timeoutMs) / 1000, bounds: bounds(args), scope: scope,
           cancelled: { isCancelled })
-        var body = treeBody(outcome.tree)
-        body["state"] = state.rawValue
-        body["held"] = outcome.satisfied
-        body["walks"] = outcome.walks
-        body["waitedSeconds"] = (outcome.seconds * 100).rounded() / 100
-        if outcome.satisfied { return ok(id, body) }
-        if let lastError = outcome.lastError { body["lastError"] = lastError }
-        body["note"] =
+        // Handed to treeBody rather than added to its answer, so the byte cap
+        // measures them along with the elements.
+        var extra: [String: Any] = [
+          "state": state.rawValue,
+          "held": outcome.satisfied,
+          "walks": outcome.walks,
+          "waitedSeconds": (outcome.seconds * 100).rounded() / 100,
+        ]
+        if outcome.satisfied { return ok(id, treeBody(outcome.tree, extra: extra)) }
+        if let lastError = outcome.lastError { extra["lastError"] = lastError }
+        extra["note"] =
           outcome.cancelled
           ? "Called off before it held."
           : state == .present
@@ -1012,7 +1039,7 @@ nonisolated enum DesktopServer {
               ? "The last read found nothing but was cut short by its bounds, so absence is not "
                 + "shown. Narrow it with 'window', or raise budgetSeconds or maxNodes."
               : "Still there after \(timeoutMs) ms: 'elements' is what the last read found."
-        return failure(id, body: body)
+        return failure(id, body: treeBody(outcome.tree, extra: extra))
 
       case "apple_desktop_user_activity":
         // Not gated on `isTrusted`: this is CoreGraphics rather than
