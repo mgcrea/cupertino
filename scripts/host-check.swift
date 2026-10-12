@@ -548,6 +548,55 @@ struct HostCheck {
       check("a switched-off surface closes the connection (could not connect)", false)
     }
 
+    // ─── the licence decision ───────────────────────────────────────────────
+    //
+    // Pure, so every combination is pinned without a key or a trial on this
+    // machine. The case it exists for is a LEND: a server the host itself
+    // spawned borrowing Desktop for its own app. The Chat pane's servers are
+    // spawned under the `self` exemption, and their lends used to be sent
+    // through the gate the pane is exempt from — so with an expired trial,
+    // Chat → Mail's reply and forward, and Chat → Maps' writes, failed with a
+    // sentence about Accessibility or a missing key.
+
+    let refused = Entitlement.refused("no licence key")
+    let licensed = Entitlement.licensed(
+      License(id: "check", email: "check@example.com", major: 1, issuedAt: "2026-01-01"))
+    check(
+      "the app talking to itself is admitted without a licence",
+      ServerHost.licenceDecision(
+        isSelf: true, lent: false, borrowerOnTrial: false, entitlement: refused)
+        == .admit(onTrial: false))
+    check(
+      "a lend is admitted without a licence — its borrower already passed the gate",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: true, borrowerOnTrial: false, entitlement: refused)
+        == .admit(onTrial: false))
+    check(
+      "a lend from a trial-admitted borrower is on the trial too, so the reaper closes it",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: true, borrowerOnTrial: true, entitlement: .trial)
+        == .admit(onTrial: true))
+    check(
+      "a lend from a borrower the app spawned for itself is not, during a trial",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: true, borrowerOnTrial: false, entitlement: .trial)
+        == .admit(onTrial: false))
+    check(
+      "a client's own connection without a licence is refused with the reason",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: false, borrowerOnTrial: false, entitlement: refused)
+        == .refuse("no licence key"))
+    check(
+      "a client's own connection on a trial is admitted on the trial",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: false, borrowerOnTrial: false, entitlement: .trial)
+        == .admit(onTrial: true))
+    check(
+      "a client's own connection with a key is admitted outright",
+      ServerHost.licenceDecision(
+        isSelf: false, lent: false, borrowerOnTrial: false, entitlement: licensed)
+        == .admit(onTrial: false))
+
     // ─── a second copy ──────────────────────────────────────────────────────
     //
     // The lock, and the guarded unlink in `stop()` that goes with it. A second

@@ -625,6 +625,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     //      is not widened by `allowAnyApp`. A capability has no bundleID, so it
     //      cannot borrow: there is no app it would be borrowing FOR.
     var lentTo: Surface?
+    /// The borrower's pid, once it has been checked against `serverPIDs`.
+    var lentPeer: Int32?
     /// Which client's config this connection came from, when it says.
     ///
     /// A claim, and deliberately an unverified one — unlike `for=` below, which
@@ -674,6 +676,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
       lentTo = borrower
+      lentPeer = peer
     }
 
     // ─── the app talking to itself ───────────────────────────────────────────
@@ -780,15 +783,22 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // pane's server, which is not in `trialPIDs`, went on reading. A trial still
     // ends the writes it admitted: that server is in `trialPIDs`, and
     // `endTrialSessions` signals it, which hangs up its store connection.
+    //
+    // A lend is the other connection that does not answer to the gate, and
+    // `licenceDecision` says why. The peer is the borrower's own server, read
+    // from `serverPIDs` above; its trial status is read from `trialPIDs` by the
+    // same pid, so a lend made for a trial-admitted server is closed with it.
     var onTrial = false
-    if !isSelf && storeFor == nil {
-      switch Entitlement.current {
-      case .licensed:
-        break
-      case .trial:
-        onTrial = true
-        hostLog(surface.id, .info, "trial: \(Trial.remainingText)")
-      case .refused(let reason):
+    if storeFor == nil {
+      let borrowerOnTrial = lentPeer.map { peer in trialPIDs.withLock { $0.contains(peer) } }
+      switch Self.licenceDecision(
+        isSelf: isSelf, lent: lentTo != nil, borrowerOnTrial: borrowerOnTrial ?? false,
+        entitlement: Entitlement.current)
+      {
+      case .admit(let trial):
+        onTrial = trial
+        if trial { hostLog(surface.id, .info, "trial: \(Trial.remainingText)") }
+      case .refuse(let reason):
         hostLog(surface.id, .error, "refused: \(reason)")
         reply(
           client,
@@ -831,6 +841,47 @@ nonisolated final class ServerHost: @unchecked Sendable {
     run(
       surface: surface, binaries: binaries, client: client, onTrial: onTrial,
       isSelf: isSelf, wiredClient: wiredClient)
+  }
+
+  /// What the licence gate answers for one connection.
+  enum LicenceDecision: Equatable {
+    /// Admitted; `onTrial` files it for `endTrialSessions`.
+    case admit(onTrial: Bool)
+    /// Refused, with the reason the bridge relays.
+    case refuse(String)
+  }
+
+  /// The licence gate's decision, apart from the socket it is replied on, so
+  /// `host-check` can pin every case of it.
+  ///
+  /// Two connections do not answer to the gate, and both for the same reason:
+  /// they are not a client reaching a surface through the relay.
+  ///
+  ///   * `self` — the Chat pane. `serve` gives the argument in full.
+  ///   * A lend (`for=<surface>`). The peer pid has already been matched
+  ///     against `serverPIDs`, which only `run` fills in, and `run` is
+  ///     reached only past this gate or through the `self` exemption. So the
+  ///     borrower has already been admitted, and asking again answers a
+  ///     different question: whether the app may lend a server it spawned for
+  ///     ITSELF. It used to ask anyway, so with an expired trial a Chat → Mail
+  ///     reply or forward, or a Chat → Maps write, failed on the lend — and
+  ///     reached the model as a missing Accessibility grant or a missing key,
+  ///     neither of which was true.
+  ///
+  /// A lend's trial status is its borrower's, not the Mac's. One made for a
+  /// server admitted on the trial must close when that server is reaped; one
+  /// made for a server the app spawned for itself must not, or the trial
+  /// running out would reach into the pane it exempts.
+  static func licenceDecision(
+    isSelf: Bool, lent: Bool, borrowerOnTrial: Bool, entitlement: Entitlement
+  ) -> LicenceDecision {
+    if isSelf { return .admit(onTrial: false) }
+    if lent { return .admit(onTrial: borrowerOnTrial) }
+    switch entitlement {
+    case .licensed: return .admit(onTrial: false)
+    case .trial: return .admit(onTrial: true)
+    case .refused(let reason): return .refuse(reason)
+    }
   }
 
   /// Close every server started on the trial, when the window closes.
