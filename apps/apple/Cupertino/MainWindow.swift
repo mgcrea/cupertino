@@ -850,13 +850,18 @@ extension MainView.Pane: RawRepresentable {
 /// It is also the sentence that keeps the claim in docs/licensing.md honest.
 /// Cupertino is sold partly on making no network connections, so the moment it
 /// can make one, the person who bought it on that basis is the one who decides.
+///
+/// Reads the answer from `UpdateController` rather than a copy of its own. The
+/// main window is never released (`HostedWindow` keeps it), so a copy seeded
+/// once went on showing the card after the question was answered in Settings —
+/// and a click on it then reversed that answer.
 struct UpdateConsentCard: View {
-  @State private var answered = UserDefaults.standard.bool(forKey: UpdateController.choiceMade)
+  private var updates = UpdateController.shared
 
   var body: some View {
     // Never in a capture: a screenshot is of the product, not of whether this
     // laptop has answered a question yet.
-    if !answered && !DemoSeed.isEnabled {
+    if !updates.choiceMade && !DemoSeed.isEnabled {
       VStack(alignment: .leading, spacing: 8) {
         Label("Should Cupertino check for updates?", systemImage: "arrow.down.circle")
           .font(.subheadline).bold()
@@ -872,10 +877,10 @@ struct UpdateConsentCard: View {
         .fixedSize(horizontal: false, vertical: true)
 
         HStack(spacing: 8) {
-          Button("Check automatically") { answer(true) }
+          Button("Check automatically") { updates.answer(true) }
             .controlSize(.small)
             .buttonStyle(.borderedProminent)
-          Button("Keep updates off") { answer(false) }
+          Button("Keep updates off") { updates.answer(false) }
             .controlSize(.small)
           Text("You can change this in Settings.")
             .font(.caption)
@@ -886,12 +891,6 @@ struct UpdateConsentCard: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(.quaternary.opacity(0.4))
     }
-  }
-
-  private func answer(_ automatic: Bool) {
-    UpdateController.shared.setAutomatic(automatic)
-    UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
-    answered = true
   }
 }
 

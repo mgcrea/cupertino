@@ -914,7 +914,6 @@ enum StatusStyle {
 /// caption says what the check sends in plain terms rather than leaving it to
 /// the privacy policy. See docs/licensing.md.
 struct UpdatesPane: View {
-  @State private var automatic = UpdateController.shared.automatic
   private var updates = UpdateController.shared
 
   var body: some View {
@@ -939,14 +938,13 @@ struct UpdatesPane: View {
       }
 
       Section {
-        Toggle(isOn: $automatic) {
+        // Bound to the controller, not to a copy seeded when the pane was
+        // built: Settings lives for the session, and the consent card can
+        // answer the same question while it does.
+        Toggle(
+          isOn: Binding(get: { updates.automatic }, set: { updates.answer($0) })
+        ) {
           Text("Check for updates automatically")
-        }
-        .onChange(of: automatic) { _, on in
-          updates.setAutomatic(on)
-          // Answering here is answering the consent card too. Leaving it armed
-          // would ask again about a decision already made in this pane.
-          UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
         }
       } footer: {
         Text(
