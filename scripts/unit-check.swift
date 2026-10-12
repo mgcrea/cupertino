@@ -744,6 +744,37 @@ struct UnitCheck {
     check("a row that does not match at all is not", !order.matchIsHidden("absent", preview: 160))
     check("an empty query flags nothing", !buried.matchIsHidden("", preview: 160))
 
+    print("\nLog store: what Follow can key on at the cap")
+
+    // The Log's Follow scrolled on `entries.count`, and `add` trims on every
+    // append once the store is full — so at the cap the count never moves
+    // again, and Follow stopped following. With payloads the byte budget is
+    // reached first, at a few hundred rows. The last entry's id is what still
+    // changes with every append, in both cases; this pins that contract, which
+    // is the one `MainWindow` now keys on.
+    let log = LogStore()
+    for n in 0..<1100 { log.append(surface: "mail", level: .info, "line \(n)") }
+    let fullCount = log.entries.count
+    let lastBefore = log.entries.last?.id
+    log.append(surface: "mail", level: .info, "one more")
+    check("the entry cap holds the count still", log.entries.count == fullCount)
+    check("while the last entry's id changes", log.entries.last?.id != lastBefore)
+
+    log.clear()
+    let payload = String(repeating: "x", count: 8 * 1024)
+    for _ in 0..<400 {
+      log.appendCall(
+        surface: "mail", text: "apple_mail_get_message", arguments: payload, id: UUID())
+    }
+    let budgetCount = log.entries.count
+    let budgetLast = log.entries.last?.id
+    log.appendCall(surface: "mail", text: "apple_mail_get_message", arguments: payload, id: UUID())
+    check(
+      "the byte budget is reached well before the entry cap (\(budgetCount) rows)",
+      budgetCount < 1000)
+    check("and holds the count still too", log.entries.count == budgetCount)
+    check("while the last entry's id changes", log.entries.last?.id != budgetLast)
+
     print("\nVisible tools: which Node calls light a notice")
 
     // The warn tier is the orange card that asks for hands off the keyboard, so

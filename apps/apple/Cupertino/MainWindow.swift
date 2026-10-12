@@ -547,7 +547,12 @@ struct MainView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .textSelection(.enabled)
-      .onChange(of: LogStore.shared.entries.count) {
+      // The last entry's id, not the count. Once the store is full every append
+      // trims one, so the count holds still — at 1,000 rows, or at a few hundred
+      // when calls carry payloads and the byte budget trims first — and Follow
+      // stopped following exactly when the log was busiest. `make unit` pins
+      // the store's half of this.
+      .onChange(of: LogStore.shared.entries.last?.id) {
         guard following else { return }
         withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(tailAnchor, anchor: .bottom) }
       }
