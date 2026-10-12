@@ -400,3 +400,114 @@ describe("no store", () => {
     expect(out.text).not.toMatch(/\[\]/);
   });
 });
+
+/**
+ * A window crowded with events the status filter hides.
+ *
+ * Each SQL leg is capped (`limit * 4 + 50`, so 250 at the default 50) and the
+ * declined/cancelled filter runs in JS afterwards. Three hundred declined
+ * invites fill the leg before the five real meetings are reached, so the list
+ * came back EMPTY with `hasMore: false`: a busy week reported as a free one.
+ */
+describe("a window crowded with hidden events", () => {
+  let crowdedPath: string;
+
+  beforeAll(() => {
+    crowdedPath = join(mkdtempSync(join(tmpdir(), "mcp-apple-calendar-")), "Calendar.sqlitedb");
+    const db = new DatabaseSync(crowdedPath);
+    db.exec(readFileSync(FIXTURE, "utf8"));
+    db.exec(`INSERT INTO Store (ROWID, name, type) VALUES (1, 'iCloud', 0)`);
+    db.exec(
+      `INSERT INTO Calendar (ROWID, store_id, title, UUID, color, type, display_order, subcal_url)
+       VALUES (1, 1, 'Work', 'CAL-1', '#f00', 'CalDAV', 0, NULL)`,
+    );
+    const item = db.prepare(
+      `INSERT INTO CalendarItem
+         (ROWID, UUID, summary, description, start_date, end_date, all_day, start_tz,
+          calendar_id, entity_type, has_recurrences, status, invitation_status)
+       VALUES (?,?,?,?,?,?,?,?,?,2,0,1,?)`,
+    );
+    let id = 1;
+    // For list_events: 300 declined on the 22nd, one a minute, then the real
+    // meetings on the 25th, after every one of them.
+    const early = apple("2026-08-22T06:00:00Z");
+    for (let i = 0; i < 300; i++) {
+      const at = early + i * 60;
+      item.run(id, `DECL-${id++}`, `Skipped sync ${i}`, null, at, at + 30, 0, "Europe/Paris", 1, 3);
+    }
+    for (let i = 0; i < 5; i++) {
+      const at = apple("2026-08-25T09:00:00Z") + i * 3600;
+      item.run(
+        id,
+        `KEEP-${id++}`,
+        `Real meeting ${i}`,
+        null,
+        at,
+        at + 1800,
+        0,
+        "Europe/Paris",
+        1,
+        2,
+      );
+    }
+    // For search_events, which runs newest first: 300 declined meetings in
+    // September, LATER than the five real ones it should find.
+    const late = apple("2026-09-15T06:00:00Z");
+    for (let i = 0; i < 300; i++) {
+      const at = late + i * 60;
+      item.run(
+        id,
+        `DECL-${id++}`,
+        `Declined meeting ${i}`,
+        null,
+        at,
+        at + 30,
+        0,
+        "Europe/Paris",
+        1,
+        3,
+      );
+    }
+    db.close();
+  });
+
+  type Paged = Page & { nextFrom?: string; nextTo?: string };
+
+  it("lists past a full leg of declined events, and says where to resume", async () => {
+    const env = { APPLE_CALENDAR_STORE: crowdedPath };
+    const window = { from: "2026-08-22", to: "2026-08-28" };
+    const first = (await call("apple_calendar_list_events", window, env)).json as Paged;
+    expect(first.hasMore).toBe(true);
+    expect(first.nextFrom).toBeDefined();
+
+    const seen = first.events.map((e) => e.summary);
+    let page = first;
+    for (let n = 0; page.hasMore && n < 5; n++) {
+      page = (await call("apple_calendar_list_events", { ...window, from: page.nextFrom }, env))
+        .json as Paged;
+      seen.push(...page.events.map((e) => e.summary));
+    }
+    expect(page.hasMore).toBe(false);
+    expect(seen.filter((s) => s.startsWith("Real meeting"))).toHaveLength(5);
+    expect(seen.some((s) => s.startsWith("Skipped sync"))).toBe(false);
+  });
+
+  it("searches past a full leg of declined events, and says where to resume", async () => {
+    const env = { APPLE_CALENDAR_STORE: crowdedPath };
+    const first = (await call("apple_calendar_search_events", { query: "meeting" }, env))
+      .json as Paged;
+    expect(first.hasMore).toBe(true);
+    expect(first.nextTo).toBeDefined();
+
+    const seen = first.events.map((e) => e.summary);
+    let page = first;
+    for (let n = 0; page.hasMore && n < 5; n++) {
+      page = (
+        await call("apple_calendar_search_events", { query: "meeting", to: page.nextTo }, env)
+      ).json as Paged;
+      seen.push(...page.events.map((e) => e.summary));
+    }
+    expect(page.hasMore).toBe(false);
+    expect(seen.filter((s) => s.startsWith("Real meeting"))).toHaveLength(5);
+  });
+});
