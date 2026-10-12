@@ -619,6 +619,9 @@ nonisolated enum AccessibilityDriver {
     /// `orphans(of:)`. Emitted as `via: "hit-test"` only when true, the way
     /// `pressable` is, so a tree that told the truth looks as it always did.
     var recovered = false
+    /// Carries `AXShowMenu`, so `show_menu` opens its context menu. Emitted
+    /// only when true, as `pressable` is.
+    var showsMenu = false
 
     var json: [String: Any] {
       var out: [String: Any] = ["handle": handle, "role": role, "depth": depth]
@@ -629,6 +632,7 @@ nonisolated enum AccessibilityDriver {
       if let rect { out["rect"] = rect }
       if let point { out["point"] = point }
       if pressable { out["pressable"] = true }
+      if showsMenu { out["showsMenu"] = true }
       if recovered { out["via"] = "hit-test" }
       return out
     }
@@ -644,6 +648,9 @@ nonisolated enum AccessibilityDriver {
     /// How many nodes arrived by hit-testing a container whose children link
     /// was empty — see `orphans(of:)`. Zero on a tree that told the truth.
     let recovered: Int
+    /// How many open menus the walk started from — see `openMenus`. Their
+    /// items come first in `elements`, ahead of every window.
+    var menus = 0
   }
 
   struct Bounds {
@@ -681,8 +688,19 @@ nonisolated enum AccessibilityDriver {
     } else {
       chosen = all
     }
-    let roots = chosen.compactMap { handles.get($0.handle)?.element }
-    return walk(roots: roots, detail: detail, bounds: bounds, bundleId: bundleId, match: match)
+    // An open menu leads, whichever window was asked for. It is modal, so it is
+    // what the next press has to deal with, and it walks first so the byte cap
+    // can only cut a window short, never the menu. Skipped where the walk
+    // reaches it again from below, or every item would carry two handles.
+    let running = try app(forBundleId: bundleId)
+    let menus = openMenus(pid: pid(of: running), app: element(for: pid(of: running)))
+    let roots = menus + chosen.compactMap { handles.get($0.handle)?.element }
+    let tree = walk(
+      roots: roots, detail: detail, bounds: bounds, bundleId: bundleId, match: match,
+      skipping: menus)
+    var answer = tree
+    answer.menus = menus.count
+    return answer
   }
 
   /// Children of one already-resolved element — the lazy half.
@@ -722,8 +740,10 @@ nonisolated enum AccessibilityDriver {
 
   private static func walk(
     roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String,
-    match: ((Candidate) -> Bool)? = nil, rootsRecovered: Bool = false
+    match: ((Candidate) -> Bool)? = nil, rootsRecovered: Bool = false,
+    skipping skipped: [AXUIElement] = []
   ) -> Tree {
+    let skip = Set(skipped.map(ElementKey.init))
     var out: [Element] = []
     var visited = 0
     var stoppedBy: String?
@@ -740,6 +760,7 @@ nonisolated enum AccessibilityDriver {
 
     func visit(_ el: AXUIElement, depth: Int, recovered viaHitTest: Bool = false) {
       if stoppedBy != nil { return }
+      if depth > 0, !skip.isEmpty, skip.contains(ElementKey(element: el)) { return }
       if visited >= bounds.nodes {
         stoppedBy = "nodes(\(bounds.nodes))"
         return
@@ -762,10 +783,15 @@ nonisolated enum AccessibilityDriver {
       // filter misses 86% of Maps' pressable elements and 80% of Calendar's,
       // because Catalyst and SwiftUI report controls as AXGenericElement,
       // AXStaticText and AXImage at least as often as AXButton.
-      let pressable = actions(el).contains(kAXPressAction as String)
+      let offered = actions(el)
+      let pressable = offered.contains(kAXPressAction as String)
+      let showsMenu = offered.contains(kAXShowMenuAction as String)
 
       var keep: Bool
       switch detail {
+      // Not widened to `showsMenu`: every element the Simulator bridges from
+      // iOS offers AXShowMenu, containers included (docs/simulator.md's tab
+      // bar), so the default tree would fill with groups nobody can press.
       case .interactive: keep = pressable
       case .labelled: keep = identifier != nil || title != nil || description != nil
       case .all: keep = true
@@ -792,7 +818,8 @@ nonisolated enum AccessibilityDriver {
             point: rect.map { [$0[0] + $0[2] / 2, $0[1] + $0[3] / 2] },
             pressable: pressable,
             depth: depth,
-            recovered: viaHitTest))
+            recovered: viaHitTest,
+            showsMenu: showsMenu))
       }
 
       if depth >= bounds.depth {
@@ -844,6 +871,82 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
     }
     if let problem = failure(for: err, doing: "Pressing '\(handle)'") { throw problem }
+  }
+
+  // ─── context menus ─────────────────────────────────────────────────────────
+
+  /// Open an element's context menu by its handle — a right-click without the
+  /// pointer, through `AXShowMenu`.
+  ///
+  /// Measured 2026-10-12 on TextEdit's text area: the action returns in under a
+  /// millisecond rather than blocking for the menu's tracking loop, and the
+  /// menu is then an `AXMenu` child of the element, its items pressable. The
+  /// same menu `click` with the right button opens.
+  static func showMenu(handle: String, scope: Scope) throws {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let element = try resolve(handle, scope: scope)
+    try announce(handle)
+    let err = AXUIElementPerformAction(element, kAXShowMenuAction as CFString)
+    if err == .actionUnsupported {
+      throw Failure.refused(
+        "That element has no AXShowMenu. Use click with button \"right\" at its point instead.")
+    }
+    if let problem = failure(for: err, doing: "Opening the menu of '\(handle)'") { throw problem }
+  }
+
+  /// The menus `pid` has open right now: a context menu, a pop-up button's
+  /// list, a submenu of either.
+  ///
+  /// Found through the window server rather than the tree, because where the
+  /// menu hangs is up to the application. TextEdit's is a child of the text
+  /// area that was right-clicked; Calque's sidebar's, of its outline. A view
+  /// that is not an accessibility element — Calque's plan canvas — has nothing
+  /// for its menu to hang from, so a walk from the windows cannot be trusted to
+  /// reach one.
+  ///
+  /// An open menu is always a window of its own, on the pop-up menu layer and
+  /// owned by the application, so the cure is the one `orphans(of:)` uses:
+  /// hit-test inside it. Measured on TextEdit: every point down the middle of
+  /// the menu answered an `AXMenuItem` whose parent is the `AXMenu`. A separator
+  /// is an item too, so landing on one still finds the menu.
+  private static func openMenus(pid: pid_t, app: AXUIElement) -> [AXUIElement] {
+    guard
+      let listed = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+        as? [[String: Any]]
+    else { return [] }
+    let menuLayer = Int(CGWindowLevelForKey(.popUpMenuWindow))
+    var found: [AXUIElement] = []
+    for window in listed {
+      guard window[kCGWindowOwnerPID as String] as? pid_t == pid,
+        window[kCGWindowLayer as String] as? Int == menuLayer,
+        let raw = window[kCGWindowBounds as String] as? [String: Any],
+        let rect = CGRect(dictionaryRepresentation: raw as CFDictionary)
+      else { continue }
+      // A few points rather than one: the first row of a menu can be a
+      // header or a gap, and a hit that answers nothing costs a round trip.
+      for dy in [8.0, 20.0, 32.0, rect.height / 2] where dy < rect.height {
+        var hit: AXUIElement?
+        guard
+          AXUIElementCopyElementAtPosition(app, Float(rect.midX), Float(rect.minY + dy), &hit)
+            == .success,
+          let menu = enclosingMenu(of: hit)
+        else { continue }
+        if !found.contains(where: { CFEqual($0, menu) }) { found.append(menu) }
+        break
+      }
+    }
+    return found
+  }
+
+  /// The nearest `AXMenu` at or above `element`, a few parents up at most.
+  private static func enclosingMenu(of element: AXUIElement?) -> AXUIElement? {
+    var current = element
+    for _ in 0..<4 {
+      guard let node = current else { return nil }
+      if string(node, kAXRoleAttribute as String) == (kAXMenuRole as String) { return node }
+      current = copy(node, kAXParentAttribute as String).map { $0 as! AXUIElement }
+    }
+    return nil
   }
 
   // ─── the menu bar ──────────────────────────────────────────────────────────
@@ -1655,23 +1758,46 @@ nonisolated enum AccessibilityDriver {
   /// source is passed in rather than made here so one sequence's events all
   /// come from one source, as `drag` has always built them.
   private static func mouseEvent(
-    _ type: CGEventType, at point: CGPoint, from source: CGEventSource?, doing what: String
+    _ type: CGEventType, at point: CGPoint, from source: CGEventSource?, doing what: String,
+    button: CGMouseButton = .left
   ) throws -> CGEvent {
     guard
       let made = CGEvent(
-        mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+        mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button)
     else { throw Failure.refused("Could not synthesise \(what).") }
     return made
   }
 
-  static func click(x: Double, y: Double, scope: Scope, announcing target: String? = nil) throws {
+  /// Which button a `click` presses.
+  ///
+  /// The right button is for what `showMenu` cannot reach: a context menu drawn
+  /// by a view that is not an accessibility element at all. Calque's plan canvas
+  /// is one — its walls and dimensions carry a right-click menu
+  /// (`PlanCanvasView.menu(for:)`) and the canvas has no element to ask for it.
+  enum MouseButton: String, CaseIterable {
+    case left, right
+
+    var events: (down: CGEventType, up: CGEventType, button: CGMouseButton) {
+      switch self {
+      case .left: return (.leftMouseDown, .leftMouseUp, .left)
+      case .right: return (.rightMouseDown, .rightMouseUp, .right)
+      }
+    }
+  }
+
+  static func click(
+    x: Double, y: Double, button: MouseButton = .left, scope: Scope,
+    announcing target: String? = nil
+  ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
+    let kind = button.events
     // Both built before either is posted, so a failure to synthesise the second
     // cannot leave the button held down — the property `drag` states below.
-    let down = try mouseEvent(.leftMouseDown, at: point, from: source, doing: "a click")
-    let up = try mouseEvent(.leftMouseUp, at: point, from: source, doing: "a click")
+    let down = try mouseEvent(
+      kind.down, at: point, from: source, doing: "a click", button: kind.button)
+    let up = try mouseEvent(kind.up, at: point, from: source, doing: "a click", button: kind.button)
     try announceSessionInput(target, scope: scope)
     DrivingOverlay.postingPointer {
       down.post(tap: .cghidEventTap)

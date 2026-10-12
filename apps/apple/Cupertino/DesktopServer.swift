@@ -123,6 +123,14 @@ nonisolated enum DesktopServer {
         "Menu titles from the menu bar down, as the menu shows them: [\"View\"] for a menu, "
         + "[\"View\", \"Show Sidebar\"] for an item in it. The Apple menu is \"Apple\".",
     ]
+    let dragEndProperty: [String: Any] = [
+      "type": "object",
+      "properties": [
+        "handle": ["type": "string"], "x": ["type": "number"], "y": ["type": "number"],
+        "bundleId": ["type": "string"],
+      ],
+      "description": "Where the button goes down: {\"handle\"} or {\"x\", \"y\"}.",
+    ]
     let boundsProperties: [String: Any] = [
       "maxDepth": [
         "type": "integer",
@@ -349,11 +357,16 @@ nonisolated enum DesktopServer {
           + "application the point belongs to: it is brought to the front first, and nothing is "
           + "clicked if it does not come. Without it the frontmost application stands in, and is "
           + "refused when it is out of reach. Either way nothing is clicked unless the point is on "
-          + "one of that application's windows.",
+          + "one of that application's windows. 'button': \"right\" opens a context menu where "
+          + "no element offers one to apple_desktop_show_menu, such as a drawing canvas.",
         "inputSchema": [
           "type": "object",
           "properties": [
             "x": ["type": "number"], "y": ["type": "number"], "bundleId": bundleIdProperty,
+            "button": [
+              "type": "string", "enum": AccessibilityDriver.MouseButton.allCases.map(\.rawValue),
+              "description": "Default left.",
+            ],
           ],
           "required": ["x", "y"],
         ],
@@ -395,6 +408,50 @@ nonisolated enum DesktopServer {
           ],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_show_menu",
+        "description":
+          "Open an element's context menu by its handle — a right-click without moving the "
+          + "pointer or bringing the application forward. The element must offer one: the tree "
+          + "marks it 'showsMenu'. The open menu's items then lead apple_desktop_ui_tree and "
+          + "apple_desktop_find_elements, pressable with apple_desktop_press; key escape, with "
+          + "the 'bundleId', closes it without choosing.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["handle": ["type": "string"]],
+          "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_drag",
+        "description":
+          "Press, move and release the left button — moving something on a canvas, a slider "
+          + "thumb, a selection, a splitter. 'from' and 'to' are each {\"handle\"} or "
+          + "{\"x\", \"y\"}; a handle's point is re-read at call time, as for hover. The "
+          + "application is brought to the front first, and nothing is posted unless both ends "
+          + "are on its windows. A drop on another application's window names that one in "
+          + "'to.bundleId', which is brought to no front but must be in reach.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "from": dragEndProperty,
+            "to": dragEndProperty.merging([
+              "description":
+                "Where the button is released: {\"handle\"} or {\"x\", \"y\"}, plus "
+                + "'bundleId' for a drop on another application's window."
+            ]) { _, new in new },
+            "bundleId": bundleIdProperty,
+            "durationMs": [
+              "type": "integer",
+              "description": "How long the move takes, default 400. The pointer is walked at "
+                + "about 60 steps a second, so what is under it sees a drag with a velocity.",
+            ],
+          ],
+          "required": ["from", "to"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
       [
         "name": "apple_desktop_type",
@@ -639,6 +696,15 @@ nonisolated enum DesktopServer {
     // caller who sees it knows those nodes exist because they are on screen,
     // and that a scrolled-away sibling would not have been found the same way.
     if tree.recovered > 0 { body["recovered"] = tree.recovered }
+    // Present only when one is: an open menu is modal, so a caller that reads
+    // past it and presses something in the window underneath is pressing into
+    // a window that will not take it until the menu closes.
+    if tree.menus > 0 {
+      body["openMenus"] = tree.menus
+      body["menuNote"] =
+        "A menu is open and its items come first. Press one, or key escape with the bundleId to "
+        + "close it."
+    }
 
     // Named rather than implied. A truncated answer that does not say so is
     // worse than a slow one, and which bound stopped it tells the caller what to
@@ -667,7 +733,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
       "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
-      "apple_desktop_press_menu",
+      "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -837,13 +903,79 @@ nonisolated enum DesktopServer {
         guard let x = args["x"] as? Double, let y = args["y"] as? Double else {
           return failure(id, "Both 'x' and 'y' are required.")
         }
+        // Absent is the left button; present and unknown is a mistake, and a
+        // left click in place of the menu it asked for would act on the canvas.
+        let button: AccessibilityDriver.MouseButton
+        if let named = args["button"] {
+          guard let name = named as? String,
+            let known = AccessibilityDriver.MouseButton(rawValue: name)
+          else { return failure(id, "The 'button' argument is \"left\" or \"right\".") }
+          button = known
+        } else {
+          button = .left
+        }
         // A point has no owner, so the caller names one. Brought forward first
         // because a click lands on whatever window is on top at that point, and
         // the person at the keyboard may have put their own there since.
         let owner = try pointOwner(
           args, at: CGPoint(x: x, y: y), verb: "click", scope: scope)
-        try AccessibilityDriver.click(x: x, y: y, scope: scope, announcing: owner)
-        return ok(id, ["clicked": [x, y], "target": owner])
+        try AccessibilityDriver.click(
+          x: x, y: y, button: button, scope: scope, announcing: owner)
+        var clicked: [String: Any] = ["clicked": [x, y], "target": owner]
+        if button != .left { clicked["button"] = button.rawValue }
+        return ok(id, clicked)
+
+      case "apple_desktop_show_menu":
+        guard let handle = args["handle"] as? String else {
+          return failure(id, "The 'handle' argument is required.")
+        }
+        try AccessibilityDriver.showMenu(handle: handle, scope: scope)
+        return ok(
+          id,
+          [
+            "shown": handle,
+            "note": "Read the menu with ui_tree or find_elements, where its items come first. "
+              + "Press one to choose it, or key escape with the bundleId to close it.",
+          ])
+
+      case "apple_desktop_drag":
+        guard let fromSpec = args["from"] as? [String: Any],
+          let toSpec = args["to"] as? [String: Any],
+          let start = try dragEnd(fromSpec, scope: scope),
+          let end = try dragEnd(toSpec, scope: scope)
+        else {
+          return failure(
+            id,
+            "Both 'from' and 'to' are required, each {\"handle\"} or {\"x\", \"y\"}. Prefer a "
+              + "handle: its point is re-read at call time.")
+        }
+        let durationMs = min(5000, max(16, (args["durationMs"] as? Int) ?? 400))
+        // The press decides which application is driven: a handle names its own,
+        // as for hover, and a point is checked as a click's is.
+        let owner: String
+        if let named = start.owner {
+          try bringForward(named, verb: "drag", scope: scope)
+          try requireOnWindow(of: named, at: start.point, verb: "drag")
+          owner = named
+        } else {
+          owner = try pointOwner(args, at: start.point, verb: "drag", scope: scope)
+        }
+        // The release lands on whatever is on top THERE, and a drop is a write
+        // into that application, so it is held to the same reach as the press.
+        let dropOwner = end.owner ?? owner
+        guard scope.admits(dropOwner) else {
+          throw AccessibilityDriver.Failure.outOfScope(dropOwner)
+        }
+        try requireOnWindow(of: dropOwner, at: end.point, verb: "drop")
+        try AccessibilityDriver.drag(
+          from: start.point, to: end.point, durationMs: durationMs, scope: scope,
+          announcing: owner)
+        var dragged: [String: Any] = [
+          "dragged": ["from": [start.point.x, start.point.y], "to": [end.point.x, end.point.y]],
+          "durationMs": durationMs, "target": owner,
+        ]
+        if dropOwner != owner { dragged["droppedOn"] = dropOwner }
+        return ok(id, dragged)
 
       case "apple_desktop_hover":
         let durationMs = min(5000, max(0, (args["durationMs"] as? Int) ?? 600))
@@ -1013,9 +1145,9 @@ nonisolated enum DesktopServer {
   /// large enough to swamp the one this builds; not `run` or `release`, which are
   /// not steps of a sequence.
   static let runSteps = [
-    "press", "press_menu", "set_value", "click", "hover", "type", "key", "focus", "activate",
-    "raise_window", "set_window_frame", "find_elements", "get_attribute", "list_windows", "menu",
-    "user_activity", "wait",
+    "press", "press_menu", "show_menu", "set_value", "click", "hover", "drag", "type", "key",
+    "focus", "activate", "raise_window", "set_window_frame", "find_elements", "get_attribute",
+    "list_windows", "menu", "user_activity", "wait",
   ]
   static let runStepCeiling = 25
   static let runWaitCeilingMs = 5000
@@ -1090,6 +1222,17 @@ nonisolated enum DesktopServer {
       if tool == "hover", step["handle"] == nil, step["x"] == nil || step["y"] == nil {
         return failure(
           id, "Step \(number) (hover) needs 'handle', or both 'x' and 'y'. Nothing was run.")
+      }
+      if tool == "drag" {
+        let ends = [step["from"], step["to"]].map { $0 as? [String: Any] ?? [:] }
+        guard
+          ends.allSatisfy({ $0["handle"] is String || ($0["x"] is Double && $0["y"] is Double) })
+        else {
+          return failure(
+            id,
+            "Step \(number) (drag) needs 'from' and 'to', each {\"handle\"} or {\"x\", \"y\"}. "
+              + "Nothing was run.")
+        }
       }
     }
 
@@ -1201,13 +1344,44 @@ nonisolated enum DesktopServer {
     } else {
       owner = try AccessibilityDriver.frontmostInReach(scope)
     }
-    guard AccessibilityDriver.pointOnWindow(of: owner, at: point) else {
+    try requireOnWindow(of: owner, at: point, verb: verb)
+    return owner
+  }
+
+  /// Polled rather than read once, because the window list trails the focus.
+  /// `bringForward` returns when Accessibility reports the application focused,
+  /// and the window server can still be stacking the old one on top for a
+  /// beat: measured 2026-10-12 raising Calque from behind VS Code, focus moved
+  /// at 130 ms and the window at the point at 156 ms. A click made in that gap
+  /// was refused as "not on a window of" an application whose window filled
+  /// the screen. A point that is really covered is refused half a second later.
+  private static func requireOnWindow(of owner: String, at point: CGPoint, verb: String) throws {
+    let started = Date()
+    var onWindow = AccessibilityDriver.pointOnWindow(of: owner, at: point)
+    while !onWindow, Date().timeIntervalSince(started) < 0.5 {
+      usleep(20_000)
+      onWindow = AccessibilityDriver.pointOnWindow(of: owner, at: point)
+    }
+    guard onWindow else {
       throw AccessibilityDriver.Failure.refused(
         "(\(Int(point.x)), \(Int(point.y))) is not on a window of \(owner), so nothing was posted "
           + "— the \(verb) would have landed in whatever is on top there. Read the window's frame "
           + "again, or prefer 'handle' with apple_desktop_press or hover.")
     }
-    return owner
+  }
+
+  /// One end of a drag: a handle's live centre and the application the store
+  /// says it came from, or a point with whatever 'bundleId' came with it. Nil
+  /// when it is neither, which the caller refuses as a malformed argument.
+  private static func dragEnd(
+    _ spec: [String: Any], scope: AccessibilityDriver.Scope
+  ) throws -> (point: CGPoint, owner: String?)? {
+    if let handle = spec["handle"] as? String {
+      let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
+      return (live.point, live.bundleId)
+    }
+    guard let x = spec["x"] as? Double, let y = spec["y"] as? Double else { return nil }
+    return (CGPoint(x: x, y: y), spec["bundleId"] as? String)
   }
 
   /// Bring `owner` to the front and WAIT for it, refusing when it did not come.
@@ -1309,7 +1483,7 @@ nonisolated enum DesktopServer {
       Reading and driving macOS applications through the Accessibility API. Prefer
       `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point,
       and `apple_desktop_press_menu` over clicking the menu bar. Neither brings the application
-      forward; only click, hover, type and key do.
+      forward; only click, hover, drag, type and key do.
 
       Driving is a session the person at the keyboard can see. The first driving call while they
       are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
@@ -1412,6 +1586,17 @@ nonisolated enum DesktopServer {
       validate theirs against the key window, so many items read disabled until the
       application is in front: `apple_desktop_activate` it, then read the menu again.
 
+      ## A context menu is a right-click away
+
+      An element the tree marks `showsMenu` opens its context menu with
+      `apple_desktop_show_menu`, without moving the pointer or bringing anything forward. A
+      view that is not an element at all — a drawing canvas, a map — has nothing to ask, so
+      right-click its point instead: `apple_desktop_click` with `button: "right"`.
+
+      Either way, while the menu is open `ui_tree` and `find_elements` list its items first and
+      say `openMenus`. Press one to choose it. A separator is an item with no name. To close the
+      menu without choosing, `apple_desktop_key` escape with the `bundleId`.
+
       ## Seeing what you did
 
       This surface reads structure, never pixels. To look at a window, use
@@ -1430,6 +1615,14 @@ nonisolated enum DesktopServer {
       nothing is posted and the call says so. Leave it out and the event goes to whatever
       is frontmost, and is refused when that is out of this surface's reach. A click or a
       hover at a point is also refused unless the point is on a window of that application.
+
+      ## Dragging
+
+      `apple_desktop_drag` presses the left button at `from`, walks the pointer to `to` and
+      releases it. Each end is `{"handle"}` or `{"x", "y"}`, and a handle's point is re-read at
+      call time. Both ends must be on the application's windows; a drop onto another application
+      names it in `to.bundleId`, and it has to be within reach like any other target. On a canvas
+      a drag is an edit: read the result before the next one, the way you would after a press.
 
       ## Driving is a session the person can see
 
@@ -1462,7 +1655,7 @@ nonisolated enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, press_menu, set_value, click, hover, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
+        ? "Writes are ON: press, press_menu, show_menu, set_value, click, hover, drag, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

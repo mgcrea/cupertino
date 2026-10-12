@@ -515,6 +515,36 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Desktop can right-click and drag.",
+            body: [
+              "`apple_desktop_show_menu` opens an element's context menu without moving the pointer or bringing the app forward, and the tree marks which elements offer one. For a view with nothing to ask, such as a drawing canvas, `apple_desktop_click` now takes `button: \"right\"`. While a menu is open, `ui_tree` and `find_elements` list its items first, wherever the app hung it, so an item is pressed like any other control. `apple_desktop_drag` presses, moves and releases between two handles or points, for moving something on a canvas, a slider or a splitter; the press and the drop are both refused unless they land on a window of an app within reach. Both are `run` steps.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "A Desktop click right after bringing an app forward is no longer refused.",
+            body: [
+              "`click` and `hover` at a point, given the app's `bundleId`, could answer that the point was \"not on a window of\" an app whose window covered it. The app had come to the front, but its window had not yet been stacked on top. The check now waits up to half a second for the window to arrive.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }
