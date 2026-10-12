@@ -708,7 +708,21 @@ export class AppleMailClient {
     account?: string | undefined;
     mailbox?: string | undefined;
   }): Promise<number[] | undefined> {
-    if (!opts.account && !opts.mailbox) return undefined;
+    if (!opts.account && !opts.mailbox) {
+      if (!this.mailboxes.restricted) return undefined;
+      // With an allowlist, "no scope" means the admitted accounts, in SQL.
+      // Returning undefined here made the predicate `1=1`: groupBy counted and
+      // named senders from excluded accounts, and search applied LIMIT/OFFSET
+      // before `#rowToSummary` dropped their rows, so pages came back short or
+      // empty. That drop stays as a second line of defence. An allowlist that
+      // admits no indexed mailbox scopes to `[]`, which narrows to nothing.
+      const index = await this.index();
+      const rowids: number[] = [];
+      for (const row of index?.mailboxes() ?? []) {
+        if (await this.mailboxes.admitsIndexUrl(row.url)) rowids.push(row.rowid);
+      }
+      return rowids;
+    }
     const lookup = await this.mailboxLookup();
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     const wanted = opts.mailbox
