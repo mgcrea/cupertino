@@ -181,9 +181,10 @@ also that renaming or removing this file breaks a page nothing in this repo buil
 
 ## The social card is baked, and its words live in `config.ts`
 
-`og-image.png` is the lockup reversed out of the page's own background over two lines of copy,
-composed by `composeCard` in `../../scripts/lib/lockup.mjs` — the same module that writes the README
-banner, so the two cannot fork.
+`og-image.png` is the lockup reversed out of the page's own background over a headline and a
+subhead of one or two lines, composed by `composeCard` in `../../scripts/lib/lockup.mjs` — the same
+module that writes the README banner, so the two cannot fork. It measures every line and throws on
+one wider than the card's insets, since a clipped line is as silent as X's crop.
 
 - **The copy is `SOCIAL_CARD` in `src/config.ts`, and the surfaces come from `data/surfaces.ts`.**
   Editing a line there is half the change: `pnpm icons` bakes it into the PNG, and until you run

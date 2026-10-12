@@ -253,10 +253,61 @@ describe("composeCard", () => {
         () => composeCard(icon, { ...palette, colors: {} }, copy),
       ],
       ["copy with no subhead", () => composeCard(icon, palette, { ...copy, subhead: "" })],
+      ["a subhead of no lines", () => composeCard(icon, palette, { ...copy, subhead: [] })],
+      [
+        "a subhead of three lines",
+        () => composeCard(icon, palette, { ...copy, subhead: ["Mail", "Notes", "Maps"] }),
+      ],
+      // The card used to draw one centred line at a fixed size and never measure
+      // it, so twelve surface names ran off both edges of the PNG in silence.
+      [
+        "a subhead line wider than the card",
+        () => composeCard(icon, palette, { ...copy, subhead: "Mail, Notes, Reminders ".repeat(5) }),
+      ],
+      [
+        "a headline wider than the card",
+        () =>
+          composeCard(icon, palette, { ...copy, headline: "Mail, Notes, Reminders ".repeat(4) }),
+      ],
     ];
     for (const [name, run] of cases) {
       it(name, () => assert.throws(run, /cupertino-lockup:/));
     }
+  });
+
+  describe("sets a two-line subhead", () => {
+    const lines = ["Mail, Notes, Reminders, Calendar,", "Contacts and Messages"];
+    const two = composeCard(icon, palette, { ...copy, subhead: lines });
+
+    it("as two centred lines, one leading apart", () => {
+      const subheads = [...two.matchAll(/<text[^>]*\by="(\d+)"[^>]*font-size="28"[^>]*>([^<]*)</g)];
+      assert.deepEqual(
+        subheads.map((m) => m[2]),
+        lines,
+      );
+      const [first, second] = subheads.map((m) => Number(m[1]));
+      assert.ok(second > first, "the second line sits below the first");
+      assert.equal(two.match(/text-anchor="middle"/g).length, 3);
+    });
+
+    it("and keeps the second line clear of the band X crops away", () => {
+      const baselines = [...two.matchAll(/<text[^>]*\by="(\d+)"/g)].map((m) => Number(m[1]));
+      const bottom = Math.max(...baselines) + 28 * 0.25;
+      assert.ok(bottom <= SOCIAL_CARD.HEIGHT - SOCIAL_CARD.SAFE_INSET, `reaches y=${bottom}`);
+    });
+  });
+
+  // The words the site actually bakes, from apps/website/src/config.ts, which
+  // generate-icons.mjs imports the same way. The list of twelve surfaces on one
+  // line estimated 1392px against the 1080 the card has inside its insets.
+  it("fits the site's own card copy", async () => {
+    const { SOCIAL_CARD: site } = await import("../../apps/website/src/config.ts");
+    const usable = SOCIAL_CARD.WIDTH - 2 * SOCIAL_CARD.SAFE_INSET;
+    const subhead = [site.subhead].flat();
+    for (const line of subhead) {
+      assert.ok(estimateWidth(line, 28) <= usable, `"${line}" is wider than ${usable}px`);
+    }
+    assert.doesNotThrow(() => composeCard(icon, palette, { ...site, ground: copy.ground }));
   });
 });
 
