@@ -693,8 +693,10 @@ const DRAFT_IDENTITY = `
     var mid = prop(function () { return row.messageId(); }, null);
     if (originalMessageId && mid && String(mid) === String(originalMessageId)) return null;
     // Only telling when the bodies open differently: a revision of the closing
-    // lines leaves both heads alike and the Message-ID to decide.
-    if (newHead !== oldHead && headOf(row).indexOf(newHead) !== 0) return null;
+    // lines leaves both heads alike and the Message-ID to decide. An empty head
+    // is a body Mail has not reported yet, not a different one.
+    var rowHead = headOf(row);
+    if (newHead !== oldHead && rowHead && rowHead.indexOf(newHead) !== 0) return null;
     return id;
   };
 `;

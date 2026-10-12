@@ -58,6 +58,11 @@ type MailBehaviour = {
   alreadySaved?: boolean;
   /** What the replacement holds once it is in Drafts. */
   replacementHeaders?: string;
+  /**
+   * The replacement's text once it is in Drafts. Left out, it is what
+   * UPDATE_DRAFT composed, or a rebuild's revised text; "" is a just-saved draft
+   * whose body Mail does not report yet.
+   */
   replacementContent?: string;
   /** The names of the files the replacement holds. */
   replacementFiles?: string[];
@@ -129,7 +134,7 @@ const runScript = (
     citationStrips = true,
     alreadySaved = false,
     replacementHeaders = `From: me@example.com\r\n${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
-    replacementContent = "The revised numbers.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
+    replacementContent,
     replacementFiles = [],
     originalGoneAfterPolls = false,
     renumberOriginal,
@@ -194,8 +199,10 @@ const runScript = (
               id: 99,
               subject: state.composed?.subject ?? subject,
               headers: replacementHeaders,
-              // What this script composed, or what a rebuild pasted.
-              content: state.composed?.content ?? replacementContent,
+              content:
+                replacementContent ??
+                state.composed?.content ??
+                "The revised numbers.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
               messageId: "<replacement@example.com>",
               files: replacementFiles,
             });
@@ -563,6 +570,18 @@ describe("references that go stale mid-script", () => {
     const { envelope } = runScript({});
     expect(envelope.data.newId).toBe(99);
     expect(envelope.data.confirmedId).toBe(99);
+  });
+
+  /*
+   * The content check only refuses on evidence. A replacement whose body Mail
+   * does not report yet is not shown to be something else, and refusing it
+   * left two drafts on every such save.
+   */
+  it("confirms a replacement whose body Mail does not report yet", () => {
+    const { envelope, state } = runScript({}, { replacementContent: "" });
+    expect(envelope.data.replaced).toBe(true);
+    expect(envelope.data.newId).toBe(99);
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
   });
 
   /*
