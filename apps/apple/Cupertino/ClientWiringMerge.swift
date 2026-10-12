@@ -397,6 +397,66 @@ nonisolated enum ClientWiringMerge {
       leftover: unexpected.filter { isOurs(servers[$0.key]) }.map(\.label))
   }
 
+  // MARK: - Keeping configs current
+
+  /// What an automatic rewire should do to one servers object.
+  ///
+  /// Configure is somebody pressing a button; this is the app deciding on its
+  /// own, at launch and when a surface is switched on or off. So it answers a
+  /// narrower question than `merged` does, and every case that is not `write`
+  /// is a reason to leave the file exactly as it is.
+  enum RewirePlan: Equatable {
+    /// Nothing of ours in the file. Wiring a client is somebody's decision, and
+    /// a surface switch is not a way to make it for them.
+    case notWired
+    /// Ours, reaching another copy of the app that is still there — a beta in
+    /// `~/Downloads`, a Debug build. That copy wired this client, or somebody
+    /// pointed it there, and launching this one must not take it over.
+    case otherCopy(String)
+    case upToDate
+    /// Keys to write fresh, and keys of ours to take out. Both sorted.
+    case write(upsert: [String], remove: [String])
+  }
+
+  /// `wanted` is the keys of the surfaces switched on; `unwanted` the keys that
+  /// should not be there — switched-off surfaces and every pre-rename `apple-*`.
+  /// `exists` asks whether a bridge path is still on disk.
+  ///
+  /// Only what is wrong is written. An entry already reaching `expectedCommand`
+  /// is left byte for byte, which keeps whatever somebody or some client added
+  /// to it — Codex's `enabled = false` above all. Configure re-renders those;
+  /// this does not, because nobody asked it to.
+  ///
+  /// An entry of ours reaching a bridge that is GONE is rewritten: that copy of
+  /// the app was moved or deleted, every client holding it is broken, and the
+  /// bundle doing the rewiring is the one that exists. A foreign entry under a
+  /// wanted key is skipped rather than refused, since there is nobody to ask.
+  static func rewirePlan(
+    servers: [String: Any],
+    expectedCommand: String,
+    wanted: [String],
+    unwanted: Set<String>,
+    exists: (String) -> Bool
+  ) -> RewirePlan {
+    let ours = servers.keys.filter { isOurs(servers[$0]) }.sorted()
+    guard !ours.isEmpty else { return .notWired }
+    // Any of ours, not only the wanted keys: a live copy still reachable under
+    // a key this build would remove is just as much somebody else's wiring.
+    for key in ours {
+      guard let command = identity(of: servers[key]), command != expectedCommand else { continue }
+      if exists(command) { return .otherCopy(command) }
+    }
+    let upsert = wanted.filter {
+      switch state(of: servers, key: $0, expectedCommand: expectedCommand) {
+      case .missing, .stale: true
+      case .matches, .foreign: false
+      }
+    }.sorted()
+    let remove = unwanted.filter { isOurs(servers[$0]) && !upsert.contains($0) }.sorted()
+    if upsert.isEmpty && remove.isEmpty { return .upToDate }
+    return .write(upsert: upsert, remove: remove)
+  }
+
   // MARK: - Writing
 
   enum WriteError: LocalizedError {

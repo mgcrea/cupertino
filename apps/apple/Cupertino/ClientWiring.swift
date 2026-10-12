@@ -516,6 +516,149 @@ enum ClientWiring {
     return backup
   }
 
+  // MARK: - Keeping configs current
+
+  /// Whether this process rewrites client configs without being asked.
+  ///
+  /// Configure used to be the only write, so a surface switched on reached no
+  /// client until somebody visited up to seven panes, and one that ships in an
+  /// update reached none at all. Bastion learned the same lesson with profiles.
+  ///
+  /// Off in every process whose bridge path is not one to hand out. A Debug
+  /// build keeps its own `io.mgcrea.cupertino.debug` preferences but shares
+  /// every client config with the installed app, so its pass would rewrite the
+  /// real `~/.claude.json` from a surface set that is not the user's, pointing at
+  /// a build directory. A copy outside an Applications folder writes a path that
+  /// breaks when the folder is cleaned, and a translocated one a path that does
+  /// not outlive the session. A capture never touches a real file.
+  ///
+  /// `autoWireClients`, set either way, wins over everything but the last two:
+  /// `-autoWireClients YES` for a developer exercising the path, `defaults write
+  /// io.mgcrea.cupertino autoWireClients -bool NO` for somebody who wants only
+  /// the button.
+  static var rewiresAutomatically: Bool {
+    if DemoSeed.isEnabled { return false }
+    let location = InstallLocation.current
+    if case .translocated = location { return false }
+    let key = "autoWireClients"
+    if UserDefaults.standard.object(forKey: key) != nil {
+      return UserDefaults.standard.bool(forKey: key)
+    }
+    #if DEBUG
+      return false
+    #else
+      return location.isStable
+    #endif
+  }
+
+  /// The keys an automatic rewire takes out when they are ours: every surface
+  /// switched off, and every pre-rename `apple-*`.
+  private static var unwantedKeys: Set<String> {
+    disabledKeys.union(legacyKeys.values)
+  }
+
+  private static func rewirePlan(servers: [String: Any]) -> ClientWiringMerge.RewirePlan {
+    ClientWiringMerge.rewirePlan(
+      servers: servers, expectedCommand: bridgePath, wanted: expected.map(\.key),
+      unwanted: unwantedKeys, exists: { FileManager.default.fileExists(atPath: $0) })
+  }
+
+  /// Bring every client already wired up to date with the surfaces switched on.
+  ///
+  /// User scope only. A folder's `.mcp.json` sits in somebody's working tree, and
+  /// `ProjectScope` explains why a decision applied silently months later is the
+  /// worst way to change one; the per-folder blocks in `~/.claude.json` follow
+  /// the folder card rather than this.
+  ///
+  /// With every surface off it does nothing. Removing the last entry would make
+  /// the client read as never wired, and switching a surface back on would then
+  /// reach nobody — the host already refuses an entry for a surface that is off.
+  ///
+  /// A failure is logged, not raised: the surface switch is the user's decision
+  /// and the config a copy of it, and the Clients pane goes on reporting what each
+  /// file actually holds.
+  static func rewireAll(because reason: String) {
+    guard rewiresAutomatically, !SurfaceSettings.enabledSurfaces.isEmpty else { return }
+    for client in clients { rewire(client, because: reason) }
+  }
+
+  private static func rewire(_ client: Client, because reason: String) {
+    do {
+      guard let config = try read(client) else { return }
+      let plan = rewirePlan(servers: config.servers)
+      guard case .write(let upsert, let remove) = plan else {
+        if case .otherCopy(let path) = plan {
+          hostLog(
+            "cupertino", .info,
+            "left \(client.displayName) alone (\(reason)): wired to another copy at \(path)")
+        }
+        return
+      }
+      switch client.wiring {
+      case .json(let path, let rootKey):
+        _ = try mergeWrite(into: path, newFileMode: 0o600) { root in
+          // Planned again from the bytes actually being merged, so the retry
+          // after a concurrent write cannot land a key that became somebody
+          // else's in between.
+          guard
+            case .write(let upsert, let remove) = rewirePlan(
+              servers: root[rootKey] as? [String: Any] ?? [:])
+          else { return root }
+          return ClientWiringMerge.merged(
+            into: root, rootKey: rootKey,
+            entries: entries(for: client.id).filter { upsert.contains($0.key) },
+            legacy: legacyKeys, remove: Set(remove))
+        }
+      case .toml(let path):
+        try spliceWrite(
+          into: path, upserting: entries(for: client.id).filter { upsert.contains($0.key) },
+          removing: Set(remove))
+      }
+      hostLog(
+        "cupertino", .info,
+        "kept \(client.displayName) current (\(reason)):"
+          + (upsert.isEmpty ? "" : " wrote \(upsert.joined(separator: ", "))")
+          + (remove.isEmpty ? "" : " removed \(remove.joined(separator: ", "))"))
+    } catch {
+      hostLog(
+        "cupertino", .error,
+        "could not keep \(client.displayName) current (\(reason)): \(error.localizedDescription)")
+    }
+  }
+
+  /// Rewire when the set of surfaces switched on changes, however it changed.
+  ///
+  /// Watched through `UserDefaults` rather than hooked into the switches: there
+  /// are three of them — the detail pane, the Settings row and the sidebar's
+  /// context menu — and a fourth would be one more place to forget. The set is
+  /// compared, because the notification fires for every default anybody writes.
+  /// Settled for half a second, so four right-clicks in the sidebar are one pass.
+  static func watchSurfaceSwitches() {
+    guard rewiresAutomatically, switchObserver == nil else { return }
+    lastSwitched = Set(SurfaceSettings.enabledSurfaces.map(\.id))
+    switchObserver = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { _ in
+      MainActor.assumeIsolated { surfacesMayHaveSwitched() }
+    }
+  }
+
+  private static var switchObserver: NSObjectProtocol?
+  private static var lastSwitched: Set<String> = []
+  private static var pendingRewire: Task<Void, Never>?
+
+  private static func surfacesMayHaveSwitched() {
+    let now = Set(SurfaceSettings.enabledSurfaces.map(\.id))
+    guard now != lastSwitched else { return }
+    lastSwitched = now
+    pendingRewire?.cancel()
+    pendingRewire = Task {
+      try? await Task.sleep(for: .milliseconds(500))
+      guard !Task.isCancelled else { return }
+      rewireAll(because: "a surface was switched")
+    }
+  }
+
   /// Read, merge, write — with one retry when the file changed in between.
   ///
   /// Every write this app makes goes through here, so the read that a merge is

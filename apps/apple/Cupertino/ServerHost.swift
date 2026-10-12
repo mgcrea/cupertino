@@ -647,11 +647,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // one being served.
     let authority = lentTo ?? surface
 
-    // The backstop for a config entry we could not remove. Command clients keep
-    // their config in files this app refuses to write — see `ClientWiring.Wiring`
-    // — so a surface switched off in the app can still be spawned by Claude
-    // Code, VS Code or Codex until the user runs the removal line. This is where
-    // that ends.
+    // The backstop for a config entry nothing removed. Switching a surface off
+    // takes its entry out of every client already wired — see
+    // `ClientWiring.rewireAll` — but not out of a folder's `.mcp.json`, a client
+    // wired to another copy of the app, or a Debug build's clients, so a
+    // surface switched off here can still be spawned. This is where that ends.
     //
     // Before the licence gate, and deliberately. Enablement is a fact about the
     // user's own configuration rather than about payment, and offering to sell a
