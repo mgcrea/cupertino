@@ -234,3 +234,24 @@ test("llms.txt states the shipped minor version and does not claim npm is pendin
   );
   assert.ok(!/not on npm yet/i.test(text), "llms.txt still says the packages are not on npm");
 });
+
+/**
+ * Every count the site spells out falls back to a digit when `SPELLED` runs
+ * out, and a digit is the spec-sheet look its own comment exists to prevent.
+ * It ran out at "seven" the day Maps shipped and at "ten" again since, both
+ * times silently, in a social card nothing in CI looks at.
+ *
+ * Read by regex for the reason given at the top of this file.
+ */
+test("SPELLED has a word for every surface count the site can print", () => {
+  const config = readFileSync(join(ROOT, "apps", "website", "src", "config.ts"), "utf8");
+  const literal = config.match(/export const SPELLED = \[([^\]]*)\]/);
+  assert.ok(literal, "SPELLED is no longer an array literal in config.ts");
+  const words = [...literal[1].matchAll(/"[^"]*"/g)].length;
+  const manifest = JSON.parse(readFileSync(join(ROOT, "surfaces.json"), "utf8"));
+  const surfaces = manifest.surfaces.length;
+  assert.ok(
+    words > surfaces,
+    `SPELLED stops at ${words - 1}, and the site counts ${surfaces} surfaces`,
+  );
+});
