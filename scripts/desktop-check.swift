@@ -1280,6 +1280,37 @@ struct DesktopCheck {
       selectBareError && selectBare.contains("'handle'"))
     check("select is a step a run can take", DesktopServer.runSteps.contains("select"))
 
+    // A step's arguments are checked by the code its tool checks them with,
+    // not just for presence. Each of these passed the old presence test, ran
+    // step 1 and failed at step 2. Every one is refused before anything is
+    // read or pressed, so a Maps that happens to be running is not touched.
+    for (label, bad) in [
+      (
+        "a menu with no item",
+        ["tool": "press_menu", "bundleId": "com.apple.Maps", "path": ["View"]]
+      ),
+      ("a value that is not a string", ["tool": "set_value", "handle": "e999999", "value": 5]),
+      ("a search with no criteria", ["tool": "find_elements", "bundleId": "com.apple.Maps"]),
+      ("a frame with no component", ["tool": "set_window_frame", "handle": "e999999"]),
+      ("a key no layout names", ["tool": "key", "key": "zzz", "bundleId": "com.example.absent"]),
+    ] as [(String, [String: Any])] {
+      let (text, failed) = runText([["tool": "wait", "ms": 1], bad])
+      check(
+        "a run with \(label) in step 2 is refused before step 1 runs",
+        failed && text.contains("Step 2") && text.contains("Nothing was run")
+          && json(text)?["completed"] == nil)
+    }
+    // And the tool itself refuses an unknown key before it brings anything
+    // forward: the application named here is not running, and the refusal is
+    // about the key, not about that.
+    let (unknownKey, unknownKeyFailed) = callText(
+      "apple_desktop_key", ["key": "zzz", "bundleId": "com.example.absent"], writes: true,
+      anyApp: true)
+    check(
+      "key with a key no layout names is refused for the key, before the app is looked up",
+      unknownKeyFailed && unknownKey.contains("Unknown key 'zzz'")
+        && !unknownKey.contains("not running"))
+
     // What the tree says about menus, without opening one.
     let menuElement = AccessibilityDriver.Element(
       handle: "e1", role: "AXTextField", subrole: nil, identifier: nil, name: nil, value: nil,

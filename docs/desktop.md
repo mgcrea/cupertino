@@ -1007,10 +1007,16 @@ that fails. Two properties matter:
 - **Every step goes through `call`**, so it passes the same write gate, argument checks and driver
   path as the tool it names. The cost is decoding the JSON each step just encoded, which is nothing
   next to an Accessibility round trip.
-- **The whole run is validated before the first step runs**: known steps, required arguments from
-  each tool's own schema, at most 25 steps, a `wait` of at most 5 s. Stopping at the first failure
-  is only half a promise without it, because a missing argument in step 5 would otherwise leave a
-  form half filled in by the time the caller hears about it.
+- **The whole run is validated before the first step runs**: known steps, at most 25 of them, a
+  `wait` of at most 5 s, and each step's arguments checked by `argumentProblem`, the check the tool
+  itself makes before it does anything, so a `press_menu` path of one title, a numeric `set_value`
+  or a key the layout has no key for is refused with nothing run. Stopping at the first failure is
+  only half a promise without it, because a malformed step 5 would otherwise leave a form half
+  filled in by the time the caller hears about it. The first version checked only that each
+  schema's required keys were present, and those three ran the steps before them. A key bound for
+  one of our Debug builds' channels is not checked against the layout, since the channel takes any
+  single character. What only the screen can answer, whether a handle still exists or an
+  application is running, is still found when its step runs.
 
 A step cannot use a handle found by another step in the same run. `ui_tree` and `expand` are not
 steps, because their answers would swamp the run's own.

@@ -679,9 +679,11 @@ nonisolated enum DesktopServer {
           "Run a sequence of steps in one call, in order, stopping at the first that fails. Each "
           + "step is {\"tool\": <verb>, ...that verb's arguments}, the verb being a desktop tool "
           + "without its apple_desktop_ prefix: \(runSteps.joined(separator: ", ")). 'wait' takes "
-          + "'ms'. Every step is checked before the first runs, so a mistake in step 5 leaves "
-          + "steps 1 to 4 undone rather than half a form filled. A step that takes a 'handle' "
-          + "can name its element instead with 'match' ({\"id\", \"role\", \"name\", \"value\", "
+          + "'ms'. Every step's arguments are checked before the first runs, so a malformed step "
+          + "5 leaves steps 1 to 4 undone rather than half a form filled. What only the screen "
+          + "can tell, whether a handle still exists or an application is running, is found when "
+          + "that step runs. A step that takes a 'handle' can name its element instead with "
+          + "'match' ({\"id\", \"role\", \"name\", \"value\", "
           + "\"window\"}, as find_elements matches) and 'bundleId': it is found when the step "
           + "runs, waiting up to 'waitMs' (default \(matchWaitDefaultMs), at most "
           + "\(matchWaitCeilingMs)) for it to appear, so a step can press an item in a menu the "
@@ -920,6 +922,15 @@ nonisolated enum DesktopServer {
           + "Cupertino.")
     }
 
+    // The check `run` makes of every step before the first runs, made here of
+    // the verb itself, so a step is malformed exactly when its tool says so.
+    let verb = String(name.dropFirst("apple_desktop_".count))
+    if name.hasPrefix("apple_desktop_"), runSteps.contains(verb),
+      let problem = argumentProblem(verb, args)
+    {
+      return failure(id, problem)
+    }
+
     do {
       switch name {
       case "apple_desktop_list_apps":
@@ -1131,14 +1142,8 @@ nonisolated enum DesktopServer {
         }
         // Absent is the left button; present and unknown is a mistake, and a
         // left click in place of the menu it asked for would act on the canvas.
-        let button: AccessibilityDriver.MouseButton
-        if let named = args["button"] {
-          guard let name = named as? String,
-            let known = AccessibilityDriver.MouseButton(rawValue: name)
-          else { return failure(id, "The 'button' argument is \"left\" or \"right\".") }
-          button = known
-        } else {
-          button = .left
+        guard let button = mouseButton(args) else {
+          return failure(id, "The 'button' argument is \"left\" or \"right\".")
         }
         // One of our Debug builds with a channel takes the click in its own
         // window, wherever that window is: nothing is brought forward.
@@ -1370,33 +1375,18 @@ nonisolated enum DesktopServer {
         }
         // Absent is no modifiers; present and not a list of names is a mistake,
         // and dropping it would send the bare key in place of the shortcut.
-        let modifiers: [String]
-        if let given = args["modifiers"] {
-          guard let names = given as? [String] else {
-            return failure(
-              id,
-              "The 'modifiers' argument is a list of names: command, shift, option, control, "
-                + "function.")
-          }
-          modifiers = names
-        } else {
-          modifiers = []
+        guard let modifiers = keyModifiers(args) else {
+          return failure(
+            id,
+            "The 'modifiers' argument is a list of names: command, shift, option, control, "
+              + "function.")
         }
         let owner = try sessionTarget(args, scope: scope)
         // Through a channel the app matches a shortcut against its own menu,
         // which is what an app in the background cannot do with a posted key.
         // The channel's names are command, shift, option and control; fn has no
         // menu meaning and goes the old way.
-        let channelModifiers = modifiers.compactMap { name -> String? in
-          switch name.lowercased() {
-          case "command", "cmd": "command"
-          case "shift": "shift"
-          case "option", "alt": "option"
-          case "control", "ctrl": "control"
-          default: nil
-          }
-        }
-        if let owner, channelModifiers.count == modifiers.count,
+        if let owner, let channelModifiers = channelModifiers(modifiers),
           let channel = channel(for: owner)
         {
           let ack = try throughChannel(
@@ -1408,6 +1398,10 @@ nonisolated enum DesktopServer {
           sent["target"] = owner
           return ok(id, sent)
         }
+        // The key is checked before anything is brought forward for it, with the
+        // lookup `key` itself makes. `argumentProblem` made it already unless it
+        // expected a channel, which may have closed since.
+        _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)
         var sent: [String: Any] = ["key": key, "modifiers": modifiers]
@@ -1700,6 +1694,151 @@ nonisolated enum DesktopServer {
       name: args["name"] as? String, value: args["value"] as? String)
   }
 
+  /// What is wrong with a step verb's arguments, in the words the tool uses, or
+  /// nil when nothing is. `call` asks it before it runs any step verb, and
+  /// `run` asks it of every step before the first runs, so the two cannot
+  /// disagree about what a malformed step is.
+  ///
+  /// It replaced a pre-pass that checked only that each schema's required
+  /// keys were present, while the verb checked its arguments again, in full,
+  /// when it ran — so a `press_menu` path of one title, a `set_value` given
+  /// the number 5, a `find_elements` with no criteria and a `set_window_frame`
+  /// with no component all passed, ran the steps before them, and failed part
+  /// way. A run promises nothing happens when a step is malformed.
+  ///
+  /// Pure, apart from a key name, which is looked up in the layout cache: a
+  /// key the layout has no key for is a malformed `key` as surely as a missing
+  /// one, and it used to be found only after the application had been brought
+  /// to the front for it. Not for a key that goes through one of our Debug
+  /// builds' channels, which take any single character. What only the screen
+  /// can answer — whether a handle still exists, whether an application is
+  /// running — is left to the step.
+  static func argumentProblem(_ tool: String, _ args: [String: Any]) -> String? {
+    func missing(_ keys: String...) -> Bool { keys.contains { !(args[$0] is String) } }
+    switch tool {
+    case "press", "show_menu", "select", "focus", "raise_window":
+      return missing("handle") ? "The 'handle' argument is required." : nil
+    case "activate", "list_windows":
+      return missing("bundleId") ? "The 'bundleId' argument is required." : nil
+    case "menu":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      return menuPath(args["path"] ?? [String]()) == nil
+        ? "'path' is an array of menu titles, none of them empty." : nil
+    case "press_menu":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      guard let path = args["path"].flatMap(menuPath), path.count >= 2 else {
+        return
+          "'path' names a menu and then an item in it, e.g. [\"View\", \"Show Sidebar\"]: at "
+          + "least two titles, none of them empty."
+      }
+      return nil
+    case "set_value":
+      return missing("handle", "value")
+        ? "Both 'handle' and 'value' are required, and 'value' is a string." : nil
+    case "get_attribute":
+      return missing("handle", "attribute")
+        ? "Both 'handle' and 'attribute' are required." : nil
+    case "click":
+      guard args["x"] is Double, args["y"] is Double else {
+        return "Both 'x' and 'y' are required."
+      }
+      return mouseButton(args) == nil ? "The 'button' argument is \"left\" or \"right\"." : nil
+    case "hover":
+      guard args["handle"] is String || (args["x"] is Double && args["y"] is Double) else {
+        return
+          "Either 'handle', or both 'x' and 'y', are required. Prefer 'handle': its point is "
+          + "re-read at call time, so a window that has moved cannot make the hover miss."
+      }
+      return nil
+    case "drag":
+      func end(_ key: String) -> Bool {
+        guard let spec = args[key] as? [String: Any] else { return false }
+        return spec["handle"] is String || (spec["x"] is Double && spec["y"] is Double)
+      }
+      guard end("from"), end("to") else {
+        return
+          "Both 'from' and 'to' are required, each {\"handle\"} or {\"x\", \"y\"}. Prefer a "
+          + "handle: its point is re-read at call time."
+      }
+      return nil
+    case "type":
+      return missing("text") ? "The 'text' argument is required." : nil
+    case "key":
+      guard let key = args["key"] as? String else { return "The 'key' argument is required." }
+      guard let modifiers = keyModifiers(args) else {
+        return
+          "The 'modifiers' argument is a list of names: command, shift, option, control, "
+          + "function."
+      }
+      // The owner the tool will drive, as `sessionTarget` finds it: a handle's
+      // own application, else the one named.
+      let owner =
+        (args["handle"] as? String).flatMap { AccessibilityDriver.handles.get($0)?.bundleId }
+        ?? args["bundleId"] as? String
+      if let owner, channelModifiers(modifiers) != nil, channel(for: owner) != nil { return nil }
+      do {
+        _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
+      } catch {
+        return error.localizedDescription
+      }
+      return nil
+    case "set_window_frame":
+      if missing("handle") { return "The 'handle' argument is required." }
+      return ["x", "y", "width", "height"].contains(where: { args[$0] is Double })
+        ? nil : "Pass at least one of 'x', 'y', 'width' or 'height'."
+    case "find_elements":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      var matcher = matching(args)
+      matcher.pressableOnly = args["pressableOnly"] as? Bool ?? false
+      return matcher.isEmpty ? "Give at least one of id, role, name, value or pressableOnly." : nil
+    case "wait_for":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if matching(args).isEmpty { return "Give at least one of id, role, name or value." }
+      if let named = args["state"],
+        (named as? String).flatMap(AccessibilityDriver.WaitState.init(rawValue:)) == nil
+      {
+        return "The 'state' argument is \"present\" or \"absent\"."
+      }
+      return nil
+    case "launch":
+      return args["bundleId"] is String || args["path"] is String
+        ? nil : "Either 'bundleId' or 'path' is required."
+    default:
+      return nil
+    }
+  }
+
+  /// The button a click names: left when absent, nil when present and not
+  /// one this knows — a left click in place of the menu it asked for would act
+  /// on the canvas.
+  static func mouseButton(_ args: [String: Any]) -> AccessibilityDriver.MouseButton? {
+    guard let named = args["button"] else { return .left }
+    return (named as? String).flatMap(AccessibilityDriver.MouseButton.init(rawValue:))
+  }
+
+  /// A key's modifier names: none when absent, nil when present and not a
+  /// list of names — dropping it would send the bare key in place of the
+  /// shortcut.
+  static func keyModifiers(_ args: [String: Any]) -> [String]? {
+    guard let given = args["modifiers"] else { return [] }
+    return given as? [String]
+  }
+
+  /// The modifiers as a channel names them, or nil when one of them has no
+  /// channel name (fn has no menu meaning), which sends the key the old way.
+  static func channelModifiers(_ modifiers: [String]) -> [String]? {
+    let named = modifiers.compactMap { name -> String? in
+      switch name.lowercased() {
+      case "command", "cmd": "command"
+      case "shift": "shift"
+      case "option", "alt": "option"
+      case "control", "ctrl": "control"
+      default: nil
+      }
+    }
+    return named.count == modifiers.count ? named : nil
+  }
+
   /// Find the one element a step's `match` names, waiting up to its `waitMs`
   /// for it to appear. Several matches are a refusal unless `index` picks one:
   /// pressing the first of two "Delete" buttons is the wrong press half the
@@ -1871,6 +2010,15 @@ nonisolated enum DesktopServer {
             "Step \(number) (drag) needs 'from' and 'to', each {\"handle\"} or {\"x\", \"y\"}. "
               + "Nothing was run.")
         }
+      }
+      // Then everything else the tool itself would refuse, by the check it
+      // makes. A step that names its element by `match` is given its handle
+      // when it runs, so a placeholder stands in for it here, one no handle
+      // can be, so it reaches nothing.
+      var probe = step
+      if matched { probe["handle"] = "(match)" }
+      if let problem = argumentProblem(tool, probe) {
+        return failure(id, "Step \(number) (\(tool)): \(problem) Nothing was run.")
       }
     }
 

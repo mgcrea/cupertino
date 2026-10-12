@@ -3211,6 +3211,27 @@ nonisolated enum AccessibilityDriver {
     still: (() -> Bool)? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
+    let (code, flags) = try keyStroke(name, modifiers: modifiers)
+    let source = CGEventSource(stateID: .hidSystemState)
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+      let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+    else { throw Failure.refused("Could not synthesise a key press.") }
+    down.flags = flags
+    up.flags = flags
+    try announceSessionInput(target, scope: scope, still: still)
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    DriveActivity.postedInput()
+  }
+
+  /// A key name and modifier names as the code and flags `key` posts, or the
+  /// refusal naming what is unknown. Its own function so a caller can check a
+  /// key before bringing an application forward for it — `apple_desktop_key`
+  /// and every `run` step do — with the very test `key` applies. The layout is
+  /// read from the cache, so this is safe off the main thread.
+  static func keyStroke(_ name: String, modifiers: [String]) throws -> (
+    code: CGKeyCode, flags: CGEventFlags
+  ) {
     guard let code = keyCode(for: name) else {
       throw Failure.refused(
         "Unknown key '\(name)'. Known: \(knownKeys().joined(separator: ", ")).")
@@ -3226,16 +3247,7 @@ nonisolated enum AccessibilityDriver {
       default: throw Failure.refused("Unknown modifier '\(modifier)'.")
       }
     }
-    let source = CGEventSource(stateID: .hidSystemState)
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-      let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
-    else { throw Failure.refused("Could not synthesise a key press.") }
-    down.flags = flags
-    up.flags = flags
-    try announceSessionInput(target, scope: scope, still: still)
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
-    DriveActivity.postedInput()
+    return (code, flags)
   }
 
   /// Deliberately small. These are the keys a driver needs to get unstuck —
