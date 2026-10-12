@@ -662,11 +662,50 @@ const ADDRESS_REPLACEMENT = `
 `;
 
 /**
+ * Who the original is, beyond its row id, read before the replacement exists.
+ * Leaves `replacementId` in scope for `CONFIRM_AND_DELETE`.
+ *
+ * The `before` snapshot is not enough on its own, because sync renumbers rows
+ * (see the delete in `CONFIRM_AND_DELETE`): an original renumbered mid-script
+ * under an unchanged subject carries an id no snapshot holds, and it was taken
+ * for the replacement, so a save that never landed came back as replaced:true.
+ * A renumbered row keeps its content, and the replacement opens with the new
+ * body; the replacement also has a Message-ID of its own. The heads are
+ * squashed and capped like revise.ts's sameDraft: an identity, not a body.
+ */
+const DRAFT_IDENTITY = `
+  var HEAD = 120;
+  var squashed = function (s) {
+    return String(s).replace(/\\uFFFC/g, "").replace(/\\s+/g, " ").trim();
+  };
+  var headOf = function (m) {
+    return squashed(prop(function () { return m.content(); }, "")).slice(0, HEAD);
+  };
+  var originalMessageId = prop(function () { return original.messageId(); }, null);
+  var oldHead = headOf(original);
+  var newHead = squashed(p.body || "").slice(0, HEAD);
+
+  // The row's id when it can be the replacement, else null. A Message-ID or a
+  // head that cannot be read is no evidence either way, so it does not refuse.
+  var replacementId = function (row) {
+    var id = prop(function () { return row.id(); }, null);
+    if (id === null || before[id]) return null;
+    var mid = prop(function () { return row.messageId(); }, null);
+    if (originalMessageId && mid && String(mid) === String(originalMessageId)) return null;
+    // Only telling when the bodies open differently: a revision of the closing
+    // lines leaves both heads alike and the Message-ID to decide.
+    if (newHead !== oldHead && headOf(row).indexOf(newHead) !== 0) return null;
+    return id;
+  };
+`;
+
+/**
  * Confirm the replacement is in Drafts, and only then delete the original.
  *
  * `UPDATE_DRAFT`'s, which needs `subject`, `before`, `facts`, `saved`,
- * `unquoted` and `attached` in scope. A draft rebuilt natively is confirmed by
- * `COMMIT_REPLACEMENT` instead, by what it holds rather than by subject alone.
+ * `unquoted`, `attached` and `replacementId` (`DRAFT_IDENTITY`) in scope. A
+ * draft rebuilt natively is confirmed by `COMMIT_REPLACEMENT` instead, by what
+ * it holds rather than by subject alone.
  */
 const CONFIRM_AND_DELETE = `
   // Ask the Drafts mailbox, not the object we just made: "save() did not throw"
@@ -677,8 +716,8 @@ const CONFIRM_AND_DELETE = `
     pause(0.4);
     var matches = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
     for (var k = 0; k < matches.length; k++) {
-      var mid = prop(function () { return matches[k].id(); }, null);
-      if (mid === null || before[mid]) continue;
+      var mid = replacementId(matches[k]);
+      if (mid === null) continue;
       if (newId === null || mid > newId) newId = mid;
     }
   }
@@ -708,6 +747,10 @@ const CONFIRM_AND_DELETE = `
    * across that gap failed with "Can't get object." The reference fetched at the
    * top of this script has been through several seconds of polling and a server
    * round trip by the time we get here, so it is refetched by id.
+   *
+   * The same rewrite can move the original itself, and then its old id finds
+   * nothing. It is left where it is rather than looked for some other way, as
+   * COMMIT_REPLACEMENT does: nothing is deleted on a guess.
    */
   try {
     M.delete(mb.messages.byId(p.id));
@@ -718,13 +761,18 @@ const CONFIRM_AND_DELETE = `
 
   // Read the id back once more: the same sync rewrite that invalidates the
   // original can renumber the replacement between confirmation and return.
+  // The confirmed id stands while it is still there; otherwise the newest row
+  // that passes the replacement test, which a renumbered original does not.
   pause(0.4);
-  var settledId = newId;
+  var settledId = null;
   var finals = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
   for (var f = 0; f < finals.length; f++) {
-    var fid = prop(function () { return finals[f].id(); }, null);
-    if (fid !== null && !before[fid] && (settledId === newId || fid > settledId)) settledId = fid;
+    var fid = replacementId(finals[f]);
+    if (fid === null) continue;
+    if (fid === newId) { settledId = newId; break; }
+    if (settledId === null || fid > settledId) settledId = fid;
   }
+  if (settledId === null) settledId = newId;
 
   return ok({
     replaced: true,
@@ -747,6 +795,7 @@ export const UPDATE_DRAFT = script(
   `
   ${RESOLVE_DRAFT}
   ${DRAFT_PREFLIGHT}
+  ${DRAFT_IDENTITY}
 
   var replacement = M.OutgoingMessage({ subject: subject, content: p.body || "", visible: true });
   M.outgoingMessages.push(replacement);

@@ -63,10 +63,25 @@ type MailBehaviour = {
   replacementFiles?: string[];
   /** The original's id finds nothing once the polling has begun: Mail renumbered it. */
   originalGoneAfterPolls?: boolean;
+  /**
+   * Sync gives the ORIGINAL a new row id mid-script, as it does a just-saved
+   * draft (measured on iCloud). The row keeps its content; only the id moves,
+   * so `byId` of the old one stops resolving. `atCall` counts `whose` calls (1
+   * is the snapshot taken before composing, 2 the first poll), `atById` counts
+   * `byId` calls (1 is the lookup at the top).
+   */
+  renumberOriginal?: { atCall?: number; atById?: number; to: number };
 };
 
 /** A row in the Drafts mailbox. */
-type Row = { id: number; subject: string; headers?: string; content?: string; files?: string[] };
+type Row = {
+  id: number;
+  subject: string;
+  headers?: string;
+  content?: string;
+  files?: string[];
+  messageId?: string;
+};
 
 /** A `Date` header just after the rebuild opened its composer, and one long before it. */
 const SAVED_NOW = "Date: Sat, 25 Oct 2026 10:00:03 +0000\r\n";
@@ -75,6 +90,7 @@ const SAVED_EARLIER = "Date: Sat, 25 Oct 2026 09:00:00 +0000\r\n";
 const OPENED_AT = Date.parse("2026-10-25T10:00:00Z");
 
 const ORIGINAL_ID = 42;
+const ORIGINAL_MESSAGE_ID = "<original@example.com>";
 
 /** JXA's `Path`, as far as `attachFiles` reads it. */
 const Path = (path: string) => ({ path });
@@ -88,6 +104,7 @@ const row = (r: Row) => ({
   allHeaders: () => r.headers ?? "",
   content: () => r.content ?? "",
   mailAttachments: () => (r.files ?? []).map((name) => ({ name: () => name })),
+  messageId: () => r.messageId ?? null,
 });
 
 const runScript = (
@@ -115,7 +132,11 @@ const runScript = (
     replacementContent = "The revised numbers.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
     replacementFiles = [],
     originalGoneAfterPolls = false,
+    renumberOriginal,
   } = behaviour;
+
+  /** The original as a Drafts row, whose id sync may move. */
+  const originalRow: Row = { id: ORIGINAL_ID, subject, messageId: ORIGINAL_MESSAGE_ID, content };
 
   const state = {
     polls: 0,
@@ -128,8 +149,14 @@ const runScript = (
     deleted: [] as number[],
     attached: [] as string[],
     closed: 0,
+    whoseCalls: 0,
+    byIdCalls: 0,
     /** Rows the Drafts mailbox reports. The replacement is added on save.  */
-    draftRows: [{ id: ORIGINAL_ID, subject }, ...otherDrafts] as Row[],
+    draftRows: [originalRow, ...otherDrafts] as Row[],
+  };
+
+  const renumberIf = (due: boolean) => {
+    if (due && renumberOriginal) originalRow.id = renumberOriginal.to;
   };
 
   const original = {
@@ -138,6 +165,7 @@ const runScript = (
     sender: () => "me@example.com",
     allHeaders: () => headers,
     content: () => `${content}`,
+    messageId: () => ORIGINAL_MESSAGE_ID,
     mailAttachments: () => Array.from({ length: attachments }, (_, i) => ({ name: () => `f${i}` })),
     toRecipients: () => [addressee("ada@example.com")],
     ccRecipients: () => [addressee("bob@example.com")],
@@ -152,11 +180,13 @@ const runScript = (
       // renumbered underneath it, and the reference — not the id — goes dead.
       // An id that is not there raises, the way Mail does: "Can't get object."
       byId: (id: number) => {
-        if (id !== ORIGINAL_ID) throw new Error("Can't get object.");
+        renumberIf(++state.byIdCalls === renumberOriginal?.atById);
+        if (id !== originalRow.id) throw new Error("Can't get object.");
         if (originalGoneAfterPolls && state.polls > 0) throw new Error("Can't get object.");
         return { ...original, bornAt: state.polls };
       },
       whose: (spec: { subject: string }) => () => {
+        renumberIf(++state.whoseCalls === renumberOriginal?.atCall);
         // The replacement only becomes visible once Mail has caught up.
         if (state.saves > 0 && ++state.polls >= savedAfterPolls) {
           if (!state.draftRows.some((r) => r.id === 99)) {
@@ -164,7 +194,9 @@ const runScript = (
               id: 99,
               subject: state.composed?.subject ?? subject,
               headers: replacementHeaders,
-              content: replacementContent,
+              // What this script composed, or what a rebuild pasted.
+              content: state.composed?.content ?? replacementContent,
+              messageId: "<replacement@example.com>",
               files: replacementFiles,
             });
           }
@@ -531,6 +563,49 @@ describe("references that go stale mid-script", () => {
     const { envelope } = runScript({});
     expect(envelope.data.newId).toBe(99);
     expect(envelope.data.confirmedId).toBe(99);
+  });
+
+  /*
+   * The same sync rewrite can renumber the ORIGINAL. Under an unchanged subject
+   * its new id is in no snapshot, so it passed for the replacement: a save that
+   * never landed was reported as `replaced: true`, with the original's new id
+   * as `newId`. It keeps its content through the move, and the replacement
+   * opens with the new body, which is what tells the two apart.
+   */
+  it("does not take the renumbered original for the replacement", () => {
+    const { envelope, state } = runScript(
+      {},
+      { savedAfterPolls: Infinity, renumberOriginal: { atCall: 2, to: 60 } },
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(envelope.data.capability).toBe("confirmation");
+    expect(state.deleted).toEqual([]);
+  });
+
+  /*
+   * Renumbered after the replacement was confirmed and before the delete: the
+   * refetch by the old id fails and the original is left, not looked for some
+   * other way, and the read-back does not take its new id for the replacement's.
+   */
+  it("keeps the replacement's id when the original moves before the delete", () => {
+    const { envelope, state } = runScript({}, { renumberOriginal: { atById: 2, to: 120 } });
+    expect(envelope.data.replaced).toBe(true);
+    expect(envelope.data.newId).toBe(99);
+    expect(envelope.data.confirmedId).toBe(99);
+    expect(envelope.data.originalDeleted).toBe(false);
+    expect(envelope.data.removeError).toMatch(/Can't get object/);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* A renumbered row that still carries the original's Message-ID is not new. */
+  it("does not take a row carrying the original's Message-ID for the replacement", () => {
+    const { envelope, state } = runScript(
+      // The same opening as the original, so only the Message-ID can tell.
+      { body: "The numbers as they stand." },
+      { savedAfterPolls: Infinity, renumberOriginal: { atCall: 2, to: 60 } },
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
   });
 
   /** An autosaved copy written after the original can outnumber the replacement. */
