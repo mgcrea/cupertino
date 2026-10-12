@@ -440,6 +440,15 @@ struct DesktopCheck {
     check(
       "key naming an application that is not running is refused and lights no indicator",
       absentError && DriveActivity.current() != "com.example.absent")
+    // A bare key sent in place of a shortcut: "a" typed where select-all was
+    // meant. Refused the way an unknown modifier name already is.
+    let (modifiersText, modifiersError) = callText(
+      "apple_desktop_key",
+      ["key": "a", "modifiers": "command", "bundleId": "com.example.absent"], writes: true,
+      anyApp: true)
+    check(
+      "key with modifiers that are not a list of names is refused, not sent bare",
+      modifiersError && modifiersText.contains("'modifiers'"))
     let (reachText, reachError) = callText(
       "apple_desktop_click", ["x": 0.0, "y": 0.0, "bundleId": "com.microsoft.VSCode"],
       writes: true, anyApp: false)
@@ -1047,6 +1056,22 @@ struct DesktopCheck {
       check("a character resolves off the main thread", answered && box.code == onMain)
       check("and answers from the cache rather than waiting on main", box.elapsed < 0.1)
     }
+
+    // ─── a frame that is not a number is no frame ───────────────────────────
+    // DeviceHub publishes NaN frames (docs/simulator.md), and JSONSerialization
+    // raises an Objective-C exception on one that `try?` cannot catch, which
+    // ends the whole app rather than one answer.
+    check(
+      "a NaN position reads as no frame",
+      AccessibilityDriver.frame(point: CGPoint(x: CGFloat.nan, y: CGFloat.nan), size: .zero) == nil)
+    check(
+      "an infinite size reads as no frame",
+      AccessibilityDriver.frame(
+        point: .zero, size: CGSize(width: CGFloat.infinity, height: 10)) == nil)
+    check(
+      "a finite frame reads as itself",
+      AccessibilityDriver.frame(point: CGPoint(x: 1, y: 2), size: CGSize(width: 3, height: 4))
+        == [1, 2, 3, 4])
 
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:

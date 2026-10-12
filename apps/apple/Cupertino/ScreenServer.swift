@@ -22,12 +22,6 @@ nonisolated enum ScreenServer {
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion
 
-  // ─── the loop ──────────────────────────────────────────────────────────────
-
-  /// One newline-delimited JSON-RPC message. MCP's stdio framing, which the
-  /// socket carries verbatim.
-  static func nextLine(_ fd: Int32) -> String? { InProcessRPC.nextLine(fd) }
-
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
   /// `targetEnabled` answers for the surface being photographed, not for this
@@ -381,10 +375,6 @@ nonisolated enum ScreenServer {
 
   private static func jsonText(_ object: Any) -> String { InProcessRPC.jsonText(object) }
 
-  private static func envelope(_ id: Any?, _ body: [String: Any]) -> String {
-    InProcessRPC.envelope(id, body)
-  }
-
   private static func result(_ id: Any?, _ value: Any) -> String {
     InProcessRPC.result(id, value)
   }
@@ -405,6 +395,6 @@ nonisolated enum ScreenServer {
   }
 
   private static func failed(_ id: Any?, _ error: Error) -> String {
-    failure(id, error.localizedDescription)
+    InProcessRPC.failed(id, error)
   }
 }

@@ -22,8 +22,6 @@ nonisolated enum DesktopServer {
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion
 
-  static func nextLine(_ fd: Int32) -> String? { InProcessRPC.nextLine(fd) }
-
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
   static func handle(
@@ -593,26 +591,22 @@ nonisolated enum DesktopServer {
   /// that does not cap.
   private static let maxBytes = 40_000
 
-  /// `elements` is what the caller asked for, which is NOT always the whole
-  /// walk.
-  ///
-  /// `find_elements` walks everything and returns a filtered set, and passing
-  /// the walk here was a real defect: `matched` came from the tree, so a search
-  /// that found ONE control reported `returned: 1, matched: 136` — which reads
-  /// exactly like a truncated answer and is the confusion this field exists to
-  /// prevent. The byte cap was wrong the same way, measured against elements
-  /// that were never going to be sent.
+  /// `matched` counts what the walk kept, which for `find_elements` is what
+  /// matched rather than everything visited: the filter runs inside the walk.
+  /// It once counted the whole tree, so a search that found ONE control
+  /// reported `returned: 1, matched: 136`, which reads exactly like a truncated
+  /// answer and is the confusion this field exists to prevent.
   ///
   /// `render` and `coordinateSpace` exist for the simulator surface, which
   /// answers the same walk in iOS points: the byte cap and the `matched` /
   /// `returned` / `truncated` contract are one implementation here rather
   /// than a copy that would drift.
   static func treeBody(
-    _ tree: AccessibilityDriver.Tree, elements: [AccessibilityDriver.Element]? = nil,
+    _ tree: AccessibilityDriver.Tree,
     render: ((AccessibilityDriver.Element) -> [String: Any])? = nil,
     coordinateSpace: String = "screen points, top-left origin"
   ) -> [String: Any] {
-    let answering = elements ?? tree.elements
+    let answering = tree.elements
     var kept: [[String: Any]] = []
     var bytes = 0
     for element in answering {
@@ -768,7 +762,7 @@ nonisolated enum DesktopServer {
             }
             return true
           })
-        return ok(id, treeBody(tree, elements: tree.elements))
+        return ok(id, treeBody(tree))
 
       case "apple_desktop_user_activity":
         // Not gated on `isTrusted`: this is CoreGraphics rather than
@@ -906,7 +900,20 @@ nonisolated enum DesktopServer {
         guard let key = args["key"] as? String else {
           return failure(id, "The 'key' argument is required.")
         }
-        let modifiers = (args["modifiers"] as? [String]) ?? []
+        // Absent is no modifiers; present and not a list of names is a mistake,
+        // and dropping it would send the bare key in place of the shortcut.
+        let modifiers: [String]
+        if let given = args["modifiers"] {
+          guard let names = given as? [String] else {
+            return failure(
+              id,
+              "The 'modifiers' argument is a list of names: command, shift, option, control, "
+                + "function.")
+          }
+          modifiers = names
+        } else {
+          modifiers = []
+        }
         let owner = try sessionTarget(args, scope: scope)
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)

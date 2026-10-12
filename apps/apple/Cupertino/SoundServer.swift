@@ -29,8 +29,6 @@ nonisolated enum SoundServer {
   /// Shared with every other in-process surface — see `InProcessRPC`.
   static let protocolVersion = InProcessRPC.protocolVersion
 
-  static func nextLine(_ fd: Int32) -> String? { InProcessRPC.nextLine(fd) }
-
   // ─── dispatch ──────────────────────────────────────────────────────────────
 
   /// `connection` is the session a recording started here belongs to, so the

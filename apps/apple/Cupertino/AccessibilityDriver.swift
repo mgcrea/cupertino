@@ -157,12 +157,6 @@ nonisolated enum AccessibilityDriver {
       guard handle.hasPrefix("e"), let number = Int(handle.dropFirst()) else { return nil }
       return elements[number]
     }
-
-    func clear() {
-      lock.lock()
-      defer { lock.unlock() }
-      elements.removeAll()
-    }
   }
 
   static let handles = HandleStore()
@@ -369,7 +363,16 @@ nonisolated enum AccessibilityDriver {
     guard AXValueGetValue(posValue as! AXValue, .cgPoint, &point),
       AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
     else { return nil }
-    return [point.x, point.y, size.width, size.height]
+    return frame(point: point, size: size)
+  }
+
+  /// nil for a frame with a NaN or infinite component, the same as an
+  /// unreadable one. DeviceHub publishes NaN frames (docs/simulator.md), and
+  /// one reaching `JSONSerialization` raises an Objective-C exception that
+  /// `try?` does not catch: it ends the app, every surface's connection with it.
+  static func frame(point: CGPoint, size: CGSize) -> [Double]? {
+    let rect: [Double] = [point.x, point.y, size.width, size.height]
+    return rect.allSatisfy(\.isFinite) ? rect : nil
   }
 
   // ─── discovery, which needs no grant ───────────────────────────────────────

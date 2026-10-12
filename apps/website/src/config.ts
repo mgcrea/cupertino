@@ -57,6 +57,16 @@ export const SPELLED = [
   "eight",
   "nine",
   "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
 ];
 
 /** "Mail, Notes, Reminders and Calendar" — however many there turn out to be. */

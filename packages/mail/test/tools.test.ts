@@ -145,6 +145,19 @@ describe("read tools", () => {
     expect(JSON.parse(textOf(result))).toEqual([]);
   });
 
+  /*
+   * An empty account list reaches LIST_MAILBOXES as "no filter", so an
+   * allowlist that matches nothing must stop here rather than list them all.
+   */
+  it("lists no mailboxes when the allowlist admits no account", async () => {
+    const runner = fakeRunner({
+      mailboxes: [{ accountUuid: UUID, accountName: "iCloud", name: "INBOX" }],
+    });
+    const client = await connect(loadConfig({ APPLE_MAIL_ACCOUNTS: "SomeOtherAccount" }), runner);
+    const result = await client.callTool({ name: "apple_mail_list_mailboxes", arguments: {} });
+    expect(JSON.parse(textOf(result))).toEqual([]);
+  });
+
   it("admits an allowlisted account by name, case-insensitively", async () => {
     const client = await connect(loadConfig({ APPLE_MAIL_ACCOUNTS: "icloud" }));
     const result = await client.callTool({ name: "apple_mail_list_accounts", arguments: {} });

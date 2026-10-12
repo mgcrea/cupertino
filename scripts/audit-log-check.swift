@@ -186,6 +186,27 @@ struct AuditLogCheck {
       "a second outage is accounted for the same way",
       summary.report.isIntact && summary.records == 7)
 
+    // A relaunch over an empty last segment: the sink creates the file before
+    // writing, so a write that fails then (a full disk) and a quit during that
+    // streak leave one behind. The chain on disk is undamaged, so it has to
+    // carry on from the last record that landed rather than from genesis.
+    AuditLog.shared.releaseSegment()
+    let empty = AuditLog.url(for: AuditLog.number(of: segment) + 1)
+    check(
+      "an empty segment can be left behind",
+      FileManager.default.createFile(
+        atPath: empty.path, contents: nil, attributes: [.posixPermissions: 0o600]))
+    let relaunched = AuditLog()
+    relaunched.record(
+      LogStore.Entry(
+        at: Date(), surface: "mail", level: .call, text: "apple_mail_get_message 9",
+        arguments: nil))
+    relaunched.flush()
+    summary = AuditLog.verifyAll()
+    check(
+      "a relaunch over an empty segment carries the chain on rather than restarting it",
+      summary.report.isIntact && summary.records == 8)
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
   }

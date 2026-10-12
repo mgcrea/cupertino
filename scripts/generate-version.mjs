@@ -48,6 +48,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { region } from "./lib/region.mjs";
+
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
 
@@ -76,17 +78,6 @@ if (!/^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$/.test(VERSION ?? "")) {
 // ─── marked regions ──────────────────────────────────────────────────────────
 
 const BANNER = "generated from package.json by `make version` — do not edit by hand";
-
-/** Byte-identical to the surfaces generator's, and for the same reasons. */
-const region = (source, open, close, body, label) => {
-  const start = source.indexOf(open);
-  const end = source.indexOf(close);
-  if (start === -1 || end === -1 || end < start) {
-    console.error(`${label}: could not find the generated region (${open.trim()})`);
-    process.exit(3);
-  }
-  return source.slice(0, start + open.length) + body + source.slice(end);
-};
 
 const targets = [];
 const target = (path, next) => targets.push({ path, next });
