@@ -62,6 +62,28 @@ final class AuditLog {
   nonisolated static var recordsPayloads: Bool { UserDefaults.standard.bool(forKey: payloadsKey) }
   nonisolated static var recordsContent: Bool { UserDefaults.standard.bool(forKey: contentKey) }
 
+  /// Whether one surface's contents — a mail body, a message's text, what a
+  /// tool returned — land in the file, given every switch that decides it.
+  ///
+  /// Five switches, and the last two are the SURFACE's: whether it records
+  /// contents at all (its own override, else the app-wide default) and whether
+  /// it records arguments. That is the runtime's rule — `RequestObserver`
+  /// captures with the surface's verdict, `record` keeps payloads only when the
+  /// file does, and `forDisk` blanks prose again unless `contentKey` is set —
+  /// and the Activity pane asks this rather than re-deriving it. It used to
+  /// gate its switch on the app-wide default alone, so it sat greyed out while
+  /// a surface's override was sending contents to disk, and could not be
+  /// turned on when that override was the only one set.
+  ///
+  /// Values rather than reads, so `make audit-log-check` can pin every case
+  /// without `SurfaceSettings`, which lives with the host.
+  nonisolated static func contentReachesDisk(
+    auditEnabled: Bool, payloads: Bool, content: Bool,
+    surfaceCapturesContent: Bool, surfaceMode: CallCapture.Mode
+  ) -> Bool {
+    auditEnabled && payloads && content && surfaceCapturesContent && surfaceMode >= .arguments
+  }
+
   nonisolated static let defaultMaxDays = 30
   nonisolated static let defaultMaxMegabytes = 100
 

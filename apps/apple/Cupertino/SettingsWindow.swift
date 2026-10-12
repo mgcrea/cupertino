@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SupportKit
 import SupportKitSettings
 import SwiftUI
@@ -991,6 +992,10 @@ private struct AuditPane: View {
   @State private var note: String?
   @State private var fingerprint = AuditSigning.currentFingerprint()
   @State private var copied = false
+  /// Bumped on every defaults write, so the contents caption follows switches
+  /// this pane does not own — each surface's own content and capture settings
+  /// live in its detail pane, and nothing here would otherwise redraw for them.
+  @State private var defaultsRevision = 0
 
   var body: some View {
     Form {
@@ -1038,16 +1043,17 @@ private struct AuditPane: View {
         // The third act, and the only toggle in this app with a warning on it.
         // Getting somebody's mail onto disk should take three deliberate
         // switches, not one — and the last of them should say what it does.
+        //
+        // Not gated on the app-wide "Include contents" above. A surface's own
+        // override is what wins at runtime, so that gate greyed this out while
+        // a surface's contents were going to disk, and kept it from being
+        // turned on when the override was the only one set. The caption names
+        // the surfaces instead, from the same rule the log applies.
         Toggle(isOn: $fileContent) {
           Text("…including message contents")
-          Text(
-            fileContent
-              ? "⚠ Mail bodies, message text and note contents are written to a file on disk, "
-                + "unencrypted. FileVault is what protects it at rest."
-              : "Off. Even with contents shown in the window above, the file keeps only the "
-                + "structure. Turning this on is a separate decision from showing them on screen.")
+          Text(contentCaption)
         }
-        .disabled(!keepFile || !filePayloads || !content)
+        .disabled(!keepFile || !filePayloads)
 
         LabeledContent("Keep for") {
           Stepper("\(maxDays) days", value: $maxDays, in: 1...365)
@@ -1153,6 +1159,10 @@ private struct AuditPane: View {
       }
     }
     .formStyle(.grouped)
+    .onReceive(
+      NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+        .receive(on: DispatchQueue.main)
+    ) { _ in defaultsRevision += 1 }
     .onAppear { summary = AuditLog.verifyAll() }
   }
 
@@ -1172,6 +1182,45 @@ private struct AuditPane: View {
     AuditLog.shared.clear()
     summary = AuditLog.verifyAll()
     note = "The log on disk is gone."
+  }
+
+  /// The surfaces whose own settings record contents: what this switch puts
+  /// in the file, with the two above it on. Asked of `AuditLog`'s rule rather
+  /// than re-derived, so the caption and the file cannot disagree.
+  private var surfacesRecordingContent: [Surface] {
+    _ = defaultsRevision
+    return SurfaceSettings.enabledSurfaces.filter {
+      AuditLog.contentReachesDisk(
+        auditEnabled: true, payloads: true, content: true,
+        surfaceCapturesContent: SurfaceSettings.capturesContent($0),
+        surfaceMode: SurfaceSettings.captureMode($0))
+    }
+  }
+
+  /// Names the surfaces, because "message contents" is a promise about all of
+  /// them and the switches that decide it are per surface.
+  private var contentCaption: String {
+    let names = surfacesRecordingContent.map(\.displayName)
+    guard !names.isEmpty else {
+      return "No surface records contents, so none would reach the file. Contents are "
+        + "turned on with Include contents above, or on a surface of its own."
+    }
+    let list = ListFormatter.localizedString(byJoining: names)
+    let record = names.count == 1 ? "records" : "record"
+    if keepFile && filePayloads && fileContent {
+      return "⚠ What \(list) \(record) — mail bodies, message text, "
+        + "what a tool returned — is written to a file on disk, unencrypted. FileVault is what "
+        + "protects it at rest."
+    }
+    if fileContent {
+      return
+        "Nothing reaches a file until one is kept with arguments and results in it. Then what \(list) "
+        + "\(record) goes into it, contents included."
+    }
+    return
+      "Off. The file keeps only the structure of what \(list) \(record). "
+      + "Turning this on writes their contents to disk, which is a separate decision from "
+      + "showing them on screen."
   }
 
   private func bytes(_ count: Int) -> String {

@@ -207,7 +207,36 @@ struct AuditLogCheck {
       "a relaunch over an empty segment carries the chain on rather than restarting it",
       summary.report.isIntact && summary.records == 8)
 
+    contentReachesDisk()
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
+  }
+
+  /// The one question the Activity pane's last switch has to answer: does the
+  /// text of a mail actually land in the file?
+  ///
+  /// The pane used to gate "…including message contents" on the APP-WIDE
+  /// content switch, while what wins at runtime is the surface's own override.
+  /// So it could sit greyed out while contents went to disk, and could not be
+  /// turned on when a surface's override was the only one set. Pure, so every
+  /// switch is pinned here without a preference written.
+  static func contentReachesDisk() {
+    print("\naudit log: when a surface's contents reach the file\n")
+    func reaches(
+      enabled: Bool = true, payloads: Bool = true, content: Bool = true,
+      surface: Bool = true, mode: CallCapture.Mode = .arguments
+    ) -> Bool {
+      AuditLog.contentReachesDisk(
+        auditEnabled: enabled, payloads: payloads, content: content,
+        surfaceCapturesContent: surface, surfaceMode: mode)
+    }
+    check("all five switches on: it does", reaches())
+    check("with results recorded too", reaches(mode: .argumentsAndResults))
+    check("not with the file off", !reaches(enabled: false))
+    check("not without payloads in the file", !reaches(payloads: false))
+    check("not without the file's own content switch", !reaches(content: false))
+    check("not when the surface records no contents", !reaches(surface: false))
+    check("not when the surface records names only", !reaches(mode: .off))
   }
 }
