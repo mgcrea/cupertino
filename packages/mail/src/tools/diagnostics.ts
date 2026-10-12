@@ -114,7 +114,13 @@ export const buildDiagnostics = async (
       // Mail's windows.
       ...(axReach
         ? {
-            composerAxRead: axReach.ok ? "granted" : "denied",
+            // "refused" is the app declining to lend, not a grant: see `MailAxLane.reach`.
+            composerAxRead: axReach.ok
+              ? "granted"
+              : axReach.refusal === null
+                ? "denied"
+                : "refused",
+            ...(axReach.refusal === null ? {} : { composerAxRefusal: axReach.refusal }),
             ...(axReach.windows ? { composerAxWindowsSeen: axReach.windows } : {}),
           }
         : {}),

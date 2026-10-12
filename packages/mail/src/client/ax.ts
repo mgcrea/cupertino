@@ -1,4 +1,5 @@
 import {
+  AxChannelError,
   openAxChannel,
   watchInterference,
   type AxChannel,
@@ -174,8 +175,14 @@ export type EditComposerArgs = {
 
 export type ReachReport = {
   ok: boolean;
-  /** `accessibility` when Mail's windows cannot be read; null when they can. */
-  reason: "accessibility" | null;
+  /**
+   * `accessibility` when the app tried and Mail's windows could not be read;
+   * `refused` when the app would not lend its driver at all; null when they
+   * could be read.
+   */
+  reason: "accessibility" | "refused" | null;
+  /** The host's own sentence when `reason` is `refused`; null otherwise. */
+  refusal: string | null;
   windows: string[] | null;
 };
 
@@ -323,6 +330,12 @@ export class MailAxLane {
    * Mail with no windows is legitimate — everything closed to the menu bar — so
    * an empty list is not evidence of anything and must not refuse a reply that
    * would have worked.
+   *
+   * A refused HANDSHAKE is kept apart from a failed read. The host turns the
+   * lend away before any window is asked for — Mail switched off, no licence,
+   * or a connection it does not recognise as this server — and every one of
+   * those used to come back here as `accessibility`, so the sentence a person
+   * read sent them to grant something already granted.
    */
   async reach(): Promise<ReachReport> {
     try {
@@ -331,10 +344,26 @@ export class MailAxLane {
         includeTitles: true,
       })) as Windows;
       const titles = (result.windows ?? []).map((w) => w.title ?? null);
-      return { ok: true, reason: null, windows: titles.filter((t): t is string => t !== null) };
-    } catch {
-      return { ok: false, reason: "accessibility", windows: null };
+      return {
+        ok: true,
+        reason: null,
+        refusal: null,
+        windows: titles.filter((t): t is string => t !== null),
+      };
+    } catch (error) {
+      if (error instanceof AxChannelError && error.refusal !== null) {
+        return { ok: false, reason: "refused", refusal: error.refusal, windows: null };
+      }
+      return { ok: false, reason: "accessibility", refusal: null, windows: null };
     }
+  }
+
+  /** The sentence to say when the host refused to lend its driver at all. */
+  static refusalMessage(mode: string, refusal: string): string {
+    return (
+      `Cupertino would not lend Mail its Accessibility driver, which is the only route into a ` +
+      `${mode} composer, so it was not started and nothing was written. The app said: ${refusal}`
+    );
   }
 
   /**

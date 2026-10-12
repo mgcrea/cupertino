@@ -95,7 +95,7 @@ const world = (
   let releases = 0;
   const lane = {
     watch: () => ({ check: async () => null }),
-    reach: async () => ({ ok: true, reason: null, windows: [] }),
+    reach: async () => ({ ok: true, reason: null, refusal: null, windows: [] }),
     composers: async (quoteChars = 2000) => [
       ...Array.from({ length: Math.max(composers, 0) }, (_, at) =>
         // With `tabs`, every composer is a tab of one window, the first one shown.

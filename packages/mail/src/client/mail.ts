@@ -354,10 +354,14 @@ export class AppleMailClient {
    *
    * Null when there is no native lane, which is not a failure — see `#ax`.
    */
-  async composerAxReach(): Promise<{ ok: boolean; windows: string[] | null } | null> {
+  async composerAxReach(): Promise<{
+    ok: boolean;
+    refusal: string | null;
+    windows: string[] | null;
+  } | null> {
     if (!this.#ax) return null;
     const reach = await this.#ax.reach();
-    return { ok: reach.ok, windows: reach.windows };
+    return { ok: reach.ok, refusal: reach.refusal, windows: reach.windows };
   }
 
   async lanes(): Promise<LaneStatus> {
@@ -1953,6 +1957,19 @@ export class AppleMailClient {
     attachments: string[],
   ): Promise<Record<string, unknown>> {
     const reach = await lane.reach();
+    if (!reach.ok && reach.refusal !== null) {
+      // The app declining to lend, not a missing grant: see `MailAxLane.reach`.
+      return {
+        replaced: false,
+        degraded: true,
+        method: "inPlace",
+        capability: "accessibility",
+        reason:
+          "Cupertino would not lend Mail its Accessibility driver, which is the only route into " +
+          `an open composer, so nothing was edited. The app said: ${reach.refusal}`,
+        hint: "Open Cupertino to see why; this is not an Accessibility grant.",
+      };
+    }
     if (!reach.ok) {
       return {
         replaced: false,
@@ -2058,6 +2075,17 @@ export class AppleMailClient {
       };
     }
     const reach = await this.#ax.reach();
+    if (!reach.ok && reach.refusal !== null) {
+      return {
+        degraded: true,
+        capability: "accessibility",
+        drafts: [],
+        reason:
+          "Cupertino would not lend its Accessibility driver, so nothing was checked — this " +
+          `does NOT mean no draft is open. The app said: ${reach.refusal}`,
+        hint: "Open Cupertino to see why; this is not an Accessibility grant.",
+      };
+    }
     if (!reach.ok) {
       return {
         degraded: true,
