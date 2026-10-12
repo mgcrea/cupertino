@@ -906,7 +906,20 @@ nonisolated enum DesktopServer {
         guard let key = args["key"] as? String else {
           return failure(id, "The 'key' argument is required.")
         }
-        let modifiers = (args["modifiers"] as? [String]) ?? []
+        // Absent is no modifiers; present and not a list of names is a mistake,
+        // and dropping it would send the bare key in place of the shortcut.
+        let modifiers: [String]
+        if let given = args["modifiers"] {
+          guard let names = given as? [String] else {
+            return failure(
+              id,
+              "The 'modifiers' argument is a list of names: command, shift, option, control, "
+                + "function.")
+          }
+          modifiers = names
+        } else {
+          modifiers = []
+        }
         let owner = try sessionTarget(args, scope: scope)
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)

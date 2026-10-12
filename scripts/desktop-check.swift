@@ -440,6 +440,15 @@ struct DesktopCheck {
     check(
       "key naming an application that is not running is refused and lights no indicator",
       absentError && DriveActivity.current() != "com.example.absent")
+    // A bare key sent in place of a shortcut: "a" typed where select-all was
+    // meant. Refused the way an unknown modifier name already is.
+    let (modifiersText, modifiersError) = callText(
+      "apple_desktop_key",
+      ["key": "a", "modifiers": "command", "bundleId": "com.example.absent"], writes: true,
+      anyApp: true)
+    check(
+      "key with modifiers that are not a list of names is refused, not sent bare",
+      modifiersError && modifiersText.contains("'modifiers'"))
     let (reachText, reachError) = callText(
       "apple_desktop_click", ["x": 0.0, "y": 0.0, "bundleId": "com.microsoft.VSCode"],
       writes: true, anyApp: false)
