@@ -216,6 +216,44 @@ commit.
   `isOurs` claims**. This is the last step of moving a hand-configured server over: it is running
   through Cupertino now, and the entry that starts its own copy is still there.
 
+## Keeping configs current
+
+Configure used to be the only write, so a surface switched on reached no client until somebody
+visited up to seven panes, and a surface that ships switched on in an update reached none at all.
+Now `ClientWiring.rewireAll` runs at every launch and half a second after the set of surfaces
+switched on changes. A pass over a config that is already current only reads it, so running it
+every time costs nothing. The switches are watched through `UserDefaults` rather than hooked, so
+the detail pane, the Settings row and the sidebar's context menu cannot disagree.
+
+It is the same idea as Bastion's rewire, and the limits are what make it safe in a file somebody
+else owns. `ClientWiringMerge.rewirePlan` decides, and `make wiring-check` exercises it:
+
+- **A client with no entry of ours is left alone.** Wiring a client is somebody's decision.
+- **A client wired to another copy that is still installed is left alone**, the whole file. A beta
+  in `~/Downloads` launched once must not take over every client. A copy that is _gone_ is
+  different: its entries are broken, and the copy doing the rewiring is the one that exists, so
+  they are pointed at it.
+- **Only what is wrong is written.** Missing keys are added, and keys of ours for a surface
+  switched off or from before the rename are removed. An entry already reaching this bundle is left
+  byte for byte, including Codex's `enabled = false`, which Configure re-renders and this does not.
+  A key held by somebody else's entry is skipped, since there is nobody to ask.
+- **With every surface off it does nothing.** Removing the last entry would make the client read
+  as never wired, and switching a surface back on would then reach nobody. The host already
+  refuses a surface that is off.
+- **User scope only.** A folder's `.mcp.json` sits in a working tree, and the per-folder blocks
+  follow the folder card.
+- **A failure is logged, not raised.** The switch is the user's decision and the config a copy
+  of it. The pane goes on reporting what the file holds.
+
+**Who may run it.** A Debug build never does: it keeps its own preferences under
+`io.mgcrea.cupertino.debug` but shares every client config with the installed app, so its pass
+would rewrite the real `~/.claude.json` from somebody else's surface set, pointing into a build
+directory. Neither does a copy outside an Applications folder, whose bridge path breaks when the
+folder is cleaned, a translocated one, or a capture. `autoWireClients` set either way wins over
+the build and the location, never over translocation or a capture: `-autoWireClients YES` for a
+developer exercising the path, `defaults write io.mgcrea.cupertino autoWireClients -bool NO` for
+somebody who wants only the button.
+
 ## The refusal
 
 `configure` used to write `servers[key] = entry` unconditionally, on the grounds that the
