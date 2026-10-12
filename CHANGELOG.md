@@ -12,6 +12,19 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Desktop can right-click and drag.** `apple_desktop_show_menu` opens an element's context menu
+  without moving the pointer or bringing the app forward, and the tree marks which elements offer
+  one. For a view with nothing to ask, such as a drawing canvas, `apple_desktop_click` now takes
+  `button: "right"`. While a menu is open, `ui_tree` and `find_elements` list its items first,
+  wherever the app hung it, so an item is pressed like any other control. `apple_desktop_drag`
+  presses, moves and releases between two handles or points, for moving something on a canvas, a
+  slider or a splitter; the press and the drop are both refused unless they land on a window of an
+  app within reach. Both are `run` steps.
+
 ## [1.26.0] - 2026-10-06
 
 **Review your open Mail draft, and drive the menu bar.** Mail reads the compose windows you have
