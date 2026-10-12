@@ -25,6 +25,17 @@ summary.
   slider or a splitter; the press and the drop are both refused unless they land on a window of an
   app within reach. Both are `run` steps.
 
+### Changed
+
+- **Clients you have configured stay current.** Switching a surface on adds it to every client
+  already wired to Cupertino, and switching one off takes it out, without a visit to each client's
+  pane. A surface that arrives in an update and starts switched on is added at the next launch, and
+  an entry still pointing at a copy of Cupertino that is no longer there is pointed at this one. A
+  client that has never been configured is left alone, and so is one wired to another copy of
+  Cupertino that is still installed. Entries that are already right are not rewritten. A folder's
+  `.mcp.json` is never touched. It is off in a copy that is not in an Applications folder, and
+  `defaults write io.mgcrea.cupertino autoWireClients -bool NO` turns it off altogether.
+
 ### Fixed
 
 - **A Desktop click right after bringing an app forward is no longer refused.** `click` and `hover`

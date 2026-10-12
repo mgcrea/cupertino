@@ -111,6 +111,7 @@ struct WiringCheck {
     foreignEntriesAreEverythingNotOurs()
     removingTakesExactlyOneKey()
     unmergedTakesOnlyOurs()
+    rewirePlanLeavesWhatIsRight()
     tomlScannerFindsEveryServer()
     tomlScannerIsNotFooledByProse()
     tomlValuesDegradeRatherThanLie()
@@ -1202,6 +1203,131 @@ struct WiringCheck {
     check("the folder's own keys survive", folder["history"] != nil)
     check(
       "and user scope is untouched", deepEqual(folderOut["mcpServers"], root["mcpServers"]))
+  }
+
+  // MARK: - 19. An automatic rewire writes only what is wrong
+
+  /// What the app does on its own, at launch and when a surface is switched.
+  /// Nobody pressed anything, so every refusal here is a file left alone.
+  static func rewirePlanLeavesWhatIsRight() {
+    print("keeping configs current")
+    let wanted = ["cupertino-mail", "cupertino-notes", "cupertino-maps"]
+    let unwanted: Set<String> = ["cupertino-safari", "apple-mail", "apple-notes", "apple-maps"]
+    let gone: (String) -> Bool = { _ in false }
+    let there: (String) -> Bool = { _ in true }
+    func plan(_ servers: [String: Any], exists: (String) -> Bool = gone)
+      -> ClientWiringMerge.RewirePlan
+    {
+      ClientWiringMerge.rewirePlan(
+        servers: servers, expectedCommand: bridge, wanted: wanted, unwanted: unwanted,
+        exists: exists)
+    }
+    let mail: [String: Any] = ["command": bridge, "args": ["--server=mail"]]
+    let notes: [String: Any] = ["command": bridge, "args": ["--server=notes"]]
+    let maps: [String: Any] = ["command": bridge, "args": ["--server=maps"]]
+
+    check("a client nobody wired is not wired", plan(["other": npx]) == .notWired)
+    check(
+      "a squatter under our key does not make it wired",
+      plan(["cupertino-mail": npx]) == .notWired)
+    check(
+      "everything wanted, matching, nothing extra: nothing to do",
+      plan(["cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps, "o": npx])
+        == .upToDate)
+    check(
+      "a surface switched on is added",
+      plan(["cupertino-mail": mail, "cupertino-notes": notes])
+        == .write(upsert: ["cupertino-maps"], remove: []))
+    check(
+      "a surface switched off is taken out",
+      plan([
+        "cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps,
+        "cupertino-safari": ["command": bridge, "args": ["--server=safari"]],
+      ]) == .write(upsert: [], remove: ["cupertino-safari"]))
+    check(
+      "a pre-rename key is migrated",
+      plan(["apple-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps])
+        == .write(upsert: ["cupertino-mail"], remove: ["apple-mail"]))
+
+    let fromMoved: [String: Any] = [
+      "cupertino-mail": ["command": moved, "args": ["--server=mail"]],
+      "cupertino-notes": notes, "cupertino-maps": maps,
+    ]
+    check(
+      "an entry reaching a copy that is gone is repointed",
+      plan(fromMoved, exists: gone) == .write(upsert: ["cupertino-mail"], remove: []))
+    check(
+      "an entry reaching a copy that is still there leaves the whole file alone",
+      plan(fromMoved, exists: there) == .otherCopy(moved))
+    check(
+      "even when the live copy is only under a key this build would remove",
+      plan(
+        [
+          "cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps,
+          "apple-safari": ["command": moved],
+        ], exists: there) == .otherCopy(moved))
+    check(
+      "our own bridge is never another copy, whatever exists says",
+      plan(
+        ["cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps], exists: there)
+        == .upToDate)
+
+    check(
+      "a foreign entry under a wanted key is skipped, not overwritten",
+      plan(["cupertino-mail": npx, "cupertino-notes": notes, "cupertino-maps": maps])
+        == .upToDate)
+    check(
+      "nor removed under an unwanted one",
+      plan([
+        "cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps,
+        "cupertino-safari": npx,
+      ]) == .upToDate)
+    check(
+      "a key from a newer build is neither kept current nor removed",
+      plan([
+        "cupertino-mail": mail, "cupertino-notes": notes, "cupertino-maps": maps,
+        "cupertino-future": ["command": bridge, "args": ["--server=future"]],
+      ]) == .upToDate)
+
+    // Applied the way `ClientWiring.rewire` applies it, and run again.
+    let customised: [String: Any] = [
+      "command": bridge, "args": ["--server=mail"], "env": ["DEBUG": "1"],
+    ]
+    let root: [String: Any] = [
+      "numStartups": 3,
+      "mcpServers": [
+        "cupertino-mail": customised,
+        "apple-notes": ["command": moved, "args": ["--server=notes"]],
+        "cupertino-safari": ["command": bridge, "args": ["--server=safari"]],
+        "other": npx,
+      ],
+    ]
+    let before = root["mcpServers"] as? [String: Any] ?? [:]
+    guard case .write(let upsert, let remove) = plan(before) else {
+      return check("the fixture needs a write", false)
+    }
+    check(
+      "the plan names exactly what is wrong",
+      upsert == ["cupertino-maps", "cupertino-notes"]
+        && remove == ["apple-notes", "cupertino-safari"])
+    let out = ClientWiringMerge.merged(
+      into: root, rootKey: "mcpServers", entries: entries().filter { upsert.contains($0.key) },
+      legacy: legacy, remove: Set(remove))
+    let servers = out["mcpServers"] as? [String: Any] ?? [:]
+    check(
+      "an entry already right is left byte for byte, extras and all",
+      deepEqual(servers["cupertino-mail"], customised))
+    check("somebody else's server survives", deepEqual(servers["other"], npx))
+    check("unrelated top-level keys survive", out["numStartups"] as? Int == 3)
+    check(
+      "and the result needs nothing more",
+      plan(servers) == .upToDate)
+    check(
+      "it audits as configured afterwards",
+      ClientWiringMerge.audit(
+        servers: servers, expectedCommand: bridge,
+        expected: wanted.map { (key: $0, label: $0) },
+        unexpected: [(key: "cupertino-safari", label: "Safari")]) == .configured)
   }
 
   // MARK: - The TOML client

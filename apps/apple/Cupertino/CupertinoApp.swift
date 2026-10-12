@@ -63,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
     DockPresence.observe()
     LoginItem.healIfNeeded()
+    // Every launch, not once behind a flag: a pass that found a surface off
+    // cannot add it, and the next launch after it is switched on can. A config
+    // already current is read and left alone, so repeating costs a read.
+    ClientWiring.rewireAll(because: "launch")
+    ClientWiring.watchSurfaceSwitches()
     promptForLicenseIfNeeded()
     UpdateController.shared.startIfConsented()
   }
