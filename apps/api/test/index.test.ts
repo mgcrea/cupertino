@@ -121,6 +121,37 @@ const resend = (t: ReturnType<typeof setup>, email: string, type = "application/
     }),
   );
 
+/**
+ * A body that never says how long it is, sent in 64 KB chunks as a chunked
+ * upload would arrive, counting how much of it the handler pulls and whether it
+ * hung up.
+ */
+const trickle = (total: number, chunk = 64 * 1024) => {
+  const seen = { pulled: 0, cancelled: false };
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (seen.pulled >= total) {
+          controller.close();
+          return;
+        }
+        seen.pulled += chunk;
+        controller.enqueue(new Uint8Array(chunk).fill(120));
+      },
+      cancel() {
+        seen.cancelled = true;
+      },
+      // No read-ahead, so a chunk is made only when the handler asks for one.
+    },
+    { highWaterMark: 0 },
+  );
+  return { body, seen, chunk };
+};
+
+/** `duplex` is required by Node for a streamed body and missing from the DOM types. */
+const streamed = (url: string, headers: Record<string, string>, body: ReadableStream) =>
+  new Request(url, { method: "POST", headers, body, duplex: "half" } as RequestInit);
+
 let errors: MockInstance<(...data: unknown[]) => void>;
 
 beforeEach(() => {
@@ -557,6 +588,30 @@ describe("signed payloads that no retry can fix answer 200", () => {
     expect(t.d1.sql("SELECT id FROM licenses")).toHaveLength(0);
   });
 
+  // A chunked upload carries no Content-Length, so the declared-size check has
+  // nothing to read. The cap has to hold while the body is being read, not after.
+  it("and one sent chunked is refused without being read whole", async () => {
+    const t = setup();
+    const { body, seen, chunk } = trickle(8 * 1024 * 1024);
+    const request = streamed(
+      "https://api.test/stripe/webhook",
+      { "stripe-signature": `t=${Math.floor(Date.now() / 1000)},v1=${"0".repeat(64)}` },
+      body,
+    );
+    expect(request.headers.get("content-length")).toBeNull();
+    const response = await t.call(request);
+    expect(response.status).toBe(413);
+    expect(seen.pulled).toBeLessThanOrEqual(256 * 1024 + chunk);
+    expect(seen.cancelled).toBe(true);
+  });
+
+  // The cap is in bytes. 200,000 "é" are 200,000 UTF-16 units and 400,000 bytes.
+  it("and one under the cap in characters but over it in bytes", async () => {
+    const t = setup();
+    const response = await t.post("é".repeat(200_000));
+    expect(response.status).toBe(413);
+  });
+
   it("while a bad signature is still a 400, and says nothing about why", async () => {
     const t = setup();
     const response = await t.post(JSON.stringify({ type: "x", data: { object: {} } }), "whsec_no");
@@ -845,6 +900,20 @@ describe("/license/resend", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     await Promise.all(limited.waiting);
+    expect(t.sent).toEqual([]);
+  });
+
+  // Same answer as ever, and the body is dropped at 4 KB rather than buffered.
+  it("stops reading a chunked body at the cap, and sends nothing", async () => {
+    const t = await customer();
+    const { body, seen, chunk } = trickle(8 * 1024 * 1024, 1024);
+    const response = await t.call(
+      streamed("https://api.test/license/resend", { "content-type": "application/json" }, body),
+    );
+    expect(await response.json()).toEqual({ ok: true });
+    expect(seen.pulled).toBeLessThanOrEqual(4096 + chunk);
+    expect(seen.cancelled).toBe(true);
+    await Promise.all(t.waiting);
     expect(t.sent).toEqual([]);
   });
 

@@ -10,6 +10,7 @@
 // Everything here is allowed to touch the network. The APP is the thing that
 // cannot, and nothing in this directory ships inside it.
 
+import { readCapped } from "./body";
 import { currentMajorProblem, signingKeyProblem, webhookSecretProblem } from "./config";
 import { sendLicense } from "./email";
 import type { LicenseRow } from "./env";
@@ -533,14 +534,12 @@ const handleWebhook = async (request: Request, env: Env): Promise<Response> => {
     return new Response("not configured", { status: 500 });
   }
 
-  // Declared size first, before a byte is buffered, the same order the resend
-  // route uses and for the same reason: this route is unauthenticated until the
-  // signature has been checked, and the signature needs the whole body.
-  if (Number(request.headers.get("content-length") ?? "0") > MAX_WEBHOOK_BYTES) {
-    return new Response("body too large", { status: 413 });
-  }
-  const raw = await request.text();
-  if (raw.length > MAX_WEBHOOK_BYTES) return new Response("body too large", { status: 413 });
+  // Capped while it is read, not after: this route is unauthenticated until the
+  // signature has been checked, and the signature needs the whole body. A chunked
+  // upload declares no size, so a check on Content-Length alone let one be
+  // buffered whole. `readCapped` still refuses a declared size before reading.
+  const raw = await readCapped(request, MAX_WEBHOOK_BYTES);
+  if (raw === null) return new Response("body too large", { status: 413 });
   const verified = await verifySignature(
     raw,
     request.headers.get("stripe-signature"),
@@ -702,6 +701,8 @@ const handleResend = async (
 
   // Declared size first, so an oversized body is refused before it is buffered.
   // This route is public and nothing legitimate on it exceeds a few hundred bytes.
+  // `readCapped` below checks the declared size again and also caps a body that
+  // declares none; this one only keeps a declared-oversized request off the limiter.
   if (Number(request.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return answer;
 
   // The SAME answer when limited, so the reply stays the one this function's
@@ -711,8 +712,8 @@ const handleResend = async (
 
   let email: string;
   try {
-    const raw = await request.text();
-    if (raw.length > MAX_BODY_BYTES) return answer;
+    const raw = await readCapped(request, MAX_BODY_BYTES);
+    if (raw === null) return answer;
     const parsed = resendRequest.safeParse(JSON.parse(raw));
     if (!parsed.success) return answer;
     email = parsed.data.email;

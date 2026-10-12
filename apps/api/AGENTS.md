@@ -154,7 +154,10 @@ Changing the payload shape means changing all three. The field order in the obje
   as `completed`, guards and all. `checkout.session.async_payment_failed` is logged with the session
   id and mints nothing. Both only arrive if the endpoint subscribes to them.
 - **Cap the body before buffering it.** The signature needs the whole body, so until it holds the
-  sender decides how much is allocated; anything over 256 KB answers 413.
+  sender decides how much is allocated; anything over 256 KB answers 413. `readCapped` counts bytes
+  as the body streams in and cancels it at the cap, because a chunked upload declares no
+  Content-Length and `request.text()` would buffer it whole first. `/license/resend` reads its body
+  the same way, capped at 4 KB.
 
 ## Revocation is not enforced here
 
