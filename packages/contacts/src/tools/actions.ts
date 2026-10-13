@@ -126,6 +126,7 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
         }
         return ok(
           await client.updateContact({
+            ref,
             personId: contact.uniqueId,
             fields: rest,
             ...(phones ? { phones } : {}),

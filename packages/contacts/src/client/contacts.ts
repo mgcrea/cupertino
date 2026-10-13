@@ -214,13 +214,17 @@ export class AppleContactsClient {
   // corrupt sync state — the lane policy in docs/distribution.md, not a
   // preference. There is no delete: the dictionary has no such command.
 
-  async #run<T>(scriptText: string, params: unknown): Promise<T> {
+  /**
+   * `ref` is what the caller passed, for the not-found error to name. Contacts
+   * only knows its own person id, and its message is not a ref.
+   */
+  async #run<T>(scriptText: string, params: unknown, ref?: string): Promise<T> {
     try {
       return await withBusyRetry(() => this.#runner.run<T>(scriptText, params));
     } catch (err) {
       const code = (err as { details?: { code?: string } })?.details?.code;
       const message = err instanceof Error ? err.message : String(err);
-      if (code === "CONTACT_NOT_FOUND") throw new ContactNotFoundError(message);
+      if (code === "CONTACT_NOT_FOUND") throw new ContactNotFoundError(ref ?? message);
       if (code === "CREATE_NOT_PERSISTED" || code === "UPDATE_NOT_PERSISTED") {
         throw new ContactWriteNotPersistedError(message);
       }
@@ -282,18 +286,23 @@ export class AppleContactsClient {
   }
 
   async updateContact(input: {
+    ref: string;
     personId: string;
     fields: ContactFields;
     phones?: readonly LabelledValue[];
     emails?: readonly LabelledValue[];
   }): Promise<WriteResult> {
-    const data = await this.#run<Record<string, unknown>>(UPDATE_CONTACT, {
-      personId: input.personId,
-      fields: input.fields,
-      phones: input.phones ?? [],
-      emails: input.emails ?? [],
-      allowLaunch: true,
-    });
+    const data = await this.#run<Record<string, unknown>>(
+      UPDATE_CONTACT,
+      {
+        personId: input.personId,
+        fields: input.fields,
+        phones: input.phones ?? [],
+        emails: input.emails ?? [],
+        allowLaunch: true,
+      },
+      input.ref,
+    );
     this.#invalidate();
     return this.#shapeWrite(data);
   }
