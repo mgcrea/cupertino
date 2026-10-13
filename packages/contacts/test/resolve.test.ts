@@ -82,8 +82,8 @@ describe("resolveHandle", () => {
    * Reporting two names would contradict what the user sees.
    */
   it("folds a person held in two accounts on their link id", () => {
-    const icloud = contact({ recordPk: 1, displayName: "Alice", source: "icloud", linkId: 77 });
-    const google = contact({ recordPk: 9, displayName: "Alice", source: "google", linkId: 77 });
+    const icloud = contact({ recordPk: 1, displayName: "Alice", source: "icloud", linkId: "77" });
+    const google = contact({ recordPk: 9, displayName: "Alice", source: "google", linkId: "77" });
     const lookup: HandleLookup = {
       byPhone: new Map([["612345678", new Set(["icloud:1", "google:9"])]]),
       byEmail: new Map(),
