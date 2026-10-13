@@ -21,11 +21,16 @@ const makeDollar = () => {
   return dollar;
 };
 
+/** JXA's Path(): a file reference, which the stubs read back as `.path`. */
+const Path = (path: string) => ({ path });
+
 const runScript = (
   params: Record<string, unknown>,
-  opts: { subject?: string; messageExists?: boolean } = {},
+  opts: { subject?: string; messageExists?: boolean; attachFails?: boolean } = {},
 ) => {
   const recipients: string[] = [];
+  const attached: string[] = [];
+  const closed: unknown[] = [];
   const opened: { mode: string | null; replyToAll: boolean | null } = {
     mode: null,
     replyToAll: null,
@@ -34,6 +39,14 @@ const runScript = (
   const draft = {
     subject: () => opts.subject ?? "Re: lunch",
     toRecipients: { push: (r: { address: string }) => recipients.push(r.address) },
+    content: {
+      attachments: {
+        push: (a: { fileName: { path: string } }) => {
+          if (opts.attachFails) throw new Error("-10000 AppleEvent handler failed");
+          attached.push(a.fileName.path);
+        },
+      },
+    },
   };
   const message = {
     subject: () => {
@@ -53,6 +66,8 @@ const runScript = (
       return draft;
     },
     ToRecipient: (spec: { address: string }) => spec,
+    Attachment: (spec: { fileName: { path: string } }) => spec,
+    close: (d: unknown) => closed.push(d),
   };
   const account = {
     id: () => "UUID",
@@ -69,12 +84,12 @@ const runScript = (
   const ObjC = { import: () => undefined, unwrap: (v: { value: string }) => v.value };
   const dollar = makeDollar();
 
-  const factory = new Function("ObjC", "Application", "$", `${OPEN_COMPOSER}\nreturn run;`);
-  const run = factory(ObjC, Application, dollar) as (argv: string[]) => string;
+  const factory = new Function("ObjC", "Application", "$", "Path", `${OPEN_COMPOSER}\nreturn run;`);
+  const run = factory(ObjC, Application, dollar, Path) as (argv: string[]) => string;
   const envelope = JSON.parse(
     run([JSON.stringify({ accountUuid: "UUID", mailbox: "INBOX", id: 42, ...params })]),
   );
-  return { envelope, recipients, opened, addressed };
+  return { envelope, recipients, opened, addressed, attached, closed };
 };
 
 describe("OPEN_COMPOSER", () => {
@@ -152,5 +167,42 @@ describe("OPEN_COMPOSER", () => {
     // text search finds them in a script that never calls one.
     const { addressed } = runScript({ mode: "reply" });
     expect(new Set(addressed)).toEqual(new Set(["Mail"]));
+  });
+
+  /*
+   * The scripting object is the only handle on the composer, and it dies with
+   * this process, so attachments go on here or not at all. Each one is the
+   * path the client resolved, wrapped in Path() and nothing else.
+   */
+  it("attaches every file to the composer it opened", () => {
+    const { envelope, attached } = runScript({
+      mode: "reply",
+      attachments: ["/tmp/a.pdf", "/tmp/b.png"],
+    });
+    expect(envelope.ok).toBe(true);
+    expect(attached).toEqual(["/tmp/a.pdf", "/tmp/b.png"]);
+    expect(envelope.data.attachments).toBe(2);
+  });
+
+  it("attaches nothing when none were asked for", () => {
+    const { envelope, attached } = runScript({ mode: "forward", to: ["a@example.com"] });
+    expect(attached).toEqual([]);
+    expect(envelope.data.attachments).toBe(0);
+  });
+
+  /*
+   * Nothing has been typed into the composer yet, so it is ours to take back:
+   * a reply that silently lost the file the caller asked for is worse than no
+   * reply, and an empty window left behind is the failure this path removed.
+   */
+  it("closes the composer and refuses when a file cannot be attached", () => {
+    const { envelope, closed } = runScript(
+      { mode: "reply", attachments: ["/tmp/a.pdf"] },
+      { attachFails: true },
+    );
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("ATTACHMENT_FAILED");
+    expect(envelope.error.message).toContain("/tmp/a.pdf");
+    expect(closed).toHaveLength(1);
   });
 });

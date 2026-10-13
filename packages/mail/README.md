@@ -190,6 +190,12 @@ filename is reduced to its basename first — a sender who names their attachmen
 `../../../.ssh/authorized_keys` gets a file called `authorized_keys` in your downloads folder and
 nothing else. Existing files are never overwritten unless you ask.
 
+Going the other way, `send_message`, `reply_to_message` and `forward_message` take `attachments`,
+absolute paths that Mail reads and attaches. On a draft, the default, you see the files before
+anything goes. Attaching and sending in one call (`sendNow`) is refused unless
+`APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody looks and a path is a way to mail out anything
+this server can read.
+
 **No shell.** The one place this package spawns a process uses `execFile`, never `exec`, and no
 caller input is ever interpolated into script text. Scripts are static constants piped to
 `osascript` over stdin; every value travels as a JSON argument. A mailbox named
@@ -213,6 +219,7 @@ and a tripwire that refuses to run any script containing a `${`.
 | `APPLE_MAIL_MAX_RESULTS`           | `200`         | Ceiling for search results.                                                     |
 | `APPLE_MAIL_BODY_MAX_BYTES`        | `262144`      | Body truncation, to protect the context window.                                 |
 | `APPLE_MAIL_ATTACHMENT_DIR`        | `~/Downloads` | The only directory attachments may be saved into.                               |
+| `APPLE_MAIL_ALLOW_FILE_SEND`       | off           | Let a compose tool attach local files and send in the same call.                |
 | `APPLE_MAIL_MAILBOX_CACHE_TTL_MS`  | `60000`       | How long the account/mailbox map is cached.                                     |
 
 ## Notes

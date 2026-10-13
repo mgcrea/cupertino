@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { encodeRef } from "../src/client/ref.js";
@@ -415,5 +419,113 @@ describe("apple_mail_update_draft", () => {
       destructiveHint: true,
       idempotentHint: false,
     });
+  });
+});
+
+const composed = (recorded: Recorded[]) =>
+  recorded.find((r) => r.script.includes("M.OutgoingMessage("));
+
+/*
+ * Attachments are a path the model names, read by Mail and put in a message
+ * to somebody else. On a draft a person sees the file before it goes; with
+ * sendNow nobody does, so that combination is the one behind a second flag.
+ */
+describe("attachments", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "mail-attach-"));
+  const pdf = join(scratch, "invoice.pdf");
+  writeFileSync(pdf, "%PDF-1.4\n");
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+  const FILE_SEND = loadConfig({ APPLE_MAIL_ALLOW_WRITES: "1", APPLE_MAIL_ALLOW_FILE_SEND: "1" });
+
+  it("attaches to a draft with writes alone, passing the resolved path", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const result = await client.callTool({
+      name: "apple_mail_send_message",
+      arguments: { to: ["a@b.com"], subject: "hi", body: "there", attachments: [pdf] },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(composed(recorded)?.params.attachments).toEqual([pdf]);
+  });
+
+  it("refuses to send a file immediately unless APPLE_MAIL_ALLOW_FILE_SEND is on", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const result = await client.callTool({
+      name: "apple_mail_send_message",
+      arguments: {
+        to: ["a@b.com"],
+        subject: "hi",
+        body: "there",
+        attachments: [pdf],
+        sendNow: true,
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/APPLE_MAIL_ALLOW_FILE_SEND/);
+    expect(composed(recorded)).toBeUndefined();
+  });
+
+  it("sends a file immediately once the flag is on", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(FILE_SEND, runner);
+    await client.callTool({
+      name: "apple_mail_send_message",
+      arguments: {
+        to: ["a@b.com"],
+        subject: "hi",
+        body: "there",
+        attachments: [pdf],
+        sendNow: true,
+        confirm: true,
+      },
+    });
+    expect(composed(recorded)?.params).toMatchObject({ sendNow: true, attachments: [pdf] });
+  });
+
+  it.each([
+    ["a relative path", "invoice.pdf", /absolute/],
+    ["a missing file", join(scratch, "nope.pdf"), /no file/i],
+    ["a directory", scratch, /not a regular file/],
+  ])("refuses %s before composing anything", async (_label, path, message) => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const result = await client.callTool({
+      name: "apple_mail_send_message",
+      arguments: { to: ["a@b.com"], subject: "hi", body: "there", attachments: [path] },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(message);
+    expect(composed(recorded)).toBeUndefined();
+  });
+
+  it.each([
+    ["apple_mail_reply_to_message", { ref: refFor("INBOX", 1), body: "see attached" }],
+    ["apple_mail_forward_message", { ref: refFor("INBOX", 1), to: ["c@d.com"] }],
+  ])("%s carries attachments into the composer", async (name, args) => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    await client.callTool({ name, arguments: { ...args, attachments: [pdf] } });
+    const call = recorded.find((r) => r.script.includes("M.forward(original"));
+    expect(call?.params.attachments).toEqual([pdf]);
+  });
+
+  it("applies the same send gate to a reply", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const result = await client.callTool({
+      name: "apple_mail_reply_to_message",
+      arguments: {
+        ref: refFor("INBOX", 1),
+        body: "see attached",
+        attachments: [pdf],
+        sendNow: true,
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(recorded.some((r) => r.script.includes("M.forward(original"))).toBe(false);
   });
 });

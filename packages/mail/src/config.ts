@@ -68,6 +68,22 @@ const ConfigSchema = BaseConfigSchema.extend({
    * yet, and the filename — not the directory — is the attacker-controlled part.
    */
   attachmentDir: z.string().default(join(homedir(), "Downloads")),
+  /**
+   * Lets a compose tool attach a local file AND send it in the same call.
+   *
+   * A sub-gate of `allowWrites`, like Messages' flag of the same name, and
+   * narrower than it: attaching to a draft needs only `allowWrites`, because a
+   * draft is left on screen and a person sees the file before anything goes.
+   * What this guards is `sendNow` with `attachments`, where nobody does. That is
+   * the exfiltration primitive -- any file this process can read, in a stranger's
+   * inbox -- and the untrusted text that would ask for it arrives through this
+   * server's own read tools, with a `confirm` the model fills in itself.
+   *
+   * No directory confinement, for the reason Messages gives: any client that can
+   * also write files defeats one with a copy, so it would be a speed bump that
+   * reads as a boundary.
+   */
+  allowFileSend: z.boolean().default(false),
   mailboxCacheTtlMs: z.number().int().min(0).max(3_600_000).default(60_000),
 }).strict();
 
@@ -94,6 +110,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     bodyScanMax: parseIntOpt(env.APPLE_MAIL_BODY_SCAN_MAX),
     bodyScanBytes: parseIntOpt(env.APPLE_MAIL_BODY_SCAN_BYTES),
     attachmentDir: trimmed(env.APPLE_MAIL_ATTACHMENT_DIR),
+    allowFileSend: parseBool(env.APPLE_MAIL_ALLOW_FILE_SEND),
     mailboxCacheTtlMs: parseIntOpt(env.APPLE_MAIL_MAILBOX_CACHE_TTL_MS),
   };
 

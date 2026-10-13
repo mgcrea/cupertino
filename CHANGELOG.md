@@ -12,6 +12,18 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Mail can attach files.** `apple_mail_send_message`, `reply_to_message` and `forward_message`
+  take `attachments`, absolute paths to local files, which Mail places after the text the way a
+  file dragged into a composer is placed. On a draft, the default, you see the files before
+  anything is sent. Attaching and sending in the same call is refused unless
+  `APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody reviews it and a path can name any file the
+  server can read. A file Mail refuses stops the call before anything is sent, and the composer
+  it opened is closed again.
+
 ## [1.27.0] - 2026-10-13
 
 **Right-click and drag on the desktop.** Desktop opens context menus and drags between two points,

@@ -541,6 +541,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail can attach files.",
+            body: [
+              "`apple_mail_send_message`, `reply_to_message` and `forward_message` take `attachments`, absolute paths to local files, which Mail places after the text the way a file dragged into a composer is placed. On a draft, the default, you see the files before anything is sent. Attaching and sending in the same call is refused unless `APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody reviews it and a path can name any file the server can read. A file Mail refuses stops the call before anything is sent, and the composer it opened is closed again.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

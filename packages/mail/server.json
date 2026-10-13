@@ -32,6 +32,12 @@
           "description": "Restrict every read and write to these Mail accounts, by name. Bounds reading, not just writing.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_MAIL_ALLOW_FILE_SEND",
+          "description": "Let the compose tools attach a local file and send in the same call. Attaching to a draft needs only writes; this is off by default because an immediate send puts the file in someone's inbox with nobody reviewing it.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

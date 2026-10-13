@@ -58,4 +58,16 @@ describe("JXA scripts", () => {
       }),
     ).not.toThrow();
   });
+
+  /*
+   * Attaching is the first thing in this server that hands Mail a file to put in
+   * somebody else's hands. The script may not choose one: its only `Path(` is
+   * the one in `attachFiles`, and its argument is an element of the list the
+   * client already resolved and gated (test/actions.test.ts pins both bounds).
+   */
+  it.each(SCRIPTS)("%s names a file only as one the client resolved", (_name, source) => {
+    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    const uses = code.match(/\bPath\([^)]*\)/g) ?? [];
+    for (const use of uses) expect(use).toBe("Path(list[i])");
+  });
 });

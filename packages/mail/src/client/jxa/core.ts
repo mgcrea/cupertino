@@ -289,6 +289,42 @@ function discardComposer(M, draft) {
 }
 
 /**
+ * Attach each file in list to an outgoing message, in order.
+ *
+ * The form measured to work on macOS 26.6 -- see docs/mail-compose.md,
+ * "Attachments can be added". Mail places each one after the last paragraph,
+ * inline, the way a file dragged into a composer is placed.
+ *
+ * Every path is one the client resolved and gated; this is the only Path call in
+ * the bundle, and test/jxa.test.ts pins it. Stops at the first refusal and
+ * names it, so a caller never sends a message missing a file it asked for.
+ * count is what Mail read back, null when it would not say.
+ */
+function attachFiles(M, msg, list) {
+  list = list || [];
+  for (var i = 0; i < list.length; i++) {
+    try {
+      msg.content.attachments.push(M.Attachment({ fileName: Path(list[i]) }));
+    } catch (e) {
+      return { ok: false, path: list[i], message: String(e && e.message ? e.message : e) };
+    }
+  }
+  if (!list.length) return { ok: true, count: 0 };
+  return { ok: true, count: prop(function () { return msg.content.attachments.length; }, null) };
+}
+
+function attachmentFailure(failure, closed) {
+  return err(
+    "ATTACHMENT_FAILED",
+    "Mail would not attach " + failure.path + ": " + failure.message + ". Nothing was sent. " +
+    (closed
+      ? "The composer this opened was closed again without saving, so a retry is safe."
+      : "The composer could NOT be closed from here and is still open in Mail; close it before " +
+        "retrying, or a retry leaves a second one behind.")
+  );
+}
+
+/**
  * Find the composer Mail just opened, by the subject Mail gave it.
  *
  * Counting windows before and after does not work: Mail closes and reuses
