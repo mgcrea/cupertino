@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
+import { createOsascriptRunner, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { CONTACTS_SURFACE } from "../src/client/errors.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -50,17 +52,26 @@ beforeAll(() => {
   d.close();
 });
 
-const connect = async (env: NodeJS.ProcessEnv = {}) => {
+const connect = async (env: NodeJS.ProcessEnv = {}, osascript?: OsascriptRunner) => {
   const config = loadConfig({ APPLE_CONTACTS_STORE: storePath, ...env });
-  const { server } = createServer({ config, home: "/nonexistent-home" });
+  const { server } = createServer({
+    config,
+    home: "/nonexistent-home",
+    ...(osascript ? { osascript } : {}),
+  });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
   return client;
 };
 
-const call = async (name: string, args: Record<string, unknown> = {}, env = {}) => {
-  const res = (await (await connect(env)).callTool({ name, arguments: args })) as {
+const call = async (
+  name: string,
+  args: Record<string, unknown> = {},
+  env = {},
+  osascript?: OsascriptRunner,
+) => {
+  const res = (await (await connect(env, osascript)).callTool({ name, arguments: args })) as {
     content: { text: string }[];
     isError?: boolean;
   };
@@ -105,5 +116,39 @@ describe("create_contact", () => {
     expect(out.isError).toBe(true);
     expect(out.text).not.toMatch(/"content"/);
     expect(out.text).toMatch(/firstName, lastName or organization/);
+  });
+});
+
+describe("update_contact", () => {
+  /**
+   * Contacts answering "no such person" names the ref the caller passed. The
+   * client used to hand Contacts' own message to the error as if it were the
+   * ref, so the reply read `No contact for ref "No contact with id …"`.
+   */
+  it("names the caller's ref when Contacts no longer has the person", async () => {
+    const osascript = createOsascriptRunner({
+      surface: CONTACTS_SURFACE,
+      osascriptPath: "/usr/bin/osascript",
+      timeoutMs: 1_000,
+      exec: async () =>
+        JSON.stringify({
+          ok: false,
+          error: { code: "CONTACT_NOT_FOUND", message: "No contact with id uid-1." },
+        }),
+    });
+    const writes = { APPLE_CONTACTS_ALLOW_WRITES: "1" };
+    const [found] = (await call("apple_contacts_search_contacts", { query: "Lovelace" })).json as {
+      ref: string;
+    }[];
+
+    const out = await call(
+      "apple_contacts_update_contact",
+      { ref: found!.ref, jobTitle: "Analyst" },
+      writes,
+      osascript,
+    );
+    expect(out.isError).toBe(true);
+    expect(out.text).toContain(`No contact for ref \\"${found!.ref}\\"`);
+    expect(out.text).not.toMatch(/for ref \\"No contact with id/);
   });
 });

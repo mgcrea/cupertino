@@ -79,7 +79,11 @@ export type IndexContact = {
   displayName: string;
   /** Which store this came from, so a duplicate across accounts is explicable. */
   source: string;
-  linkId: number | null;
+  /**
+   * Shared by the records Contacts shows as one unified card. Text: the column
+   * is VARCHAR, and reading it as a number made it null on every row.
+   */
+  linkId: string | null;
   isMe: boolean;
 };
 
@@ -193,7 +197,7 @@ export class ContactsIndex {
         jobTitle: text(r.jobTitle),
         displayName: displayNameOf(parts),
         source: shard.label,
-        linkId: num(r.linkId),
+        linkId: text(r.linkId),
         isMe: num(r.isMe) !== null,
       };
     });

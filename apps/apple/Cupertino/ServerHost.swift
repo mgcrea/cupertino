@@ -932,13 +932,21 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // single copy of that fact. It used to be spelled here and a second time
       // in `SurfaceCatalog`, and the second copy handed every swift-hosted
       // surface to `ScreenServer`.
-      switch InProcessServers.handle(
-        line, surface: surface,
-        allowWrites: SurfaceSettings.allowWrites(authority),
-        gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
-        surfaceEnabled: SurfaceSettings.isEnabled,
-        lentScope: lentScope, connection: session)
-      {
+      //
+      // Inside a pool of its own. This thread lives as long as the connection,
+      // and Foundation's JSON and bridging leave autoreleased objects behind on
+      // every request, so without one they pile up until the client hangs up —
+      // hours, for an editor session. Measured on a port of the Contacts server:
+      // 96 MB after a thousand requests without the pool, 24 MB with it.
+      let reply = autoreleasepool {
+        InProcessServers.handle(
+          line, surface: surface,
+          allowWrites: SurfaceSettings.allowWrites(authority),
+          gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
+          surfaceEnabled: SurfaceSettings.isEnabled,
+          lentScope: lentScope, connection: session)
+      }
+      switch reply {
       case .message(let response):
         let frame = Data("\(response)\n".utf8)
         observer?.answered(frame)

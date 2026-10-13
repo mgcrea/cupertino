@@ -24,6 +24,18 @@ summary.
   server can read. A file Mail refuses stops the call before anything is sent, and the composer
   it opened is closed again.
 
+### Fixed
+
+- **Contacts recognises one person held in two accounts.** Someone in both iCloud and Google came
+  back from `apple_contacts_resolve_handles` as ambiguous, with no name, because the link id that
+  joins their two cards was read as a number and the column holds text.
+- **Contacts names the right ref when a person has gone.** Updating a contact deleted in the
+  meantime said `No contact for ref "No contact with id …"`, quoting Contacts' own message where
+  the ref you passed belonged.
+- **Desktop, Screen, Sound and Simulator no longer grow over a long session.** The app serves
+  them itself, and each request left Foundation's temporary objects behind until the client
+  disconnected. They are now released after every request.
+
 ## [1.27.0] - 2026-10-13
 
 **Right-click and drag on the desktop.** Desktop opens context menus and drags between two points,

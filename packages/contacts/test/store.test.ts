@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { SchemaDriftError } from "../src/client/errors.js";
+import { resolveHandle } from "../src/client/resolve.js";
 import {
   ContactsIndex,
   countContacts,
@@ -45,7 +46,7 @@ const addContact = (
   pk: number,
   first: string | null,
   last: string | null,
-  extra: { org?: string; ent?: number; linkId?: number } = {},
+  extra: { org?: string; ent?: number; linkId?: string } = {},
 ): void => {
   d.prepare(
     `INSERT INTO ZABCDRECORD (Z_PK, Z_ENT, ZFIRSTNAME, ZLASTNAME, ZORGANIZATION, ZLINKID, ZUNIQUEID)
@@ -218,6 +219,33 @@ describe("ContactsIndex", () => {
       ),
     ]);
     expect(index.buildLookup().byPhone.size).toBe(0);
+  });
+
+  /**
+   * `ZLINKID` is declared VARCHAR, so SQLite hands it back as text. Read as a
+   * number it came back null for every row, and a person held in two accounts
+   * resolved as two people — ambiguous, with no name — on every real store.
+   */
+  it("folds one person held in two accounts on their link id", () => {
+    const index = new ContactsIndex([
+      shardOf(
+        db((x) => {
+          addContact(x, 1, "Alice", "Adams", { linkId: "6A2C9F0E-LINK" });
+          addPhone(x, 1, 1, "06 12 34 56 78");
+        }),
+        "icloud",
+      ),
+      shardOf(
+        db((x) => {
+          addContact(x, 4, "Alice", "Adams", { linkId: "6A2C9F0E-LINK" });
+          addPhone(x, 1, 4, "+33612345678");
+        }),
+        "google",
+      ),
+    ]);
+    const result = resolveHandle("+33612345678", index.buildLookup());
+    expect(result.status).toBe("resolved");
+    expect(result.name).toBe("Alice Adams");
   });
 });
 
