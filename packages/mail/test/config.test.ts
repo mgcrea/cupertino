@@ -47,6 +47,11 @@ describe("loadConfig", () => {
     );
   });
 
+  it("keeps sending local files off unless asked, even with writes on", () => {
+    expect(loadConfig({ APPLE_MAIL_ALLOW_WRITES: "1" }).allowFileSend).toBe(false);
+    expect(loadConfig({ APPLE_MAIL_ALLOW_FILE_SEND: "1" }).allowFileSend).toBe(true);
+  });
+
   it("ignores a non-numeric override rather than producing NaN", () => {
     expect(loadConfig({ APPLE_MAIL_MAX_RESULTS: "lots" }).maxResults).toBe(200);
   });

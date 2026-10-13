@@ -24,20 +24,33 @@ type Behaviour = {
   menuThrows?: boolean;
   /** The window refuses to report its size and position. */
   geometryUnreadable?: boolean;
+  /** Mail refuses the file, as it would one it cannot read. */
+  attachFails?: boolean;
 };
 
 const START_SIZE = [820, 600];
 const START_POSITION = [120, 80];
 const SUBJECT = "Quarterly numbers";
 
+/** JXA's Path(): a file reference, which the stubs read back as `.path`. */
+const Path = (path: string) => ({ path });
+
 const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = {}) => {
-  const { quoteLevel = 1, menuThrows = false, geometryUnreadable = false } = behaviour;
+  const {
+    quoteLevel = 1,
+    menuThrows = false,
+    geometryUnreadable = false,
+    attachFails = false,
+  } = behaviour;
 
   const state = {
     frontmost: "Terminal",
     quoteLevel,
     decreaseClicks: 0,
     sends: 0,
+    /** Paths attached, and what had been sent at the moment each went on. */
+    attached: [] as { path: string; sendsBefore: number }[],
+    closes: 0,
     /** Every write to the window's geometry, in order. */
     writes: [] as [string, number[]][],
   };
@@ -144,6 +157,17 @@ const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = 
     toRecipients: { push: () => undefined },
     ccRecipients: { push: () => undefined },
     bccRecipients: { push: () => undefined },
+    content: {
+      attachments: {
+        push: (a: { fileName: { path: string } }) => {
+          if (attachFails) throw new Error("-10000 AppleEvent handler failed");
+          state.attached.push({ path: a.fileName.path, sendsBefore: state.sends });
+        },
+        get length() {
+          return state.attached.length;
+        },
+      },
+    },
   };
   const mail = {
     OutgoingMessage: () => message,
@@ -151,6 +175,10 @@ const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = 
     ToRecipient: (spec: unknown) => spec,
     CcRecipient: (spec: unknown) => spec,
     BccRecipient: (spec: unknown) => spec,
+    Attachment: (spec: unknown) => spec,
+    close: () => {
+      state.closes++;
+    },
   };
 
   const Application = (name: string) => (name === "Mail" ? mail : systemEvents);
@@ -162,8 +190,8 @@ const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = 
   dollar.NSPasteboardTypeString = "public.utf8-plain-text";
   dollar.NSPasteboard = { generalPasteboard: {} };
 
-  const factory = new Function("ObjC", "Application", "$", `${SEND_MESSAGE}\nreturn run;`);
-  const run = factory(ObjC, Application, dollar) as (argv: string[]) => string;
+  const factory = new Function("ObjC", "Application", "$", "Path", `${SEND_MESSAGE}\nreturn run;`);
+  const run = factory(ObjC, Application, dollar, Path) as (argv: string[]) => string;
   const envelope = JSON.parse(
     run([
       JSON.stringify({
@@ -232,5 +260,37 @@ describe("the composer window a compose leaves behind", () => {
     expect(state.sends).toBe(1);
     // Restored before send(), so Mail persists the frame the user chose.
     expect(geometry()).toEqual({ size: START_SIZE, position: START_POSITION });
+  });
+});
+
+describe("attachments on a new message", () => {
+  it("attaches every file before anything is sent, and counts them back", () => {
+    const { envelope, state } = runScript({
+      attachments: ["/tmp/a.pdf", "/tmp/b.png"],
+      sendNow: true,
+    });
+    expect(envelope.ok).toBe(true);
+    expect(state.attached).toEqual([
+      { path: "/tmp/a.pdf", sendsBefore: 0 },
+      { path: "/tmp/b.png", sendsBefore: 0 },
+    ]);
+    expect(state.sends).toBe(1);
+    expect(envelope.data.attachments).toBe(2);
+  });
+
+  /*
+   * A message that goes out without the file it was asked to carry is the one
+   * outcome worse than not sending, so a refused file stops the send and takes
+   * back the composer this script opened.
+   */
+  it("sends nothing and closes the composer when a file is refused", () => {
+    const { envelope, state } = runScript(
+      { attachments: ["/tmp/a.pdf"], sendNow: true },
+      { attachFails: true },
+    );
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("ATTACHMENT_FAILED");
+    expect(state.sends).toBe(0);
+    expect(state.closes).toBe(1);
   });
 });

@@ -98,6 +98,8 @@ export type ComposeResult = {
   /** Null when it cannot be told — the composer went while nobody was looking. */
   sent: boolean | null;
   note: string;
+  /** Files put on the composer. The number pushed, not read back: see OPEN_COMPOSER. */
+  attachments?: number;
 };
 
 /**
@@ -345,6 +347,7 @@ export const replyOrForwardNatively = async (
     body: string | null;
     to: string[];
     replyToAll: boolean;
+    attachments?: string[];
     sendNow: boolean;
   },
   opts: {
@@ -375,7 +378,10 @@ export const replyOrForwardNatively = async (
   const reach = await lane.reach();
   if (!reach.ok) throw new Error(MailAxLane.grantMessage(params.mode));
 
-  const opened = (await runner.run(OPEN_COMPOSER, params)) as { subject: string };
+  const opened = (await runner.run(OPEN_COMPOSER, params)) as {
+    subject: string;
+    attachments?: number;
+  };
   const subject = opened.subject;
 
   /**
@@ -541,6 +547,7 @@ export const replyOrForwardNatively = async (
     bodyVerified,
     verifiedChars,
     sent,
+    ...(opened.attachments ? { attachments: opened.attachments } : {}),
     note: params.sendNow
       ? sent
         ? "Sent."

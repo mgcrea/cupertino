@@ -320,6 +320,11 @@ export const SEND_MESSAGE = script(
     }
   }
 
+  // Before the send, and before anything else touches the window: a refused
+  // file must leave nothing sent and nothing behind.
+  var attached = attachFiles(M, msg, p.attachments);
+  if (!attached.ok) return attachmentFailure(attached, discardComposer(M, msg));
+
   pause(1.2);
   var unquoted = false;
   try { unquoted = stripCitation(String(p.subject || "")); } catch (e) { unquoted = false; }
@@ -327,10 +332,12 @@ export const SEND_MESSAGE = script(
   if (p.sendNow) {
     msg.send();
     return ok({ sent: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
-                recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length });
+                recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,
+                attachments: attached.count });
   }
   return ok({ sent: false, draft: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
               recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,
+              attachments: attached.count,
               note: "Draft window is open in Mail for review." });
 `,
   { allowLaunch: true },
@@ -758,6 +765,9 @@ export const REPLY_OR_FORWARD = script(
     }
   }
 
+  var attached = attachFiles(M, draft, p.attachments);
+  if (!attached.ok) return attachmentFailure(attached, discardComposer(M, draft));
+
   var bodyArea = findBodyArea(win, 0);
   if (!bodyArea) {
     var closedNoBody = discardComposer(M, draft);
@@ -986,7 +996,14 @@ export const OPEN_COMPOSER = script(
     }
   }
 
-  return ok({ subject: subject });
+  // Here or nowhere: the reference dies with this process, and nothing has
+  // been typed yet, so a refusal can take the composer back.
+  var attached = attachFiles(M, draft, p.attachments);
+  if (!attached.ok) return attachmentFailure(attached, discardComposer(M, draft));
+
+  // Not a count on a reply or forward: content reads back as the attachment
+  // characters alone there (docs/mail-compose.md), so it is the number pushed.
+  return ok({ subject: subject, attachments: (p.attachments || []).length });
 `,
   { allowLaunch: true },
 );

@@ -1,4 +1,5 @@
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 
 import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
 
@@ -1415,8 +1416,11 @@ export class AppleMailClient {
     bcc: string[];
     subject: string;
     body: string;
+    attachments?: string[];
     sendNow: boolean;
   }): Promise<unknown> {
+    // Before the account, so a call that could never go out asks Mail nothing.
+    const attachments = this.#resolveAttachments(opts.attachments, opts.sendNow);
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     return this.runner.run(SEND_MESSAGE, {
       senderAddress: account?.emailAddresses[0] ?? null,
@@ -1425,6 +1429,7 @@ export class AppleMailClient {
       bcc: opts.bcc,
       subject: opts.subject,
       body: opts.body,
+      attachments,
       sendNow: opts.sendNow,
     });
   }
@@ -1436,9 +1441,11 @@ export class AppleMailClient {
       body?: string;
       to?: string[];
       replyToAll?: boolean;
+      attachments?: string[];
       sendNow: boolean;
     },
   ): Promise<unknown> {
+    const attachments = this.#resolveAttachments(opts.attachments, opts.sendNow);
     const decoded = decodeRef(ref);
     const params = {
       accountUuid: decoded.accountUuid,
@@ -1448,6 +1455,7 @@ export class AppleMailClient {
       body: opts.body ?? null,
       to: opts.to ?? [],
       replyToAll: opts.replyToAll ?? false,
+      attachments,
       sendNow: opts.sendNow,
     };
     // The native lane when the app is hosting this server, and the System Events
@@ -1463,6 +1471,41 @@ export class AppleMailClient {
         this.#clipboard ? { clipboard: this.#clipboard } : {},
       );
     return this.runner.run(REPLY_OR_FORWARD, params);
+  }
+
+  /**
+   * The files a compose call names, checked before Mail is asked anything.
+   *
+   * Two bounds, and the tool layer relies on both being here rather than in it.
+   * The gate: attaching to a draft needs only writes, because a person sees the
+   * file before it goes, but attaching and sending at once needs
+   * `allowFileSend` -- see config.ts. The shape: absolute, present, a regular
+   * file, so a directory or a dangling path fails with a sentence here rather
+   * than as an Apple Event error out of Mail.
+   */
+  #resolveAttachments(paths: string[] | undefined, sendNow: boolean): string[] {
+    if (!paths?.length) return [];
+    if (sendNow && !this.config.allowFileSend) {
+      throw new PreconditionError(
+        "Sending a local file immediately is off. Leave out sendNow to open a draft with the " +
+          "attachments for the user to review and send, or set APPLE_MAIL_ALLOW_FILE_SEND=1 to " +
+          "allow attaching and sending in one call.",
+      );
+    }
+    return paths.map((path) => {
+      if (!isAbsolute(path)) {
+        throw new PreconditionError(
+          `"${path}" is not an absolute path. This server has no meaningful working directory, ` +
+            "so a relative path cannot be resolved to the file you mean.",
+        );
+      }
+      const source = resolvePath(path);
+      if (!existsSync(source)) throw new PreconditionError(`There is no file at ${source}.`);
+      if (!statSync(source).isFile()) {
+        throw new PreconditionError(`${source} is not a regular file; Mail can only attach files.`);
+      }
+      return source;
+    });
   }
 
   #withRef(m: Omit<MessageSummary, "ref"> & MessageIdentity): MessageSummary {
