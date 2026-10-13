@@ -712,7 +712,7 @@ nonisolated enum DemoSeed {
   /// churn the golden gate into noise — and the images would claim a version
   /// before the store listing showing them had caught up.
   /// Bump this deliberately, when new marketing images are wanted.
-  nonisolated static let version = "1.27.0"
+  nonisolated static let version = "1.28.0"
 
   nonisolated static let diskAccess: DiskAccessStatus = .granted
   nonisolated static let automation: AutomationStatus = .granted

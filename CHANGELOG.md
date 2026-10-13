@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.27.0`,
-`notes-v1.27.0`, `reminders-v1.27.0`, `core-v1.27.0` for the npm packages, and `app-v1.27.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.28.0`,
+`notes-v1.28.0`, `reminders-v1.28.0`, `core-v1.28.0` for the npm packages, and `app-v1.28.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.28.0] - 2026-10-13
+
+**Mail attaches files.** Sending, replying and forwarding take local files, which a draft shows you
+before anything goes out, and Contacts now recognises one person held in two accounts.
 
 ### Added
 
@@ -2853,7 +2856,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.27.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.28.0...HEAD
+[1.28.0]: https://github.com/mgcrea/cupertino/compare/app-v1.27.0...app-v1.28.0
 [1.27.0]: https://github.com/mgcrea/cupertino/compare/app-v1.26.0...app-v1.27.0
 [1.26.0]: https://github.com/mgcrea/cupertino/compare/app-v1.25.0...app-v1.26.0
 [1.25.0]: https://github.com/mgcrea/cupertino/compare/app-v1.24.1...app-v1.25.0

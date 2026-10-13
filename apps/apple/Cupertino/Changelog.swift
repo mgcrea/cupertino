@@ -220,7 +220,48 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_27_0, v1_26_0, v1_25_0, v1_24_1, v1_24_0]
+  static let releases: [Release] = [v1_28_0, v1_27_0, v1_26_0, v1_25_0, v1_24_1]
+
+  // swift-format-ignore
+  private static let v1_28_0: Release = Release(
+    version: "1.28.0",
+    date: "2026-10-13",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail can attach files.",
+            body: [
+              "`apple_mail_send_message`, `reply_to_message` and `forward_message` take `attachments`, absolute paths to local files, which Mail places after the text the way a file dragged into a composer is placed. On a draft, the default, you see the files before anything is sent. Attaching and sending in the same call is refused unless `APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody reviews it and a path can name any file the server can read. A file Mail refuses stops the call before anything is sent, and the composer it opened is closed again.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Contacts recognises one person held in two accounts.",
+            body: [
+              "Someone in both iCloud and Google came back from `apple_contacts_resolve_handles` as ambiguous, with no name, because the link id that joins their two cards was read as a number and the column holds text.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Contacts names the right ref when a person has gone.",
+            body: [
+              "Updating a contact deleted in the meantime said `No contact for ref \"No contact with id …\"`, quoting Contacts' own message where the ref you passed belonged.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Desktop, Screen, Sound and Simulator no longer grow over a long session.",
+            body: [
+              "The app serves them itself, and each request left Foundation's temporary objects behind until the client disconnected. They are now released after every request.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_27_0: Release = Release(
@@ -506,60 +547,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_24_0: Release = Release(
-    version: "1.24.0",
-    date: "2026-09-26",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "The Simulator surface works on Xcode 27, through DeviceHub.",
-            body: [
-              "Xcode 27 ships no Simulator.app; the simulator's window belongs to DeviceHub, which bridges the device's accessibility tree the same way. The surface now drives whichever of the two is showing the simulator, finds the device screen DeviceHub nests beside its sidebar and inspector, and still reaches those two applications and nothing else. Every tool was measured working against an iPhone 18 Pro on iOS 27.0, including rotation, which DeviceHub's menus no longer list but whose shortcuts it keeps.",
-              "Two Xcode 27 changes had to be worked around, and both fail without a sign. AppKit reports DeviceHub's process id as -1, so every Accessibility call went to no process and answered like an app with no accessibility at all; the driver now finds the process by its executable. And device types no longer carry their screen size in `profile.plist`, so the point size is read from `capabilities.plist`, where Xcode 27 moved it. An earlier entry claimed the surface was working on Xcode 27; only its icon was. A physical device shown in DeviceHub remains out of reach: its screen is a video with no tree behind it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "The on-screen notice can be placed, resized and given a sound.",
-            body: [
-              "Three settings in Settings → General: which of six places along the top or bottom edge of the display the card sits in, how large it is drawn, and whether it plays a sound arriving and leaving. The top-right corner it shipped in is not free for everyone — it is where menu bar apps drop their panels, where Xcode parks its inspector, and on a laptop with a notch it is the narrowest part of the visible frame.",
-              "Six places rather than eight, because the vertical middle is where the person is looking and is the one place a notice must not cover. The position control draws them inside the outline of a display rather than listing them in a menu, since the answer is a geometry rather than a phrase, and a Preview button puts a sample card where the real one would go — the setting is otherwise unanswerable from the window it is set in, because the card only appears while an agent is working.",
-              "The size is a scale applied to every length in the card, the panel and padding as well as both type sizes, rather than a transform on the rendered layer — which looks identical in a screenshot and wrong on the screen, because it would blow up a bitmap of the text. Medium is scale 1 exactly, so a Mac that never opens the setting sees no change.",
-              "The sound is a choice of the Mac's own alert sounds, one for the card arriving and one for it going, with a volume slider. They ship with every Mac, so there is nothing to bundle, and the menu is read from `/System/Library/Sounds` rather than written out — it is whatever this macOS has. There is no separate switch: \"None\" is a row in each menu, because a switch beside two menus has a fourth state that says nothing the menus do not already say. Picking a sound plays it, since a sound is chosen by ear, and the volume plays a sample when the slider is let go rather than on every step. It starts silent, at a third of full if chosen, where an alert sound reads as a cue under what you are doing rather than as an alert.",
-              "All of it is appearance and none of it can stop the card appearing, change what it says, or move it off the display holding the application being driven. This is the only warning the person at the keyboard gets, and `docs/desktop.md` records what happened without one. Sounds are silent under a screenshot run whatever is chosen, and fire when the card arrives and when it goes rather than on each step — an agent working through a sequence shows one card, so it is twice a session and not twice a keystroke.",
-              "The placement arithmetic lives in `NoticeStyle` with no dependency beyond `CGRect` and `make unit` pins it, because it is silent when wrong: AppKit's y grows upward, and a sign error puts the card under the Dock, where it looks exactly like a card that never appeared. So is the volume, which is the other value that can be wrong invisibly — `NSArgumentDomain` hands back strings, so a volume of 0 read as a `Double` is nil and falls through to a default that is a third of full, which is the opposite of what was asked for.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail can attach files.",
-            body: [
-              "`apple_mail_send_message`, `reply_to_message` and `forward_message` take `attachments`, absolute paths to local files, which Mail places after the text the way a file dragged into a composer is placed. On a draft, the default, you see the files before anything is sent. Attaching and sending in the same call is refused unless `APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody reviews it and a path can name any file the server can read. A file Mail refuses stops the call before anything is sent, and the composer it opened is closed again.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
