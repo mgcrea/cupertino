@@ -220,7 +220,83 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_26_0, v1_25_0, v1_24_1, v1_24_0, v1_23_0]
+  static let releases: [Release] = [v1_27_0, v1_26_0, v1_25_0, v1_24_1, v1_24_0]
+
+  // swift-format-ignore
+  private static let v1_27_0: Release = Release(
+    version: "1.27.0",
+    date: "2026-10-13",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Desktop can right-click and drag.",
+            body: [
+              "`apple_desktop_show_menu` opens an element's context menu without moving the pointer or bringing the app forward, and the tree marks which elements offer one. For a view with nothing to ask, such as a drawing canvas, `apple_desktop_click` now takes `button: \"right\"`. While a menu is open, `ui_tree` and `find_elements` list its items first, wherever the app hung it, so an item is pressed like any other control. `apple_desktop_drag` presses, moves and releases between two handles or points, for moving something on a canvas, a slider or a splitter; the press and the drop are both refused unless they land on a window of an app within reach. Both are `run` steps.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Clients you have configured stay current.",
+            body: [
+              "Switching a surface on adds it to every client already wired to Cupertino, and switching one off takes it out, without a visit to each client's pane. A surface that arrives in an update and starts switched on is added at the next launch, and an entry still pointing at a copy of Cupertino that is no longer there is pointed at this one. A client that has never been configured is left alone, and so is one wired to another copy of Cupertino that is still installed. Entries that are already right are not rewritten. A folder's `.mcp.json` is never touched. It is off in a copy that is not in an Applications folder, and `defaults write io.mgcrea.cupertino autoWireClients -bool NO` turns it off altogether.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "A Desktop click right after bringing an app forward is no longer refused.",
+            body: [
+              "`click` and `hover` at a point, given the app's `bundleId`, could answer that the point was \"not on a window of\" an app whose window covered it. The app had come to the front, but its window had not yet been stacked on top. The check now waits up to half a second for the window to arrive.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Updating a Mail draft no longer deletes it when the save fails.",
+            body: [
+              "`apple_mail_update_draft` took any other draft already carrying the subject, such as one of Mail's autosaved copies, as proof that the replacement was saved, and deleted the original with nothing saved in its place.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "An element reporting an impossible frame no longer quits Cupertino.",
+            body: [
+              "A window or control whose frame came back as NaN, as some Simulator windows' do, made `ui_tree`, `find_elements` or `list_windows` terminate the app and every surface's connection with it. It now reads as an element with no frame.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "Mail's account allowlist holds for mailboxes.",
+            body: [
+              "With `APPLE_MAIL_ACCOUNTS` naming no account that exists, `apple_mail_list_mailboxes` listed every account's mailboxes instead of none.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "`apple_desktop_key` refuses modifiers it cannot read.",
+            body: [
+              "A `modifiers` given as a string, or a list with something other than names in it, was dropped and the bare key sent, so \"a\" was typed where select-all was meant and the call still reported success.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "The activity log no longer reports a removed record after a full disk.",
+            body: [
+              "A write that failed could leave an empty log file behind, and the next launch started a new chain from it, so verification said a record was missing from a log nothing had been removed from.",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "Safari says when it may need reopening.",
+            body: [
+              "A page action that times out while no site has been captured for over half an hour now names a stopped extension as the likely cause, rather than only a missing site permission.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_26_0: Release = Release(
@@ -460,102 +536,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_23_0: Release = Release(
-    version: "1.23.0",
-    date: "2026-09-18",
-    sections: [
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "`apple_mail_update_draft` now edits a reply draft instead of refusing it.",
-            body: [
-              "Revising a draft is the most common thing asked of this server — \"draft a reply, now change this line\" — and it was the one thing the tool would not do. Rewriting a draft meant RECREATING it, which cannot carry `In-Reply-To` across, so a reply draft was refused outright and the only way through was deleting it in Mail by hand.",
-              "Recreating was never the only option; it was the only one reachable from Apple Events. The draft's own composer window is still on screen — nothing in this server closes one — and a body replaced in that window saves back to the same draft, so threading, attachments and the quoted original all survive because nothing is remade. `update_draft` now does that first and falls back to recreating only when no composer is open. The result says which route it took in `method`, and a ref stays valid across an in-place edit.",
-              "Telling the draft's own text from the message it quotes is the whole difficulty, and `AXBlockQuoteLevel` answers it exactly: the sender's paragraphs read 0, and the attribution line and everything below it read 1 — for a forward as well as a reply, which was measured rather than assumed. The selection is then proved before anything is replaced: it is copied back and must equal the composer's own text exactly, because `AXSelectedText` reads null on Mail's composer and the pasteboard is the only place a selection is legible. Selecting and copying change nothing, so a selection that cannot be made to match costs a refusal rather than somebody's draft. Measured on macOS 27.0 (build 26A428) and verified end to end against a live Mail on a forward draft — the kind recreation refuses — which came back with one draft, its `References` header intact and the forwarded message still under the new text. `docs/mail-compose.md` carries the sequence and the readings, and `node scripts/verify-mail-ax.mjs --compose` re-runs the whole thing.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Opening or resizing a window could abort the app.",
-            body: [
-              "Diagnosed from a crash report: naming a window for AppKit's frame autosave makes it write the frame out from inside `-[NSWindow _setFrameCommon:]` — so a resize SwiftUI itself performs during the window's own layout pass persists a frame, persisting posts `NSUserDefaultsDidChange`, an `@AppStorage` observer reads that as a settings change and dirties the hosting view, and the `setNeedsUpdateConstraints` that follows lands inside the layout pass that is still running. AppKit throws rather than re-enter, nobody catches it, and the process takes SIGABRT. It needs no bad frame and no bad window: one `@AppStorage` anywhere in the app is fuel enough. The frame is still remembered, but it is read with `setFrameUsingName` and written a turn later by a saver that only believes a person's own resize or move — never a size SwiftUI tried on its own. The key and its format are unchanged, so a frame saved by an earlier build still restores.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Every accent, em dash and curly quote in a composed mail was corrupted.",
-            body: [
-              "`pbcopy` and `pbpaste` encode in the LOCALE's character set, and this server is spawned by the app with an environment naming none — so they fell back to MacRoman, and every byte outside ASCII was wrong in both directions. A body pasted into a composer arrived with `—` turned into `‚Äî`. Not a display artefact: that is what went into the draft, and what would have gone into the mail. The read is worse in kind, because the clipboard is BORROWED — read, overwritten, put back — so replying to a mail handed back a corrupted copy of whatever the person had copied. Both verbs now name `LC_CTYPE=UTF-8`, which sets the encoding and nothing else. Found by a live rewrite whose read-back would not match, and verified end to end: `é à ç œ « »` and `—` now reach the stored draft intact.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "A mailbox holding fewer messages than the limit could not be listed at all.",
-            body: [
-              "`apple_mail_list_messages` came back with a null subject, null sender and an unusable `#null` ref on every row — so nothing else could act on any of them. `slice(from, to)` on an Apple Events specifier is INCLUSIVE of `to`, not exclusive like JavaScript's, so asking for `n` messages asked for `n + 1`; when `n` was the whole mailbox that ran one past the end, raised `Invalid index.`, and left every batched property read empty. Drafts is where it was found, because a Drafts mailbox almost always holds fewer messages than the limit — an agent that had just written a reply could not find the draft again to revise it. The same off-by-one was in `SENT_SINCE`, where it matters most: that is the read deciding whether a reply was SENT, and on a Sent mailbox smaller than the limit it answered \"it does NOT appear to have been sent\" for a mail that had gone, inviting a second send. Measured against a live Mail: `slice(0, 303)` on a 303-message mailbox raises, `slice(0, 302)` returns all 303.",
-              "The stubs had hidden it by being kinder than Mail — they modelled `Array.prototype.slice`, which is exclusive and forgiving of an index past the end. They now raise where Mail raises, and 7 of the 9 existing `sent-since` tests fail without the fix.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "`apple_mail_reply_to_message` and `apple_mail_forward_message` reported a correct draft as a failure.",
-            body: [
-              "The composer was read back once, immediately after the paste — but `apple_desktop_key` returns when the keystroke is POSTED, and WebKit has still to take it, edit the document and republish an accessibility tree. On a long message the read lost that race and the reply came back `bodyVerified: false` with \"SOMETHING DID land in it that could not be read back\", for a body that was in fact perfect. Worse, that message tells its reader not to retry. Measured against a reply quoting a 322-element newsletter. The read-back is now polled, the same way the focus poll above it already was.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can right-click and drag.",
-            body: [
-              "`apple_desktop_show_menu` opens an element's context menu without moving the pointer or bringing the app forward, and the tree marks which elements offer one. For a view with nothing to ask, such as a drawing canvas, `apple_desktop_click` now takes `button: \"right\"`. While a menu is open, `ui_tree` and `find_elements` list its items first, wherever the app hung it, so an item is pressed like any other control. `apple_desktop_drag` presses, moves and releases between two handles or points, for moving something on a canvas, a slider or a splitter; the press and the drop are both refused unless they land on a window of an app within reach. Both are `run` steps.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Clients you have configured stay current.",
-            body: [
-              "Switching a surface on adds it to every client already wired to Cupertino, and switching one off takes it out, without a visit to each client's pane. A surface that arrives in an update and starts switched on is added at the next launch, and an entry still pointing at a copy of Cupertino that is no longer there is pointed at this one. A client that has never been configured is left alone, and so is one wired to another copy of Cupertino that is still installed. Entries that are already right are not rewritten. A folder's `.mcp.json` is never touched. It is off in a copy that is not in an Applications folder, and `defaults write io.mgcrea.cupertino autoWireClients -bool NO` turns it off altogether.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "A Desktop click right after bringing an app forward is no longer refused.",
-            body: [
-              "`click` and `hover` at a point, given the app's `bundleId`, could answer that the point was \"not on a window of\" an app whose window covered it. The app had come to the front, but its window had not yet been stacked on top. The check now waits up to half a second for the window to arrive.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

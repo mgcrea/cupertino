@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.26.0`,
-`notes-v1.26.0`, `reminders-v1.26.0`, `core-v1.26.0` for the npm packages, and `app-v1.26.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.27.0`,
+`notes-v1.27.0`, `reminders-v1.27.0`, `core-v1.27.0` for the npm packages, and `app-v1.27.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.27.0] - 2026-10-13
+
+**Right-click and drag on the desktop.** Desktop opens context menus and drags between two points,
+and switching a surface on or off now reaches every client already wired to Cupertino.
 
 ### Added
 
@@ -42,6 +45,30 @@ summary.
   at a point, given the app's `bundleId`, could answer that the point was "not on a window of" an
   app whose window covered it. The app had come to the front, but its window had not yet been
   stacked on top. The check now waits up to half a second for the window to arrive.
+
+- **Updating a Mail draft no longer deletes it when the save fails.** `apple_mail_update_draft`
+  took any other draft already carrying the subject, such as one of Mail's autosaved copies, as
+  proof that the replacement was saved, and deleted the original with nothing saved in its place.
+
+- **An element reporting an impossible frame no longer quits Cupertino.** A window or control whose
+  frame came back as NaN, as some Simulator windows' do, made `ui_tree`, `find_elements` or
+  `list_windows` terminate the app and every surface's connection with it. It now reads as an
+  element with no frame.
+
+- **Mail's account allowlist holds for mailboxes.** With `APPLE_MAIL_ACCOUNTS` naming no account
+  that exists, `apple_mail_list_mailboxes` listed every account's mailboxes instead of none.
+
+- **`apple_desktop_key` refuses modifiers it cannot read.** A `modifiers` given as a string, or a
+  list with something other than names in it, was dropped and the bare key sent, so "a" was typed
+  where select-all was meant and the call still reported success.
+
+- **The activity log no longer reports a removed record after a full disk.** A write that failed
+  could leave an empty log file behind, and the next launch started a new chain from it, so
+  verification said a record was missing from a log nothing had been removed from.
+
+- **Safari says when it may need reopening.** A page action that times out while no site has been
+  captured for over half an hour now names a stopped extension as the likely cause, rather than
+  only a missing site permission.
 
 ## [1.26.0] - 2026-10-06
 
@@ -2802,7 +2829,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.26.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.27.0...HEAD
+[1.27.0]: https://github.com/mgcrea/cupertino/compare/app-v1.26.0...app-v1.27.0
 [1.26.0]: https://github.com/mgcrea/cupertino/compare/app-v1.25.0...app-v1.26.0
 [1.25.0]: https://github.com/mgcrea/cupertino/compare/app-v1.24.1...app-v1.25.0
 [1.24.1]: https://github.com/mgcrea/cupertino/compare/app-v1.24.0...app-v1.24.1
