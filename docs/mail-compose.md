@@ -201,6 +201,29 @@ length 1 — the attachment character alone, with none of the quoted original. S
 from that path is not evidence of anything; the send is. Consistent with
 [why the body cannot go through the scripting interface](#why-the-body-still-cannot-go-through-the-scripting-interface).
 
+### What ships
+
+`apple_mail_send_message`, `reply_to_message` and `forward_message` take `attachments`, a list of
+absolute paths. It is a parameter rather than an `add_attachment` tool because the scripting object
+is the only handle on a composer and it dies with the `osascript` that made it; a separate tool
+would have to find the draft again after Mail saves and renumbers it, which is the hardest part of
+`update_draft`. So files go on at compose time, in `SEND_MESSAGE` and `OPEN_COMPOSER` (and the
+System Events fallback, `REPLY_OR_FORWARD`), through one prelude helper, `attachFiles`.
+
+| Bound                                 | Where                                       | Why                                                                                                                     |
+| ------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Absolute, present, a file             | `#resolveAttachments` in `client/mail.ts`   | A directory or a dangling path fails with a sentence, before Mail is asked anything.                                    |
+| On a draft: `ALLOW_WRITES`            | same                                        | The default leaves the composer on screen, so a person sees the file before it goes.                                    |
+| With `sendNow`: `ALLOW_FILE_SEND` too | same                                        | Nobody looks. Mail's read tools carry strangers' text, and `confirm` is filled in by the model, as in docs/messages.md. |
+| Only `Path(list[i])`                  | `attachFiles`, pinned by `test/jxa.test.ts` | No script names a file of its own.                                                                                      |
+
+No directory confinement, for the reason docs/messages.md gives. A refused file stops the call
+before anything is typed or sent and takes the composer back with `discardComposer`, so the
+result is never a message that went out without the file it was asked to carry.
+
+The count reported back is Mail's own on a new message. On a reply or forward it is the number
+pushed, because `content` reads back as the attachment characters alone there (above).
+
 ## The order is the safety property
 
 The replacement is created **and confirmed present in the Drafts mailbox** before the original is
@@ -466,6 +489,11 @@ written a reply could not address it. `jxa/read.ts` carries the readings.
 
 ## Still open
 
+- **Where an attachment lands in a native-lane reply, and whether the read-back still passes.**
+  `OPEN_COMPOSER` attaches after the last paragraph and before the body is pasted, so on a reply
+  the file may sit under the quoted original rather than under the new text. Unmeasured, as is
+  whether the attachment character disturbs `paste`'s read-back. The 26.6 probe above sent through
+  the scripting object, not through this lane. One reply draft to your own address settles both.
 - ~~**Whether an open composer can be re-found and rewritten.**~~ **ANSWERED 2026-09-06, for the
   half that matters.** An open composer's body can be rewritten — by select-all and paste through
   the Accessibility lane, not by assigning `content` — and the save lands on the same draft. See
