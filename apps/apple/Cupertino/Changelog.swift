@@ -552,6 +552,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A reply no longer blames Accessibility when Mail just has no window open.",
+            body: [
+              "With Mail closed down to the menu bar, `apple_desktop_list_windows` refused instead of listing none, and Mail's reply and forward read that refusal as a missing grant: nothing was written, and you were sent to toggle a permission that was already on. Listing an app with no windows now answers an empty list, so the reply goes ahead.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

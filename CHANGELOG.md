@@ -12,6 +12,16 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **A reply no longer blames Accessibility when Mail just has no window open.** With Mail closed
+  down to the menu bar, `apple_desktop_list_windows` refused instead of listing none, and Mail's
+  reply and forward read that refusal as a missing grant: nothing was written, and you were sent
+  to toggle a permission that was already on. Listing an app with no windows now answers an empty
+  list, so the reply goes ahead.
+
 ## [1.28.0] - 2026-10-13
 
 **Mail attaches files.** Sending, replying and forwarding take local files, which a draft shows you

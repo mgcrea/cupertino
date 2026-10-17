@@ -788,6 +788,23 @@ struct DesktopCheck {
       DesktopServer.bounds(["maxNodes": 0]).nodes == 1
         && DesktopServer.bounds(["budgetSeconds": 0.0]).seconds == 0.1)
 
+    // Mail closed down to the menu bar has no windows, and list_windows used to
+    // refuse rather than say so. The Mail lane read that refusal as a missing
+    // Accessibility grant and sent people to System Settings with the grant
+    // already on. A listing answers an empty list; only the real refusals stay
+    // refusals.
+    let none = try? DesktopServer.windowListing {
+      throw AccessibilityDriver.Failure.noWindows("Mail")
+    }
+    check("an app with no windows lists none rather than refusing", none?.isEmpty == true)
+    var untrusted = false
+    do {
+      _ = try DesktopServer.windowListing { throw AccessibilityDriver.Failure.notTrusted }
+    } catch AccessibilityDriver.Failure.notTrusted {
+      untrusted = true
+    } catch {}
+    check("a missing Accessibility grant is still a refusal", untrusted)
+
     // find_elements has always honoured `window`; for a while it did not say so,
     // which is how a caller learns an argument exists by having it ignored.
     let findSchema =

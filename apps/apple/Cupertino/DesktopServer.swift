@@ -614,6 +614,24 @@ nonisolated enum DesktopServer {
   static let maxNodesCeiling = 50_000
   static let maxSecondsCeiling = 60.0
 
+  /// What `list_windows` answers: the driver's windows, and an EMPTY list where
+  /// the driver says there are none.
+  ///
+  /// `AccessibilityDriver.windows` throws `noWindows` because every other verb
+  /// needs a window to act on. A listing does not, and an app with nothing open
+  /// — Mail closed down to the menu bar — has a true answer here, which is none.
+  /// Refusing instead cost a reply on 2026-10-17: the Mail lane reads any refusal
+  /// as the Accessibility grant, so a granted app was sent to System Settings.
+  static func windowListing(
+    _ read: () throws -> [AccessibilityDriver.WindowRef]
+  ) throws -> [AccessibilityDriver.WindowRef] {
+    do {
+      return try read()
+    } catch AccessibilityDriver.Failure.noWindows {
+      return []
+    }
+  }
+
   static func bounds(_ args: [String: Any]) -> AccessibilityDriver.Bounds {
     var out = AccessibilityDriver.Bounds()
     if let depth = args["maxDepth"] as? Int { out.depth = max(1, depth) }
@@ -760,7 +778,9 @@ nonisolated enum DesktopServer {
           return failure(id, "The 'bundleId' argument is required.")
         }
         let includeTitles = args["includeTitles"] as? Bool ?? false
-        let windows = try AccessibilityDriver.windows(bundleId: bundleId, scope: scope)
+        let windows = try windowListing {
+          try AccessibilityDriver.windows(bundleId: bundleId, scope: scope)
+        }
         return ok(
           id,
           [
