@@ -947,6 +947,18 @@
      */
     function makeOpen(inner) {
       return function open(method, url) {
+        try {
+          // A listener the page added before the first `open` (a legacy
+          // `onreadystatechange` poll) runs before ours, so it can reopen a
+          // DONE request before any snapshot was taken. Read it now, while
+          // the response is still there: `inner` is about to reset it.
+          const previous = xhrState.get(this);
+          if (previous && previous.started && !previous.done && this.readyState === 4) {
+            xhrSnapshot(this, previous);
+          }
+        } catch {
+          // Unrecorded, not broken.
+        }
         const result = inner.apply(this, arguments);
         try {
           // `open` on a request that has not ended closes its record here,
