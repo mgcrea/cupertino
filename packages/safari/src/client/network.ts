@@ -204,11 +204,23 @@ export function sniffType(bytes: Buffer): string | null {
 export const REDACTED_HEADER =
   /^(authorization|proxy-authorization|cookie|set-cookie)$|token|secret|api-key|apikey/i;
 
-/** Replace the value of every sensitive header with its length, keeping the name. */
+/** A value some layer has already masked, as `redactHeaders` writes it. */
+const ALREADY_REDACTED = /^<redacted: \d+ chars>$/;
+
+/**
+ * Replace the value of every sensitive header with its length, keeping the name.
+ *
+ * Idempotent, because it runs twice on the way out: in the page, and again
+ * here. Masking a mask would report the mask's length (20 or so) instead of
+ * the secret's, which is the one fact about it the caller is allowed.
+ */
 export function redactHeaders(h: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(h)) {
-    out[name] = REDACTED_HEADER.test(name) ? `<redacted: ${value.length} chars>` : value;
+    out[name] =
+      REDACTED_HEADER.test(name) && !ALREADY_REDACTED.test(value)
+        ? `<redacted: ${value.length} chars>`
+        : value;
   }
   return out;
 }
@@ -480,7 +492,13 @@ export async function networkGet(
   const body = pulled.join("");
   const base = {
     entry: head.entry,
-    ...(head.headers ? { headers: head.headers } : {}),
+    // Redacted again here although the page already did it. The page's copy
+    // of the pattern is plain JS in a bundle that ships with the app, and a
+    // test pins the two together only at this commit: an older extension, a
+    // page copy that drifted, or a header the page's filter missed would
+    // otherwise reach the caller as sent. This copy ships with the server
+    // that answers, so it is the one that is always current.
+    ...(head.headers ? { headers: redactHeaders(head.headers) } : {}),
     encoding: head.encoding,
     // Said on every answer, so an inline read of a cut-short body is never
     // mistaken for the whole of it.

@@ -137,6 +137,12 @@ describe("sniffType", () => {
 });
 
 describe("redactHeaders", () => {
+  it("is idempotent: an already-redacted value keeps the length it reported", () => {
+    const once = redactHeaders({ Cookie: "a=1; b=2" });
+    expect(redactHeaders(once)).toEqual(once);
+    expect(once).toEqual({ Cookie: "<redacted: 8 chars>" });
+  });
+
   it("replaces secret values with their length and leaves the rest", () => {
     expect(
       redactHeaders({ Authorization: "Bearer abc", "X-Api-Key": "k", "Content-Type": "a/b" }),

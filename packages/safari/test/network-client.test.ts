@@ -46,6 +46,8 @@ const fakeOsascript: OsascriptRunner = {
 };
 
 type Canned = {
+  /** Headers the page answers with, in place of the default content-type. */
+  headers?: Record<string, string>;
   truncated?: boolean;
   splitSurrogates?: boolean;
   body: string;
@@ -140,7 +142,7 @@ const fakeExtension = (
               },
               ...(command.headers === false
                 ? {}
-                : { headers: { "content-type": "application/json" } }),
+                : { headers: record.headers ?? { "content-type": "application/json" } }),
               encoding: record.encoding === undefined ? "text" : record.encoding,
               totalChars: total,
               offset,
@@ -485,6 +487,41 @@ describe("headers, truncation and surrogate pairs", () => {
     expect(
       (await t.client.networkGet({ url: PAGE_URL, id: ID, headers: false })).headers,
     ).toBeUndefined();
+  });
+
+  /**
+   * The page redacts before anything leaves it, and this is the second layer:
+   * a page copy of `network.js` from an older build, or one whose pattern
+   * drifted, must still not hand a session cookie to the caller.
+   */
+  it("redacts sensitive headers again, whatever the page sent", async () => {
+    const t = setup();
+    fakeExtension(t, {
+      [ID]: {
+        body: "x",
+        headers: {
+          "content-type": "application/json",
+          "Set-Cookie": "sid=abc123",
+          "x-apikey": "k-1",
+        },
+      },
+    });
+    expect((await t.client.networkGet({ url: PAGE_URL, id: ID })).headers).toEqual({
+      "content-type": "application/json",
+      "Set-Cookie": "<redacted: 10 chars>",
+      "x-apikey": "<redacted: 3 chars>",
+    });
+  });
+
+  it("leaves a value the page already redacted as the page wrote it", async () => {
+    const t = setup();
+    fakeExtension(t, {
+      [ID]: { body: "x", headers: { authorization: "<redacted: 42 chars>" } },
+    });
+    // Not "<redacted: 20 chars>": the length is the secret's, not the mask's.
+    expect((await t.client.networkGet({ url: PAGE_URL, id: ID })).headers).toEqual({
+      authorization: "<redacted: 42 chars>",
+    });
   });
 
   it("refuses to save a body the page cut short, before pulling more", async () => {
