@@ -18,9 +18,11 @@ import { compact, fail, ok, wrapResult } from "./util.js";
  *
  * ## What cannot be redacted
  *
- * Headers are filtered by name: `authorization`, `cookie`, `set-cookie` and
- * anything with `token`, `secret` or `api-key` in the name come back as
- * `<redacted: N chars>`. Bodies are NOT touched. A JSON response that contains
+ * Headers are filtered by name: `authorization`, `proxy-authorization`,
+ * `cookie`, `set-cookie` and anything with `token`, `secret`, `api-key` or
+ * `apikey` in the name come back as `<redacted: N chars>`, masked in the page
+ * and again in the server. Bodies are NOT touched, and neither are URLs: a
+ * query string that carries a token is listed with the token in it. A JSON response that contains
  * a token is returned with the token in it, because there is no way to know
  * which string in an arbitrary body is a secret, and a guess that sometimes
  * missed would be worse than saying plainly that none is attempted. The tool
@@ -64,8 +66,18 @@ const LIMITS =
 /** What every network description says about secrets. */
 const REDACTION =
   "Bodies are NOT redacted: only headers named authorization, proxy-authorization, cookie, " +
-  "set-cookie, or containing token, secret or api-key are masked. A body that holds a " +
+  "set-cookie, or containing token, secret, api-key or apikey are masked. A body that holds a " +
   "credential comes back with it, so read one only when you need to.";
+
+/**
+ * Said on the two tools that return URLs. A signed download link or an OAuth
+ * callback carries its secret in the query string, and the header rule above
+ * says nothing about that, so a reader could take "headers are masked" for
+ * "secrets are masked".
+ */
+const URLS_IN_FULL =
+  "URLs are returned in full, query strings included, and are not redacted: a token or a " +
+  "signature in a URL comes back as the page sent it.";
 
 export const registerNetworkTools = (
   server: McpServer,
@@ -95,9 +107,12 @@ export const registerNetworkTools = (
           "start recording and then trigger the request yourself.\n\n" +
           "Arming puts the recorder into the page as a script, and only then: a page that was " +
           "never armed runs nothing of it. On a page whose Content-Security-Policy refuses " +
-          "inline scripts it is loaded from the extension instead, which arrives late and can " +
-          "miss the page's first requests, even with `reload: true`; `hook.injection` in the " +
-          'answer says which happened ("inline", "src", or "blocked" when neither got in).\n\n' +
+          "inline scripts there is a fallback that loads it from the extension instead; it " +
+          "has not been verified in Safari, and even when it works it arrives late and can " +
+          "miss the page's first requests, even with `reload: true`. `hook.injection` in the " +
+          'answer says which happened: "inline", "src" (the fallback was asked for; ' +
+          '`hook.worlds` containing "main" says it arrived), "blocked" when neither got in, ' +
+          'or "unavailable" when the extension had no recorder source to inject.\n\n' +
           LIMITS +
           " " +
           REDACTION +
@@ -194,7 +209,9 @@ export const registerNetworkTools = (
           'after it had answered, and "error 4/0" a real network failure.\n\n' +
           LIMITS +
           " " +
-          REDACTION,
+          REDACTION +
+          " " +
+          URLS_IN_FULL,
       ),
       inputSchema: {
         url: urlArg,
@@ -279,6 +296,8 @@ export const registerNetworkTools = (
           LIMITS +
           " " +
           REDACTION +
+          " " +
+          URLS_IN_FULL +
           writesNote,
       ),
       inputSchema: {

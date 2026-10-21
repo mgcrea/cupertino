@@ -215,6 +215,29 @@ describe("network tool registration", () => {
     expect(record).toMatch(/Content-Security-Policy/);
     expect(record).toMatch(/first requests/i);
     expect(record).not.toContain("hook.background");
+    // The fallback exists; whether Safari lets it in is not measured, and the
+    // description must not promise more than that.
+    expect(record).toMatch(/not been verified in Safari/);
+    expect(tools.find((t) => t.name === "apple_safari_network_record")?.description).toContain(
+      '"unavailable"',
+    );
+  });
+
+  it("names apikey among the masked headers, as the pattern does", async () => {
+    const { client } = await connect({ APPLE_SAFARI_ALLOW_NETWORK: "true" });
+    const { tools } = await client.listTools();
+    for (const tool of tools.filter((t) => t.name.startsWith("apple_safari_network_"))) {
+      expect(tool.description).toContain("apikey");
+    }
+  });
+
+  it("says plainly that URLs, query strings included, are not redacted", async () => {
+    const { client } = await connect({ APPLE_SAFARI_ALLOW_NETWORK: "true" });
+    const { tools } = await client.listTools();
+    for (const name of ["apple_safari_network_list", "apple_safari_network_get"]) {
+      const description = tools.find((t) => t.name === name)?.description ?? "";
+      expect(description).toMatch(/URLs.*query strings included.*not redacted/);
+    }
   });
 });
 
