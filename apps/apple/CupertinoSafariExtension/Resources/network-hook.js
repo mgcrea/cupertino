@@ -783,6 +783,13 @@
       if (wantsBody(st.rec.url)) {
         try {
           snap.body = xhrBody(xhr, contentType, options.maxBodyBytes);
+          // A Blob read is a promise that may fail before anything closes the
+          // record and attaches its own handler; a rejection nobody handled
+          // yet is reported to the PAGE's `unhandledrejection`. This one
+          // handler marks it handled, and the real one still sees the result.
+          if (snap.body && typeof snap.body.then === "function") {
+            snap.body.then(null, () => {});
+          }
         } catch {
           snap.body = null;
         }
@@ -879,6 +886,11 @@
         const type = event.type;
         const readyState = xhr.readyState;
         if (type === "readystatechange" && readyState !== 4) return;
+        // A request's own `loadend` comes at DONE, or at UNSENT after a page
+        // reset it in `load`; never at OPENED. One at OPENED is the PREVIOUS
+        // request's, still being dispatched after a page reopened this object
+        // from its `load` listener, and must not end the new one.
+        if (type === "loadend" && readyState !== 4 && readyState !== 0) return;
         if (st.rec.trace.length < XHR_TRACE_MAX) {
           st.rec.trace.push(type + " " + readyState + "/" + xhr.status);
         }
@@ -890,10 +902,36 @@
       }
     }
 
+    /**
+     * `EventTarget.prototype.addEventListener` as it was when the hook loaded.
+     *
+     * A page can patch it, and zone.js does: through the patch, every one of
+     * our listeners becomes a zone task, and each `readystatechange` in
+     * LOADING a change-detection pass the page never asked for. Calling the
+     * native one directly keeps the recorder out of the page's bookkeeping.
+     * Injected inline at `document_start`, this is the browser's own; the
+     * late `src` fallback may find a page's patch already in place, and then
+     * gets the same behaviour as before, no worse.
+     */
+    const nativeAddListener = (function () {
+      try {
+        const f =
+          typeof EventTarget === "function" && EventTarget.prototype
+            ? EventTarget.prototype.addEventListener
+            : null;
+        return typeof f === "function" ? f : null;
+      } catch {
+        return null;
+      }
+    })();
+
     function listenTo(xhr) {
       if (xhrListening.has(xhr)) return;
       xhrListening.add(xhr);
-      for (const type of XHR_TRACED) xhr.addEventListener(type, onXhrEvent);
+      for (const type of XHR_TRACED) {
+        if (nativeAddListener) nativeAddListener.call(xhr, type, onXhrEvent);
+        else xhr.addEventListener(type, onXhrEvent);
+      }
     }
 
     /**
@@ -905,14 +943,25 @@
       return function open(method, url) {
         const result = inner.apply(this, arguments);
         try {
-          // `open` on a request still in flight aborts it, and no `loadend`
-          // follows for that one. Close its record here; left open, its
-          // listeners would take the NEXT request's response as its own.
+          // `open` on a request that has not ended closes its record here,
+          // because no `loadend` of its own will reach it (one that is still
+          // being dispatched arrives at OPENED and is ignored; see
+          // `onXhrEvent`). If its response was already seen — `open` called
+          // from a `load` listener, after DONE — it was answered, and is
+          // closed from that snapshot exactly as `loadend` would have.
+          // Otherwise `open` aborted it in flight.
           const previous = xhrState.get(this);
           if (previous && previous.started && !previous.done) {
-            previous.done = true;
-            previous.rec.error = "Aborted";
-            finish(previous.rec, previous.t0, previous.pending);
+            if (previous.rec.trace.length < XHR_TRACE_MAX) {
+              previous.rec.trace.push("open " + this.readyState + "/" + this.status);
+            }
+            if (previous.snap) {
+              xhrDone(this, previous);
+            } else {
+              previous.done = true;
+              previous.rec.error = "Aborted";
+              finish(previous.rec, previous.t0, previous.pending);
+            }
           }
           if (wants("xhr")) {
             const rec = newRecord("xhr", String(method).toUpperCase(), absolute(url));

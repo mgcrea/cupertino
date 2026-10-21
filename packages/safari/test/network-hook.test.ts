@@ -162,8 +162,14 @@ class FakeXHR extends EventTarget {
   private text = "";
   private replyHeaders: Record<string, string> = {};
   open(...args: unknown[]) {
+    // As the spec's open() does: OPENED, and the previous response gone.
     this.opened = args;
     this.readyState = 1;
+    this.status = 0;
+    this.statusText = "";
+    this.response = null;
+    this.text = "";
+    this.replyHeaders = {};
   }
   setRequestHeader(name: string, value: string) {
     this.sentHeaders.push([name, value]);
@@ -315,6 +321,7 @@ const load = (
     location: { href: `${ORIGIN}/page` },
     CustomEvent,
     Event,
+    EventTarget,
     URL,
     TextEncoder,
     TextDecoder,
@@ -1014,6 +1021,119 @@ describe("xhr", () => {
     const end = await endOf(page);
     expect(end).toMatchObject({ status: 200, error: null, body: { data: "ok" } });
     expect(end.trace).toEqual(["readystatechange 4/200", "load 0/0", "loadend 0/0"]);
+  });
+
+  /**
+   * `open()` after DONE is the other spec reset: OPENED, response gone, and the
+   * first request's own `loadend` still to come — now at readyState 1, where
+   * no request's `loadend` ever legitimately fires.
+   */
+  it("open() inside a load listener after DONE keeps the first record's 200 and body", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("one") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/one");
+    xhr.addEventListener("load", () => xhr.open("GET", "/later"));
+    xhr.send();
+    const end = await endOf(page);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(page.ends()).toHaveLength(1);
+    expect(end).toMatchObject({
+      url: `${ORIGIN}/one`,
+      status: 200,
+      error: null,
+      body: { data: "one" },
+    });
+  });
+
+  it("reusing one object, open and send from its load, gives two records, each its own", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("one") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/one");
+    let reused = false;
+    xhr.addEventListener("load", () => {
+      if (reused) return;
+      reused = true;
+      FakeXHR.next = {
+        status: 404,
+        statusText: "Not Found",
+        headers: { "content-type": "text/plain" },
+        body: bytesOf("two"),
+      };
+      xhr.open("GET", "/two");
+      xhr.send();
+    });
+    xhr.send();
+    await endOf(page, 2);
+    const [first, second] = page.ends();
+    expect(first).toMatchObject({ url: `${ORIGIN}/one`, status: 200, body: { data: "one" } });
+    expect(second).toMatchObject({
+      url: `${ORIGIN}/two`,
+      status: 404,
+      error: null,
+      body: { data: "two" },
+    });
+    // The first request's late loadend, at OPENED, was not taken as the second's.
+    expect(second!.trace).toEqual(["readystatechange 4/404", "load 4/404", "loadend 4/404"]);
+  });
+
+  it("a Blob body read at snapshot time that fails, closed through open, leaks no rejection", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "image/png" }, body: bytesOf("png") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.responseType = "blob";
+    // Before `open`, so it runs before the hook's listener: the Blob the hook
+    // reads cannot be read.
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState === 4) {
+        xhr.response = {
+          size: 3,
+          type: "image/png",
+          slice: () => ({ arrayBuffer: () => Promise.reject(new Error("read failed")) }),
+        };
+      }
+    });
+    xhr.open("GET", "/img");
+    // The record closes through this `open`, from the snapshot whose body is
+    // the failing read; vitest fails the run on an unhandled rejection.
+    xhr.addEventListener("load", () => xhr.open("GET", "/next"));
+    xhr.send();
+    const end = await endOf(page);
+    expect(end).toMatchObject({ url: `${ORIGIN}/img`, status: 200, body: null, error: null });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(page.ends()).toHaveLength(1);
+  });
+
+  it("registers its listeners with the native addEventListener, not the page's patch", async () => {
+    const page = load();
+    page.install();
+    const patched = vi.fn(function (
+      this: EventTarget,
+      ...args: Parameters<EventTarget["addEventListener"]>
+    ) {
+      return EventTarget.prototype.addEventListener.apply(this, args);
+    });
+    // zone.js-style: the page patches addEventListener after the hook loaded.
+    (FakeXHR.prototype as unknown as Record<string, unknown>).addEventListener = patched;
+    try {
+      FakeXHR.next = {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+        body: bytesOf("ok"),
+      };
+      const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+      xhr.open("GET", "/zoned");
+      xhr.send();
+      const end = await endOf(page);
+      expect(patched).not.toHaveBeenCalled();
+      expect(end).toMatchObject({ status: 200, body: { data: "ok" } });
+    } finally {
+      delete (FakeXHR.prototype as unknown as Record<string, unknown>).addEventListener;
+    }
   });
 
   it("a genuine network error is still a network error", async () => {
