@@ -1080,6 +1080,41 @@ describe("xhr", () => {
     expect(second!.trace).toEqual(["readystatechange 4/404", "load 4/404", "loadend 4/404"]);
   });
 
+  /**
+   * The legacy poll: `onreadystatechange` set once, before the first `open`,
+   * reopening the same object at DONE. A handler set before `open` runs before
+   * the hook's listener, so `open` arrives before any snapshot was taken.
+   */
+  it("reopening from a readystatechange listener added before open keeps each answer", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("one") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    let polls = 0;
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState !== 4 || polls >= 1) return;
+      polls += 1;
+      FakeXHR.next = {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+        body: bytesOf("two"),
+      };
+      xhr.open("GET", "/poll?1");
+      xhr.send();
+    });
+    xhr.open("GET", "/poll?0");
+    xhr.send();
+    await endOf(page, 2);
+    const [first, second] = page.ends();
+    expect(first).toMatchObject({
+      url: `${ORIGIN}/poll?0`,
+      status: 200,
+      error: null,
+      body: { data: "one" },
+    });
+    expect(second).toMatchObject({ url: `${ORIGIN}/poll?1`, status: 200, body: { data: "two" } });
+  });
+
   it("a Blob body read at snapshot time that fails, closed through open, leaks no rejection", async () => {
     const page = load();
     page.install();

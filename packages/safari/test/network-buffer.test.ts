@@ -33,6 +33,22 @@ const resource = (name: string) =>
   );
 
 const NETWORK = resource("network.js");
+
+/** The right-hand side of `const NAME = …;`, as written. */
+const literalOf = (source: string, name: string): string | undefined =>
+  new RegExp(`const ${name} = (.+);`).exec(source)?.[1];
+
+/** `function normalize(raw) { … }`, line by line with indentation stripped. */
+const normalizeLines = (source: string): string[] => {
+  const lines = source.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "function normalize(raw) {");
+  const indent = lines[start]!.length - lines[start]!.trimStart().length;
+  const end = lines.findIndex(
+    (l, i) => i > start && l.trim() === "}" && l.length - l.trimStart().length === indent,
+  );
+  return lines.slice(start, end + 1).map((l) => l.trim());
+};
+
 const ACTIONS = resource("actions.js");
 const HOOK = resource("network-hook.js");
 
@@ -982,6 +998,29 @@ describe("get", () => {
     const copy = runInContext(m![1]!, createContext({})) as RegExp;
     expect(copy.source).toBe(REDACTED_HEADER.source);
     expect(copy.flags).toBe(REDACTED_HEADER.flags);
+  });
+
+  /**
+   * The hook is injected as source, so it cannot import these either. The
+   * buffer reports `options` from its own `normalize`, and that report is only
+   * true while the clamp and its bounds match the hook's, which enforces them.
+   */
+  it("shares the hook's event names, bounds and option clamp", () => {
+    for (const name of [
+      "FLAG_KEY",
+      "EVENT_INSTALL",
+      "EVENT_UNINSTALL",
+      "EVENT_READY",
+      "EVENT_RECORD",
+      "KINDS",
+      "DEFAULT_MAX_BODY",
+      "MAX_MAX_BODY",
+    ]) {
+      expect(literalOf(NETWORK, name), `${name} in network.js`).toBeDefined();
+      expect(literalOf(HOOK, name), name).toBe(literalOf(NETWORK, name));
+    }
+    expect(normalizeLines(NETWORK).length).toBeGreaterThan(5);
+    expect(normalizeLines(HOOK)).toEqual(normalizeLines(NETWORK));
   });
 });
 

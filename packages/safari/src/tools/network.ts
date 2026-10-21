@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { INLINE_CAP_CHARS } from "../client/network.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { describeReach, urlArg } from "./actions.js";
 import { compact, fail, ok, wrapResult } from "./util.js";
@@ -341,7 +342,7 @@ export const registerNetworkTools = (
           .number()
           .int()
           .min(1)
-          .max(20_000)
+          .max(INLINE_CAP_CHARS)
           .optional()
           .describe("Characters to return inline. Defaults to and is capped at 20,000."),
         saveAs: z

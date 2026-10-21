@@ -422,6 +422,11 @@ export async function networkGet(
   const from = whole ? 0 : offset;
   const limit = whole ? Number.POSITIVE_INFINITY : want;
 
+  // The page's `bodyTruncated` describes the response only: a request body is
+  // never cut, only replaced by a summary. So it cannot refuse a request read.
+  const cutShort = (slice: Slice): boolean =>
+    (input.part ?? "response") === "response" && slice.entry.bodyTruncated === true;
+
   const pulled: string[] = [];
   let first: Slice | undefined;
   let position = from;
@@ -465,7 +470,7 @@ export async function networkGet(
       );
     }
     first ??= slice;
-    if (index === 0 && whole && slice.entry.bodyTruncated === true) {
+    if (index === 0 && whole && cutShort(slice)) {
       // The page keeps only the first `maxBodyBytes` of a larger body. Parsing
       // that as JSON fails confusingly, and saving it writes a corrupt file
       // that looks whole (a PDF missing its tail still opens as a PDF), so the
@@ -502,7 +507,7 @@ export async function networkGet(
     encoding: head.encoding,
     // Said on every answer, so an inline read of a cut-short body is never
     // mistaken for the whole of it.
-    bodyTruncated: head.entry.bodyTruncated === true,
+    bodyTruncated: cutShort(head),
   };
 
   if (!whole) {
@@ -517,6 +522,17 @@ export async function networkGet(
     };
   }
 
+  // The page can evict the body (or replace the entry) between two chunks, and
+  // from then on answers an empty, done slice. The chunks already pulled are
+  // then a prefix, and saving them writes the corrupt file that looks whole the
+  // cut-short refusal above exists to prevent.
+  if (body.length !== head.totalChars) {
+    throw new PreconditionError(
+      `The body of ${input.id} changed or was evicted from the buffer partway through the ` +
+        `pull (${body.length} of ${head.totalChars} characters arrived); nothing was saved. ` +
+        `List again and retry.`,
+    );
+  }
   if (head.encoding === null) {
     throw new PreconditionError(
       `Request ${input.id} has no ${input.part ?? "response"} body to read` +
