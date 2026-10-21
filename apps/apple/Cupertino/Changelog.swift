@@ -220,7 +220,37 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_28_1, v1_28_0, v1_27_0, v1_26_0, v1_25_0]
+  static let releases: [Release] = [v1_29_0, v1_28_1, v1_28_0, v1_27_0, v1_26_0]
+
+  // swift-format-ignore
+  private static let v1_29_0: Release = Release(
+    version: "1.29.0",
+    date: "2026-10-21",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Safari can show what a page fetched.",
+            body: [
+              "With the new \"Read network traffic\" setting on, three tools appear: `apple_safari_network_record` starts and stops recording on an open tab, `apple_safari_network_list` lists the requests it made, with method, address, status and timing, and `apple_safari_network_get` reads one request's headers and response. It answers the questions a page's text cannot, such as why a button did nothing or which call came back with an error. The setting is off by default, recording is per tab and ends on its own after 15 minutes unless you ask for longer, and it works only on websites you have allowed the Cupertino extension on.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "A file inside a response can be saved straight to disk.",
+            body: [
+              "Some sites hand over a document, a signed PDF for instance, as base64 inside a JSON response rather than as a download. `apple_safari_network_get` can pick that field out, decode it and save it to your Downloads folder in one call, without the file passing through the conversation. Saving a file, and reloading a tab to record it from the start, also need the write setting.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "What it cannot see, and what it does not hide.",
+            body: [
+              "Only the page's own `fetch` and `XMLHttpRequest` calls and its console errors are recorded: nothing from embedded frames, web or service workers, or WebSockets. Headers that carry credentials are masked, but response bodies and addresses are returned as the page received them, so a body or a link holding a token comes back with the token in it.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_28_1: Release = Release(
@@ -434,143 +464,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_25_0: Release = Release(
-    version: "1.25.0",
-    date: "2026-10-03",
-    sections: [
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Removing a place from Maps takes an explicit `confirm`.",
-            body: [
-              "`apple_maps_remove_favorite` and `apple_maps_remove_saved_place` both delete on every device signed in to the account, through iCloud, and now refuse a call without `confirm: true` — before Maps is opened, in the second case. Every other destructive tool on every surface already asked.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Safari element ids name the page load they came from.",
-            body: [
-              "An id now reads `3f9a2c1d-e12` rather than `e12`, and a click or fill goes only to the tab that handed it out. With two tabs on the same URL, `click e12` from one tab's list could be claimed by the other and press its `e12` instead, with nothing in the answer saying which tab had acted. An id whose page has since reloaded or closed is refused rather than guessed at; list the elements again. Tabs open across the update need a reload first.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Every surface's diagnostics report the same things in the same places.",
-            body: [
-              "`server` is which build is running, with its version and commit, and `settings` is how it is configured — the write gate, prompts, on-demand tools and the result cap. Notes, Reminders and Calendar used to file their lane report under `server` and so could not report their own version; their lanes now sit beside it, as everyone else's do. Contacts' diagnostics stopped saying its dictionary offers a delete.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "Desktop driving no longer types into whatever happens to be in front.",
-            body: [
-              "A `type`, `key`, `click` or `hover` that named no application went to the frontmost one, even when the surface's reach did not include it — so with Terminal in front, text meant for another app went into a shell. The frontmost application is now checked against the surface's reach before anything is posted, and checked again after the on-screen countdown, since that is when the person at the keyboard may switch apps. A click or hover is also refused unless the point is actually on one of that application's windows, and no surface can drive Cupertino itself, whatever its reach.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "A recording ends when the client that started it goes.",
-            body: [
-              "A microphone recording outlived its client and its editor, with the indicator up and nobody left holding a `stop_recording`; switching Sound or recording off did not end one already running either. Both now finalise it. Recordings are written readable by you alone, as screen captures are.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Screen capture honours a surface being switched off.",
-            body: [
-              "A surface switched off in Settings could still have its window photographed, by name or, with \"Capture any application\", by bundle id. Both are refused now, before anything is captured.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "The Activity window and the audit log see Desktop, Simulator, Screen and Sound.",
-            body: [
-              "Calls to the surfaces Cupertino serves itself were missing from both, and their sessions read zero calls however hard they were driven. A trial running out also closes those sessions now, as it already closed every other surface's.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "The audit log survives a disk that will not take a write.",
-            body: [
-              "A failed append used to advance the chain in memory anyway, so the next record that landed linked to one that never had, and verification reported a full disk as tampering. The log now continues from what is actually on disk and files a notice saying how many records were not written. A Keychain prompt dismissed while signing an export also no longer replaces the signing key recipients have pinned.",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "Installing an update with a Screen or Sound session open no longer kills the app mid-install.",
-            body: [
-              "The updater stopped every session's process, and those two report Cupertino's own.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "A second copy of Cupertino quitting no longer takes the running one's socket with it",
-            body: [
-              ", and the watch that notices the socket being replaced now actually runs.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "`apple_mail_save_attachment` writes the attachment, not three bytes of whitespace.",
-            body: [
-              "When Mail keeps an attachment beside the message rather than inside it, the blank part left in its place was taken for the file. And `apple_mail_get_message` stopped saying an attachment could not be fetched when `save_attachment` could fetch it; the note now names only the files Mail has not downloaded.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "Moving a reminder keeps its due time.",
-            body: [
-              "A reminder due at 16:40 arrived in the other list as due that day, all day.",
-            ]),
-          Entry(
-            ordinal: 12,
-            headline: "A server's own log output stays inside Cupertino.",
-            body: [
-              "Whatever a server wrote to stderr was also copied to the app's standard error, outside the redaction calls get, and into a file that outlives the process. It now stays in the in-app log only.",
-            ]),
-          Entry(
-            ordinal: 13,
-            headline: nil,
-            body: [
-              "`APPLE_*_DEBUG=0` turned debug logging on, like any other non-empty value; it now means off. Searching Messages no longer holds every recent message in memory at once to decode it; it reads one at a time and stops once it has a page.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Safari can show what a page fetched.",
-            body: [
-              "With the new \"Read network traffic\" setting on, three tools appear: `apple_safari_network_record` starts and stops recording on an open tab, `apple_safari_network_list` lists the requests it made, with method, address, status and timing, and `apple_safari_network_get` reads one request's headers and response. It answers the questions a page's text cannot, such as why a button did nothing or which call came back with an error. The setting is off by default, recording is per tab and ends on its own after 15 minutes unless you ask for longer, and it works only on websites you have allowed the Cupertino extension on.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A file inside a response can be saved straight to disk.",
-            body: [
-              "Some sites hand over a document, a signed PDF for instance, as base64 inside a JSON response rather than as a download. `apple_safari_network_get` can pick that field out, decode it and save it to your Downloads folder in one call, without the file passing through the conversation. Saving a file, and reloading a tab to record it from the start, also need the write setting.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "What it cannot see, and what it does not hide.",
-            body: [
-              "Only the page's own `fetch` and `XMLHttpRequest` calls and its console errors are recorded: nothing from embedded frames, web or service workers, or WebSockets. Headers that carry credentials are masked, but response bodies and addresses are returned as the page received them, so a body or a link holding a token comes back with the token in it.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
