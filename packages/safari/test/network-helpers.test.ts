@@ -79,6 +79,39 @@ describe("decodeBase64", () => {
   it("throws on characters outside the alphabet instead of skipping them", () => {
     expect(() => decodeBase64("JVBER*")).toThrow();
   });
+
+  it("accepts unpadded input whose length leaves 2 or 3 characters over", () => {
+    expect(decodeBase64("JVBERi0")).toEqual(decodeBase64("JVBERi0="));
+    expect(decodeBase64("JVBERg")).toEqual(decodeBase64("JVBERg=="));
+  });
+
+  /**
+   * One character past a multiple of four is six bits, which is not a byte:
+   * no encoder writes it, so it is always a field cut short or a character
+   * lost. Node decodes it anyway, dropping the stray character, and a file
+   * one byte short of whole is exactly the quiet corruption this exists to
+   * refuse.
+   */
+  it("throws on a length one past a multiple of four", () => {
+    expect(() => decodeBase64("JVBERi0AB")).toThrow(/length/i);
+    expect(() => decodeBase64("J")).toThrow(/length/i);
+    expect(() => decodeBase64("JVBERi0AB=")).toThrow();
+  });
+
+  it("throws on padding anywhere but the end, naming where", () => {
+    expect(() => decodeBase64("JV=BERi0")).toThrow(/"=".*position 2/);
+    expect(() => decodeBase64("JVBE=Ri0=")).toThrow(/"=".*position 4/);
+  });
+
+  it("throws on more padding than the length calls for", () => {
+    expect(() => decodeBase64("JVBERi0==")).toThrow(/padding/i);
+    expect(() => decodeBase64("JVBE=")).toThrow(/padding/i);
+    expect(() => decodeBase64("====")).toThrow();
+  });
+
+  it("still decodes the empty string to nothing", () => {
+    expect(decodeBase64("")).toEqual(Buffer.alloc(0));
+  });
 });
 
 describe("sniffType", () => {

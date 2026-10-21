@@ -132,17 +132,47 @@ export function resolveJsonPath(root: unknown, path: string): PathResult {
  * file with no signal. Validating first turns that into an error. Both the
  * standard and URL-safe alphabets are accepted (APIs return either), as is a
  * `data:*;base64,` prefix, since that is how a page often holds the same bytes.
+ *
+ * The SHAPE is checked as well as the alphabet, because Node is as lenient
+ * about it: it stops at the first `=` wherever it is, and decodes a length one
+ * past a multiple of four by dropping the stray character. Both are a field
+ * that was cut or spliced, and both would otherwise save a file a byte or a
+ * tail short with nothing to say so. Unpadded input is fine (many APIs strip
+ * the `=`), so the rule is on the data's length, not the padded one: 4n+2 and
+ * 4n+3 characters are whole bytes, 4n+1 never is, and padding may only make
+ * up the difference to a multiple of four.
  */
 export function decodeBase64(text: string): Buffer {
   const stripped = text.replace(/^data:[^,]*;base64,/i, "").replace(/\s+/g, "");
-  if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(stripped)) {
-    const bad = stripped.search(/[^A-Za-z0-9+/_=-]/);
+  const bad = stripped.search(/[^A-Za-z0-9+/_=-]/);
+  if (bad >= 0) {
     throw new PreconditionError(
-      `Not valid base64: unexpected character at position ${bad >= 0 ? bad : stripped.length} ` +
+      `Not valid base64: unexpected character at position ${bad} ` +
         `(standard and URL-safe alphabets are accepted).`,
     );
   }
-  return Buffer.from(stripped, "base64");
+  const data = stripped.replace(/=+$/, "");
+  const misplaced = data.indexOf("=");
+  if (misplaced >= 0) {
+    throw new PreconditionError(
+      `Not valid base64: "=" at position ${misplaced}, before the end. Padding only ever ` +
+        `ends a value, so this is two values run together or one that was cut and spliced.`,
+    );
+  }
+  if (data.length % 4 === 1) {
+    throw new PreconditionError(
+      `Not valid base64: a length of ${data.length} characters (one past a multiple of four) ` +
+        `cannot encode whole bytes, so the value was cut short or lost a character.`,
+    );
+  }
+  const padding = stripped.length - data.length;
+  if (padding > 0 && (data.length % 4 === 0 || (data.length + padding) % 4 !== 0)) {
+    throw new PreconditionError(
+      `Not valid base64: ${padding} "=" of padding after ${data.length} characters, where ` +
+        `${(4 - (data.length % 4)) % 4} would make a multiple of four.`,
+    );
+  }
+  return Buffer.from(data, "base64");
 }
 
 /**
