@@ -24,3 +24,51 @@ browser.runtime.onMessage.addListener(async (message) => {
     return undefined;
   }
 });
+
+// ── Page-world hook registration (fallback) ─────────────────────────────────
+//
+// The network recorder, `network-hook.js`, has to run in the page's own
+// JavaScript world to wrap its `fetch` and `XMLHttpRequest`. The manifest asks
+// for that with `"world": "MAIN"` on a `content_scripts` entry, but Safari's
+// support for that key is UNDOCUMENTED: Apple's manifest reference does not
+// list it, and the only thing an Apple developer-forum thread confirms is
+// `scripting.registerContentScripts` with `world: "MAIN"`, available since
+// Safari 16.4. If the manifest key were silently ignored, the hook would load
+// into the isolated world, see nothing, and every network command would
+// answer "no traffic" with no sign that the recorder never ran. Finding that
+// out costs a notarization round trip.
+//
+// So the same script is registered here too. It costs one permission
+// (`scripting`) and makes the build work whichever way Safari treats the key.
+// Both copies running is harmless: the hook guards itself with a
+// `window.__cupertinoNetHook` symbol, so a second copy in the page world does
+// nothing, and it checks which world it landed in, so a copy that ended up in
+// the isolated world does nothing either.
+//
+// Registered on install AND on startup because the worker is non-persistent
+// and registrations made through this API are only as durable as
+// `persistAcrossSessions` says; the second call is the one that repairs a
+// registration Safari dropped. The call is idempotent in effect: a repeat
+// fails with a duplicate-id error, which means "already registered" and is
+// ignored. Anything else is logged and otherwise ignored, because the manifest
+// entry may still be doing the job.
+async function registerNetworkHook() {
+  try {
+    await browser.scripting.registerContentScripts([
+      {
+        id: "cupertino-net-hook",
+        matches: ["<all_urls>"],
+        js: ["network-hook.js"],
+        runAt: "document_start",
+        world: "MAIN",
+        persistAcrossSessions: true,
+      },
+    ]);
+  } catch (error) {
+    if (/duplicate/i.test(String(error?.message ?? error))) return;
+    console.error("[cupertino] registering the network hook failed:", String(error));
+  }
+}
+
+browser.runtime.onInstalled.addListener(registerNetworkHook);
+browser.runtime.onStartup.addListener(registerNetworkHook);
