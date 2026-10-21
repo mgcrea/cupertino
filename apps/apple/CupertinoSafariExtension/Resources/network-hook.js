@@ -601,6 +601,12 @@
         // The clone is taken in the first `.then` on the fetch's own promise,
         // which this wrapper registered before the page ever saw that promise,
         // so it always runs before the page can start reading.
+        //
+        // One visible cost of the tee: a page that calls `reader.cancel()` on
+        // its own branch, to stop a download it no longer wants, cancels only
+        // that branch. The connection stays open while this reads the clone,
+        // up to `maxBodyBytes`, so on an armed tab a cancelled download keeps
+        // using the network until the cap is reached or the body ends.
         const clone = res.clone();
         readCapped(clone, cap).then(
           (read) => {
