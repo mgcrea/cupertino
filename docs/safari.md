@@ -956,14 +956,28 @@ What a page FETCHED, as a third thing the extension lane can answer next to what
 
 ### The lane
 
-A `network-hook.js` content script in the page's MAIN world wraps `fetch`, `XMLHttpRequest` and the
-console while a tab is armed, and hands each record to `network.js` in the isolated world, which
-keeps a ring buffer for that page load and answers three commands (`netRecord`, `netList`,
+A recorder in the page's own JavaScript world wraps `fetch`, `XMLHttpRequest` and the console while
+a tab is armed, and hands each record to `network.js` in the isolated world, which keeps a ring
+buffer for that page load and answers three commands (`netRecord`, `netList`,
 `netGet`) through the same command channel the click lane uses. Arming is opt-in per tab, is kept in
 `sessionStorage` so it survives a reload, and carries an expiry (15 minutes by default, 120 at most)
 so a forgotten recording does not wrap a page all day. Request ids are `<pageToken>-r<n>`, the
 element-id rule again: an id names the page load that recorded it, and a stale one is an error
 instead of another tab's record.
+
+**How the recorder gets into the page.** Not through the manifest: Safari ignores `"world": "MAIN"`
+on a `content_scripts` entry and on `scripting.registerContentScripts` alike, and runs both in the
+isolated world (measured below). So `network-hook.js` is still a manifest content script, but only
+as the source provider: in the isolated world it wraps nothing and leaves its recorder as a string,
+and `network.js` injects that string into the page as an inline `<script>` element, then removes the
+element. It does so only when the tab is armed, at load under a valid arm flag or on
+`network_record start`, so an unarmed tab gets no script at all. A page whose Content-Security-Policy
+refuses inline scripts gets the same file by URL instead (it is listed in
+`web_accessible_resources`); that load is asynchronous, so the page's first requests can go out
+before the recorder is there, even after `reload: true`. `status` reports which happened as
+`hook.injection`: `inline`, `src`, `blocked` (the URL load failed too), `unavailable` (no source),
+or null (nothing attempted). The background worker is a plain relay again, and the extension no
+longer asks for the `scripting` permission.
 
 A body is pulled in chunks (`APPLE_SAFARI_NETWORK_CHUNK_CHARS`, 262,144 by default) because one
 native message cannot carry a multi-megabyte response. Only `jsonPath`, `decode` and `saveAs` need
@@ -986,23 +1000,32 @@ not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally
 - **Page memory only.** Records live in the page and die with the load; nothing is written to disk
   except an explicit `saveAs`. The buffer holds 1,000 records and 50 MiB of bodies, bodies are
   evicted before records, and `dropped` says so.
+- **A strict CSP costs the first requests.** On a page that forbids inline scripts the recorder
+  arrives by URL, late; what the page fetched before it arrived is not recorded.
 - **A page can arm itself** by writing the arm flag into its own `sessionStorage`. The expiry is
   clamped to the 120-minute maximum and the data leaves the tab only when an agent asks. Closing it
   needs a nonce the page cannot read; that is deferred, and recorded in the spec.
 
 ### Measurements
 
-Not measured yet. These are the five probes from the spec's "Measure first" section, and each one
-changes a detail of the build rather than its shape. The table is filled in from the first notarized
-run; until then every row is an assumption, and the build behaves as described under each.
+The five probes from the spec's "Measure first" section, each of which changes a detail of the
+build rather than its shape. Three were measured on the notarized build of 385bb73 (Safari 26, macOS
+26). The other two are still assumptions, and the build behaves as described under each.
 
-| Probe                                      | Result | Date | If it comes back the other way                                    |
-| ------------------------------------------ | ------ | ---- | ----------------------------------------------------------------- |
-| MAIN-world script from the manifest        | TBD    | TBD  | falls back to `scripting.registerContentScripts` (already wired)  |
-| Native-messaging payload limit             | TBD    | TBD  | lower `APPLE_SAFARI_NETWORK_CHUNK_CHARS`'s default                |
-| `CustomEvent` `detail` across worlds       | TBD    | TBD  | nothing: the hook sends strings, so this only confirms the choice |
-| `PerformanceResourceTiming.responseStatus` | TBD    | TBD  | `resource` entries carry no status and `failed` cannot see them   |
-| The target PDF site's request path         | TBD    | TBD  | XHR is expected (Angular `HttpClient`); a subframe would not work |
+| Probe                                       | Result                                                                        | Date       | What the build does about it                                                    |
+| ------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------- |
+| MAIN-world script from the manifest         | **Ignored**, and by `scripting.registerContentScripts` too: both run isolated | 2026-10-21 | `network.js` injects the hook as a page `<script>`; the registration is removed |
+| Native-messaging payload limit              | TBD                                                                           | TBD        | if lower, lower `APPLE_SAFARI_NETWORK_CHUNK_CHARS`'s default                    |
+| `CustomEvent` string `detail` across worlds | **Yes**, both directions                                                      | 2026-10-21 | nothing: the hook sends strings, and this confirms the choice                   |
+| `PerformanceResourceTiming.responseStatus`  | **Not supported**                                                             | 2026-10-21 | `resource` entries carry no status, and `failed` cannot see them                |
+| The target PDF site's request path          | TBD; it sends no CSP header or meta tag, so inline injection is allowed there | TBD        | XHR is expected (Angular `HttpClient`); a subframe would not work               |
+
+The first row in detail: `status.hook` came back `installed: false` with only `"isolated"` among the
+worlds, across several reloads, while the background reported its registration as made. A test page
+listening for the events itself saw, from the page's world, no `window.__cupertinoNetHook` and a
+native `fetch` and `XMLHttpRequest.prototype.send`, yet received `cupertino:net-ping` once and
+`cupertino:net-ready` twice. So the registered copy did run, in the wrong world, and the events do
+cross between worlds.
 
 ## Still open
 

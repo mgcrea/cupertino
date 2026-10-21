@@ -126,7 +126,9 @@ is a different exposure from a one-time code.
   filename, and never over an existing file unless `overwrite: true`). Each fails with an error
   naming `APPLE_SAFARI_ALLOW_WRITES`.
 - **What it cannot see:** subframes, web and service workers, `<img>`/`<script>` bodies and
-  WebSockets. Request ids die when the page reloads or navigates.
+  WebSockets. Request ids die when the page reloads or navigates. On a page whose
+  Content-Security-Policy refuses inline scripts the recorder is loaded late, so the page's first
+  requests can be missing.
 - **A file inside an API response:** `network_get` with `jsonPath` to the field, `decode: "base64"`
   and `saveAs`. The bytes go to disk, not into the conversation.
 

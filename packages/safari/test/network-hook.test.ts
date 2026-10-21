@@ -16,6 +16,12 @@ import { describe, expect, it, vi } from "vitest";
  * pass a hook that breaks every page it touches, so most of these assert the
  * page's side first.
  *
+ * Safari ignores `"world": "MAIN"`, so the file itself lands in the isolated
+ * world, where it wraps nothing and only hands its source to `network.js`,
+ * which injects it into the page as a `<script>`. Both halves are run here: the
+ * file as it loads in each world, and the injected source string evaluated on
+ * its own, in a context that has nothing of the file around it.
+ *
  * Same approach as `content-script.test.ts`: the script is evaluated in a
  * `node:vm` against hand-rolled stubs, not jsdom. The stubs are only as rich as
  * the hook's use of them — a `Response` with `clone()` and a body that can be
@@ -216,7 +222,16 @@ const jsonReply: Responder = async () =>
  * `window` is the sandbox itself, so `window.fetch = …` inside the script and a
  * bare `fetch(…)` both reach the same slot, as they do in a page.
  */
-const load = (opts: { flag?: Json | string; browser?: boolean; respond?: Responder } = {}) => {
+const load = (
+  opts: {
+    flag?: Json | string;
+    /** `true` is the extension's own `browser`; any other value is a page global of that name. */
+    browser?: boolean | Json;
+    respond?: Responder;
+    /** What is evaluated: the file by default, or the source an isolated copy exposed. */
+    source?: string;
+  } = {},
+) => {
   const store = new Map<string, string>();
   if (opts.flag !== undefined) {
     store.set(FLAG, typeof opts.flag === "string" ? opts.flag : JSON.stringify(opts.flag));
@@ -287,10 +302,11 @@ const load = (opts: { flag?: Json | string; browser?: boolean; respond?: Respond
     removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
     dispatchEvent: windowEvents.dispatchEvent.bind(windowEvents),
   };
-  if (opts.browser) sandbox.browser = { runtime: {} };
+  if (opts.browser === true) sandbox.browser = { runtime: {} };
+  else if (opts.browser) sandbox.browser = opts.browser;
   sandbox.window = sandbox;
   const context = createContext(sandbox);
-  runInContext(SOURCE, context);
+  runInContext(opts.source ?? SOURCE, context);
 
   const send = (name: string, detail?: Json) =>
     document.dispatchEvent(
@@ -448,8 +464,8 @@ describe("arming", () => {
     expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
     expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
     expect(page.ready).toEqual([]);
-    // Bailing means not claiming the guard either: the MAIN-world copy that
-    // Task 4's fallback injects must still be able to run.
+    // Bailing means not claiming the guard either: the page-world copy that
+    // network.js injects from this one's source must still be able to run.
     expect(page.sandbox[GUARD]).toBeUndefined();
   });
 
@@ -998,5 +1014,134 @@ describe("console", () => {
     con.error("first");
     expect(page.records).toHaveLength(1);
     expect(page.consoleCalls.map((c) => c.args[0])).toEqual(["first", "echo"]);
+  });
+});
+
+/**
+ * The source the isolated copy hands to `network.js`, as `network.js` would
+ * read it off the window. Taken once, from a real isolated-world load.
+ */
+const injectedSource = () => {
+  const isolated = load({ browser: true });
+  const source = isolated.sandbox.cupertinoNetHookSource;
+  expect(typeof source).toBe("string");
+  return source as string;
+};
+
+describe("injected as a page script", () => {
+  it("an isolated copy wraps nothing, even when armed, and exposes its source", () => {
+    const page = load({ browser: true, flag: { expiresAt: Date.now() + 60_000 } });
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
+    expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
+    expect(page.sandbox[GUARD]).toBeUndefined();
+    const source = page.sandbox.cupertinoNetHookSource as string;
+    expect(source).toMatch(/^\(function cupertinoNetHookMain\(\)/);
+    expect(source.trimEnd()).toMatch(/\)\(\);$/);
+  });
+
+  it("a page copy exposes no source and leaves no global behind but the guard", () => {
+    const page = load();
+    expect(page.sandbox.cupertinoNetHookSource).toBeUndefined();
+    expect(page.sandbox.cupertinoNetHookMain).toBeUndefined();
+  });
+
+  it("a page global named browser that is not the extension's does not make the page copy bail", () => {
+    // `<div id="browser">` is a `window.browser` in every engine.
+    const page = load({ browser: { tagName: "DIV" } });
+    page.install();
+    expect(page.sandbox.fetch).not.toBe(page.originalFetch);
+  });
+
+  it("evaluated alone, the source arms from the flag at load and answers as main", async () => {
+    const page = load({ source: injectedSource(), flag: { expiresAt: Date.now() + 60_000 } });
+    expect(page.sandbox.fetch).not.toBe(page.originalFetch);
+    expect(page.ready).toEqual([{ installed: true }]);
+    page.ready.length = 0;
+    page.ping();
+    expect(page.ready).toEqual([{ installed: true, world: "main" }]);
+    await page.fetch("/api");
+    expect((await endOf(page)).status).toBe(200);
+  });
+
+  it("evaluated alone, the source stays dormant until installed", () => {
+    const page = load({ source: injectedSource() });
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(page.ready).toEqual([{ installed: false }]);
+  });
+
+  it("injected fetch transparency", async () => {
+    const response = new FakeResponse(bytesOf('{"items":[1,2,3]}'), {
+      headers: { "content-type": "application/json" },
+    });
+    const page = load({ source: injectedSource(), respond: async () => response });
+    page.install();
+    const promise = page.fetch("/api/items");
+    expect(promise).toBe(page.lastPromise());
+    const res = await promise;
+    expect(res).toBe(response);
+    const end = await endOf(page);
+    expect(await res.json()).toEqual({ items: [1, 2, 3] });
+    expect(end).toMatchObject({
+      kind: "fetch",
+      url: `${ORIGIN}/api/items`,
+      status: 200,
+      body: { encoding: "text", data: '{"items":[1,2,3]}', truncated: false },
+    });
+  });
+
+  it("injected xhr records request and response and hands the page its own response", async () => {
+    const page = load({ source: injectedSource() });
+    page.install();
+    FakeXHR.next = {
+      status: 201,
+      headers: { "content-type": "application/json" },
+      body: bytesOf('{"a":1}'),
+    };
+    const XHR = page.sandbox.XMLHttpRequest as typeof FakeXHR;
+    const xhr = new XHR();
+    xhr.responseType = "json";
+    xhr.open("post", "/x", true);
+    xhr.send("payload");
+    const end = await endOf(page);
+    expect(xhr.opened).toEqual(["post", "/x", true]);
+    expect(xhr.response).toEqual({ a: 1 });
+    expect(end).toMatchObject({
+      kind: "xhr",
+      method: "POST",
+      url: `${ORIGIN}/x`,
+      status: 201,
+      requestBody: { encoding: "text", data: "payload" },
+      body: { encoding: "text", data: '{"a":1}' },
+    });
+  });
+
+  it("injected console.error records and still calls the original", () => {
+    const page = load({ source: injectedSource() });
+    page.install();
+    const con = page.sandbox.console as Record<"error", (...a: unknown[]) => void>;
+    con.error("bad thing", { a: 1 });
+    expect(page.consoleCalls).toEqual([{ level: "error", args: ["bad thing", { a: 1 }] }]);
+    expect(page.records).toEqual([
+      expect.objectContaining({ kind: "console", level: "error", message: 'bad thing {"a":1}' }),
+    ]);
+  });
+
+  it("an injected copy after a page copy is a no-op, and the reverse too", async () => {
+    const source = injectedSource();
+    for (const [first, second] of [
+      [SOURCE, source],
+      [source, SOURCE],
+    ] as const) {
+      const page = load({ source: first });
+      runInContext(second, page.context);
+      page.ready.length = 0;
+      page.ping();
+      expect(page.ready).toHaveLength(1);
+      page.install();
+      await page.fetch("/api");
+      await endOf(page);
+      expect(page.starts()).toHaveLength(1);
+    }
   });
 });

@@ -11,8 +11,7 @@
       "matches": ["<all_urls>"],
       "js": ["network-hook.js"],
       "run_at": "document_start",
-      "all_frames": false,
-      "world": "MAIN"
+      "all_frames": false
     },
     {
       "matches": ["<all_urls>"],
@@ -47,5 +46,7 @@
     "512": "images/icon-512.png"
   },
 
-  "permissions": ["nativeMessaging", "scripting"]
+  "permissions": ["nativeMessaging"],
+
+  "web_accessible_resources": [{ "resources": ["network-hook.js"], "matches": ["<all_urls>"] }]
 }

@@ -200,13 +200,17 @@ export type RecordState = {
   dropped?: unknown;
   hook?: {
     installed: boolean;
-    /** Hook copies that answered a ping: "isolated", "main", both, or none. */
+    /** Hook copies that answered a ping: "isolated" (the source provider), "main" (the recorder), both, or none. */
     worlds?: string[];
-    /** The background worker's view of the hook registration: no answer yet, no answer ever, or an answer. */
-    background?:
-      | { state: "pending" }
-      | { state: "failed"; error: string }
-      | { state: "ok"; registered: string[]; error: string | null; scriptingAvailable: boolean };
+    /**
+     * How the recorder was put into the page on this load. Safari ignores
+     * `world: "MAIN"`, so `network.js` injects it as a `<script>`: inline,
+     * or by URL (`src`) when the page's CSP refuses inline scripts, which
+     * loads late and can miss the first requests. `blocked` means that load
+     * failed too; `unavailable` that there was no source to inject; null that
+     * nothing was attempted (never armed, or a page copy already answered).
+     */
+    injection?: "inline" | "src" | "blocked" | "unavailable" | null;
   };
   resourceStatusSupported?: boolean;
 };

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { REDACTED_HEADER } from "../src/client/network.js";
 
@@ -34,6 +34,7 @@ const resource = (name: string) =>
 
 const NETWORK = resource("network.js");
 const ACTIONS = resource("actions.js");
+const HOOK = resource("network-hook.js");
 
 const FLAG = "__cupertino_net";
 const T0 = Date.UTC(2026, 9, 21, 9, 0, 0);
@@ -80,15 +81,7 @@ interface State {
   hook: {
     installed: boolean;
     worlds: string[];
-    background:
-      | { state: "pending" }
-      | { state: "failed"; error: string }
-      | {
-          state: "ok";
-          registered: string[];
-          error: string | null;
-          scriptingAvailable: boolean;
-        };
+    injection: "inline" | "src" | "blocked" | "unavailable" | null;
   };
   resourceStatusSupported: boolean;
 }
@@ -121,12 +114,31 @@ interface Timing {
   responseStatus?: number;
 }
 
+/** A `<script>` element as far as network.js touches one. */
+class FakeScript extends EventTarget {
+  textContent = "";
+  src = "";
+  parentNode: { removeChild: (node: FakeScript) => unknown } | null = null;
+}
+
+const EXTENSION_BASE = "safari-web-extension://0d1e2f3a/";
+
 /**
  * One tab: network.js then actions.js, over a stub page.
  *
  * `flag` pre-seeds `sessionStorage` the way a reload under an armed tab finds
  * it. `timings` is the live resource-timing list, which the test may push to
  * later, as the browser does.
+ *
+ * `page` is what the PAGE world does with a `<script>` network.js appends:
+ * `"inline"` runs an inline one at once, as a page without a CSP does, and
+ * `"csp"` refuses it, as `script-src` without `'unsafe-inline'` does. A `src`
+ * script never runs on its own; the test fires its `load` or `error`. What
+ * "runs" means is a stub hook that answers the ping as `main`, unless
+ * `realHook` is set: then the real network-hook.js is loaded into the isolated
+ * context first, the way the manifest loads it, and the source it exposes is
+ * evaluated in a separate page-world context that shares only `document` and
+ * `sessionStorage`, the way the two worlds share them.
  */
 const tab = (
   opts: {
@@ -135,8 +147,10 @@ const tab = (
     token?: string;
     /** What answers `cupertino:net-ping`, in order, as the hook copies would. */
     pingAnswers?: Json[];
-    /** The background's reply to `{kind:"netDiag"}`; a function may reject. */
-    netDiag?: unknown | (() => Promise<unknown>);
+    /** `window.cupertinoNetHookSource`, as the isolated hook copy would leave it. */
+    hookSource?: string;
+    page?: "inline" | "csp";
+    realHook?: boolean;
   } = {},
 ) => {
   const clock = { now: T0 };
@@ -166,9 +180,51 @@ const tab = (
   const reloads: number[] = [];
   const timings = opts.timings ?? [];
 
+  /**
+   * Everything in order: scripts appended and removed, install and uninstall
+   * dispatched. "Injected, THEN told to install" is an ordering claim.
+   */
+  const timeline: string[] = [];
+  const scripts: FakeScript[] = [];
+  let runInPage: ((code: string) => void) | null = null;
+  let stubHookRan = false;
+  const ready = (detail: Json) =>
+    document.dispatchEvent(
+      new CustomEvent("cupertino:net-ready", { detail: JSON.stringify(detail) }),
+    );
+
+  const root = {
+    appendChild(node: FakeScript) {
+      node.parentNode = root;
+      scripts.push(node);
+      timeline.push(node.src ? `append src ${node.src}` : "append inline");
+      if (!node.src && opts.page === "inline") {
+        if (runInPage) runInPage(node.textContent);
+        else if (!stubHookRan) {
+          stubHookRan = true;
+          document.addEventListener("cupertino:net-ping", () =>
+            ready({ installed: false, world: "main" }),
+          );
+          ready({ installed: false });
+        }
+      }
+      return node;
+    },
+    removeChild(node: FakeScript) {
+      node.parentNode = null;
+      timeline.push(node.src ? "remove src" : "remove inline");
+      return node;
+    },
+  };
+
   const document = Object.assign(new EventTarget(), {
     querySelectorAll: () => [button],
     getElementById: () => null,
+    documentElement: root,
+    createElement: (tag: string) => {
+      if (tag !== "script") throw new Error(`unexpected element ${tag}`);
+      return new FakeScript();
+    },
   });
   const button = {
     tagName: "BUTTON",
@@ -195,6 +251,7 @@ const tab = (
     document.addEventListener(name, (e) => {
       const detail = (e as CustomEvent<string>).detail;
       control.push({ name, detail: typeof detail === "string" ? JSON.parse(detail) : detail });
+      timeline.push(name);
     });
   }
 
@@ -207,23 +264,18 @@ const tab = (
       ),
     );
   }
+  /** Anything sent to the background. Nothing should be: it is a plain relay again. */
   const messages: unknown[] = [];
-
   const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
   if (opts.token) window.cupertinoPageToken = opts.token;
+  if (opts.hookSource !== undefined) window.cupertinoNetHookSource = opts.hookSource;
   const context = createContext({
-    ...(opts.netDiag === undefined
-      ? {}
-      : {
-          browser: {
-            runtime: {
-              sendMessage: async (message: unknown) => {
-                messages.push(message);
-                return typeof opts.netDiag === "function" ? opts.netDiag() : opts.netDiag;
-              },
-            },
-          },
-        }),
+    browser: {
+      runtime: {
+        getURL: (path: string) => EXTENSION_BASE + path,
+        sendMessage: async (message: unknown) => void messages.push(message),
+      },
+    },
     crypto: webcrypto,
     window,
     document,
@@ -239,6 +291,36 @@ const tab = (
     },
     getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
   });
+
+  /** The page's own `fetch`, for `realHook`: whatever the hook wraps. */
+  const pageFetches: string[] = [];
+  let pageContext: Record<string, unknown> | null = null;
+  if (opts.realHook) {
+    const pageWindow: Record<string, unknown> = {
+      document,
+      sessionStorage,
+      Date: FakeDate,
+      CustomEvent,
+      Event,
+      URL,
+      TextEncoder,
+      TextDecoder,
+      btoa,
+      location: { href: `${ORIGIN}/page` },
+      performance: { now: () => clock.now - T0 },
+      console: { error: () => {}, warn: () => {} },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      fetch: async (input: string) => {
+        pageFetches.push(input);
+        return new Response('{"from":"page"}', { headers: { "content-type": "application/json" } });
+      },
+    };
+    pageWindow.window = pageWindow;
+    pageContext = createContext(pageWindow);
+    runInPage = (code) => runInContext(code, pageContext!);
+    runInContext(HOOK, context);
+  }
   runInContext(NETWORK, context);
   runInContext(ACTIONS, context);
 
@@ -303,6 +385,10 @@ const tab = (
     run,
     messages,
     document,
+    timeline,
+    scripts,
+    pageContext,
+    pageFetches,
     window,
     store,
     clock,
@@ -488,46 +574,26 @@ describe("arming", () => {
     expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["isolated"] });
   });
 
-  it("reports worlds: [] and no background when nothing answered", () => {
-    expect(tab().status().data.hook).toMatchObject({ installed: false, worlds: [] });
+  it("reports worlds: [] and no injection when nothing answered and nothing was armed", () => {
+    expect(tab().status().data.hook).toEqual({ installed: false, worlds: [], injection: null });
   });
 
   it("hears a hook copy that loaded after network.js, on a later status", () => {
     const t = tab();
     expect(t.status().data.hook.worlds).toEqual([]);
-    // A scripting-registered copy arriving late: it listens for pings now.
+    // A `src`-injected copy arriving late: it listens for pings now.
     t.document.addEventListener("cupertino:net-ping", () =>
       t.emit("cupertino:net-ready", { installed: false, world: "main" }),
     );
     expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["main"] });
   });
 
-  it("background is pending until the answer arrives", async () => {
-    let release!: (v: unknown) => void;
-    const t = tab({ netDiag: () => new Promise((resolve) => (release = resolve)) });
-    expect(t.status().data.hook.background).toEqual({ state: "pending" });
-    release({ registered: [], error: null, scriptingAvailable: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(t.status().data.hook.background).toMatchObject({ state: "ok" });
+  it("reports no background diagnostic any more, and sends the background nothing", () => {
+    const t = tab({ flag: { expiresAt: T0 + 60_000 }, hookSource: "/* hook */", page: "inline" });
+    const hook = t.status().data.hook as unknown as Json;
+    expect(Object.keys(hook).toSorted()).toEqual(["injection", "installed", "worlds"]);
+    expect(t.messages).toEqual([]);
   });
-
-  it("carries the background's netDiag answer", async () => {
-    const diag = { registered: ["cupertino-net-hook"], error: null, scriptingAvailable: true };
-    const t = tab({ netDiag: diag });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(t.messages).toEqual([{ kind: "netDiag" }]);
-    expect(t.status().data.hook.background).toEqual({ state: "ok", ...diag });
-  });
-
-  it("a netDiag that rejects or answers nonsense is failed, with a reason", async () => {
-    const rejected = tab({ netDiag: () => Promise.reject(new Error("no worker")) });
-    const nonsense = tab({ netDiag: "hello" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(rejected.status().data.hook.background).toEqual({ state: "failed", error: "no worker" });
-    expect(nonsense.status().data.hook.background).toMatchObject({ state: "failed" });
-    expect(tab().status().data.hook.background).toMatchObject({ state: "failed" });
-  });
-
   it("refuses an unknown op", () => {
     const out = tab().run({ action: "netRecord", op: "pause" });
     expect(out.ok).toBe(false);
@@ -979,5 +1045,166 @@ describe("without the recorder", () => {
       expect(out.ok).toBe(false);
       expect(out.error).toBe("The network recorder did not load on this page.");
     }
+  });
+});
+
+/**
+ * Getting the hook into the page.
+ *
+ * Safari runs both copies of network-hook.js in the isolated world whatever
+ * the manifest or `registerContentScripts` says, so network.js puts the hook's
+ * source into the page as a `<script>` when — and only when — the tab is armed.
+ */
+describe("injection", () => {
+  const SOURCE = "/* the hook */";
+  const ARMED = { expiresAt: T0 + 60_000, kinds: ["fetch", "xhr", "console"] };
+
+  it("injects nothing at all on a tab that is not armed", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline" });
+    expect(t.scripts).toEqual([]);
+    expect(t.status().data.hook.injection).toBeNull();
+    t.list();
+    t.run({ action: "netRecord", op: "clear" });
+    expect(t.scripts).toEqual([]);
+  });
+
+  it("injects nothing under an expired flag", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline", flag: { expiresAt: T0 - 1 } });
+    expect(t.scripts).toEqual([]);
+    expect(t.status().data.hook.injection).toBeNull();
+  });
+
+  it("at load under a valid flag, runs the source inline, removes the element, then installs", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline", flag: ARMED });
+    expect(t.scripts).toHaveLength(1);
+    expect(t.scripts[0]!.textContent).toBe(SOURCE);
+    expect(t.scripts[0]!.src).toBe("");
+    expect(t.scripts[0]!.parentNode).toBeNull();
+    expect(t.timeline).toEqual(["append inline", "remove inline", "cupertino:net-install"]);
+    expect(t.status().data.hook).toEqual({
+      installed: false,
+      worlds: ["main"],
+      injection: "inline",
+    });
+  });
+
+  it("falls back to a src script when no main answer follows the inline attempt", () => {
+    const t = tab({ hookSource: SOURCE, page: "csp", flag: ARMED });
+    expect(t.timeline.slice(0, 3)).toEqual([
+      "append inline",
+      "remove inline",
+      `append src ${EXTENSION_BASE}network-hook.js`,
+    ]);
+    expect(t.scripts[1]!.src).toBe(`${EXTENSION_BASE}network-hook.js`);
+    expect(t.scripts[1]!.textContent).toBe("");
+    expect(t.status().data.hook.injection).toBe("src");
+  });
+
+  it("a src script that loads is removed and leaves injection at src", () => {
+    const t = tab({ hookSource: SOURCE, page: "csp", flag: ARMED });
+    const src = t.scripts[1]!;
+    // The file runs in the page world when it loads, and answers as main.
+    t.document.addEventListener("cupertino:net-ping", () =>
+      t.emit("cupertino:net-ready", { installed: true, world: "main" }),
+    );
+    src.dispatchEvent(new Event("load"));
+    expect(src.parentNode).toBeNull();
+    expect(t.status().data.hook).toEqual({ installed: true, worlds: ["main"], injection: "src" });
+  });
+
+  it("a src script that fails to load is blocked", () => {
+    const t = tab({ hookSource: SOURCE, page: "csp", flag: ARMED });
+    const src = t.scripts[1]!;
+    src.dispatchEvent(new Event("error"));
+    expect(src.parentNode).toBeNull();
+    expect(t.status().data.hook.injection).toBe("blocked");
+  });
+
+  it("is unavailable when the isolated copy left no source", () => {
+    const t = tab({ page: "inline", flag: ARMED });
+    expect(t.scripts).toEqual([]);
+    expect(t.status().data.hook.injection).toBe("unavailable");
+  });
+
+  it("injects nothing when a main copy already answers", () => {
+    const t = tab({
+      hookSource: SOURCE,
+      page: "inline",
+      flag: ARMED,
+      pingAnswers: [{ installed: true, world: "main" }],
+    });
+    expect(t.scripts).toEqual([]);
+    expect(t.status().data.hook).toEqual({ installed: true, worlds: ["main"], injection: null });
+  });
+
+  it("start injects, then dispatches install", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline" });
+    const out = t.start();
+    expect(out.ok, out.error).toBe(true);
+    expect(t.timeline).toEqual(["append inline", "remove inline", "cupertino:net-install"]);
+    expect(out.data.hook.injection).toBe("inline");
+  });
+
+  it("a second start does not inject again", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline" });
+    t.start();
+    t.stop();
+    t.start();
+    expect(t.scripts).toHaveLength(1);
+  });
+
+  it("a second start under a CSP does not retry inline or load the file twice", () => {
+    const t = tab({ hookSource: SOURCE, page: "csp" });
+    t.start();
+    t.start();
+    expect(t.scripts).toHaveLength(2);
+    expect(t.status().data.hook.injection).toBe("src");
+  });
+
+  it("an injection that throws is a failed injection, never a failed command", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline" });
+    (t.document as unknown as { createElement: () => never }).createElement = () => {
+      throw new Error("no DOM");
+    };
+    const out = t.start();
+    expect(out.ok, out.error).toBe(true);
+    expect(out.data.recording).toBe(true);
+  });
+
+  it("end to end: the real hook, injected from its own isolated copy, records a page fetch", async () => {
+    const t = tab({ page: "inline", realHook: true });
+    // The isolated copy answered the load-time ping as isolated and wrapped nothing.
+    expect(t.status().data.hook).toEqual({
+      installed: false,
+      worlds: ["isolated"],
+      injection: null,
+    });
+    const page = t.pageContext!;
+    const original = page.fetch;
+
+    const out = t.start({ kinds: ["fetch"] });
+    expect(out.ok, out.error).toBe(true);
+    expect(out.data.hook).toEqual({
+      installed: true,
+      worlds: ["isolated", "main"],
+      injection: "inline",
+    });
+    expect(page.fetch).not.toBe(original);
+
+    const res = await (page.fetch as (u: string) => Promise<Response>)("/api/items");
+    expect(await res.json()).toEqual({ from: "page" });
+    expect(t.pageFetches).toEqual(["/api/items"]);
+    await vi.waitFor(() => {
+      const entries = listed(t).entries;
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        kind: "fetch",
+        url: `${ORIGIN}/api/items`,
+        status: 200,
+        bodyAvailable: true,
+      });
+    });
+    const body = t.get(listed(t).entries[0]!.id);
+    expect(body.data.slice).toBe('{"from":"page"}');
   });
 });

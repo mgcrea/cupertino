@@ -206,6 +206,16 @@ describe("network tool registration", () => {
     expect(all).toContain("jsonPath");
     expect(all).toContain("saveAs");
   });
+
+  it("says how the hook gets into the page, and what a strict CSP costs", async () => {
+    const { client } = await connect({ APPLE_SAFARI_ALLOW_NETWORK: "true" });
+    const { tools } = await client.listTools();
+    const record = JSON.stringify(tools.find((t) => t.name === "apple_safari_network_record"));
+    expect(record).toContain("hook.injection");
+    expect(record).toMatch(/Content-Security-Policy/);
+    expect(record).toMatch(/first requests/i);
+    expect(record).not.toContain("hook.background");
+  });
 });
 
 describe("network tools with writes off", () => {

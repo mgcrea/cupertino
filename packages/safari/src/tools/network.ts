@@ -93,6 +93,11 @@ export const registerNetworkTools = (
           "tab. That re-runs the page (and can re-send a form's request), so it needs " +
           "APPLE_SAFARI_ALLOW_WRITES; without it the call is refused. The alternative is to " +
           "start recording and then trigger the request yourself.\n\n" +
+          "Arming puts the recorder into the page as a script, and only then: a page that was " +
+          "never armed runs nothing of it. On a page whose Content-Security-Policy refuses " +
+          "inline scripts it is loaded from the extension instead, which arrives late and can " +
+          "miss the page's first requests, even with `reload: true`; `hook.injection` in the " +
+          'answer says which happened ("inline", "src", or "blocked" when neither got in).\n\n' +
           LIMITS +
           " " +
           REDACTION +
@@ -107,10 +112,10 @@ export const registerNetworkTools = (
             '"start" arms the tab (and replaces the options of an armed one), "stop" disarms ' +
               'it and keeps what was recorded, "clear" drops the records, "status" reports ' +
               "the state, record counts and expiry without changing anything. " +
-              'Its `hook.worlds` lists the hook copies that answered a ping just now ("main" is the one ' +
-              'that records; "isolated" alone means it landed in the wrong world; empty means no ' +
-              "copy is present in this page load), and " +
-              "`hook.background` says whether the extension registered it.",
+              'Its `hook.worlds` lists the hook copies that answered a ping just now ("main" is the ' +
+              'recorder in the page; "isolated" is the extension\'s own copy, which only supplies ' +
+              'the source, so "isolated" alone on an armed tab means the recorder never got in), ' +
+              "and `hook.injection` says how it was put there.",
           ),
         kinds: z
           .array(z.enum(["fetch", "xhr", "console"]))

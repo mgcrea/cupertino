@@ -97,6 +97,9 @@ bug: subframes (an embedded iframe's traffic), web and service workers,
 \`<img>\`/\`<script>\` bodies, and WebSockets. Ids die when the page reloads or
 navigates, so list again afterwards. A body whose \`bodyTruncated\` is true was
 cut at the recording's size limit; record again with a larger \`maxBodyBytes\`.
+On a page with a strict Content-Security-Policy the recorder arrives late
+(\`hook.injection: "src"\` in the record answer), so its very first requests
+can be missing even after \`reload: true\`.
 
 **Bodies are NOT redacted.** Only credential-looking HEADERS are masked. A body
 can hold a token or a person's data, so read one only when you need it, and do

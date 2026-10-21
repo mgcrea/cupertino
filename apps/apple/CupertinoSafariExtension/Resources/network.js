@@ -4,13 +4,15 @@
 //
 // `network-hook.js` runs in the page's own world, where `fetch` and
 // `XMLHttpRequest` are the functions the page calls, and dispatches one
-// CustomEvent per thing it sees. This file runs in the ISOLATED world, beside
-// `actions.js` and `content.js`, where the page cannot reach: it decides
-// whether a record is wanted at all, keeps the ones that are for this page
-// load, and answers three commands through `cupertinoRunCommand` —
-// `netRecord` (arm, disarm, clear, status), `netList` (metadata, filtered and
-// paged by cursor) and `netGet` (one record's headers and one slice of a
-// body). See docs/superpowers/specs/2026-10-20-safari-network-design.md.
+// CustomEvent per thing it sees. It gets there because this file puts it
+// there, when the tab is armed: see "Getting the hook into the page" below.
+// This file runs in the ISOLATED world, beside `actions.js` and `content.js`,
+// where the page cannot reach: it decides whether a record is wanted at all,
+// keeps the ones that are for this page load, and answers three commands
+// through `cupertinoRunCommand` — `netRecord` (arm, disarm, clear, status),
+// `netList` (metadata, filtered and paged by cursor) and `netGet` (one
+// record's headers and one slice of a body). See
+// docs/superpowers/specs/2026-10-20-safari-network-design.md.
 //
 // ## Why the armed state lives here and not in the hook
 //
@@ -129,18 +131,19 @@
   /** The hook's last word on itself, from `cupertino:net-ready`. */
   let hookInstalled = false;
   /**
-   * Which worlds have answered the load-time ping: `"isolated"` (a hook copy
-   * that landed in the wrong world and bailed), `"main"`, both, or neither.
-   * Insertion order, no repeats.
+   * Which worlds have answered a ping: `"isolated"` (the manifest copy, which
+   * Safari always puts there and which only provides the source), `"main"`
+   * (the recorder, in the page), both, or neither. Insertion order, no repeats.
    */
   const hookWorlds = [];
   /**
-   * The background's `netDiag` answer as `status` reports it. Three states so
-   * "no answer yet", "no answer ever" and "an answer" cannot be confused:
-   * `pending` until the reply lands, `failed` (with why) if the message
-   * rejected, answered nonsense or could not be sent, `ok` with the answer.
+   * How the recorder was put into the page on this load, as `status` reports
+   * it: `"inline"`, `"src"` (the CSP fallback, asked for; whether it arrived
+   * is `worlds`), `"blocked"` (that load failed too), `"unavailable"` (no
+   * source to inject), or null — not attempted, because the tab was never
+   * armed or a `main` copy was already there.
    */
-  let backgroundDiag = { state: "pending" };
+  let injection = null;
 
   /** Oldest first, which is also seq order. */
   const entries = [];
@@ -483,10 +486,10 @@
    * count from `unmatched`; the count rather than the URL alone, so a URL
    * fetched once while armed and once not is listed once, not zero times.
    *
-   * `responseStatus` is new (Safari support unmeasured until Task 7), so a
-   * missing property is `null` — unknown — and never 0. A 0 from a browser
-   * that has it means a cross-origin response it will not describe, which is
-   * unknown too.
+   * `responseStatus` is new, and Safari 26 does not have it (measured on the
+   * notarized build), so a missing property is `null` — unknown — and never
+   * 0. A 0 from a browser that has it means a cross-origin response it will
+   * not describe, which is unknown too.
    */
   function ingestTiming(t) {
     const url = String(t.name);
@@ -682,15 +685,115 @@
 
   /**
    * Ask every hook copy that is present to say so. A copy that loaded after
-   * this file (the registered one has no promised order) never heard the
-   * load-time ping, so `status` asks again each time; the listeners are
-   * synchronous, so everything present has answered before `hook` is built.
+   * this file (the `src` fallback arrives whenever the browser loads it) never
+   * heard the load-time ping, so `status` asks again each time; the listeners
+   * are synchronous, so everything present has answered before `hook` is built.
    */
   function pingHooks() {
     try {
       document.dispatchEvent(new CustomEvent(EVENT_PING));
     } catch {
       // No hook to ask is the same as a hook that did not answer.
+    }
+  }
+
+  // ── Getting the hook into the page ─────────────────────────────────────────
+  //
+  // Safari ignores `"world": "MAIN"`, in the manifest and in
+  // `scripting.registerContentScripts` alike: on the notarized build of
+  // 385bb73 both copies of the hook answered from the isolated world, and the
+  // page's `fetch` was native. What DOES reach the page from here is the DOM —
+  // a `<script>` element appended by a content script runs in the page's world
+  // — so that is how the recorder gets there. The manifest copy of
+  // `network-hook.js` leaves its own source on this world's window as
+  // `cupertinoNetHookSource`, and this injects it.
+  //
+  // Only on an armed tab: at load under a valid flag, and on `start`. A tab
+  // nobody armed gets no element, no script and no wrapper, which keeps the
+  // promise the hook's dormancy used to keep on its own. And at most once per
+  // page load: a page whose CSP refused the inline script refuses it again,
+  // and each refusal is a console error in the page and possibly a violation
+  // report to the site — so a second `start` only re-pings.
+  //
+  // Inline first, because an inline script runs synchronously inside
+  // `appendChild`: at `document_start` that is before any page script, and the
+  // ping right after says whether it took. A page whose Content-Security-Policy
+  // forbids inline scripts (or whose Trusted Types refuses the assignment)
+  // gets nothing from that, so the fallback is the same file by URL, listed in
+  // `web_accessible_resources`. It loads asynchronously, so a reload's first
+  // requests can go out before it is there, and it says nothing synchronously
+  // about whether it will arrive: `injection` says it was asked for, and the
+  // ping each `status` repeats says whether it came.
+  //
+  // The element is removed as soon as it has run. A page that watches its own
+  // DOM with a MutationObserver can see it come and go; that is the one trace
+  // this leaves, and only on a tab someone armed.
+
+  function hookInPage() {
+    pingHooks();
+    return hookWorlds.indexOf("main") !== -1;
+  }
+
+  /** `document_start` may come before `<html>` exists; anything that can hold a node will do. */
+  function scriptParent() {
+    return document.documentElement || document.head || document;
+  }
+
+  function detach(node) {
+    try {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    } catch {
+      // Already gone, or never attached: nothing to tidy.
+    }
+  }
+
+  function injectHook() {
+    try {
+      if (hookInPage() || injection !== null) return;
+      const source = window.cupertinoNetHookSource;
+      if (typeof source !== "string" || source === "") {
+        injection = "unavailable";
+        return;
+      }
+
+      try {
+        const inline = document.createElement("script");
+        inline.textContent = source;
+        const parent = scriptParent();
+        parent.appendChild(inline);
+        detach(inline);
+      } catch {
+        // Refused before it ran (Trusted Types, a DOM that will not take the
+        // node): the `src` fallback below is the next thing to try.
+      }
+      if (hookInPage()) {
+        injection = "inline";
+        return;
+      }
+
+      const external = document.createElement("script");
+      external.src = browser.runtime.getURL("network-hook.js");
+      external.addEventListener("load", () => {
+        detach(external);
+        // The file read the arm flag itself when it ran. This is for the
+        // `start` whose flag could not be written: the hook would come up
+        // dormant while this side records, and nothing would arrive.
+        try {
+          if (armed()) dispatch(EVENT_INSTALL, options);
+        } catch {
+          // The hook stays as the flag left it.
+        }
+      });
+      external.addEventListener("error", () => {
+        detach(external);
+        injection = "blocked";
+      });
+      scriptParent().appendChild(external);
+      injection = "src";
+    } catch {
+      // Whatever failed, the command it ran under still answers. A half-done
+      // attempt that set nothing is reported as unavailable, not as untried.
+      if (injection === null) injection = "unavailable";
     }
   }
 
@@ -713,7 +816,7 @@
       options: normalize(options),
       counts: { records: entries.length, bodies, bodyBytes: bytes },
       dropped: { records: dropped.records, bodies: dropped.bodies },
-      hook: { installed: hookInstalled, worlds: hookWorlds.slice(), background: backgroundDiag },
+      hook: { installed: hookInstalled, worlds: hookWorlds.slice(), injection },
       resourceStatusSupported: timingStatusSupported(),
     };
   }
@@ -747,6 +850,10 @@
     } catch {
       flagWritten = false;
     }
+    // Injected first, then told to install: an inline hook is in the page by
+    // the time the event goes out. A `src` one is not yet, and arms itself
+    // from the flag (or from the install sent on its `load`) when it arrives.
+    injectHook();
     dispatch(EVENT_INSTALL, options);
     if (command.reload === true && !flagWritten) {
       return {
@@ -955,63 +1062,29 @@
     // No document: nothing will arrive, and every answer says so by being empty.
   }
 
-  // ── At load: where did the hook land? ──────────────────────────────────────
+  // ── At load: is a hook already in the page? ──────────────────────────────
   //
-  // The hook's own load-time `net-ready` fires before this file is listening
-  // (this is a later `content_scripts` entry), so "no word" could mean the hook
-  // never ran, ran in the wrong world, or simply spoke first. Asking now makes
-  // every copy that is already there answer, and says which world it is in:
-  // possibly both, since the manifest entry and the registered one can both
-  // load. A copy that loads after this is caught by the ping `state()` repeats.
+  // The isolated copy's answer, and a page copy's if a future Safari honours
+  // `"world": "MAIN"` for the manifest entry: either way, asked now because
+  // their own load-time `net-ready` fired before this file was listening.
+  // A copy that loads after this is caught by the ping `state()` repeats.
   pingHooks();
-
-  // And ask the background whether its registration of the hook happened,
-  // since that is the other half of "why is the hook not installed". Async and
-  // caught, and the three outcomes are kept apart (see `backgroundDiag`).
-  function diagFailed(error) {
-    backgroundDiag = { state: "failed", error: String((error && error.message) || error) };
-  }
-  try {
-    if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
-      Promise.resolve(browser.runtime.sendMessage({ kind: "netDiag" }))
-        .then((answer) => {
-          if (
-            answer &&
-            typeof answer === "object" &&
-            Array.isArray(answer.registered) &&
-            typeof answer.scriptingAvailable === "boolean"
-          ) {
-            backgroundDiag = {
-              state: "ok",
-              registered: answer.registered.filter((id) => typeof id === "string"),
-              error: typeof answer.error === "string" ? answer.error : null,
-              scriptingAvailable: answer.scriptingAvailable,
-            };
-          } else {
-            diagFailed("the background answered something that is not a diagnostic");
-          }
-        })
-        .catch(diagFailed);
-    } else {
-      diagFailed("no extension messaging in this world");
-    }
-  } catch (error) {
-    diagFailed(error);
-  }
 
   // ── At load: the arm flag ──────────────────────────────────────────────────
   //
-  // The hook reads the same flag and wraps on its own; this only decides that
-  // what it sends is wanted. The flag is left for the hook to delete when it
-  // has expired, since it is the one that must not act on it.
+  // A valid flag is the one thing that puts the hook into the page at load:
+  // it is injected here, before the install below, and reads the same flag
+  // and wraps on its own as it starts. This only decides that what it sends
+  // is wanted. The flag is left for the hook to delete when it has expired,
+  // since it is the one that must not act on it — and an expired flag injects
+  // nothing, so a stale one never puts a script into the page.
   //
-  // The install event re-sent here is for the hook's `ready` answer. Both
-  // scripts run at `document_start` in two worlds, in no promised order: if
-  // the hook ran first, its "installed" went out before anything here was
-  // listening, and `status` would report a hook that is not there. Installing
-  // an installed hook only re-applies the same options and answers again; if
-  // the hook has not run yet, nobody hears this and it arms itself from the
-  // flag when it does.
+  // The install event re-sent here is for the hook's `ready` answer, and for
+  // a page copy that got here some other way first (a future Safari that
+  // honours MAIN): its "installed" may have gone out before anything here was
+  // listening. Installing an installed hook only re-applies the same options
+  // and answers again; a `src` hook that has not loaded yet hears nothing
+  // and arms itself from the flag when it does.
   //
   // The page can write this flag too (see the header), so its expiry is capped
   // at `MAX_ARM_MINUTES` from now, and a capped flag is stored back capped:
@@ -1036,6 +1109,7 @@
             // Unwritable: this load still stops at the cap; the next caps again.
           }
         }
+        injectHook();
         dispatch(EVENT_INSTALL, options);
       }
     }
