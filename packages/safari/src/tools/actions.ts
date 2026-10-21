@@ -46,7 +46,7 @@ const elementIdArg = z
       "after any click that loaded something.",
   );
 
-const urlArg = z
+export const urlArg = z
   .string()
   .min(1)
   .describe(
@@ -56,7 +56,7 @@ const urlArg = z
   );
 
 /** Shared by every action tool: the same failure means the same three things. */
-const describeReach = (what: string): string =>
+export const describeReach = (what: string): string =>
   `${what} Runs through the Cupertino Safari extension, so it needs NO Full Disk Access and NO ` +
   `Automation grant — what it needs is the extension enabled in Safari AND allowed on that ` +
   `specific website, which Safari grants one site at a time. The page must be open. Expect about ` +

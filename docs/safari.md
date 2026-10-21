@@ -946,6 +946,64 @@ trip — and installing over a running Safari can crash it. The first real run i
 whether a content script sharing an isolated world really does see `cupertinoRunCommand` across two
 files, and whether one second is a poll rate anyone can live with.
 
+## Network capture
+
+What a page FETCHED, as a third thing the extension lane can answer next to what it contains
+(`read_page`) and what can be done on it (`click`, `fill`). Design:
+[the network capture spec](superpowers/specs/2026-10-20-safari-network-design.md). Three tools,
+`apple_safari_network_record`, `_list` and `_get`, behind their own gate, `allowNetwork`
+(`APPLE_SAFARI_ALLOW_NETWORK`, off by default).
+
+### The lane
+
+A `network-hook.js` content script in the page's MAIN world wraps `fetch`, `XMLHttpRequest` and the
+console while a tab is armed, and hands each record to `network.js` in the isolated world, which
+keeps a ring buffer for that page load and answers three commands (`netRecord`, `netList`,
+`netGet`) through the same command channel the click lane uses. Arming is opt-in per tab, is kept in
+`sessionStorage` so it survives a reload, and carries an expiry (15 minutes by default, 120 at most)
+so a forgotten recording does not wrap a page all day. Request ids are `<pageToken>-r<n>`, the
+element-id rule again: an id names the page load that recorded it, and a stale one is an error
+instead of another tab's record.
+
+A body is pulled in chunks (`APPLE_SAFARI_NETWORK_CHUNK_CHARS`, 262,144 by default) because one
+native message cannot carry a multi-megabyte response. Only `jsonPath`, `decode` and `saveAs` need
+the whole body; an inline read pulls the chunks covering its window.
+
+### Why it is a gate of its own
+
+It is a read, so it is not behind `allowWrites`, and it is not folded into `allowCodes` because a
+signed-in page's traffic is session material rather than one short-lived string. Off, the tools do
+not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally need
+`allowWrites`, and the client refuses them with a message naming `APPLE_SAFARI_ALLOW_WRITES`.
+
+### Limits, stated plainly
+
+- **Bodies are not redacted.** Headers are masked by name (`authorization`, `proxy-authorization`,
+  `cookie`, `set-cookie`, anything containing `token`, `secret` or `api-key`). A body has no names
+  to match, so it comes back as the page saw it.
+- **Top frame only.** No subframes, no web or service workers, no WebSockets, and no bodies for
+  `<img>`/`<script>`/`<link>` loads (resource timing lists their URLs and timing, never their bytes).
+- **Page memory only.** Records live in the page and die with the load; nothing is written to disk
+  except an explicit `saveAs`. The buffer holds 1,000 records and 50 MiB of bodies, bodies are
+  evicted before records, and `dropped` says so.
+- **A page can arm itself** by writing the arm flag into its own `sessionStorage`. The expiry is
+  clamped to the 120-minute maximum and the data leaves the tab only when an agent asks. Closing it
+  needs a nonce the page cannot read; that is deferred, and recorded in the spec.
+
+### Measurements
+
+Not measured yet. These are the five probes from the spec's "Measure first" section, and each one
+changes a detail of the build rather than its shape. The table is filled in from the first notarized
+run; until then every row is an assumption, and the build behaves as described under each.
+
+| Probe                                      | Result | Date | If it comes back the other way                                    |
+| ------------------------------------------ | ------ | ---- | ----------------------------------------------------------------- |
+| MAIN-world script from the manifest        | TBD    | TBD  | falls back to `scripting.registerContentScripts` (already wired)  |
+| Native-messaging payload limit             | TBD    | TBD  | lower `APPLE_SAFARI_NETWORK_CHUNK_CHARS`'s default                |
+| `CustomEvent` `detail` across worlds       | TBD    | TBD  | nothing: the hook sends strings, so this only confirms the choice |
+| `PerformanceResourceTiming.responseStatus` | TBD    | TBD  | `resource` entries carry no status and `failed` cannot see them   |
+| The target PDF site's request path         | TBD    | TBD  | XHR is expected (Angular `HttpClient`); a subframe would not work |
+
 ## Still open
 
 - ~~**Reading List counts.**~~ Measured: 6 folders, 200 leaves, tree depth 2. The Reading List

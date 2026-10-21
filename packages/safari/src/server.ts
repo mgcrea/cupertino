@@ -59,6 +59,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       registerTools(target, client, {
         allowWrites,
         allowCodes: config.allowCodes,
+        allowNetwork: config.allowNetwork,
       }),
   );
   /*

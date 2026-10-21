@@ -48,6 +48,14 @@ which the user can see and revoke per site.
 | ------------------------- | ----------------------------------------------- |
 | `apple_safari_find_codes` | a one-time 2FA code in the TEXT of an open page |
 
+**Opt-in read** — `APPLE_SAFARI_ALLOW_NETWORK`
+
+| Tool                          | What                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `apple_safari_network_record` | arm, stop, clear or report recording on a page (`reload` needs writes) |
+| `apple_safari_network_list`   | what the page fetched: method, URL, status, timing, no bodies          |
+| `apple_safari_network_get`    | one request's headers and body; `saveAs` writes a file (needs writes)  |
+
 **Write** — `APPLE_SAFARI_ALLOW_WRITES`
 
 | Tool                                 | What                                    |
@@ -60,23 +68,26 @@ which the user can see and revoke per site.
 
 ## Configuration
 
-| Variable                               | Default |                                                       |
-| -------------------------------------- | ------- | ----------------------------------------------------- |
-| `APPLE_SAFARI_ALLOW_WRITES`            | off     | Register the five write tools at all.                 |
-| `APPLE_SAFARI_ALLOW_CODES`             | off     | One-time codes — see below.                           |
-| `APPLE_SAFARI_LIVE_TABS`               | on      | Use the Apple Events lane. Off = no Apple Event.      |
-| `APPLE_SAFARI_STORE`                   | auto    | Explicit `History.db` path.                           |
-| `APPLE_SAFARI_BOOKMARKS`               | auto    | Explicit `Bookmarks.plist` path.                      |
-| `APPLE_SAFARI_PAGES`                   | auto    | Explicit extension capture directory.                 |
-| `APPLE_SAFARI_ACTION_TIMEOUT_MS`       | `12000` | How long an action waits for the page to answer.      |
-| `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`    | `2500`  | How long `read_page` waits on the tab. `0` = capture. |
-| `APPLE_SAFARI_READING_LIST_CONFIRM_MS` | `1500`  | Beat before re-reading to confirm a Reading List add. |
-| `APPLE_SAFARI_INDEX_MODE`              | `auto`  | `auto` \| `ro` \| `immutable` \| `off`.               |
-| `APPLE_SAFARI_DEFAULT_RANGE_DAYS`      | `30`    | Window when only a start is given.                    |
-| `APPLE_SAFARI_MAX_RANGE_DAYS`          | `3660`  | Hard ceiling on a single range.                       |
-| `APPLE_SAFARI_MAX_RESULTS`             | —       | Default page size.                                    |
-| `APPLE_SAFARI_EXPOSE_PROMPTS`          | off     | Register prompts and `cupertino://` resources.        |
-| `APPLE_SAFARI_DEBUG`                   | off     | Verbose logging.                                      |
+| Variable                               | Default       |                                                       |
+| -------------------------------------- | ------------- | ----------------------------------------------------- |
+| `APPLE_SAFARI_ALLOW_WRITES`            | off           | Register the five write tools at all.                 |
+| `APPLE_SAFARI_ALLOW_CODES`             | off           | One-time codes — see below.                           |
+| `APPLE_SAFARI_ALLOW_NETWORK`           | off           | Network capture — see below.                          |
+| `APPLE_SAFARI_DOWNLOAD_DIR`            | `~/Downloads` | Where `network_get` `saveAs` writes.                  |
+| `APPLE_SAFARI_NETWORK_CHUNK_CHARS`     | `262144`      | Characters per native message when pulling a body.    |
+| `APPLE_SAFARI_LIVE_TABS`               | on            | Use the Apple Events lane. Off = no Apple Event.      |
+| `APPLE_SAFARI_STORE`                   | auto          | Explicit `History.db` path.                           |
+| `APPLE_SAFARI_BOOKMARKS`               | auto          | Explicit `Bookmarks.plist` path.                      |
+| `APPLE_SAFARI_PAGES`                   | auto          | Explicit extension capture directory.                 |
+| `APPLE_SAFARI_ACTION_TIMEOUT_MS`       | `12000`       | How long an action waits for the page to answer.      |
+| `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`    | `2500`        | How long `read_page` waits on the tab. `0` = capture. |
+| `APPLE_SAFARI_READING_LIST_CONFIRM_MS` | `1500`        | Beat before re-reading to confirm a Reading List add. |
+| `APPLE_SAFARI_INDEX_MODE`              | `auto`        | `auto` \| `ro` \| `immutable` \| `off`.               |
+| `APPLE_SAFARI_DEFAULT_RANGE_DAYS`      | `30`          | Window when only a start is given.                    |
+| `APPLE_SAFARI_MAX_RANGE_DAYS`          | `3660`        | Hard ceiling on a single range.                       |
+| `APPLE_SAFARI_MAX_RESULTS`             | —             | Default page size.                                    |
+| `APPLE_SAFARI_EXPOSE_PROMPTS`          | off           | Register prompts and `cupertino://` resources.        |
+| `APPLE_SAFARI_DEBUG`                   | off           | Verbose logging.                                      |
 
 ### `APPLE_SAFARI_ALLOW_CODES`
 
@@ -96,6 +107,31 @@ so off removes the targeted field read and the live DOM scan — not every byte 
 
 See `docs/passwords.md` in the repo for why the Passwords app itself is unreachable by any lane, and
 why reading a code a _website shows_ is a different question from reading the vault.
+
+### `APPLE_SAFARI_ALLOW_NETWORK`
+
+Registers `network_record`, `network_list` and `network_get`, which show what a page you have
+allowed the extension on **fetched**: `fetch` and `XMLHttpRequest` calls from the top frame, console
+errors, and resource-timing entries. It is a **read** gate and is not folded into `ALLOW_WRITES`,
+for the reason `ALLOW_CODES` is not: the traffic of a signed-in page is session material, and that
+is a different exposure from a one-time code.
+
+- **Bodies are not redacted.** Headers named `authorization`, `proxy-authorization`, `cookie` or
+  `set-cookie`, or containing `token`, `secret` or `api-key`, come back as `<redacted: N chars>`.
+  A body has no names to match, so it is returned as the page saw it. Turn the gate on knowing that.
+- **Opt-in per tab, and it expires.** Nothing is wrapped until `network_record` starts, recording
+  survives a reload for 15 minutes by default (120 at most), and `stop` ends it at once.
+- **Two things need `ALLOW_WRITES` as well:** `reload: true` on `network_record`, which re-runs the
+  page, and `saveAs` on `network_get`, which writes into `APPLE_SAFARI_DOWNLOAD_DIR` (a bare
+  filename, and never over an existing file unless `overwrite: true`). Each fails with an error
+  naming `APPLE_SAFARI_ALLOW_WRITES`.
+- **What it cannot see:** subframes, web and service workers, `<img>`/`<script>` bodies and
+  WebSockets. Request ids die when the page reloads or navigates.
+- **A file inside an API response:** `network_get` with `jsonPath` to the field, `decode: "base64"`
+  and `saveAs`. The bytes go to disk, not into the conversation.
+
+Buffer limits: 1,000 records and 50 MiB of bodies per page; bodies are kept up to `maxBodyBytes`
+(10 MiB by default, 50 MiB at most). See [docs/safari.md](../../docs/safari.md#network-capture).
 
 ## Notes that will bite you
 
