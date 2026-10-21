@@ -52,17 +52,49 @@
   // the right move for a misplaced copy is to do nothing at all and let that one
   // work. `browser` (and Chrome's `chrome.runtime.id`) exist only in an
   // extension world.
+  //
+  // "Does nothing" has one exception, the ping below: the live test could not
+  // tell whether this file ran at all, in either world, because its load-time
+  // `net-ready` fires before `network.js` is listening. So every copy answers
+  // `cupertino:net-ping`, and a misplaced one says `world: "isolated"` and
+  // wraps nothing. It is the only code that runs outside the armed, MAIN-world
+  // path, and it reads and writes nothing but that one reply.
+  const EVENT_PING = "cupertino:net-ping";
+  const EVENT_READY_NAME = "cupertino:net-ready";
+
+  function answerPing(world, isInstalled) {
+    try {
+      document.addEventListener(EVENT_PING, () => {
+        try {
+          document.dispatchEvent(
+            new CustomEvent(EVENT_READY_NAME, {
+              detail: JSON.stringify({ installed: isInstalled(), world }),
+            }),
+          );
+        } catch {
+          // A reply that cannot be sent is a ping unanswered, never a page error.
+        }
+      });
+    } catch {
+      // No document to listen on: nothing can ask, which is the safe way to fail.
+    }
+  }
+  let misplaced = false;
   try {
-    if (typeof browser !== "undefined") return;
-    if (
+    if (typeof browser !== "undefined") misplaced = true;
+    else if (
       typeof chrome !== "undefined" &&
       chrome &&
       chrome.runtime &&
       typeof chrome.runtime.id === "string"
     ) {
-      return;
+      misplaced = true;
     }
   } catch {
+    misplaced = true;
+  }
+  if (misplaced) {
+    answerPing("isolated", () => false);
     return;
   }
 
@@ -78,6 +110,9 @@
   } catch {
     return;
   }
+  // Claimed above, so a second MAIN copy returned before this line and never
+  // registers a second listener (which would answer every ping twice).
+  answerPing("main", () => installed);
 
   const FLAG_KEY = "__cupertino_net";
   const EVENT_INSTALL = "cupertino:net-install";

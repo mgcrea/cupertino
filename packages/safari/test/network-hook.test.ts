@@ -229,12 +229,14 @@ const load = (opts: { flag?: Json | string; browser?: boolean; respond?: Respond
 
   const document = new EventTarget();
   const records: NetRecord[] = [];
-  const ready: { installed: boolean }[] = [];
+  const ready: { installed: boolean; world?: string }[] = [];
   document.addEventListener("cupertino:net-record", (e) =>
     records.push(JSON.parse((e as CustomEvent<string>).detail) as NetRecord),
   );
   document.addEventListener("cupertino:net-ready", (e) =>
-    ready.push(JSON.parse((e as CustomEvent<string>).detail) as { installed: boolean }),
+    ready.push(
+      JSON.parse((e as CustomEvent<string>).detail) as { installed: boolean; world?: string },
+    ),
   );
 
   const consoleCalls: { level: string; args: unknown[] }[] = [];
@@ -320,6 +322,7 @@ const load = (opts: { flag?: Json | string; browser?: boolean; respond?: Respond
         ...detail,
       }),
     uninstall: () => send("cupertino:net-uninstall"),
+    ping: () => send("cupertino:net-ping"),
     ends: () => records.filter((r) => r.phase === "end"),
     starts: () => records.filter((r) => r.phase === "start"),
   };
@@ -407,6 +410,35 @@ describe("arming", () => {
     await endOf(page);
     expect(page.starts()).toHaveLength(1);
     expect(page.ready).toEqual([{ installed: false }, { installed: true }]);
+  });
+
+  it("answers a ping from the MAIN world with its install state", () => {
+    const page = load();
+    page.ready.length = 0;
+    page.ping();
+    expect(page.ready).toEqual([{ installed: false, world: "main" }]);
+    page.install();
+    page.ready.length = 0;
+    page.ping();
+    expect(page.ready).toEqual([{ installed: true, world: "main" }]);
+  });
+
+  it("a duplicate MAIN copy does not answer a ping twice", () => {
+    const page = load();
+    runInContext(SOURCE, page.context);
+    page.ready.length = 0;
+    page.ping();
+    expect(page.ready).toHaveLength(1);
+  });
+
+  it("an isolated-world copy answers a ping as isolated and wraps nothing", () => {
+    const page = load({ browser: true, flag: { expiresAt: Date.now() + 60_000 } });
+    page.ping();
+    expect(page.ready).toEqual([{ installed: false, world: "isolated" }]);
+    // An install event must not arm it, and it still never answers as MAIN.
+    page.install();
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(page.ready).toEqual([{ installed: false, world: "isolated" }]);
   });
 
   it("isolated-world copy bails", () => {

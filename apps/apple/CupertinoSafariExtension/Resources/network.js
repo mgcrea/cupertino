@@ -84,6 +84,7 @@
   const EVENT_INSTALL = "cupertino:net-install";
   const EVENT_UNINSTALL = "cupertino:net-uninstall";
   const EVENT_READY = "cupertino:net-ready";
+  const EVENT_PING = "cupertino:net-ping";
   const EVENT_RECORD = "cupertino:net-record";
 
   const KINDS = ["fetch", "xhr", "console"];
@@ -127,6 +128,14 @@
   let options = normalize({});
   /** The hook's last word on itself, from `cupertino:net-ready`. */
   let hookInstalled = false;
+  /**
+   * Which worlds have answered the load-time ping: `"isolated"` (a hook copy
+   * that landed in the wrong world and bailed), `"main"`, both, or neither.
+   * Insertion order, no repeats.
+   */
+  const hookWorlds = [];
+  /** The background's `netDiag` answer, once it arrives; null until then and on any failure. */
+  let backgroundDiag = null;
 
   /** Oldest first, which is also seq order. */
   const entries = [];
@@ -431,6 +440,17 @@
   function onReady(event) {
     try {
       const detail = typeof event.detail === "string" ? JSON.parse(event.detail) : null;
+      const world = detail && detail.world;
+      if (world === "isolated") {
+        // A misplaced copy answering the ping. It wraps nothing, so it has no
+        // say in `installed`, whatever it claims.
+        if (hookWorlds.indexOf("isolated") === -1) hookWorlds.push("isolated");
+        return;
+      }
+      // Anything else came from the MAIN copy: it is the only one that ever
+      // arms, and its install/uninstall announcements carry no `world`. Hearing
+      // from it at all is evidence it is there.
+      if (hookWorlds.indexOf("main") === -1) hookWorlds.push("main");
       // The hook says this after an install AND after an uninstall, so the
       // last one heard is simply the truth.
       hookInstalled = !!(detail && detail.installed === true);
@@ -673,7 +693,7 @@
       options: normalize(options),
       counts: { records: entries.length, bodies, bodyBytes: bytes },
       dropped: { records: dropped.records, bodies: dropped.bodies },
-      hook: { installed: hookInstalled },
+      hook: { installed: hookInstalled, worlds: hookWorlds.slice(), background: backgroundDiag },
       resourceStatusSupported: timingStatusSupported(),
     };
   }
@@ -913,6 +933,48 @@
     document.addEventListener(EVENT_READY, onReady);
   } catch {
     // No document: nothing will arrive, and every answer says so by being empty.
+  }
+
+  // ── At load: where did the hook land? ──────────────────────────────────────
+  //
+  // The hook's own load-time `net-ready` fires before this file is listening
+  // (this is a later `content_scripts` entry), so "no word" could mean the hook
+  // never ran, ran in the wrong world, or simply spoke first. Asking now makes
+  // every copy that is already there answer, and says which world it is in:
+  // possibly both, since the manifest entry and the registered one can both
+  // load. A copy that loads after this is silent here and is heard by its own
+  // `net-ready` when it arms.
+  try {
+    document.dispatchEvent(new CustomEvent(EVENT_PING));
+  } catch {
+    // No hook to ask is the same as a hook that did not answer.
+  }
+
+  // And ask the background whether its registration of the hook happened,
+  // since that is the other half of "why is the hook not installed". Async and
+  // caught: a worker that is not there, or answers nonsense, leaves
+  // `background` null rather than failing a status.
+  try {
+    if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
+      Promise.resolve(browser.runtime.sendMessage({ kind: "netDiag" }))
+        .then((answer) => {
+          if (
+            answer &&
+            typeof answer === "object" &&
+            Array.isArray(answer.registered) &&
+            typeof answer.scriptingAvailable === "boolean"
+          ) {
+            backgroundDiag = {
+              registered: answer.registered.filter((id) => typeof id === "string"),
+              error: typeof answer.error === "string" ? answer.error : null,
+              scriptingAvailable: answer.scriptingAvailable,
+            };
+          }
+        })
+        .catch(() => {});
+    }
+  } catch {
+    // Same: no answer is `null`.
   }
 
   // ── At load: the arm flag ──────────────────────────────────────────────────

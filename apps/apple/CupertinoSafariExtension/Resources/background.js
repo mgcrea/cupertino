@@ -6,7 +6,13 @@
 // messages — the store on the native side is the state.
 
 browser.runtime.onMessage.addListener(async (message) => {
+  // Registration rides on the first message of ANY kind, before the filter
+  // below, and is deliberately not awaited: a poll must not wait on Safari's
+  // scripting API, and `ensureHookRegistered` never rejects. See the section
+  // at the bottom for why install and startup are not enough.
+  ensureHookRegistered();
   const kind = message?.kind;
+  if (kind === "netDiag") return await networkDiagnostics();
   if (kind !== "capture" && kind !== "poll" && kind !== "result") return;
   try {
     // The reply MATTERS for a poll — it carries the commands — so unlike a
@@ -52,6 +58,25 @@ browser.runtime.onMessage.addListener(async (message) => {
 // fails with a duplicate-id error, which means "already registered" and is
 // ignored. Anything else is logged and otherwise ignored, because the manifest
 // entry may still be doing the job.
+//
+// And lazily, on the first message the worker handles. The first live run
+// reinstalled the SAME manifest version over the old one, and neither
+// `onInstalled` (which fires on a version change) nor `onStartup` (which a
+// non-persistent worker may never see) ran, so the registration never
+// happened and nothing said so. The page scripts poll every second, so "the
+// first message of this worker's life" is as good as "always", and costs one
+// memoised promise. The promise is shared by all three triggers: one
+// registration per worker lifetime, however they interleave.
+let hookRegistration = null;
+
+/** The last registration failure that was not a duplicate id, for `netDiag`. */
+let registrationError = null;
+
+function ensureHookRegistered() {
+  if (!hookRegistration) hookRegistration = registerNetworkHook();
+  return hookRegistration;
+}
+
 async function registerNetworkHook() {
   try {
     await browser.scripting.registerContentScripts([
@@ -66,9 +91,32 @@ async function registerNetworkHook() {
     ]);
   } catch (error) {
     if (/duplicate/i.test(String(error?.message ?? error))) return;
+    registrationError = String(error?.message ?? error);
     console.error("[cupertino] registering the network hook failed:", String(error));
   }
 }
 
-browser.runtime.onInstalled.addListener(registerNetworkHook);
-browser.runtime.onStartup.addListener(registerNetworkHook);
+browser.runtime.onInstalled.addListener(ensureHookRegistered);
+browser.runtime.onStartup.addListener(ensureHookRegistered);
+
+// What `network.js` reports under `hook.background`: whether the registration
+// is there, and why not if it failed. It answers here rather than going to
+// native because only this worker can see the scripting API, and it awaits the
+// registration so the answer reflects the attempt rather than racing it.
+async function networkDiagnostics() {
+  await ensureHookRegistered();
+  const scriptingAvailable = typeof browser.scripting?.getRegisteredContentScripts === "function";
+  let registered = [];
+  let error = registrationError;
+  if (scriptingAvailable) {
+    try {
+      const scripts = await browser.scripting.getRegisteredContentScripts();
+      registered = scripts.map((script) => script.id);
+    } catch (listError) {
+      error = error ?? String(listError?.message ?? listError);
+    }
+  } else {
+    error = error ?? "browser.scripting is not available";
+  }
+  return { registered, error, scriptingAvailable };
+}

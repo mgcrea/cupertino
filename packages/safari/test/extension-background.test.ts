@@ -26,9 +26,14 @@ const SOURCE = readFileSync(
   "utf8",
 );
 
-function load(register: (scripts: unknown[]) => Promise<void>) {
+function load(
+  register: (scripts: unknown[]) => Promise<void>,
+  opts: { registered?: string[]; scripting?: boolean } = {},
+) {
   const registerContentScripts = vi.fn(register);
+  const sendNativeMessage = vi.fn(async (..._args: unknown[]) => "native-reply" as unknown);
   const listeners: Record<string, () => void> = {};
+  const messageListeners: ((message: unknown) => Promise<unknown>)[] = [];
   const errors: unknown[][] = [];
   const hook = (name: string) => ({
     addListener: (fn: () => void) => {
@@ -38,17 +43,28 @@ function load(register: (scripts: unknown[]) => Promise<void>) {
   const context = createContext({
     browser: {
       runtime: {
-        onMessage: { addListener: () => {} },
+        onMessage: {
+          addListener: (fn: (message: unknown) => Promise<unknown>) =>
+            void messageListeners.push(fn),
+        },
         onInstalled: hook("installed"),
         onStartup: hook("startup"),
-        sendNativeMessage: async () => undefined,
+        sendNativeMessage,
       },
-      scripting: { registerContentScripts },
+      scripting:
+        opts.scripting === false
+          ? undefined
+          : {
+              registerContentScripts,
+              getRegisteredContentScripts: async () =>
+                (opts.registered ?? []).map((id) => ({ id })),
+            },
     },
     console: { error: (...args: unknown[]) => errors.push(args) },
   });
   runInContext(SOURCE, context);
-  return { registerContentScripts, listeners, errors };
+  const send = (message: unknown) => messageListeners[0]!(message);
+  return { registerContentScripts, sendNativeMessage, listeners, errors, send };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -96,5 +112,79 @@ describe("background registration fallback", () => {
     listeners.installed!();
     await flush();
     expect(errors).toHaveLength(1);
+  });
+
+  it("registers lazily on the first message of any kind, once, without onInstalled", async () => {
+    const { registerContentScripts, send } = load(async () => {});
+    await send({ kind: "poll" });
+    await send({ kind: "capture" });
+    await flush();
+    expect(registerContentScripts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not register a second time when onInstalled already did", async () => {
+    const { registerContentScripts, listeners, send } = load(async () => {});
+    listeners.installed!();
+    await send({ kind: "poll" });
+    await flush();
+    expect(registerContentScripts).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers a poll without waiting for the registration", async () => {
+    const { send } = load(() => new Promise(() => {}));
+    await expect(send({ kind: "poll" })).resolves.toBe("native-reply");
+  });
+});
+
+describe("netDiag", () => {
+  it("reports the registered ids and no error", async () => {
+    const { send } = load(async () => {}, { registered: ["cupertino-net-hook"] });
+    expect(await send({ kind: "netDiag" })).toEqual({
+      registered: ["cupertino-net-hook"],
+      error: null,
+      scriptingAvailable: true,
+    });
+  });
+
+  it("reports the last non-duplicate registration error", async () => {
+    const { send } = load(
+      async () => {
+        throw new Error("permission denied");
+      },
+      { registered: [] },
+    );
+    expect(await send({ kind: "netDiag" })).toEqual({
+      registered: [],
+      error: "permission denied",
+      scriptingAvailable: true,
+    });
+  });
+
+  it("does not count a duplicate-id rejection as an error", async () => {
+    const { send } = load(
+      async () => {
+        throw new Error("Duplicate script ID 'cupertino-net-hook'");
+      },
+      { registered: ["cupertino-net-hook"] },
+    );
+    expect(await send({ kind: "netDiag" })).toMatchObject({ error: null });
+  });
+
+  it("says so when the scripting API is missing", async () => {
+    const { send } = load(async () => {}, { scripting: false });
+    const out = (await send({ kind: "netDiag" })) as {
+      registered: string[];
+      error: string | null;
+      scriptingAvailable: boolean;
+    };
+    expect(out.scriptingAvailable).toBe(false);
+    expect(out.registered).toEqual([]);
+    expect(out.error).toEqual(expect.any(String));
+  });
+
+  it("is never forwarded to native", async () => {
+    const { send, sendNativeMessage } = load(async () => {});
+    await send({ kind: "netDiag" });
+    expect(sendNativeMessage).not.toHaveBeenCalled();
   });
 });

@@ -77,7 +77,11 @@ interface State {
   options: Json;
   counts: { records: number; bodies: number; bodyBytes: number };
   dropped: { records: number; bodies: number };
-  hook: { installed: boolean };
+  hook: {
+    installed: boolean;
+    worlds: string[];
+    background: { registered: string[]; error: string | null; scriptingAvailable: boolean } | null;
+  };
   resourceStatusSupported: boolean;
 }
 
@@ -116,7 +120,17 @@ interface Timing {
  * it. `timings` is the live resource-timing list, which the test may push to
  * later, as the browser does.
  */
-const tab = (opts: { flag?: Json; timings?: Timing[]; token?: string } = {}) => {
+const tab = (
+  opts: {
+    flag?: Json;
+    timings?: Timing[];
+    token?: string;
+    /** What answers `cupertino:net-ping`, in order, as the hook copies would. */
+    pingAnswers?: Json[];
+    /** The background's reply to `{kind:"netDiag"}`; a function may reject. */
+    netDiag?: unknown | (() => Promise<unknown>);
+  } = {},
+) => {
   const clock = { now: T0 };
   class FakeDate extends Date {
     constructor(...args: unknown[]) {
@@ -176,9 +190,32 @@ const tab = (opts: { flag?: Json; timings?: Timing[]; token?: string } = {}) => 
     });
   }
 
+  // The hook copies that would answer the load-time ping. Registered before
+  // network.js runs, so a synchronous answer is heard the way it would be.
+  for (const answer of opts.pingAnswers ?? []) {
+    document.addEventListener("cupertino:net-ping", () =>
+      document.dispatchEvent(
+        new CustomEvent("cupertino:net-ready", { detail: JSON.stringify(answer) }),
+      ),
+    );
+  }
+  const messages: unknown[] = [];
+
   const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
   if (opts.token) window.cupertinoPageToken = opts.token;
   const context = createContext({
+    ...(opts.netDiag === undefined
+      ? {}
+      : {
+          browser: {
+            runtime: {
+              sendMessage: async (message: unknown) => {
+                messages.push(message);
+                return typeof opts.netDiag === "function" ? opts.netDiag() : opts.netDiag;
+              },
+            },
+          },
+        }),
     crypto: webcrypto,
     window,
     document,
@@ -256,6 +293,7 @@ const tab = (opts: { flag?: Json; timings?: Timing[]; token?: string } = {}) => 
 
   return {
     run,
+    messages,
     window,
     store,
     clock,
@@ -424,6 +462,44 @@ describe("arming", () => {
     expect(t.status().data.hook.installed).toBe(true);
     t.emit("cupertino:net-ready", { installed: false });
     expect(t.status().data.hook.installed).toBe(false);
+  });
+
+  it("reports which worlds answered the load-time ping, with main deciding installed", () => {
+    const t = tab({
+      pingAnswers: [
+        { installed: false, world: "isolated" },
+        { installed: true, world: "main" },
+      ],
+    });
+    expect(t.status().data.hook).toMatchObject({ installed: true, worlds: ["isolated", "main"] });
+    // The hook's later word still rules once it speaks.
+    t.emit("cupertino:net-ready", { installed: false });
+    expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["isolated", "main"] });
+  });
+
+  it("an isolated-only answer is not an installed hook", () => {
+    const t = tab({ pingAnswers: [{ installed: true, world: "isolated" }] });
+    expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["isolated"] });
+  });
+
+  it("reports worlds: [] and no background when nothing answered", () => {
+    expect(tab().status().data.hook).toEqual({ installed: false, worlds: [], background: null });
+  });
+
+  it("carries the background's netDiag answer", async () => {
+    const diag = { registered: ["cupertino-net-hook"], error: null, scriptingAvailable: true };
+    const t = tab({ netDiag: diag });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.messages).toEqual([{ kind: "netDiag" }]);
+    expect(t.status().data.hook.background).toEqual(diag);
+  });
+
+  it("a netDiag that rejects or answers nonsense leaves background null", async () => {
+    const rejected = tab({ netDiag: () => Promise.reject(new Error("no worker")) });
+    const nonsense = tab({ netDiag: "hello" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rejected.status().data.hook.background).toBeNull();
+    expect(nonsense.status().data.hook.background).toBeNull();
   });
 
   it("refuses an unknown op", () => {

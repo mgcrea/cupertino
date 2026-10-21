@@ -198,7 +198,13 @@ export type RecordState = {
   options?: unknown;
   counts?: unknown;
   dropped?: unknown;
-  hook?: { installed: boolean };
+  hook?: {
+    installed: boolean;
+    /** Worlds that answered the load-time ping: "isolated", "main", both, or none. */
+    worlds?: string[];
+    /** The background worker's view of the hook registration; null when it did not answer. */
+    background?: { registered: string[]; error: string | null; scriptingAvailable: boolean } | null;
+  };
   resourceStatusSupported?: boolean;
 };
 
