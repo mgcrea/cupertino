@@ -345,6 +345,32 @@ describe("arming", () => {
     expect(listed(dead).entries).toEqual([]);
   });
 
+  /**
+   * The flag lives in the page's own `sessionStorage`, so the page can write
+   * one. It may then arm its own tab — recording only its own traffic — but
+   * never for longer than `start` itself could.
+   */
+  it("caps a page-written flag's expiry at 120 minutes, and stores it back capped", () => {
+    const t = tab({ flag: { expiresAt: 9e15 } });
+    const state = t.status().data;
+    expect(state.recording).toBe(true);
+    expect(Date.parse(state.expiresAt!)).toBeLessThanOrEqual(T0 + 120 * 60_000);
+
+    const stored = JSON.parse(t.store.get(FLAG)!) as Json;
+    expect(stored.expiresAt).toBe(T0 + 120 * 60_000);
+
+    t.clock.now += 120 * 60_000;
+    t.request();
+    expect(t.status().data.recording).toBe(false);
+  });
+
+  it("leaves an in-range flag as it was written", () => {
+    const flag = { expiresAt: T0 + 5 * 60_000, kinds: ["fetch"], bodyFilter: "/api/" };
+    const t = tab({ flag });
+    expect(t.status().data.expiresAt).toBe(new Date(T0 + 5 * 60_000).toISOString());
+    expect(JSON.parse(t.store.get(FLAG)!)).toEqual(flag);
+  });
+
   it("stops accepting records once the flag's expiry passes, checked on every event", () => {
     const t = tab();
     t.start({ armMinutes: 1 });

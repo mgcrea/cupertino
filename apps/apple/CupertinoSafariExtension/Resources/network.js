@@ -18,10 +18,21 @@
 // dispatch `cupertino:net-record` itself, or `cupertino:net-install`, and the
 // hook would obey the second. So the hook's state is not the one that decides
 // what is kept: this script keeps its own `recording`, and a record that
-// arrives while it is false is dropped, whoever sent it. A page can then make
-// this store nothing it was not asked to store; what it can still do is lie
-// about its own traffic while armed, which tells nobody anything the page
-// could not already say.
+// arrives while it is false is dropped, whoever sent it. What a page can still
+// do through events is lie about its own traffic while armed, which tells
+// nobody anything the page could not already say.
+//
+// The arm flag is a different door, and it is open. It lives in the page's own
+// `sessionStorage`, so a page can write one, and the next load of its tab is
+// then armed as if `start` had been called. What that buys the page is a copy
+// of its OWN traffic, in its own tab's memory, which leaves only when an agent
+// asks that tab for it. The one thing it could otherwise take is time: a flag
+// written to expire in the year 2255 would keep the tab wrapped indefinitely.
+// So an expiry is never honoured past `MAX_ARM_MINUTES` from the load that
+// reads it — the longest `start` itself can arm for — and the flag is written
+// back capped, so the hook and this buffer agree on when it ends. Shutting the
+// door entirely would take a nonce the page cannot read, held in extension
+// storage and checked here; that is deferred, not forgotten.
 //
 // ## Why it loads at `document_start`, before `actions.js`
 //
@@ -152,8 +163,11 @@
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   }
 
+  /** Null for anything `Date` cannot hold, rather than the RangeError it throws. */
   function iso(ms) {
-    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+    if (!Number.isFinite(ms)) return null;
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
 
   function firstLine(value) {
@@ -898,14 +912,30 @@
   // an installed hook only re-applies the same options and answers again; if
   // the hook has not run yet, nobody hears this and it arms itself from the
   // flag when it does.
+  //
+  // The page can write this flag too (see the header), so its expiry is capped
+  // at `MAX_ARM_MINUTES` from now, and a capped flag is stored back capped:
+  // the hook never re-reads it on this load, but the next load must not find
+  // the uncapped one and start the clock over from there.
   try {
     const raw = sessionStorage.getItem(FLAG_KEY);
     if (raw != null) {
       const flag = JSON.parse(raw);
       if (flag && typeof flag === "object" && Number(flag.expiresAt) > Date.now()) {
+        const latest = Date.now() + MAX_ARM_MINUTES * 60000;
         options = normalize(flag);
-        expiresAt = Number(flag.expiresAt);
+        expiresAt = Math.min(Number(flag.expiresAt), latest);
         recording = true;
+        if (Number(flag.expiresAt) > latest) {
+          try {
+            sessionStorage.setItem(
+              FLAG_KEY,
+              JSON.stringify(Object.assign({}, flag, { expiresAt })),
+            );
+          } catch {
+            // Unwritable: this load still stops at the cap; the next caps again.
+          }
+        }
         dispatch(EVENT_INSTALL, options);
       }
     }
