@@ -245,6 +245,29 @@ describe("tool registration", () => {
   });
 
   /**
+   * The network gate, the third read gate and independent of both others. Off,
+   * none of its three tools exists; on, exactly those three appear and nothing
+   * else moves, so neither the codes gate nor the writes gate is a way to it.
+   */
+  it("adds only the three network tools when APPLE_SAFARI_ALLOW_NETWORK is set", async () => {
+    const off = await toolNames(await connect());
+    const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_NETWORK: "true" }));
+    expect(on.filter((n) => !off.includes(n))).toEqual([
+      "apple_safari_network_get",
+      "apple_safari_network_list",
+      "apple_safari_network_record",
+    ]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
+  });
+
+  it("does not reach the network tools through allowWrites or allowCodes", async () => {
+    const names = await toolNames(
+      await connect({ APPLE_SAFARI_ALLOW_WRITES: "true", APPLE_SAFARI_ALLOW_CODES: "true" }),
+    );
+    expect(names.filter((n) => n.startsWith("apple_safari_network_"))).toEqual([]);
+  });
+
+  /**
    * `find_codes` READS. It must never be marked destructive, and turning the
    * gate on must not change what anything else claims about itself.
    */

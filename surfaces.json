@@ -321,7 +321,34 @@
         "ungated, so off means only the targeted field read and the live DOM",
         "scan are gone \u2014 not every byte of a page. See docs/passwords.md for",
         "why the Passwords app itself is unreachable and this is what ships",
-        "in its place."
+        "in its place.",
+        "",
+        "The THIRD gate, `allowNetwork`, is also a READ gate and is also not",
+        "behind allowWrites, for the same reason as the second: it registers",
+        "three tools that look at what a page fetched, and looking is not a",
+        "write. It is a separate switch rather than part of `allowCodes`",
+        "because it is a different class of exposure. A code is one string",
+        "with a short life; the traffic of a signed-in page is session",
+        "material, API responses and anything the page was ever sent, and a",
+        "user who is comfortable with the first has said nothing about the",
+        "second. Off, none of the three tools exists.",
+        "",
+        "WHY BODIES CANNOT BE REDACTED. Headers have names, so the ones that",
+        "carry credentials (authorization, cookie, set-cookie, anything with",
+        "token, secret or api-key in the name) are masked to their length. A",
+        "body has no names to match: a token can sit in any string of any",
+        "JSON, and a filter that caught most of them would teach the model",
+        "that what it was handed was safe. So bodies come back as the page",
+        "saw them, the tool descriptions say so, and the gate is where the",
+        "user decides whether that is acceptable.",
+        "",
+        "Two things inside those tools need allowWrites ON TOP of the gate:",
+        "`reload`, which re-runs a page and can re-send a form's request, and",
+        "`saveAs`, which writes a file into APPLE_SAFARI_DOWNLOAD_DIR. The",
+        "gate on its own therefore never changes anything. Like the click",
+        "lane, the capture itself goes through the extension and so inherits",
+        "Safari's per-website consent, and it sees only the top frame: no",
+        "subframes, no workers, no WebSockets. See docs/safari.md."
       ],
       "gates": [
         {
@@ -329,6 +356,12 @@
           "envSuffix": "ALLOW_CODES",
           "label": "Read one-time codes",
           "description": "Lets Safari tools read a one-time 2FA code from a page you have allowed the extension on. Off by default."
+        },
+        {
+          "id": "allowNetwork",
+          "envSuffix": "ALLOW_NETWORK",
+          "label": "Read network traffic",
+          "description": "Lets Safari tools record what a page you have allowed the extension on fetches, and read the responses. Off by default."
         }
       ]
     },

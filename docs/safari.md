@@ -181,9 +181,10 @@ their browser can be scripted.
 ## Built
 
 `packages/safari` shipped this surface as six read tools with no write tool, and now ships
-**fourteen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
-`allowWrites`, and `find_codes` behind `allowCodes`. Each arrival is recorded further down, under
-[Writes, built](#writes-built) and [Acting on a page, built](#acting-on-a-page-built). Three
+**seventeen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
+`allowWrites`, `find_codes` behind `allowCodes`, and the three network tools behind `allowNetwork`.
+Each arrival is recorded further down, under [Writes, built](#writes-built),
+[Acting on a page, built](#acting-on-a-page-built) and [Network capture](#network-capture). Three
 decisions came out of building the read half that this document did not anticipate.
 
 **The epoch is detected at runtime, not hardcoded.** The obvious response to the `visit_time` bug
@@ -945,6 +946,123 @@ not notarized and stapled, so exercising this needs a full `make build-release` 
 trip — and installing over a running Safari can crash it. The first real run is the one that says
 whether a content script sharing an isolated world really does see `cupertinoRunCommand` across two
 files, and whether one second is a poll rate anyone can live with.
+
+## Network capture
+
+What a page FETCHED, as a third thing the extension lane can answer next to what it contains
+(`read_page`) and what can be done on it (`click`, `fill`). Design:
+[the network capture spec](superpowers/specs/2026-10-20-safari-network-design.md). Three tools,
+`apple_safari_network_record`, `_list` and `_get`, behind their own gate, `allowNetwork`
+(`APPLE_SAFARI_ALLOW_NETWORK`, off by default).
+
+### The lane
+
+A recorder in the page's own JavaScript world wraps `fetch`, `XMLHttpRequest` and the console while
+a tab is armed, and hands each record to `network.js` in the isolated world, which keeps a ring
+buffer for that page load and answers three commands (`netRecord`, `netList`,
+`netGet`) through the same command channel the click lane uses. Arming is opt-in per tab, is kept in
+`sessionStorage` so it survives a reload, and carries an expiry (15 minutes by default, 120 at most)
+so a forgotten recording does not wrap a page all day. Request ids are `<pageToken>-r<n>`, the
+element-id rule again: an id names the page load that recorded it, and a stale one is an error
+instead of another tab's record.
+
+**How the recorder gets into the page.** Not through the manifest: Safari ignores `"world": "MAIN"`
+on a `content_scripts` entry and on `scripting.registerContentScripts` alike, and runs both in the
+isolated world (measured below). So `network-hook.js` is still a manifest content script, but only
+as the source provider: in the isolated world it wraps nothing and leaves its recorder as a string,
+and `network.js` injects that string into the page as an inline `<script>` element, then removes the
+element. It does so only when the tab is armed, at load under a valid arm flag or on
+`network_record start`, so an unarmed tab gets no script at all. An expired or unreadable flag is
+deleted at load by `network.js` itself, since the hook that used to delete it is no longer in the
+page to see one. If `<html>` does not exist yet at `document_start`, the injection waits for it
+(a one-shot `MutationObserver` on the document) rather than appending to the document itself, and
+`hook.injectionDetail` says it was deferred.
+
+A page whose Content-Security-Policy refuses inline scripts is meant to get the same file by URL
+instead (it is listed in `web_accessible_resources`). **That fallback is unmeasured**: no page with
+a strict CSP was tried in Safari, so whether Safari lets a page load a `safari-web-extension://`
+script past its `script-src` is not known. The unit tests cover what the extension does in each
+case, not what Safari does. If it works, the load is asynchronous, so the page's first requests can
+go out before the recorder is there, even after `reload: true`; if it does not, `hook.injection`
+ends at `blocked`, or stays at `src` with no `"main"` in `hook.worlds`. `status` reports which
+happened as `hook.injection`: `inline`, `src` (the fallback was asked for), `blocked` (the URL load
+failed too), `unavailable` (no source), or null (nothing attempted). The background worker is a
+plain relay again, and the extension no longer asks for the `scripting` permission.
+
+A body is pulled in chunks (`APPLE_SAFARI_NETWORK_CHUNK_CHARS`, 262,144 by default) because one
+native message cannot carry a multi-megabyte response. Only `jsonPath`, `decode` and `saveAs` need
+the whole body; an inline read pulls the chunks covering its window.
+
+### Why it is a gate of its own
+
+It is a read, so it is not behind `allowWrites`, and it is not folded into `allowCodes` because a
+signed-in page's traffic is session material rather than one short-lived string. Off, the tools do
+not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally need
+`allowWrites`, and the client refuses them with a message naming `APPLE_SAFARI_ALLOW_WRITES`.
+
+### Limits, stated plainly
+
+- **Bodies are not redacted.** Headers are masked by name (`authorization`, `proxy-authorization`,
+  `cookie`, `set-cookie`, anything containing `token`, `secret`, `api-key` or `apikey`), in the
+  page and again in the server. A body has no names to match, so it comes back as the page saw it.
+- **URLs are not redacted either.** They are returned in full, query strings included, so a
+  signed link or a token passed as a parameter comes back as the page sent it.
+- **Top frame only.** No subframes, no web or service workers, no WebSockets, and no bodies for
+  `<img>`/`<script>`/`<link>` loads (resource timing lists their URLs and timing, never their bytes).
+- **Page memory only.** Records live in the page and die with the load; nothing is written to disk
+  except an explicit `saveAs`. The buffer holds 1,000 records and 50 MiB of bodies, bodies are
+  evicted before records, and `dropped` says so.
+- **A strict CSP costs the first requests, if it works at all.** On a page that forbids inline
+  scripts the recorder is asked for by URL, which is unmeasured in Safari (see above). If it
+  arrives, it arrives late, and what the page fetched before then is not recorded.
+- **A page can arm itself** by writing the arm flag into its own `sessionStorage`. The expiry is
+  clamped to the 120-minute maximum and the data leaves the tab only when an agent asks. Closing it
+  needs a nonce the page cannot read; that is deferred, and recorded in the spec.
+
+### Measurements
+
+Measured 2026-10-21 on Safari 26 / macOS 26, against the notarized builds of 385bb73 (the first
+row's negative), 1a82e34 and 5d33ea0, on localhost test pages and on the one production site this
+feature was built for. Four of the spec's five "Measure first" probes are settled. The fifth, the
+native-message ceiling, is measured only as "the default works". The CSP fallback, which the
+injection change added after the spec, is not measured at all; its row is here so that stays
+visible.
+
+| Probe                                       | Result                                                                                                                                                                                       | What the build does about it                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Getting the hook into the page              | **Inline `<script>` works**: `worlds: ["isolated","main"]`, `injection: "inline"`. Manifest `world: "MAIN"` and `registerContentScripts` MAIN are both **ignored**; both copies run isolated | `network.js` injects the hook as a page `<script>` on armed tabs; the registration and `scripting` are gone       |
+| Native-messaging payload limit              | **262,144 chars per chunk works**: a 1.3 MB emoji-heavy body came back byte-identical in 5 chunks, about 1.1 s per chunk. **Ceiling not measured**                                           | the default stays at 262,144 (see below)                                                                          |
+| `CustomEvent` string `detail` across worlds | **Yes**, both directions                                                                                                                                                                     | nothing: the hook sends strings, and this confirms the choice                                                     |
+| `PerformanceResourceTiming.responseStatus`  | **Not supported**                                                                                                                                                                            | `resource` entries carry no status, and `failed` cannot see them                                                  |
+| The target PDF site (`app.immo-sign.com`)   | **XHR**, JSON with the PDF as base64 at `data.signedFile`; **no CSP**, so inline injection works                                                                                             | the recipe works end to end: `jsonPath: "data.signedFile"`, `decode: "base64"`, `saveAs` gave a valid 11-page PDF |
+| The CSP `src` fallback                      | **Unmeasured.** No page with a `script-src` that refuses inline scripts was tried; the target site has no CSP, so the fallback never ran live                                                | the fallback ships and is reported as `src`/`blocked`; docs and tool descriptions say it is unverified            |
+
+**Injection, the negative first.** On 385bb73 `status.hook` came back `installed: false` with only
+`"isolated"` among the worlds, across several reloads, while the background reported its
+registration as made. A test page listening for the events itself saw, from the page's world, no
+`window.__cupertinoNetHook` and a native `fetch` and `XMLHttpRequest.prototype.send`, yet received
+`cupertino:net-ping` once and `cupertino:net-ready` twice. So the registered copy did run, in the
+wrong world, and the events do cross between worlds. The inline injection that replaced it reported
+`["isolated","main"]` and `inline`, and recorded localhost fetch, XHR and console correctly.
+
+**Why the chunk ceiling is unmeasured.** Finding it means restarting the server with a larger
+`APPLE_SAFARI_NETWORK_CHUNK_CHARS` until a chunk fails. The server the extension talks to is the one
+the Cupertino app spawns, and its environment cannot be changed from a shell; a server launched from
+a shell instead cannot reach the extension's container at all (macOS app-data protection refuses it
+with `EPERM`). So the default is kept: it is measured to work, and at about a second per chunk a
+10 MiB body is a few dozen round trips, which is slow but not broken.
+
+**An XHR is reset between `load` and `loadend` on a real Angular app.** On the PDF site (Angular 18
+`HttpClient` with zone.js) every XHR was first recorded as `status: 0, "Network error"` while the page
+rendered all its data. Each request's trace read `["readystatechange 4/200","load 4/200","loadend
+0/0"]`: something resets the request after DONE (an `abort()` or `open()` there sets status 0 and
+drops the response without an event of its own) before `loadend` is dispatched. That is why the hook
+snapshots status, headers and body at `readystatechange`/`load` and only finalises at `loadend`, and
+why XHR entries carry `trace`. With that, every request on the site recorded as 200 with its body.
+
+**Two refusals behave as designed.** A request id from before a reload is refused with the "since
+gone" message, after the action timeout. A `saveAs` onto a name that already exists refuses without
+`overwrite: true`.
 
 ## Still open
 

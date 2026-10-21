@@ -40,7 +40,7 @@ off cannot see that they exist.
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 9 tools, chats/search/counts/decoded text + gated send and codes                 |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 14 tools, history/tabs/reading list/page reads + gated writes and codes          |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 17 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
@@ -305,11 +305,11 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 
 ### Safari
 
-| Always available                                     | Write-gated                        |
-| ---------------------------------------------------- | ---------------------------------- |
-| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` |
-| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            |
-| `diagnostics`                                        |                                    |
+| Always available                                     | Write-gated                        | Behind their own flag                         |
+| ---------------------------------------------------- | ---------------------------------- | --------------------------------------------- |
+| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` | `find_codes`                                  |
+| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            | `network_record` `network_list` `network_get` |
+| `diagnostics`                                        |                                    |                                               |
 
 **The widest write set here, and it splits across two lanes that share nothing but the flag.**
 `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser.
@@ -317,6 +317,16 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 consents to one website at a time — so their real gate is a per-site grant the user can see and
 revoke, and the write flag is the second lock rather than the only one. `find_codes` is registered
 separately behind `APPLE_SAFARI_ALLOW_CODES`, because reading a one-time code is a read.
+
+**The network tools read what a page fetched**, behind `APPLE_SAFARI_ALLOW_NETWORK` ("Read network
+traffic" in the app, off by default) for the same reason. `network_record` arms one tab,
+`network_list` lists its `fetch` and `XMLHttpRequest` calls and console errors, and `network_get`
+reads a body, or saves a file out of one: a PDF an API returns as base64 inside JSON comes out with
+`jsonPath`, `decode: "base64"` and `saveAs`. Top frame only, so no subframes, workers or WebSockets.
+Headers named like credentials are masked; **bodies are not redacted, and neither are URLs** — a
+token in a query string comes back as the page sent it. On a page whose Content-Security-Policy
+refuses inline scripts there is a fallback that loads the recorder by URL; it has not been verified
+in Safari. `reload` and `saveAs` also need the write flag.
 
 There is deliberately no `do JavaScript` tool: it needs a developer-menu toggle that is not a TCC
 grant and whose state cannot be read, so diagnostics could never say in advance whether it would
@@ -619,7 +629,7 @@ pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Fu
 pnpm probe:screen    # ScreenCaptureKit — Screen Recording, and it takes effect on relaunch
 ```
 
-Every probed surface has a package except `screen`, `sound` and `desktop`, which the app serves in-process because their grants live in the app rather than in a package. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface has a package except `screen`, `sound` and `desktop`, which the app serves in-process because their grants live in the app rather than in a package. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; the three `network_*` tools sit behind `APPLE_SAFARI_ALLOW_NETWORK` for the same reason, and their `reload` and `saveAs` additionally need the write flag; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

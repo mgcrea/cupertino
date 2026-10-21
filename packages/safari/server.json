@@ -32,6 +32,24 @@
           "description": "Return one-time codes: a one-time-code field in apple_safari_page_elements, and apple_safari_find_codes for a code a page shows as text. Its own gate rather than allowWrites, because it is a read. Credential fields stay redacted whatever this says.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_SAFARI_ALLOW_NETWORK",
+          "description": "Register apple_safari_network_record, _list and _get, which record what a page you allowed the extension on fetches and read the responses. Its own gate rather than allowWrites, because it is a read; off means the tools do not exist. Headers named like credentials are masked, bodies are not. Reloading a tab to record and saving a body to a file still need APPLE_SAFARI_ALLOW_WRITES.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_SAFARI_DOWNLOAD_DIR",
+          "description": "Where apple_safari_network_get's saveAs writes a file. Defaults to ~/Downloads. A name is kept to its basename and an existing file is never replaced unless asked.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_SAFARI_NETWORK_CHUNK_CHARS",
+          "description": "Characters of a body the server asks the page for per command when it reads a large body. Defaults to 262144, which was measured to work; how far above that Safari's native-message channel goes is unmeasured.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

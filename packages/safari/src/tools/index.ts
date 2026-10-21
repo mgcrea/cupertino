@@ -6,6 +6,7 @@ import { registerBookmarkTools } from "./bookmarks.js";
 import { registerCodeTools } from "./codes.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerHistoryTools } from "./history.js";
+import { registerNetworkTools } from "./network.js";
 import { registerPageTools } from "./pages.js";
 import { registerTabTools } from "./tabs.js";
 import { registerWriteTools } from "./writes.js";
@@ -44,6 +45,21 @@ export type ToolContext = {
    * granting the right to click a button in order to see a number.
    */
   allowCodes: boolean;
+  /**
+   * Reading what a page fetched: `network_record`, `network_list` and `network_get`.
+   *
+   * A READ gate, kept apart from `allowWrites` for the reason `allowCodes` is:
+   * that flag means "may change something", and reaching a read through it would
+   * mean granting the right to click a button in order to see a response. It is
+   * also the only thing keeping these tools from existing at all, which matters
+   * because the traffic of a signed-in page carries session material, and bodies
+   * cannot be redacted the way headers are.
+   *
+   * `reload` and `saveAs` inside these tools additionally need `allowWrites`,
+   * because they re-run a page and write a file; the client refuses them, so this
+   * flag alone never lets either happen.
+   */
+  allowNetwork: boolean;
 };
 
 /**
@@ -68,6 +84,7 @@ export const registerTools = (
   registerBookmarkTools(server, client);
   registerElementTools(server, client);
   if (ctx.allowCodes) registerCodeTools(server, client);
+  if (ctx.allowNetwork) registerNetworkTools(server, client, { allowWrites: ctx.allowWrites });
   if (!ctx.allowWrites) return;
   registerWriteTools(server, client);
   registerActionTools(server, client);

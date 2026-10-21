@@ -216,6 +216,9 @@
 
   async function pump() {
     if (stopped) return;
+    // Whether this poll handed us work. A command is usually one step of a
+    // sequence (click, then read), so the next one is probably already queued.
+    let gotWork = false;
     try {
       const response = await browser.runtime.sendMessage({
         kind: "poll",
@@ -227,7 +230,9 @@
         page: window.cupertinoPageToken ?? null,
         extensionVersion: manifestVersion(),
       });
-      for (const command of response?.commands ?? []) {
+      const commands = response?.commands ?? [];
+      gotWork = commands.length > 0;
+      for (const command of commands) {
         // Never let one command's failure strand the next: each is reported on
         // its own, and `cupertinoRunCommand` is written never to throw.
         const result = window.cupertinoRunCommand
@@ -244,7 +249,12 @@
       // The background worker may be asleep, restarting, or gone. A failed poll
       // is a poll that did not happen, never a broken page.
     }
-    setTimeout(pump, document.hidden ? HIDDEN_MS : VISIBLE_MS);
+    // After a poll that carried work, poll again at once instead of waiting out
+    // the interval: a multi-step flow would otherwise pay a full second (ten
+    // when hidden) between every step. It cannot spin, because the next poll
+    // is a real round trip that returns nothing as soon as the queue is empty,
+    // and an empty answer goes back to the interval.
+    setTimeout(pump, gotWork ? 0 : document.hidden ? HIDDEN_MS : VISIBLE_MS);
   }
 
   // The seam a push would use: a wake can call this to collapse the latency to

@@ -12,6 +12,9 @@
 #     reports this only in its own extension error list, which nothing reads;
 #     the build stays green. Measured on the probe: adding a background.js
 #     without wiring it in shipped a bundle without it and said nothing.
+#     That includes `web_accessible_resources`: the network hook's CSP
+#     fallback loads `network-hook.js` by URL, and a missing file there is a
+#     404 the page sees and the extension never reports.
 #   * A bundle identifier that is not prefixed by the app's. Safari keys
 #     enablement state to that identifier, so a change silently resets whether
 #     the extension is switched on.
@@ -87,6 +90,11 @@ for cs in m.get("content_scripts", []):
 named.update(m.get("icons", {}).values())
 named.update(m.get("action", {}).get("default_icon", {}).values())
 if p := m.get("action", {}).get("default_popup"): named.add(p)
+# Manifest V3 lists objects with a `resources` array; V2 lists bare strings.
+# A glob names no one file, so it is left to Safari rather than guessed at.
+for war in m.get("web_accessible_resources", []):
+    entries = war.get("resources", []) if isinstance(war, dict) else [war]
+    named.update(r for r in entries if isinstance(r, str) and "*" not in r)
 missing = sorted(n for n in named if not (res / n).exists())
 if missing:
     print(f"  FAIL  manifest names files the bundle does not carry: {missing}", file=sys.stderr); sys.exit(1)

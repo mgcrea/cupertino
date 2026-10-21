@@ -51,7 +51,16 @@ import { PageCommandTimeoutError, PreconditionError } from "./errors.js";
 /** One instruction for a page. */
 export type Command = {
   id: string;
-  action: "elements" | "click" | "fill" | "scroll" | "codes" | "read";
+  action:
+    | "elements"
+    | "click"
+    | "fill"
+    | "scroll"
+    | "codes"
+    | "read"
+    | "netRecord"
+    | "netList"
+    | "netGet";
   /**
    * The page this is for. A command with no URL is answered by whichever
    * allowed page polls first, which is only ever right for a question about
@@ -59,7 +68,8 @@ export type Command = {
    */
   url?: string | undefined;
   /**
-   * The page load this is for, taken from `elementId`. The handler gives a
+   * The page load this is for, taken from `elementId` or, for `netGet`, from a
+   * request id (see `pageOfRequest`). The handler gives a
    * command carrying one ONLY to the tab whose content script minted it, and
    * that script refuses any other — see `pageOfElement`.
    */
@@ -82,6 +92,30 @@ export type Command = {
    * CREDENTIAL field is withheld whether this is set or not.
    */
   includeCodes?: boolean | undefined;
+  // The `net*` fields. They are named after what `network.js` reads, one flat
+  // set rather than a nested payload, because that is how every other command
+  // here is shaped and the handler forwards the whole object.
+  /** `netRecord`: start, stop, clear or report. */
+  op?: "start" | "stop" | "clear" | "status" | undefined;
+  kinds?: string[] | undefined;
+  captureBodies?: boolean | undefined;
+  bodyFilter?: string | undefined;
+  maxBodyBytes?: number | undefined;
+  armMinutes?: number | undefined;
+  /** `netRecord`: reload the tab so it records from its first request. */
+  reload?: boolean | undefined;
+  /** `netList`: which records, and where the cursor stands. */
+  filter?: Record<string, unknown> | undefined;
+  after?: string | undefined;
+  /** `netGet`: which record, which side of it, and which slice of the body. */
+  // `requestId`, not `id`: `id` is this command's own, stamped by `runCommand`
+  // and used to file the result, so a record id sent under it would be silently
+  // replaced by a random UUID.
+  requestId?: string | undefined;
+  part?: "response" | "request" | undefined;
+  headers?: boolean | undefined;
+  offset?: number | undefined;
+  length?: number | undefined;
   /** Unix seconds. The handler drops an expired command rather than running it. */
   expiresAt: number;
 };
@@ -109,6 +143,17 @@ const ELEMENT_ID = /^([0-9a-f]{8})-e\d+$/;
 /** The page token an element id carries, or null when it is not an id at all. */
 export const pageOfElement = (elementId: string): string | null =>
   ELEMENT_ID.exec(elementId)?.[1] ?? null;
+
+/**
+ * A request id as `network.js` hands one out: the page token, a kind letter
+ * (`r` fetch/XHR, `t` resource timing, `c` console) and a number —
+ * `3f9a2c1d-r12`. Same token as `pageOfElement`, same reason: it is what lets
+ * the handler give the command to the one page load that holds the record.
+ */
+const REQUEST_ID = /^([0-9a-f]{8})-[rtc]\d+$/;
+
+/** The page token a request id carries, or null when it is not an id at all. */
+export const pageOfRequest = (id: string): string | null => REQUEST_ID.exec(id)?.[1] ?? null;
 
 /** `commands/` and `results/` sit beside `pages/` in the appex container. */
 export const channelDirectory = (pagesDirectory: string, name: string): string =>
@@ -197,7 +242,7 @@ export const runCommand = async (
       `background tab can legitimately be slower than this. Check with apple_safari_diagnostics.` +
       // The cause a page-addressed command adds, and the likeliest one: the
       // load that minted the id is gone, and no other tab will take it.
-      (command.page
+      (command.page && command.elementId !== undefined
         ? ` This command could only run on the page load that handed out "${command.elementId}" ` +
           `— no other tab, even on the same URL, will take it. If that tab has reloaded, ` +
           `navigated or closed since apple_safari_page_elements, enumerate again.`

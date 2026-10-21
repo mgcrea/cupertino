@@ -540,6 +540,37 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Safari can show what a page fetched.",
+            body: [
+              "With the new \"Read network traffic\" setting on, three tools appear: `apple_safari_network_record` starts and stops recording on an open tab, `apple_safari_network_list` lists the requests it made, with method, address, status and timing, and `apple_safari_network_get` reads one request's headers and response. It answers the questions a page's text cannot, such as why a button did nothing or which call came back with an error. The setting is off by default, recording is per tab and ends on its own after 15 minutes unless you ask for longer, and it works only on websites you have allowed the Cupertino extension on.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "A file inside a response can be saved straight to disk.",
+            body: [
+              "Some sites hand over a document, a signed PDF for instance, as base64 inside a JSON response rather than as a download. `apple_safari_network_get` can pick that field out, decode it and save it to your Downloads folder in one call, without the file passing through the conversation. Saving a file, and reloading a tab to record it from the start, also need the write setting.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "What it cannot see, and what it does not hide.",
+            body: [
+              "Only the page's own `fetch` and `XMLHttpRequest` calls and its console errors are recorded: nothing from embedded frames, web or service workers, or WebSockets. Headers that carry credentials are masked, but response bodies and addresses are returned as the page received them, so a body or a link holding a token comes back with the token in it.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

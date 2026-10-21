@@ -67,6 +67,49 @@ ask them to trigger a new one. And a site that splits the code across six
 single-character boxes cannot be filled by one \`fill\`; enumerate again
 afterwards and look at \`hasValue\` before clicking submit.
 
+## Debugging a page, and getting a file out of an API response
+
+Only when the user has switched on "Read network traffic"
+(\`APPLE_SAFARI_ALLOW_NETWORK\`); otherwise none of these tools exists, so say
+so rather than looking for them. They show what a page FETCHED, which is the
+question \`read_page\` cannot answer: why a button did nothing, which call came
+back 403, what an app's JSON actually held.
+
+1. \`apple_safari_network_record\` with \`action: "start"\` on the page. Nothing
+   is recorded before this, so a request that already happened is gone. To see a
+   page's FIRST requests pass \`reload: true\`, which needs the write gate on
+   because it re-runs the page; otherwise start, then trigger the request.
+2. \`apple_safari_network_list\`, filtered: \`failed: true\`, \`status: "400-599"\`,
+   \`urlContains\`. It returns metadata only, with ids.
+3. \`apple_safari_network_get\` on an id for headers and body. Inline reads are
+   capped at 20,000 characters; \`nextOffset\` continues.
+
+**To get a file out** (a signed PDF that the page holds as base64 inside a JSON
+response, for example), do not read the body inline. In ONE call to
+\`network_get\` pass \`jsonPath\` to the field, \`decode: "base64"\` and
+\`saveAs: "name.pdf"\`. The bytes go to the user's download folder and never
+into this conversation; the result gives the path, the size and a sniffed type.
+\`saveAs\` needs the write gate and will not overwrite unless \`overwrite: true\`.
+A \`type: null\` means the type was not recognised, not that the save failed.
+
+**What it cannot see**, and a missing request may be one of these rather than a
+bug: subframes (an embedded iframe's traffic), web and service workers,
+\`<img>\`/\`<script>\` bodies, and WebSockets. Ids die when the page reloads or
+navigates, so list again afterwards. A body whose \`bodyTruncated\` is true was
+cut at the recording's size limit; record again with a larger \`maxBodyBytes\`.
+On a page with a strict Content-Security-Policy there is a fallback that loads
+the recorder by URL (\`hook.injection: "src"\` in the record answer). It has not
+been verified in Safari: if \`hook.worlds\` does not come to include "main", it
+did not get in, so say that rather than reporting an empty list as "no
+traffic". When it does work it arrives late, so the very first requests can be
+missing even after \`reload: true\`.
+
+**Bodies are NOT redacted, and neither are URLs.** Only credential-looking
+HEADERS are masked; a URL comes back in full, query string and any token in it
+included. A body can hold a token or a person's data, so read one only when you
+need it, and do not repeat what is in it back to the user beyond what the task
+requires.
+
 ## Three lanes that are not fallbacks for each other
 
 This is the thing to understand about this surface. The lanes see almost

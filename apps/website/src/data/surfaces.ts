@@ -436,6 +436,28 @@ export const SURFACES: readonly Surface[] = [
         env: "APPLE_SAFARI_ALLOW_CODES",
         why: "Reads a one-time 2FA code from a page you have allowed the extension on. Off unless you turn it on.",
       },
+      // Network capture is a read too, and a heavier one than a 2FA code: a
+      // page's request and response bodies carry whatever its session carries,
+      // and bodies are never redacted (no rule can tell which string in an
+      // arbitrary body is a secret). So it gets its own switch, "Read network
+      // traffic", and off means the three tools are not registered at all.
+      // Reloading a tab to record from its first request, and saving a body to
+      // a file, still need the write gate on top.
+      {
+        name: "apple_safari_network_record",
+        env: "APPLE_SAFARI_ALLOW_NETWORK",
+        why: "Starts or stops recording what an open page fetches, on a site you have allowed the extension on. Off unless you turn it on.",
+      },
+      {
+        name: "apple_safari_network_list",
+        env: "APPLE_SAFARI_ALLOW_NETWORK",
+        why: "Lists the requests a recorded page made: URL, method, status, timing and size, never a body.",
+      },
+      {
+        name: "apple_safari_network_get",
+        env: "APPLE_SAFARI_ALLOW_NETWORK",
+        why: "Reads one recorded request's headers and body, or saves a file out of it. Bodies are not redacted.",
+      },
     ],
     pitch:
       "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says, plus clicking and typing on it. Opens a URL or saves one for later behind the write gate.",

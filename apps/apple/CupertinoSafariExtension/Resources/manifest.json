@@ -9,6 +9,12 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["network-hook.js", "network.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["actions.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": false
@@ -34,5 +40,7 @@
     "512": "images/icon-512.png"
   },
 
-  "permissions": ["nativeMessaging"]
+  "permissions": ["nativeMessaging"],
+
+  "web_accessible_resources": [{ "resources": ["network-hook.js"], "matches": ["<all_urls>"] }]
 }

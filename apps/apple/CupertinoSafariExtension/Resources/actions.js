@@ -56,10 +56,19 @@
    *
    * Not a secret and not a defence against the page: page scripts cannot see
    * this world, and the token is only ever a routing label.
+   *
+   * Reused when one is already there. `network.js` shares this isolated world
+   * and loads first, at `document_start`, and mints the token itself so its
+   * request ids carry it from the page's first request. Minting a second one
+   * here would leave the page with two names: `-r` ids under one, `-e` ids and
+   * the poll under the other, and every request id refused as another load's.
    */
-  const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+  const PAGE =
+    typeof window.cupertinoPageToken === "string" && /^[0-9a-f]{8}$/.test(window.cupertinoPageToken)
+      ? window.cupertinoPageToken
+      : Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join("");
 
   /** Read by `content.js`, which polls with it so the handler can route by it. */
   window.cupertinoPageToken = PAGE;
@@ -750,6 +759,22 @@
       // rule enforced where the click would happen, so no routing mistake
       // upstream can turn into an action here.
       if (command.page != null && command.page !== PAGE) {
+        // The network commands name a RECORD, not an element, and the usual
+        // reason one lands on the wrong load is that its own load is over: the
+        // tab reloaded or navigated, and the buffer went with it. Say that, and
+        // what to do about it. (The handler normally never delivers such a
+        // command at all, so the server words its timeout the same way; this
+        // is the same rule enforced where the record would be read.)
+        if (typeof command.action === "string" && command.action.startsWith("net")) {
+          return {
+            ok: false,
+            error:
+              (command.requestId || command.id
+                ? "Request " + (command.requestId || command.id) + " was"
+                : "That was") +
+              " recorded by a page load that has since gone (reloaded, navigated or closed); list again.",
+          };
+        }
         return {
           ok: false,
           error:
@@ -797,6 +822,16 @@
           return { ok: true, data: scroll(command.direction) };
         case "codes":
           return { ok: true, data: findCodes(Math.min(command.limit || 10, 40)) };
+        // Answered by `network.js`, which owns the buffer. It loads from its own
+        // manifest entry, so it can be missing where this is not — an older
+        // manifest, or a page Safari would not inject it into — and that is
+        // worth saying in so many words rather than as an unknown action.
+        case "netRecord":
+        case "netList":
+        case "netGet":
+          return window.cupertinoNetwork && typeof window.cupertinoNetwork.run === "function"
+            ? window.cupertinoNetwork.run(command)
+            : { ok: false, error: "The network recorder did not load on this page." };
         default:
           return { ok: false, error: `Unknown action "${command.action}".` };
       }
