@@ -53,6 +53,12 @@ type Canned = {
   body: string;
   encoding?: "text" | "base64" | "summary" | null;
   contentType?: string;
+  /**
+   * The request body, served for `part: "request"`. `truncated` still comes
+   * from the response, as `network.js`'s `view()` sets it: request bodies are
+   * never cut, only replaced by a summary.
+   */
+  request?: string;
 };
 
 const setup = (env: NodeJS.ProcessEnv = {}) => {
@@ -123,14 +129,18 @@ const fakeExtension = (
             error: opts.stale ?? `no request ${String(command.requestId)} on this page.`,
           };
         } else {
-          const total = record.body.length;
+          const data =
+            command.part === "request" && record.request !== undefined
+              ? record.request
+              : record.body;
+          const total = data.length;
           const offset = Math.min(Number(command.offset) || 0, total);
           const length = Number(command.length) > 0 ? Number(command.length) : total - offset;
           let end = Math.min(offset + length, total);
           // As the real page does: never end on the first half of a pair.
-          const last = record.body.charCodeAt(end - 1);
+          const last = data.charCodeAt(end - 1);
           if (end < total && last >= 0xd800 && last <= 0xdbff) end -= 1;
-          const slice = record.body.slice(offset, end);
+          const slice = data.slice(offset, end);
           reply = {
             ok: true,
             data: {
@@ -550,6 +560,24 @@ describe("headers, truncation and surrogate pairs", () => {
     const out = await t.client.networkGet({ url: PAGE_URL, id: ID });
     expect(out.text).toBe("partial");
     expect(out.bodyTruncated).toBe(true);
+  });
+
+  it("reads a whole request body when only the response was cut short", async () => {
+    const t = setup();
+    fakeExtension(t, {
+      [ID]: { body: "%PDF-".repeat(100), truncated: true, request: '{"filters":{"year":2026}}' },
+    });
+    const picked = await t.client.networkGet({
+      url: PAGE_URL,
+      id: ID,
+      part: "request",
+      jsonPath: "filters.year",
+    });
+    expect(picked.text).toBe("2026");
+    expect(picked.bodyTruncated).toBe(false);
+    const inline = await t.client.networkGet({ url: PAGE_URL, id: ID, part: "request" });
+    expect(inline.text).toBe('{"filters":{"year":2026}}');
+    expect(inline.bodyTruncated).toBe(false);
   });
 
   it("reassembles text whose chunk boundary falls inside an emoji", async () => {

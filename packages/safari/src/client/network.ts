@@ -422,6 +422,11 @@ export async function networkGet(
   const from = whole ? 0 : offset;
   const limit = whole ? Number.POSITIVE_INFINITY : want;
 
+  // The page's `bodyTruncated` describes the response only: a request body is
+  // never cut, only replaced by a summary. So it cannot refuse a request read.
+  const cutShort = (slice: Slice): boolean =>
+    (input.part ?? "response") === "response" && slice.entry.bodyTruncated === true;
+
   const pulled: string[] = [];
   let first: Slice | undefined;
   let position = from;
@@ -465,7 +470,7 @@ export async function networkGet(
       );
     }
     first ??= slice;
-    if (index === 0 && whole && slice.entry.bodyTruncated === true) {
+    if (index === 0 && whole && cutShort(slice)) {
       // The page keeps only the first `maxBodyBytes` of a larger body. Parsing
       // that as JSON fails confusingly, and saving it writes a corrupt file
       // that looks whole (a PDF missing its tail still opens as a PDF), so the
@@ -502,7 +507,7 @@ export async function networkGet(
     encoding: head.encoding,
     // Said on every answer, so an inline read of a cut-short body is never
     // mistaken for the whole of it.
-    bodyTruncated: head.entry.bodyTruncated === true,
+    bodyTruncated: cutShort(head),
   };
 
   if (!whole) {
