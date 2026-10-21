@@ -154,7 +154,12 @@ network-hook.js                      network.js
   into a tiny shared `document_start` script is the obvious way.
 - **Spoofing**: the page can dispatch the install event or forge records. Forged records describe
   the page's own claims about itself, and the isolated script keeps its own armed state and drops
-  records while disarmed, so a page cannot make the extension store anything it was not asked to.
+  records while disarmed. One gap remains, found in review: the arm flag lives in the page's own
+  `sessionStorage`, so a page can write one and arm its own tab from the next load. What it buys is
+  small. Its own traffic is recorded into its own tab's memory, capped at the 120-minute arm
+  maximum (a load-time `expiresAt` beyond now + 120 min is clamped), and it leaves the tab only when
+  an agent asks that tab for it. Closing the gap needs a nonce the page cannot read, kept in
+  extension storage and checked asynchronously at load. That is deferred and recorded as a ruling.
 - **Pump change in `content.js`**: when a poll handled a command, poll again immediately rather
   than after the 1-second interval. This makes the chunked body transfer below (and any burst of
   commands) cost about one native round trip per chunk, not one second. The handler's
