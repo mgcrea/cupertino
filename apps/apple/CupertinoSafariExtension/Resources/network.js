@@ -39,9 +39,13 @@
 // ## Why it loads at `document_start`, before `actions.js`
 //
 // An armed reload records from the page's first request, and the first request
-// can leave before `document_idle`. So this script is its own `content_scripts`
-// entry at `document_start`, and that makes it the first of the three to run —
-// which is why it, not `actions.js`, mints the page token when there is none.
+// can leave before `document_idle`. So this script loads at `document_start`,
+// in ONE `content_scripts` entry with `network-hook.js` listed first — files
+// in one entry's `js` run in the order listed, which two separate entries do
+// not promise, and the hook has to have left its source before this looks for
+// it. That makes the pair the first of the content scripts to run, and this
+// the first that needs a token — which is why it, not `actions.js`, mints the
+// page token when there is none.
 // `actions.js` reuses whatever it finds, so the `-r` ids here and the `-e` ids
 // there name the same page load.
 //

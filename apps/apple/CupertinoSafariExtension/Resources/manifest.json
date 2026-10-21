@@ -9,13 +9,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["network-hook.js"],
-      "run_at": "document_start",
-      "all_frames": false
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["network.js"],
+      "js": ["network-hook.js", "network.js"],
       "run_at": "document_start",
       "all_frames": false
     },
