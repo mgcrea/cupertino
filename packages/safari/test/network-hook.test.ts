@@ -555,6 +555,42 @@ describe("fetch", () => {
     });
   });
 
+  /**
+   * Text or base64 is decided by the media type alone. The words matter only
+   * as a whole subtype or a structured suffix: an .xlsx is
+   * `…spreadsheetml.sheet`, which CONTAINS "xml", and decoding a zip as UTF-8
+   * destroys it.
+   */
+  it.each([
+    ["application/json; charset=utf-8", "text"],
+    ["application/problem+json", "text"],
+    ["image/svg+xml", "text"],
+    ["text/html", "text"],
+    ["application/javascript", "text"],
+    ["application/x-javascript", "text"],
+    ["application/ecmascript", "text"],
+    ["application/xml", "text"],
+    ["application/x-www-form-urlencoded", "text"],
+    ["APPLICATION/JSON", "text"],
+    ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "base64"],
+    ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "base64"],
+    ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "base64"],
+    ["application/jsonl-but-not-really", "base64"],
+    ["application/octet-stream; name=json.txt", "base64"],
+    ["", "base64"],
+  ])("content type %j is %s", async (contentType, encoding) => {
+    const payload = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00]);
+    const page = load({
+      respond: async () =>
+        new FakeResponse(payload, contentType ? { headers: { "content-type": contentType } } : {}),
+    });
+    page.install();
+    await page.fetch("/file");
+    const end = await endOf(page);
+    expect(end.body!.encoding).toBe(encoding);
+    if (encoding === "base64") expect(decode64(end.body!.data)).toEqual(payload);
+  });
+
   it("binary body is base64", async () => {
     const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff, 0x00, 0x80]);
     const page = load({

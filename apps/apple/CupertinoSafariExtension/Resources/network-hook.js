@@ -227,9 +227,28 @@
    * one — a PDF decoded as UTF-8 cannot be turned back into the PDF — so
    * anything unrecognised, including a missing type, is treated as binary. The
    * server sniffs base64 bodies anyway.
+   *
+   * Matched on the media type's parts, never on words anywhere in the header.
+   * The first version tested for "xml" as a substring, and every Office file
+   * is `application/vnd.openxmlformats-officedocument.…`: an .xlsx is a zip,
+   * and a zip decoded as UTF-8 cannot be put back together. So parameters are
+   * dropped, and text means a `text/*` type, a subtype that IS one of the
+   * text formats (with the legacy `x-` prefix allowed), or a structured
+   * `+json`/`+xml` suffix such as `application/problem+json`.
    */
+  const TEXT_SUBTYPE = /^(?:(?:x-)?(?:json|xml|javascript|ecmascript)|x-www-form-urlencoded)$/;
+  const TEXT_SUFFIX = /\+(?:json|xml)$/;
+
   function textLike(contentType) {
-    return /^text\/|json|xml|javascript|x-www-form-urlencoded/i.test(contentType || "");
+    const essence = String(contentType || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    const slash = essence.indexOf("/");
+    if (slash <= 0) return false;
+    const type = essence.slice(0, slash);
+    const subtype = essence.slice(slash + 1);
+    return type === "text" || TEXT_SUBTYPE.test(subtype) || TEXT_SUFFIX.test(subtype);
   }
 
   function charsetOf(contentType) {
