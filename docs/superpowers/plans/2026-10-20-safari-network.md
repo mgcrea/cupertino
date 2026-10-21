@@ -35,10 +35,12 @@
 ### Task 1: Pure helpers: JSON path, base64, type sniffing, redaction
 
 **Files:**
+
 - Create: `packages/safari/src/client/network.ts`
 - Test: `packages/safari/test/network-helpers.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `resolveJsonPath(root: unknown, path: string): { ok: true; value: unknown } | { ok: false; error: string }`. Grammar: optional leading `$`, dotted keys, `[n]` indices, `["quoted.key"]`.
   - `decodeBase64(text: string): Buffer`. Accepts standard and URL-safe alphabets and an optional `data:*;base64,` prefix. Throws `PreconditionError` on characters outside the alphabet (Node's `Buffer.from` silently skips them, so validate first).
@@ -64,10 +66,12 @@
 ### Task 2: `network-hook.js`, the MAIN-world recorder
 
 **Files:**
+
 - Create: `apps/apple/CupertinoSafariExtension/Resources/network-hook.js`
 - Test: `packages/safari/test/network-hook.test.ts` (`node:vm`, hand-rolled stubs in the `content-script.test.ts` style, no jsdom)
 
 **Interfaces:**
+
 - Produces, as DOM events on `document`, every `detail` a JSON **string**:
   - Listens: `cupertino:net-install`, detail `{"kinds":["fetch","xhr","console"],"captureBodies":true,"bodyFilter":null,"maxBodyBytes":10485760}`. Installs the wrappers (idempotent: a second install only updates the options). `cupertino:net-uninstall` restores the originals.
   - Emits: `cupertino:net-ready`, detail `{"installed":bool}`, once at load and after each install.
@@ -101,11 +105,13 @@
 ### Task 3: `network.js`, the isolated-world buffer and the three commands
 
 **Files:**
+
 - Create: `apps/apple/CupertinoSafariExtension/Resources/network.js`
 - Modify: `apps/apple/CupertinoSafariExtension/Resources/actions.js:60-65` (reuse an existing `window.cupertinoPageToken` instead of always minting one) and `:746-805` (dispatch `netRecord`/`netList`/`netGet` to `window.cupertinoNetwork.run(command)`. If it is absent: `{ok:false, error:"The network recorder did not load on this page."}`)
 - Test: `packages/safari/test/network-buffer.test.ts` (vm. Load `network.js` then `actions.js` into one context, as Safari's shared isolated world does)
 
 **Interfaces:**
+
 - Consumes: the Task 2 event protocol.
 - Produces `window.cupertinoNetwork.run(command) → {ok, data}|{ok:false, error}`. It is synchronous, because `cupertinoRunCommand` is synchronous. Commands:
   - `{action:"netRecord", op:"start"|"stop"|"clear"|"status", kinds?, captureBodies?, bodyFilter?, maxBodyBytes?, armMinutes?, reload?}` → `data: {recording:boolean, page, expiresAt:string|null(ISO), options, counts:{records, bodies, bodyBytes}, dropped:{records, bodies}, hook:{installed:boolean}, resourceStatusSupported:boolean}`.
@@ -148,12 +154,14 @@
 ### Task 4: Manifest, background fallback, faster pump
 
 **Files:**
+
 - Modify: `apps/apple/CupertinoSafariExtension/Resources/manifest.json`
 - Modify: `apps/apple/CupertinoSafariExtension/Resources/background.js`
 - Modify: `apps/apple/CupertinoSafariExtension/Resources/content.js:200-235` (`pump`)
 - Test: `packages/safari/test/extension-manifest.test.ts` (new), plus a `pump` test in `network-buffer.test.ts` or a new vm test
 
 **Interfaces:**
+
 - Manifest `content_scripts` becomes three entries:
   1. `{"matches":["<all_urls>"], "js":["network-hook.js"], "run_at":"document_start", "all_frames":false, "world":"MAIN"}`
   2. `{"matches":["<all_urls>"], "js":["network.js"], "run_at":"document_start", "all_frames":false}`
@@ -176,12 +184,14 @@
 ### Task 5: Server client: config, routing, chunked pull, save
 
 **Files:**
+
 - Modify: `packages/safari/src/config.ts` (add `allowNetwork`, `downloadDir`, `networkChunkChars`)
 - Modify: `packages/safari/src/client/actions.ts` (`Command.action` gains `"netRecord" | "netList" | "netGet"`, plus the fields below. Add `pageOfRequest`)
 - Modify: `packages/safari/src/client/safari.ts` (new methods next to `pageAction`)
 - Test: `packages/safari/test/network-client.test.ts` (the fake-extension pattern from `actions.test.ts`: a loop that answers files in `commands/` by writing `results/`)
 
 **Interfaces:**
+
 - Config: `allowNetwork: z.boolean().default(false)` ← `APPLE_SAFARI_ALLOW_NETWORK`. `downloadDir: z.string().default(join(homedir(), "Downloads"))` ← `APPLE_SAFARI_DOWNLOAD_DIR`. `networkChunkChars: z.number().int().min(16_384).max(8_388_608).default(262_144)` ← `APPLE_SAFARI_NETWORK_CHUNK_CHARS`. The default is a guess until Task 7 measures Safari's native-message limit, so leave a comment saying so.
 - `pageOfRequest(id: string): string | null` matches `/^([0-9a-f]{8})-[rtc]\d+$/`.
 - `AppleSafariClient` methods (each uses `runCommand` with `actionTimeoutMs`):
@@ -215,6 +225,7 @@
 ### Task 6: Tools, gate, guide and docs
 
 **Files:**
+
 - Create: `packages/safari/src/tools/network.ts`
 - Modify: `packages/safari/src/tools/index.ts` (`ToolContext.allowNetwork`, register `registerNetworkTools(server, client, {allowWrites})` when on), `packages/safari/src/server.ts:59-62` (pass `allowNetwork: config.allowNetwork`)
 - Modify: `surfaces.json` (add the gate to Safari), then `make surfaces` to regenerate the copies. Modify `apps/apple/Cupertino/Surfaces.swift` (add `Surface.Gate(id: "allowNetwork", envSuffix: "ALLOW_NETWORK", label: "Read network traffic", description: "Lets Safari tools record what a page you have allowed the extension on fetches, and read the responses. Off by default.")`, with a house-style comment on why it is a read gate and why bodies cannot be redacted) if `make surfaces` does not generate it
@@ -222,6 +233,7 @@
 - Test: `packages/safari/test/tools.test.ts` (registration), `packages/safari/test/network-client.test.ts` (one end-to-end call per tool through the MCP client)
 
 **Interfaces:**
+
 - Tool names, exactly: `apple_safari_network_record`, `apple_safari_network_list`, `apple_safari_network_get`. Argument names and defaults as in Task 5 and the spec. `url` reuses the `urlArg` description pattern from `tools/actions.ts`, and descriptions go through the same `describeReach` wording (copy it or export it from `actions.ts`).
 - `network_list` takes `status` as a string: `"404"` (exact) or `"400-599"` (inclusive range). The tool parses it into `statusMin`/`statusMax`. A malformed value fails validation with an example. Test both forms in Step 1.
 - Annotations: `record` `{readOnlyHint:false, idempotentHint:false, openWorldHint:true}`. `list` `{readOnlyHint:true, openWorldHint:true}`. `get` `{readOnlyHint:false, destructiveHint:false, openWorldHint:true}` (it can save a file).
@@ -240,6 +252,7 @@
 Live on Olivier's Mac. He authorized builds and installs for this project on 2026-10-20. Follow the `use-the-dev-build` and `cut-a-release` skills' guidance on which app the session's tools reach. Quit Safari before installing (`docs/safari.md`, "Replacing the app under a running Safari can crash Safari"): tabs restore on relaunch.
 
 **Files:**
+
 - Modify: `docs/safari.md` (fill in the measurement table), `packages/safari/src/config.ts` (set the `networkChunkChars` default from the measurement)
 
 - [ ] **Step 1: Build.** `make build-release`, then `make verify-extension`. Expected: notarized and stapled, manifest resources all present.
