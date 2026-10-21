@@ -839,7 +839,12 @@
    * (FormData, an oversized request body) is JSON text and pages the same way.
    */
   function netGet(command) {
-    const found = lookup(String(command.id ?? ""));
+    // `requestId` first: on the wire `id` is the COMMAND's id (the server's
+    // `runCommand` stamps one, and the result is filed under it), so a record
+    // id sent as `id` is overwritten before the page ever sees it. `id` stays
+    // as the fallback for a caller that has no such stamp, which is how the
+    // tests drive this directly.
+    const found = lookup(String(command.requestId ?? command.id ?? ""));
     if (!found.entry) return { ok: false, error: found.error };
     const entry = found.entry;
     const request = command.part === "request";

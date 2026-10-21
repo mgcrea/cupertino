@@ -7,7 +7,7 @@ import {
 
 import { BUILD_INFO } from "../build-info.js";
 import type { Config } from "../config.js";
-import { pageOfElement, runCommand, type CommandResult } from "./actions.js";
+import { pageOfElement, runCommand, type Command, type CommandResult } from "./actions.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
@@ -21,6 +21,16 @@ import { LIVE_TABS } from "./jxa/tabs.js";
 import { ADD_READING_LIST_ITEM, OPEN_URL } from "./jxa/writes.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { urlVariants, type MatchKind } from "./match.js";
+import {
+  networkGet,
+  networkList,
+  networkRecord,
+  type GetInput,
+  type GetResult,
+  type ListResult,
+  type RecordInput,
+  type RecordState,
+} from "./network.js";
 import {
   ageSeconds,
   defaultPagesDirectory,
@@ -615,6 +625,45 @@ export class AppleSafariClient {
     } catch (error) {
       throw this.#explainSilence(error, input.url);
     }
+  }
+
+  /**
+   * Send one network command through the same channel and the same silence
+   * diagnosis as `pageAction`. The logic that uses it lives in `network.ts`;
+   * this is only the wiring, to keep this file from carrying it.
+   */
+  #runNet = async (command: Omit<Command, "id" | "expiresAt">): Promise<CommandResult> => {
+    try {
+      return await runCommand(
+        { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
+        command,
+      );
+    } catch (error) {
+      throw this.#explainSilence(error, command.url);
+    }
+  };
+
+  /** Start, stop, clear or report network recording on a page. */
+  networkRecord(input: RecordInput): Promise<RecordState> {
+    return networkRecord(this.#runNet, { allowWrites: this.#config.allowWrites }, input);
+  }
+
+  /** The records a page has buffered, filtered and paged. */
+  networkList(input: Parameters<typeof networkList>[1]): Promise<ListResult> {
+    return networkList(this.#runNet, input);
+  }
+
+  /** One record's headers and body, pulled in chunks; see `networkGet`. */
+  networkGet(input: GetInput): Promise<GetResult> {
+    return networkGet(
+      this.#runNet,
+      {
+        allowWrites: this.#config.allowWrites,
+        downloadDir: this.#config.downloadDir,
+        chunkChars: this.#config.networkChunkChars,
+      },
+      input,
+    );
   }
 
   /**

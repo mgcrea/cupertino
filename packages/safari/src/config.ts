@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import {
   BaseConfigSchema,
   parseBool,
@@ -124,6 +127,34 @@ const ConfigSchema = BaseConfigSchema.extend({
    * in milliseconds — 11 ms for a URL `LIKE` across 7,797 items, 2 ms on title.
    */
   maxRangeDays: z.number().int().min(1).max(36_600).default(3_660),
+  /**
+   * Whether the network-capture tools exist at all.
+   *
+   * Off by default, and off means NOT REGISTERED rather than refused: a page's
+   * request and response bodies carry whatever the site's session carries, so
+   * the opt-in is the user's, made once in Settings, and never something a
+   * caller can talk its way into. Headers are redacted on top of that, but
+   * redaction is a second line, not the first.
+   */
+  allowNetwork: z.boolean().default(false),
+  /**
+   * Where `saveAs` may write. Only ever reached through core's
+   * `writeConfinedFile`, which keeps a name to its basename, resolves symlinks
+   * and refuses to overwrite; this setting is the root of that confinement.
+   * Defaults to ~/Downloads because that is where a person looks for a file
+   * they asked for.
+   */
+  downloadDir: z.string().default(join(homedir(), "Downloads")),
+  /**
+   * Characters of a body the server asks the page for per command.
+   *
+   * THE DEFAULT IS A GUESS. A command's answer travels through Safari's
+   * native-message channel, which has a size limit nobody has measured on this
+   * machine; Task 7 of the network work measures it and this default is to be
+   * revisited then. Too large and a chunk is dropped silently, too small and a
+   * big PDF costs a hundred round trips at a poll interval each.
+   */
+  networkChunkChars: z.number().int().min(16_384).max(8_388_608).default(262_144),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -132,6 +163,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
   parseConfig(ConfigSchema, {
     allowWrites: parseBool(env.APPLE_SAFARI_ALLOW_WRITES),
     allowCodes: parseBool(env.APPLE_SAFARI_ALLOW_CODES),
+    allowNetwork: parseBool(env.APPLE_SAFARI_ALLOW_NETWORK),
+    downloadDir: trimmed(env.APPLE_SAFARI_DOWNLOAD_DIR),
+    networkChunkChars: parseIntOpt(env.APPLE_SAFARI_NETWORK_CHUNK_CHARS),
     exposePrompts: parseBool(env.APPLE_SAFARI_EXPOSE_PROMPTS),
     lazyTools: parseBool(env.APPLE_SAFARI_LAZY_TOOLS),
     storePath: trimmed(env.APPLE_SAFARI_STORE),

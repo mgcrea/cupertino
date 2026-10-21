@@ -769,7 +769,9 @@
           return {
             ok: false,
             error:
-              (command.id ? "Request " + command.id + " was" : "That was") +
+              (command.requestId || command.id
+                ? "Request " + (command.requestId || command.id) + " was"
+                : "That was") +
               " recorded by a page load that has since gone (reloaded, navigated or closed); list again.",
           };
         }
