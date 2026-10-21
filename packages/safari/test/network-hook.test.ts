@@ -1,0 +1,934 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { createContext, runInContext } from "node:vm";
+
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * The MAIN-world network recorder, EXECUTED.
+ *
+ * `network-hook.js` runs in the page's own JavaScript world and replaces
+ * `fetch`, three `XMLHttpRequest` methods and two `console` methods while a tab
+ * is armed. The property that matters most is not that it records — it is that
+ * the page cannot tell it is there: the same Response object, the same thrown
+ * error, a body the page can still read in full, and no exception of the
+ * recorder's ever reaching a site. A test that only checked the records would
+ * pass a hook that breaks every page it touches, so most of these assert the
+ * page's side first.
+ *
+ * Same approach as `content-script.test.ts`: the script is evaluated in a
+ * `node:vm` against hand-rolled stubs, not jsdom. The stubs are only as rich as
+ * the hook's use of them — a `Response` with `clone()` and a body that can be
+ * read once, an `XMLHttpRequest` that completes on the next tick, and an
+ * `EventTarget` standing in for `document` so the CustomEvent protocol to the
+ * isolated world is the real one.
+ */
+
+const SOURCE = readFileSync(
+  fileURLToPath(
+    new URL(
+      "../../../apps/apple/CupertinoSafariExtension/Resources/network-hook.js",
+      import.meta.url,
+    ),
+  ),
+  "utf8",
+);
+
+const FLAG = "__cupertino_net";
+const GUARD = "__cupertinoNetHook";
+const ORIGIN = "https://app.example.com";
+
+type Json = Record<string, unknown>;
+
+interface Body {
+  encoding: string;
+  data: string;
+  bytes: number;
+  truncated?: boolean;
+  totalBytes?: number | null;
+}
+
+interface NetRecord {
+  kind: string;
+  phase: string;
+  ref: number;
+  method: string;
+  url: string;
+  startedAt: number;
+  requestHeaders: Record<string, string>;
+  requestBody: Body | null;
+  status: number | null;
+  statusText: string | null;
+  responseHeaders: Record<string, string> | null;
+  contentType: string | null;
+  durationMs: number | null;
+  error: string | null;
+  body: Body | null;
+  level?: string;
+  message?: string;
+  stack?: string | null;
+}
+
+const bytesOf = (s: string) => new TextEncoder().encode(s);
+
+/**
+ * A `Response` whose body can be read exactly once, like the real one.
+ *
+ * Stream-less on purpose: it has no `body`, so the hook takes its
+ * `arrayBuffer()` path. The stream path is exercised separately with Node's own
+ * `Response`, whose `clone()` is a genuine tee.
+ */
+class FakeResponse {
+  bodyUsed = false;
+  readonly headers: Headers;
+  readonly status: number;
+  readonly statusText: string;
+  constructor(
+    readonly bytes: Uint8Array,
+    readonly init: { status?: number; statusText?: string; headers?: Record<string, string> } = {},
+    readonly stats = { clones: 0 },
+  ) {
+    this.status = init.status ?? 200;
+    this.statusText = init.statusText ?? "OK";
+    this.headers = new Headers(init.headers);
+  }
+  get ok() {
+    return this.status >= 200 && this.status < 300;
+  }
+  clone() {
+    if (this.bodyUsed) throw new TypeError("Body has already been used");
+    this.stats.clones++;
+    return new FakeResponse(this.bytes, this.init, this.stats);
+  }
+  private consume() {
+    if (this.bodyUsed) throw new TypeError("Body has already been used");
+    this.bodyUsed = true;
+    return this.bytes;
+  }
+  async arrayBuffer() {
+    const b = this.consume();
+    return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+  }
+  async text() {
+    return new TextDecoder().decode(this.consume());
+  }
+  async json() {
+    return JSON.parse(await this.text()) as unknown;
+  }
+}
+
+interface XhrReply {
+  status: number;
+  statusText?: string;
+  headers: Record<string, string>;
+  body: Uint8Array;
+}
+
+/**
+ * An `XMLHttpRequest` that completes on the next macrotask with whatever
+ * `FakeXHR.next` says, materialising `response` per `responseType` the way a
+ * browser does — and, like a browser, refusing `responseText` for any type but
+ * text.
+ */
+class FakeXHR extends EventTarget {
+  static next: XhrReply = {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: bytesOf('{"a":1}'),
+  };
+  responseType = "";
+  readyState = 0;
+  status = 0;
+  statusText = "";
+  response: unknown = null;
+  opened: unknown[] = [];
+  sentBody: unknown = undefined;
+  sentHeaders: [string, string][] = [];
+  private text = "";
+  private replyHeaders: Record<string, string> = {};
+  open(...args: unknown[]) {
+    this.opened = args;
+    this.readyState = 1;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.sentHeaders.push([name, value]);
+  }
+  send(body?: unknown) {
+    this.sentBody = body;
+    const reply = FakeXHR.next;
+    setTimeout(() => {
+      this.status = reply.status;
+      this.statusText = reply.statusText ?? "OK";
+      this.replyHeaders = reply.headers;
+      const text = new TextDecoder().decode(reply.body);
+      this.text = text;
+      switch (this.responseType) {
+        case "":
+        case "text":
+          this.response = text;
+          break;
+        case "json":
+          this.response = JSON.parse(text);
+          break;
+        case "arraybuffer":
+          this.response = reply.body.slice().buffer;
+          break;
+        case "blob":
+          this.response = new Blob([reply.body], { type: reply.headers["content-type"] });
+          break;
+      }
+      this.readyState = 4;
+      this.dispatchEvent(new Event("load"));
+      this.dispatchEvent(new Event("loadend"));
+    }, 0);
+  }
+  get responseText() {
+    if (this.responseType !== "" && this.responseType !== "text") {
+      throw new Error("InvalidStateError");
+    }
+    return this.text;
+  }
+  getAllResponseHeaders() {
+    return Object.entries(this.replyHeaders)
+      .map(([k, v]) => `${k}: ${v}\r\n`)
+      .join("");
+  }
+  getResponseHeader(name: string) {
+    return this.replyHeaders[name.toLowerCase()] ?? null;
+  }
+}
+
+const XHR_OPEN = FakeXHR.prototype.open;
+const XHR_SEND = FakeXHR.prototype.send;
+const XHR_SET_HEADER = FakeXHR.prototype.setRequestHeader;
+
+type Responder = (input: unknown, init?: unknown) => Promise<unknown>;
+
+const jsonReply: Responder = async () =>
+  new FakeResponse(bytesOf('{"ok":true}'), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+/**
+ * Evaluate the hook against a fresh stub page.
+ *
+ * `window` is the sandbox itself, so `window.fetch = …` inside the script and a
+ * bare `fetch(…)` both reach the same slot, as they do in a page.
+ */
+const load = (opts: { flag?: Json | string; browser?: boolean; respond?: Responder } = {}) => {
+  const store = new Map<string, string>();
+  if (opts.flag !== undefined) {
+    store.set(FLAG, typeof opts.flag === "string" ? opts.flag : JSON.stringify(opts.flag));
+  }
+  const sessionStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+  };
+
+  const document = new EventTarget();
+  const records: NetRecord[] = [];
+  const ready: { installed: boolean }[] = [];
+  document.addEventListener("cupertino:net-record", (e) =>
+    records.push(JSON.parse((e as CustomEvent<string>).detail) as NetRecord),
+  );
+  document.addEventListener("cupertino:net-ready", (e) =>
+    ready.push(JSON.parse((e as CustomEvent<string>).detail) as { installed: boolean }),
+  );
+
+  const consoleCalls: { level: string; args: unknown[] }[] = [];
+  const fakeConsole = {
+    error: (...args: unknown[]) => void consoleCalls.push({ level: "error", args }),
+    warn: (...args: unknown[]) => void consoleCalls.push({ level: "warn", args }),
+    log: (...args: unknown[]) => void consoleCalls.push({ level: "log", args }),
+  };
+  const originalConsoleError = fakeConsole.error;
+  const originalConsoleWarn = fakeConsole.warn;
+
+  const respond = { fn: opts.respond ?? jsonReply };
+  const fetchCalls: { input: unknown; init: unknown }[] = [];
+  let lastPromise: Promise<unknown> | null = null;
+  const originalFetch = function fetch(input: unknown, init?: unknown) {
+    fetchCalls.push({ input, init });
+    lastPromise = respond.fn(input, init);
+    return lastPromise;
+  };
+
+  // Each load gets its own prototype methods back, since an earlier test's
+  // hook may have left them wrapped.
+  FakeXHR.prototype.open = XHR_OPEN;
+  FakeXHR.prototype.send = XHR_SEND;
+  FakeXHR.prototype.setRequestHeader = XHR_SET_HEADER;
+
+  const windowEvents = new EventTarget();
+  const sandbox: Record<string, unknown> = {
+    fetch: originalFetch,
+    XMLHttpRequest: FakeXHR,
+    console: fakeConsole,
+    sessionStorage,
+    document,
+    location: { href: `${ORIGIN}/page` },
+    CustomEvent,
+    Event,
+    URL,
+    TextEncoder,
+    TextDecoder,
+    btoa,
+    atob,
+    Blob,
+    File,
+    FormData,
+    URLSearchParams,
+    performance,
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
+    dispatchEvent: windowEvents.dispatchEvent.bind(windowEvents),
+  };
+  if (opts.browser) sandbox.browser = { runtime: {} };
+  sandbox.window = sandbox;
+  const context = createContext(sandbox);
+  runInContext(SOURCE, context);
+
+  const send = (name: string, detail?: Json) =>
+    document.dispatchEvent(
+      new CustomEvent(name, { detail: detail === undefined ? undefined : JSON.stringify(detail) }),
+    );
+
+  return {
+    sandbox,
+    context,
+    store,
+    records,
+    ready,
+    consoleCalls,
+    windowEvents,
+    respond,
+    fetchCalls,
+    originalFetch,
+    originalConsoleError,
+    originalConsoleWarn,
+    lastPromise: () => lastPromise,
+    fetch: (input: unknown, init?: unknown) =>
+      (sandbox.fetch as (i: unknown, n?: unknown) => Promise<FakeResponse>)(input, init),
+    install: (detail: Json = {}) =>
+      send("cupertino:net-install", {
+        kinds: ["fetch", "xhr", "console"],
+        captureBodies: true,
+        bodyFilter: null,
+        maxBodyBytes: 10485760,
+        ...detail,
+      }),
+    uninstall: () => send("cupertino:net-uninstall"),
+    ends: () => records.filter((r) => r.phase === "end"),
+    starts: () => records.filter((r) => r.phase === "start"),
+  };
+};
+
+type Page = ReturnType<typeof load>;
+
+const endOf = async (page: Page, count = 1) => {
+  await vi.waitFor(() => expect(page.ends()).toHaveLength(count));
+  return page.ends()[count - 1]!;
+};
+
+const decode64 = (data: string) => new Uint8Array(Buffer.from(data, "base64"));
+
+describe("arming", () => {
+  it("does nothing until installed", () => {
+    const page = load();
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
+    expect(FakeXHR.prototype.send).toBe(XHR_SEND);
+    expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
+    expect(page.ready).toEqual([{ installed: false }]);
+  });
+
+  it("installs at load from an unexpired flag", async () => {
+    const page = load({
+      flag: {
+        expiresAt: Date.now() + 60_000,
+        kinds: ["fetch"],
+        captureBodies: true,
+        bodyFilter: null,
+        maxBodyBytes: 1024,
+      },
+    });
+    expect(page.sandbox.fetch).not.toBe(page.originalFetch);
+    expect(page.ready).toEqual([{ installed: true }]);
+    // Only the armed kinds are wrapped.
+    expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
+    expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
+    await page.fetch("/api");
+    expect((await endOf(page)).status).toBe(200);
+    expect(page.store.has(FLAG)).toBe(true);
+  });
+
+  it("removes an expired flag and stays dormant", () => {
+    const page = load({
+      flag: { expiresAt: Date.now() - 1, kinds: ["fetch"], captureBodies: true },
+    });
+    expect(page.store.has(FLAG)).toBe(false);
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(page.ready).toEqual([{ installed: false }]);
+  });
+
+  it("removes an unreadable flag and stays dormant", () => {
+    const page = load({ flag: "{not json" });
+    expect(page.store.has(FLAG)).toBe(false);
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+  });
+
+  it("a second install only updates the options", async () => {
+    const page = load();
+    page.install({ maxBodyBytes: 1024 });
+    const wrapped = page.sandbox.fetch;
+    page.install({ maxBodyBytes: 4 });
+    expect(page.sandbox.fetch).toBe(wrapped);
+    expect(page.ready).toEqual([{ installed: false }, { installed: true }, { installed: true }]);
+    await page.fetch("/api");
+    const end = await endOf(page);
+    expect(page.starts()).toHaveLength(1);
+    expect(end.body).toMatchObject({ truncated: true, bytes: 4, data: '{"ok' });
+  });
+
+  it("a missing or null maxBodyBytes means the default, not zero", async () => {
+    const page = load();
+    page.install({ maxBodyBytes: null });
+    await page.fetch("/api");
+    expect((await endOf(page)).body).toMatchObject({ data: '{"ok":true}', truncated: false });
+  });
+
+  it("a double injection is a no-op", async () => {
+    const page = load();
+    runInContext(SOURCE, page.context);
+    page.install();
+    await page.fetch("/api");
+    await endOf(page);
+    expect(page.starts()).toHaveLength(1);
+    expect(page.ready).toEqual([{ installed: false }, { installed: true }]);
+  });
+
+  it("isolated-world copy bails", () => {
+    const page = load({ browser: true, flag: { expiresAt: Date.now() + 60_000 } });
+    page.install();
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
+    expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
+    expect(page.ready).toEqual([]);
+    // Bailing means not claiming the guard either: the MAIN-world copy that
+    // Task 4's fallback injects must still be able to run.
+    expect(page.sandbox[GUARD]).toBeUndefined();
+  });
+
+  it("uninstall restores the originals", () => {
+    const page = load();
+    page.install();
+    expect(page.sandbox.fetch).not.toBe(page.originalFetch);
+    expect(FakeXHR.prototype.open).not.toBe(XHR_OPEN);
+    page.uninstall();
+    expect(page.sandbox.fetch).toBe(page.originalFetch);
+    expect(FakeXHR.prototype.open).toBe(XHR_OPEN);
+    expect(FakeXHR.prototype.send).toBe(XHR_SEND);
+    expect(FakeXHR.prototype.setRequestHeader).toBe(XHR_SET_HEADER);
+    expect((page.sandbox.console as { error: unknown }).error).toBe(page.originalConsoleError);
+    expect((page.sandbox.console as { warn: unknown }).warn).toBe(page.originalConsoleWarn);
+    expect(page.ready.at(-1)).toEqual({ installed: false });
+  });
+
+  it("uninstall leaves a page's later wrapper in place and goes quiet", async () => {
+    const page = load();
+    page.install();
+    const ours = page.sandbox.fetch as (...a: unknown[]) => Promise<unknown>;
+    let pageSaw = 0;
+    // A library (an error tracker, say) wraps fetch after the hook did.
+    page.sandbox.fetch = function (...args: unknown[]) {
+      pageSaw++;
+      return ours(...args);
+    };
+    const theirs = page.sandbox.fetch;
+    page.uninstall();
+    expect(page.sandbox.fetch).toBe(theirs);
+    await page.fetch("/api");
+    expect(pageSaw).toBe(1);
+    expect(page.records).toHaveLength(0);
+  });
+});
+
+describe("fetch", () => {
+  it("fetch transparency", async () => {
+    const response = new FakeResponse(bytesOf('{"items":[1,2,3]}'), {
+      headers: { "content-type": "application/json" },
+    });
+    const page = load({ respond: async () => response });
+    page.install();
+    const promise = page.fetch("/api/items");
+    // The very promise the original returned: nothing chained in front of the
+    // page's own `.then`.
+    expect(promise).toBe(page.lastPromise());
+    const res = await promise;
+    expect(res).toBe(response);
+    await endOf(page);
+    expect(await res.json()).toEqual({ items: [1, 2, 3] });
+  });
+
+  it("a rejected fetch rejects with the same error and records it", async () => {
+    const failure = new TypeError("Load failed");
+    const page = load({ respond: () => Promise.reject(failure) });
+    page.install();
+    await expect(page.fetch("/api")).rejects.toBe(failure);
+    const end = await endOf(page);
+    expect(end.error).toBe("TypeError: Load failed");
+    expect(end.status).toBeNull();
+    expect(end.body).toBeNull();
+  });
+
+  it("fetch records request and response", async () => {
+    const page = load({
+      respond: async () =>
+        new FakeResponse(bytesOf('{"ok":true}'), {
+          status: 201,
+          statusText: "Created",
+          headers: { "content-type": "application/json; charset=utf-8", "x-request-id": "r1" },
+        }),
+    });
+    page.install();
+    await page.fetch("/api/items?x=1", {
+      method: "post",
+      body: '{"q":1}',
+      headers: { "Content-Type": "application/json", "X-Trace": "abc" },
+    });
+    const end = await endOf(page);
+    const [start] = page.starts();
+    expect(start).toMatchObject({
+      kind: "fetch",
+      phase: "start",
+      method: "POST",
+      url: `${ORIGIN}/api/items?x=1`,
+      requestHeaders: { "content-type": "application/json", "x-trace": "abc" },
+      requestBody: { encoding: "text", data: '{"q":1}', bytes: 7 },
+      status: null,
+      body: null,
+    });
+    expect(typeof start!.startedAt).toBe("number");
+    expect(end).toMatchObject({
+      kind: "fetch",
+      phase: "end",
+      ref: start!.ref,
+      method: "POST",
+      url: `${ORIGIN}/api/items?x=1`,
+      startedAt: start!.startedAt,
+      status: 201,
+      statusText: "Created",
+      contentType: "application/json; charset=utf-8",
+      responseHeaders: { "content-type": "application/json; charset=utf-8", "x-request-id": "r1" },
+      error: null,
+      body: {
+        encoding: "text",
+        data: '{"ok":true}',
+        bytes: 11,
+        truncated: false,
+        totalBytes: 11,
+      },
+    });
+    expect(end.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("refs are distinct per request", async () => {
+    const page = load();
+    page.install();
+    await Promise.all([page.fetch("/a"), page.fetch("/b")]);
+    await endOf(page, 2);
+    const refs = page.starts().map((r) => r.ref);
+    expect(new Set(refs).size).toBe(2);
+  });
+
+  it("takes method, url and headers from a Request-like input", async () => {
+    const page = load();
+    page.install();
+    await page.fetch(new Request(`${ORIGIN}/r`, { method: "PUT", headers: { "X-A": "1" } }));
+    const [start] = page.starts();
+    expect(start).toMatchObject({
+      method: "PUT",
+      url: `${ORIGIN}/r`,
+      requestHeaders: { "x-a": "1" },
+    });
+  });
+
+  it("binary body is base64", async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff, 0x00, 0x80]);
+    const page = load({
+      respond: async () =>
+        new FakeResponse(pdf, { headers: { "content-type": "application/pdf" } }),
+    });
+    page.install();
+    await page.fetch("/doc.pdf");
+    const end = await endOf(page);
+    expect(end.body).toMatchObject({ encoding: "base64", bytes: 8, truncated: false });
+    expect(decode64(end.body!.data)).toEqual(pdf);
+  });
+
+  it("body cap without Content-Length", async () => {
+    const page = load({
+      respond: async () =>
+        new FakeResponse(bytesOf("hello world!"), { headers: { "content-type": "text/plain" } }),
+    });
+    page.install({ maxBodyBytes: 8 });
+    const res = await page.fetch("/big");
+    const end = await endOf(page);
+    expect(end.body).toMatchObject({
+      encoding: "text",
+      data: "hello wo",
+      bytes: 8,
+      truncated: true,
+    });
+    expect(await res.text()).toBe("hello world!");
+  });
+
+  it("body cap through a real stream tee", async () => {
+    let response: Response | null = null;
+    const page = load({
+      respond: async () => {
+        response = new Response("hello world!", { headers: { "content-type": "text/plain" } });
+        return response;
+      },
+    });
+    page.install({ maxBodyBytes: 8 });
+    const res = (await page.fetch("/big")) as unknown as Response;
+    expect(res).toBe(response);
+    const end = await endOf(page);
+    expect(end.body).toMatchObject({
+      encoding: "text",
+      data: "hello wo",
+      bytes: 8,
+      truncated: true,
+    });
+    expect(await res.text()).toBe("hello world!");
+  });
+
+  it("Content-Length over cap skips the clone", async () => {
+    const stats = { clones: 0 };
+    const page = load({
+      respond: async () =>
+        new FakeResponse(
+          bytesOf("0123456789abcdefghij"),
+          { headers: { "content-type": "text/plain", "content-length": "20" } },
+          stats,
+        ),
+    });
+    page.install({ maxBodyBytes: 8 });
+    const res = await page.fetch("/big");
+    const end = await endOf(page);
+    expect(stats.clones).toBe(0);
+    expect(end.body).toMatchObject({ truncated: true, totalBytes: 20, bytes: 0 });
+    expect(await res.text()).toBe("0123456789abcdefghij");
+  });
+
+  it("bodyFilter", async () => {
+    const page = load();
+    page.install({ bodyFilter: "/api/" });
+    await page.fetch("/static/app.json", { method: "POST", body: "x=1" });
+    await page.fetch("/api/items");
+    const [skipped, kept] = [await endOf(page, 1), await endOf(page, 2)];
+    expect(skipped).toMatchObject({ status: 200, contentType: "application/json", body: null });
+    expect(skipped.requestBody).toBeNull();
+    expect(skipped.responseHeaders).toEqual({ "content-type": "application/json" });
+    expect(kept.body).toMatchObject({ encoding: "text", data: '{"ok":true}' });
+  });
+
+  it("captureBodies false keeps metadata only", async () => {
+    const page = load();
+    page.install({ captureBodies: false });
+    await page.fetch("/api", { method: "POST", body: "x=1" });
+    const end = await endOf(page);
+    expect(end).toMatchObject({ status: 200, body: null, requestBody: null });
+  });
+
+  it("request bodies", async () => {
+    const page = load();
+    page.install({ maxBodyBytes: 16 });
+    const form = new FormData();
+    form.append("title", "Lease");
+    form.append("doc", new File([new Uint8Array([1, 2, 3])], "a.pdf", { type: "application/pdf" }));
+    await page.fetch("/a", { method: "POST", body: new URLSearchParams({ a: "1", b: "2" }) });
+    await page.fetch("/b", { method: "POST", body: form });
+    await page.fetch("/c", { method: "POST", body: new Uint8Array([0, 1, 255]) });
+    await page.fetch("/d", { method: "POST", body: new Uint8Array([0, 1, 255]).buffer });
+    await page.fetch("/e", { method: "POST", body: new Blob([new Uint8Array([7, 8])]) });
+    await page.fetch("/f", { method: "POST", body: new Uint8Array(32) });
+    await page.fetch("/g", { method: "POST", body: "x".repeat(17) });
+    await endOf(page, 7);
+    const byUrl = (path: string) => page.ends().find((r) => r.url === `${ORIGIN}${path}`)!;
+
+    expect(byUrl("/a").requestBody).toEqual({ encoding: "text", data: "a=1&b=2", bytes: 7 });
+    expect(byUrl("/b").requestBody!.encoding).toBe("summary");
+    expect(JSON.parse(byUrl("/b").requestBody!.data)).toEqual([
+      { name: "title" },
+      { name: "doc", file: { name: "a.pdf", size: 3, type: "application/pdf" } },
+    ]);
+    for (const path of ["/c", "/d"]) {
+      expect(byUrl(path).requestBody).toMatchObject({ encoding: "base64", bytes: 3 });
+      expect(decode64(byUrl(path).requestBody!.data)).toEqual(new Uint8Array([0, 1, 255]));
+    }
+    expect(byUrl("/e").requestBody).toMatchObject({ encoding: "base64", bytes: 2 });
+    expect(decode64(byUrl("/e").requestBody!.data)).toEqual(new Uint8Array([7, 8]));
+    expect(byUrl("/f").requestBody).toMatchObject({ encoding: "summary", bytes: 32 });
+    expect(byUrl("/g").requestBody).toMatchObject({ encoding: "summary", bytes: 17 });
+  });
+
+  it("an exception inside the recorder never reaches the page", async () => {
+    const page = load();
+    page.install();
+    runInContext(
+      `(() => {
+        const real = JSON.stringify;
+        let once = true;
+        JSON.stringify = function () {
+          if (once) { once = false; throw new Error("recorder blew up"); }
+          return real.apply(this, arguments);
+        };
+      })()`,
+      page.context,
+    );
+    const res = await page.fetch("/api");
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  /**
+   * The end record is sent from inside promise callbacks, where a throw does
+   * not reach the page synchronously — it becomes an unhandled rejection, which
+   * a browser reports to the page's own `unhandledrejection` listeners. Vitest
+   * fails the run on one, so this pins the asynchronous path as well.
+   */
+  it("a recorder that throws on the end record leaks no rejection either", async () => {
+    const page = load();
+    page.install();
+    runInContext(
+      `(() => {
+        const real = JSON.stringify;
+        JSON.stringify = function (value) {
+          if (value && value.phase === "end") throw new Error("recorder blew up");
+          return real.apply(this, arguments);
+        };
+      })()`,
+      page.context,
+    );
+    const leaked: unknown[] = [];
+    const onLeak = (reason: unknown) => void leaked.push(reason);
+    process.on("unhandledRejection", onLeak);
+    try {
+      // Both asynchronous routes to the end record: a response body read, and
+      // a Blob request body read.
+      const res = await page.fetch("/api", { method: "POST", body: new Blob(["x"]) });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(await res.json()).toEqual({ ok: true });
+      expect(page.starts()).toHaveLength(1);
+      expect(page.ends()).toHaveLength(0);
+      expect(leaked).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onLeak);
+    }
+  });
+
+  it("a recorder that cannot clone still hands the page its response", async () => {
+    const response = new FakeResponse(bytesOf("{}"), {
+      headers: { "content-type": "application/json" },
+    });
+    response.clone = () => {
+      throw new Error("no clone for you");
+    };
+    const page = load({ respond: async () => response });
+    page.install();
+    expect(await page.fetch("/api")).toBe(response);
+    const end = await endOf(page);
+    expect(end).toMatchObject({ status: 200, body: null });
+  });
+});
+
+describe("xhr", () => {
+  const cases: [string, string, Uint8Array, string, (r: unknown) => void][] = [
+    [
+      "arraybuffer",
+      "application/octet-stream",
+      new Uint8Array([1, 2, 3, 250]),
+      "base64",
+      (r) => expect(new Uint8Array(r as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3, 250])),
+    ],
+    [
+      "blob",
+      "image/png",
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      "base64",
+      (r) => expect((r as Blob).size).toBe(4),
+    ],
+    ["json", "application/json", bytesOf('{"a":1}'), "text", (r) => expect(r).toEqual({ a: 1 })],
+    ["text", "text/plain", bytesOf("plain words"), "text", (r) => expect(r).toBe("plain words")],
+  ];
+
+  it.each(cases)(
+    "xhr responseType %s",
+    async (responseType, contentType, payload, encoding, check) => {
+      const page = load();
+      page.install();
+      FakeXHR.next = { status: 200, headers: { "content-type": contentType }, body: payload };
+      const XHR = page.sandbox.XMLHttpRequest as typeof FakeXHR;
+      const xhr = new XHR();
+      xhr.responseType = responseType;
+      let seenByPage: unknown;
+      xhr.addEventListener("loadend", () => (seenByPage = xhr.response));
+      xhr.open("post", "/x", true);
+      xhr.setRequestHeader("X-Trace", "t1");
+      xhr.send("payload");
+      const end = await endOf(page);
+
+      // The page's view first: arguments passed through, and the very response
+      // object the browser made.
+      expect(xhr.opened).toEqual(["post", "/x", true]);
+      expect(xhr.sentBody).toBe("payload");
+      expect(xhr.sentHeaders).toEqual([["X-Trace", "t1"]]);
+      expect(xhr.response).toBe(seenByPage);
+      check(xhr.response);
+
+      const [start] = page.starts();
+      expect(start).toMatchObject({
+        kind: "xhr",
+        method: "POST",
+        url: `${ORIGIN}/x`,
+        requestHeaders: { "x-trace": "t1" },
+        requestBody: { encoding: "text", data: "payload", bytes: 7 },
+      });
+      expect(end).toMatchObject({
+        kind: "xhr",
+        ref: start!.ref,
+        status: 200,
+        contentType,
+        responseHeaders: { "content-type": contentType },
+        error: null,
+        body: { encoding, bytes: payload.length, truncated: false },
+      });
+      if (encoding === "base64") expect(decode64(end.body!.data)).toEqual(payload);
+      else expect(end.body!.data).toBe(new TextDecoder().decode(payload));
+    },
+  );
+
+  it("open passes its exact arguments through", () => {
+    const page = load();
+    page.install();
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    // Two arguments, not three: an explicit `undefined` async flag would turn
+    // a real XHR synchronous.
+    xhr.open("GET", "/two");
+    expect(xhr.opened).toEqual(["GET", "/two"]);
+  });
+
+  it("caps an xhr body", async () => {
+    const page = load();
+    page.install({ maxBodyBytes: 3 });
+    FakeXHR.next = {
+      status: 200,
+      headers: { "content-type": "application/octet-stream" },
+      body: new Uint8Array([1, 2, 3, 4, 5]),
+    };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.responseType = "arraybuffer";
+    xhr.open("GET", "/bin");
+    xhr.send();
+    const end = await endOf(page);
+    expect(end.body).toMatchObject({ bytes: 3, truncated: true, totalBytes: 5 });
+    expect(decode64(end.body!.data)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(new Uint8Array(xhr.response as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+  });
+
+  it("reopening an in-flight request closes its record as aborted", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("2nd") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/first");
+    xhr.send();
+    // `open` on a request in flight aborts it, without a `loadend` of its own.
+    xhr.open("GET", "/second");
+    xhr.send();
+    await endOf(page, 2);
+    const [first, second] = page.ends();
+    expect(first).toMatchObject({ url: `${ORIGIN}/first`, error: "Aborted", body: null });
+    expect(second).toMatchObject({ url: `${ORIGIN}/second`, error: null, body: { data: "2nd" } });
+    expect(first!.ref).not.toBe(second!.ref);
+  });
+
+  it("a request opened before install is not recorded", async () => {
+    const page = load();
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/early");
+    page.install();
+    xhr.send();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(page.records).toHaveLength(0);
+  });
+});
+
+describe("console", () => {
+  it("console.error emits a record and still calls the original with the same arguments", () => {
+    const page = load();
+    page.install();
+    const detail = { a: 1 };
+    const failure = new Error("kaput");
+    const con = page.sandbox.console as Record<"error" | "warn", (...a: unknown[]) => void>;
+    con.error("bad thing", detail, failure);
+    con.warn("careful");
+    expect(page.consoleCalls).toHaveLength(2);
+    expect(page.consoleCalls[0]!.args[1]).toBe(detail);
+    expect(page.consoleCalls[0]!.args[2]).toBe(failure);
+    expect(page.consoleCalls[1]).toEqual({ level: "warn", args: ["careful"] });
+    expect(page.records).toHaveLength(2);
+    expect(page.records[0]).toMatchObject({
+      kind: "console",
+      level: "error",
+      message: 'bad thing {"a":1} Error: kaput',
+    });
+    expect(page.records[0]!.stack).toContain("kaput");
+    expect(typeof page.records[0]!.startedAt).toBe("number");
+    expect(page.records[1]).toMatchObject({ kind: "console", level: "warn", message: "careful" });
+  });
+
+  it("records error and unhandledrejection events", () => {
+    const page = load();
+    page.install();
+    const failure = new Error("uncaught");
+    page.windowEvents.dispatchEvent(
+      Object.assign(new Event("error"), { message: "Uncaught Error: uncaught", error: failure }),
+    );
+    page.windowEvents.dispatchEvent(
+      Object.assign(new Event("unhandledrejection"), { reason: new Error("nobody caught me") }),
+    );
+    expect(page.records).toHaveLength(2);
+    expect(page.records[0]).toMatchObject({
+      kind: "console",
+      level: "error",
+      message: "Uncaught Error: uncaught",
+    });
+    expect(page.records[0]!.stack).toContain("uncaught");
+    expect(page.records[1]).toMatchObject({ kind: "console", level: "error" });
+    expect(page.records[1]!.message).toContain("nobody caught me");
+  });
+
+  it("stops listening for page errors after uninstall", () => {
+    const page = load();
+    page.install();
+    page.uninstall();
+    page.windowEvents.dispatchEvent(Object.assign(new Event("error"), { message: "late" }));
+    expect(page.records).toHaveLength(0);
+  });
+
+  it("a page listener that logs while a record is in flight does not loop", () => {
+    const page = load();
+    page.install();
+    const con = page.sandbox.console as Record<"error", (...a: unknown[]) => void>;
+    (page.sandbox.document as EventTarget).addEventListener("cupertino:net-record", () =>
+      con.error("echo"),
+    );
+    con.error("first");
+    expect(page.records).toHaveLength(1);
+    expect(page.consoleCalls.map((c) => c.args[0])).toEqual(["first", "echo"]);
+  });
+});
