@@ -286,3 +286,51 @@ CHANGELOG.
 File and function names beyond those given, buffer default numbers within reason, the exact
 redaction pattern list, how resource-timing entries are matched against hooked ones, and the order
 the work lands in.
+
+## As built (2026-10-21)
+
+Recorded after the build and its measurements, so the sections above can stay as they were
+designed. Where they disagree with this, this is what ships; `docs/safari.md`, "Network capture",
+carries the measurements behind it.
+
+- **Injection.** Safari 26 ignores `"world": "MAIN"`, both on a manifest `content_scripts` entry
+  and in `scripting.registerContentScripts`: on the notarized build of 385bb73 both copies ran in
+  the isolated world, with a native `fetch` in the page. So the hook is not a MAIN-world content
+  script. It still loads from the manifest, but as the source provider: in the isolated world it
+  wraps nothing and leaves its recorder as a string, and `network.js` injects that into the page as
+  a `<script>` element on armed tabs only (at load under a valid flag, or on `start`). Inline
+  first, which was measured to work; when that does not answer, a `src` fallback that loads the
+  same file through `web_accessible_resources`, which is unmeasured, because no page with a strict
+  CSP was tried. There is no `scripting` permission. The two scripts are one `content_scripts`
+  entry, `"js": ["network-hook.js", "network.js"]` at `document_start`, because one entry is the
+  only form whose order is promised. The injection waits for `<html>` when `document_start` comes
+  before it, and `network.js`, not the hook, deletes an expired or unreadable flag at load, since
+  the hook is no longer in the page to see one.
+- **Event names are fixed**, `cupertino:net-*` (`record`, `ready`, `ping`, `install`,
+  `uninstall`), not minted per load. The page world cannot learn a name minted in the isolated
+  world without a fixed channel to carry it, and the spoofing analysis above already accepts that
+  the page can see and forge these events; the isolated side's own armed state is what stops a
+  forged record being kept.
+- **The record id travels as `requestId`** in a `netGet` command, not `id`: `id` is already the
+  command's own id in the command channel.
+- **XHR responses are snapshotted at `load`**, with status, headers and body taken at
+  `readystatechange`/`load` and the record finalised at `loadend`. A production Angular 18 app
+  (`HttpClient` with zone.js) reset each request between `load` and `loadend`, so reading at
+  `loadend` alone recorded every request as `status: 0`, "Network error", while the page rendered
+  all its data. XHR entries carry a `trace` of their events for that reason.
+- **The chunk default is 262,144 characters, and it was measured to work**: a 1.3 MB emoji-heavy
+  body came back byte-identical in five chunks, about 1.1 s each. The ceiling is unmeasured, because
+  the server the extension talks to is the one the app spawns and its environment cannot be changed
+  from a shell. It is configurable as `APPLE_SAFARI_NETWORK_CHUNK_CHARS` (characters, not the
+  `networkChunkBytes` named above).
+
+Earlier sentences this supersedes, left in place above:
+
+- Extension, first bullet: "`network-hook.js`, a new MAIN-world content script". It is an
+  isolated-world source provider, and the recorder reaches the page as an injected `<script>`.
+- Extension, the hook's last sub-bullet: "under an event name minted per page load". The names are
+  the fixed `cupertino:net-*`.
+- Extension, "`network.js` must run from `document_start`": "That means its own `content_scripts`
+  entry". It shares one entry with `network-hook.js`, listed second.
+- Measure first, item 1's fallback chain: `registerContentScripts` was built, measured as ignored,
+  and removed; the script-tag route is what ships, inline first.
