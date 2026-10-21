@@ -134,8 +134,13 @@
    * Insertion order, no repeats.
    */
   const hookWorlds = [];
-  /** The background's `netDiag` answer, once it arrives; null until then and on any failure. */
-  let backgroundDiag = null;
+  /**
+   * The background's `netDiag` answer as `status` reports it. Three states so
+   * "no answer yet", "no answer ever" and "an answer" cannot be confused:
+   * `pending` until the reply lands, `failed` (with why) if the message
+   * rejected, answered nonsense or could not be sent, `ok` with the answer.
+   */
+  let backgroundDiag = { state: "pending" };
 
   /** Oldest first, which is also seq order. */
   const entries = [];
@@ -675,8 +680,23 @@
     return { error: "no request " + id + " on this page." };
   }
 
+  /**
+   * Ask every hook copy that is present to say so. A copy that loaded after
+   * this file (the registered one has no promised order) never heard the
+   * load-time ping, so `status` asks again each time; the listeners are
+   * synchronous, so everything present has answered before `hook` is built.
+   */
+  function pingHooks() {
+    try {
+      document.dispatchEvent(new CustomEvent(EVENT_PING));
+    } catch {
+      // No hook to ask is the same as a hook that did not answer.
+    }
+  }
+
   function state() {
     armed();
+    pingHooks();
     let bodies = 0;
     let bytes = 0;
     for (const e of entries) {
@@ -942,18 +962,15 @@
   // never ran, ran in the wrong world, or simply spoke first. Asking now makes
   // every copy that is already there answer, and says which world it is in:
   // possibly both, since the manifest entry and the registered one can both
-  // load. A copy that loads after this is silent here and is heard by its own
-  // `net-ready` when it arms.
-  try {
-    document.dispatchEvent(new CustomEvent(EVENT_PING));
-  } catch {
-    // No hook to ask is the same as a hook that did not answer.
-  }
+  // load. A copy that loads after this is caught by the ping `state()` repeats.
+  pingHooks();
 
   // And ask the background whether its registration of the hook happened,
   // since that is the other half of "why is the hook not installed". Async and
-  // caught: a worker that is not there, or answers nonsense, leaves
-  // `background` null rather than failing a status.
+  // caught, and the three outcomes are kept apart (see `backgroundDiag`).
+  function diagFailed(error) {
+    backgroundDiag = { state: "failed", error: String((error && error.message) || error) };
+  }
   try {
     if (typeof browser !== "undefined" && browser.runtime && browser.runtime.sendMessage) {
       Promise.resolve(browser.runtime.sendMessage({ kind: "netDiag" }))
@@ -965,16 +982,21 @@
             typeof answer.scriptingAvailable === "boolean"
           ) {
             backgroundDiag = {
+              state: "ok",
               registered: answer.registered.filter((id) => typeof id === "string"),
               error: typeof answer.error === "string" ? answer.error : null,
               scriptingAvailable: answer.scriptingAvailable,
             };
+          } else {
+            diagFailed("the background answered something that is not a diagnostic");
           }
         })
-        .catch(() => {});
+        .catch(diagFailed);
+    } else {
+      diagFailed("no extension messaging in this world");
     }
-  } catch {
-    // Same: no answer is `null`.
+  } catch (error) {
+    diagFailed(error);
   }
 
   // ── At load: the arm flag ──────────────────────────────────────────────────

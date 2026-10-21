@@ -103,15 +103,50 @@ browser.runtime.onStartup.addListener(ensureHookRegistered);
 // is there, and why not if it failed. It answers here rather than going to
 // native because only this worker can see the scripting API, and it awaits the
 // registration so the answer reflects the attempt rather than racing it.
+const DIAG_TIMEOUT_MS = 3000;
+const TIMED_OUT = Symbol("timed out");
+
+/** Resolves with `TIMED_OUT` if `promise` has not settled in `ms`; never rejects. */
+function bounded(promise, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      },
+    );
+  });
+}
+
+// Both waits are bounded because a diagnostic that hangs is the one thing it
+// must not do: a `registerContentScripts` that never settles would otherwise
+// leave `network.js` showing "pending" for ever, indistinguishable from a
+// worker that is slow. On a timeout the answer says so by name and still
+// carries whatever the listing could report.
 async function networkDiagnostics() {
-  await ensureHookRegistered();
+  const settled = await bounded(ensureHookRegistered(), DIAG_TIMEOUT_MS);
+  let error = registrationError;
+  if (settled === TIMED_OUT) {
+    error = error ?? "registerContentScripts did not settle within 3s";
+  }
   const scriptingAvailable = typeof browser.scripting?.getRegisteredContentScripts === "function";
   let registered = [];
-  let error = registrationError;
   if (scriptingAvailable) {
     try {
-      const scripts = await browser.scripting.getRegisteredContentScripts();
-      registered = scripts.map((script) => script.id);
+      const scripts = await bounded(
+        Promise.resolve(browser.scripting.getRegisteredContentScripts()),
+        DIAG_TIMEOUT_MS,
+      );
+      if (scripts === TIMED_OUT) {
+        error = error ?? "getRegisteredContentScripts did not settle within 3s";
+      } else if (Array.isArray(scripts)) {
+        registered = scripts.map((script) => script.id);
+      }
     } catch (listError) {
       error = error ?? String(listError?.message ?? listError);
     }

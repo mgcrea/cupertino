@@ -106,9 +106,10 @@ export const registerNetworkTools = (
           .describe(
             '"start" arms the tab (and replaces the options of an armed one), "stop" disarms ' +
               'it and keeps what was recorded, "clear" drops the records, "status" reports ' +
-              "the state, record counts and expiry without changing anything. Its `hook.worlds` lists " +
-              'where the page hook answered ("main" is the one that records; "isolated" alone ' +
-              "means it landed in the wrong world; empty means it never ran), and " +
+              "the state, record counts and expiry without changing anything. " +
+              'Its `hook.worlds` lists the hook copies that answered a ping just now ("main" is the one ' +
+              'that records; "isolated" alone means it landed in the wrong world; empty means no ' +
+              "copy is present in this page load), and " +
               "`hook.background` says whether the extension registered it.",
           ),
         kinds: z

@@ -80,7 +80,15 @@ interface State {
   hook: {
     installed: boolean;
     worlds: string[];
-    background: { registered: string[]; error: string | null; scriptingAvailable: boolean } | null;
+    background:
+      | { state: "pending" }
+      | { state: "failed"; error: string }
+      | {
+          state: "ok";
+          registered: string[];
+          error: string | null;
+          scriptingAvailable: boolean;
+        };
   };
   resourceStatusSupported: boolean;
 }
@@ -294,6 +302,7 @@ const tab = (
   return {
     run,
     messages,
+    document,
     window,
     store,
     clock,
@@ -472,9 +481,6 @@ describe("arming", () => {
       ],
     });
     expect(t.status().data.hook).toMatchObject({ installed: true, worlds: ["isolated", "main"] });
-    // The hook's later word still rules once it speaks.
-    t.emit("cupertino:net-ready", { installed: false });
-    expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["isolated", "main"] });
   });
 
   it("an isolated-only answer is not an installed hook", () => {
@@ -483,7 +489,26 @@ describe("arming", () => {
   });
 
   it("reports worlds: [] and no background when nothing answered", () => {
-    expect(tab().status().data.hook).toEqual({ installed: false, worlds: [], background: null });
+    expect(tab().status().data.hook).toMatchObject({ installed: false, worlds: [] });
+  });
+
+  it("hears a hook copy that loaded after network.js, on a later status", () => {
+    const t = tab();
+    expect(t.status().data.hook.worlds).toEqual([]);
+    // A scripting-registered copy arriving late: it listens for pings now.
+    t.document.addEventListener("cupertino:net-ping", () =>
+      t.emit("cupertino:net-ready", { installed: false, world: "main" }),
+    );
+    expect(t.status().data.hook).toMatchObject({ installed: false, worlds: ["main"] });
+  });
+
+  it("background is pending until the answer arrives", async () => {
+    let release!: (v: unknown) => void;
+    const t = tab({ netDiag: () => new Promise((resolve) => (release = resolve)) });
+    expect(t.status().data.hook.background).toEqual({ state: "pending" });
+    release({ registered: [], error: null, scriptingAvailable: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.status().data.hook.background).toMatchObject({ state: "ok" });
   });
 
   it("carries the background's netDiag answer", async () => {
@@ -491,15 +516,16 @@ describe("arming", () => {
     const t = tab({ netDiag: diag });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(t.messages).toEqual([{ kind: "netDiag" }]);
-    expect(t.status().data.hook.background).toEqual(diag);
+    expect(t.status().data.hook.background).toEqual({ state: "ok", ...diag });
   });
 
-  it("a netDiag that rejects or answers nonsense leaves background null", async () => {
+  it("a netDiag that rejects or answers nonsense is failed, with a reason", async () => {
     const rejected = tab({ netDiag: () => Promise.reject(new Error("no worker")) });
     const nonsense = tab({ netDiag: "hello" });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(rejected.status().data.hook.background).toBeNull();
-    expect(nonsense.status().data.hook.background).toBeNull();
+    expect(rejected.status().data.hook.background).toEqual({ state: "failed", error: "no worker" });
+    expect(nonsense.status().data.hook.background).toMatchObject({ state: "failed" });
+    expect(tab().status().data.hook.background).toMatchObject({ state: "failed" });
   });
 
   it("refuses an unknown op", () => {

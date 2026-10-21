@@ -28,7 +28,7 @@ const SOURCE = readFileSync(
 
 function load(
   register: (scripts: unknown[]) => Promise<void>,
-  opts: { registered?: string[]; scripting?: boolean } = {},
+  opts: { registered?: string[]; scripting?: boolean; hangList?: boolean } = {},
 ) {
   const registerContentScripts = vi.fn(register);
   const sendNativeMessage = vi.fn(async (..._args: unknown[]) => "native-reply" as unknown);
@@ -56,10 +56,14 @@ function load(
           ? undefined
           : {
               registerContentScripts,
-              getRegisteredContentScripts: async () =>
-                (opts.registered ?? []).map((id) => ({ id })),
+              getRegisteredContentScripts: () =>
+                opts.hangList
+                  ? new Promise<never>(() => {})
+                  : Promise.resolve((opts.registered ?? []).map((id) => ({ id }))),
             },
     },
+    setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
+    clearTimeout: (id: never) => globalThis.clearTimeout(id),
     console: { error: (...args: unknown[]) => errors.push(args) },
   });
   runInContext(SOURCE, context);
@@ -180,6 +184,38 @@ describe("netDiag", () => {
     expect(out.scriptingAvailable).toBe(false);
     expect(out.registered).toEqual([]);
     expect(out.error).toEqual(expect.any(String));
+  });
+
+  it("bounds the wait on a registration that never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { send } = load(() => new Promise(() => {}), { registered: ["cupertino-net-hook"] });
+      const pending = send({ kind: "netDiag" });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await pending).toEqual({
+        registered: ["cupertino-net-hook"],
+        error: "registerContentScripts did not settle within 3s",
+        scriptingAvailable: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds the listing too", async () => {
+    vi.useFakeTimers();
+    try {
+      const { send } = load(async () => {}, { hangList: true });
+      const pending = send({ kind: "netDiag" });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await pending).toEqual({
+        registered: [],
+        error: "getRegisteredContentScripts did not settle within 3s",
+        scriptingAvailable: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is never forwarded to native", async () => {
