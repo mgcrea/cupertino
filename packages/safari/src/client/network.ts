@@ -211,6 +211,12 @@ export type RecordState = {
      * nothing was attempted (never armed, or a page copy already answered).
      */
     injection?: "inline" | "src" | "blocked" | "unavailable" | null;
+    /**
+     * Why `injection` is not simply "inline": `"inline threw: <name: message>"`,
+     * `"inline appended, no main answer"`, `"fallback threw: <message>"` (after
+     * the inline reason, joined with "; "), or `"no source"`. Null otherwise.
+     */
+    injectionDetail?: string | null;
   };
   resourceStatusSupported?: boolean;
 };

@@ -144,6 +144,26 @@
    * armed or a `main` copy was already there.
    */
   let injection = null;
+  /**
+   * WHY `injection` is what it is, when it is not simply "inline": one of
+   * `"inline threw: <name: message>"`, `"inline appended, no main answer"`
+   * (a CSP, most likely), `"fallback threw: <message>"` (joined to the inline
+   * reason with "; ") or `"no source"`. Without it `src` and `unavailable`
+   * each covered several causes, and a live run could not say which.
+   */
+  let injectionDetail = null;
+
+  /** How an error reads in a diagnostic: `TypeError: message`. Never throws. */
+  function describeError(error) {
+    try {
+      if (error && typeof error === "object" && "message" in error) {
+        return (error.name ? error.name + ": " : "") + String(error.message);
+      }
+      return String(error);
+    } catch {
+      return "unknown error";
+    }
+  }
 
   /** Oldest first, which is also seq order. */
   const entries = [];
@@ -380,8 +400,19 @@
       durationMs: number(raw.durationMs),
       error: text(raw.error),
       body: bodyOf(raw.body),
+      trace: traceOf(raw.trace),
       ended: raw.phase === "end",
     };
+  }
+
+  /**
+   * The hook's event trace on an XHR record (see `XHR_TRACE_MAX` there):
+   * strings only, eight at most, null when absent. A diagnostic for the next
+   * live run, so it is passed through as it came rather than interpreted.
+   */
+  function traceOf(raw) {
+    if (!Array.isArray(raw)) return null;
+    return raw.filter((t) => typeof t === "string").slice(0, 8);
   }
 
   /**
@@ -625,6 +656,8 @@
       bodyAvailable: !!r.body && !e.evicted,
       bodyTruncated: !!r.body && r.body.truncated,
       bodyEvicted: e.evicted,
+      // XHR only: which events the request went through, and in what state.
+      ...(e.kind === "xhr" ? { trace: r.trace } : {}),
     };
   }
 
@@ -753,24 +786,43 @@
       const source = window.cupertinoNetHookSource;
       if (typeof source !== "string" || source === "") {
         injection = "unavailable";
+        injectionDetail = "no source";
         return;
       }
 
+      let inlineThrew = null;
       try {
         const inline = document.createElement("script");
         inline.textContent = source;
         const parent = scriptParent();
         parent.appendChild(inline);
         detach(inline);
-      } catch {
+      } catch (error) {
         // Refused before it ran (Trusted Types, a DOM that will not take the
         // node): the `src` fallback below is the next thing to try.
+        inlineThrew = error;
       }
       if (hookInPage()) {
         injection = "inline";
         return;
       }
+      injectionDetail =
+        inlineThrew === null
+          ? "inline appended, no main answer"
+          : "inline threw: " + describeError(inlineThrew);
+    } catch (error) {
+      // Nothing above should throw past its own catch; if it does, the
+      // command it ran under still answers, and says why.
+      injection = "unavailable";
+      injectionDetail = "inline threw: " + describeError(error);
+      return;
+    }
 
+    // `src` is set BEFORE the append, so that an `error` event fired during
+    // the append (or an append that throws) leaves `blocked` standing rather
+    // than being overwritten by a "src" assigned after it.
+    try {
+      injection = "src";
       const external = document.createElement("script");
       external.src = browser.runtime.getURL("network-hook.js");
       external.addEventListener("load", () => {
@@ -789,11 +841,13 @@
         injection = "blocked";
       });
       scriptParent().appendChild(external);
-      injection = "src";
-    } catch {
-      // Whatever failed, the command it ran under still answers. A half-done
-      // attempt that set nothing is reported as unavailable, not as untried.
-      if (injection === null) injection = "unavailable";
+    } catch (error) {
+      // Whatever failed, the command it ran under still answers.
+      injection = "blocked";
+      injectionDetail =
+        (injectionDetail ? injectionDetail + "; " : "") +
+        "fallback threw: " +
+        String((error && error.message) || error);
     }
   }
 
@@ -816,7 +870,7 @@
       options: normalize(options),
       counts: { records: entries.length, bodies, bodyBytes: bytes },
       dropped: { records: dropped.records, bodies: dropped.bodies },
-      hook: { installed: hookInstalled, worlds: hookWorlds.slice(), injection },
+      hook: { installed: hookInstalled, worlds: hookWorlds.slice(), injection, injectionDetail },
       resourceStatusSupported: timingStatusSupported(),
     };
   }

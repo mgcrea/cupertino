@@ -73,6 +73,7 @@ interface NetRecord {
   level?: string;
   message?: string;
   stack?: string | null;
+  trace?: string[];
 }
 
 const bytesOf = (s: string) => new TextEncoder().encode(s);
@@ -128,13 +129,21 @@ interface XhrReply {
   statusText?: string;
   headers: Record<string, string>;
   body: Uint8Array;
+  /** A network error: DONE with status 0, then `error` and `loadend`, never `load`. */
+  fail?: boolean;
 }
 
 /**
  * An `XMLHttpRequest` that completes on the next macrotask with whatever
  * `FakeXHR.next` says, materialising `response` per `responseType` the way a
  * browser does — and, like a browser, refusing `responseText` for any type but
- * text.
+ * text. It fires what a browser fires, in order: `readystatechange` at DONE,
+ * then `load` (or `error`), then `loadend`.
+ *
+ * `abort()` only models the call that matters here, the one after DONE: per
+ * the XHR spec it resets the state to UNSENT and the response to a network
+ * error — status 0, no headers, no body — and fires NO event, so the
+ * `loadend` still to come sees a request that looks like it never answered.
  */
 class FakeXHR extends EventTarget {
   static next: XhrReply = {
@@ -163,6 +172,14 @@ class FakeXHR extends EventTarget {
     this.sentBody = body;
     const reply = FakeXHR.next;
     setTimeout(() => {
+      if (reply.fail) {
+        this.readyState = 4;
+        this.status = 0;
+        this.dispatchEvent(new Event("readystatechange"));
+        this.dispatchEvent(new Event("error"));
+        this.dispatchEvent(new Event("loadend"));
+        return;
+      }
       this.status = reply.status;
       this.statusText = reply.statusText ?? "OK";
       this.replyHeaders = reply.headers;
@@ -184,9 +201,19 @@ class FakeXHR extends EventTarget {
           break;
       }
       this.readyState = 4;
+      this.dispatchEvent(new Event("readystatechange"));
       this.dispatchEvent(new Event("load"));
       this.dispatchEvent(new Event("loadend"));
     }, 0);
+  }
+  abort() {
+    if (this.readyState !== 4) throw new Error("FakeXHR models only the abort after DONE");
+    this.readyState = 0;
+    this.status = 0;
+    this.statusText = "";
+    this.response = null;
+    this.text = "";
+    this.replyHeaders = {};
   }
   get responseText() {
     if (this.responseType !== "" && this.responseType !== "text") {
@@ -938,6 +965,87 @@ describe("xhr", () => {
     expect(first).toMatchObject({ url: `${ORIGIN}/first`, error: "Aborted", body: null });
     expect(second).toMatchObject({ url: `${ORIGIN}/second`, error: null, body: { data: "2nd" } });
     expect(first!.ref).not.toBe(second!.ref);
+  });
+
+  /**
+   * The live bug on an Angular 18 + zone.js site: every XHR recorded as
+   * `status: 0, "Network error"` while the page got all its data. Something
+   * calls `abort()` after DONE, which wipes status and response without an
+   * abort event, before `loadend`. So the response is taken at `load`.
+   */
+  it("an abort after DONE does not erase what load saw", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = {
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: bytesOf('{"rows":[1]}'),
+    };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/api/rows");
+    let seen: unknown;
+    // The page's own listener, added after `open` the way HttpClient does.
+    xhr.addEventListener("load", () => {
+      seen = xhr.responseText;
+      xhr.abort();
+    });
+    xhr.send();
+    const end = await endOf(page);
+    expect(seen).toBe('{"rows":[1]}');
+    expect(xhr.status).toBe(0);
+    expect(end).toMatchObject({
+      status: 200,
+      error: null,
+      contentType: "application/json",
+      responseHeaders: { "content-type": "application/json" },
+      body: { encoding: "text", data: '{"rows":[1]}', truncated: false },
+    });
+    expect(end.trace).toEqual(["readystatechange 4/200", "load 4/200", "loadend 0/0"]);
+  });
+
+  it("an abort after DONE from a load listener added before open is caught at readystatechange", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("ok") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.addEventListener("load", () => xhr.abort());
+    xhr.open("GET", "/early-listener");
+    xhr.send();
+    const end = await endOf(page);
+    expect(end).toMatchObject({ status: 200, error: null, body: { data: "ok" } });
+    expect(end.trace).toEqual(["readystatechange 4/200", "load 0/0", "loadend 0/0"]);
+  });
+
+  it("a genuine network error is still a network error", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 0, headers: {}, body: new Uint8Array(), fail: true };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/down");
+    xhr.send();
+    const end = await endOf(page);
+    expect(end).toMatchObject({ status: 0, error: "Network error", body: null });
+    expect(end.trace).toEqual(["readystatechange 4/0", "error 4/0", "loadend 4/0"]);
+  });
+
+  it("keeps the trace to eight entries", async () => {
+    const page = load();
+    page.install();
+    FakeXHR.next = { status: 200, headers: { "content-type": "text/plain" }, body: bytesOf("x") };
+    const xhr = new (page.sandbox.XMLHttpRequest as typeof FakeXHR)();
+    xhr.open("GET", "/chatty");
+    xhr.send();
+    for (let i = 0; i < 20; i++) xhr.dispatchEvent(new Event("timeout"));
+    const end = await endOf(page);
+    expect(end.trace).toHaveLength(8);
+    expect(end.trace![0]).toBe("timeout 1/0");
+  });
+
+  it("a fetch record carries no trace", async () => {
+    const page = load();
+    page.install();
+    await page.fetch("/api");
+    expect((await endOf(page)).trace).toBeUndefined();
   });
 
   it("a request opened before install is not recorded", async () => {

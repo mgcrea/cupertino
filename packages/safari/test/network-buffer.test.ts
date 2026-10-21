@@ -82,6 +82,7 @@ interface State {
     installed: boolean;
     worlds: string[];
     injection: "inline" | "src" | "blocked" | "unavailable" | null;
+    injectionDetail: string | null;
   };
   resourceStatusSupported: boolean;
 }
@@ -150,6 +151,8 @@ const tab = (
     /** `window.cupertinoNetHookSource`, as the isolated hook copy would leave it. */
     hookSource?: string;
     page?: "inline" | "csp";
+    /** What appending a `src` script does: throw, or fire `error` before returning. */
+    src?: "throws" | "errorsSync";
     realHook?: boolean;
   } = {},
 ) => {
@@ -195,6 +198,7 @@ const tab = (
 
   const root = {
     appendChild(node: FakeScript) {
+      if (node.src && opts.src === "throws") throw new TypeError("appendChild refused");
       node.parentNode = root;
       scripts.push(node);
       timeline.push(node.src ? `append src ${node.src}` : "append inline");
@@ -208,6 +212,7 @@ const tab = (
           ready({ installed: false });
         }
       }
+      if (node.src && opts.src === "errorsSync") node.dispatchEvent(new Event("error"));
       return node;
     },
     removeChild(node: FakeScript) {
@@ -575,7 +580,12 @@ describe("arming", () => {
   });
 
   it("reports worlds: [] and no injection when nothing answered and nothing was armed", () => {
-    expect(tab().status().data.hook).toEqual({ installed: false, worlds: [], injection: null });
+    expect(tab().status().data.hook).toEqual({
+      installed: false,
+      worlds: [],
+      injection: null,
+      injectionDetail: null,
+    });
   });
 
   it("hears a hook copy that loaded after network.js, on a later status", () => {
@@ -591,7 +601,12 @@ describe("arming", () => {
   it("reports no background diagnostic any more, and sends the background nothing", () => {
     const t = tab({ flag: { expiresAt: T0 + 60_000 }, hookSource: "/* hook */", page: "inline" });
     const hook = t.status().data.hook as unknown as Json;
-    expect(Object.keys(hook).toSorted()).toEqual(["injection", "installed", "worlds"]);
+    expect(Object.keys(hook).toSorted()).toEqual([
+      "injection",
+      "injectionDetail",
+      "installed",
+      "worlds",
+    ]);
     expect(t.messages).toEqual([]);
   });
   it("refuses an unknown op", () => {
@@ -645,6 +660,30 @@ describe("ids", () => {
     const out = t.get(id);
     expect(out.ok).toBe(false);
     expect(out.error).toContain(`no request ${id} on this page`);
+  });
+});
+
+describe("xhr trace", () => {
+  it("lists an xhr record's trace, cleaned and capped, and gives fetch entries none", () => {
+    const t = tab();
+    t.start();
+    t.request({ kind: "xhr", url: `${ORIGIN}/x` }, { trace: ["load 4/200", 7, "loadend 0/0"] });
+    t.request(
+      { kind: "xhr", url: `${ORIGIN}/many` },
+      { trace: Array.from({ length: 12 }, (_, i) => `e${i}`) },
+    );
+    t.request({ url: `${ORIGIN}/f` });
+    const [x, many, f] = listed(t).entries as (Entry & { trace?: string[] | null })[];
+    expect(x!.trace).toEqual(["load 4/200", "loadend 0/0"]);
+    expect(many!.trace).toHaveLength(8);
+    expect(f).not.toHaveProperty("trace");
+  });
+
+  it("an xhr record without a trace lists trace: null", () => {
+    const t = tab();
+    t.start();
+    t.request({ kind: "xhr" });
+    expect((listed(t).entries[0] as Entry & { trace?: unknown }).trace).toBeNull();
   });
 });
 
@@ -1048,6 +1087,11 @@ describe("without the recorder", () => {
   });
 });
 
+const detailOf = (t: Tab) => {
+  const { injection, injectionDetail } = t.status().data.hook;
+  return { injection, injectionDetail };
+};
+
 /**
  * Getting the hook into the page.
  *
@@ -1085,6 +1129,7 @@ describe("injection", () => {
       installed: false,
       worlds: ["main"],
       injection: "inline",
+      injectionDetail: null,
     });
   });
 
@@ -1109,7 +1154,11 @@ describe("injection", () => {
     );
     src.dispatchEvent(new Event("load"));
     expect(src.parentNode).toBeNull();
-    expect(t.status().data.hook).toEqual({ installed: true, worlds: ["main"], injection: "src" });
+    expect(t.status().data.hook).toMatchObject({
+      installed: true,
+      worlds: ["main"],
+      injection: "src",
+    });
   });
 
   it("a src script that fails to load is blocked", () => {
@@ -1134,7 +1183,12 @@ describe("injection", () => {
       pingAnswers: [{ installed: true, world: "main" }],
     });
     expect(t.scripts).toEqual([]);
-    expect(t.status().data.hook).toEqual({ installed: true, worlds: ["main"], injection: null });
+    expect(t.status().data.hook).toEqual({
+      installed: true,
+      worlds: ["main"],
+      injection: null,
+      injectionDetail: null,
+    });
   });
 
   it("start injects, then dispatches install", () => {
@@ -1171,6 +1225,63 @@ describe("injection", () => {
     expect(out.data.recording).toBe(true);
   });
 
+  describe("injectionDetail says which way it went", () => {
+    it("null when inline worked", () => {
+      const t = tab({ hookSource: SOURCE, page: "inline", flag: ARMED });
+      expect(detailOf(t)).toEqual({ injection: "inline", injectionDetail: null });
+    });
+
+    it("inline threw: the error, then src", () => {
+      const t = tab({ hookSource: SOURCE, page: "inline" });
+      const doc = t.document as unknown as { createElement: (tag: string) => FakeScript };
+      doc.createElement = () => {
+        const script = new FakeScript();
+        // Trusted Types refuses a plain string as script text.
+        Object.defineProperty(script, "textContent", {
+          set() {
+            throw new TypeError("This document requires 'TrustedScript' assignment.");
+          },
+        });
+        return script;
+      };
+      t.start();
+      expect(detailOf(t)).toEqual({
+        injection: "src",
+        injectionDetail:
+          "inline threw: TypeError: This document requires 'TrustedScript' assignment.",
+      });
+    });
+
+    it("inline appended, no main answer: a CSP, then src", () => {
+      const t = tab({ hookSource: SOURCE, page: "csp", flag: ARMED });
+      expect(detailOf(t)).toEqual({
+        injection: "src",
+        injectionDetail: "inline appended, no main answer",
+      });
+    });
+
+    it("fallback threw: blocked, with both reasons", () => {
+      const t = tab({ hookSource: SOURCE, page: "csp", src: "throws", flag: ARMED });
+      expect(detailOf(t)).toEqual({
+        injection: "blocked",
+        injectionDetail: "inline appended, no main answer; fallback threw: appendChild refused",
+      });
+    });
+
+    it("an error event fired during the append is not overwritten by src", () => {
+      const t = tab({ hookSource: SOURCE, page: "csp", src: "errorsSync", flag: ARMED });
+      expect(detailOf(t)).toEqual({
+        injection: "blocked",
+        injectionDetail: "inline appended, no main answer",
+      });
+    });
+
+    it("no source: unavailable", () => {
+      const t = tab({ page: "inline", flag: ARMED });
+      expect(detailOf(t)).toEqual({ injection: "unavailable", injectionDetail: "no source" });
+    });
+  });
+
   it("end to end: the real hook, injected from its own isolated copy, records a page fetch", async () => {
     const t = tab({ page: "inline", realHook: true });
     // The isolated copy answered the load-time ping as isolated and wrapped nothing.
@@ -1178,6 +1289,7 @@ describe("injection", () => {
       installed: false,
       worlds: ["isolated"],
       injection: null,
+      injectionDetail: null,
     });
     const page = t.pageContext!;
     const original = page.fetch;
@@ -1188,6 +1300,7 @@ describe("injection", () => {
       installed: true,
       worlds: ["isolated", "main"],
       injection: "inline",
+      injectionDetail: null,
     });
     expect(page.fetch).not.toBe(original);
 

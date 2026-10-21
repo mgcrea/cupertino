@@ -115,7 +115,8 @@ export const registerNetworkTools = (
               'Its `hook.worlds` lists the hook copies that answered a ping just now ("main" is the ' +
               'recorder in the page; "isolated" is the extension\'s own copy, which only supplies ' +
               'the source, so "isolated" alone on an armed tab means the recorder never got in), ' +
-              "and `hook.injection` says how it was put there.",
+              "and `hook.injection` says how it was put there, with `hook.injectionDetail` saying " +
+              'why when it was not "inline".',
           ),
         kinds: z
           .array(z.enum(["fetch", "xhr", "console"]))
@@ -188,6 +189,9 @@ export const registerNetworkTools = (
           'Entries of kind "resource" come from the browser\'s resource timing and are listed ' +
           "even when recording is off: they give URL and timing for images, scripts and " +
           "stylesheets, never a body, and carry a status only where Safari reports one.\n\n" +
+          'An "xhr" entry also has `trace`, the request\'s events as "type readyState/status" ' +
+          '(at most eight): "load 4/200" then "loadend 0/0" is a page that aborted a request ' +
+          'after it had answered, and "error 4/0" a real network failure.\n\n' +
           LIMITS +
           " " +
           REDACTION,

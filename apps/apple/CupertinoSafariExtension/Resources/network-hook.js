@@ -749,36 +749,92 @@
       return null;
     }
 
+    /**
+     * The response, taken while it is guaranteed to be whole.
+     *
+     * Not at `loadend`. On an Angular 18 + zone.js site every XHR was recorded
+     * as `status: 0, "Network error"` while the page rendered all its data,
+     * and the XHR spec says how: `abort()` (or `open()`) on a request that is
+     * already DONE resets it to UNSENT with a network-error response — status
+     * 0, no headers, no body — and fires no event, and if that happens in a
+     * `load` listener it happens before `loadend` is dispatched. So the
+     * status, headers and body are read at `readystatechange` to DONE and at
+     * `load`, whichever comes first with a real status, and `loadend` only
+     * finalises.
+     *
+     * A status of 0 here is not a response, so nothing is kept and `loadend`
+     * decides as it always has. The body is read now too, from `response` or
+     * `responseText` per `responseType`, because after such an abort there is
+     * no body left to read; a Blob body stays a promise, since the Blob itself
+     * survives the abort.
+     */
+    function xhrSnapshot(xhr, st) {
+      if (st.snap) return;
+      const status = xhr.status;
+      if (!status) return;
+      const contentType = xhr.getResponseHeader("content-type");
+      const snap = {
+        status,
+        statusText: xhr.statusText,
+        responseHeaders: parseRawHeaders(xhr.getAllResponseHeaders()),
+        contentType,
+        body: null,
+      };
+      if (wantsBody(st.rec.url)) {
+        try {
+          snap.body = xhrBody(xhr, contentType, options.maxBodyBytes);
+        } catch {
+          snap.body = null;
+        }
+      }
+      st.snap = snap;
+    }
+
+    /** Fill the end record with a body that may still be a promise (a Blob), then send it. */
+    function finishWithBody(rec, st, body) {
+      if (body && typeof body.then === "function") {
+        body.then(
+          (b) => {
+            rec.body = b;
+            finish(rec, st.t0, st.pending);
+          },
+          () => finish(rec, st.t0, st.pending),
+        );
+        return;
+      }
+      rec.body = body;
+      finish(rec, st.t0, st.pending);
+    }
+
     function xhrDone(xhr, st) {
       if (st.done) return;
       st.done = true;
       const rec = st.rec;
       try {
+        const snap = st.snap;
+        if (snap) {
+          // What `load` saw wins over whatever is left by now, failure flags
+          // included: a request that loaded was answered.
+          rec.status = snap.status;
+          rec.statusText = snap.statusText;
+          rec.responseHeaders = snap.responseHeaders;
+          rec.contentType = snap.contentType;
+          return finishWithBody(rec, st, snap.body);
+        }
         rec.status = xhr.status;
         rec.statusText = xhr.statusText;
         rec.responseHeaders = parseRawHeaders(xhr.getAllResponseHeaders());
         rec.contentType = xhr.getResponseHeader("content-type");
-        // Status 0 at loadend is the XHR way of saying the request never got an
-        // answer. Which of error/abort/timeout it was is only on the earlier
-        // event, so that is remembered as it happens.
+        // Status 0 at loadend, with no response seen before it, is the XHR way
+        // of saying the request never got an answer. Which of
+        // error/abort/timeout it was is only on the earlier event, so that is
+        // remembered as it happens.
         if (st.failure || xhr.status === 0) {
           rec.error = st.failure || "Network error";
           return finish(rec, st.t0, st.pending);
         }
         if (!wantsBody(rec.url)) return finish(rec, st.t0, st.pending);
-        const body = xhrBody(xhr, rec.contentType, options.maxBodyBytes);
-        if (body && typeof body.then === "function") {
-          body.then(
-            (b) => {
-              rec.body = b;
-              finish(rec, st.t0, st.pending);
-            },
-            () => finish(rec, st.t0, st.pending),
-          );
-          return;
-        }
-        rec.body = body;
-        finish(rec, st.t0, st.pending);
+        finishWithBody(rec, st, xhrBody(xhr, rec.contentType, options.maxBodyBytes));
       } catch {
         try {
           finish(rec, st.t0, st.pending);
@@ -789,6 +845,56 @@
     }
 
     const XHR_FAILURES = { error: "Network error", abort: "Aborted", timeout: "Timed out" };
+
+    /**
+     * What happened to a request, as the events saw it: `"load 4/200"` is the
+     * event, then readyState/status at that moment. Kept on XHR records only
+     * and only eight long, because its one job is to tell the next live run
+     * what the page did to a request that came out wrong, as the
+     * `status: 0` records did — "load 4/200" then "loadend 0/0" is an abort
+     * after DONE, and "error 4/0" a real failure.
+     */
+    const XHR_TRACE_MAX = 8;
+    const XHR_TRACED = ["readystatechange", "load", "error", "abort", "timeout", "loadend"];
+
+    /** Request objects that already carry the listener below; it is added once per object. */
+    const xhrListening = new WeakSet();
+
+    /**
+     * One listener per request OBJECT, added at `open` rather than `send`, and
+     * reading the object's current state when an event arrives.
+     *
+     * At `open` because listeners run in the order they were added, and a
+     * page (Angular's HttpClient among them) adds its own `load` listener
+     * between `open` and `send`. Ours must run first, while the response is
+     * still there to read, in case the page's empties it. Per object, because
+     * a request reopened for another call is the same object, and a listener
+     * per `open` would answer every event once per reuse.
+     */
+    function onXhrEvent(event) {
+      try {
+        const xhr = event.target || event.currentTarget;
+        const st = xhrState.get(xhr);
+        if (!st || !st.started || st.done) return;
+        const type = event.type;
+        const readyState = xhr.readyState;
+        if (type === "readystatechange" && readyState !== 4) return;
+        if (st.rec.trace.length < XHR_TRACE_MAX) {
+          st.rec.trace.push(type + " " + readyState + "/" + xhr.status);
+        }
+        if (type === "readystatechange" || type === "load") xhrSnapshot(xhr, st);
+        else if (type === "loadend") xhrDone(xhr, st);
+        else st.failure = XHR_FAILURES[type] || st.failure;
+      } catch {
+        // Unrecorded, not broken.
+      }
+    }
+
+    function listenTo(xhr) {
+      if (xhrListening.has(xhr)) return;
+      xhrListening.add(xhr);
+      for (const type of XHR_TRACED) xhr.addEventListener(type, onXhrEvent);
+    }
 
     /**
      * The three prototype methods. Each passes `arguments` through untouched —
@@ -809,13 +915,17 @@
             finish(previous.rec, previous.t0, previous.pending);
           }
           if (wants("xhr")) {
+            const rec = newRecord("xhr", String(method).toUpperCase(), absolute(url));
+            rec.trace = [];
             xhrState.set(this, {
-              rec: newRecord("xhr", String(method).toUpperCase(), absolute(url)),
+              rec,
               t0: 0,
               pending: null,
               failure: null,
+              snap: null,
               done: false,
             });
+            listenTo(this);
           } else {
             // A reopened request starts over; a stale entry from an earlier
             // armed `open` must not attach to this one.
@@ -860,20 +970,7 @@
               st.rec.requestBody = body.now;
               st.pending = body.later;
             }
-            const onEvent = (event) => {
-              try {
-                if (event.type === "loadend") {
-                  xhrDone(xhr, st);
-                } else {
-                  st.failure = XHR_FAILURES[event.type] || st.failure;
-                }
-              } catch {
-                // Unrecorded, not broken.
-              }
-            };
-            for (const type of ["error", "abort", "timeout", "loadend"]) {
-              xhr.addEventListener(type, onEvent);
-            }
+            // Its listener has been there since `open`; see `onXhrEvent`.
             st.t0 = now();
             emit(EVENT_RECORD, st.rec);
           } else {
