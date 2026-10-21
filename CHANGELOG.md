@@ -6,11 +6,33 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.29.0`,
-`notes-v1.29.0`, `reminders-v1.29.0`, `core-v1.29.0` for the npm packages, and `app-v1.29.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.29.1`,
+`notes-v1.29.1`, `reminders-v1.29.1`, `core-v1.29.1` for the npm packages, and `app-v1.29.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.29.1] - 2026-10-21
+
+**Safari network capture, fixed.** A body is saved whole or refused, a request body reads whole
+when its response was cut short, and a page that polls keeps every answer.
+
+### Fixed
+
+- **A saved body is whole, or nothing is saved.** If the page dropped a large body from its buffer
+  while `apple_safari_network_get` was still pulling it, the part already pulled was saved as the
+  file and reported as a success: a PDF missing its tail, which still opens. The pull now checks it
+  got every character and refuses otherwise.
+- **A request body reads whole when the response was cut short.** With `part: "request"`,
+  `jsonPath`, `decode` and `saveAs` refused whenever the response had gone past `maxBodyBytes`, and
+  sent you to record again for nothing. Request bodies are never cut, so they are now judged on
+  their own.
+- **A page that polls with one request keeps every answer.** A page that reopens the same request
+  from its `onreadystatechange` handler had every answered poll but the last recorded as
+  "Aborted", with no status or body.
+- **A save never writes through a symlink.** Saving with `overwrite` (Mail, Notes and Messages
+  attachments, Safari's `saveAs`) followed a symlink of the same name in the download folder, so
+  the bytes could land outside it. It now refuses.
 
 ## [1.29.0] - 2026-10-21
 
@@ -2894,7 +2916,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.29.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.29.1...HEAD
+[1.29.1]: https://github.com/mgcrea/cupertino/compare/app-v1.29.0...app-v1.29.1
 [1.29.0]: https://github.com/mgcrea/cupertino/compare/app-v1.28.1...app-v1.29.0
 [1.28.1]: https://github.com/mgcrea/cupertino/compare/app-v1.28.0...app-v1.28.1
 [1.28.0]: https://github.com/mgcrea/cupertino/compare/app-v1.27.0...app-v1.28.0
