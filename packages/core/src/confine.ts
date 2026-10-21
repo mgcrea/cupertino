@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, constants, mkdirSync, openSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 import { PreconditionError } from "./errors.js";
@@ -32,7 +32,9 @@ import { PreconditionError } from "./errors.js";
  * name can be created — as a symlink to somewhere else, by anything that can
  * write to that directory. Without `overwrite`, the file is created with `wx`,
  * which fails if it exists rather than asking first, so the refusal and the
- * write are one operation the kernel performs.
+ * write are one operation the kernel performs. With `overwrite`, the leaf is
+ * opened `O_NOFOLLOW`: only the directory is realpath'd, so a leaf that is
+ * itself a symlink would otherwise carry the write wherever it points.
  */
 export type ConfinedWrite = {
   /** The confinement boundary. Created if it is not there. */
@@ -105,15 +107,32 @@ export const writeConfinedFile = ({
 
   const data = typeof bytes === "function" ? bytes() : bytes;
   mkdirSync(dir, { recursive: true });
+  let fd: number;
   try {
     // `wx` unless overwriting: the refusal and the write are one operation, so
-    // nothing can appear between them.
-    writeFileSync(target, data, { mode: 0o600, flag: overwrite ? "w" : "wx" });
+    // nothing can appear between them. Overwriting refuses a symlinked leaf the
+    // same way, in the open itself.
+    fd = openSync(
+      target,
+      overwrite
+        ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
+        : "wx",
+      0o600,
+    );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
       throw new PreconditionError(`${target} already exists; refusing to overwrite it.`);
     }
+    if (code === "ELOOP") {
+      throw new PreconditionError(`${target} is a symlink; refusing to write through it.`);
+    }
     throw error;
+  }
+  try {
+    writeFileSync(fd, data);
+  } finally {
+    closeSync(fd);
   }
   return { path: target, bytes: data.length };
 };

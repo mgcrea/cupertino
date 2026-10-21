@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -141,5 +149,22 @@ describe("writeConfinedFile", () => {
       settingName,
     });
     expect(readFileSync(out.path, "utf8")).toBe("REPLACED");
+  });
+
+  /*
+   * Only the directory is realpath'd, so a leaf that is a symlink would be
+   * followed by a plain `w` open and the bytes land wherever it points.
+   */
+  it("will not overwrite through a symlink that points out of the root", () => {
+    const base = scratch();
+    const root = join(base, "Downloads");
+    mkdirSync(root);
+    const outside = join(base, "outside.txt");
+    writeFileSync(outside, "ORIGINAL");
+    symlinkSync(outside, join(root, "invoice.pdf"));
+    expect(() =>
+      writeConfinedFile({ root, name: "invoice.pdf", bytes, overwrite: true, settingName }),
+    ).toThrow(PreconditionError);
+    expect(readFileSync(outside, "utf8")).toBe("ORIGINAL");
   });
 });
