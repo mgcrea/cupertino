@@ -214,6 +214,8 @@ export type GetResult = {
   entry: Record<string, unknown>;
   headers?: Record<string, string> | undefined;
   encoding: "text" | "base64" | "summary" | null;
+  /** The page stored only the first `maxBodyBytes` of this body. */
+  bodyTruncated: boolean;
   /** Absent when the body was saved: the bytes never travel back to the caller. */
   text?: string;
   offset: number;
@@ -373,8 +375,9 @@ export async function networkGet(
           requestId: input.id,
           part: input.part ?? "response",
           // Headers once: the page repeats them in every answer otherwise, and
-          // a chunk's worth of channel is better spent on body.
-          headers: index === 0 ? input.headers === true : false,
+          // a chunk's worth of channel is better spent on body. On unless the
+          // caller said no, as the design has it (they are already redacted).
+          headers: index === 0 ? input.headers !== false : false,
           offset: position,
           length,
         }),
@@ -398,6 +401,17 @@ export async function networkGet(
       );
     }
     first ??= slice;
+    if (index === 0 && whole && slice.entry.bodyTruncated === true) {
+      // The page keeps only the first `maxBodyBytes` of a larger body. Parsing
+      // that as JSON fails confusingly, and saving it writes a corrupt file
+      // that looks whole (a PDF missing its tail still opens as a PDF), so the
+      // refusal comes before the rest is pulled, parsed or written.
+      throw new PreconditionError(
+        `The recorded body of ${input.id} was cut short at the recording's maxBodyBytes, so ` +
+          `jsonPath, decode and saveAs would work from an incomplete body. Record again with a ` +
+          `larger maxBodyBytes (up to 50 MiB), repeat the request, and get it again.`,
+      );
+    }
     if (index === 0) {
       const end = whole ? slice.totalChars : Math.min(slice.totalChars, from + limit);
       planned = Math.max(1, Math.ceil((end - from) / chunk));
@@ -416,6 +430,9 @@ export async function networkGet(
     entry: head.entry,
     ...(head.headers ? { headers: head.headers } : {}),
     encoding: head.encoding,
+    // Said on every answer, so an inline read of a cut-short body is never
+    // mistaken for the whole of it.
+    bodyTruncated: head.entry.bodyTruncated === true,
   };
 
   if (!whole) {

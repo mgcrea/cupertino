@@ -46,6 +46,8 @@ const fakeOsascript: OsascriptRunner = {
 };
 
 type Canned = {
+  truncated?: boolean;
+  splitSurrogates?: boolean;
   body: string;
   encoding?: "text" | "base64" | "summary" | null;
   contentType?: string;
@@ -122,12 +124,17 @@ const fakeExtension = (
           const total = record.body.length;
           const offset = Math.min(Number(command.offset) || 0, total);
           const length = Number(command.length) > 0 ? Number(command.length) : total - offset;
-          const slice = record.body.slice(offset, offset + length);
+          let end = Math.min(offset + length, total);
+          // As the real page does: never end on the first half of a pair.
+          const last = record.body.charCodeAt(end - 1);
+          if (end < total && last >= 0xd800 && last <= 0xdbff) end -= 1;
+          const slice = record.body.slice(offset, end);
           reply = {
             ok: true,
             data: {
               entry: {
                 id: command.requestId,
+                bodyTruncated: record.truncated === true,
                 url: "https://example.test/api",
                 contentType: record.contentType ?? "application/json",
               },
@@ -465,5 +472,56 @@ describe("failures from the page", () => {
     expect(String(error.message)).toContain(
       "stopped answering partway through the body (chunk 2 of 3)",
     );
+  });
+});
+
+describe("headers, truncation and surrogate pairs", () => {
+  it("returns headers when none are asked for explicitly, and omits them on false", async () => {
+    const t = setup();
+    fakeExtension(t, { [ID]: { body: "x" } });
+    expect((await t.client.networkGet({ url: PAGE_URL, id: ID })).headers).toEqual({
+      "content-type": "application/json",
+    });
+    expect(
+      (await t.client.networkGet({ url: PAGE_URL, id: ID, headers: false })).headers,
+    ).toBeUndefined();
+  });
+
+  it("refuses to save a body the page cut short, before pulling more", async () => {
+    const t = setup();
+    const ext = fakeExtension(t, { [ID]: { body: "x".repeat(40_000), truncated: true } });
+    const error = await t.client
+      .networkGet({ url: PAGE_URL, id: ID, saveAs: "cut.bin" })
+      .catch((e) => e);
+    expect(String(error.message)).toMatch(/cut short at the recording's maxBodyBytes/);
+    expect(String(error.message)).toContain("50 MiB");
+    expect(ext.netGets()).toHaveLength(1);
+    expect(existsSync(join(t.downloads, "cut.bin"))).toBe(false);
+  });
+
+  it("refuses jsonPath on a body the page cut short", async () => {
+    const t = setup();
+    fakeExtension(t, { [ID]: { body: '{"a":1', truncated: true } });
+    await expect(t.client.networkGet({ url: PAGE_URL, id: ID, jsonPath: "a" })).rejects.toThrow(
+      /cut short at the recording's maxBodyBytes/,
+    );
+  });
+
+  it("flags a cut-short body on an inline read, which still works", async () => {
+    const t = setup();
+    fakeExtension(t, { [ID]: { body: "partial", truncated: true } });
+    const out = await t.client.networkGet({ url: PAGE_URL, id: ID });
+    expect(out.text).toBe("partial");
+    expect(out.bodyTruncated).toBe(true);
+  });
+
+  it("reassembles text whose chunk boundary falls inside an emoji", async () => {
+    const t = setup({ APPLE_SAFARI_NETWORK_CHUNK_CHARS: "16384" });
+    // The emoji's high half is unit 16383, so the first chunk ends one early.
+    const body = "a".repeat(16_383) + "😀" + "b".repeat(20_000);
+    const ext = fakeExtension(t, { [ID]: { body } });
+    await t.client.networkGet({ url: PAGE_URL, id: ID, saveAs: "emoji.txt" });
+    expect(readFileSync(join(t.downloads, "emoji.txt"), "utf8")).toBe(body);
+    expect(ext.netGets().map((c) => c.offset)).toEqual([0, 16_383, 32_767]);
   });
 });

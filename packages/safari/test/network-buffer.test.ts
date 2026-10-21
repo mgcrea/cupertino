@@ -652,6 +652,27 @@ describe("get", () => {
     expect(slices[2]!.offset).toBe(8);
   });
 
+  it("never ends a slice between the halves of a surrogate pair", () => {
+    const t = tab();
+    t.start();
+    const data = "ab😀cd";
+    t.request(
+      {},
+      {
+        contentType: "text/plain",
+        body: { encoding: "text", data, bytes: 9, truncated: false, totalBytes: 9 },
+      },
+    );
+    const id = listed(t).entries[0]!.id;
+    // Units: a b [D83D DE00] c d. A length of 3 would end on the high half.
+    const first = t.get(id, { offset: 0, length: 3 });
+    expect(first.data.slice).toBe("ab");
+    const rest = t.get(id, { offset: first.data.slice.length, length: 3 });
+    expect(rest.data.slice).toBe("😀c");
+    // A one-unit window grows to take the pair whole rather than split it.
+    expect(t.get(id, { offset: 2, length: 1 }).data.slice).toBe("😀");
+  });
+
   it("serves the request part, summary bodies included", () => {
     const t = tab();
     t.start();

@@ -859,7 +859,18 @@
     const offset = Math.min(Math.max(0, Math.floor(Number(command.offset)) || 0), total);
     const asked = Math.floor(Number(command.length));
     const length = asked > 0 ? asked : total - offset;
-    const slice = data.slice(offset, offset + length);
+    // Slices are UTF-16 units, and a cut between the two halves of a surrogate
+    // pair (an emoji) leaves a lone surrogate that the native side may refuse
+    // or turn into U+FFFD. So a slice that would end on a high surrogate with
+    // more data after it ends one unit early; the caller advances by what it
+    // got, not by what it asked for. A one-unit request cannot shrink, so it
+    // grows to take the pair whole.
+    let end = Math.min(offset + length, total);
+    if (end < total) {
+      const last = data.charCodeAt(end - 1);
+      if (last >= 0xd800 && last <= 0xdbff) end = end - 1 > offset ? end - 1 : end + 1;
+    }
+    const slice = data.slice(offset, end);
     const out = {
       entry: view(entry),
       encoding: body ? body.encoding : null,
