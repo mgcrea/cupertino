@@ -522,6 +522,17 @@ export async function networkGet(
     };
   }
 
+  // The page can evict the body (or replace the entry) between two chunks, and
+  // from then on answers an empty, done slice. The chunks already pulled are
+  // then a prefix, and saving them writes the corrupt file that looks whole the
+  // cut-short refusal above exists to prevent.
+  if (body.length !== head.totalChars) {
+    throw new PreconditionError(
+      `The body of ${input.id} changed or was evicted from the buffer partway through the ` +
+        `pull (${body.length} of ${head.totalChars} characters arrived); nothing was saved. ` +
+        `List again and retry.`,
+    );
+  }
   if (head.encoding === null) {
     throw new PreconditionError(
       `Request ${input.id} has no ${input.part ?? "response"} body to read` +

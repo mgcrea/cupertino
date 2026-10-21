@@ -59,6 +59,11 @@ type Canned = {
    * never cut, only replaced by a summary.
    */
   request?: string;
+  /**
+   * Answer this many chunks, then as `network.js` answers once the buffer has
+   * evicted the body: no body, nothing to slice, done.
+   */
+  evictAfter?: number;
 };
 
 const setup = (env: NodeJS.ProcessEnv = {}) => {
@@ -105,6 +110,7 @@ const fakeExtension = (
   } = {},
 ) => {
   const seen: Record<string, unknown>[] = [];
+  const served: Record<string, number> = {};
   let answered = 0;
   const timer = setInterval(() => {
     let files: string[] = [];
@@ -129,8 +135,12 @@ const fakeExtension = (
             error: opts.stale ?? `no request ${String(command.requestId)} on this page.`,
           };
         } else {
-          const data =
-            command.part === "request" && record.request !== undefined
+          const id = String(command.requestId);
+          served[id] = (served[id] ?? 0) + 1;
+          const evicted = record.evictAfter !== undefined && served[id] > record.evictAfter;
+          const data = evicted
+            ? ""
+            : command.part === "request" && record.request !== undefined
               ? record.request
               : record.body;
           const total = data.length;
@@ -147,13 +157,14 @@ const fakeExtension = (
               entry: {
                 id: command.requestId,
                 bodyTruncated: record.truncated === true,
+                bodyEvicted: evicted,
                 url: "https://example.test/api",
                 contentType: record.contentType ?? "application/json",
               },
               ...(command.headers === false
                 ? {}
                 : { headers: record.headers ?? { "content-type": "application/json" } }),
-              encoding: record.encoding === undefined ? "text" : record.encoding,
+              encoding: evicted ? null : record.encoding === undefined ? "text" : record.encoding,
               totalChars: total,
               offset,
               slice,
@@ -560,6 +571,18 @@ describe("headers, truncation and surrogate pairs", () => {
     const out = await t.client.networkGet({ url: PAGE_URL, id: ID });
     expect(out.text).toBe("partial");
     expect(out.bodyTruncated).toBe(true);
+  });
+
+  it("refuses a body evicted partway through the pull, and saves nothing", async () => {
+    const t = setup({ APPLE_SAFARI_NETWORK_CHUNK_CHARS: "16384" });
+    const ext = fakeExtension(t, { [ID]: { body: "z".repeat(40_000), evictAfter: 1 } });
+    const error = await t.client
+      .networkGet({ url: PAGE_URL, id: ID, saveAs: "big.bin" })
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(PreconditionError);
+    expect(String(error.message)).toMatch(/evicted|changed/);
+    expect(ext.netGets()).toHaveLength(2);
+    expect(existsSync(join(t.downloads, "big.bin"))).toBe(false);
   });
 
   it("reads a whole request body when only the response was cut short", async () => {
