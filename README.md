@@ -305,11 +305,11 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 
 ### Safari
 
-| Always available                                     | Write-gated                        |
-| ---------------------------------------------------- | ---------------------------------- |
-| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` |
-| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            |
-| `diagnostics`                                        |                                    |
+| Always available                                     | Write-gated                        | Behind their own flag                         |
+| ---------------------------------------------------- | ---------------------------------- | --------------------------------------------- |
+| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` | `find_codes`                                  |
+| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            | `network_record` `network_list` `network_get` |
+| `diagnostics`                                        |                                    |                                               |
 
 **The widest write set here, and it splits across two lanes that share nothing but the flag.**
 `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser.
@@ -317,6 +317,16 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 consents to one website at a time — so their real gate is a per-site grant the user can see and
 revoke, and the write flag is the second lock rather than the only one. `find_codes` is registered
 separately behind `APPLE_SAFARI_ALLOW_CODES`, because reading a one-time code is a read.
+
+**The network tools read what a page fetched**, behind `APPLE_SAFARI_ALLOW_NETWORK` ("Read network
+traffic" in the app, off by default) for the same reason. `network_record` arms one tab,
+`network_list` lists its `fetch` and `XMLHttpRequest` calls and console errors, and `network_get`
+reads a body, or saves a file out of one: a PDF an API returns as base64 inside JSON comes out with
+`jsonPath`, `decode: "base64"` and `saveAs`. Top frame only, so no subframes, workers or WebSockets.
+Headers named like credentials are masked; **bodies are not redacted, and neither are URLs** — a
+token in a query string comes back as the page sent it. On a page whose Content-Security-Policy
+refuses inline scripts there is a fallback that loads the recorder by URL; it has not been verified
+in Safari. `reload` and `saveAs` also need the write flag.
 
 There is deliberately no `do JavaScript` tool: it needs a developer-menu toggle that is not a TCC
 grant and whose state cannot be read, so diagnostics could never say in advance whether it would

@@ -181,9 +181,10 @@ their browser can be scripted.
 ## Built
 
 `packages/safari` shipped this surface as six read tools with no write tool, and now ships
-**fourteen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
-`allowWrites`, and `find_codes` behind `allowCodes`. Each arrival is recorded further down, under
-[Writes, built](#writes-built) and [Acting on a page, built](#acting-on-a-page-built). Three
+**seventeen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
+`allowWrites`, `find_codes` behind `allowCodes`, and the three network tools behind `allowNetwork`.
+Each arrival is recorded further down, under [Writes, built](#writes-built),
+[Acting on a page, built](#acting-on-a-page-built) and [Network capture](#network-capture). Three
 decisions came out of building the read half that this document did not anticipate.
 
 **The epoch is detected at runtime, not hardcoded.** The obvious response to the `visit_time` bug
@@ -971,13 +972,22 @@ isolated world (measured below). So `network-hook.js` is still a manifest conten
 as the source provider: in the isolated world it wraps nothing and leaves its recorder as a string,
 and `network.js` injects that string into the page as an inline `<script>` element, then removes the
 element. It does so only when the tab is armed, at load under a valid arm flag or on
-`network_record start`, so an unarmed tab gets no script at all. A page whose Content-Security-Policy
-refuses inline scripts gets the same file by URL instead (it is listed in
-`web_accessible_resources`); that load is asynchronous, so the page's first requests can go out
-before the recorder is there, even after `reload: true`. `status` reports which happened as
-`hook.injection`: `inline`, `src`, `blocked` (the URL load failed too), `unavailable` (no source),
-or null (nothing attempted). The background worker is a plain relay again, and the extension no
-longer asks for the `scripting` permission.
+`network_record start`, so an unarmed tab gets no script at all. An expired or unreadable flag is
+deleted at load by `network.js` itself, since the hook that used to delete it is no longer in the
+page to see one. If `<html>` does not exist yet at `document_start`, the injection waits for it
+(a one-shot `MutationObserver` on the document) rather than appending to the document itself, and
+`hook.injectionDetail` says it was deferred.
+
+A page whose Content-Security-Policy refuses inline scripts is meant to get the same file by URL
+instead (it is listed in `web_accessible_resources`). **That fallback is unmeasured**: no page with
+a strict CSP was tried in Safari, so whether Safari lets a page load a `safari-web-extension://`
+script past its `script-src` is not known. The unit tests cover what the extension does in each
+case, not what Safari does. If it works, the load is asynchronous, so the page's first requests can
+go out before the recorder is there, even after `reload: true`; if it does not, `hook.injection`
+ends at `blocked`, or stays at `src` with no `"main"` in `hook.worlds`. `status` reports which
+happened as `hook.injection`: `inline`, `src` (the fallback was asked for), `blocked` (the URL load
+failed too), `unavailable` (no source), or null (nothing attempted). The background worker is a
+plain relay again, and the extension no longer asks for the `scripting` permission.
 
 A body is pulled in chunks (`APPLE_SAFARI_NETWORK_CHUNK_CHARS`, 262,144 by default) because one
 native message cannot carry a multi-megabyte response. Only `jsonPath`, `decode` and `saveAs` need
@@ -993,15 +1003,18 @@ not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally
 ### Limits, stated plainly
 
 - **Bodies are not redacted.** Headers are masked by name (`authorization`, `proxy-authorization`,
-  `cookie`, `set-cookie`, anything containing `token`, `secret` or `api-key`). A body has no names
-  to match, so it comes back as the page saw it.
+  `cookie`, `set-cookie`, anything containing `token`, `secret`, `api-key` or `apikey`), in the
+  page and again in the server. A body has no names to match, so it comes back as the page saw it.
+- **URLs are not redacted either.** They are returned in full, query strings included, so a
+  signed link or a token passed as a parameter comes back as the page sent it.
 - **Top frame only.** No subframes, no web or service workers, no WebSockets, and no bodies for
   `<img>`/`<script>`/`<link>` loads (resource timing lists their URLs and timing, never their bytes).
 - **Page memory only.** Records live in the page and die with the load; nothing is written to disk
   except an explicit `saveAs`. The buffer holds 1,000 records and 50 MiB of bodies, bodies are
   evicted before records, and `dropped` says so.
-- **A strict CSP costs the first requests.** On a page that forbids inline scripts the recorder
-  arrives by URL, late; what the page fetched before it arrived is not recorded.
+- **A strict CSP costs the first requests, if it works at all.** On a page that forbids inline
+  scripts the recorder is asked for by URL, which is unmeasured in Safari (see above). If it
+  arrives, it arrives late, and what the page fetched before then is not recorded.
 - **A page can arm itself** by writing the arm flag into its own `sessionStorage`. The expiry is
   clamped to the 120-minute maximum and the data leaves the tab only when an agent asks. Closing it
   needs a nonce the page cannot read; that is deferred, and recorded in the spec.
@@ -1011,7 +1024,9 @@ not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally
 Measured 2026-10-21 on Safari 26 / macOS 26, against the notarized builds of 385bb73 (the first
 row's negative), 1a82e34 and 5d33ea0, on localhost test pages and on the one production site this
 feature was built for. Four of the spec's five "Measure first" probes are settled. The fifth, the
-native-message ceiling, is measured only as "the default works".
+native-message ceiling, is measured only as "the default works". The CSP fallback, which the
+injection change added after the spec, is not measured at all; its row is here so that stays
+visible.
 
 | Probe                                       | Result                                                                                                                                                                                       | What the build does about it                                                                                      |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -1020,6 +1035,7 @@ native-message ceiling, is measured only as "the default works".
 | `CustomEvent` string `detail` across worlds | **Yes**, both directions                                                                                                                                                                     | nothing: the hook sends strings, and this confirms the choice                                                     |
 | `PerformanceResourceTiming.responseStatus`  | **Not supported**                                                                                                                                                                            | `resource` entries carry no status, and `failed` cannot see them                                                  |
 | The target PDF site (`app.immo-sign.com`)   | **XHR**, JSON with the PDF as base64 at `data.signedFile`; **no CSP**, so inline injection works                                                                                             | the recipe works end to end: `jsonPath: "data.signedFile"`, `decode: "base64"`, `saveAs` gave a valid 11-page PDF |
+| The CSP `src` fallback                      | **Unmeasured.** No page with a `script-src` that refuses inline scripts was tried; the target site has no CSP, so the fallback never ran live                                                | the fallback ships and is reported as `src`/`blocked`; docs and tool descriptions say it is unverified            |
 
 **Injection, the negative first.** On 385bb73 `status.hook` came back `installed: false` with only
 `"isolated"` among the worlds, across several reloads, while the background reported its

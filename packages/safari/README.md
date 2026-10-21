@@ -116,9 +116,11 @@ errors, and resource-timing entries. It is a **read** gate and is not folded int
 for the reason `ALLOW_CODES` is not: the traffic of a signed-in page is session material, and that
 is a different exposure from a one-time code.
 
-- **Bodies are not redacted.** Headers named `authorization`, `proxy-authorization`, `cookie` or
-  `set-cookie`, or containing `token`, `secret` or `api-key`, come back as `<redacted: N chars>`.
-  A body has no names to match, so it is returned as the page saw it. Turn the gate on knowing that.
+- **Bodies are not redacted, and neither are URLs.** Headers named `authorization`,
+  `proxy-authorization`, `cookie` or `set-cookie`, or containing `token`, `secret`, `api-key` or
+  `apikey`, come back as `<redacted: N chars>`. A body has no names to match, so it is returned as
+  the page saw it, and URLs are returned in full, query strings included, so a token in one comes
+  back too. Turn the gate on knowing that.
 - **Opt-in per tab, and it expires.** Nothing is wrapped until `network_record` starts, recording
   survives a reload for 15 minutes by default (120 at most), and `stop` ends it at once.
 - **Two things need `ALLOW_WRITES` as well:** `reload: true` on `network_record`, which re-runs the
@@ -127,8 +129,9 @@ is a different exposure from a one-time code.
   naming `APPLE_SAFARI_ALLOW_WRITES`.
 - **What it cannot see:** subframes, web and service workers, `<img>`/`<script>` bodies and
   WebSockets. Request ids die when the page reloads or navigates. On a page whose
-  Content-Security-Policy refuses inline scripts the recorder is loaded late, so the page's first
-  requests can be missing.
+  Content-Security-Policy refuses inline scripts there is a fallback that loads the recorder by URL
+  instead. It has not been verified in Safari; if it works it arrives late, so the page's first
+  requests can be missing, and if it does not, `hook.injection` says `"blocked"`.
 - **A file inside an API response:** `network_get` with `jsonPath` to the field, `decode: "base64"`
   and `saveAs`. The bytes go to disk, not into the conversation.
 
