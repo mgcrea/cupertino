@@ -214,7 +214,10 @@ export type RecordState = {
     /**
      * Why `injection` is not simply "inline": `"inline threw: <name: message>"`,
      * `"inline appended, no main answer"`, `"fallback threw: <message>"` (after
-     * the inline reason, joined with "; "), or `"no source"`. Null otherwise.
+     * the inline reason, joined with "; "), or `"no source"`. Also
+     * `"deferred: no documentElement yet"` while the page had no `<html>` to
+     * append to (injection still null), and `"deferred until documentElement
+     * existed"` first in line once it ran. Null otherwise.
      */
     injectionDetail?: string | null;
   };

@@ -150,6 +150,12 @@
    * (a CSP, most likely), `"fallback threw: <message>"` (joined to the inline
    * reason with "; ") or `"no source"`. Without it `src` and `unavailable`
    * each covered several causes, and a live run could not say which.
+   *
+   * One more case comes before any of those: `"deferred: no documentElement
+   * yet"` while `injection` is still null because `<html>` did not exist at
+   * `document_start`, and `"deferred until documentElement existed"` once the
+   * injection ran (alone when inline then worked, otherwise first, joined to
+   * the rest with "; ").
    */
   let injectionDetail = null;
 
@@ -767,9 +773,82 @@
     return hookWorlds.indexOf("main") !== -1;
   }
 
-  /** `document_start` may come before `<html>` exists; anything that can hold a node will do. */
+  /**
+   * Where the `<script>` goes: `<html>`, and nothing else.
+   *
+   * `document_start` can come before `<html>` exists. This used to fall back
+   * to `document` itself then, which is the one parent that is worse than
+   * none: a Document takes a single element child, so the script would BECOME
+   * the document element, and the parser's own `<html>` would then have
+   * nowhere to go — a page broken by the act of recording it. (`document.head`
+   * was never a real fallback either: no `<html>`, no `<head>`.) Null means
+   * "not yet", and `injectHook` waits for it; see `deferInjection`.
+   */
   function scriptParent() {
-    return document.documentElement || document.head || document;
+    return document.documentElement || null;
+  }
+
+  /**
+   * The watch for `<html>`, while there is one. Non-null means an injection
+   * is owed and will run when the element arrives, so a second `start` in the
+   * meantime must not set a second watch.
+   */
+  let rootWatch = null;
+  /** Set once an injection had to wait, so its detail says so whatever follows. */
+  let deferred = false;
+
+  /** Append `reason` to `injectionDetail`, joined with "; " to what is there. */
+  function noteDetail(reason) {
+    injectionDetail = injectionDetail ? injectionDetail + "; " + reason : reason;
+  }
+
+  /**
+   * Inject as soon as `<html>` exists, from a one-shot MutationObserver on the
+   * Document: the parser inserting `<html>` is a child-list mutation of the
+   * Document, which is the earliest moment a script can be appended where it
+   * belongs. It still runs before any page script, since those live inside
+   * the element that has only just arrived.
+   *
+   * `injection` stays null while waiting (nothing has been tried), and the
+   * detail says why. If the tab was stopped, or the arming ran out, before
+   * `<html>` came, nothing is injected: only an armed tab gets the script,
+   * and a later `start` finds `<html>` there and injects as usual. When it
+   * does run, the install it dispatches is the one `start` sent while there
+   * was no hook to hear it — needed when the flag could not be written, and
+   * a harmless repeat otherwise.
+   */
+  function deferInjection() {
+    if (rootWatch !== null) return;
+    injectionDetail = "deferred: no documentElement yet";
+    try {
+      rootWatch = new MutationObserver(() => {
+        if (!scriptParent()) return;
+        try {
+          rootWatch.disconnect();
+        } catch {
+          // One more callback at worst; the guard below makes it a no-op.
+        }
+        rootWatch = null;
+        if (!armed()) {
+          injectionDetail = null;
+          return;
+        }
+        deferred = true;
+        injectionDetail = null;
+        injectHook();
+        try {
+          dispatch(EVENT_INSTALL, options);
+        } catch {
+          // The hook arms itself from the flag; this was only for a missing one.
+        }
+      });
+      rootWatch.observe(document, { childList: true });
+    } catch (error) {
+      rootWatch = null;
+      injection = "unavailable";
+      injectionDetail =
+        "deferred, and the watch for documentElement threw: " + describeError(error);
+    }
   }
 
   function detach(node) {
@@ -782,13 +861,18 @@
 
   function injectHook() {
     try {
-      if (hookInPage() || injection !== null) return;
+      if (hookInPage() || injection !== null || rootWatch !== null) return;
       const source = window.cupertinoNetHookSource;
       if (typeof source !== "string" || source === "") {
         injection = "unavailable";
         injectionDetail = "no source";
         return;
       }
+      if (!scriptParent()) {
+        deferInjection();
+        return;
+      }
+      if (deferred) injectionDetail = "deferred until documentElement existed";
 
       let inlineThrew = null;
       try {
@@ -806,15 +890,16 @@
         injection = "inline";
         return;
       }
-      injectionDetail =
+      noteDetail(
         inlineThrew === null
           ? "inline appended, no main answer"
-          : "inline threw: " + describeError(inlineThrew);
+          : "inline threw: " + describeError(inlineThrew),
+      );
     } catch (error) {
       // Nothing above should throw past its own catch; if it does, the
       // command it ran under still answers, and says why.
       injection = "unavailable";
-      injectionDetail = "inline threw: " + describeError(error);
+      noteDetail("inline threw: " + describeError(error));
       return;
     }
 
@@ -844,10 +929,7 @@
     } catch (error) {
       // Whatever failed, the command it ran under still answers.
       injection = "blocked";
-      injectionDetail =
-        (injectionDetail ? injectionDetail + "; " : "") +
-        "fallback threw: " +
-        String((error && error.message) || error);
+      noteDetail("fallback threw: " + String((error && error.message) || error));
     }
   }
 
@@ -1129,9 +1211,15 @@
   // A valid flag is the one thing that puts the hook into the page at load:
   // it is injected here, before the install below, and reads the same flag
   // and wraps on its own as it starts. This only decides that what it sends
-  // is wanted. The flag is left for the hook to delete when it has expired,
-  // since it is the one that must not act on it — and an expired flag injects
-  // nothing, so a stale one never puts a script into the page.
+  // is wanted.
+  //
+  // An expired flag, or one that does not parse, is deleted HERE. It used to
+  // be left for the hook to delete, back when the hook was a MAIN-world
+  // manifest script that read every load's flag. Since Safari ignores MAIN
+  // the hook only reaches the page when this injects it, which it never does
+  // under a stale flag — so nothing else would ever delete one, and every
+  // later load of the tab would parse it again for the rest of the session
+  // (and copy it into any tab opened from this one).
   //
   // The install event re-sent here is for the hook's `ready` answer, and for
   // a page copy that got here some other way first (a future Safari that
@@ -1147,7 +1235,12 @@
   try {
     const raw = sessionStorage.getItem(FLAG_KEY);
     if (raw != null) {
-      const flag = JSON.parse(raw);
+      let flag = null;
+      try {
+        flag = JSON.parse(raw);
+      } catch {
+        flag = null;
+      }
       if (flag && typeof flag === "object" && Number(flag.expiresAt) > Date.now()) {
         const latest = Date.now() + MAX_ARM_MINUTES * 60000;
         options = normalize(flag);
@@ -1165,9 +1258,11 @@
         }
         injectHook();
         dispatch(EVENT_INSTALL, options);
+      } else {
+        sessionStorage.removeItem(FLAG_KEY);
       }
     }
   } catch {
-    // Storage disabled, or a flag that does not parse: not armed.
+    // Storage disabled or sandboxed away: not armed, and nothing to delete.
   }
 })();

@@ -144,6 +144,13 @@ const EXTENSION_BASE = "safari-web-extension://0d1e2f3a/";
 const tab = (
   opts: {
     flag?: Json;
+    /** A flag string that is not JSON, as a page could leave one. */
+    rawFlag?: string;
+    /**
+     * `document.documentElement` is null at load, as it can be at
+     * `document_start`, until the test calls `growRoot()`.
+     */
+    noRoot?: boolean;
     timings?: Timing[];
     token?: string;
     /** What answers `cupertino:net-ping`, in order, as the hook copies would. */
@@ -169,6 +176,7 @@ const tab = (
 
   const store = new Map<string, string>();
   if (opts.flag) store.set(FLAG, JSON.stringify(opts.flag));
+  if (opts.rawFlag !== undefined) store.set(FLAG, opts.rawFlag);
   const sessionStorage = {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => void store.set(k, String(v)),
@@ -225,12 +233,44 @@ const tab = (
   const document = Object.assign(new EventTarget(), {
     querySelectorAll: () => [button],
     getElementById: () => null,
-    documentElement: root,
+    documentElement: (opts.noRoot ? null : root) as typeof root | null,
     createElement: (tag: string) => {
       if (tag !== "script") throw new Error(`unexpected element ${tag}`);
       return new FakeScript();
     },
+    // A Document takes one element child, and a script is not the one it
+    // wants: appending here is the bug, so it is recorded rather than allowed
+    // to pass for a parent.
+    appendChild(node: FakeScript) {
+      timeline.push(node.src ? "append src to document" : "append inline to document");
+      return node;
+    },
   });
+
+  /**
+   * MutationObservers on `document`, so `<html>` arriving after
+   * `document_start` can be played: `growRoot()` attaches it and tells every
+   * observer still connected, as the parser's insertion would.
+   */
+  const observers: { fn: () => void; target: unknown; live: boolean }[] = [];
+  class FakeMutationObserver {
+    #entry: { fn: () => void; target: unknown; live: boolean };
+    constructor(fn: () => void) {
+      this.#entry = { fn, target: null, live: false };
+      observers.push(this.#entry);
+    }
+    observe(target: unknown) {
+      this.#entry.target = target;
+      this.#entry.live = true;
+    }
+    disconnect() {
+      this.#entry.live = false;
+    }
+  }
+  const growRoot = () => {
+    document.documentElement = root;
+    for (const o of observers.slice()) if (o.live && o.target === document) o.fn();
+  };
   const button = {
     tagName: "BUTTON",
     getAttribute: () => null,
@@ -287,6 +327,7 @@ const tab = (
     sessionStorage,
     Date: FakeDate,
     CustomEvent,
+    MutationObserver: FakeMutationObserver,
     location: { href: `${ORIGIN}/page`, reload: () => void reloads.push(clock.now) },
     setTimeout: (fn: () => void, ms = 0) => void timers.push({ fn, ms }),
     performance: {
@@ -396,6 +437,8 @@ const tab = (
     pageFetches,
     window,
     store,
+    observers,
+    growRoot,
     clock,
     timers,
     runTimers,
@@ -1112,10 +1155,89 @@ describe("injection", () => {
     expect(t.scripts).toEqual([]);
   });
 
-  it("injects nothing under an expired flag", () => {
+  it("injects nothing under an expired flag, and deletes it", () => {
     const t = tab({ hookSource: SOURCE, page: "inline", flag: { expiresAt: T0 - 1 } });
     expect(t.scripts).toEqual([]);
     expect(t.status().data.hook.injection).toBeNull();
+    // Nothing else would: the hook that used to delete it is never put into
+    // a page under an expired flag, so the next load would parse it again.
+    expect(t.store.has(FLAG)).toBe(false);
+  });
+
+  it("injects nothing under a flag that does not parse, and deletes it", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline", rawFlag: "{not json" });
+    expect(t.scripts).toEqual([]);
+    expect(t.status().data.recording).toBe(false);
+    expect(t.store.has(FLAG)).toBe(false);
+  });
+
+  it("deletes a flag that parses to something with no expiry", () => {
+    const t = tab({ hookSource: SOURCE, page: "inline", rawFlag: "null" });
+    expect(t.scripts).toEqual([]);
+    expect(t.store.has(FLAG)).toBe(false);
+  });
+
+  /**
+   * At `document_start` there may be no `<html>` yet. A `<script>` appended
+   * to the Document itself would become its document element, and the
+   * parser's own `<html>` would then have nowhere to go, so the injection
+   * waits for the element instead.
+   */
+  describe("before <html> exists", () => {
+    it("waits, never appends to the document, then injects once <html> arrives", () => {
+      const t = tab({ hookSource: SOURCE, page: "inline", flag: ARMED, noRoot: true });
+      expect(t.scripts).toEqual([]);
+      expect(t.timeline.some((e) => e.includes("to document"))).toBe(false);
+      expect(detailOf(t)).toEqual({
+        injection: null,
+        injectionDetail: "deferred: no documentElement yet",
+      });
+
+      t.growRoot();
+      expect(t.timeline.some((e) => e.includes("to document"))).toBe(false);
+      expect(t.scripts).toHaveLength(1);
+      expect(t.timeline.slice(-3)).toEqual([
+        "append inline",
+        "remove inline",
+        "cupertino:net-install",
+      ]);
+      expect(detailOf(t)).toEqual({
+        injection: "inline",
+        injectionDetail: "deferred until documentElement existed",
+      });
+      expect(t.observers.every((o) => !o.live)).toBe(true);
+    });
+
+    it("keeps the deferral in the detail when the fallback follows", () => {
+      const t = tab({ hookSource: SOURCE, page: "csp", flag: ARMED, noRoot: true });
+      t.growRoot();
+      expect(detailOf(t)).toEqual({
+        injection: "src",
+        injectionDetail: "deferred until documentElement existed; inline appended, no main answer",
+      });
+    });
+
+    it("a second start while waiting does not set a second watch", () => {
+      const t = tab({ hookSource: SOURCE, page: "inline", noRoot: true });
+      t.start();
+      t.start();
+      expect(t.observers).toHaveLength(1);
+      t.growRoot();
+      expect(t.scripts).toHaveLength(1);
+    });
+
+    it("injects nothing if the tab was stopped before <html> arrived", () => {
+      const t = tab({ hookSource: SOURCE, page: "inline", noRoot: true });
+      t.start();
+      t.stop();
+      t.growRoot();
+      expect(t.scripts).toEqual([]);
+      expect(detailOf(t)).toEqual({ injection: null, injectionDetail: null });
+      // A later start finds <html> there and injects as usual.
+      t.start();
+      expect(t.scripts).toHaveLength(1);
+      expect(detailOf(t).injection).toBe("inline");
+    });
   });
 
   it("at load under a valid flag, runs the source inline, removes the element, then installs", () => {

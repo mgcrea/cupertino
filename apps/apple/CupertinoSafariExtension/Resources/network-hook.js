@@ -1270,8 +1270,18 @@
     // Written by `network.js` on `netRecord start`, read here so a reload is
     // recorded from its first request. It expires: an agent that never said
     // `stop` must not leave a site wrapped for the rest of the day, and Safari
-    // may copy `sessionStorage` into a tab opened from this one. An expired or
-    // unreadable flag is removed, so the next load does not parse it again.
+    // may copy `sessionStorage` into a tab opened from this one.
+    //
+    // The `else` that removes an expired or unreadable flag is, today, all
+    // but unreachable, and is kept on purpose. `network.js` deletes a stale
+    // flag at load itself, and only injects this copy under a valid one, so
+    // a page copy normally never sees a stale flag. The two ways one still
+    // could are worth the four lines: a `src` copy that loads after the flag
+    // ran out on its way in, and a future Safari that honours
+    // `"world": "MAIN"` for a manifest entry, where this copy would run at
+    // `document_start` on every load, armed or not, and be the first to read
+    // the flag. Either way it must not wrap under it, and deleting it is the
+    // same thing `network.js` would have done.
     let armedAtLoad = false;
     try {
       const raw = sessionStorage.getItem(FLAG_KEY);
