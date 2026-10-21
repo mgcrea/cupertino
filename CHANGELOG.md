@@ -12,6 +12,28 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Safari can show what a page fetched.** With the new "Read network traffic" setting on, three
+  tools appear: `apple_safari_network_record` starts and stops recording on an open tab,
+  `apple_safari_network_list` lists the requests it made, with method, address, status and timing,
+  and `apple_safari_network_get` reads one request's headers and response. It answers the questions
+  a page's text cannot, such as why a button did nothing or which call came back with an error. The
+  setting is off by default, recording is per tab and ends on its own after 15 minutes unless you
+  ask for longer, and it works only on websites you have allowed the Cupertino extension on.
+- **A file inside a response can be saved straight to disk.** Some sites hand over a document, a
+  signed PDF for instance, as base64 inside a JSON response rather than as a download.
+  `apple_safari_network_get` can pick that field out, decode it and save it to your Downloads
+  folder in one call, without the file passing through the conversation. Saving a file, and
+  reloading a tab to record it from the start, also need the write setting.
+- **What it cannot see, and what it does not hide.** Only the page's own `fetch` and
+  `XMLHttpRequest` calls and its console errors are recorded: nothing from embedded frames, web or
+  service workers, or WebSockets. Headers that carry credentials are masked, but response bodies
+  and addresses are returned as the page received them, so a body or a link holding a token comes
+  back with the token in it.
+
 ## [1.28.1] - 2026-10-17
 
 **Replies work with Mail in the menu bar.** A reply or forward no longer stops to send you to
