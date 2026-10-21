@@ -148,11 +148,16 @@ const ConfigSchema = BaseConfigSchema.extend({
   /**
    * Characters of a body the server asks the page for per command.
    *
-   * THE DEFAULT IS A GUESS. A command's answer travels through Safari's
-   * native-message channel, which has a size limit nobody has measured on this
-   * machine; Task 7 of the network work measures it and this default is to be
-   * revisited then. Too large and a chunk is dropped silently, too small and a
-   * big PDF costs a hundred round trips at a poll interval each.
+   * THE DEFAULT IS MEASURED TO WORK; THE CEILING IS NOT. A command's answer
+   * travels through Safari's native-message channel, which has a size limit.
+   * On Safari 26 a 1.3 MB emoji-heavy body came back byte-identical in five
+   * chunks of this size, about 1.1 s each. How far above it the channel goes
+   * is unmeasured: the server the extension talks to is the one the app
+   * spawns, whose environment a shell cannot change, and a shell-launched
+   * server cannot reach the extension's container (EPERM). So the default
+   * stays. Too large and a chunk is dropped silently, too small and a big PDF
+   * costs a hundred round trips at a poll interval each. See docs/safari.md,
+   * "Measurements".
    */
   networkChunkChars: z.number().int().min(16_384).max(8_388_608).default(262_144),
 }).strict();

@@ -1008,24 +1008,45 @@ not exist. `reload` (re-runs the page) and `saveAs` (writes a file) additionally
 
 ### Measurements
 
-The five probes from the spec's "Measure first" section, each of which changes a detail of the
-build rather than its shape. Three were measured on the notarized build of 385bb73 (Safari 26, macOS
-26). The other two are still assumptions, and the build behaves as described under each.
+Measured 2026-10-21 on Safari 26 / macOS 26, against the notarized builds of 385bb73 (the first
+row's negative), 1a82e34 and 5d33ea0, on localhost test pages and on the one production site this
+feature was built for. Four of the spec's five "Measure first" probes are settled. The fifth, the
+native-message ceiling, is measured only as "the default works".
 
-| Probe                                       | Result                                                                        | Date       | What the build does about it                                                    |
-| ------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------- |
-| MAIN-world script from the manifest         | **Ignored**, and by `scripting.registerContentScripts` too: both run isolated | 2026-10-21 | `network.js` injects the hook as a page `<script>`; the registration is removed |
-| Native-messaging payload limit              | TBD                                                                           | TBD        | if lower, lower `APPLE_SAFARI_NETWORK_CHUNK_CHARS`'s default                    |
-| `CustomEvent` string `detail` across worlds | **Yes**, both directions                                                      | 2026-10-21 | nothing: the hook sends strings, and this confirms the choice                   |
-| `PerformanceResourceTiming.responseStatus`  | **Not supported**                                                             | 2026-10-21 | `resource` entries carry no status, and `failed` cannot see them                |
-| The target PDF site's request path          | TBD; it sends no CSP header or meta tag, so inline injection is allowed there | TBD        | XHR is expected (Angular `HttpClient`); a subframe would not work               |
+| Probe                                       | Result                                                                                                                                                                                       | What the build does about it                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Getting the hook into the page              | **Inline `<script>` works**: `worlds: ["isolated","main"]`, `injection: "inline"`. Manifest `world: "MAIN"` and `registerContentScripts` MAIN are both **ignored**; both copies run isolated | `network.js` injects the hook as a page `<script>` on armed tabs; the registration and `scripting` are gone       |
+| Native-messaging payload limit              | **262,144 chars per chunk works**: a 1.3 MB emoji-heavy body came back byte-identical in 5 chunks, about 1.1 s per chunk. **Ceiling not measured**                                           | the default stays at 262,144 (see below)                                                                          |
+| `CustomEvent` string `detail` across worlds | **Yes**, both directions                                                                                                                                                                     | nothing: the hook sends strings, and this confirms the choice                                                     |
+| `PerformanceResourceTiming.responseStatus`  | **Not supported**                                                                                                                                                                            | `resource` entries carry no status, and `failed` cannot see them                                                  |
+| The target PDF site (`app.immo-sign.com`)   | **XHR**, JSON with the PDF as base64 at `data.signedFile`; **no CSP**, so inline injection works                                                                                             | the recipe works end to end: `jsonPath: "data.signedFile"`, `decode: "base64"`, `saveAs` gave a valid 11-page PDF |
 
-The first row in detail: `status.hook` came back `installed: false` with only `"isolated"` among the
-worlds, across several reloads, while the background reported its registration as made. A test page
-listening for the events itself saw, from the page's world, no `window.__cupertinoNetHook` and a
-native `fetch` and `XMLHttpRequest.prototype.send`, yet received `cupertino:net-ping` once and
-`cupertino:net-ready` twice. So the registered copy did run, in the wrong world, and the events do
-cross between worlds.
+**Injection, the negative first.** On 385bb73 `status.hook` came back `installed: false` with only
+`"isolated"` among the worlds, across several reloads, while the background reported its
+registration as made. A test page listening for the events itself saw, from the page's world, no
+`window.__cupertinoNetHook` and a native `fetch` and `XMLHttpRequest.prototype.send`, yet received
+`cupertino:net-ping` once and `cupertino:net-ready` twice. So the registered copy did run, in the
+wrong world, and the events do cross between worlds. The inline injection that replaced it reported
+`["isolated","main"]` and `inline`, and recorded localhost fetch, XHR and console correctly.
+
+**Why the chunk ceiling is unmeasured.** Finding it means restarting the server with a larger
+`APPLE_SAFARI_NETWORK_CHUNK_CHARS` until a chunk fails. The server the extension talks to is the one
+the Cupertino app spawns, and its environment cannot be changed from a shell; a server launched from
+a shell instead cannot reach the extension's container at all (macOS app-data protection refuses it
+with `EPERM`). So the default is kept: it is measured to work, and at about a second per chunk a
+10 MiB body is a few dozen round trips, which is slow but not broken.
+
+**An XHR is reset between `load` and `loadend` on a real Angular app.** On the PDF site (Angular 18
+`HttpClient` with zone.js) every XHR was first recorded as `status: 0, "Network error"` while the page
+rendered all its data. Each request's trace read `["readystatechange 4/200","load 4/200","loadend
+0/0"]`: something resets the request after DONE (an `abort()` or `open()` there sets status 0 and
+drops the response without an event of its own) before `loadend` is dispatched. That is why the hook
+snapshots status, headers and body at `readystatechange`/`load` and only finalises at `loadend`, and
+why XHR entries carry `trace`. With that, every request on the site recorded as 200 with its body.
+
+**Two refusals behave as designed.** A request id from before a reload is refused with the "since
+gone" message, after the action timeout. A `saveAs` onto a name that already exists refuses without
+`overwrite: true`.
 
 ## Still open
 
