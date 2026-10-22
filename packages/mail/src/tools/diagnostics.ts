@@ -121,8 +121,12 @@ export const buildDiagnostics = async (
         ? {
             composerLaneNote:
               "This server is hosted by Cupertino, so a composer is driven through the app's " +
-              "own Accessibility driver. Automation to System Events is NOT required for it, " +
-              "and `automationSystemEvents` above can be denied without affecting a reply.",
+              "own Accessibility driver, for a new message as for a reply or forward: the body " +
+              "is pasted, never assigned. Automation to System Events is NOT required for it, " +
+              "and `automationSystemEvents` above can be denied. The one exception is a new " +
+              "message with no subject, which still has its body assigned and then needs " +
+              "System Events to take off the quotation Mail wraps an assigned body in; without " +
+              "it, the result says `quoted: true` and the message is not sent.",
           }
         : {}),
       ...((composer.uiRead === "granted" && composer.systemEvents === "granted") ||
@@ -134,7 +138,8 @@ export const buildDiagnostics = async (
               "above: Automation to System Events (a different grant from Automation to Mail) " +
               "and Accessibility. Until both are granted, apple_mail_reply_to_message and " +
               "apple_mail_forward_message fail with COMPOSER_NOT_FOUND while every other tool " +
-              "works. Grant them to the Cupertino bundle that is RUNNING — not to your terminal " +
+              "works, and apple_mail_send_message leaves its body wrapped as a QUOTATION that " +
+              "recipients see — reported as `quoted: true`, and never sent that way. Grant them to the Cupertino bundle that is RUNNING — not to your terminal " +
               "and not to node: the app is the process macOS holds responsible, and the servers " +
               "do inherit its identity. If Cupertino's own Settings shows a GREEN Accessibility " +
               "row while `composerUiRead` above says denied, believe this line and not the row: " +

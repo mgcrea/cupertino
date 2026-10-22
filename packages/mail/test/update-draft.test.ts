@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { DRAFT_FACTS, UPDATE_DRAFT } from "../src/client/jxa/write.js";
+import {
+  COMMIT_REPLACEMENT,
+  DRAFT_FACTS,
+  STAGE_REPLACEMENT,
+  UPDATE_DRAFT,
+} from "../src/client/jxa/write.js";
 
 /**
  * The draft-rewrite script, run for real against a fake Mail.
@@ -48,6 +53,14 @@ type MailBehaviour = {
   otherDrafts?: { id: number; subject: string }[];
   /** Mail refuses to attach a file to the replacement. */
   attachFails?: boolean;
+  /**
+   * Whether taking Mail's quotation off the assigned body works. It drives
+   * System Events, which no fake here models, so the outcome is decided here.
+   * False is the measured state under Cupertino without that grant.
+   */
+  citationStrips?: boolean;
+  /** The replacement was already saved, by a keystroke, before this script ran. */
+  alreadySaved?: boolean;
 };
 
 const ORIGINAL_ID = 42;
@@ -76,11 +89,13 @@ const runScript = (
     content = "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
     otherDrafts = [],
     attachFails = false,
+    citationStrips = true,
+    alreadySaved = false,
   } = behaviour;
 
   const state = {
     polls: 0,
-    saves: 0,
+    saves: alreadySaved ? 1 : 0,
     composed: null as null | { subject: string; content: string; visible: boolean },
     to: [] as string[],
     cc: [] as string[],
@@ -120,7 +135,7 @@ const runScript = (
         // The replacement only becomes visible once Mail has caught up.
         if (state.saves > 0 && ++state.polls >= savedAfterPolls) {
           if (!state.draftRows.some((r) => r.id === 99)) {
-            state.draftRows.push({ id: 99, subject: state.composed?.subject ?? "" });
+            state.draftRows.push({ id: 99, subject: state.composed?.subject ?? subject });
           }
         }
         return state.draftRows
@@ -230,8 +245,19 @@ const runScript = (
   dollar.NSPasteboardTypeString = "public.utf8-plain-text";
   dollar.NSPasteboard = { generalPasteboard: {} };
 
-  const factory = new Function("ObjC", "Application", "$", "Path", `${script}\nreturn run;`);
-  const run = factory(ObjC, Application, dollar, Path) as (argv: string[]) => string;
+  // A function declaration is a mutable binding, so this replaces the prelude's
+  // for the whole script.
+  const factory = new Function(
+    "ObjC",
+    "Application",
+    "$",
+    "Path",
+    "strips",
+    `${script}\nstripCitation = function () { return strips; };\nreturn run;`,
+  );
+  const run = factory(ObjC, Application, dollar, Path, citationStrips) as (
+    argv: string[],
+  ) => string;
   const envelope = JSON.parse(
     run([
       JSON.stringify({
@@ -290,11 +316,17 @@ describe("rewriting a draft", () => {
     expect(runScript({}).envelope.data.originalMovedToTrash).toBe(true);
   });
 
-  /** Cosmetic, and already wrapped: a broken System Events must not lose a draft. */
-  it("still completes when the citation strip cannot run", () => {
-    const { envelope } = runScript({});
-    expect(envelope.data.unquoted).toBe(false);
-    expect(envelope.data.replaced).toBe(true);
+  /*
+   * NOT cosmetic, which this test used to say it was. A body that stays wrapped
+   * reads as one long quotation to whoever gets it — the 2026-10-21 mail — so a
+   * replacement that cannot be unquoted is not saved and the original stays.
+   */
+  it("keeps the original when the replacement's body cannot be unquoted", () => {
+    const { envelope, state } = runScript({}, { citationStrips: false });
+    expect(envelope.data).toMatchObject({ replaced: false, capability: "quoting" });
+    expect(state.saves).toBe(0);
+    expect(state.closed).toBe(1);
+    expect(state.deleted).toEqual([]);
   });
 });
 
@@ -519,5 +551,75 @@ describe("reading a draft's facts", () => {
     const { envelope } = runScript({ id: 4242 }, {}, DRAFT_FACTS);
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe("MESSAGE_NOT_FOUND");
+  });
+});
+
+/*
+ * Recreating with the body pasted rather than assigned: `STAGE_REPLACEMENT`
+ * opens the replacement, the client fills and saves its window, and
+ * `COMMIT_REPLACEMENT` confirms it and deletes the original. The split must
+ * keep both halves of `UPDATE_DRAFT`'s contract: the same refusals, and the
+ * same order.
+ */
+describe("recreating a draft with its body pasted", () => {
+  /*
+   * The point of staging at all. Any write to `content` — "" included —
+   * makes Mail wrap the body in a hidden quotation, measured on macOS 27.0.
+   */
+  it("stages a replacement that never touches content", () => {
+    const { envelope, state } = runScript({}, {}, STAGE_REPLACEMENT);
+    expect(envelope.data).toMatchObject({ staged: true, subject: "Quarterly numbers" });
+    expect(state.composed).not.toHaveProperty("content");
+    expect(state.attached).toEqual([]);
+    expect(state.to).toEqual(["ada@example.com"]);
+    expect(state.saves).toBe(0);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* Rows already under the subject are handed over, so none is taken for the new one. */
+  it("hands over every row that was already there", () => {
+    const { envelope } = runScript(
+      {},
+      { otherDrafts: [{ id: 50, subject: "Quarterly numbers" }] },
+      STAGE_REPLACEMENT,
+    );
+    expect([...envelope.data.before].toSorted()).toEqual([42, 50]);
+  });
+
+  it("refuses a reply before opening anything", () => {
+    const { envelope, state } = runScript({}, { headers: REPLY_HEADERS }, STAGE_REPLACEMENT);
+    expect(envelope.data).toMatchObject({ replaced: false, capability: "threading" });
+    expect(state.composed).toBeNull();
+  });
+
+  it("deletes the original once the saved replacement is confirmed", () => {
+    const { envelope, state } = runScript(
+      { subject: "Quarterly numbers", before: [42], attachmentsAdded: 1 },
+      { alreadySaved: true },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: true, newId: 99, attachmentsAdded: 1 });
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
+  });
+
+  it("keeps the original when the replacement never shows up", () => {
+    const { envelope, state } = runScript(
+      { subject: "Quarterly numbers", before: [42] },
+      { alreadySaved: true, savedAfterPolls: Infinity },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* An autosaved copy handed over as already there is not the replacement. */
+  it("does not take a row that was already there for the replacement", () => {
+    const { envelope, state } = runScript(
+      { subject: "Quarterly numbers", before: [42, 50] },
+      { otherDrafts: [{ id: 50, subject: "Quarterly numbers" }], savedAfterPolls: Infinity },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
   });
 });

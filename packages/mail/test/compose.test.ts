@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MailAxLane } from "../src/client/ax.js";
-import { replyOrForwardNatively, type Clipboard } from "../src/client/compose.js";
+import { composeNatively, type Clipboard } from "../src/client/compose.js";
 import { SENT_SINCE } from "../src/client/jxa/read.js";
 
 const open = new Set<Server>();
@@ -94,18 +94,24 @@ const laneOver = async (
   return { lane, seen };
 };
 
-const fakeClipboard = (): Clipboard & { history: string[]; current: string | null } => {
+const fakeClipboard = (): Clipboard & {
+  history: string[];
+  current: string | null;
+  files: string[] | null;
+} => {
   const state = {
     history: [] as string[],
     current: "something the user had copied" as string | null,
+    files: null as string[] | null,
     read: async () => state.current,
     write: async (text: string) => {
       state.history.push(text);
       state.current = text;
+      state.files = null;
     },
-    // Compose attaches through Apple Events, never through the pasteboard.
-    writeFiles: async () => {
-      throw new Error("compose does not paste files");
+    writeFiles: async (paths: string[]) => {
+      state.current = null;
+      state.files = paths;
     },
   };
   return state;
@@ -116,7 +122,7 @@ const runnerReturning = (subject: string) => ({ run: async () => ({ subject }) }
 /**
  * A runner that answers the Sent check too.
  *
- * `replyOrForwardNatively` reaches Apple Events twice now: once to open the
+ * `composeNatively` reaches Apple Events twice now: once to open the
  * composer, and once more — only when the composer has GONE — to ask whether
  * what was in it went out.
  */
@@ -155,7 +161,7 @@ const PARAMS = {
   sendNow: true,
 };
 
-describe("replyOrForwardNatively", () => {
+describe("composeNatively", () => {
   it("opens, pastes, verifies, then sends — and confirms the window went", async () => {
     const { lane, seen } = await laneOver(
       healthyHost({
@@ -167,7 +173,7 @@ describe("replyOrForwardNatively", () => {
             : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
       }),
     );
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -186,7 +192,7 @@ describe("replyOrForwardNatively", () => {
   it("puts the clipboard back", async () => {
     const { lane } = await laneOver(healthyHost());
     const clipboard = fakeClipboard();
-    await replyOrForwardNatively(
+    await composeNatively(
       lane,
       runnerReturning("Re: lunch"),
       { ...PARAMS, sendNow: false },
@@ -218,7 +224,7 @@ describe("replyOrForwardNatively", () => {
             : { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "PASTED" }] },
       }),
     );
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -239,7 +245,7 @@ describe("replyOrForwardNatively", () => {
     const { lane } = await laneOver(
       healthyHost({ expand: { elements: [{ handle: "e8", depth: 3, value: "" }] } }),
     );
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -269,7 +275,7 @@ describe("replyOrForwardNatively", () => {
         },
       }),
     );
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -293,7 +299,7 @@ describe("replyOrForwardNatively", () => {
    */
   it("reports a composer that vanished mid-paste as gone, not as a body that failed", async () => {
     const { lane } = await laneOver(composerThatVanishes());
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
       PARAMS,
@@ -315,7 +321,7 @@ describe("replyOrForwardNatively", () => {
    */
   it("says the reply went when Sent holds it, and does not invite a retry", async () => {
     const { lane } = await laneOver(composerThatVanishes());
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", {
         checked: true,
@@ -341,7 +347,7 @@ describe("replyOrForwardNatively", () => {
    */
   it("refuses to call it unsent when Sent's newest entry predates the call", async () => {
     const { lane } = await laneOver(composerThatVanishes());
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", {
         checked: true,
@@ -366,7 +372,7 @@ describe("replyOrForwardNatively", () => {
     const { lane, seen } = await laneOver(
       healthyHost({ raise_window: (_a: unknown, n: number) => (n > 1 ? { refusal: "gone" } : {}) }),
     );
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
       PARAMS,
@@ -383,7 +389,7 @@ describe("replyOrForwardNatively", () => {
    */
   it("does not claim a body when the composer never took the focus", async () => {
     const { lane, seen } = await laneOver(healthyHost({ focus: { focused: false } }));
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -402,7 +408,7 @@ describe("replyOrForwardNatively", () => {
    */
   it("does not report a send whose window is still open", async () => {
     const { lane } = await laneOver(healthyHost());
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -430,7 +436,7 @@ describe("replyOrForwardNatively", () => {
             : {},
       }),
     );
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -445,7 +451,7 @@ describe("replyOrForwardNatively", () => {
 
   it("saves a draft without waiting for any window to close", async () => {
     const { lane, seen } = await laneOver(healthyHost());
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerReturning("Re: lunch"),
       { ...PARAMS, sendNow: false },
@@ -473,7 +479,7 @@ describe("replyOrForwardNatively", () => {
     const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
     const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
     const clipboard = fakeClipboard();
-    const result = await replyOrForwardNatively(
+    const result = await composeNatively(
       lane,
       runnerReturning("Re: lunch"),
       { ...PARAMS, sendNow: false },
@@ -495,7 +501,7 @@ describe("replyOrForwardNatively", () => {
   it("never presses send when a composer with this subject was already open", async () => {
     const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
     const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
-    const result = await replyOrForwardNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
       clipboard: fakeClipboard(),
       sendTimeoutMs: 50,
       composerTimeoutMs: 50,
@@ -524,10 +530,135 @@ describe("replyOrForwardNatively", () => {
       CUPERTINO_AX_FOR: "mail",
     })!;
     await expect(
-      replyOrForwardNatively(dead, runnerReturning("Re: lunch"), PARAMS, {
+      composeNatively(dead, runnerReturning("Re: lunch"), PARAMS, {
         clipboard: fakeClipboard(),
       }),
     ).rejects.toThrow(/Accessibility/);
     expect(seen).toEqual([]);
+  });
+});
+
+/*
+ * A NEW message, composed the way a reply is. The incident this exists for,
+ * 2026-10-21: a new message's body was assigned to `content`, Mail wrapped it
+ * in a quotation it hides and Outlook shows, and the person it went to read
+ * the whole mail as a quote. Nothing here may assign it; it is pasted and read
+ * back like a reply's.
+ */
+/** A runner that opens "GPU VMs" and records what it was asked. */
+const recording = () => {
+  const calls: { script: string; params: Record<string, unknown> }[] = [];
+  const runner = {
+    run: async (script: string, params: Record<string, unknown>) => {
+      calls.push({ script, params });
+      return { subject: "GPU VMs" };
+    },
+  } as never;
+  return { calls, runner };
+};
+const saves = (seen: { tool: string; args: Record<string, unknown> }[]) =>
+  seen.filter((c) => c.tool === "key" && c.args.key === "s").length;
+
+describe("composeNatively, a new message", () => {
+  const NEW = {
+    mode: "new" as const,
+    accountUuid: null,
+    subject: "GPU VMs",
+    senderAddress: "me@example.com",
+    body: "PASTED",
+    to: ["dave@example.com"],
+    cc: [],
+    bcc: [],
+    sendNow: false,
+  };
+  const newHost = (over: Record<string, unknown> = {}) =>
+    healthyHost({
+      list_windows: (_a: unknown, n: number) =>
+        n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: "GPU VMs" }] },
+      ...over,
+    });
+  it("opens it without a body, pastes the body, and saves", async () => {
+    const { lane, seen } = await laneOver(newHost());
+    const { calls, runner } = recording();
+    const result = await composeNatively(lane, runner, NEW, {
+      clipboard: fakeClipboard(),
+      composerTimeoutMs: 50,
+      renderTimeoutMs: 50,
+    });
+    lane.close();
+    expect(result).toMatchObject({ ok: true, bodyVerified: true, sent: false });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.params).toMatchObject({ mode: "new", subject: "GPU VMs" });
+    // The body never travels to Mail's scripting object.
+    expect(calls[0]?.params).not.toHaveProperty("attachments");
+    expect(saves(seen)).toBe(1);
+  });
+
+  it("refuses before opening anything when the subject is already a window", async () => {
+    const { lane, seen } = await laneOver(
+      newHost({ list_windows: { windows: [{ handle: "w1", index: 0, title: "GPU VMs" }] } }),
+    );
+    const { calls, runner } = recording();
+    const result = await composeNatively(lane, runner, NEW, {
+      clipboard: fakeClipboard(),
+      composerTimeoutMs: 50,
+    });
+    lane.close();
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(result.note).toMatch(/Nothing was opened/);
+    expect(calls).toHaveLength(0);
+    expect(seen.some((c) => c.tool === "key")).toBe(false);
+  });
+
+  it("pastes the files after the body and saves once they read back", async () => {
+    const clipboard = fakeClipboard();
+    // The body as the tree shows it: the pasted text, and the file once a
+    // command-V has gone in with its URL on the pasteboard.
+    let pastedFiles = false;
+    const { lane, seen } = await laneOver(
+      newHost({
+        expand: () => ({
+          elements: [
+            { handle: "g0", role: "AXGroup", depth: 0 },
+            { handle: "e8", role: "AXStaticText", depth: 1, value: "PASTED" },
+            ...(pastedFiles
+              ? [{ handle: "f0", role: "AXImage", depth: 1, name: "chart.png" }]
+              : []),
+          ],
+        }),
+        get_attribute: { value: 0 },
+        key: (args: Record<string, unknown>) => {
+          if (args.key === "v" && clipboard.files) pastedFiles = true;
+          return {};
+        },
+      }),
+    );
+    const { runner } = recording();
+    const result = await composeNatively(
+      lane,
+      runner,
+      { ...NEW, attachments: ["/Users/me/chart.png"] },
+      { clipboard, composerTimeoutMs: 50, renderTimeoutMs: 300 },
+    );
+    lane.close();
+    expect(result).toMatchObject({ ok: true, bodyVerified: true, attachments: 1 });
+    expect(clipboard.files).toBeNull();
+    expect(clipboard.current).toBe("something the user had copied");
+    expect(saves(seen)).toBe(1);
+  });
+
+  it("does not save when the files never read back", async () => {
+    const { lane, seen } = await laneOver(newHost({ get_attribute: { value: 0 } }));
+    const { runner } = recording();
+    const result = await composeNatively(
+      lane,
+      runner,
+      { ...NEW, attachments: ["/Users/me/chart.png"] },
+      { clipboard: fakeClipboard(), composerTimeoutMs: 50, renderTimeoutMs: 100 },
+    );
+    lane.close();
+    expect(result).toMatchObject({ ok: false, degraded: true, bodyVerified: true, sent: false });
+    expect(result.note).toMatch(/NOT saved/);
+    expect(saves(seen)).toBe(0);
   });
 });

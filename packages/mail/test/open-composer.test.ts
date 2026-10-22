@@ -31,6 +31,7 @@ const runScript = (
   const recipients: string[] = [];
   const attached: string[] = [];
   const closed: unknown[] = [];
+  const created: Record<string, unknown>[] = [];
   const opened: { mode: string | null; replyToAll: boolean | null } = {
     mode: null,
     replyToAll: null,
@@ -65,7 +66,23 @@ const runScript = (
       opened.mode = "forward";
       return draft;
     },
+    // A new message: what it was created with, and where its recipients went.
+    OutgoingMessage: (spec: Record<string, unknown>) => {
+      created.push(spec);
+      return {
+        set sender(v: string) {
+          created.push({ sender: v });
+        },
+        toRecipients: { push: (r: { address: string }) => recipients.push(`to:${r.address}`) },
+        ccRecipients: { push: (r: { address: string }) => recipients.push(`cc:${r.address}`) },
+        bccRecipients: { push: (r: { address: string }) => recipients.push(`bcc:${r.address}`) },
+        content: draft.content,
+      };
+    },
+    outgoingMessages: { push: () => undefined },
     ToRecipient: (spec: { address: string }) => spec,
+    CcRecipient: (spec: { address: string }) => spec,
+    BccRecipient: (spec: { address: string }) => spec,
     Attachment: (spec: { fileName: { path: string } }) => spec,
     close: (d: unknown) => closed.push(d),
   };
@@ -89,7 +106,7 @@ const runScript = (
   const envelope = JSON.parse(
     run([JSON.stringify({ accountUuid: "UUID", mailbox: "INBOX", id: 42, ...params })]),
   );
-  return { envelope, recipients, opened, addressed, attached, closed };
+  return { envelope, recipients, opened, addressed, attached, closed, created };
 };
 
 describe("OPEN_COMPOSER", () => {
@@ -170,39 +187,41 @@ describe("OPEN_COMPOSER", () => {
   });
 
   /*
-   * The scripting object is the only handle on the composer, and it dies with
-   * this process, so attachments go on here or not at all. Each one is the
-   * path the client resolved, wrapped in Path() and nothing else.
+   * Files are pasted into the window by the native half, never pushed onto
+   * `content` here. MEASURED, macOS 27.0: pushing an attachment onto it is a
+   * write to it, and any write makes Mail wrap the body in a quotation that
+   * recipients see. So a list of files reaching this script changes nothing.
    */
-  it("attaches every file to the composer it opened", () => {
+  it("never attaches through the scripting object", () => {
     const { envelope, attached } = runScript({
       mode: "reply",
       attachments: ["/tmp/a.pdf", "/tmp/b.png"],
     });
     expect(envelope.ok).toBe(true);
-    expect(attached).toEqual(["/tmp/a.pdf", "/tmp/b.png"]);
-    expect(envelope.data.attachments).toBe(2);
-  });
-
-  it("attaches nothing when none were asked for", () => {
-    const { envelope, attached } = runScript({ mode: "forward", to: ["a@example.com"] });
     expect(attached).toEqual([]);
-    expect(envelope.data.attachments).toBe(0);
+    expect(envelope.data).not.toHaveProperty("attachments");
   });
 
   /*
-   * Nothing has been typed into the composer yet, so it is ours to take back:
-   * a reply that silently lost the file the caller asked for is worse than no
-   * reply, and an empty window left behind is the failure this path removed.
+   * A new message is opened with NO content property at all. Assigning even ""
+   * is what wrapped the 2026-10-21 mail in a quotation; a message created
+   * without it measured clean.
    */
-  it("closes the composer and refuses when a file cannot be attached", () => {
-    const { envelope, closed } = runScript(
-      { mode: "reply", attachments: ["/tmp/a.pdf"] },
-      { attachFails: true },
-    );
-    expect(envelope.ok).toBe(false);
-    expect(envelope.error.code).toBe("ATTACHMENT_FAILED");
-    expect(envelope.error.message).toContain("/tmp/a.pdf");
-    expect(closed).toHaveLength(1);
+  it("opens a new message addressed, and without content", () => {
+    const { envelope, created, recipients, opened } = runScript({
+      mode: "new",
+      subject: "GPU VMs",
+      senderAddress: "me@example.com",
+      to: ["dave@example.com"],
+      cc: ["arkadi@example.com"],
+      bcc: [],
+      attachments: ["/tmp/a.pdf"],
+    });
+    expect(envelope.data).toEqual({ subject: "GPU VMs" });
+    expect(created[0]).toEqual({ subject: "GPU VMs", visible: true });
+    expect(created).toContainEqual({ sender: "me@example.com" });
+    expect(recipients).toEqual(["to:dave@example.com", "cc:arkadi@example.com"]);
+    // Neither a reply nor a forward was made.
+    expect(opened.mode).toBeNull();
   });
 });
