@@ -220,7 +220,36 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_29_1, v1_29_0, v1_28_1, v1_28_0, v1_27_0]
+  static let releases: [Release] = [v1_30_0, v1_29_1, v1_29_0, v1_28_1, v1_28_0]
+
+  // swift-format-ignore
+  private static let v1_30_0: Release = Release(
+    version: "1.30.0",
+    date: "2026-10-22",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A new mail no longer reaches its recipient as one long quote.",
+            body: [
+              "`apple_mail_send_message` set the body through AppleScript, and Mail wraps a body set that way in a quotation. Mail hides it, but Outlook and every other client show it, and the plain-text part had `> ` before every line. The step meant to remove it needed a permission Cupertino doesn't hold, so it failed every time, and the failure was dropped as cosmetic. A new message is now composed the way a reply is: the body and any files are pasted into the window and read back, and nothing is assigned, so there is no quote to remove. `apple_mail_update_draft` recreates a draft the same way. Without Cupertino, a body that stays quoted is reported as `quoted: true` and is never sent like that.",
+            ]),
+        ]),
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Mail attaches files to a draft that is already open.",
+            body: [
+              "`apple_mail_update_draft` takes `attachments`, and its `body` is now optional, so \"attach the PDF to that reply\" no longer means driving Mail's File menu by hand. The files are pasted into the draft's own composer window after your text and above any quoted original, the way a file copied in Finder pastes, and nothing is saved until each one shows up in the window with your text unchanged. Threading and the quote stay as they were. With no window open, files only go on when the body is rewritten too, on a draft that is not a reply.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_29_1: Release = Release(
@@ -347,117 +376,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_27_0: Release = Release(
-    version: "1.27.0",
-    date: "2026-10-13",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can right-click and drag.",
-            body: [
-              "`apple_desktop_show_menu` opens an element's context menu without moving the pointer or bringing the app forward, and the tree marks which elements offer one. For a view with nothing to ask, such as a drawing canvas, `apple_desktop_click` now takes `button: \"right\"`. While a menu is open, `ui_tree` and `find_elements` list its items first, wherever the app hung it, so an item is pressed like any other control. `apple_desktop_drag` presses, moves and releases between two handles or points, for moving something on a canvas, a slider or a splitter; the press and the drop are both refused unless they land on a window of an app within reach. Both are `run` steps.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Clients you have configured stay current.",
-            body: [
-              "Switching a surface on adds it to every client already wired to Cupertino, and switching one off takes it out, without a visit to each client's pane. A surface that arrives in an update and starts switched on is added at the next launch, and an entry still pointing at a copy of Cupertino that is no longer there is pointed at this one. A client that has never been configured is left alone, and so is one wired to another copy of Cupertino that is still installed. Entries that are already right are not rewritten. A folder's `.mcp.json` is never touched. It is off in a copy that is not in an Applications folder, and `defaults write io.mgcrea.cupertino autoWireClients -bool NO` turns it off altogether.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "A Desktop click right after bringing an app forward is no longer refused.",
-            body: [
-              "`click` and `hover` at a point, given the app's `bundleId`, could answer that the point was \"not on a window of\" an app whose window covered it. The app had come to the front, but its window had not yet been stacked on top. The check now waits up to half a second for the window to arrive.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Updating a Mail draft no longer deletes it when the save fails.",
-            body: [
-              "`apple_mail_update_draft` took any other draft already carrying the subject, such as one of Mail's autosaved copies, as proof that the replacement was saved, and deleted the original with nothing saved in its place.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "An element reporting an impossible frame no longer quits Cupertino.",
-            body: [
-              "A window or control whose frame came back as NaN, as some Simulator windows' do, made `ui_tree`, `find_elements` or `list_windows` terminate the app and every surface's connection with it. It now reads as an element with no frame.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Mail's account allowlist holds for mailboxes.",
-            body: [
-              "With `APPLE_MAIL_ACCOUNTS` naming no account that exists, `apple_mail_list_mailboxes` listed every account's mailboxes instead of none.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "`apple_desktop_key` refuses modifiers it cannot read.",
-            body: [
-              "A `modifiers` given as a string, or a list with something other than names in it, was dropped and the bare key sent, so \"a\" was typed where select-all was meant and the call still reported success.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "The activity log no longer reports a removed record after a full disk.",
-            body: [
-              "A write that failed could leave an empty log file behind, and the next launch started a new chain from it, so verification said a record was missing from a log nothing had been removed from.",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "Safari says when it may need reopening.",
-            body: [
-              "A page action that times out while no site has been captured for over half an hour now names a stopped extension as the likely cause, rather than only a missing site permission.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A new mail no longer reaches its recipient as one long quote.",
-            body: [
-              "`apple_mail_send_message` set the body through AppleScript, and Mail wraps a body set that way in a quotation. Mail hides it, but Outlook and every other client show it, and the plain-text part had `> ` before every line. The step meant to remove it needed a permission Cupertino doesn't hold, so it failed every time, and the failure was dropped as cosmetic. A new message is now composed the way a reply is: the body and any files are pasted into the window and read back, and nothing is assigned, so there is no quote to remove. `apple_mail_update_draft` recreates a draft the same way. Without Cupertino, a body that stays quoted is reported as `quoted: true` and is never sent like that.",
-            ]),
-        ]),
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Mail attaches files to a draft that is already open.",
-            body: [
-              "`apple_mail_update_draft` takes `attachments`, and its `body` is now optional, so \"attach the PDF to that reply\" no longer means driving Mail's File menu by hand. The files are pasted into the draft's own composer window after your text and above any quoted original, the way a file copied in Finder pastes, and nothing is saved until each one shows up in the window with your text unchanged. Threading and the quote stay as they were. With no window open, files only go on when the body is rewritten too, on a draft that is not a reply.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
