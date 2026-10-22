@@ -64,8 +64,9 @@
  *                        the proof.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const DEBUG = process.argv.includes("--debug");
@@ -347,9 +348,10 @@ async function composeCheck() {
       result?.ok === true
         ? `\n  Left in Mail, on purpose, as the evidence:\n` +
             `    a saved draft "${result.subject}" addressed to ${address},\n` +
-            `    and its composer window. Its note now reads REVISED and the\n` +
-            `    forwarded message below it should be untouched — that pair is\n` +
-            `    what the in-place rewrite is claiming.\n` +
+            `    and its composer window. Its note now reads REVISED, two files\n` +
+            `    (verify-note.txt, verify-dot.png) follow it, and the forwarded\n` +
+            `    message below should be untouched — that is what the in-place\n` +
+            `    rewrite and attach are claiming.\n` +
             `  Open it, read it, then delete both. Nothing here will.\n`
         : `\n  Left in Mail: an EMPTY composer window "${result?.subject ?? "Fwd: …"}".\n` +
             `  No draft was saved — the compose path stops before the save when it\n` +
@@ -434,6 +436,69 @@ async function reviseCheck(mail, subject) {
     `quoteKept: ${result?.quoteKept}`,
   );
   check("it was saved", result?.saved === true, result?.note ?? "");
+  if (result?.saved === true) await attachCheck(mail, subject);
+}
+
+/**
+ * Add two files to the same draft, in the same window, with no new body.
+ *
+ * A file goes in by pasting its URL, the way a file copied in Finder does, and
+ * is confirmed by reading its name back out of the sender's own text. MEASURED
+ * by hand on macOS 27.0 one file at a time, in a new message; this is the
+ * check for two at once, in a composer that quotes something, which the stubs
+ * cannot vouch for. One is an image and one is not, because Mail shows the two
+ * differently: an AXImage named with the file, and an AXButton named with the
+ * file and its size.
+ */
+async function attachCheck(mail, subject) {
+  const dir = mkdtempSync(join(tmpdir(), "verify-mail-ax-"));
+  const files = [join(dir, "verify-note.txt"), join(dir, "verify-dot.png")];
+  writeFileSync(files[0], "Cupertino verify-mail-ax attachment\n");
+  // A 1x1 PNG.
+  writeFileSync(
+    files[1],
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  try {
+    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
+    const draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
+    if (!draft?.ref) {
+      check("the draft could be addressed, to attach to it", false, `no draft "${subject}"`);
+      return;
+    }
+    let result;
+    try {
+      result = await mail.call("apple_mail_update_draft", {
+        ref: draft.ref,
+        attachments: files,
+        confirm: true,
+      });
+    } catch (error) {
+      check("the files were accepted", false, error.message);
+      return;
+    }
+    check(
+      "both files went in IN ITS COMPOSER and read back",
+      result?.method === "inPlace" &&
+        result?.replaced === true &&
+        result?.attachmentsAdded?.length === 2,
+      result?.replaced === true
+        ? `attachmentsAdded: ${JSON.stringify(result?.attachmentsAdded)}`
+        : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
+    );
+    check(
+      "the quoted original was left alone",
+      result?.quoteKept === true,
+      `quoteKept: ${result?.quoteKept}`,
+    );
+    check("it was saved", result?.saved === true, result?.note ?? "");
+  } finally {
+    // Mail copies a file into the draft when it saves, so the originals can go.
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`${passed}/${passed + failed} automated checks passed\n`);
