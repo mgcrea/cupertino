@@ -210,6 +210,12 @@ would have to find the draft again after Mail saves and renumbers it, which is t
 `update_draft`. So files go on at compose time, in `SEND_MESSAGE` and `OPEN_COMPOSER` (and the
 System Events fallback, `REPLY_OR_FORWARD`), through one prelude helper, `attachFiles`.
 
+> **Amended 2026-10-22.** That hardest part had already been solved, by `update_draft` itself: its
+> in-place lane finds a draft's open composer and proves it is the right one. So `update_draft` now
+> takes `attachments` too — see [Adding files to an open draft](#adding-files-to-an-open-draft).
+> Without it an agent asked to attach something to a reply fell back to driving File ▸ Attach
+> Files… by hand.
+
 | Bound                                 | Where                                       | Why                                                                                                                     |
 | ------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Absolute, present, a file             | `#resolveAttachments` in `client/mail.ts`   | A directory or a dangling path fails with a sentence, before Mail is asked anything.                                    |
@@ -223,6 +229,63 @@ result is never a message that went out without the file it was asked to carry.
 
 The count reported back is Mail's own on a new message. On a reply or forward it is the number
 pushed, because `content` reads back as the attachment characters alone there (above).
+
+## Adding files to an open draft
+
+Measured 2026-10-22 against a live Mail on macOS 27.0, on a new message addressed to the author,
+through the native Accessibility lane. `apple_mail_update_draft` with `attachments` (and, now
+optionally, a `body`) does this in the draft's own composer.
+
+**A file URL pasted into the body attaches the file**, the way a file copied in Finder does. The
+pasteboard was written with `NSPasteboard.writeObjects` of `NSURL`s, which publishes
+`public.file-url` and `NSFilenamesPboardType`, then command-V into the focused web area:
+
+| Pasted               | Reads back in the sender's own block                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `attach-probe.png`   | `AXImage` named `attach-probe.png`, with an unnamed child `AXButton`  |
+| `attach-probe.txt`   | `AXButton` named `attach-probe.txt, 23 bytes`                         |
+| the text beside them | the `AXStaticText` unchanged: a file has no value                     |
+| after command-S      | ONE draft; `mailAttachments` = `attach-probe.txt`, `attach-probe.png` |
+
+So a file is identified by its name, and by its name followed by a comma: the size is localised and
+the filename is not (`isFileNamed` in `client/ax.ts`). The text reading in `#split` is untouched by
+a file, which is what lets the same read prove both that the files arrived and that the words
+around them did not move.
+
+### The sequence
+
+    select the sender's own text, proven by copy-back      (as for a body rewrite)
+    right arrow                                             collapse to its end, above the quote
+    -- or, with a body: paste it; the caret ends after it
+    file URLs onto the pasteboard, command-V
+    read back  -> compare                                   each name once more than before,
+                                                            and the text exactly as it was
+    command-S
+
+**The text check is the one that matters.** If the selection were not collapsed, the paste would
+REPLACE the sender's words with the files, and the files would then read back perfectly. Comparing
+the text before and after is what stops that from being saved. "Once more than before" stops a file
+of the same name already in the draft from being taken as proof.
+
+**No window, no files.** Recreating a draft writes a new body, so with files and no body there is
+nothing to recreate it from, and the tool refuses rather than rebuilding the old text from its
+plain rendering. With a body, on a draft that recreation accepts (not a reply, no files of its
+own), `UPDATE_DRAFT` attaches them to the replacement through `attachFiles`, before the save, so a
+refused file leaves the original untouched.
+
+### Two traps on the way
+
+**`$(jsArray)` drops files.** Bridging a JavaScript array of two `NSURL`s with `$()` wrote ONE
+pasteboard item, and `writeObjects` still answered `true`. `systemClipboard.writeFiles` builds an
+`NSMutableArray` and then checks `pasteboardItems.count` against the number of paths, and that
+count is bridged: compared as it comes, `2 !== 2`, so it goes through `Number()` first.
+
+**The first write was wiped before the paste, once.** On the probe's first attempt the pasteboard
+read EMPTY at the moment of command-V, a few seconds after a write that had read back with six
+types. Nothing in the app clears it (`clearContents` appears only behind two buttons in its own
+windows), and a write left alone for a second survives its writer exiting. Unexplained. Nothing
+here depends on it: the files are written immediately before the paste, and a paste that brings
+nothing is caught by the read-back and not saved.
 
 ## The order is the safety property
 
@@ -509,7 +572,13 @@ written a reply could not address it. `jxa/read.ts` carries the readings.
 - **Whether the selection survives a body with inline images or attachments.** Measured on text
   above a quote. A composer whose own text holds an attachment character or an inline image has
   blocks the copy-back may render differently from the accessibility tree, which would show up as a
-  refusal rather than damage — but it has not been seen either way.
+  refusal rather than damage — but it has not been seen either way. It matters more now: a draft
+  `update_draft` has added files to is exactly that, so a SECOND call on it (another body change,
+  or more files) depends on the answer. `sameDraft` already ignores U+FFFC on both sides, in case
+  Mail's plain text renders a file that way; that is a guess, unmeasured for a stored draft.
+- **Two files in one paste, and a paste above a quote.** The probe pasted one file at a time into a
+  new message. `node scripts/verify-mail-ax.mjs --compose` now adds two (an image and a text file)
+  to the forward it rewrites, which covers both.
 - **Re-selecting is bounded at 200 extra lines.** One press per wrapped line, so a draft of a few
   hundred wrapped lines would reach the bound and refuse. Not seen; cheap to raise.
 - **Bcc on a saved draft.** Read from `bccRecipients` and preserved, but a draft stored on an IMAP
