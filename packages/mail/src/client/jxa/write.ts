@@ -329,6 +329,30 @@ export const SEND_MESSAGE = script(
   var unquoted = false;
   try { unquoted = stripCitation(String(p.subject || "")); } catch (e) { unquoted = false; }
 
+  /*
+   * Assigning content made Mail wrap the body in a quotation that Mail itself
+   * hides and every other client shows — the 2026-10-21 mail that reached its
+   * recipient as one long quote. When it cannot be taken off, the message is
+   * NOT sent, and a draft says so rather than reporting a flag nobody reads.
+   */
+  if (!unquoted) {
+    return ok({
+      sent: false, draft: true, quoted: true, degraded: true, capability: "quoting",
+      subjectLength: String(p.subject || "").length,
+      recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,
+      attachments: attached.count,
+      note:
+        "The draft is open in Mail, but its whole body is wrapped as a QUOTATION: Mail does " +
+        "this to a body set through AppleScript and hides it on screen, while the recipient " +
+        "sees every line quoted. Taking it off needs Automation for System Events, which this " +
+        "process does not have or which failed." +
+        (p.sendNow ? " So it was NOT sent." : "") +
+        " Tell the user before they send it: in Mail, select the whole body and choose " +
+        "Format > Quote Level > Decrease, or run this server from Cupertino, which pastes the " +
+        "body instead."
+    });
+  }
+
   if (p.sendNow) {
     msg.send();
     return ok({ sent: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
@@ -523,10 +547,14 @@ export const DRAFT_FACTS = script(`
  * remade. `client/mail.ts` tries that first and arrives here only when there is
  * no window to edit.
  */
-export const UPDATE_DRAFT = script(
-  `
-  ${RESOLVE_DRAFT}
-
+/**
+ * Everything both recreate routes check before a replacement exists.
+ *
+ * Shared, like `RESOLVE_DRAFT`, so the route that pastes the body and the one
+ * that assigns it refuse exactly the same drafts. Leaves `facts`, `subject` and
+ * `before` in scope.
+ */
+const DRAFT_PREFLIGHT = `
   // Everything the caller needs to decide what to do instead, reported on the
   // refusals as well as on success.
   var facts = {
@@ -585,9 +613,10 @@ export const UPDATE_DRAFT = script(
     var bid = prop(function () { return existing[b].id(); }, null);
     if (bid !== null) before[bid] = true;
   }
+`;
 
-  var replacement = M.OutgoingMessage({ subject: subject, content: p.body || "", visible: true });
-  M.outgoingMessages.push(replacement);
+/** The original's sender and recipients, onto `replacement`. */
+const ADDRESS_REPLACEMENT = `
   if (sender) { try { replacement.sender = sender; } catch (e) {} }
 
   var lists = [["to", to], ["cc", cc], ["bcc", bcc]];
@@ -600,22 +629,16 @@ export const UPDATE_DRAFT = script(
       else replacement.bccRecipients.push(M.BccRecipient({ address: addrs[i] }));
     }
   }
+`;
 
-  // Before the save: a refused file takes the replacement back, and the
-  // original has not been touched yet.
-  var attached = attachFiles(M, replacement, p.attachments);
-  if (!attached.ok) {
-    return attachmentFailure(attached, discardComposer(M, replacement),
-      "The original draft was not changed.");
-  }
-
-  pause(1.2);
-  var unquoted = false;
-  try { unquoted = stripCitation(subject); } catch (e) { unquoted = false; }
-
-  var saved = true;
-  try { replacement.save(); } catch (e) { saved = false; }
-
+/**
+ * Confirm the replacement is in Drafts, and only then delete the original.
+ *
+ * Needs `subject`, `before`, `facts`, `saved`, `unquoted` and `attached` in
+ * scope; the route that pastes its body supplies them as parameters, because
+ * by the time it confirms, the script that composed the replacement is gone.
+ */
+const CONFIRM_AND_DELETE = `
   // Ask the Drafts mailbox, not the object we just made: "save() did not throw"
   // is precisely the kind of evidence the compose path already learned not to
   // trust. Anything but a new row here means we must not delete the old one.
@@ -688,6 +711,114 @@ export const UPDATE_DRAFT = script(
     originalMovedToTrash: removed ? movesToTrash : null,
     removeError: removeError
   });
+`;
+
+export const UPDATE_DRAFT = script(
+  `
+  ${RESOLVE_DRAFT}
+  ${DRAFT_PREFLIGHT}
+
+  var replacement = M.OutgoingMessage({ subject: subject, content: p.body || "", visible: true });
+  M.outgoingMessages.push(replacement);
+  ${ADDRESS_REPLACEMENT}
+
+  // Before the save: a refused file takes the replacement back, and the
+  // original has not been touched yet.
+  var attached = attachFiles(M, replacement, p.attachments);
+  if (!attached.ok) {
+    return attachmentFailure(attached, discardComposer(M, replacement),
+      "The original draft was not changed.");
+  }
+
+  pause(1.2);
+  var unquoted = false;
+  try { unquoted = stripCitation(subject); } catch (e) { unquoted = false; }
+
+  /*
+   * Assigning content made Mail wrap the whole body in a hidden quotation, and
+   * it could not be taken off: what would be saved reads as a QUOTE to
+   * whoever gets it, in Outlook most visibly. Saving that and deleting the
+   * original is replacing a good draft with a broken one, so neither happens.
+   */
+  if (!unquoted) {
+    return ok({
+      replaced: false, method: "recreate", degraded: true, capability: "quoting", draft: facts,
+      closed: discardComposer(M, replacement),
+      reason:
+        "Mail wraps a body set through AppleScript in a quotation, hidden in Mail itself but " +
+        "shown to recipients, and taking it off needs Automation for System Events, which this " +
+        "process does not have or which failed. The replacement was not saved and the original " +
+        "draft was not changed.",
+      hint:
+        "Run this server from Cupertino, which pastes the body instead, or grant this process " +
+        "Automation for System Events, or edit the draft in Mail."
+    });
+  }
+
+  var saved = true;
+  try { replacement.save(); } catch (e) { saved = false; }
+
+  ${CONFIRM_AND_DELETE}
+`,
+  { allowLaunch: true },
+);
+
+/**
+ * The first half of recreating a draft without assigning its body.
+ *
+ * MEASURED, macOS 27.0: assigning `content` in any form, "" included and an
+ * attachment pushed onto it included, makes Mail wrap the body in
+ * `<blockquote type="cite">` inside an `Apple-Mail-URLShareWrapperClass`
+ * div, styled with no border. Mail shows nothing; Outlook shows a quotation,
+ * and the text/plain part carries "> " on every line. A message created with
+ * no `content` at all has none of it. So this composes the replacement with
+ * no body, the client pastes the body and any files into its window and
+ * presses save, and `COMMIT_REPLACEMENT` finishes the job.
+ *
+ * Every refusal `UPDATE_DRAFT` makes, it makes here, before anything opens.
+ */
+export const STAGE_REPLACEMENT = script(
+  `
+  ${RESOLVE_DRAFT}
+  ${DRAFT_PREFLIGHT}
+
+  var replacement = M.OutgoingMessage({ subject: subject, visible: true });
+  M.outgoingMessages.push(replacement);
+  ${ADDRESS_REPLACEMENT}
+
+  var ids = [];
+  for (var key in before) ids.push(Number(key));
+  return ok({ staged: true, subject: subject, before: ids, draftsMailbox: draftsName });
+`,
+  { allowLaunch: true },
+);
+
+/**
+ * The second half: the replacement was pasted into and saved by the client.
+ *
+ * The same confirmation and the same order as `UPDATE_DRAFT`, which is the
+ * point of sharing it: nothing is deleted until a row that was not there
+ * before is in Drafts under the subject.
+ */
+export const COMMIT_REPLACEMENT = script(
+  `
+  ${RESOLVE_DRAFT}
+
+  var facts = {
+    subject: oldSubject,
+    isReply: isReply,
+    attachments: attachments,
+    recipientCount: to.length + cc.length + bcc.length
+  };
+  var subject = String(p.subject);
+  var before = {};
+  before[p.id] = true;
+  for (var b = 0; b < p.before.length; b++) before[p.before[b]] = true;
+  var saved = true;
+  var unquoted = null;
+  var attached = { count: p.attachmentsAdded || 0 };
+
+  ${CONFIRM_AND_DELETE}
 `,
   { allowLaunch: true },
 );
@@ -950,7 +1081,7 @@ export const REPLY_OR_FORWARD = script(
 );
 
 /**
- * Open a reply or forward composer, address it, and stop.
+ * Open a composer — new, reply or forward — address it, and stop.
  *
  * The Apple Events half of the NATIVE composer path — see `client/ax.ts` for
  * the other half and `client/compose.ts` for the sequence that joins them.
@@ -970,9 +1101,33 @@ export const REPLY_OR_FORWARD = script(
  *
  * Recipients go through the scripting object, which does work for them, and
  * only once the composer exists.
+ *
+ * **`content` is never touched, and that includes attaching files.** MEASURED,
+ * macOS 27.0: any write to it — assigning "" or pushing an attachment onto it —
+ * makes Mail wrap the body in a hidden quotation that every other client shows
+ * (`STAGE_REPLACEMENT` has the detail). The native half pastes the body and the
+ * files into the window instead.
  */
 export const OPEN_COMPOSER = script(
   `
+  var draft;
+  if (p.mode === "new") {
+    draft = M.OutgoingMessage({ subject: p.subject || "", visible: true });
+    M.outgoingMessages.push(draft);
+    if (p.senderAddress) draft.sender = p.senderAddress;
+    var lists = [["to", p.to], ["cc", p.cc], ["bcc", p.bcc]];
+    for (var l = 0; l < lists.length; l++) {
+      var kind = lists[l][0];
+      var each = lists[l][1] || [];
+      for (var r = 0; r < each.length; r++) {
+        if (kind === "to") draft.toRecipients.push(M.ToRecipient({ address: each[r] }));
+        else if (kind === "cc") draft.ccRecipients.push(M.CcRecipient({ address: each[r] }));
+        else draft.bccRecipients.push(M.BccRecipient({ address: each[r] }));
+      }
+    }
+    return ok({ subject: String(p.subject || "") });
+  }
+
   var acct = findAccount(M, p.accountUuid);
   if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
   var mb = resolveMailbox(acct, p.mailbox);
@@ -986,7 +1141,6 @@ export const OPEN_COMPOSER = script(
     return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
   }
 
-  var draft;
   if (p.mode === "forward") {
     draft = M.forward(original, { openingWindow: true });
   } else {
@@ -1005,14 +1159,7 @@ export const OPEN_COMPOSER = script(
     }
   }
 
-  // Here or nowhere: the reference dies with this process, and nothing has
-  // been typed yet, so a refusal can take the composer back.
-  var attached = attachFiles(M, draft, p.attachments);
-  if (!attached.ok) return attachmentFailure(attached, discardComposer(M, draft));
-
-  // Not a count on a reply or forward: content reads back as the attachment
-  // characters alone there (docs/mail-compose.md), so it is the number pushed.
-  return ok({ subject: subject, attachments: (p.attachments || []).length });
+  return ok({ subject: subject });
 `,
   { allowLaunch: true },
 );

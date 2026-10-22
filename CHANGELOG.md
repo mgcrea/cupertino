@@ -14,6 +14,17 @@ summary.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A new mail no longer reaches its recipient as one long quote.** `apple_mail_send_message` set
+  the body through AppleScript, and Mail wraps a body set that way in a quotation. Mail hides it,
+  but Outlook and every other client show it, and the plain-text part had `> ` before every line.
+  The step meant to remove it needed a permission Cupertino doesn't hold, so it failed every time,
+  and the failure was dropped as cosmetic. A new message is now composed the way a reply is: the
+  body and any files are pasted into the window and read back, and nothing is assigned, so there
+  is no quote to remove. `apple_mail_update_draft` recreates a draft the same way. Without
+  Cupertino, a body that stays quoted is reported as `quoted: true` and is never sent like that.
+
 ### Added
 
 - **Mail attaches files to a draft that is already open.** `apple_mail_update_draft` takes

@@ -117,6 +117,9 @@ shrunk and pushed off-screen for the duration and then put back exactly where it
 Mail persists the compose window's frame and a window left at 1×1 is inherited by the next composer
 opened by hand. A window whose geometry cannot be read back is not moved at all.
 
+> **Amended 2026-10-22: that undo is now the fallback, and it had been failing silently for two
+> months.** See [A new message went out as one long quote](#a-new-message-went-out-as-one-long-quote).
+
 ## What recreation cannot carry across
 
 Two things, and both are invisible in the result, which is why both are refused rather than
@@ -286,6 +289,71 @@ types. Nothing in the app clears it (`clearContents` appears only behind two but
 windows), and a write left alone for a second survives its writer exiting. Unexplained. Nothing
 here depends on it: the files are written immediately before the paste, and a paste that brings
 nothing is caught by the read-back and not saved.
+
+## A new message went out as one long quote
+
+Reported 2026-10-22: a new message to a colleague looked normal in Mail, and his Outlook reply showed
+the whole of it as a quotation. Its source, from Sent:
+
+```
+text/plain   > Hi Dave,
+             >=20
+             > Arkadi wants the same models running in both data centres, ...
+text/html    <div class="Apple-Mail-URLShareUserContentTopClass"><br></div>
+             <div class="Apple-Mail-URLShareWrapperClass" style="position: relative !important;">
+             <blockquote type="cite" style="border-left-style: none; color: inherit;
+                                            padding: inherit; margin: inherit;">
+             Hi Dave,<br><br>Arkadi wants ...
+             </blockquote></div>
+```
+
+That is FB11734014's wrapper, styled so that Mail draws no bar. Mail shows nothing wrong; every other
+client honours the `cite` and the `> `. A scan of Sent since 2026-08-01 found **23** such messages,
+every one a new message and none of about 140 replies.
+
+### Why nobody saw it
+
+`SEND_MESSAGE` assigned `content`, and the undo, `stripCitation`, drives Mail through **System
+Events**. When the server is hosted by Cupertino that grant is not needed for anything else and was
+not held — diagnostics read `automationSystemEvents: "error"`, `composerUiRead: "denied"` — so the
+undo failed on every call. The failure was caught as "cosmetic" and reported as `unquoted: false`,
+a flag nothing read, and with `sendNow` the message went out anyway. Replies were never affected
+because the native lane pastes their body and never assigns it. `MailAxLane.selectAll` and
+`maxQuoteLevel` had been written "for the quote strip" when that lane was built and were never
+called: new messages were simply never moved over.
+
+### What triggers the wrapper, measured
+
+macOS 27.0, three drafts to the author's own address, sources read back from Drafts:
+
+| Created with                                        | Wrapper in the saved source                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------- |
+| `content: ""`, then the body pasted                 | yes, EMPTY, below the pasted text, which sits outside it at level 0 |
+| no `content` at all, then the body pasted           | **none**: plain `<div>`s                                            |
+| no `content`, then `content.attachments.push(file)` | yes, with the FILE inside it                                        |
+
+So the trigger is any Apple Events write to `content`, an attachment included. That last row also
+means the compose-time attachments shipped in 1.28.0 sat inside a hidden quote on every new message.
+
+### What ships
+
+**When the app hosts the server, nothing assigns `content` any more.** `send_message` goes through
+the same native path as a reply (`composeNatively` in `client/compose.ts`): `OPEN_COMPOSER` in mode
+`new` creates the message with a subject and recipients only, the body is pasted and read back, and
+files are pasted after it the way `update_draft` pastes them. `OPEN_COMPOSER` no longer attaches for
+a reply or forward either. `update_draft`'s recreate route is split the same way:
+`STAGE_REPLACEMENT` opens the replacement with no body, the client fills and saves its window, and
+`COMMIT_REPLACEMENT` confirms it in Drafts before deleting the original. Both halves share
+`UPDATE_DRAFT`'s preflight and its confirm-then-delete tail, so the refusals and the order are the
+same on both routes.
+
+**When it does not — or for a new message with no subject, whose window has no stable title — the
+old assigning path remains, and a failed undo is loud.** `SEND_MESSAGE` returns `quoted: true`,
+`degraded: true` and a note saying recipients will see a quotation, and with `sendNow` it does NOT
+send. `UPDATE_DRAFT` discards the replacement unsaved and keeps the original.
+
+`node scripts/verify-mail-ax.mjs --compose` now composes a new message too, and fails if the saved
+draft's source holds a `blockquote` at all.
 
 ## The order is the safety property
 
@@ -576,6 +644,9 @@ written a reply could not address it. `jxa/read.ts` carries the readings.
   `update_draft` has added files to is exactly that, so a SECOND call on it (another body change,
   or more files) depends on the answer. `sameDraft` already ignores U+FFFC on both sides, in case
   Mail's plain text renders a file that way; that is a guess, unmeasured for a stored draft.
+- **The native new-message path, live.** Every piece of it is measured — a message opened without
+  `content`, a body pasted into it, files pasted after a body — but the shipped sequence has run only
+  against stubs. `verify-mail-ax --compose` runs it, and reads the source.
 - **Two files in one paste, and a paste above a quote.** The probe pasted one file at a time into a
   new message. `node scripts/verify-mail-ax.mjs --compose` now adds two (an image and a text file)
   to the forward it rewrites, which covers both.

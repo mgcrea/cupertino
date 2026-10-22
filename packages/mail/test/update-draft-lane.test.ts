@@ -5,6 +5,14 @@ import { basename, join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { MailAxLane } from "../src/client/ax.js";
+import {
+  COMMIT_REPLACEMENT,
+  DRAFT_FACTS,
+  OPEN_COMPOSER,
+  SEND_MESSAGE,
+  STAGE_REPLACEMENT,
+  UPDATE_DRAFT,
+} from "../src/client/jxa/write.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { loadConfig } from "../src/config.js";
@@ -25,11 +33,25 @@ import { loadConfig } from "../src/config.js";
 
 const REF = "m1:98AC2C3D-408C-47E4-8FE4-6E64D1F58E99/Drafts#42";
 
-/** A runner that records which scripts it was asked for. */
-const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
+const NAMES = new Map<string, string>([
+  [DRAFT_FACTS, "DRAFT_FACTS"],
+  [UPDATE_DRAFT, "UPDATE_DRAFT"],
+  [STAGE_REPLACEMENT, "STAGE_REPLACEMENT"],
+  [COMMIT_REPLACEMENT, "COMMIT_REPLACEMENT"],
+  [OPEN_COMPOSER, "OPEN_COMPOSER"],
+  [SEND_MESSAGE, "SEND_MESSAGE"],
+]);
+
+/**
+ * A runner that records which scripts it was asked for, by name.
+ *
+ * Staging refuses unless told to stage, which is what a reply draft does.
+ */
+const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
   run: vi.fn(async (script: string) => {
-    if (script.includes("contentHead")) {
-      scripts.push("DRAFT_FACTS");
+    const name = NAMES.get(script) ?? "OTHER";
+    scripts.push(name);
+    if (name === "DRAFT_FACTS") {
       return {
         subject: "Re: Quarterly numbers",
         isReply: true,
@@ -39,7 +61,12 @@ const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
         draftsMailbox: "Drafts",
       };
     }
-    scripts.push("UPDATE_DRAFT");
+    if (name === "STAGE_REPLACEMENT" && stages) {
+      return { staged: true, subject: "Quarterly numbers", before: [42], draftsMailbox: "Drafts" };
+    }
+    if (name === "COMMIT_REPLACEMENT") return { replaced: true, method: "recreate", newId: 99 };
+    if (name === "OPEN_COMPOSER") return { subject: "Hello" };
+    if (name === "SEND_MESSAGE") return { sent: false, draft: true };
     return { replaced: false, method: "recreate", capability: "threading" };
   }) as OsascriptRunner["run"],
 });
@@ -53,9 +80,12 @@ const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
  * has to be a fake at all because the real one is the machine's — a test that
  * wrote to it would clobber whatever the person running the suite had copied.
  */
-const world = (composers: number) => {
+const world = (
+  composers: number,
+  over: { stages?: boolean; finish?: "pressed" | "refused" } = {},
+) => {
   const scripts: string[] = [];
-  const runner = runnerSeeing(scripts);
+  const runner = runnerSeeing(scripts, over.stages);
   let pasteboard: string | null = "whatever was already copied";
   // What the composer shows above its quote. The paste changes it.
   let shown = "ALPHA one";
@@ -73,6 +103,17 @@ const world = (composers: number) => {
       copiedFiles = paths;
     },
   };
+  const keys = async (_ref: unknown, strokes: { key: string; modifiers?: string[] }[]) => {
+    for (const stroke of strokes) {
+      // command-C puts the selection on the pasteboard; the selection here is
+      // the whole of the composer's own text. command-V replaces it.
+      if (stroke.key === "c") pasteboard = shown;
+      if (stroke.key === "v" && copiedFiles)
+        files.push(...copiedFiles.map((path) => basename(path)));
+      else if (stroke.key === "v") shown = String(pasteboard);
+    }
+    return true;
+  };
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
@@ -83,18 +124,14 @@ const world = (composers: number) => {
         index: at,
       })),
     composerBody: async () => ({ text: shown, blocks: 1, quoted: true, files: [...files] }),
-    keys: async (_ref: unknown, strokes: { key: string; modifiers?: string[] }[]) => {
-      for (const stroke of strokes) {
-        // command-C puts the selection on the pasteboard; the selection here is
-        // the whole of the composer's own text. command-V replaces it.
-        if (stroke.key === "c") pasteboard = shown;
-        if (stroke.key === "v" && copiedFiles)
-          files.push(...copiedFiles.map((path) => basename(path)));
-        else if (stroke.key === "v") shown = String(pasteboard);
-      }
-      return true;
-    },
-    finish: async () => "pressed" as const,
+    keys,
+    finish: async () => over.finish ?? ("pressed" as const),
+    // What the recreate route's composer needs: a window, and a body to read.
+    findComposer: async () => ({ window: "w9", body: "b9", index: 9 }),
+    bodySize: async () => shown.length,
+    bodyText: async () => shown,
+    paste: async (ref: unknown) => keys(ref, [{ key: "v", modifiers: ["command"] }]),
+    composerGone: async () => false,
   } as unknown as MailAxLane;
 
   const client = new AppleMailClient({
@@ -123,7 +160,31 @@ describe("which lane a draft rewrite takes", () => {
     const { client, scripts } = world(0);
     const result = await client.updateDraft(REF, { body: "BRAVO" });
     expect(result).toMatchObject({ method: "recreate" });
-    expect(scripts).toEqual(["DRAFT_FACTS", "UPDATE_DRAFT"]);
+    // Staged, so the body is pasted rather than assigned; a reply refuses there.
+    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
+  });
+
+  /*
+   * The route that replaced assigning the body. The replacement's window is
+   * filled and saved like a reply's, and only then is the original deleted.
+   */
+  it("recreates by pasting into the staged replacement, then commits", async () => {
+    const { client, scripts, runner, shownNow } = world(0, { stages: true });
+    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: true, method: "recreate", bodyVerified: true });
+    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
+    expect(shownNow()).toBe("BRAVO");
+    const commit = vi.mocked(runner.run).mock.calls.at(-1)?.[1];
+    expect(commit).toMatchObject({ subject: "Quarterly numbers", before: [42] });
+  });
+
+  /* Unsaved replacement, untouched original: commit is never reached. */
+  it("does not commit a replacement it could not save", async () => {
+    const { client, scripts } = world(0, { stages: true, finish: "refused" });
+    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer" });
+    expect(String((result as { reason: string }).reason)).toMatch(/original draft was not changed/);
+    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
   });
 
   /*
@@ -134,7 +195,7 @@ describe("which lane a draft rewrite takes", () => {
   it("goes the recreate way when the subject is changing", async () => {
     const { client, scripts } = world(1);
     await client.updateDraft(REF, { body: "BRAVO", subject: "A different subject" });
-    expect(scripts).toEqual(["DRAFT_FACTS", "UPDATE_DRAFT"]);
+    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
   });
 
   /* A subject that is passed but unchanged is not a change. */
@@ -226,10 +287,21 @@ describe("adding files to a draft", () => {
     expect(scripts).toEqual([]);
   });
 
-  it("hands the files to the recreated draft when a body comes with them", async () => {
-    const { client, scripts, runner } = world(0);
+  it("pastes the files into the recreated draft when a body comes with them", async () => {
+    const { client, scripts, runner, files } = world(0, { stages: true });
+    const result = await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
+    expect(result).toMatchObject({ replaced: true });
+    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
+    expect(files).toEqual(["report.pdf"]);
+    const commit = vi.mocked(runner.run).mock.calls.at(-1)?.[1];
+    expect(commit).toMatchObject({ attachmentsAdded: 1 });
+  });
+
+  /* Without a lane, files ride on the assigned body, as they always did. */
+  it("hands the files to the assigning route without a lane", async () => {
+    const { client, scripts, runner } = world(-1);
     await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
-    expect(scripts).toEqual(["DRAFT_FACTS", "UPDATE_DRAFT"]);
+    expect(scripts).toEqual(["UPDATE_DRAFT"]);
     const calls = vi.mocked(runner.run).mock.calls;
     expect(calls.at(-1)?.[1]).toMatchObject({ body: "BRAVO", attachments: [report] });
   });
@@ -253,5 +325,35 @@ describe("adding files to a draft", () => {
     const { client, clipboard } = world(1);
     await client.updateDraft(REF, { attachments: [report] });
     expect(await clipboard.read()).toBe("whatever was already copied");
+  });
+});
+
+/*
+ * Which way a new message goes. Assigning its body is what SEND_MESSAGE does
+ * and what wrapped the 2026-10-21 mail in a quotation, so with a lane it must
+ * not be reached at all.
+ */
+describe("which lane a new message takes", () => {
+  const message = { to: ["dave@example.com"], cc: [], bcc: [], body: "Hi Dave", sendNow: false };
+
+  it("pastes the body natively when the app hosts this server", async () => {
+    const { client, scripts, shownNow } = world(0);
+    const result = await client.sendMessage({ ...message, subject: "Hello" });
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
+    expect(scripts).toEqual(["OPEN_COMPOSER"]);
+    expect(shownNow()).toBe("Hi Dave");
+  });
+
+  /* The subject is the native half's only handle on the window. */
+  it("keeps a message with no subject on the assigning route", async () => {
+    const { client, scripts } = world(0);
+    await client.sendMessage({ ...message, subject: "  " });
+    expect(scripts).toEqual(["SEND_MESSAGE"]);
+  });
+
+  it("assigns the body without a lane, as it always did", async () => {
+    const { client, scripts } = world(-1);
+    await client.sendMessage({ ...message, subject: "Hello" });
+    expect(scripts).toEqual(["SEND_MESSAGE"]);
   });
 });

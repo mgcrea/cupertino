@@ -2,8 +2,8 @@ import { basename } from "node:path";
 
 import { interferenceNote } from "@mgcrea/mcp-apple-core";
 
-import { isFileNamed, squash, type ComposerBody, type ComposerRef, type MailAxLane } from "./ax.js";
-import { borrowClipboard, systemClipboard, type Clipboard } from "./compose.js";
+import { squash, type ComposerBody, type ComposerRef, type MailAxLane } from "./ax.js";
+import { borrowClipboard, pasteFiles, systemClipboard, type Clipboard } from "./compose.js";
 
 /**
  * Rewrite a draft by editing its open composer, instead of recreating it.
@@ -264,44 +264,6 @@ const awaitOwnText = async (
   }
 };
 
-/**
- * Wait for the files just pasted to read back in the sender's own text.
- *
- * Each requested name has to appear once more than it did before the paste, so
- * a draft already carrying a file of the same name is not taken as proof. The
- * sender's text must also read exactly as it did: a paste that replaced a
- * selection instead of landing at a caret would show the files and lose words.
- */
-const awaitFiles = async (
-  lane: MailAxLane,
-  ref: ComposerRef,
-  before: ComposerBody,
-  names: string[],
-  timeoutMs: number,
-): Promise<ComposerBody | null> => {
-  const wanted = squash(before.text);
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const shown = await lane.composerBody(ref.body);
-    if (
-      shown &&
-      squash(shown.text) === wanted &&
-      names.every(
-        (name) =>
-          countFiles(shown.files, name) >=
-          countFiles(before.files, name) + names.filter((n) => n === name).length,
-      )
-    )
-      return shown;
-    if (Date.now() >= deadline) return null;
-    await new Promise((resolve) => setTimeout(resolve, RENDER_POLL_MS));
-  }
-};
-
-/** How many of these element names read as the file called `name`. */
-const countFiles = (files: string[], name: string): number =>
-  files.filter((file) => isFileNamed(file, name)).length;
-
 /** How a borrowed-clipboard sequence ended. */
 type Outcome =
   /** Nothing was changed: the caret or selection could not be placed. */
@@ -405,13 +367,22 @@ export const reviseDraftInPlace = async (
 
     if (files.length === 0) return { kind: "done", shown: now };
     // After a body paste the caret is already at its end, so nothing moves.
-    await clipboard.writeFiles(files);
-    if (!(await lane.keys(ref, [{ key: "v", modifiers: ["command"] }], opts.focusTimeoutMs)))
+    const attached = await pasteFiles(
+      lane,
+      clipboard,
+      ref,
+      now,
+      files,
+      opts.focusTimeoutMs,
+      renderTimeoutMs,
+    );
+    if (attached.kind === "unfocused")
       return opts.body === undefined
         ? { kind: "selection", selection: "unfocused" }
         : { kind: "interrupted" };
-    const attached = await awaitFiles(lane, ref, now, names, renderTimeoutMs);
-    return attached ? { kind: "done", shown: attached } : { kind: "unconfirmed", what: "files" };
+    return attached.kind === "done"
+      ? { kind: "done", shown: attached.shown }
+      : { kind: "unconfirmed", what: "files" };
   });
 
   if (outcome.kind === "selection" && outcome.selection === "unfocused") {

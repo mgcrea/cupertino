@@ -236,10 +236,21 @@ describe("the composer window a compose leaves behind", () => {
     const { envelope, geometry } = runScript({}, { menuThrows: true });
 
     expect(envelope.ok).toBe(true);
-    // A failed strip is cosmetic and reported as such...
-    expect(envelope.data.unquoted).toBe(false);
-    // ...but it must not cost the user their composer.
+    // A failed strip is NOT cosmetic: the body is still a quotation to anyone
+    // but Mail, which is how the 2026-10-21 mail went out. It is said, loudly...
+    expect(envelope.data).toMatchObject({ quoted: true, degraded: true, capability: "quoting" });
+    expect(envelope.data.note).toMatch(/QUOTATION/);
+    // ...and it must not cost the user their composer.
     expect(geometry()).toEqual({ size: START_SIZE, position: START_POSITION });
+  });
+
+  /* A body that is still quoted does not go out, even when asked to. */
+  it("does not send a body it could not unquote", () => {
+    const { envelope, state } = runScript({ sendNow: true }, { menuThrows: true });
+
+    expect(envelope.data).toMatchObject({ sent: false, quoted: true });
+    expect(envelope.data.note).toMatch(/NOT sent/);
+    expect(state.sends).toBe(0);
   });
 
   it("never moves a window whose geometry it cannot read back", () => {

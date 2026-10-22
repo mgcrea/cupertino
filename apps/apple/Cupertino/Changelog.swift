@@ -434,11 +434,22 @@ nonisolated enum Changelog {
     date: "",
     sections: [
       Section(
-        name: "Added",
+        name: "Fixed",
         lead: [],
         entries: [
           Entry(
             ordinal: 0,
+            headline: "A new mail no longer reaches its recipient as one long quote.",
+            body: [
+              "`apple_mail_send_message` set the body through AppleScript, and Mail wraps a body set that way in a quotation. Mail hides it, but Outlook and every other client show it, and the plain-text part had `> ` before every line. The step meant to remove it needed a permission Cupertino doesn't hold, so it failed every time, and the failure was dropped as cosmetic. A new message is now composed the way a reply is: the body and any files are pasted into the window and read back, and nothing is assigned, so there is no quote to remove. `apple_mail_update_draft` recreates a draft the same way. Without Cupertino, a body that stays quoted is reported as `quoted: true` and is never sent like that.",
+            ]),
+        ]),
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
             headline: "Mail attaches files to a draft that is already open.",
             body: [
               "`apple_mail_update_draft` takes `attachments`, and its `body` is now optional, so \"attach the PDF to that reply\" no longer means driving Mail's File menu by hand. The files are pasted into the draft's own composer window after your text and above any quoted original, the way a file copied in Finder pastes, and nothing is saved until each one shows up in the window with your text unchanged. Threading and the quote stay as they were. With no window open, files only go on when the body is rewritten too, on a draft that is not a reply.",

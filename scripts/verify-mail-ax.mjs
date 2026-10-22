@@ -286,6 +286,8 @@ async function composeCheck() {
       return;
     }
 
+    await newMessageCheck(mail, address);
+
     const listed = await mail.call("apple_mail_list_messages", { limit: 1 });
     const target = listed?.messages?.[0];
     if (!target?.ref) {
@@ -348,6 +350,7 @@ async function composeCheck() {
       result?.ok === true
         ? `\n  Left in Mail, on purpose, as the evidence:\n` +
             `    a saved draft "${result.subject}" addressed to ${address},\n` +
+            `    a new-message draft "Cupertino verify-mail-ax new …" beside it,\n` +
             `    and its composer window. Its note now reads REVISED, two files\n` +
             `    (verify-note.txt, verify-dot.png) follow it, and the forwarded\n` +
             `    message below should be untouched — that is what the in-place\n` +
@@ -362,6 +365,57 @@ async function composeCheck() {
   } finally {
     mail.close();
   }
+}
+
+/**
+ * Compose a NEW message to the user's own address, and read what Mail stored.
+ *
+ * The check that would have caught the 2026-10-21 incident, and 22 messages
+ * before it: a new message's body used to be ASSIGNED, Mail wrapped it in a
+ * `<blockquote type="cite">` inside an `Apple-Mail-URLShareWrapperClass` div
+ * styled with no border, and every recipient outside Mail read the mail as one
+ * long quote. Mail's own window showed nothing wrong, so this reads the saved
+ * draft's raw SOURCE rather than the window. It sends nothing, and the draft is
+ * left beside the forward's for the same reason the forward's is.
+ */
+async function newMessageCheck(mail, address) {
+  const subject = `Cupertino verify-mail-ax new ${new Date().toISOString()}`;
+  let result;
+  try {
+    result = await mail.call("apple_mail_send_message", {
+      to: [address],
+      subject,
+      body: "A new message made by a check, never sent. Its body must not be quoted.",
+      sendNow: false,
+    });
+  } catch (error) {
+    check("the new message was accepted", false, error.message);
+    return;
+  }
+  check(
+    "the new message's body was pasted and read back",
+    result?.ok === true && result?.bodyVerified === true,
+    result?.note ?? JSON.stringify(result),
+  );
+  if (result?.ok !== true) return;
+
+  let draft = null;
+  for (let attempt = 0; attempt < 10 && !draft; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
+    draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
+  }
+  if (!draft?.ref) {
+    check("the new message was saved to Drafts", false, `no draft "${subject}" after 10s`);
+    return;
+  }
+  const source = await mail.call("apple_mail_get_message_source", { ref: draft.ref });
+  const raw = String(source?.source ?? "");
+  check(
+    "the new message is NOT wrapped in a quotation",
+    raw.length > 0 && !/URLShareWrapperClass|blockquote/i.test(raw),
+    raw.length === 0 ? "its source could not be read" : "found a blockquote in its source",
+  );
 }
 
 /**

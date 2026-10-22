@@ -6,7 +6,7 @@ import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
 import type { Config } from "../config.js";
 import { MailAxLane } from "./ax.js";
 import { scanBodies } from "./body-scan.js";
-import { replyOrForwardNatively, type Clipboard } from "./compose.js";
+import { composeNatively, type Clipboard } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
@@ -28,6 +28,7 @@ import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/
 import {
   COMPOSER_ACCESS,
   CHECK_FOR_NEW_MAIL,
+  COMMIT_REPLACEMENT,
   CREATE_MAILBOX,
   DELETE_MESSAGES,
   DRAFT_FACTS,
@@ -35,6 +36,7 @@ import {
   REPLY_OR_FORWARD,
   SEND_MESSAGE,
   SET_FLAGS,
+  STAGE_REPLACEMENT,
   UPDATE_DRAFT,
 } from "./jxa/write.js";
 import { locateEnvelopeIndex, type LocateResult } from "./locate.js";
@@ -1349,6 +1351,8 @@ export class AppleMailClient {
       };
     }
 
+    if (this.#ax)
+      return this.#recreateNatively(this.#ax, target, opts.body, opts.subject, attachments);
     return withBusyRetry(() =>
       this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
         ...target,
@@ -1357,6 +1361,99 @@ export class AppleMailClient {
         attachments,
       }),
     );
+  }
+
+  /**
+   * Recreate a draft with its body PASTED, never assigned.
+   *
+   * `UPDATE_DRAFT` assigns `content`, and Mail wraps any body set that way in a
+   * quotation that it hides and every other client shows. So the replacement is
+   * staged with no body, filled through its window the way a reply is, saved,
+   * and only then is the original deleted — by `COMMIT_REPLACEMENT`, which
+   * shares `UPDATE_DRAFT`'s confirmation, so the order that protects the
+   * original is the same on both routes.
+   */
+  async #recreateNatively(
+    lane: MailAxLane,
+    target: { accountUuid: string; mailbox: string; id: number },
+    body: string,
+    subject: string | undefined,
+    attachments: string[],
+  ): Promise<Record<string, unknown>> {
+    const reach = await lane.reach();
+    if (!reach.ok) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "recreate",
+        capability: "accessibility",
+        reason: MailAxLane.grantMessage("replacement"),
+        hint: "Run apple_mail_diagnostics.",
+      };
+    }
+    const staged = await withBusyRetry(() =>
+      this.runner.run<Record<string, unknown>>(STAGE_REPLACEMENT, {
+        ...target,
+        subject: subject ?? null,
+      }),
+    );
+    // A refusal, made before anything opened.
+    if (staged.staged !== true) return staged;
+    const newSubject = String(staged.subject);
+
+    const composed = await composeNatively(
+      lane,
+      this.runner,
+      {
+        mode: "new",
+        accountUuid: target.accountUuid,
+        subject: newSubject,
+        body,
+        to: [],
+        attachments,
+        sendNow: false,
+      },
+      {
+        opened: { subject: newSubject, windowsBefore: reach.windows ?? [] },
+        ...(this.#clipboard ? { clipboard: this.#clipboard } : {}),
+      },
+    );
+    if (!composed.ok) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "recreate",
+        capability: "composer",
+        reason: `${composed.note} The original draft was not changed.`,
+        hint:
+          "Look at the replacement's window in Mail: finish and save it there and delete the " +
+          "original yourself, or close it without saving.",
+      };
+    }
+
+    try {
+      const committed = await withBusyRetry(() =>
+        this.runner.run<Record<string, unknown>>(COMMIT_REPLACEMENT, {
+          ...target,
+          subject: newSubject,
+          before: staged.before,
+          attachmentsAdded: composed.attachments ?? 0,
+        }),
+      );
+      return { ...committed, bodyVerified: composed.bodyVerified };
+    } catch (err) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "recreate",
+        capability: "confirmation",
+        reason:
+          `The replacement was pasted, verified and saved, but the original could not be ` +
+          `reached again to confirm it and delete it (${err instanceof Error ? err.message : err}). ` +
+          `THE ORIGINAL WAS NOT DELETED — there may now be two drafts under "${newSubject}".`,
+        hint: "Look in Drafts and delete the one you do not want. Nothing here will.",
+      };
+    }
   }
 
   /**
@@ -1460,6 +1557,32 @@ export class AppleMailClient {
     // Before the account, so a call that could never go out asks Mail nothing.
     const attachments = this.#resolveAttachments(opts.attachments, opts.sendNow);
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
+    /*
+     * Natively when the app hosts this server: the body is pasted, because
+     * assigning it — which is all SEND_MESSAGE can do — makes Mail wrap it in a
+     * quotation that recipients see (the 2026-10-21 incident). A message with no
+     * subject stays on the old path: the subject is the only handle the native
+     * half has on the window, and a subjectless one is titled in the locale.
+     */
+    if (this.#ax && opts.subject.trim()) {
+      return composeNatively(
+        this.#ax,
+        this.runner,
+        {
+          mode: "new",
+          accountUuid: account?.id ?? null,
+          subject: opts.subject,
+          senderAddress: account?.emailAddresses[0] ?? null,
+          body: opts.body,
+          to: opts.to,
+          cc: opts.cc,
+          bcc: opts.bcc,
+          attachments,
+          sendNow: opts.sendNow,
+        },
+        this.#clipboard ? { clipboard: this.#clipboard } : {},
+      );
+    }
     return this.runner.run(SEND_MESSAGE, {
       senderAddress: account?.emailAddresses[0] ?? null,
       to: opts.to,
@@ -1502,7 +1625,7 @@ export class AppleMailClient {
     // difference a person sees is that the native path needs ONE grant where
     // the other needs two.
     if (this.#ax)
-      return replyOrForwardNatively(
+      return composeNatively(
         this.#ax,
         this.runner,
         params,
