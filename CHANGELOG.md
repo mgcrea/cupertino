@@ -12,6 +12,18 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Mail attaches files to a draft that is already open.** `apple_mail_update_draft` takes
+  `attachments`, and its `body` is now optional, so "attach the PDF to that reply" no longer means
+  driving Mail's File menu by hand. The files are pasted into the draft's own composer window
+  after your text and above any quoted original, the way a file copied in Finder pastes, and
+  nothing is saved until each one shows up in the window with your text unchanged. Threading and
+  the quote stay as they were. With no window open, files only go on when the body is rewritten
+  too, on a draft that is not a reply.
+
 ## [1.29.1] - 2026-10-21
 
 **Safari network capture, fixed.** A body is saved whole or refused, a request body reads whole

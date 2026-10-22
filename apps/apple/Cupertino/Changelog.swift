@@ -428,6 +428,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail attaches files to a draft that is already open.",
+            body: [
+              "`apple_mail_update_draft` takes `attachments`, and its `body` is now optional, so \"attach the PDF to that reply\" no longer means driving Mail's File menu by hand. The files are pasted into the draft's own composer window after your text and above any quoted original, the way a file copied in Finder pastes, and nothing is saved until each one shows up in the window with your text unchanged. Threading and the quote stay as they were. With no window open, files only go on when the body is rewritten too, on a draft that is not a reply.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

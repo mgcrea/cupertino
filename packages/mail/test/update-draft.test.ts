@@ -46,9 +46,14 @@ type MailBehaviour = {
    * copies under one subject, so a second row carrying it is the ordinary case.
    */
   otherDrafts?: { id: number; subject: string }[];
+  /** Mail refuses to attach a file to the replacement. */
+  attachFails?: boolean;
 };
 
 const ORIGINAL_ID = 42;
+
+/** JXA's `Path`, as far as `attachFiles` reads it. */
+const Path = (path: string) => ({ path });
 
 const addressee = (address: string) => ({ address: () => address });
 
@@ -70,6 +75,7 @@ const runScript = (
     staleAfterPolling = false,
     content = "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
     otherDrafts = [],
+    attachFails = false,
   } = behaviour;
 
   const state = {
@@ -81,6 +87,8 @@ const runScript = (
     bcc: [] as string[],
     sender: null as string | null,
     deleted: [] as number[],
+    attached: [] as string[],
+    closed: 0,
     /** Rows the Drafts mailbox reports. The replacement is added on save.  */
     draftRows: [{ id: ORIGINAL_ID, subject }, ...otherDrafts],
   };
@@ -167,6 +175,17 @@ const runScript = (
           state.saves++;
           if (saveThrows) throw new Error("save is not supported here");
         },
+        content: {
+          attachments: {
+            push: (a: { fileName: { path: string } }) => {
+              if (attachFails) throw new Error("-10000 AppleEvent handler failed");
+              state.attached.push(a.fileName.path);
+            },
+            get length() {
+              return state.attached.length;
+            },
+          },
+        },
         toRecipients: { push: (r: { address: string }) => state.to.push(r.address) },
         ccRecipients: { push: (r: { address: string }) => state.cc.push(r.address) },
         bccRecipients: { push: (r: { address: string }) => state.bcc.push(r.address) },
@@ -174,6 +193,10 @@ const runScript = (
     },
     outgoingMessages: { push: () => undefined },
     ToRecipient: (spec: { address: string }) => spec,
+    Attachment: (spec: { fileName: { path: string } }) => spec,
+    close: () => {
+      state.closed++;
+    },
     CcRecipient: (spec: { address: string }) => spec,
     BccRecipient: (spec: { address: string }) => spec,
     delete: (m: { id: () => number; bornAt?: number }) => {
@@ -207,8 +230,8 @@ const runScript = (
   dollar.NSPasteboardTypeString = "public.utf8-plain-text";
   dollar.NSPasteboard = { generalPasteboard: {} };
 
-  const factory = new Function("ObjC", "Application", "$", `${script}\nreturn run;`);
-  const run = factory(ObjC, Application, dollar) as (argv: string[]) => string;
+  const factory = new Function("ObjC", "Application", "$", "Path", `${script}\nreturn run;`);
+  const run = factory(ObjC, Application, dollar, Path) as (argv: string[]) => string;
   const envelope = JSON.parse(
     run([
       JSON.stringify({
@@ -243,6 +266,14 @@ describe("rewriting a draft", () => {
     expect(state.deleted).toEqual([ORIGINAL_ID]);
   });
 
+  it("puts the files it is given on the replacement", () => {
+    const { envelope, state } = runScript({ attachments: ["/tmp/a.pdf", "/tmp/b.png"] });
+    expect(envelope.data.replaced).toBe(true);
+    expect(envelope.data.attachmentsAdded).toBe(2);
+    expect(state.attached).toEqual(["/tmp/a.pdf", "/tmp/b.png"]);
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
+  });
+
   it("takes a new subject when one is given", () => {
     const { envelope, state } = runScript({ subject: "Revised numbers" });
     expect(state.composed?.subject).toBe("Revised numbers");
@@ -273,6 +304,16 @@ describe("rewriting a draft", () => {
  * wrote is still in Mail.
  */
 describe("refusing rather than losing the draft", () => {
+  /* Before the save, so the replacement goes and the original never moved. */
+  it("does not touch the original when a file cannot be attached", () => {
+    const { envelope, state } = runScript({ attachments: ["/tmp/a.pdf"] }, { attachFails: true });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.message).toMatch(/original draft was not changed/);
+    expect(state.saves).toBe(0);
+    expect(state.closed).toBe(1);
+    expect(state.deleted).toEqual([]);
+  });
+
   it("does not delete the original when the replacement never appears", () => {
     const { envelope, state } = runScript({}, { savedAfterPolls: Infinity });
     expect(envelope.ok).toBe(true);

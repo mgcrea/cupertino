@@ -125,7 +125,41 @@ const compare = (before: number | null, after: number | null): Landed => {
  * `pbcopy` would clobber whatever the person running it had copied, which is
  * not a thing a test suite may do.
  */
-export type Clipboard = { read(): Promise<string | null>; write(text: string): Promise<void> };
+export type Clipboard = {
+  read(): Promise<string | null>;
+  write(text: string): Promise<void>;
+  /** Put these files on the pasteboard, the way Finder's Copy does. */
+  writeFiles(paths: string[]): Promise<void>;
+};
+
+/**
+ * File URLs onto the pasteboard, as `public.file-url` and `NSFilenamesPboardType`.
+ *
+ * `pbcopy` only carries text, so this goes through the ObjC bridge. The paths
+ * arrive as arguments and are never spliced into the source, so a filename
+ * holding a quote is a filename and not code. Throws when the pasteboard
+ * refuses, rather than leaving whatever was there to be pasted in their place.
+ *
+ * The array is built as an NSMutableArray on purpose. MEASURED, macOS 27.0:
+ * `$(jsArray)` of two NSURLs wrote ONE pasteboard item and `writeObjects`
+ * still answered true, so the second file would have gone missing without a
+ * word. Hence the count check as well.
+ */
+const WRITE_FILES = `
+function run(argv) {
+  ObjC.import("AppKit");
+  var pb = $.NSPasteboard.generalPasteboard;
+  pb.clearContents;
+  var urls = $.NSMutableArray.array;
+  argv.forEach(function (path) { urls.addObject($.NSURL.fileURLWithPath(path)); });
+  if (!pb.writeObjects(urls)) throw new Error("the pasteboard refused the files");
+  // Bridged, not a JS number: compared as one, it never equals argv.length.
+  var held = Number(pb.pasteboardItems.count);
+  if (held !== argv.length) {
+    throw new Error("the pasteboard holds " + held + " of " + argv.length + " files");
+  }
+  return "ok";
+}`;
 
 /**
  * `pbcopy` and `pbpaste` speak the locale's encoding, NOT UTF-8.
@@ -168,6 +202,9 @@ export const systemClipboard: Clipboard = {
       child.on("close", resolve);
       child.on("error", reject);
     });
+  },
+  async writeFiles(paths) {
+    await run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WRITE_FILES, ...paths]);
   },
 };
 

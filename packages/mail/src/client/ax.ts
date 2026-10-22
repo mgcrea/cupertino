@@ -195,7 +195,29 @@ export type ComposerBody = {
   blocks: number;
   /** Whether a quoted original follows. */
   quoted: boolean;
+  /**
+   * The names of the files sitting in the sender's own text, in order. See
+   * `FILE_ROLES`. They carry no value, so `text` never includes them.
+   */
+  files: string[];
 };
+
+/**
+ * What a file in a composer's body reads as.
+ *
+ * MEASURED, macOS 27.0, pasting file URLs into a new message's body: an image
+ * is an `AXImage` NAMED with its filename (`attach-probe.png`), and anything
+ * else an `AXButton` named with the filename and its size (`attach-probe.txt,
+ * 23 bytes`). The size is localised and the filename is not, so a file is
+ * matched by the name or by the name followed by a comma — see `isFileNamed`.
+ * Neither has a value, so neither disturbs the text read beside it. The image's
+ * own child button is unnamed, and is not counted.
+ */
+const FILE_ROLES = new Set(["AXImage", "AXButton"]);
+
+/** Does this element name read as the file called `name`? */
+export const isFileNamed = (element: string, name: string): boolean =>
+  element === name || element.startsWith(`${name}, `);
 
 /**
  * One compose window as a person would read it, for reviewing what they wrote.
@@ -631,8 +653,17 @@ export class MailAxLane {
     const quoteBlocks: string[] = [];
     for (let block = boundary; block < starts.length; block += 1)
       quoteBlocks.push(blockText(block));
+    // Only above the boundary: a quoted original's images are not the sender's.
+    const files = elements
+      .slice(0, starts[boundary] ?? elements.length)
+      .flatMap((el) => (FILE_ROLES.has(el.role) && el.name ? [el.name] : []));
     return {
-      own: { text: lines.join("\n"), blocks: boundary, quoted: boundary < starts.length },
+      own: {
+        text: lines.join("\n"),
+        blocks: boundary,
+        quoted: boundary < starts.length,
+        files,
+      },
       tree,
       quoteBlocks,
     };

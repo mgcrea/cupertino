@@ -601,6 +601,14 @@ export const UPDATE_DRAFT = script(
     }
   }
 
+  // Before the save: a refused file takes the replacement back, and the
+  // original has not been touched yet.
+  var attached = attachFiles(M, replacement, p.attachments);
+  if (!attached.ok) {
+    return attachmentFailure(attached, discardComposer(M, replacement),
+      "The original draft was not changed.");
+  }
+
   pause(1.2);
   var unquoted = false;
   try { unquoted = stripCitation(subject); } catch (e) { unquoted = false; }
@@ -674,6 +682,7 @@ export const UPDATE_DRAFT = script(
     subject: subject,
     recipientCount: facts.recipientCount,
     bodyLength: String(p.body || "").length,
+    attachmentsAdded: attached.count,
     unquoted: unquoted,
     originalDeleted: removed,
     originalMovedToTrash: removed ? movesToTrash : null,

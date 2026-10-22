@@ -1,6 +1,8 @@
+import { basename } from "node:path";
+
 import { interferenceNote } from "@mgcrea/mcp-apple-core";
 
-import { squash, type ComposerBody, type ComposerRef, type MailAxLane } from "./ax.js";
+import { isFileNamed, squash, type ComposerBody, type ComposerRef, type MailAxLane } from "./ax.js";
 import { borrowClipboard, systemClipboard, type Clipboard } from "./compose.js";
 
 /**
@@ -100,6 +102,9 @@ const RENDER_POLL_MS = 250;
 const COPY_TIMEOUT_MS = 1_500;
 const COPY_POLL_MS = 50;
 
+/** What a text reading puts where a file is. */
+const FILE_CHAR = "￼";
+
 /** What the Apple Events half has to say about the draft before this can start. */
 export type DraftFacts = {
   subject: string;
@@ -112,7 +117,10 @@ export type DraftFacts = {
 };
 
 export type ReviseOptions = {
-  body: string;
+  /** The new body. Omitted, the sender's text is left exactly as it is. */
+  body?: string | undefined;
+  /** Absolute paths, already resolved and gated by the client. */
+  attachments?: string[] | undefined;
   clipboard?: Clipboard | undefined;
   focusTimeoutMs?: number | undefined;
   renderTimeoutMs?: number | undefined;
@@ -150,8 +158,11 @@ const refuse = (
  * they agree on the words while disagreeing about every line break.
  */
 const sameDraft = (stored: string, shown: string): boolean => {
-  const a = squash(stored);
-  const b = squash(shown);
+  // A file is an element with no value in the window, and plain text renders
+  // one as an object replacement character (unmeasured for a stored draft), so
+  // neither side's reading of one is compared with the other's.
+  const a = squash(stored.replaceAll(FILE_CHAR, ""));
+  const b = squash(shown.replaceAll(FILE_CHAR, ""));
   // Both empty is a match: a reply whose body was never written has nothing to
   // compare, and pasting into it destroys nothing either way.
   if (a.length === 0 || b.length === 0) return a.length === b.length;
@@ -254,7 +265,55 @@ const awaitOwnText = async (
 };
 
 /**
- * Replace a draft's body in its open composer.
+ * Wait for the files just pasted to read back in the sender's own text.
+ *
+ * Each requested name has to appear once more than it did before the paste, so
+ * a draft already carrying a file of the same name is not taken as proof. The
+ * sender's text must also read exactly as it did: a paste that replaced a
+ * selection instead of landing at a caret would show the files and lose words.
+ */
+const awaitFiles = async (
+  lane: MailAxLane,
+  ref: ComposerRef,
+  before: ComposerBody,
+  names: string[],
+  timeoutMs: number,
+): Promise<ComposerBody | null> => {
+  const wanted = squash(before.text);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const shown = await lane.composerBody(ref.body);
+    if (
+      shown &&
+      squash(shown.text) === wanted &&
+      names.every(
+        (name) =>
+          countFiles(shown.files, name) >=
+          countFiles(before.files, name) + names.filter((n) => n === name).length,
+      )
+    )
+      return shown;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, RENDER_POLL_MS));
+  }
+};
+
+/** How many of these element names read as the file called `name`. */
+const countFiles = (files: string[], name: string): number =>
+  files.filter((file) => isFileNamed(file, name)).length;
+
+/** How a borrowed-clipboard sequence ended. */
+type Outcome =
+  /** Nothing was changed: the caret or selection could not be placed. */
+  | { kind: "selection"; selection: "unfocused" | "blind" | "overshot" }
+  /** The keyboard went away after something was already pasted. */
+  | { kind: "interrupted" }
+  /** A paste went in and did not read back as what was sent. */
+  | { kind: "unconfirmed"; what: "body" | "files" }
+  | { kind: "done"; shown: ComposerBody };
+
+/**
+ * Replace a draft's body in its open composer, add files to it, or both.
  *
  * Null — and only null — means there is no composer to edit, which is the
  * caller's signal to fall back to recreating the draft. Every other outcome,
@@ -313,7 +372,9 @@ export const reviseDraftInPlace = async (
     );
   }
 
-  const outcome = await borrowClipboard(clipboard, async () => {
+  const files = opts.attachments ?? [];
+  const names = files.map((path) => basename(path));
+  const outcome = await borrowClipboard(clipboard, async (): Promise<Outcome> => {
     // Nothing to replace: the reply was addressed and left empty. Put the caret
     // at the top and paste, which adds text rather than replacing any.
     const selection =
@@ -323,15 +384,37 @@ export const reviseDraftInPlace = async (
             .then((ok) => (ok ? ("selected" as const) : ("unfocused" as const)))
         : await selectOwnText(lane, clipboard, ref, shown, opts.focusTimeoutMs);
 
-    if (selection !== "selected") return { selection, shown: null };
+    if (selection !== "selected") return { kind: "selection", selection };
 
-    await clipboard.write(opts.body);
+    let now = shown;
+    if (opts.body !== undefined) {
+      await clipboard.write(opts.body);
+      if (!(await lane.keys(ref, [{ key: "v", modifiers: ["command"] }], opts.focusTimeoutMs)))
+        return { kind: "selection", selection: "unfocused" };
+      const pasted = await awaitOwnText(lane, ref, opts.body, renderTimeoutMs);
+      if (!pasted) return { kind: "unconfirmed", what: "body" };
+      now = pasted;
+    } else if (
+      shown.blocks > 0 &&
+      // Collapse the proven selection to its end: the caret then sits after the
+      // sender's last word and before the quote, which is where a file goes.
+      !(await lane.keys(ref, [{ key: "right" }], opts.focusTimeoutMs))
+    ) {
+      return { kind: "selection", selection: "unfocused" };
+    }
+
+    if (files.length === 0) return { kind: "done", shown: now };
+    // After a body paste the caret is already at its end, so nothing moves.
+    await clipboard.writeFiles(files);
     if (!(await lane.keys(ref, [{ key: "v", modifiers: ["command"] }], opts.focusTimeoutMs)))
-      return { selection: "unfocused" as const, shown: null };
-    return { selection, shown: await awaitOwnText(lane, ref, opts.body, renderTimeoutMs) };
+      return opts.body === undefined
+        ? { kind: "selection", selection: "unfocused" }
+        : { kind: "interrupted" };
+    const attached = await awaitFiles(lane, ref, now, names, renderTimeoutMs);
+    return attached ? { kind: "done", shown: attached } : { kind: "unconfirmed", what: "files" };
   });
 
-  if (outcome.selection === "unfocused") {
+  if (outcome.kind === "selection" && outcome.selection === "unfocused") {
     return refuse(
       "composer",
       facts,
@@ -342,7 +425,7 @@ export const reviseDraftInPlace = async (
       "Try again once the Mac is free, or edit the draft in Mail.",
     );
   }
-  if (outcome.selection === "blind") {
+  if (outcome.kind === "selection" && outcome.selection === "blind") {
     return refuse(
       "selection",
       facts,
@@ -352,7 +435,7 @@ export const reviseDraftInPlace = async (
       "Edit the body in Mail directly.",
     );
   }
-  if (outcome.selection === "overshot") {
+  if (outcome.kind === "selection") {
     return refuse(
       "selection",
       facts,
@@ -364,7 +447,20 @@ export const reviseDraftInPlace = async (
     );
   }
 
-  if (!outcome.shown) {
+  if (outcome.kind === "interrupted") {
+    return refuse(
+      "composer",
+      facts,
+      `The new body went into the composer for "${facts.subject}" and was verified, but the ` +
+        `window then would not take the keyboard, so the files were not pasted and IT WAS NOT ` +
+        `SAVED. The draft still holds its old text; the window holds the new text without the ` +
+        `files.` +
+        interferenceNote(await watch.check()),
+      "Look at the composer in Mail: save it there and attach the files by hand, or close it " +
+        "without saving and try again.",
+    );
+  }
+  if (outcome.kind === "unconfirmed" && outcome.what === "body") {
     return refuse(
       "confirmation",
       facts,
@@ -372,6 +468,18 @@ export const reviseDraftInPlace = async (
         `as what was sent within ${renderTimeoutMs / 1000}s, so IT WAS NOT SAVED. The draft ` +
         `still holds its old text; the composer window on screen holds something this could not ` +
         `verify.` +
+        interferenceNote(await watch.check()),
+      "Look at the composer in Mail and either fix it there or close it without saving.",
+    );
+  }
+  if (outcome.kind === "unconfirmed") {
+    return refuse(
+      "confirmation",
+      facts,
+      `${names.join(", ")} ${names.length > 1 ? "were" : "was"} pasted into the composer for ` +
+        `"${facts.subject}" but did not read back in the draft's own text within ` +
+        `${renderTimeoutMs / 1000}s, with that text unchanged, so IT WAS NOT SAVED. The draft ` +
+        `on disk is as it was; the window may hold some of the files, or none.` +
         interferenceNote(await watch.check()),
       "Look at the composer in Mail and either fix it there or close it without saving.",
     );
@@ -390,10 +498,9 @@ export const reviseDraftInPlace = async (
     return refuse(
       "confirmation",
       facts,
-      `The new body went into the composer for "${facts.subject}", but the quoted original that ` +
-        `was below it is GONE from the window — so the replacement reached further than the ` +
-        `draft's own text. IT WAS NOT SAVED: the draft on disk still holds its old text, quote ` +
-        `and all.`,
+      `The paste went into the composer for "${facts.subject}", but the quoted original that ` +
+        `was below it is GONE from the window — so it reached further than the draft's own ` +
+        `text. IT WAS NOT SAVED: the draft on disk still holds its old text, quote and all.`,
       "Close the composer in Mail WITHOUT saving, or undo inside it with command-Z. The draft " +
         "itself is untouched.",
     );
@@ -407,7 +514,7 @@ export const reviseDraftInPlace = async (
   const survivors = [
     ...(facts.isReply ? ["its threading"] : []),
     ...(outcome.shown.quoted ? ["the original it quotes"] : []),
-    ...(facts.attachments > 0 ? [`its ${facts.attachments} attachment(s)`] : []),
+    ...(facts.attachments > 0 ? [`its ${facts.attachments} earlier attachment(s)`] : []),
   ];
   const kept =
     survivors.length === 0
@@ -415,12 +522,21 @@ export const reviseDraftInPlace = async (
       : `${survivors.slice(0, -1).join(", ")}${survivors.length > 1 ? " and " : ""}${survivors.at(-1)} ${
           survivors.length > 1 ? "are" : "is"
         }`;
+  const changed =
+    opts.body === undefined
+      ? `${names.join(", ")} ${names.length > 1 ? "were" : "was"} added`
+      : files.length > 0
+        ? `The body was replaced and ${names.join(", ")} added`
+        : "The draft was edited";
+  const what =
+    opts.body === undefined ? "files" : files.length > 0 ? "new body and files" : "new body";
 
   return {
     replaced: true,
     method: "inPlace",
     subject: facts.subject,
-    bodyLength: opts.body.length,
+    ...(opts.body !== undefined ? { bodyLength: opts.body.length } : {}),
+    ...(files.length > 0 ? { attachmentsAdded: names } : {}),
     // The two things recreation could not have kept, kept — because nothing was
     // recreated.
     threadingKept: facts.isReply,
@@ -434,20 +550,20 @@ export const reviseDraftInPlace = async (
     saved: saved === "pressed",
     note:
       saved === "pressed"
-        ? `The draft was edited in its own composer window — nothing was recreated, so ${kept} ` +
+        ? `${changed} in the draft's own composer window — nothing was recreated, so ${kept} ` +
           `untouched, and no second draft was made. The window is still open in Mail for ` +
           `review. Mail may renumber a saved draft's row within seconds, so re-find it by ` +
           `subject rather than reusing the ref across turns.` +
           disturbed
         : saved === "refused"
-          ? `The new body is in the composer and verified, but Mail would not come forward, so ` +
-            `command-S was not pressed and the draft on disk still holds the OLD text. The ` +
-            `window is open with the new text in it. Press save in Mail, or try again once the ` +
-            `Mac is free.` +
+          ? `The ${what} ${what === "files" ? "are" : "is"} in the composer and verified, but ` +
+            `Mail would not come forward, so command-S was not pressed and the draft on disk ` +
+            `does NOT have them yet. The window is open with the change in it. Press save in ` +
+            `Mail, or try again once the Mac is free.` +
             disturbed
-          : `The new body was pasted and verified, and then the composer window went — nothing ` +
-            `here closes one, so someone using the Mac closed or sent it. Look in Mail before ` +
-            `doing anything else.` +
+          : `The ${what} went in and ${what === "files" ? "were" : "was"} verified, and then the ` +
+            `composer window went — nothing here closes one, so someone using the Mac closed or ` +
+            `sent it. Look in Mail before doing anything else.` +
             disturbed,
   };
 };
