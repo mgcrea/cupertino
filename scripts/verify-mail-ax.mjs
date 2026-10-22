@@ -411,10 +411,15 @@ async function newMessageCheck(mail, address) {
   }
   const source = await mail.call("apple_mail_get_message_source", { ref: draft.ref });
   const raw = String(source?.source ?? "");
+  const quoted = /URLShareWrapperClass|blockquote/i.test(raw);
   check(
     "the new message is NOT wrapped in a quotation",
-    raw.length > 0 && !/URLShareWrapperClass|blockquote/i.test(raw),
-    raw.length === 0 ? "its source could not be read" : "found a blockquote in its source",
+    raw.length > 0 && !quoted,
+    raw.length === 0
+      ? "its source could not be read"
+      : quoted
+        ? "found a blockquote in its source"
+        : "no blockquote in its saved source",
   );
 }
 
