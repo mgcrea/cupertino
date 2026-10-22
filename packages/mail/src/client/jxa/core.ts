@@ -313,10 +313,11 @@ function attachFiles(M, msg, list) {
   return { ok: true, count: prop(function () { return msg.content.attachments.length; }, null) };
 }
 
-function attachmentFailure(failure, closed) {
+function attachmentFailure(failure, closed, also) {
   return err(
     "ATTACHMENT_FAILED",
     "Mail would not attach " + failure.path + ": " + failure.message + ". Nothing was sent. " +
+    (also ? also + " " : "") +
     (closed
       ? "The composer this opened was closed again without saving, so a retry is safe."
       : "The composer could NOT be closed from here and is still open in Mail; close it before " +

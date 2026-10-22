@@ -103,6 +103,10 @@ const fakeClipboard = (): Clipboard & { history: string[]; current: string | nul
       state.history.push(text);
       state.current = text;
     },
+    // Compose attaches through Apple Events, never through the pasteboard.
+    writeFiles: async () => {
+      throw new Error("compose does not paste files");
+    },
   };
   return state;
 };

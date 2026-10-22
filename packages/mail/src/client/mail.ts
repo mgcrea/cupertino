@@ -1282,15 +1282,26 @@ export class AppleMailClient {
    */
   async updateDraft(
     ref: string,
-    opts: { body: string; subject?: string | undefined },
+    opts: {
+      body?: string | undefined;
+      subject?: string | undefined;
+      attachments?: string[] | undefined;
+    },
   ): Promise<Record<string, unknown>> {
-    if (!opts.body.trim()) {
+    if (opts.body === undefined && !opts.attachments?.length) {
+      throw new PreconditionError(
+        "Nothing to change: pass a body, attachments, or both. A new subject alone needs a body.",
+      );
+    }
+    if (opts.body !== undefined && !opts.body.trim()) {
       throw new PreconditionError(
         "A replacement body cannot be empty. Blanking a draft and reporting success is " +
           "indistinguishable from having written it, so it is refused here rather than done. " +
           "Delete the draft with apple_mail_delete_messages if that is what you meant.",
       );
     }
+    // Never sent from here, so a file needs only writes -- as on a compose draft.
+    const attachments = this.#resolveAttachments(opts.attachments, false);
     const decoded = decodeRef(ref);
     const target = {
       accountUuid: decoded.accountUuid,
@@ -1298,13 +1309,16 @@ export class AppleMailClient {
       id: decoded.id,
     };
 
+    let subjectChanging = opts.subject !== undefined;
     if (this.#ax) {
       const facts = await withBusyRetry(() => this.runner.run<DraftFacts>(DRAFT_FACTS, target));
       // A new subject cannot be typed into the composer's subject field by this
       // path, so asking for one sends the draft down the lane that can set it.
-      if (opts.subject === undefined || opts.subject === facts.subject) {
+      subjectChanging = opts.subject !== undefined && opts.subject !== facts.subject;
+      if (!subjectChanging) {
         const edited = await reviseDraftInPlace(this.#ax, facts, {
           body: opts.body,
+          attachments,
           clipboard: this.#clipboard,
         });
         // Null, and only null, means there was no composer to edit.
@@ -1312,11 +1326,35 @@ export class AppleMailClient {
       }
     }
 
+    // Recreating writes a body, so with none to write there is nothing to make
+    // the replacement from -- and the old one's text, read back as plain text,
+    // would quietly lose its formatting.
+    if (opts.body === undefined) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "recreate",
+        capability: "composer",
+        reason: subjectChanging
+          ? "A new subject can only be set by recreating the draft, and recreating it needs a " +
+            "body to write. Nothing was changed."
+          : "Files can only be added to a draft through its composer window, and none is open " +
+            "for this one" +
+            (this.#ax ? "" : " that this server can reach: it was not started by Cupertino") +
+            ". Nothing was changed.",
+        hint: subjectChanging
+          ? "Pass the body as well, or leave the subject out to add the files in place."
+          : "Open the draft in Mail and try again, or pass a body too: recreating a draft that " +
+            "is not a reply and carries no files of its own attaches them to the replacement.",
+      };
+    }
+
     return withBusyRetry(() =>
       this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
         ...target,
         body: opts.body,
         subject: opts.subject ?? null,
+        attachments,
       }),
     );
   }

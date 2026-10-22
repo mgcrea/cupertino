@@ -115,7 +115,8 @@ export const registerMessageTools = (
         "saved where a search finds it, and the window is the current text either way. " +
         "`main: true` marks the window in front. Each draft carries `savedDrafts`, the refs Mail " +
         "autosaved under the same subject: read one with apple_mail_get_message for recipient " +
-        "ADDRESSES, or pass it to apple_mail_update_draft to rewrite the body in place. " +
+        "ADDRESSES, or pass it to apple_mail_update_draft to rewrite the body or add files in " +
+        "place. " +
         "Read-only: nothing is focused, typed or brought to the front. `degraded: true` means " +
         "the windows could not be read, which is NOT the same as no draft being open.",
       inputSchema: {

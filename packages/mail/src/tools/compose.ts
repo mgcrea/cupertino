@@ -178,18 +178,22 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     "apple_mail_update_draft",
     {
       description:
-        "Replace the body of an unsent draft — including a REPLY draft you have just written " +
-        "and been asked to revise, which is the usual reason to reach for this. For a draft " +
+        "Replace the body of an unsent draft, add files to it, or both — including a REPLY " +
+        "draft you have just written and been asked to revise or attach something to, which is " +
+        "the usual reason to reach for this. For a draft " +
         "the user has open, apple_mail_list_open_drafts gives its ref under `savedDrafts`. " +
         "It takes one of two routes and the result says which in `method`. " +
         "`inPlace`: the draft's own composer window is still open in Mail, so the body is " +
-        "edited in that window. Nothing is recreated, so threading, attachments and the quoted " +
+        "edited in that window and files are pasted in after the text, above any quoted " +
+        "original; each file must read back in the window before anything is saved. Nothing is " +
+        "recreated, so threading, earlier attachments and the quoted " +
         "original all survive, no second draft appears, and your ref stays valid — though Mail " +
         "may renumber a saved draft within seconds, so re-find it by subject rather than " +
         "reusing a ref across turns. " +
         "`recreate`: no composer is open, so a new draft is composed with the same recipients " +
         "and the old one deleted once the replacement is confirmed present; the ref you passed " +
-        "in is DEAD afterwards and the result carries the new one. " +
+        "in is DEAD afterwards and the result carries the new one; files go on the replacement, " +
+        "and adding files with no body is refused on this route. " +
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
         "it does. Editing in place refuses when two composers share the subject, when the open " +
         "window turns out to hold a different message, or when the draft's own text cannot be " +
@@ -208,11 +212,14 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         body: z
           .string()
           .min(1)
+          .optional()
           .describe(
             "The complete new body. This REPLACES the draft's text rather than appending to it, " +
               "so include everything that should remain — read the draft first with " +
-              "apple_mail_get_message if you are editing rather than rewriting.",
+              "apple_mail_get_message if you are editing rather than rewriting. Omit it to only " +
+              "add attachments, which leaves the text exactly as it is.",
           ),
+        attachments: attachmentsArg,
         subject: z
           .string()
           .optional()
@@ -228,8 +235,14 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
-    async ({ ref, body, subject }) =>
-      wrap(async () => client.updateDraft(ref, { body, ...(subject ? { subject } : {}) })),
+    async ({ ref, body, subject, attachments }) =>
+      wrap(async () =>
+        client.updateDraft(ref, {
+          ...(body !== undefined ? { body } : {}),
+          ...(subject ? { subject } : {}),
+          ...(attachments?.length ? { attachments } : {}),
+        }),
+      ),
   );
 };
 

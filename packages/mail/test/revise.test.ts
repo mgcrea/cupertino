@@ -47,6 +47,8 @@ type Composer = {
   /** How many blocks those lines make up — what AXBlockQuoteLevel 0 counts. */
   blocks?: number;
   quote?: string[];
+  /** Files already in the sender's own text, by name. */
+  files?: string[];
 };
 
 type Behaviour = {
@@ -59,6 +61,10 @@ type Behaviour = {
   renderAfter?: number;
   /** The paste swallows the quoted original — the damage this must never save. */
   quoteLostOnPaste?: boolean;
+  /** Pasted files never show up in the tree. */
+  filesNeverRender?: boolean;
+  /** A plain right arrow leaves the selection where it is. */
+  selectionStays?: boolean;
 };
 
 /**
@@ -73,7 +79,7 @@ type Behaviour = {
  */
 const hostStub = async (
   behaviour: Behaviour,
-  clipboard: { value: string | null },
+  clipboard: { value: string | null; files?: string[] | null },
 ): Promise<{ env: NodeJS.ProcessEnv; seen: Call[] }> => {
   const dir = mkdtempSync(join(tmpdir(), "mail-revise-"));
   scratch.add(dir);
@@ -95,6 +101,8 @@ const hostStub = async (
     endLine: 0,
     atEnd: false,
     pastes: 0,
+    // Whether a paste would replace a selection rather than land at a caret.
+    selecting: false,
   }));
   let readsSincePaste = 0;
 
@@ -128,7 +136,7 @@ const hostStub = async (
           : own;
       const blocks = entry.pastes > 0 ? shown.length : (entry.composer.blocks ?? shown.length);
       // One element per block, then the quote as one more block.
-      const elements = Array.from({ length: blocks }, (_, block) => ({
+      const elements: Record<string, unknown>[] = Array.from({ length: blocks }, (_, block) => ({
         role: "AXGroup",
         depth: 0,
         handle: `${args.handle}q${block}`,
@@ -137,6 +145,21 @@ const hostStub = async (
           .slice(blockStart(shown, blocks, block), blockStart(shown, blocks, block + 1))
           .join(" "),
       }));
+      // Files sit in the sender's own text, after its last block's words; a body
+      // with no blocks gets one to hold them, as WebKit makes a paragraph.
+      const files = entry.composer.files ?? [];
+      if (files.length > 0 && elements.length === 0) {
+        elements.push({ role: "AXGroup", depth: 0, handle: `${args.handle}q0`, value: "" });
+      }
+      files.forEach((name, index) => {
+        elements.push({
+          ...(name.endsWith(".png")
+            ? { role: "AXImage", name }
+            : { role: "AXButton", name: `${name}, 23 bytes` }),
+          depth: 1,
+          handle: `${args.handle}f${index}`,
+        });
+      });
       const quoteGone = behaviour.quoteLostOnPaste === true && entry.pastes > 0;
       if ((entry.composer.quote ?? []).length > 0 && !quoteGone) {
         elements.push({
@@ -166,18 +189,31 @@ const hostStub = async (
         if (key === "up" && mods.includes("command")) {
           entry.endLine = 0;
           entry.atEnd = false;
+          entry.selecting = false;
         } else if (key === "down" && mods.includes("shift")) {
           entry.endLine += 1;
           entry.atEnd = false;
+          entry.selecting = true;
         } else if (key === "right" && mods.includes("shift")) {
           entry.atEnd = true;
+          entry.selecting = true;
+        } else if (key === "right" && mods.length === 0) {
+          if (behaviour.selectionStays !== true) entry.selecting = false;
         } else if (key === "c" && mods.includes("command")) {
           if (behaviour.copyDoesNothing !== true && selected(entry) > 0) {
             clipboard.value = lines(at).slice(0, selected(entry)).join("\n");
           }
+        } else if (key === "v" && mods.includes("command") && clipboard.files) {
+          if (behaviour.filesNeverRender === true) continue;
+          // Over a live selection the files replace what is selected.
+          if (entry.selecting) entry.composer.lines = entry.composer.lines.slice(selected(entry));
+          entry.selecting = false;
+          const names = clipboard.files.map((file) => file.split("/").at(-1) as string);
+          entry.composer.files = [...(entry.composer.files ?? []), ...names];
         } else if (key === "v" && mods.includes("command")) {
           entry.pastes += 1;
           entry.composer.lines = String(clipboard.value ?? "").split("\n");
+          entry.selecting = false;
           readsSincePaste = 0;
         }
       }
@@ -240,11 +276,16 @@ const facts = (over: Partial<DraftFacts> = {}): DraftFacts => ({
 });
 
 const stubClipboard = (initial = "user's own clipboard") => {
-  const box = { value: initial as string | null };
+  const box = { value: initial as string | null, files: null as string[] | null };
   const clipboard: Clipboard = {
     read: async () => box.value,
     write: async (text) => {
       box.value = text;
+      box.files = null;
+    },
+    writeFiles: async (paths) => {
+      box.value = null;
+      box.files = paths;
     },
   };
   return { box, clipboard };
@@ -587,5 +628,181 @@ describe("reviseDraftInPlace", () => {
       );
     });
     expect(saves).toHaveLength(0);
+  });
+});
+
+const saves = (seen: Call[]): number =>
+  seen.filter((call) => {
+    const steps =
+      call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args];
+    return steps.some(
+      (step) => step.key === "s" && ((step.modifiers as string[]) ?? []).includes("command"),
+    );
+  }).length;
+
+/*
+ * Files go in by pasting their URLs, which is what a file copied in Finder does
+ * to a composer — MEASURED on macOS 27.0, with an image reading back as an
+ * AXImage and anything else as an AXButton, each named by its filename. The
+ * claim pinned here is the same as for a body: nothing is saved until the files
+ * read back in the sender's own text, and that text is still exactly what it
+ * was.
+ */
+/** A reply composer: two lines of the sender's own above a quote. */
+const reply = (over: Partial<Composer> = {}): Composer => ({
+  title: "Re: Quarterly numbers",
+  lines: ["ALPHA one", "ALPHA two"],
+  quote: ["On 18 Sep 2026, Ada wrote:", "the original"],
+  ...over,
+});
+
+describe("reviseDraftInPlace, adding files", () => {
+  it("lands them after the sender's text and above the quote, then saves", async () => {
+    const { box, clipboard } = stubClipboard();
+    const composer = reply();
+    const { env, seen } = await hostStub({ composers: [composer] }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf", "/Users/me/chart.png"],
+      clipboard,
+      renderTimeoutMs: 2000,
+    });
+    lane.close();
+
+    expect(result).toMatchObject({
+      replaced: true,
+      method: "inPlace",
+      attachmentsAdded: ["report.pdf", "chart.png"],
+      quoteKept: true,
+      saved: true,
+    });
+    expect(composer.lines).toEqual(["ALPHA one", "ALPHA two"]);
+    expect(composer.files).toEqual(["report.pdf", "chart.png"]);
+    expect(saves(seen)).toBe(1);
+    // The selection was collapsed to its end before anything was pasted.
+    const order = seen.flatMap((call) =>
+      call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args],
+    );
+    const collapse = order.findIndex((s) => s.key === "right" && !s.modifiers);
+    const paste = order.findIndex((s) => s.key === "v");
+    expect(collapse).toBeGreaterThan(-1);
+    expect(collapse).toBeLessThan(paste);
+  });
+
+  it("replaces the body and then adds the files", async () => {
+    const { box, clipboard } = stubClipboard();
+    const composer = reply();
+    const { env, seen } = await hostStub({ composers: [composer] }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      body: "BRAVO one",
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 2000,
+    });
+    lane.close();
+    expect(result).toMatchObject({ replaced: true, attachmentsAdded: ["report.pdf"] });
+    expect(composer.lines).toEqual(["BRAVO one"]);
+    expect(composer.files).toEqual(["report.pdf"]);
+    expect(pastes(seen)).toBe(2);
+  });
+
+  it("adds them to a reply whose own text is still empty", async () => {
+    const { box, clipboard } = stubClipboard();
+    const composer = reply({ lines: [], blocks: 0 });
+    const { env } = await hostStub({ composers: [composer] }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts({ contentHead: "" }), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 2000,
+    });
+    lane.close();
+    expect(result).toMatchObject({ replaced: true, saved: true });
+    expect(composer.files).toEqual(["report.pdf"]);
+  });
+
+  it("does not save when the files never read back", async () => {
+    const { box, clipboard } = stubClipboard();
+    const { env, seen } = await hostStub({ composers: [reply()], filesNeverRender: true }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 300,
+    });
+    lane.close();
+    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(String((result as { reason: string }).reason)).toMatch(/NOT SAVED/);
+    expect(saves(seen)).toBe(0);
+  });
+
+  /*
+   * A file of the same name already in the draft is not proof the new one went
+   * in: the count has to go up.
+   */
+  it("does not take a file already in the draft for the one just pasted", async () => {
+    const { box, clipboard } = stubClipboard();
+    const { env, seen } = await hostStub(
+      { composers: [reply({ files: ["report.pdf"] })], filesNeverRender: true },
+      box,
+    );
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 300,
+    });
+    lane.close();
+    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(saves(seen)).toBe(0);
+  });
+
+  /*
+   * The hazard of pasting files at all: if the selection was not collapsed, the
+   * paste REPLACES the sender's words. The files then read back fine, and only
+   * the text check stands between that and a saved draft missing its words.
+   */
+  it("does not save when the paste replaced the sender's text", async () => {
+    const { box, clipboard } = stubClipboard();
+    const composer = reply();
+    const { env, seen } = await hostStub({ composers: [composer], selectionStays: true }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 300,
+    });
+    lane.close();
+    expect(composer.files).toEqual(["report.pdf"]);
+    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(saves(seen)).toBe(0);
+  });
+
+  it("pastes nothing when the selection cannot be proved", async () => {
+    const { box, clipboard } = stubClipboard();
+    const { env, seen } = await hostStub({ composers: [reply()], copyDoesNothing: true }, box);
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 300,
+    });
+    lane.close();
+    expect(result).toMatchObject({ replaced: false, capability: "selection" });
+    expect(pastes(seen)).toBe(0);
+  });
+
+  it("puts the clipboard back", async () => {
+    const { box, clipboard } = stubClipboard("something the user copied");
+    const { env } = await hostStub({ composers: [reply()] }, box);
+    const lane = MailAxLane.open(env)!;
+    await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+      clipboard,
+      renderTimeoutMs: 2000,
+    });
+    lane.close();
+    expect(box.value).toBe("something the user copied");
   });
 });
