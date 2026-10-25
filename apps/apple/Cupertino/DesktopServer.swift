@@ -759,6 +759,13 @@ nonisolated enum DesktopServer {
     _ name: String, args: [String: Any], id: Any?, surface: Surface, writesAllowed: Bool,
     scope: AccessibilityDriver.Scope
   ) -> String {
+    // The Mail composer verbs do not exist anywhere but the channel lent to
+    // Mail, and that includes the writes-off refusal below: answering "switched
+    // off" would name a verb a public Desktop client has no business knowing.
+    if name.hasPrefix("apple_desktop_mail_") && scope != AXComposerWindow.scope {
+      return failure(id, "unknown tool '\(name)'")
+    }
+
     // Every driving tool goes through here. Unreachable through a compliant
     // client, since none of them is listed with writes off — but a server must
     // not rely on its caller being compliant to stay read-only.
@@ -1183,14 +1190,31 @@ nonisolated enum DesktopServer {
       // The Mail composer verbs. Never in `tools/list`, and answered only on the
       // channel `ServerHost` lends to Mail: anywhere else they fall through to
       // the unknown-tool answer below, as if they did not exist.
-      case "apple_desktop_mail_composers" where scope == .only(["com.apple.mail"]):
+      case "apple_desktop_mail_composers" where scope == AXComposerWindow.scope:
         guard AccessibilityDriver.isTrusted() else {
           return failure(id, "Accessibility is not granted to Cupertino.")
         }
-        return ok(id, ["composers": MailComposer.listing(AXComposerWindow.all())])
+        return ok(id, ["composers": MailComposer.listing(try AXComposerWindow.all(scope: scope))])
 
-      case "apple_desktop_mail_composer_edit" where scope == .only(["com.apple.mail"]):
-        return failure(id, "apple_desktop_mail_composer_edit is not available yet.")
+      // One verified edit of one compose window: every check before anything
+      // destructive, and a refusal answered as a result (not an error) in the
+      // shape revise.ts refuses with, so the Mail server passes it through.
+      case "apple_desktop_mail_composer_edit" where scope == AXComposerWindow.scope:
+        guard let handle = args["composer"] as? String else {
+          return failure(id, "The 'composer' argument is required.")
+        }
+        let request = try MailComposer.request(from: args)
+        guard let window = MailComposer.resolve(handle) else {
+          return ok(id, MailComposer.gone(handle))
+        }
+        guard AccessibilityDriver.isTrusted() else {
+          return failure(id, "Accessibility is not granted to Cupertino.")
+        }
+        return ok(
+          id,
+          MailComposer.edit(
+            window, request: request, board: LivePasteboard(),
+            front: LiveFront(driven: AXComposerWindow.bundleId)))
 
       default:
         return failure(id, "unknown tool '\(name)'")

@@ -4,9 +4,13 @@ import Foundation
 
 /// A Mail compose window, as far as listing and editing need to know it.
 ///
-/// The seam the checks fake: everything above it (handles, the listing's shape)
-/// is plain Swift and can be asserted without Mail running.
-protocol ComposerWindow: AnyObject {
+/// The seam the checks fake: everything above it (handles, the listing's shape,
+/// the order of the edit's checks) is plain Swift and can be asserted without
+/// Mail running.
+///
+/// `nonisolated` because the app target defaults to the main actor, and these
+/// are read on the connection thread that serves the channel lent to Mail.
+nonisolated protocol ComposerWindow: AnyObject {
   var subject: String { get }
   /// Display names, never addresses: Mail's recipient tokens carry only the name.
   var recipientNames: [String] { get }
@@ -17,18 +21,76 @@ protocol ComposerWindow: AnyObject {
   /// Whether `other` is this same window. Identity for a fake; `CFEqual` on the
   /// `AXUIElement` for the live type, since AX hands back a new wrapper on every read.
   func isSame(as other: ComposerWindow) -> Bool
+
+  // ─── editing ─────────────────────────────────────────────────────────────
+  //
+  // Every `select…` returns what the selection READS BACK as once set, or nil
+  // when it could not be set. The caller compares it with what it meant to
+  // select, so the gate before a paste lives in `MailComposer.edit`, where the
+  // checks can reach it, rather than inside the live type.
+
+  /// The sender's own blocks as one text-marker range, read as a string. Empty
+  /// for a reply with nothing written; nil when the range could not be built.
+  func ownRangeText() throws -> String?
+  /// Select the own blocks. Empty own text selects a collapsed range at the
+  /// start of the body's first block, so a paste lands above the quote.
+  func selectOwn() throws -> String?
+  /// Select `range` of `own`, the string `ownRangeText` answered.
+  func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String?
+  /// A collapsed selection at the end of the own text, where files go.
+  func selectOwnEnd() throws -> String?
+  /// Bring Mail and this window to the front, ready to take a paste. Once per
+  /// edit: a second activation would pull Mail back over an app the person
+  /// moved to in between.
+  func activate() throws -> Bool
+  /// Paste what the pasteboard holds over the selection. `content` is what was
+  /// written there; the live type does not need it, a fake does.
+  func paste(_ content: PasteContent) throws -> Bool
+  func save() throws -> SaveOutcome
 }
 
 extension ComposerWindow {
   func isSame(as other: ComposerWindow) -> Bool { self === other }
 }
 
-struct ComposerBlock {
+nonisolated struct ComposerBlock {
   let text: String
   /// `AXBlockQuoteLevel`; nil when Mail would not say.
   let quoteLevel: Int?
   /// Names of images and attachments inside the block.
   let fileNames: [String]
+}
+
+nonisolated enum PasteContent: Equatable {
+  case text(String)
+  /// `.html` with a `.string` fallback, on one pasteboard item. Mail rewrites
+  /// pasted HTML (`&nbsp;`, a font-size wrapper, an href's trailing slash), so
+  /// what lands is verified as `fallback`, by text.
+  case html(String, fallback: String)
+  case files([URL])
+}
+
+nonisolated enum SaveOutcome {
+  case pressed
+  /// The window went before command-S could be pressed.
+  case gone
+  /// Mail would not take the keystroke.
+  case refused
+}
+
+/// The general pasteboard, borrowed for the length of one edit.
+nonisolated protocol Pasteboard {
+  /// Every item and every type, opaque to the caller.
+  func snapshot() -> Any
+  func restore(_ saved: Any)
+  /// Throws when the pasteboard did not take it, so nothing else on it is pasted.
+  func write(_ content: PasteContent) throws
+}
+
+/// Which application has the front, and handing it back.
+nonisolated protocol Front {
+  func current() -> pid_t?
+  func give(to pid: pid_t?)
 }
 
 /// Handles for compose windows, and the listing the Mail server reads.
@@ -122,6 +184,565 @@ nonisolated enum MailComposer {
       ]
     }
   }
+
+  // ─── the edit verb ─────────────────────────────────────────────────────────
+
+  struct EditRequest {
+    var body: String?
+    /// Pasted as HTML with `body` as its plain-text fallback, and verified as `body`.
+    var html: String?
+    var edits: [MailComposerText.Edit]?
+    var files: [URL] = []
+    var save = true
+    /// The opening the caller expects the own text to have (the old `sameDraft`).
+    var expectHead: String?
+  }
+
+  /// The arguments the Mail server sends.
+  ///
+  /// A malformed call is an error, not a refusal: it is the server's bug, and
+  /// nothing about the draft. One of `body`, `edits` or `attachments` is
+  /// required, `body` and `edits` exclude each other, and `html` rides on a
+  /// `body`, which is its plain-text fallback and what the window must read back.
+  struct ArgumentError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+  }
+
+  static func request(from args: [String: Any]) throws -> EditRequest {
+    var request = EditRequest()
+    if let body = args["body"] {
+      guard let body = body as? String else { throw ArgumentError("'body' is a string.") }
+      request.body = body
+    }
+    if let html = args["html"] {
+      guard let html = html as? String else { throw ArgumentError("'html' is a string.") }
+      guard request.body != nil else {
+        throw ArgumentError("'html' needs 'body': its plain text, which is what is verified.")
+      }
+      request.html = html
+    }
+    if let edits = args["edits"] {
+      guard let list = edits as? [[String: Any]], !list.isEmpty else {
+        throw ArgumentError("'edits' is a non-empty list of {find, replace}.")
+      }
+      request.edits = try list.map {
+        guard let find = $0["find"] as? String, let replace = $0["replace"] as? String else {
+          throw ArgumentError("Each edit is {find, replace}, both strings.")
+        }
+        return MailComposerText.Edit(find: find, replace: replace)
+      }
+      guard request.body == nil else { throw ArgumentError("Pass 'body' or 'edits', not both.") }
+    }
+    if let paths = args["attachments"] {
+      guard let paths = paths as? [String], paths.allSatisfy({ $0.hasPrefix("/") }) else {
+        throw ArgumentError("'attachments' is a list of absolute paths.")
+      }
+      request.files = paths.map { URL(fileURLWithPath: $0) }
+    }
+    guard request.body != nil || request.edits != nil || !request.files.isEmpty else {
+      throw ArgumentError("Pass 'body', 'edits' or 'attachments'.")
+    }
+    if let save = args["save"] {
+      guard let save = save as? Bool else { throw ArgumentError("'save' is a boolean.") }
+      request.save = save
+    }
+    if let head = args["expectHead"] {
+      guard let head = head as? String else { throw ArgumentError("'expectHead' is a string.") }
+      request.expectHead = head
+    }
+    return request
+  }
+
+  /// The refusal for a handle that resolves to nothing.
+  static func gone(_ handle: String) -> [String: Any] {
+    refusal(
+      "composer",
+      "The composer \(handle) is gone: it was sent or closed, or Mail quit. Nothing was changed.",
+      "List the composers again and edit the one that holds this draft.")
+  }
+
+  /// Edit one compose window in one verified step.
+  ///
+  /// The order is the safety property. Steps 1 to 7 only read, apart from
+  /// moving the selection in the background, and any of them refusing leaves
+  /// the draft exactly as it was and Mail where it was. From step 8 on, the
+  /// pasteboard and the front are borrowed, and handed back on every way out.
+  /// Nothing is saved that was not read back from the window first.
+  ///
+  ///  1. the window is alive;
+  ///  2. its blocks read, every quote level readable;
+  ///  3. `expectHead` matches the own text (whitespace-folded);
+  ///  4. a `body` over own text holding files is refused, naming them, and so
+  ///     is an attachment that is not there;
+  ///  5. the new text is computed, or each edit placed exactly once;
+  ///  6. the own marker range reads as the own text;
+  ///  7. every selection the pastes need is set and read back, BEFORE anything
+  ///     is pasted (each one again right before its own paste);
+  ///  8. the pasteboard is snapshotted and the front noted;
+  ///  9. Mail is activated, once;
+  /// 10. each paste is polled until the own text reads as expected and the
+  ///     quote is still there, unchanged;
+  /// 11. files are pasted at the end of the own text and their names polled for;
+  /// 12. command-S;
+  /// 13. the pasteboard is restored and the front given back.
+  ///
+  /// `edits` are pasted one at a time, highest offset first, so an edit never
+  /// shifts one still to come. Sub-range selection was measured only for an
+  /// ASCII span at the end of a block, so each is read back and must equal the
+  /// text it replaces; a mismatch refuses, and never falls back to repasting
+  /// the whole own text.
+  static func edit(
+    _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
+    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12
+  ) -> [String: Any] {
+    let untouched = "Nothing was changed."
+
+    // 1.
+    guard w.isAlive else {
+      return refusal(
+        "composer", "The composer is gone: it was sent or closed, or Mail quit. \(untouched)",
+        "List the composers again and edit the one that holds this draft.")
+    }
+
+    // 2.
+    let before: Read
+    do {
+      guard let read = Read(try w.blocks()) else {
+        return refusal(
+          "selection",
+          "Mail would not say where one of the composer's blocks sits relative to the quoted "
+            + "original, so where the draft's own text ends is unknown. \(untouched)",
+          "Edit the draft in Mail directly.")
+      }
+      before = read
+    } catch {
+      return refusal(
+        "composer", "The composer's body could not be read (\(describe(error))). \(untouched)",
+        "Try again, or edit the draft in Mail directly.")
+    }
+
+    // 3.
+    if let head = request.expectHead, !sameHead(head, before.text) {
+      return refusal(
+        "identity",
+        "The composer's own text does not begin the way this draft's does, so it may be "
+          + "another draft. \(untouched)",
+        "List the composers again and pick the one whose text is this draft's.")
+    }
+
+    // 4.
+    if request.body != nil, !before.files.isEmpty {
+      return refusal(
+        "files",
+        "The draft's own text holds \(before.files.joined(separator: ", ")), which a new body "
+          + "would remove. \(untouched)",
+        "Use edits, which change only the text they find and leave files where they are.",
+        ["files": before.files])
+    }
+    let missing = request.files.filter { !FileManager.default.isReadableFile(atPath: $0.path) }
+    if !missing.isEmpty {
+      let names = missing.map(\.lastPathComponent)
+      return refusal(
+        "files",
+        "\(names.joined(separator: ", ")) could not be read, so nothing was attached. \(untouched)",
+        "Check the paths and try again.", ["files": names])
+    }
+
+    // 5.
+    var result: String?
+    if let edits = request.edits {
+      switch MailComposerText.apply(edits, to: before.text) {
+      case .ok(let text, _): result = text
+      case .notFound(let find):
+        return refusal(
+          "edits", "This edit's text is not in the draft's own text. \(untouched)",
+          "Read the draft again and quote its text exactly; line breaks do not matter.",
+          ["find": find])
+      case .ambiguous(let find, let count):
+        return refusal(
+          "edits",
+          "This edit's text is in the draft's own text \(count) times, so which one to change "
+            + "is unknown. \(untouched)",
+          "Quote more of the text around it, so it matches once.",
+          ["find": find, "count": count])
+      case .overlapping:
+        return refusal(
+          "edits", "Two edits change overlapping text. \(untouched)",
+          "Merge them into one edit, or make them touch separate text.")
+      }
+    } else if let body = request.body {
+      result = body
+    }
+
+    // 6.
+    let range: String
+    do {
+      guard let text = try w.ownRangeText(), same(text, before.text) else {
+        return refusal(
+          "selection",
+          "The text range over the draft's own blocks does not read as their text, so a "
+            + "selection built on it could reach the quote. \(untouched)",
+          "Edit the draft in Mail directly.")
+      }
+      range = text
+    } catch {
+      return refusal(
+        "composer", "The composer's text could not be read (\(describe(error))). \(untouched)",
+        "Try again, or edit the draft in Mail directly.")
+    }
+    var steps: [Step] = []
+    if let edits = request.edits {
+      guard let placed = place(edits, in: range) else {
+        return refusal(
+          "selection",
+          "The edits matched the draft's blocks but not the composer's text range, so they "
+            + "cannot be selected there. \(untouched)",
+          "Edit the draft in Mail directly.")
+      }
+      steps = placed
+    }
+
+    // 7. In the background, before anything is borrowed or pasted.
+    do {
+      if !steps.isEmpty {
+        for step in steps {
+          guard let back = try w.selectSubrange(step.range, in: range),
+            sameSpan(back, step.original)
+          else { return misselected(step.original, changed: false) }
+        }
+      } else if request.body != nil {
+        guard let back = try w.selectOwn(), sameSpan(back, range) else {
+          return misselected(nil, changed: false)
+        }
+      } else {
+        guard let back = try w.selectOwnEnd(), back.isEmpty else {
+          return misselected(nil, changed: false)
+        }
+      }
+    } catch {
+      return refusal(
+        "composer", "The composer's text could not be selected (\(describe(error))). \(untouched)",
+        "Try again once the Mac is free, or edit the draft in Mail directly.")
+    }
+
+    // 8. And 13, on every way out from here.
+    let borrowed = board.snapshot()
+    let previous = front.current()
+    defer {
+      board.restore(borrowed)
+      front.give(to: previous)
+    }
+    return paste(
+      w, request, before: before, range: range, steps: steps, result: result, board: board,
+      readbackTimeout: readbackTimeout, filesTimeout: filesTimeout)
+  }
+
+  /// Steps 9 to 12. Borrowing and handing back are the caller's.
+  private static func paste(
+    _ w: ComposerWindow, _ request: EditRequest, before: Read, range: String, steps: [Step],
+    result: String?, board: Pasteboard, readbackTimeout: TimeInterval,
+    filesTimeout: TimeInterval
+  ) -> [String: Any] {
+    // Whether the window may now hold something the saved draft does not.
+    var changed = false
+    func state() -> String {
+      changed
+        ? "IT WAS NOT SAVED: the draft on disk is as it was, and the window holds changes this "
+          + "could not verify."
+        : "Nothing was pasted and the draft is unchanged."
+    }
+    let look = "Look at the composer in Mail: fix it there, or close it without saving."
+
+    do {
+      // 9.
+      guard try w.activate() else {
+        return refusal(
+          "composer",
+          "Mail did not come to the front with this composer as its window, so nothing was "
+            + "pasted. Someone is probably using the Mac. \(state())",
+          "Try again once the Mac is free.")
+      }
+
+      // 10.
+      var shown = before
+      if !steps.isEmpty {
+        for step in steps {
+          guard let back = try w.selectSubrange(step.range, in: range),
+            sameSpan(back, step.original)
+          else { return misselected(step.original, changed: changed) }
+          let content = PasteContent.text(step.replace)
+          try board.write(content)
+          guard try w.paste(content) else { return unfocused(state()) }
+          changed = true
+          guard
+            let read = awaitRead(
+              w, timeout: readbackTimeout, until: { same($0.text, step.expected) })
+          else { return unconfirmed(readbackTimeout, state(), look) }
+          guard quoteIntact(before, read) else { return quoteLost() }
+          shown = read
+        }
+      } else if let body = request.body {
+        guard let back = try w.selectOwn(), sameSpan(back, range) else {
+          return misselected(nil, changed: changed)
+        }
+        // An empty body over an empty reply has nothing to paste or delete.
+        if !(body.isEmpty && back.isEmpty) {
+          let content = request.html.map { PasteContent.html($0, fallback: body) } ?? .text(body)
+          try board.write(content)
+          guard try w.paste(content) else { return unfocused(state()) }
+          changed = true
+        }
+      }
+      if let result {
+        guard let read = awaitRead(w, timeout: readbackTimeout, until: { same($0.text, result) })
+        else { return unconfirmed(readbackTimeout, state(), look) }
+        guard quoteIntact(before, read) else { return quoteLost() }
+        shown = read
+      }
+
+      // 11.
+      var added: [String] = []
+      if !request.files.isEmpty {
+        guard let back = try w.selectOwnEnd(), back.isEmpty else {
+          return misselected(nil, changed: changed)
+        }
+        let content = PasteContent.files(request.files)
+        try board.write(content)
+        guard try w.paste(content) else { return unfocused(state()) }
+        changed = true
+        let names = request.files.map(\.lastPathComponent)
+        let text = shown.text
+        let held = shown.files
+        guard
+          let read = awaitRead(
+            w, timeout: filesTimeout,
+            until: {
+              same($0.text, text) && arrived(names, before: held, now: $0.files)
+                && quoteIntact(before, $0)
+            })
+        else {
+          return refusal(
+            "confirmation",
+            "\(names.joined(separator: ", ")) did not read back in the draft's own text within "
+              + "\(seconds(filesTimeout)), with that text and the quote unchanged. \(state())",
+            look)
+        }
+        shown = read
+        added = names
+      }
+
+      // 12.
+      var saved = false
+      let note: String
+      if request.save {
+        let outcome = (try? w.save()) ?? .refused
+        switch outcome {
+        case .pressed:
+          saved = true
+          note =
+            "The change was read back from the composer and saved. The window is still open in "
+            + "Mail."
+        case .gone:
+          note =
+            "The change was read back from the composer, and then the window went before it "
+            + "could be saved. Nothing here closes one, so someone closed or sent it. Look in "
+            + "Mail before doing anything else."
+        case .refused:
+          note =
+            "The change was read back from the composer, but Mail would not take command-S, so "
+            + "the draft on disk does NOT have it yet. The window is open with the change in it."
+        }
+      } else {
+        note = "The change was read back from the composer and, as asked, not saved."
+      }
+      return [
+        "replaced": true, "method": "inPlace", "text": shown.text, "quoteKept": shown.quoted,
+        "filesAdded": added, "saved": saved, "note": note,
+      ]
+    } catch {
+      return refusal("composer", "The edit stopped: \(describe(error)). \(state())", look)
+    }
+  }
+
+  // ─── the edit's parts ──────────────────────────────────────────────────────
+
+  /// A body split at the quote: own blocks are the level-0 ones before the
+  /// first quoted block. Nil when any level is unreadable.
+  struct Read {
+    let own: [ComposerBlock]
+    let quote: [ComposerBlock]
+
+    init?(_ blocks: [ComposerBlock]) {
+      guard blocks.allSatisfy({ $0.quoteLevel != nil }) else { return nil }
+      let boundary = blocks.firstIndex { ($0.quoteLevel ?? 0) > 0 } ?? blocks.endIndex
+      own = Array(blocks[..<boundary])
+      quote = Array(blocks[boundary...])
+    }
+
+    var text: String { own.map(\.text).joined(separator: "\n") }
+    var quoteText: String { quote.map(\.text).joined(separator: "\n") }
+    var files: [String] { own.flatMap(\.fileNames) }
+    var quoted: Bool { !quote.isEmpty }
+  }
+
+  /// One edit's paste. `range` indexes the own range's text; `expected` is the
+  /// own text once this edit and every one pasted before it have landed.
+  private struct Step {
+    let range: Range<String.Index>
+    let original: String
+    let replace: String
+    let expected: String
+  }
+
+  /// The edits as pastes, highest offset first.
+  private static func place(_ edits: [MailComposerText.Edit], in text: String) -> [Step]? {
+    guard case .ok(_, let matches) = MailComposerText.apply(edits, to: text) else { return nil }
+    let order = edits.indices.sorted { matches[$0].lowerBound > matches[$1].lowerBound }
+    var steps: [Step] = []
+    for (k, index) in order.enumerated() {
+      guard
+        case .ok(let expected, _) = MailComposerText.apply(
+          order[...k].map { edits[$0] }, to: text)
+      else { return nil }
+      steps.append(
+        Step(
+          range: matches[index], original: String(text[matches[index]]),
+          replace: edits[index].replace, expected: expected))
+    }
+    return steps
+  }
+
+  private static func awaitRead(
+    _ w: ComposerWindow, timeout: TimeInterval, until done: (Read) -> Bool
+  ) -> Read? {
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+      if let blocks = try? w.blocks(), let read = Read(blocks), done(read) { return read }
+      if Date() >= deadline || !w.isAlive { return nil }
+      usleep(50_000)
+    }
+  }
+
+  /// The quote that was there is still there, word for word. A draft that had
+  /// none has nothing to lose.
+  private static func quoteIntact(_ before: Read, _ now: Read) -> Bool {
+    !before.quoted || (now.quoted && same(now.quoteText, before.quoteText))
+  }
+
+  /// Each name at least once more than it was there before, per time it is added.
+  private static func arrived(_ names: [String], before: [String], now: [String]) -> Bool {
+    names.allSatisfy { name in
+      now.filter { $0 == name }.count
+        >= before.filter { $0 == name }.count + names.filter { $0 == name }.count
+    }
+  }
+
+  /// The own text and a read-back of it, compared as `revise.ts` does: every
+  /// whitespace run is one space, ends trimmed, and the object replacement
+  /// character a file reads as in a marker range dropped. Mail's paragraphs
+  /// read back with breaks where the caller has spaces, and `&nbsp;` where a
+  /// pasted HTML space was.
+  static func squash(_ text: String) -> String {
+    text.replacingOccurrences(of: "\u{FFFC}", with: "")
+      .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+  }
+
+  static func same(_ a: String, _ b: String) -> Bool { squash(a) == squash(b) }
+
+  /// Stricter, for a selection against the text it is meant to cover: both come
+  /// from the same marker-range read, so only a whitespace run's shape may
+  /// differ. A selection one newline wider than its text is not the same span:
+  /// pasting over it would join two paragraphs.
+  static func sameSpan(_ a: String, _ b: String) -> Bool {
+    func fold(_ s: String) -> String {
+      var out = ""
+      for c in s {
+        if c.isWhitespace {
+          if out.last != " " { out.append(" ") }
+        } else {
+          out.append(c)
+        }
+      }
+      return out
+    }
+    return fold(a) == fold(b)
+  }
+
+  static let headLength = 120
+
+  /// The old `sameDraft`: the two openings agree for as long as both run, up to
+  /// `headLength` characters. Both empty is a match.
+  static func sameHead(_ expected: String, _ shown: String) -> Bool {
+    let a = Array(squash(expected))
+    let b = Array(squash(shown))
+    if a.isEmpty || b.isEmpty { return a.isEmpty == b.isEmpty }
+    let n = min(a.count, b.count, headLength)
+    return a.prefix(n) == b.prefix(n)
+  }
+
+  private static func misselected(_ text: String?, changed: Bool) -> [String: Any] {
+    let what = text.map { "the text \"\($0)\"" } ?? "the draft's own text"
+    let state =
+      changed
+      ? "Earlier edits are in the window, verified, but IT WAS NOT SAVED: the draft on disk is "
+        + "as it was."
+      : "Nothing was pasted and the draft is unchanged."
+    return refusal(
+      "selection",
+      "The selection over \(what) did not read back as that text, so a paste could reach "
+        + "further than it should. \(state)",
+      changed
+        ? "Look at the composer in Mail: fix it there, or close it without saving."
+        : "Edit the draft in Mail directly, or replace the whole body.")
+  }
+
+  private static func unfocused(_ state: String) -> [String: Any] {
+    refusal(
+      "composer",
+      "The composer would not take the keyboard, so the paste was not posted. Someone is "
+        + "probably using the Mac. \(state)",
+      "Try again once the Mac is free.")
+  }
+
+  private static func unconfirmed(
+    _ timeout: TimeInterval, _ state: String, _ hint: String
+  ) -> [String: Any] {
+    refusal(
+      "confirmation",
+      "The paste did not read back as the expected text within \(seconds(timeout)). Someone may "
+        + "have typed in the window. \(state)",
+      hint)
+  }
+
+  private static func quoteLost() -> [String: Any] {
+    refusal(
+      "confirmation",
+      "The paste went in, but the quoted original below it is gone or changed, so it reached "
+        + "further than the draft's own text. IT WAS NOT SAVED: the draft on disk still has its "
+        + "quote.",
+      "Close the composer in Mail WITHOUT saving, or undo inside it with command-Z.")
+  }
+
+  private static func seconds(_ t: TimeInterval) -> String {
+    t >= 1 ? "\(Int(t.rounded())) s" : "\(Int((t * 1000).rounded())) ms"
+  }
+
+  private static func describe(_ error: Error) -> String {
+    (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+  }
+
+  /// The shape `revise.ts` refuses with, so the Mail server passes it through.
+  static func refusal(
+    _ capability: String, _ reason: String, _ hint: String, _ extra: [String: Any] = [:]
+  ) -> [String: Any] {
+    var out: [String: Any] = [
+      "replaced": false, "degraded": true, "method": "inPlace", "capability": capability,
+      "reason": reason, "hint": hint,
+    ]
+    out.merge(extra) { _, new in new }
+    return out
+  }
 }
 
 /// A compose window read through Accessibility.
@@ -129,40 +750,71 @@ nonisolated enum MailComposer {
 /// Recognised by its subject FIELD (`Mail.subjectField`, three levels down), not
 /// its title: a viewer showing a message with the same subject has the same
 /// title and no field.
-final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
+///
+/// Every write goes through `DrivingSession.admit` first, as every driving verb
+/// does, so the person at the keyboard is warned or asked before the selection
+/// moves; and every keystroke through `AccessibilityDriver.key`, which refuses
+/// to post unless Mail is frontmost.
+///
+/// UNMEASURED LIVE beyond what `scripts/spike-mail-composer.swift` records.
+nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   static let bundleId = "com.apple.mail"
+  static let scope = AccessibilityDriver.Scope.only([bundleId])
   private static let tokenChar: Character = "\u{FFFC}"
   /// Roles whose name marks a file in the body, as `FILE_ROLES` in ax.ts.
   private static let fileRoles: Set<String> = ["AXImage", "AXButton"]
+  private static let selectedRange = "AXSelectedTextMarkerRange"
 
   let window: AXUIElement
   private let subjectField: AXUIElement
+  private let pid: pid_t
 
-  private init(window: AXUIElement, subjectField: AXUIElement) {
+  private init(window: AXUIElement, subjectField: AXUIElement, pid: pid_t) {
     self.window = window
     self.subjectField = subjectField
+    self.pid = pid
   }
 
   /// Every compose window Mail has open now. Reads only.
-  static func all() -> [AXComposerWindow] {
-    guard
-      let mail = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
-    else { return [] }
-    let app = AXUIElementCreateApplication(mail.processIdentifier)
-    let windows = (attr(app, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+  ///
+  /// Through `AccessibilityDriver.windowElements`, so the window list is the
+  /// driver's (`kAXWindows` merged with window children) and every read carries
+  /// its messaging timeout: a hung Mail answers `busy` instead of holding the
+  /// connection. Mail not running, or with no window, is no composer; any other
+  /// failure is thrown, because "none open" is an answer the Mail server acts on.
+  static func all(scope: AccessibilityDriver.Scope) throws -> [AXComposerWindow] {
+    let windows: [AXUIElement]
+    do {
+      windows = try AccessibilityDriver.windowElements(bundleId: bundleId, scope: scope)
+    } catch AccessibilityDriver.Failure.appNotRunning(_) {
+      return []
+    } catch AccessibilityDriver.Failure.noWindows(_) {
+      return []
+    }
     return windows.compactMap { window in
-      field(in: window, "Mail.subjectField").map {
-        AXComposerWindow(window: window, subjectField: $0)
+      var pid: pid_t = 0
+      guard AXUIElementGetPid(window, &pid) == .success else { return nil }
+      return field(in: window, "Mail.subjectField").map {
+        AXComposerWindow(window: window, subjectField: $0, pid: pid)
       }
     }
   }
 
   var subject: String { Self.attr(subjectField, kAXValueAttribute as String) as? String ?? "" }
 
+  /// Only an element AX calls invalid is dead. A busy Mail (`cannotComplete`)
+  /// still has its window, and calling that gone would let a later listing
+  /// mint it a second handle.
   var isAlive: Bool {
+    guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+      return false
+    }
     var out: CFTypeRef?
-    return AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &out) == .success
+    return Self.alive(
+      after: AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &out))
   }
+
+  static func alive(after err: AXError) -> Bool { err != .invalidUIElement }
 
   func isSame(as other: ComposerWindow) -> Bool {
     guard let other = other as? AXComposerWindow else { return false }
@@ -196,9 +848,7 @@ final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   struct NoBody: Error {}
 
   func blocks() throws -> [ComposerBlock] {
-    guard let web = Self.find(window, depth: 10, where: { Self.role($0) == "AXWebArea" })
-    else { throw NoBody() }
-    return Self.children(web).map { block in
+    try Self.children(webArea()).map { block in
       ComposerBlock(
         text: Self.text(of: block),
         quoteLevel: (Self.attr(block, "AXBlockQuoteLevel") as? NSNumber)?.intValue,
@@ -206,11 +856,186 @@ final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     }
   }
 
+  // ─── editing ───────────────────────────────────────────────────────────────
+
+  func ownRangeText() throws -> String? {
+    let web = try webArea()
+    guard let range = ownRange(web) else { return nil }
+    return Self.string(web, for: range) ?? ""
+  }
+
+  func selectOwn() throws -> String? {
+    let web = try webArea()
+    guard let range = ownRange(web) else { return nil }
+    return try select(range, in: web)
+  }
+
+  /// MEASURED only for an ASCII span at the end of a block (spike RUN 2). Offsets
+  /// are UTF-16 from the own range's start, added to that start's index in the
+  /// web area. Whether this holds mid-block, across blocks or past a non-BMP
+  /// character is unmeasured, which is why the caller reads the selection back.
+  func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String? {
+    let web = try webArea()
+    guard let ownRange = ownRange(web),
+      let base =
+        (Self.param(web, "AXIndexForTextMarker", Self.start(of: ownRange))
+        as? NSNumber)?.intValue
+    else { return nil }
+    let span = NSRange(range, in: own)
+    guard
+      let from = Self.marker(
+        Self.param(web, "AXTextMarkerForIndex", NSNumber(value: base + span.location))),
+      let to = Self.marker(
+        Self.param(web, "AXTextMarkerForIndex", NSNumber(value: base + NSMaxRange(span))))
+    else { return nil }
+    return try select(AXTextMarkerRangeCreate(kCFAllocatorDefault, from, to), in: web)
+  }
+
+  func selectOwnEnd() throws -> String? {
+    let web = try webArea()
+    guard let range = ownRange(web) else { return nil }
+    let end = AXTextMarkerRangeCopyEndMarker(range)
+    return try select(AXTextMarkerRangeCreate(kCFAllocatorDefault, end, end), in: web)
+  }
+
+  /// MEASURED (spike): a paste only lands with Mail active, and right after
+  /// `activate()` the frontmost read can still say no while the paste would
+  /// land — so this waits for the window server to agree (up to two seconds,
+  /// `activateAndWait`), then raises this window and focuses its body, and
+  /// requires it to be Mail's focused window: command-V goes to the key window,
+  /// and the viewer's search field is not where a draft goes.
+  func activate() throws -> Bool {
+    let web = try webArea()
+    guard try AccessibilityDriver.activateAndWait(bundleId: Self.bundleId, scope: Self.scope)
+    else { return false }
+    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+    AXUIElementSetAttributeValue(web, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    let started = Date()
+    repeat {
+      if isFocusedWindow() { return true }
+      usleep(50_000)
+    } while Date().timeIntervalSince(started) < 1
+    return isFocusedWindow()
+  }
+
+  /// command-V, or Delete for an empty replacement: an empty pasteboard pastes
+  /// nothing, and the selection has to go. Refused, not posted, unless this
+  /// window still has the focus — `AccessibilityDriver.key` checks Mail is
+  /// frontmost, this checks it is THIS window of Mail's.
+  func paste(_ content: PasteContent) throws -> Bool {
+    guard isFocusedWindow() else { return false }
+    if content == .text("") {
+      try AccessibilityDriver.key(
+        "delete", modifiers: [], scope: Self.scope, announcing: Self.bundleId)
+    } else {
+      try AccessibilityDriver.key(
+        "v", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId)
+    }
+    return true
+  }
+
+  func save() throws -> SaveOutcome {
+    guard isAlive else { return .gone }
+    guard isFocusedWindow() else { return .refused }
+    do {
+      try AccessibilityDriver.key(
+        "s", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId)
+    } catch {
+      return isAlive ? .refused : .gone
+    }
+    return .pressed
+  }
+
+  private func webArea() throws -> AXUIElement {
+    guard let web = Self.find(window, depth: 10, where: { Self.role($0) == "AXWebArea" })
+    else { throw NoBody() }
+    return web
+  }
+
+  /// The own blocks' range: the first's start to the last's end, joined with the
+  /// public marker calls (Mail offers no `AXStartTextMarkerForTextMarkerRange`).
+  /// With no own block, a collapsed range at the start of the first block, or
+  /// of the web area when it has none.
+  private func ownRange(_ web: AXUIElement) -> AXTextMarkerRange? {
+    let blocks = Self.children(web)
+    let own = blocks.prefix {
+      (Self.attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue == 0
+    }
+    if let first = own.first, let last = own.last {
+      guard let head = Self.markerRange(Self.param(web, "AXTextMarkerRangeForUIElement", first)),
+        let tail = Self.markerRange(Self.param(web, "AXTextMarkerRangeForUIElement", last))
+      else { return nil }
+      return AXTextMarkerRangeCreate(
+        kCFAllocatorDefault, Self.start(of: head), AXTextMarkerRangeCopyEndMarker(tail))
+    }
+    guard
+      let anchor = Self.markerRange(
+        Self.param(web, "AXTextMarkerRangeForUIElement", blocks.first ?? web))
+    else { return nil }
+    let start = Self.start(of: anchor)
+    return AXTextMarkerRangeCreate(kCFAllocatorDefault, start, start)
+  }
+
+  /// Set the selection and read it back, waiting up to half a second for it to
+  /// read as the range set. Admission first: moving someone's selection is
+  /// driving, as `select` and `set_value` are.
+  private func select(_ range: AXTextMarkerRange, in web: AXUIElement) throws -> String? {
+    try DrivingSession.admit(Self.bundleId)
+    DriveActivity.record(Self.bundleId)
+    let meant = Self.string(web, for: range) ?? ""
+    guard
+      AXUIElementSetAttributeValue(web, Self.selectedRange as CFString, range) == .success
+    else { return nil }
+    var read: String?
+    let started = Date()
+    repeat {
+      if let selected = Self.markerRange(Self.attr(web, Self.selectedRange)) {
+        read = Self.string(web, for: selected) ?? ""
+        if read == meant { break }
+      }
+      usleep(25_000)
+    } while Date().timeIntervalSince(started) < 0.5
+    return read
+  }
+
+  private func isFocusedWindow() -> Bool {
+    let app = AccessibilityDriver.element(for: pid)
+    guard let focused = Self.attr(app, kAXFocusedWindowAttribute as String),
+      CFGetTypeID(focused) == AXUIElementGetTypeID()
+    else { return false }
+    return CFEqual(focused, window)
+  }
+
   // MARK: AX reads
 
   private static func attr(_ el: AXUIElement, _ name: String) -> CFTypeRef? {
     var out: CFTypeRef?
     return AXUIElementCopyAttributeValue(el, name as CFString, &out) == .success ? out : nil
+  }
+
+  private static func param(_ el: AXUIElement, _ name: String, _ arg: CFTypeRef) -> CFTypeRef? {
+    var out: CFTypeRef?
+    return AXUIElementCopyParameterizedAttributeValue(el, name as CFString, arg, &out) == .success
+      ? out : nil
+  }
+
+  private static func markerRange(_ value: CFTypeRef?) -> AXTextMarkerRange? {
+    guard let value, CFGetTypeID(value) == AXTextMarkerRangeGetTypeID() else { return nil }
+    return (value as! AXTextMarkerRange)
+  }
+
+  private static func marker(_ value: CFTypeRef?) -> AXTextMarker? {
+    guard let value, CFGetTypeID(value) == AXTextMarkerGetTypeID() else { return nil }
+    return (value as! AXTextMarker)
+  }
+
+  private static func start(of range: AXTextMarkerRange) -> AXTextMarker {
+    AXTextMarkerRangeCopyStartMarker(range)
+  }
+
+  private static func string(_ web: AXUIElement, for range: AXTextMarkerRange) -> String? {
+    param(web, "AXStringForTextMarkerRange", range) as? String
   }
 
   private static func children(_ el: AXUIElement) -> [AXUIElement] {
@@ -260,5 +1085,84 @@ final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     }
     if depth > 0 { for child in children(el) { names += files(in: child, depth: depth - 1) } }
     return names
+  }
+}
+
+/// `NSPasteboard.general`, every item and every type kept, as the spike did.
+nonisolated struct LivePasteboard: Pasteboard {
+  private typealias Item = [(NSPasteboard.PasteboardType, Data)]
+
+  struct Refused: LocalizedError {
+    var errorDescription: String? { "The pasteboard would not take what was to be pasted." }
+  }
+
+  func snapshot() -> Any {
+    (NSPasteboard.general.pasteboardItems ?? []).map { item -> Item in
+      item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+    }
+  }
+
+  func restore(_ saved: Any) {
+    guard let items = saved as? [Item] else { return }
+    let board = NSPasteboard.general
+    board.clearContents()
+    let restored = items.map { pairs -> NSPasteboardItem in
+      let item = NSPasteboardItem()
+      for (type, data) in pairs { item.setData(data, forType: type) }
+      return item
+    }
+    if !restored.isEmpty { board.writeObjects(restored) }
+  }
+
+  func write(_ content: PasteContent) throws {
+    let board = NSPasteboard.general
+    board.clearContents()
+    switch content {
+    case .text(let text):
+      guard board.setString(text, forType: .string) else { throw Refused() }
+    case .html(let html, let fallback):
+      let item = NSPasteboardItem()
+      item.setString(html, forType: .html)
+      item.setString(fallback, forType: .string)
+      guard board.writeObjects([item]) else { throw Refused() }
+    case .files(let urls):
+      // Counted as well: compose.ts measured writeObjects answering true with
+      // one item for two files.
+      guard board.writeObjects(urls.map { $0 as NSURL }),
+        board.pasteboardItems?.count == urls.count
+      else { throw Refused() }
+    }
+  }
+}
+
+/// The frontmost application, by pid, as the window server sees it.
+nonisolated struct LiveFront: Front {
+  /// The application the edit drives. The front is handed back only while it
+  /// still has it: someone who moved elsewhere meanwhile is left where they went,
+  /// the rule `DrivingSession.finish` keeps.
+  let driven: String
+
+  func current() -> pid_t? {
+    var raw: AnyObject?
+    if AXUIElementCopyAttributeValue(
+      AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString, &raw)
+      == .success, let focused = raw, CFGetTypeID(focused) == AXUIElementGetTypeID()
+    {
+      var pid: pid_t = 0
+      if AXUIElementGetPid(focused as! AXUIElement, &pid) == .success { return pid }
+    }
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier
+  }
+
+  func give(to pid: pid_t?) {
+    guard let pid, pid != current(),
+      AccessibilityDriver.frontmostBundleId() == driven,
+      let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated
+    else { return }
+    if let bundleId = app.bundleIdentifier {
+      _ = AccessibilityDriver.handBack(to: bundleId)
+    } else {
+      _ = app.activate()
+    }
   }
 }

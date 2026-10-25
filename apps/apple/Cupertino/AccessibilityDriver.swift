@@ -200,7 +200,9 @@ nonisolated enum AccessibilityDriver {
   /// at 4.5 ms a round trip) and far short of a client timeout.
   private static let messagingTimeout: Float = 2.0
 
-  private static func element(for pid: pid_t) -> AXUIElement {
+  /// Internal rather than private for `AXComposerWindow`, which reads Mail through
+  /// the same bound.
+  static func element(for pid: pid_t) -> AXUIElement {
     let el = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(el, messagingTimeout)
     return el
@@ -552,6 +554,22 @@ nonisolated enum AccessibilityDriver {
   /// scroll area, neither of which is a window. `kAXWindows` still leads, so an
   /// app that answers it properly keeps the order and the indices it had.
   static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
+    try windowElements(bundleId: bundleId, scope: scope).enumerated().map { index, window in
+      WindowRef(
+        handle: handles.put(window, bundleId: bundleId),
+        index: index,
+        title: string(window, kAXTitleAttribute as String),
+        role: string(window, kAXRoleAttribute as String) ?? "AXWindow",
+        rect: frame(window),
+        main: (copy(window, kAXMainAttribute as String) as? Bool) ?? false)
+    }
+  }
+
+  /// The elements behind `windows`, minting no handles: for a caller that keeps
+  /// its own, as `AXComposerWindow` does. Read through an application element
+  /// carrying `messagingTimeout`, so a hung application answers `busy` rather
+  /// than holding the connection thread.
+  static func windowElements(bundleId: String, scope: Scope) throws -> [AXUIElement] {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
@@ -574,16 +592,7 @@ nonisolated enum AccessibilityDriver {
     guard !list.isEmpty else {
       throw Failure.noWindows(running.localizedName ?? bundleId)
     }
-
-    return list.enumerated().map { index, window in
-      WindowRef(
-        handle: handles.put(window, bundleId: bundleId),
-        index: index,
-        title: string(window, kAXTitleAttribute as String),
-        role: string(window, kAXRoleAttribute as String) ?? "AXWindow",
-        rect: frame(window),
-        main: (copy(window, kAXMainAttribute as String) as? Bool) ?? false)
-    }
+    return list
   }
 
   // ─── the tree ──────────────────────────────────────────────────────────────

@@ -272,6 +272,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 	@swiftc -O -o apps/apple/.build/desktop-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
@@ -321,6 +322,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 	@swiftc -O -o apps/apple/.build/simulator-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
@@ -404,6 +406,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
@@ -500,6 +503,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
