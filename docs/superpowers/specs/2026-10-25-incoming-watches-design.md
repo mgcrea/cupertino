@@ -126,9 +126,14 @@ without appearing in `resources/list`.
 
 One watcher per server process, started by the first watch and stopped by the last unwatch.
 
-- **Trigger:** `fs.watch` on the `MailData` directory, filtered to `Envelope Index` and
-  `Envelope Index-wal`, debounced 500 ms. A **60 s fallback poll** runs as well, since FSEvents may
-  coalesce events or drop them.
+- **Trigger:** `fs.watch` on `Envelope Index` and on `Envelope Index-wal` themselves, plus a watch
+  on the `MailData` directory, debounced 500 ms. Neither level is enough alone. The Task 1 spike
+  measured that a directory watch does not fire when SQLite appends to an existing `-wal` (it fires
+  only on create, remove and checkpoint), while a watch on the `-wal` file fired on every insert.
+  But SQLite deletes and recreates the `-wal`, and a watcher on the old inode goes quiet without
+  saying so, so the directory watch exists to re-arm the file watchers when a name is renamed. A
+  **60 s fallback poll** runs as well, since FSEvents may coalesce or drop events, and it re-arms
+  the watchers too.
 - **Query:** one statement per trigger for all watches together: `m.ROWID > cursor`, joined to
   `addresses` and `mailboxes` exactly as `envelope.ts` already joins them. It is opened
   **`mode=ro`, never the `immutable=1` fallback**: `immutable` is WAL-blind (`sqlite.ts`), so the
@@ -144,8 +149,9 @@ One watcher per server process, started by the first watch and stopped by the la
   watched sender into a watched mailbox arrives as a new row. That is accepted for now; the live
   run measures whether moves create new rows and whether `global_message_id` survives, before any
   horizon or dedup is decided.
-- **Mail has to be running.** The index only changes when Mail.app fetches. The `watch` result says
-  so when Mail is not running, rather than staying quiet.
+- **Nothing arrives until Mail runs.** The index only changes when Mail.app fetches. A watch can be
+  set while Mail is closed, unless `mailboxes` is given, since Mail is what resolves mailbox names;
+  the `watch` result says so when Mail is not running, rather than staying quiet.
 
 ### Messages, second
 

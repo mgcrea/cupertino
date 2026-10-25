@@ -74,8 +74,10 @@ messages. Prefer the index; results are labelled with their source.
   \`cursor\`.
 - **Reads carry no bodies.** Each message is envelope metadata with a \`ref\`.
   Use \`apple_mail_get_message\` with that ref for the text.
-- **Mail has to be running.** The index only changes while Mail fetches. If it
-  was not running when you set the watch, the result says so in \`note\`.
+- **Nothing arrives until Mail runs.** The index only changes while Mail
+  fetches. You can set a watch while Mail is closed, unless you give
+  \`mailboxes\`, which needs Mail to resolve names. If it was not running, the
+  result says so in \`note\`.
 - **A move counts as an arrival.** Moving or archiving mail from a watched
   sender into a watched mailbox shows up as a new message.
 - **Scope.** Sent, Drafts, Junk and Trash never match, nor does mail from the
