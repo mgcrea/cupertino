@@ -34,12 +34,12 @@ off cannot see that they exist.
 
 | Surface   | Package                                    | Status                                                                                         |
 | --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 22 tools, search/read/attachments + gated writes                                 |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 24 tools, search/read/attachments + gated writes and watches                     |
 | Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                 |
 | Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 9 tools, chats/search/counts/decoded text + gated send and codes                 |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches       |
 | Safari    | [`packages/safari`](packages/safari)       | implemented — 17 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
@@ -230,6 +230,8 @@ merely refused.
 | `get_message` `get_message_source` `list_attachments` `list_open_drafts` | `send_message` `reply_to_message` `forward_message` `update_draft`         |
 | `list_accounts` `list_mailboxes` `diagnostics`                           | `save_attachment` `create_mailbox`                                         |
 
+`watch` and `unwatch` are registered too, behind their own `APPLE_MAIL_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands the host a resource to subscribe to, and returns envelope metadata only.
+
 ### Notes
 
 | Always available                                          | Write-gated                                                              |
@@ -282,6 +284,8 @@ instead. See [docs/contacts.md](docs/contacts.md).
 `find_codes` is registered too, behind its own `APPLE_MESSAGES_ALLOW_CODES` rather than the write
 gate — reading a one-time code is a read, and it is separated because it is the one read that hands
 over a credential.
+
+`watch` and `unwatch` are registered too, behind `APPLE_MESSAGES_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands the host a resource to subscribe to, and returns message ids without text.
 
 **One write tool, because the dictionary has one usable command.** `sdef` lists `send`, `login` and
 `logout`; the other two would sign the user out of iMessage on every device they own. There is no

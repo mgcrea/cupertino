@@ -220,6 +220,7 @@ and a tripwire that refuses to run any script containing a `${`.
 | `APPLE_MAIL_BODY_MAX_BYTES`        | `262144`      | Body truncation, to protect the context window.                                 |
 | `APPLE_MAIL_ATTACHMENT_DIR`        | `~/Downloads` | The only directory attachments may be saved into.                               |
 | `APPLE_MAIL_ALLOW_FILE_SEND`       | off           | Let a compose tool attach local files and send in the same call.                |
+| `APPLE_MAIL_ALLOW_WATCHES`         | off           | Register `watch` and `unwatch`: push for mail from named senders.               |
 | `APPLE_MAIL_MAILBOX_CACHE_TTL_MS`  | `60000`       | How long the account/mailbox map is cached.                                     |
 
 ## Notes

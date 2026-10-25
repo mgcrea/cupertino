@@ -402,6 +402,12 @@ nonisolated enum Changelog {
             body: [
               "Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and Maps answer `server/discover` and serve a client that opens with the new per-request handshake, alongside the 2025 `initialize` one. Clients on the older protocol see no change.",
             ]),
+          Entry(
+            ordinal: 1,
+            headline: "Mail and Messages can tell a session when something arrives.",
+            body: [
+              "`apple_mail_watch` and `apple_messages_watch` take a sender filter, `from` or `domains`, and hand back a resource the host can subscribe to; when a matching message lands, the server pushes `notifications/resources/updated`, and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything. A watch carries envelope metadata only, never a body or message text. It works with both the 2025 and the 2026-07-28 protocol, and lives as long as the connection that made it. The Activity log and the audit file record each subscription and each push, so what Cupertino sent into a session reads the same as what it was asked.",
+            ]),
         ]),
     ])
 

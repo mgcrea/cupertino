@@ -65,6 +65,75 @@ reach is decided by two switches the guide already states — so it serves a gui
 `diagnostics` URI. The tool of that name still answers; the resource is the thing that would have
 had nothing to add.
 
+## Watches
+
+Mail and Messages can register one more kind of resource, and it is the named exception to "a
+resource that is never the same twice is a tool call wearing a URI". It exists only behind
+`APPLE_MAIL_ALLOW_WATCHES` / `APPLE_MESSAGES_ALLOW_WATCHES` (off by default; the gate registers the
+two tools and the template together, and declares `resources.subscribe`).
+
+**Why a URI at all.** The only way a server speaks unprompted in the 2026-07-28 protocol is
+`notifications/resources/updated`, and that carries a URI and nothing else. `subscriptions/listen`
+names URIs, never tools. So the thing a host subscribes to has to be a resource, and a tool call
+(`apple_mail_watch`, `apple_messages_watch`) is what mints it: it takes the sender filter, returns a
+handle such as `cupertino://mail/watch/w_7f3a`, and the server keeps the filter in-process. The
+filter cannot ride in the URI. SDK v2's `serveStdio` matches subscriptions by exact URI and never
+tells the server what anyone subscribed to, so a URI that encoded the filter would leave the server
+not knowing which filters to evaluate.
+
+**Why it is not listed.** `resources/list` must not vary per connection or as a side effect of
+other requests, and a watch is created by a tool call. The template
+`cupertino://<surface>/watch/{id}{?after}` is registered without a list callback, so a handle is
+readable and subscribable by whoever holds the URI and never enumerable.
+
+**What a read returns.** Envelope metadata for what arrived since the watch began, or since `after`,
+oldest first, at most 50: no bodies and no message text, which stay a `get_message` call away. The
+`cursor` is the last row _scanned_, so reading again with `after=cursor` resumes exactly, and `more`
+says to. The cursor is the client's to keep; the server holds no per-client read state. An unknown
+handle is `-32602`, which is what a reconnect looks like: handles live as long as the stdio
+connection that made them, at most ten of them. A read fails like any other surface resource
+(`guardedRead`) when the store itself is unreadable.
+
+**What fires it.** One watcher per process, started by the first watch and stopped by the last
+unwatch. The trigger watches each store file (`Envelope Index` and its `-wal`; `chat.db` and its
+`-wal`) _and_ the directory: a directory watch alone does not fire when SQLite appends to an
+existing `-wal` (measured on macOS), and a file watch goes quiet when SQLite replaces the file, so
+the directory watch and the poll re-arm the file watchers. It is debounced 500 ms, with a 60 s poll
+beneath it for dropped events. The cursor is the message table's ROWID, which both stores declare
+`AUTOINCREMENT`, so a row can never land below a cursor that has passed it. The one way the mark
+goes backwards is a store rebuilt from scratch, and then it resets to the new head and notifies
+nothing. The store opens read-only and never `immutable`, which cannot see the WAL where the newest
+row is; if only `immutable` opens, the watch tool refuses and says why.
+
+**What a watch may follow.** A sender filter is required: `from`, `domains`, or both. There is no
+watch on everything, and the filter is the trust boundary, a line in a tool call the user can see
+saying whose messages may arrive unasked. Scope is per watch and core knows it only as opaque keys.
+Mail's `mailboxes` resolve to Envelope Index rowids, and each row carries its own mailbox and its
+Gmail labels as keys; a watch with none takes every mailbox but Sent, Drafts, Junk and Trash, and
+mail from the account's own addresses never matches. Naming mailboxes needs Mail running, since
+Mail is what resolves them; a watch without them works with Mail closed, though nothing arrives
+until Mail fetches. Messages needs no running app, skips your own messages and tapbacks, and wants
+phone numbers in international form (`+33612345678`): an entry the store does not hold is reported
+as `unresolved`, with `suggestions` when it holds near misses.
+
+**Both eras.** On a 2026-era connection the router does the matching and the server sends
+`notifications/resources/updated` per fired watch. On a 2025-era connection the router passes
+notifications through unsolicited, so the server keeps the subscribed URIs itself, and only in that
+era. MCP SDK v2 has no built-in `resources/subscribe` handler: `McpServer` answers `-32601` until
+one is registered, even with `subscribe: true` declared, so the watch module registers both methods
+by name.
+
+**The model does not subscribe.** `subscriptions/listen` is a message the host sends, not a tool.
+A host that never subscribes still has a working watch, since a read is "what came in since I last
+asked", but nothing is pushed. Whether a given host acts on the push is the host's business; see
+[alternatives.md](alternatives.md).
+
+In the app, a `subscriptions/listen` is logged as a subscription rather than a call that never
+returns, and each pushed `notifications/resources/updated` is a row in the Activity log and the
+audit file (`subscribed …`, `pushed …`), so "what did Cupertino push into this session" has the
+same answer as "what did it call". The design is in
+[the incoming-watches spec](superpowers/specs/2026-10-25-incoming-watches-design.md).
+
 ## Prompts: the ordering constraints
 
 The tools hold the constraints that are about **one call** — that a body search wants a narrowing
@@ -130,7 +199,7 @@ header of [`main.swift`](../apps/apple/CupertinoBridge/main.swift). Prompts and 
 reach hosts through Cupertino.app exactly as they do over plain stdio, with no Swift change and
 nothing to add to `surfaces.json`.
 
-## A known upstream sharp edge
+## Omitted prompt arguments
 
 The MCP spec makes `GetPromptRequest.params.arguments` **optional**. Version 1 of the SDK parsed
 whatever arrived against the declared object schema, and `z.object({…}).safeParse(undefined)` fails
@@ -162,7 +231,7 @@ listing at ~4 chars per token:
 Re-measured 2026-09-05, and the previous figures were stale by roughly half: the table said
 ~18,453 tokens for seven servers while Mail had grown 19 → 21 tools and Maps had shipped. The
 expansion column is the largest prompt that expands with no arguments; Notes and Contacts declare
-arguments on every prompt, which is the upstream sharp edge described above rather than an
+arguments on every prompt, so those two have no argument-free expansion to measure, which is not an
 omission.
 
 Three things follow, and they are why `exposePrompts` defaults on:

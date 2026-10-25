@@ -191,16 +191,22 @@ Notifications already flow through the stdio pumps untouched. Two things need do
 
 ## Measure first
 
-1. **Does Claude Code do anything with an update?** A minimal server, one resource, one update a
-   minute, in both eras. The two public reports found (anthropics/claude-code #7252, #47823) say it
-   ignores or drops `notifications/resources/updated`, and both are closed without a stated fix.
-   The answer doesn't block this spec: watches are useful to any SDK client and to `MCPChatClient`.
-   But it decides whether the README may say "push" next to Claude Code.
-2. **Does `fs.watch` fire for `Envelope Index-wal` under the grant the server actually runs with**,
-   and how long from Mail showing a message to the event? If it does not fire, the poll becomes the
-   trigger and its interval drops to 15 s.
+Items 1 to 3 and the three questions after them are **pending the live run**. Item 4 was read from
+the package and verified over an in-memory transport.
+
+1. **Does Claude Code do anything with an update?** _Pending the live run._ A minimal server, one
+   resource, one update a minute, in both eras. The two public reports found (anthropics/claude-code
+   #7252, #47823) say it ignores or drops `notifications/resources/updated`, and both are closed
+   without a stated fix. The answer doesn't block this spec: watches are useful to any SDK client
+   and to `MCPChatClient`. But it decides whether the README may say "push" next to Claude Code.
+2. **Does the trigger fire for `Envelope Index-wal` under the grant the server actually runs
+   with**, and how long from Mail showing a message to the event? _Pending the live run._ The
+   trigger is a file watch on the `-wal` plus a watch on the directory. A directory watch alone was
+   measured on /private/tmp to miss WAL appends (the Task 1 spike), so it is not enough. If the live
+   run shows the file watch does not fire either, the poll becomes the trigger and its interval
+   drops to 15 s.
 3. **Cost of the watch query** on the 181k-message index: run against the `ROWID > cursor` range it
-   should be a few ms, since it is an index range. Measure it anyway.
+   should be a few ms, since it is an index range. _Pending the live run._
 4. **Does SDK v2's `McpServer` answer `resources/subscribe` on its own** when `subscribe: true` is
    declared? **No, the server has to register the handler.** In the installed 2.4.0,
    `McpServer` registers only `resources/list`, `resources/templates/list` and `resources/read`
@@ -216,6 +222,17 @@ Notifications already flow through the stdio pumps untouched. Two things need do
    `UnsubscribeRequest` are. Sending is `server.server.sendResourceUpdated({ uri })`
    (`mcp-oHn3ureC.mjs:1419`), which emits `notifications/resources/updated`. The era is not a
    guess either: `serveStdio` passes `{ era: "legacy" | "modern" }` to the server factory.
+
+Three more questions, each still pending the live run, so the session has one checklist:
+
+- **Does a Gmail label row land in the same transaction as the message?** Mail's scope keys include
+  a row's Gmail label rowids. If the label row arrives after the message, a scan between the two
+  would see the row without its label and judge it outside a mailbox-scoped watch, and the cursor
+  would move past it.
+- **Does a Mail move create a new ROWID, and does `global_message_id` survive?** The design accepts
+  that a move fires. This decides whether a horizon or a dedup on `global_message_id` is needed.
+- **Does Claude Code deliver updates?** Item 1, restated as a pass or fail for the live run: one
+  `notifications/resources/updated` in each era, and whether the host re-reads the resource.
 
 ## Non-goals (v1)
 

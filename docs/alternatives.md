@@ -154,7 +154,14 @@ the permanent refresh problem an FTS5 index would cost. `imdinu` still wins the 
 The refusal names the candidate count and the bound, which is the part that matters: it is not a
 silent cap reported as an absence. See [mail-body.md](mail-body.md).
 
-**No channel lane.** Recorded as a gap, not as a plan. Anthropic's iMessage plugin declares
+**No channel lane.** The protocol-native half is decided and shipped: Mail and Messages can
+register a resource watch behind `allowWatches` (off by default), and push
+`notifications/resources/updated` to a host that subscribed, in both protocol eras. See
+[prompts-and-resources.md](prompts-and-resources.md#watches). Whether Claude Code acts on that
+notification is **not yet measured**. Two public reports say it ignores or drops it, and neither
+closed with a stated fix; this project has not run the check, so the README says nothing about
+"push" next to Claude Code. The channel half stays open until it has. What follows is the
+channel as first recorded, a gap and not a plan. Anthropic's iMessage plugin declares
 `claude/channel` and `claude/channel/permission` and pushes `notifications/claude/channel`, which
 is the host protocol that lets a phone drive a Claude Code session — including relaying tool
 permission prompts to self-chat and reading `yes <id>` back. Nothing here references it, and
