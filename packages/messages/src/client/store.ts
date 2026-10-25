@@ -345,6 +345,37 @@ export class MessagesStore {
     return rows.map((r) => this.#toRow(r));
   }
 
+  /** Highest message ROWID now, or 0 for an empty store. The watch cursor's head. */
+  headRowid(): number {
+    const row = this.db.prepare(`SELECT MAX("ROWID") AS head FROM "message"`).get() as {
+      head: number | null;
+    };
+    return row.head ?? 0;
+  }
+
+  /**
+   * Messages with ROWID above `after`, ascending, at most `limit`.
+   *
+   * Nothing is filtered out, reactions and my own messages included: a watch
+   * cursor advances over every ROWID and the caller decides what is excluded.
+   * `message` is AUTOINCREMENT, so a ROWID is never handed out twice and the
+   * cursor can only move forward.
+   */
+  arrivalsAfter(after: number, limit: number): (MessageRow & { rowid: number })[] {
+    const sql = `
+      SELECT m."ROWID" AS rowid, ${this.#messageColumns()}
+        FROM "message" m
+        ${this.#joins()}
+       WHERE m."ROWID" > ?
+       ORDER BY m."ROWID" ASC
+       LIMIT ?`;
+    const rows = this.db.prepare(sql).all(after, Math.max(1, Math.trunc(limit))) as Record<
+      string,
+      unknown
+    >[];
+    return rows.map((r) => ({ ...this.#toRow(r), rowid: Number(r.rowid) }));
+  }
+
   /**
    * Text search, in two passes — and the second one is the point.
    *
