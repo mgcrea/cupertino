@@ -353,12 +353,28 @@ export const fileTrigger =
       logger?.warn?.(`cannot watch ${path}, relying on the poll`, err);
     };
 
+    // `onChange` reads a store that can be busy, locked or unreadable, and it runs
+    // from a timer, where a throw would be an uncaught exception. Failures are
+    // logged once until a call succeeds, so a store that stays broken costs one
+    // line, not one per poll.
+    let failing = false;
+    const fire = (): void => {
+      if (stopped) return;
+      try {
+        onChange();
+        failing = false;
+      } catch (err) {
+        if (!failing) logger?.warn?.("watch trigger callback failed", err);
+        failing = true;
+      }
+    };
+
     const schedule = (): void => {
       if (stopped) return;
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
         debounce = undefined;
-        if (!stopped) onChange();
+        fire();
       }, debounceMs);
     };
 
@@ -404,8 +420,12 @@ export const fileTrigger =
     }
     for (const name of names) arm(name);
 
+    // The poll also re-arms: a missed rename, a watcher that errored, or a file
+    // absent at start would otherwise stay unwatched for the trigger's lifetime.
     const poll = setInterval(() => {
-      if (!stopped) onChange();
+      if (stopped) return;
+      for (const name of names) if (!files.has(name)) arm(name);
+      fire();
     }, pollMs);
     poll.unref();
 

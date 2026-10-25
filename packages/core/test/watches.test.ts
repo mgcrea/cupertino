@@ -423,6 +423,61 @@ describe("fileTrigger", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("survives onChange throwing, warns once until a call succeeds, and keeps polling", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const warn = vi.fn();
+    let fail = true;
+    const onChange = vi.fn(() => {
+      if (fail) throw new Error("SQLITE_BUSY");
+    });
+    fileTrigger({ ...base, watch: fake.watch, logger: { warn } })(onChange);
+    expect(() => vi.advanceTimersByTime(60_000)).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    fake.at("/s/chat.db-wal").emit("change", "change", "chat.db-wal");
+    expect(() => vi.advanceTimersByTime(500)).not.toThrow();
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    fail = false;
+    vi.advanceTimersByTime(60_000);
+    expect(onChange).toHaveBeenCalledTimes(3);
+    fail = true;
+    vi.advanceTimersByTime(60_000);
+    expect(onChange).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-arms a file watcher that errored on the next poll", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    fileTrigger({ ...base, watch: fake.watch })(() => {});
+    const old = fake.at("/s/chat.db-wal");
+    old.emit("error", new Error("boom"));
+    expect(old.close).toHaveBeenCalled();
+    expect(fake.at("/s/chat.db-wal")).toBe(old);
+    vi.advanceTimersByTime(60_000);
+    expect(fake.at("/s/chat.db-wal")).not.toBe(old);
+  });
+
+  it("closes on a removing rename, stays unarmed while missing, arms on the poll once back", () => {
+    vi.useFakeTimers();
+    const missing = new Set<string>();
+    const fake = makeFakeWatch({ missing });
+    fileTrigger({ ...base, watch: fake.watch })(() => {});
+    const old = fake.at("/s/chat.db-wal");
+    const created = fake.watchers.length;
+    missing.add("/s/chat.db-wal");
+    fake.at("/s").emit("change", "rename", "chat.db-wal");
+    expect(old.close).toHaveBeenCalledTimes(1);
+    expect(fake.watchers.length).toBe(created);
+    missing.clear();
+    vi.advanceTimersByTime(60_000);
+    expect(fake.watchers.length).toBe(created + 1);
+    expect(fake.at("/s/chat.db-wal")).not.toBe(old);
+    vi.advanceTimersByTime(60_000);
+    expect(fake.watchers.length).toBe(created + 1);
+  });
+
   it("arms a file missing at start once the directory reports it", () => {
     vi.useFakeTimers();
     const missing = new Set(["/s/chat.db-wal"]);
