@@ -220,7 +220,54 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_30_0, v1_29_1, v1_29_0, v1_28_1, v1_28_0]
+  static let releases: [Release] = [v1_31_0, v1_30_0, v1_29_1, v1_29_0, v1_28_1]
+
+  // swift-format-ignore
+  private static let v1_31_0: Release = Release(
+    version: "1.31.0",
+    date: "2026-10-25",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Desktop can select a list row without clicking it.",
+            body: [
+              "`apple_desktop_select` chooses a sidebar entry or a table or outline row, given the row or the label inside it that a search by name finds. It is what a click on the row does, without moving the pointer or bringing the app forward. Rows like these usually have no press action, so they were missing from the default tree and a click was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Simulator can fold and unfold iPhone Duo.",
+            body: [
+              "`apple_simulator_set_pose` sets a foldable simulator closed, partially open or open through Device Hub's pose buttons, the only way there is, selecting the device first if no window shows it, and confirms which screen it then draws. An open Duo is readable and pressable like any other device; the window listings name the screen as `display`.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "A simulator tap can no longer land outside the simulator.",
+            body: [
+              "`apple_simulator_tap` and `swipe` checked the point against the device screen, then clicked wherever the screen's reported frame put it on the Mac. Device Hub reports iPhone Duo's screen away from where it draws it, so on a Duo that was another app's window. Both now refuse when the screen is not on its window, and when the Mac point is not on the simulator's window, as desktop clicks already did. On the Duo, press works.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "An unfolded iPhone Duo is found.",
+            body: [
+              "Only the device's main screen was matched, which on the Duo is the outer one, so an open Duo was \"not found\". Every built-in screen is matched now, and Device Hub keeps one for each panel once the Duo has been opened, so the one actually drawn is asked of `devicectl`.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "Finding the device screen in Device Hub stops before the app's own tree",
+            body: [
+              ", which made the search run out of time on an iPhone Duo.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_30_0: Release = Release(
@@ -335,100 +382,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_28_0: Release = Release(
-    version: "1.28.0",
-    date: "2026-10-13",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail can attach files.",
-            body: [
-              "`apple_mail_send_message`, `reply_to_message` and `forward_message` take `attachments`, absolute paths to local files, which Mail places after the text the way a file dragged into a composer is placed. On a draft, the default, you see the files before anything is sent. Attaching and sending in the same call is refused unless `APPLE_MAIL_ALLOW_FILE_SEND` is set, because nobody reviews it and a path can name any file the server can read. A file Mail refuses stops the call before anything is sent, and the composer it opened is closed again.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Contacts recognises one person held in two accounts.",
-            body: [
-              "Someone in both iCloud and Google came back from `apple_contacts_resolve_handles` as ambiguous, with no name, because the link id that joins their two cards was read as a number and the column holds text.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Contacts names the right ref when a person has gone.",
-            body: [
-              "Updating a contact deleted in the meantime said `No contact for ref \"No contact with id …\"`, quoting Contacts' own message where the ref you passed belonged.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Desktop, Screen, Sound and Simulator no longer grow over a long session.",
-            body: [
-              "The app serves them itself, and each request left Foundation's temporary objects behind until the client disconnected. They are now released after every request.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can select a list row without clicking it.",
-            body: [
-              "`apple_desktop_select` chooses a sidebar entry or a table or outline row, given the row or the label inside it that a search by name finds. It is what a click on the row does, without moving the pointer or bringing the app forward. Rows like these usually have no press action, so they were missing from the default tree and a click was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Simulator can fold and unfold iPhone Duo.",
-            body: [
-              "`apple_simulator_set_pose` sets a foldable simulator closed, partially open or open through Device Hub's pose buttons, the only way there is, selecting the device first if no window shows it, and confirms which screen it then draws. An open Duo is readable and pressable like any other device; the window listings name the screen as `display`.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "A simulator tap can no longer land outside the simulator.",
-            body: [
-              "`apple_simulator_tap` and `swipe` checked the point against the device screen, then clicked wherever the screen's reported frame put it on the Mac. Device Hub reports iPhone Duo's screen away from where it draws it, so on a Duo that was another app's window. Both now refuse when the screen is not on its window, and when the Mac point is not on the simulator's window, as desktop clicks already did. On the Duo, press works.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "An unfolded iPhone Duo is found.",
-            body: [
-              "Only the device's main screen was matched, which on the Duo is the outer one, so an open Duo was \"not found\". Every built-in screen is matched now, and Device Hub keeps one for each panel once the Duo has been opened, so the one actually drawn is asked of `devicectl`.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Finding the device screen in Device Hub stops before the app's own tree",
-            body: [
-              ", which made the search run out of time on an iPhone Duo.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

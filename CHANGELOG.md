@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.30.0`,
-`notes-v1.30.0`, `reminders-v1.30.0`, `core-v1.30.0` for the npm packages, and `app-v1.30.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.31.0`,
+`notes-v1.31.0`, `reminders-v1.31.0`, `core-v1.31.0` for the npm packages, and `app-v1.31.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.31.0] - 2026-10-25
+
+**Simulator folds iPhone Duo.** Simulator can fold and unfold the Duo and drive either screen,
+its taps stay on the simulator window, and desktop selects a list row without clicking it.
 
 ### Added
 
@@ -2973,7 +2976,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.30.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.31.0...HEAD
+[1.31.0]: https://github.com/mgcrea/cupertino/compare/app-v1.30.0...app-v1.31.0
 [1.30.0]: https://github.com/mgcrea/cupertino/compare/app-v1.29.1...app-v1.30.0
 [1.29.1]: https://github.com/mgcrea/cupertino/compare/app-v1.29.0...app-v1.29.1
 [1.29.0]: https://github.com/mgcrea/cupertino/compare/app-v1.28.1...app-v1.29.0
