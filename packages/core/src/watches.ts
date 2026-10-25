@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { watch as fsWatch, type FSWatcher } from "node:fs";
+import { join } from "node:path";
 
 import { PreconditionError } from "./errors.js";
+import type { Logger } from "./osascript.js";
 import { surfaceUri } from "./resources.js";
 
 /**
@@ -284,3 +287,141 @@ export class WatchRegistry<R extends ArrivalRow> {
     this.#trigger = undefined;
   }
 }
+
+export type TriggerOptions = {
+  dir: string;
+  /** Basenames that count, e.g. ["chat.db", "chat.db-wal"]. */
+  names: string[];
+  /** Quiet time after the last event before `onChange` runs. Default 500. */
+  debounceMs?: number;
+  /** Floor for a missed event: `onChange` runs this often regardless. Default 60_000. */
+  pollMs?: number;
+  /** Injected by tests. */
+  watch?: typeof fsWatch;
+  logger?: Logger;
+};
+
+/**
+ * Tells a watch registry that a SQLite store may have changed.
+ *
+ * ## Why the files and their directory are both watched
+ *
+ * Neither level is enough alone. Measured on macOS (scripts/spike-watch-arrivals.mjs),
+ * a watch on the *directory* does not fire when SQLite appends to an existing
+ * `-wal`: it fires only when the `-wal` or `-shm` is created or removed, and on
+ * a checkpoint. A watch on the `-wal` *file* fired on every insert. So each
+ * named file is watched directly, which is what sees arrivals, and the directory
+ * is watched too, because SQLite deletes and recreates the `-wal` around
+ * checkpoints and when the last connection closes, and a watch on the old inode
+ * goes quiet without saying so. A rename of a name in the directory re-arms that
+ * name's file watcher. A file missing at start is normal and is armed when it
+ * appears.
+ *
+ * Only the given names count, for triggering and for re-arming. `-shm` churns
+ * constantly and says nothing about new rows.
+ *
+ * ## Two independent timers
+ *
+ * Events are debounced from the last one, because an arrival is a burst of
+ * writes. The poll is separate and unconditional: `fs.watch` can drop events
+ * (a network volume, a replaced directory, a watcher that errored), and a
+ * missed event must cost one interval of latency, not an arrival never seen.
+ * Both are `unref`ed and the watchers are non-persistent, so none of this keeps
+ * the process alive after stdin closes.
+ *
+ * A watcher that cannot be created (missing directory, EACCES) is logged once
+ * and the rest is armed regardless; the poll remains.
+ */
+export const fileTrigger =
+  (opts: TriggerOptions) =>
+  (onChange: () => void): { stop(): void } => {
+    const { dir, names, logger } = opts;
+    const debounceMs = opts.debounceMs ?? 500;
+    const pollMs = opts.pollMs ?? 60_000;
+    const watch = opts.watch ?? fsWatch;
+    const wanted = new Set(names);
+
+    let stopped = false;
+    let warned = false;
+    let dirWatcher: FSWatcher | undefined;
+    const files = new Map<string, FSWatcher>();
+    let debounce: NodeJS.Timeout | undefined;
+
+    const warn = (path: string, err: unknown): void => {
+      if (warned) return;
+      warned = true;
+      logger?.warn?.(`cannot watch ${path}, relying on the poll`, err);
+    };
+
+    const schedule = (): void => {
+      if (stopped) return;
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        debounce = undefined;
+        if (!stopped) onChange();
+      }, debounceMs);
+    };
+
+    const disarm = (name: string): void => {
+      const w = files.get(name);
+      files.delete(name);
+      try {
+        w?.close();
+      } catch {
+        // Already closed.
+      }
+    };
+
+    const arm = (name: string): void => {
+      disarm(name);
+      const path = join(dir, name);
+      try {
+        const w = watch(path, { persistent: false });
+        w.on("change", schedule);
+        // A deleted file errors or renames its watcher; the directory re-arms it.
+        w.on("error", () => disarm(name));
+        files.set(name, w);
+      } catch (err) {
+        // A file that is not there yet is normal, not a failure.
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") warn(path, err);
+      }
+    };
+
+    try {
+      dirWatcher = watch(dir, { persistent: false });
+      dirWatcher.on("change", (eventType: string, filename: string | Buffer | null) => {
+        if (stopped) return;
+        const name = filename == null ? undefined : filename.toString();
+        if (name !== undefined && !wanted.has(name)) return;
+        if (eventType === "rename") {
+          for (const n of name === undefined ? names : [name]) arm(n);
+        }
+        schedule();
+      });
+      dirWatcher.on("error", (err: unknown) => warn(dir, err));
+    } catch (err) {
+      warn(dir, err);
+    }
+    for (const name of names) arm(name);
+
+    const poll = setInterval(() => {
+      if (!stopped) onChange();
+    }, pollMs);
+    poll.unref();
+
+    return {
+      stop() {
+        stopped = true;
+        clearInterval(poll);
+        if (debounce) clearTimeout(debounce);
+        debounce = undefined;
+        for (const name of files.keys()) disarm(name);
+        try {
+          dirWatcher?.close();
+        } catch {
+          // Already closed.
+        }
+        dirWatcher = undefined;
+      },
+    };
+  };

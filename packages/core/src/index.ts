@@ -117,12 +117,14 @@ export {
   type ToolResult,
 } from "./tools.js";
 export {
+  fileTrigger,
   matchesSender,
   normalizeFilter,
   watchUri,
   WatchRegistry,
   type ArrivalRow,
   type ArrivalSource,
+  type TriggerOptions,
   type Watch,
   type WatchFilter,
   type WatchRead,

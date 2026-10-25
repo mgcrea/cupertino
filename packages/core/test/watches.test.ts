@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import type { watch as fsWatch } from "node:fs";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PreconditionError } from "../src/errors.js";
 import {
+  fileTrigger,
   matchesSender,
   normalizeFilter,
   WatchRegistry,
@@ -301,5 +305,137 @@ describe("WatchRegistry trigger", () => {
     store.push("jo@acme.com");
     fire?.();
     expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+type FakeWatcher = EventEmitter & { path: string; close: ReturnType<typeof vi.fn> };
+
+/** A `fs.watch` stand-in that serves directory and file watchers alike. */
+const makeFakeWatch = (opts: { throws?: Error; missing?: Set<string> } = {}) => {
+  const watchers: FakeWatcher[] = [];
+  const watch = vi.fn((path: string) => {
+    if (opts.throws) throw opts.throws;
+    if (opts.missing?.has(path)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    const w = Object.assign(new EventEmitter(), { path, close: vi.fn() }) as FakeWatcher;
+    watchers.push(w);
+    return w;
+  });
+  return {
+    watch: watch as unknown as typeof fsWatch,
+    spy: watch,
+    watchers,
+    at: (path: string) => watchers.filter((w) => w.path === path).at(-1)!,
+  };
+};
+
+describe("fileTrigger", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const base = { dir: "/s", names: ["chat.db", "chat.db-wal"] };
+
+  it("debounces a burst on the -wal file into one call 500 ms after the last event", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch })(onChange);
+    const wal = fake.at("/s/chat.db-wal");
+    for (let i = 0; i < 5; i++) {
+      wal.emit("change", "change", "chat.db-wal");
+      if (i < 4) vi.advanceTimersByTime(100);
+    }
+    vi.advanceTimersByTime(499);
+    expect(onChange).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("watches the directory and each named file, non-persistent", () => {
+    const fake = makeFakeWatch();
+    fileTrigger({ ...base, watch: fake.watch })(() => {});
+    expect(fake.spy.mock.calls.map((c) => c[0])).toEqual(["/s", "/s/chat.db", "/s/chat.db-wal"]);
+    for (const call of fake.spy.mock.calls) expect(call[1]).toEqual({ persistent: false });
+  });
+
+  it("ignores -shm and other names on the directory watcher", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, pollMs: 10_000_000, watch: fake.watch })(onChange);
+    const before = fake.spy.mock.calls.length;
+    fake.at("/s").emit("change", "rename", "chat.db-shm");
+    fake.at("/s").emit("change", "change", "other.txt");
+    vi.advanceTimersByTime(5000);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(fake.spy.mock.calls.length).toBe(before);
+  });
+
+  it("polls at 60 s and again at 120 s with no events", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch })(onChange);
+    vi.advanceTimersByTime(59_999);
+    expect(onChange).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60_000);
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs a throwing watch once and still polls", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch({ throws: new Error("EACCES") });
+    const warn = vi.fn();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch, logger: { warn } })(onChange);
+    expect(warn).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60_000);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("stop closes every watcher, clears both timers, and nothing fires after", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    const t = fileTrigger({ ...base, watch: fake.watch })(onChange);
+    fake.at("/s/chat.db-wal").emit("change", "change", "chat.db-wal");
+    t.stop();
+    for (const w of fake.watchers) expect(w.close).toHaveBeenCalled();
+    vi.advanceTimersByTime(300_000);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("re-arms a file watcher when the directory reports its rename", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch })(onChange);
+    const old = fake.at("/s/chat.db-wal");
+    fake.at("/s").emit("change", "rename", "chat.db-wal");
+    expect(old.close).toHaveBeenCalledTimes(1);
+    const fresh = fake.at("/s/chat.db-wal");
+    expect(fresh).not.toBe(old);
+    fresh.emit("change", "change", "chat.db-wal");
+    vi.advanceTimersByTime(500);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms a file missing at start once the directory reports it", () => {
+    vi.useFakeTimers();
+    const missing = new Set(["/s/chat.db-wal"]);
+    const fake = makeFakeWatch({ missing });
+    const warn = vi.fn();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch, logger: { warn } })(onChange);
+    expect(fake.watchers.some((w) => w.path === "/s/chat.db-wal")).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    missing.clear();
+    fake.at("/s").emit("change", "rename", "chat.db-wal");
+    expect(fake.watchers.some((w) => w.path === "/s/chat.db-wal")).toBe(true);
+    vi.advanceTimersByTime(500);
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });
