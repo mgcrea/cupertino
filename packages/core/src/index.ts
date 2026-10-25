@@ -116,6 +116,7 @@ export {
   wrapResult,
   type ToolResult,
 } from "./tools.js";
+export { createWatches, type WatchesOptions } from "./watch-resources.js";
 export {
   fileTrigger,
   matchesSender,
