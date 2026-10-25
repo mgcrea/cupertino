@@ -535,6 +535,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_simulator_type",
       "apple_simulator_key",
       "apple_simulator_press_button",
+      "apple_simulator_set_pose",
       "apple_simulator_release",
     ],
     pitch:

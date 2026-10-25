@@ -72,9 +72,9 @@ The app itself hosts four more surfaces, none of them a separate npm install:
   API — reads a window as named, addressable controls, and behind the write gate presses, types,
   right-clicks, drags and runs a whole session (`apple_desktop_run`) before releasing control back
   to whoever was using the Mac. Scoped to the apps Cupertino brokers unless you widen it.
-- Simulator — 11 tools (4 always registered, 7 write-gated). The same idea for an iOS Simulator
+- Simulator — 12 tools (4 always registered, 8 write-gated). The same idea for an iOS Simulator
   window: reads an app's own controls in iOS points and, behind the write gate, presses, taps,
-  swipes and types, with no WebDriverAgent runner to keep alive.
+  swipes, types and folds a foldable, with no WebDriverAgent runner to keep alive.
 
 ## The app
 
