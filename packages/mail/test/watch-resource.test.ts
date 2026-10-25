@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { normalizeFilter, WatchRegistry } from "@mgcrea/mcp-apple-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MAIL_SURFACE, MailNotRunningError } from "../src/client/errors.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
+import type { MailArrival } from "../src/client/watch.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 import { MailWatchService } from "../src/tools/watch.js";
@@ -191,6 +193,55 @@ describe("MailWatchService freshness", () => {
     const row = service.source.since(0, 10)[0];
     expect(row?.excluded).toBeUndefined();
     expect(row?.mailbox).toBe("Receipts");
+  });
+
+  it("never scans before the first mailbox lookup has succeeded", async () => {
+    const fx = copyIndex();
+    const config = loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: fx.path });
+    let accountsAnswer = false;
+    const runnerNow: OsascriptRunner = {
+      run: vi.fn(async (script: string) => {
+        if (!script.includes("a.emailAddresses()")) return [];
+        if (!accountsAnswer) throw new MailNotRunningError(MAIL_SURFACE);
+        return ACCOUNTS;
+      }) as OsascriptRunner["run"],
+    };
+    const client = new AppleMailClient({ config, osascript: runnerNow });
+    let mailUp = false;
+    const service = new MailWatchService({
+      client,
+      config,
+      now: () => 1_000_000,
+      isMailRunning: async () => mailUp,
+    });
+    const onUpdate = vi.fn();
+    const registry = new WatchRegistry<MailArrival>({
+      surface: "mail",
+      source: service.source,
+      onUpdate,
+    });
+    service.bind(registry);
+
+    // Set with Mail closed: the lookup starts empty.
+    const { watch } = await service.add(normalizeFilter({ from: ["sam@example.com"] }), undefined);
+    addMessage(fx.db, 40, 1);
+
+    // Mail is launching: it has written the index, but cannot answer for its accounts yet.
+    mailUp = true;
+    await service.onTrigger(() => registry.tick());
+    expect(onUpdate).not.toHaveBeenCalled();
+    // A read must not hand out the row as excluded-by-emptiness, nor move the cursor.
+    const early = registry.read(watch.id);
+    expect(early?.messages).toEqual([]);
+    expect(early?.cursor).toBe(watch.createdAt);
+
+    // Mail answers: the same trigger path now loads, ticks, and the arrival is whole.
+    accountsAnswer = true;
+    await service.onTrigger(() => registry.tick());
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    const late = registry.read(watch.id);
+    expect(late?.messages.map((m) => m.mailbox)).toEqual(["INBOX"]);
+    expect(late?.cursor).toBe(40);
   });
 
   it("keeps working when Mail has quit and the TTL has passed", async () => {

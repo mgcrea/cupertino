@@ -94,11 +94,19 @@ export class MailWatchService {
   #init: Promise<void> | undefined;
   #refreshing: Promise<void> | undefined;
   #refreshedAt = 0;
+  /**
+   * Whether a `#load` has ever succeeded. Until then the lookup is the empty one
+   * seeded for a watch set while Mail was closed, and scanning with it would mark
+   * every row excluded and move the cursor past arrivals that were never judged.
+   */
+  #loaded = false;
 
   /** What `createWatches` is given. Delegates to the source `ensure()` builds. */
   readonly source: ArrivalSource<MailArrival> = {
     head: () => this.#ready().head(),
-    since: (after, limit) => this.#ready().since(after, limit),
+    // Nothing is scanned before the first real lookup: no rows, so the cursor
+    // stays where it was and a read or tick later sees these rows properly.
+    since: (after, limit) => (this.#loaded ? this.#ready().since(after, limit) : []),
   };
 
   constructor(opts: MailWatchServiceOptions) {
@@ -195,6 +203,7 @@ export class MailWatchService {
     this.#lookup = toLookup(map);
     this.#own = accounts.flatMap((a) => a.emailAddresses);
     this.#refreshedAt = this.#now();
+    this.#loaded = true;
     this.#rebuild();
   }
 
@@ -219,13 +228,18 @@ export class MailWatchService {
   /**
    * The trigger's callback: refresh the lookup if the TTL has passed, then tick.
    * A refresh that fails is logged and the tick still runs on the old lookup,
-   * since a stale lookup is better than a missed arrival.
+   * since a stale lookup is better than a missed arrival. That holds only once a
+   * lookup has loaded: before the first, there is no real lookup to fall back on
+   * (Mail may be launching, and has written the index before it can answer for
+   * its accounts), so the tick is skipped and the next trigger or the poll tries
+   * again.
    */
   async onTrigger(tick: () => void): Promise<void> {
     try {
       await this.#refreshIfStale();
     } catch (err) {
       this.#logger?.warn?.("watch: could not refresh the mailbox map, using the last one", err);
+      if (!this.#loaded) return;
     }
     tick();
   }
