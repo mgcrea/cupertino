@@ -12,6 +12,48 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+**Mail drafts can be edited after their window is closed.** `apple_mail_update_draft` now rebuilds a
+closed reply as a reply, changes only the words you name, and tells two windows with one subject
+apart, and the editing itself happens inside Cupertino with fewer interruptions.
+
+### Added
+
+- **A draft whose window was closed can still be edited.** `apple_mail_update_draft` used to refuse
+  once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the
+  thread and keeps its files and formatting, and the old draft is deleted only after the new one is
+  confirmed in Drafts. It still refuses, changing nothing, for a forward, for an original Mail can't
+  find, and when the quote Mail writes is not the one the draft had.
+- **Edits can be find and replace.** `update_draft` takes `edits`, pairs of text to find and what
+  replaces it, applied to what you wrote and never to the quoted message. Each `find` must match
+  exactly once, and only the matched words change, so the rest of the draft, its formatting and its
+  files are left alone.
+- **A draft can be named by its window, or not at all.** `update_draft` takes a `composer` handle
+  from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose
+  window that is open. With none or several open it refuses and lists them.
+- **The Mail pane says when drafts need Accessibility.** Writing into a compose window requires it,
+  and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes
+  are on and the grant is missing.
+
+### Fixed
+
+- **Two drafts with the same subject are no longer refused.** Two replies in one thread share a
+  title, and the old edit gave up rather than guess which window was meant. Each window now has its
+  own handle, so the right one is edited and the other is left as it was.
+- **A missing Accessibility grant is explained once, in plain words.** Each draft tool said so in its
+  own way, and some only said it could not read the window. They now say what the missing grant
+  stopped and where to turn it on.
+
+### Changed
+
+- **Editing a draft is faster and interrupts less.** The text is selected without moving the caret
+  line by line and without a copy for every step, so Mail comes to the front once, to paste, and your
+  clipboard and the app you were in are put back afterwards.
+- **`apple_mail_list_open_drafts` returns a handle for each window.** It also reports From, To, Cc and
+  Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without
+  searching for it first.
+
 ## [1.31.0] - 2026-10-25
 
 **Simulator folds iPhone Duo.** Simulator can fold and unfold the Duo and drive either screen,

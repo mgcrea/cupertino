@@ -387,6 +387,77 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A draft whose window was closed can still be edited.",
+            body: [
+              "`apple_mail_update_draft` used to refuse once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the thread and keeps its files and formatting, and the old draft is deleted only after the new one is confirmed in Drafts. It still refuses, changing nothing, for a forward, for an original Mail can't find, and when the quote Mail writes is not the one the draft had.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Edits can be find and replace.",
+            body: [
+              "`update_draft` takes `edits`, pairs of text to find and what replaces it, applied to what you wrote and never to the quoted message. Each `find` must match exactly once, and only the matched words change, so the rest of the draft, its formatting and its files are left alone.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "A draft can be named by its window, or not at all.",
+            body: [
+              "`update_draft` takes a `composer` handle from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose window that is open. With none or several open it refuses and lists them.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "The Mail pane says when drafts need Accessibility.",
+            body: [
+              "Writing into a compose window requires it, and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes are on and the grant is missing.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 4,
+            headline: "Two drafts with the same subject are no longer refused.",
+            body: [
+              "Two replies in one thread share a title, and the old edit gave up rather than guess which window was meant. Each window now has its own handle, so the right one is edited and the other is left as it was.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "A missing Accessibility grant is explained once, in plain words.",
+            body: [
+              "Each draft tool said so in its own way, and some only said it could not read the window. They now say what the missing grant stopped and where to turn it on.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 6,
+            headline: "Editing a draft is faster and interrupts less.",
+            body: [
+              "The text is selected without moving the caret line by line and without a copy for every step, so Mail comes to the front once, to paste, and your clipboard and the app you were in are put back afterwards.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "`apple_mail_list_open_drafts` returns a handle for each window.",
+            body: [
+              "It also reports From, To, Cc and Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without searching for it first.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

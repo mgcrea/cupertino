@@ -78,7 +78,7 @@ not tidiness: the ref for a sent message is shaped exactly like the ref for a dr
 
 "Review my draft" names no message, and the draft meant is the one on screen.
 `apple_mail_list_open_drafts` reads every compose window
-([`MailAxLane.listComposers`](../packages/mail/src/client/ax.ts)). Measured 2026-10-06 on macOS
+([`MailAxLane.composers`](../packages/mail/src/client/ax.ts), which asks the app's `apple_desktop_mail_composers` verb since 2026-10-26). Measured 2026-10-06 on macOS
 27.0, against a reply composer the user had opened by hand:
 
 | Tried                                   | Answer                                                                                                                                                                                                  |
@@ -618,9 +618,96 @@ the end, raised `Invalid index.` and returned a null subject and an unusable `#n
 row. A Drafts mailbox almost always holds fewer messages than the limit, so an agent that had just
 written a reply could not address it. `jxa/read.ts` carries the readings.
 
+## The composer moved into the app
+
+Added 2026-10-26. Everything above was measured when the Node server drove the composer one
+keystroke at a time through `apple_desktop_*` calls. That is now the app's job, in one process, and
+the sections above describe the behaviour it replaced. This is what a spike on **macOS 27.0**
+measured to justify the move, what shipped, and the rule for the one case that still needs a rebuild.
+
+### What the spike measured
+
+[`scripts/spike-mail-composer.swift`](../scripts/spike-mail-composer.swift) carries the numbers in its
+header. The ones that decided the design:
+
+| Question                                      | Measured 2026-10-25                                                                                                                                                                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can the own text be selected without keys?    | **Yes.** In process, `AXTextMarkerRangeForUIElement` on each own block gives a range, `AXSelectedTextMarkerRange` is settable **with Mail in the background**, and `AXStringForTextMarkerRange` reads it back exactly. No copy, no per-line walk. |
+| Can a span inside a block be selected?        | **Yes, for the case measured**: `AXTextMarkerForIndex` offsets are index-compatible with the own range's start, and `"ALPHA two"` read back as exactly itself. Mid-block spans and non-BMP text were not measured.                                |
+| Does the paste need Mail active?              | **Yes.** command-V posted to Mail's pid in the background was ignored. With Mail active and the event on the HID tap it landed in about 70 ms, over exactly the selection, quote intact.                                                          |
+| Does HTML survive a paste?                    | **Yes.** `<b>` and `<a href>` survive; Mail rewrites spaces to `&nbsp;`, adds a `font-size: medium` wrapper and the quote is not touched.                                                                                                         |
+| Can the subject be retyped?                   | **No.** The subject field accepts an `AXValue` write and displays it, but the title and the saved draft keep the old subject.                                                                                                                     |
+| Is a saved draft's Message-ID an address?     | **No.** It changes on every save, as does the row id. `In-Reply-To` and `References` survive, which is what a rebuild uses.                                                                                                                       |
+| Can a closed draft be reopened as a composer? | **No.** `message://<Message-ID>` on a saved draft opens the read-only viewer, the same dead end as `M.open`.                                                                                                                                      |
+
+`X-Universally-Unique-Identifier` held across two saves of one composer but is the same value on two
+different composers replying to one message, so it is not used as an address either.
+
+### The two verbs
+
+Both are answered only on the channel the app lends to the Mail server (the peer check in
+`ServerHost` refuses anything it did not spawn), so a terminal cannot borrow them.
+
+- **`apple_desktop_mail_composers`** reads every compose window: a `composer` handle (`mc-<n>`),
+  subject, From, To, Cc, Bcc, the own text apart from the quote (split by `AXBlockQuoteLevel`, as
+  before), the opening of the quote (`quoteChars`) and the named files. Handles are minted per call.
+  This is what `apple_mail_list_open_drafts` returns, so two windows under one subject can finally be
+  told apart and addressed.
+- **`apple_desktop_mail_composer_edit`** changes one window: a whole `body`, find/replace `edits`,
+  files, or HTML (a rebuilt draft keeps its formatting).
+
+### The edit sequence and its guards
+
+    select the own text (or each `find`) with text markers, Mail still in the background
+    read the selection back                  must equal what was asked for, exactly
+    save the pasteboard (every item, every type) and the front app
+    activate Mail, once
+    command-V                                the replacement, as text or text plus HTML
+    read back the own text and the quote     must be what was pasted, quote still level 1
+    command-S                                the save
+    restore the pasteboard and the front app
+
+What it refuses, changing nothing: a `find` that matches zero or several places (compared ignoring
+whitespace, against the own text only, never the quote), a window whose own text cannot be told
+apart from its quote, and a selection that does not read back as asked. Nothing destructive happens
+until the selection is verified, as before; what changed is that verifying it costs a read instead
+of a copy and a poll, so the clipboard is borrowed once, for the paste, and Mail is brought forward
+once instead of for the whole walk.
+
+Two windows under one subject are no longer refused. `update_draft` takes a `composer` handle, or
+`ref` (matched to its window by content), or neither: with exactly one compose window open it edits
+that one, and with none or several it refuses and lists them.
+
+### Route B: a closed draft is rebuilt as a reply
+
+A draft whose window is closed has no composer and cannot get one back (see the table). So it is
+rebuilt, in `rebuild.ts`:
+
+1. Preflight, before any window opens: Accessibility, no window already open under the subject, not
+   a forward (what was forwarded is not known from here), the original found in the index by the
+   draft's `In-Reply-To`, every `find` matching exactly once, none crossing formatting, every file
+   stored locally. A refusal here opens nothing.
+2. The original is reopened as a reply, so Mail writes the threading headers and the quote itself.
+3. The draft's own HTML (everything before Mail's `AppleOriginalContents` div) and its files are
+   pasted by the app's verb, read back and saved.
+4. **The regenerated quote must match the old one and the recipients must be the ones asked for,** or
+   the window is left open, unsaved, for the person to close.
+5. **Confirm, then delete.** The new draft is found in Drafts by what it holds: its `Date`, its
+   `In-Reply-To` and the head of its text, and there must be **exactly one** candidate. Only then is
+   the original deleted. Message-ID and row id are never used, because both change on every save.
+   If Drafts cannot confirm, the original is kept and the reply says there are two.
+
+The new draft gets a new ref. `method: "rebuild"` in the result says this route ran;
+`threadingKept` and `inReplyTo` say what carried over.
+
+### Checked live
+
+`node scripts/verify-mail-ax.mjs --compose` adds the cases for all of this, each against drafts to the
+user's own address. Its results are recorded below once run; until then they are unmeasured.
+
 ## Still open
 
-- **Where an attachment lands in a native-lane reply, and whether the read-back still passes.**
+- **Where an attachment lands in a native-lane reply, and whether the read-back still passes.** **STILL OPEN 2026-10-26.**
   `OPEN_COMPOSER` attaches after the last paragraph and before the body is pasted, so on a reply
   the file may sit under the quoted original rather than under the new text. Unmeasured, as is
   whether the attachment character disturbs `paste`'s read-back. The 26.6 probe above sent through
@@ -637,26 +724,38 @@ written a reply could not address it. `jxa/read.ts` carries the readings.
   [Editing the composer that is already open](#editing-the-composer-that-is-already-open). A draft
   whose window has been CLOSED still has none: `M.open` gives a viewer, and driving the message list
   means moving the user's window. That case falls back to recreation and keeps its refusals.
-- **Whether the selection survives a body with inline images or attachments.** Measured on text
+  **ANSWERED 2026-10-26 for a reply:** there is still no route to the window, so a closed reply is
+  rebuilt as a reply to its original, threading and files kept (see
+  [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)). A forward cannot be, because what it
+  forwarded is not known from here, and still refuses.
+- **Whether the selection survives a body with inline images or attachments.** **PARTLY ANSWERED 2026-10-26:** the native edit selects by text marker on the own blocks and reads the range back, so a copy no longer has to match the tree. Not measured on a body holding an inline image or a file, and `verify-mail-ax --compose` edits a forward that holds two files, which is the first place it will show. Measured on text
   above a quote. A composer whose own text holds an attachment character or an inline image has
   blocks the copy-back may render differently from the accessibility tree, which would show up as a
   refusal rather than damage — but it has not been seen either way. It matters more now: a draft
   `update_draft` has added files to is exactly that, so a SECOND call on it (another body change,
   or more files) depends on the answer. `sameDraft` already ignores U+FFFC on both sides, in case
   Mail's plain text renders a file that way; that is a guess, unmeasured for a stored draft.
-- **The native new-message path, live.** Every piece of it is measured — a message opened without
+- **The native new-message path, live.** **STILL OPEN 2026-10-26 until the live run is recorded.** Every piece of it is measured — a message opened without
   `content`, a body pasted into it, files pasted after a body — but the shipped sequence has run only
   against stubs. `verify-mail-ax --compose` runs it, and reads the source.
-- **Two files in one paste, and a paste above a quote.** The probe pasted one file at a time into a
+- **Two files in one paste, and a paste above a quote.** **STILL OPEN 2026-10-26 until the live run is recorded.** The probe pasted one file at a time into a
   new message. `node scripts/verify-mail-ax.mjs --compose` now adds two (an image and a text file)
   to the forward it rewrites, which covers both.
-- **Re-selecting is bounded at 200 extra lines.** One press per wrapped line, so a draft of a few
+- **Re-selecting is bounded at 200 extra lines.** **ANSWERED 2026-10-26, by removal:** the native edit selects by text marker and no longer walks lines, so there is no bound. One press per wrapped line, so a draft of a few
   hundred wrapped lines would reach the bound and refuse. Not seen; cheap to raise.
-- **Bcc on a saved draft.** Read from `bccRecipients` and preserved, but a draft stored on an IMAP
+- **Bcc on a saved draft.** **STILL OPEN 2026-10-26.** `list_open_drafts` now reads the Bcc field of an open window (null when it is not shown), but a rebuilt draft takes its recipients from the saved message. Read from `bccRecipients` and preserved, but a draft stored on an IMAP
   server may not carry Bcc at all. Not measured, and it would be silently dropped if so.
-- **How long the renumbering window lasts.** One observation, on iCloud, of a single rewrite.
+- **How long the renumbering window lasts.** **STILL OPEN 2026-10-26.** The rebuild sidesteps it by never using an id to find its own result. One observation, on iCloud, of a single rewrite.
   Whether a draft settles after one sync or keeps moving is unknown, and it decides whether
   `newId` is worth returning at all.
-- **The discovery scan is capped at 200 messages of All Drafts.** An account whose drafts all sit
+- **The discovery scan is capped at 200 messages of All Drafts.** **STILL OPEN 2026-10-26.** An account whose drafts all sit
   past that point in the ordering would fall through to the refusal. Not seen, and cheap to raise
   if it ever is.
+- **Whether the rebuild's confirmation rule holds across providers.** New 2026-10-26. A draft is
+  found again by `Date`, `In-Reply-To` and the head of its text, with exactly one candidate. That is
+  unmeasured on an account that rewrites `Date` on sync, where it would refuse and keep both drafts.
+- **A mid-block selection with text after it, a span across two blocks, and non-BMP text.** New
+  2026-10-26. The spike measured one ASCII span at the end of a block. An edit that is not that
+  shape is read back before the paste, so a miss refuses, but the cases are not seen.
+- **Pasting into the subject field.** New 2026-10-26. An `AXValue` write is ignored, so a subject
+  change still rebuilds the draft. Whether a paste into the field would hold is untested.
