@@ -14,12 +14,13 @@ import { encodeRef } from "./ref.js";
  */
 
 export type MailArrival = ArrivalRow & {
+  /** Empty on an excluded row whose mailbox does not resolve; such a row is never delivered. */
   ref: string;
   mailbox: string;
   senderAddress: string | null;
   senderName: string | null;
   subject: string | null;
-  dateReceived: string;
+  dateReceived: string | null;
 };
 
 /** Last path components whose mail is never an arrival: sent, drafted, binned or spam. */
@@ -48,42 +49,44 @@ const decode = (s: string): string => {
   }
 };
 
-/** Split an index mailbox URL into its account (the host) and decoded path. */
-const splitUrl = (url: string): { accountUuid: string; mailbox: string } => {
-  const m = /^[a-z-]+:\/\/([^/]*)\/?(.*)$/i.exec(url);
-  return { accountUuid: decode(m?.[1] ?? ""), mailbox: decode(m?.[2] ?? "") };
-};
-
 /** Whether a mailbox URL names Sent, Drafts, Junk or Trash, by its decoded last path component. */
 export const isUnwatchedMailbox = (mailboxUrl: string): boolean => {
-  const leaf = splitUrl(mailboxUrl).mailbox.split("/").pop() ?? "";
-  return UNWATCHED_LEAVES.has(leaf.trim().toLowerCase());
+  const m = /^[a-z-]+:\/\/[^/]*\/?(.*)$/i.exec(mailboxUrl);
+  const leaf = decode(m?.[1] ?? "")
+    .split("/")
+    .pop();
+  return UNWATCHED_LEAVES.has((leaf ?? "").trim().toLowerCase());
 };
+
+export type MailboxLookup = (
+  mailboxRowid: number,
+) => { accountUuid: string; mailbox: string } | null;
 
 export type MailArrivalSourceOptions = {
   index: EnvelopeIndex;
   ownAddresses: Iterable<string>;
-  /** When given, rows in any other mailbox are excluded. */
-  mailboxRowids?: number[];
   /**
-   * Map an index mailbox URL to the scriptable account and mailbox name, as the
-   * mailbox map does for search results. Default (and fallback when it returns
-   * null): the URL's host and decoded path.
+   * Mailbox rowid to scriptable account and mailbox name, built the way search
+   * builds its own: `await client.mailboxLookup()`, then `(id) => map.get(id) ?? null`.
+   * A row whose mailbox is missing is excluded and never gets a ref: that is
+   * how `local://` mailboxes and accounts hidden by the allowlist drop out.
    */
-  resolveMailbox?: (url: string) => { accountUuid: string; mailbox: string } | null;
+  lookup: MailboxLookup;
+  /** When given, rows in no listed mailbox, by their own mailbox or by label, are excluded. */
+  mailboxRowids?: number[];
 };
 
 export class MailArrivalSource implements ArrivalSource<MailArrival> {
   readonly #index: EnvelopeIndex;
   readonly #own: Set<string>;
   readonly #scope: Set<number> | null;
-  readonly #resolve: ((url: string) => { accountUuid: string; mailbox: string } | null) | undefined;
+  readonly #lookup: MailboxLookup;
 
   constructor(opts: MailArrivalSourceOptions) {
     this.#index = opts.index;
     this.#own = new Set([...opts.ownAddresses].map((a) => a.trim().toLowerCase()));
     this.#scope = opts.mailboxRowids ? new Set(opts.mailboxRowids) : null;
-    this.#resolve = opts.resolveMailbox;
+    this.#lookup = opts.lookup;
   }
 
   head(): number {
@@ -92,23 +95,34 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
 
   since(after: number, limit: number): MailArrival[] {
     return this.#index.arrivalsAfter(after, limit).map((r) => {
+      const where = this.#lookup(r.mailboxRowid);
       const sender = r.senderAddress?.trim().toLowerCase() ?? null;
+      // Membership is the row's own mailbox or any label, as `#mailboxPredicate`
+      // has it. Whether Mail writes a label row in the same transaction as the
+      // message is not established anywhere in this repo (docs/envelope-index.md
+      // only records the schema), so a row can be scanned a moment before its
+      // label lands. The live run measures that.
+      const inScope =
+        this.#scope === null ||
+        this.#scope.has(r.mailboxRowid) ||
+        r.labelMailboxIds.some((id) => this.#scope!.has(id));
       const excluded =
+        where === null ||
+        r.mailboxUrl === null ||
         isUnwatchedMailbox(r.mailboxUrl) ||
         (sender !== null && this.#own.has(sender)) ||
-        (this.#scope !== null && !this.#scope.has(r.mailboxRowid));
-      const where = this.#resolve?.(r.mailboxUrl) ?? splitUrl(r.mailboxUrl);
+        !inScope;
       return {
         cursor: r.rowid,
         key: r.key,
         sender: r.senderAddress,
         ...(excluded ? { excluded: true } : {}),
-        ref: encodeRef({ accountUuid: where.accountUuid, mailbox: where.mailbox, id: r.rowid }),
-        mailbox: where.mailbox,
+        ref: where ? encodeRef({ ...where, id: r.rowid }) : "",
+        mailbox: where?.mailbox ?? "",
         senderAddress: r.senderAddress,
         senderName: r.senderName,
         subject: r.subject,
-        dateReceived: this.#index.renderDate(r.dateReceived) ?? "",
+        dateReceived: this.#index.renderDate(r.dateReceived),
       };
     });
   }

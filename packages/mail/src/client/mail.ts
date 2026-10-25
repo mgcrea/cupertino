@@ -439,7 +439,7 @@ export class AppleMailClient {
    * no account UUID in the host position, so entries that do not resolve are
    * dropped rather than guessed at.
    */
-  async #mailboxLookup(): Promise<
+  async mailboxLookup(): Promise<
     Map<number, { accountUuid: string; mailbox: string; url: string }>
   > {
     const index = await this.index();
@@ -463,7 +463,7 @@ export class AppleMailClient {
     mailbox?: string | undefined;
   }): Promise<number[] | undefined> {
     if (!opts.account && !opts.mailbox) return undefined;
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     const wanted = opts.mailbox
       ? account
@@ -538,7 +538,7 @@ export class AppleMailClient {
     const groups =
       field === "mailbox"
         ? await (async () => {
-            const lookup = await this.#mailboxLookup();
+            const lookup = await this.mailboxLookup();
             return result.groups.map((g) => {
               const entry = g.key === null ? undefined : lookup.get(Number(g.key));
               return entry
@@ -576,7 +576,7 @@ export class AppleMailClient {
     if (!index) return null;
 
     const mailboxRowids = await this.#targetMailboxRowids(opts);
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     const scoped = { ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) };
 
     const common = {
@@ -684,7 +684,7 @@ export class AppleMailClient {
     const decoded = decodeRef(ref);
     const conversationId = index.conversationOf(decoded.id);
     if (conversationId === null) return [];
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     return index
       .thread(conversationId, limit)
       .map((r) => this.#rowToSummary(r, lookup))

@@ -134,6 +134,10 @@ One watcher per server process, started by the first watch and stopped by the la
   so SQLite never reuses a ROWID, even after the newest row is deleted, and a cursor past the last
   ROWID seen cannot miss an arrival. If the index is rebuilt with lower ROWIDs (a re-index), the
   watcher sees the head below its cursor, resets to the new head and notifies nothing.
+- **A move fires.** Mail gives a moved message a new ROWID, so moving or archiving mail from a
+  watched sender into a watched mailbox arrives as a new row. That is accepted for now; the live
+  run measures whether moves create new rows and whether `global_message_id` survives, before any
+  horizon or dedup is decided.
 - **Mail has to be running.** The index only changes when Mail.app fetches. The `watch` result says
   so when Mail is not running, rather than staying quiet.
 
