@@ -396,6 +396,35 @@ nonisolated enum Changelog {
             body: [
               "`apple_desktop_select` chooses a sidebar entry or a table or outline row, given the row or the label inside it that a search by name finds. It is what a click on the row does, without moving the pointer or bringing the app forward. Rows like these usually have no press action, so they were missing from the default tree and a click was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.",
             ]),
+          Entry(
+            ordinal: 1,
+            headline: "Simulator can fold and unfold iPhone Duo.",
+            body: [
+              "`apple_simulator_set_pose` sets a foldable simulator closed, partially open or open through Device Hub's pose buttons, the only way there is, selecting the device first if no window shows it, and confirms which screen it then draws. An open Duo is readable and pressable like any other device; the window listings name the screen as `display`.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "A simulator tap can no longer land outside the simulator.",
+            body: [
+              "`apple_simulator_tap` and `swipe` checked the point against the device screen, then clicked wherever the screen's reported frame put it on the Mac. Device Hub reports iPhone Duo's screen away from where it draws it, so on a Duo that was another app's window. Both now refuse when the screen is not on its window, and when the Mac point is not on the simulator's window, as desktop clicks already did. On the Duo, press works.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "An unfolded iPhone Duo is found.",
+            body: [
+              "Only the device's main screen was matched, which on the Duo is the outer one, so an open Duo was \"not found\". Every built-in screen is matched now, and Device Hub keeps one for each panel once the Duo has been opened, so the one actually drawn is asked of `devicectl`.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "Finding the device screen in Device Hub stops before the app's own tree",
+            body: [
+              ", which made the search run out of time on an iPhone Duo.",
+            ]),
         ]),
     ])
 
