@@ -101,6 +101,18 @@ const ConfigSchema = BaseConfigSchema.extend({
    * where this server WRITES, which nothing else on this surface can do.
    */
   allowFileSend: z.boolean().default(false),
+  /**
+   * Lets a client register a watch on handles or email domains and be told when
+   * a matching message arrives. Off by default, and independent of `allowWrites`
+   * and `exposePrompts`.
+   *
+   * Not a write gate: a watch only reads chat.db. It is a gate because it is the
+   * one thing here that runs unasked, a file watcher in a process that otherwise
+   * has none, and because the handle filter it takes decides whose messages may
+   * reach a session without the model asking for it. Off, neither watch tool is
+   * registered and the server does not declare `resources.subscribe`.
+   */
+  allowWatches: z.boolean().default(false),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -118,6 +130,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     sendReconcileMs: parseIntOpt(env.APPLE_MESSAGES_SEND_RECONCILE_MS),
     allowCodes: parseBool(env.APPLE_MESSAGES_ALLOW_CODES),
     allowFileSend: parseBool(env.APPLE_MESSAGES_ALLOW_FILE_SEND),
+    allowWatches: parseBool(env.APPLE_MESSAGES_ALLOW_WATCHES),
     osascriptPath: trimmed(env.APPLE_MESSAGES_OSASCRIPT_PATH),
     osascriptTimeoutMs: parseIntOpt(env.APPLE_MESSAGES_OSASCRIPT_TIMEOUT_MS),
     maxResults: parseIntOpt(env.APPLE_MESSAGES_MAX_RESULTS),

@@ -380,6 +380,7 @@ nonisolated struct Surface: Identifiable, Hashable {
       runtime: .node,
       gates: [
         Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets apple_messages_find_codes extract 2FA codes from recent messages. Off by default."),
+        Surface.Gate(id: "allowWatches", envSuffix: "ALLOW_WATCHES", label: "Watch for incoming messages", description: "Lets a client register a watch on handles or email domains and be notified when a matching message arrives. Off by default."),
       ]
     ),
     Surface(

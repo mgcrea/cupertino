@@ -12,14 +12,15 @@ runStdioServer({
   build: BUILD_INFO,
   surface: MESSAGES_SURFACE,
   logPrefix: LOG_PREFIX,
-  start: async (logger) => {
+  start: async (logger, ctx) => {
     const config = loadConfig();
-    const { server, client } = createServer({ config, logger });
+    const { server, client } = createServer({ config, logger, era: ctx.era });
     const status = client.status();
     return {
       server,
       banner:
         `writes=${config.allowWrites ? "ENABLED" : "disabled"}, ` +
+        `watches=${config.allowWatches ? "ENABLED" : "disabled"}, ` +
         `store=${status.store.opened ? "open" : "UNREADABLE"}, ` +
         `messages=${status.counts?.messages ?? 0}, ` +
         `chats=${status.counts?.chats ?? 0}, ` +

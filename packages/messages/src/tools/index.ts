@@ -8,6 +8,7 @@ import { registerCodeTools } from "./codes.js";
 import { registerCountTools } from "./counts.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
+import { registerWatchTools, type MessagesWatchService } from "./watch.js";
 
 export type ToolContext = {
   /**
@@ -38,6 +39,11 @@ export type ToolContext = {
    * model will keep filling in.
    */
   allowFileSend: boolean;
+  /**
+   * Present only when `allowWatches` is on. Independent of `allowWrites`: both
+   * watch tools are reads, so they register on read-only servers too.
+   */
+  watches?: MessagesWatchService | undefined;
 };
 
 /**
@@ -47,7 +53,8 @@ export type ToolContext = {
  * surface the flag carries a permission claim as well as a safety one: with it
  * off no Apple Event is ever sent, so no Automation grant is ever requested.
  * What is needed either way is Full Disk Access, absolutely — see `diagnostics`.
- * One further read, `find_codes`, only when `allowCodes` is on.
+ * One further read, `find_codes`, only when `allowCodes` is on. Two more, the watch
+ * tools, only when `allowWatches` is on (`ctx.watches`).
  *
  * The registered set is a pure function of STATIC CONFIGURATION, never of
  * runtime state. In particular it does NOT vary with whether the store is
@@ -72,6 +79,7 @@ export const registerTools = (
   registerMessageTools(server, client);
   registerCountTools(server, client);
   if (ctx.allowCodes) registerCodeTools(server, client);
+  if (ctx.watches) registerWatchTools(server, ctx.watches);
   if (!ctx.allowWrites) return;
   registerActionTools(server, client, ctx);
   registerAttachmentTools(server, client);

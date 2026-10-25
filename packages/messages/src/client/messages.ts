@@ -667,6 +667,24 @@ export class AppleMessagesClient {
   }
 
   /**
+   * The stored spellings that name the same correspondent as `typed`. Candidates,
+   * not answers: a locally-spelled number reaches `+33…` here, so a caller that
+   * needs an exact spelling still has to compare. `[]` when the store is closed.
+   */
+  storeHandlesFor(typed: string): string[] {
+    return this.#handlesLike(typed);
+  }
+
+  /**
+   * The open store and the file it came from, for a watch. Throws the same
+   * reason every other read throws when the store is off or unreadable.
+   */
+  watchStore(): { store: MessagesStore; path: string } {
+    const store = this.#require();
+    return { store, path: this.located().storePath };
+  }
+
+  /**
    * Find the row Messages wrote, or say plainly that it was not found.
    *
    * `docs/messages.md` left this as an open question — "whether a send should

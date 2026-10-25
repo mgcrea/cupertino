@@ -59,6 +59,35 @@ there, that is this, not silence.
 conversations and reported on the message they target. A "liked" is not a reply
 and should not be summarised as one.
 
+## Watches
+
+\`apple_messages_watch\` and \`apple_messages_unwatch\` exist only when the watch
+gate (\`APPLE_MESSAGES_ALLOW_WATCHES\`) is on. If you cannot see them, watches
+are off.
+
+- **A filter is required.** Give \`from\` (phone numbers or email addresses, as
+  you would type them) or \`domains\` (email handles only; a phone number never
+  matches a domain). There is no watch on all messages. A number is matched to
+  the store's own spelling, ignoring spaces and punctuation; one the store does
+  not hold yet is kept as typed and listed in \`unresolved\`.
+- **The host subscribes, not you.** \`apple_messages_watch\` returns a handle and a
+  \`uri\`. Subscribing to that uri is something the host does; there is no tool
+  for it, so do not promise the user a push. A host that never subscribes still
+  has a working watch: read the uri whenever you want to know what came in.
+- **\`after\` is yours to keep.** A read returns what arrived since the watch
+  began, or since the \`after\` you pass, oldest first. The \`cursor\` it returns
+  is the last row scanned; pass it back as \`after\` next time. The server does
+  not remember what you have seen. When \`more\` is true, read again from
+  \`cursor\`.
+- **Reads carry no text.** Each message is \`id\`, \`handle\`, \`chat\` and \`date\`.
+  Use \`apple_messages_get_message\` with that \`id\` for the text.
+- **Your own messages and tapbacks never fire a watch.**
+- **Messages need not be running.** The store is written by the system, not by
+  the app, so a watch works with Messages closed.
+- At most ten watches per connection, and they end with it: after a reconnect,
+  call \`apple_messages_watch\` again. Reading a watch that does not exist is a
+  not-found error, which is also what a reconnect looks like.
+
 ## Sending
 
 \`apple_messages_send_message\` exists only when writes are enabled, and it is the

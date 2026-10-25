@@ -25,6 +25,13 @@ describe("loadConfig", () => {
     expect(loadConfig({ APPLE_MESSAGES_ALLOW_CODES: "1" }).allowWrites).toBe(false);
   });
 
+  it("keeps watches off unless asked, independent of the other gates", () => {
+    expect(loadConfig({}).allowWatches).toBe(false);
+    expect(loadConfig({ APPLE_MESSAGES_ALLOW_WATCHES: "1" }).allowWatches).toBe(true);
+    expect(loadConfig({ APPLE_MESSAGES_ALLOW_WATCHES: "1" }).allowWrites).toBe(false);
+    expect(loadConfig({ APPLE_MESSAGES_ALLOW_WRITES: "1" }).allowWatches).toBe(false);
+  });
+
   it("reads every APPLE_MESSAGES_ variable", () => {
     const c = loadConfig({
       APPLE_MESSAGES_INDEX_MODE: "immutable",

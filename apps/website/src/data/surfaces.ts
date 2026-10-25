@@ -302,6 +302,18 @@ export const SURFACES: readonly Surface[] = [
         env: "APPLE_MESSAGES_ALLOW_CODES",
         why: "Extracts one-time 2FA codes from recent messages. Off unless you turn it on.",
       },
+      // Reads, gated on their own flag rather than the write gate: a watch runs a
+      // file watcher unasked and decides whose messages may reach a session. Off by default.
+      {
+        name: "apple_messages_watch",
+        env: "APPLE_MESSAGES_ALLOW_WATCHES",
+        why: "Watches for new messages from chosen handles or email domains. Off unless you turn it on.",
+      },
+      {
+        name: "apple_messages_unwatch",
+        env: "APPLE_MESSAGES_ALLOW_WATCHES",
+        why: "Stops a watch. Off unless you turn it on.",
+      },
     ],
     pitch:
       "Reads iMessage, SMS and RCS straight from chat.db — including the messages SQL cannot see — saves attachments, and sends, behind the write gate.",
