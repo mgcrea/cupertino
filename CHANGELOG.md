@@ -12,6 +12,15 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **The npm servers also speak the 2026-07-28 MCP protocol.** Mail, Notes, Reminders, Calendar,
+  Contacts, Messages, Safari and Maps answer `server/discover` and serve a client that opens with
+  the new per-request handshake, alongside the 2025 `initialize` one. Clients on the older protocol
+  see no change.
+
 ## [1.31.0] - 2026-10-25
 
 **Simulator folds iPhone Duo.** Simulator can fold and unfold the Duo and drive either screen,

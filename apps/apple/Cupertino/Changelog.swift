@@ -387,6 +387,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "The npm servers also speak the 2026-07-28 MCP protocol.",
+            body: [
+              "Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and Maps answer `server/discover` and serve a client that opens with the new per-request handshake, alongside the 2025 `initialize` one. Clients on the older protocol see no change.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }
