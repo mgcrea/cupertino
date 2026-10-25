@@ -389,48 +389,19 @@ describe("bodyText", () => {
   });
 });
 
-describe("bodySize", () => {
-  /*
-   * `matched` rather than the returned length. The response is byte capped, so
-   * a long quoted message truncates — and a fingerprint read off a truncated
-   * list would compare two bounds instead of two states, which is exactly the
-   * comparison that decides whether pasting again is safe.
-   */
-  it("counts what matched, not what fitted in the response", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" })], matched: 412, truncated: "raise maxNodes" },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodySize("e7")).resolves.toBe(412);
-    lane.close();
-  });
-
-  /*
-   * Null, and never a number. This returned -1, and the caller compared it as a
-   * count: a composer that CLOSES takes its handle with it, so a body that had
-   * gone in perfectly read back as -1, compared unequal to the size before, and
-   * was reported as "something landed that cannot be matched". A reply sent by
-   * hand mid-call came back as a body that never went in.
-   */
-  it("is null, never a number, when the body cannot be read", async () => {
-    const { env } = await hostStub({ expand: { refusal: "gone" } });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodySize("e7")).resolves.toBeNull();
-    lane.close();
-  });
-});
-
-describe("paste", () => {
+describe("keys", () => {
   /*
    * The order is load-bearing. A raise orders the window forward inside Mail; an
    * activate makes Mail the app a synthetic keystroke reaches; the focus decides
    * which element inside it receives the key. Drop any one and command-V lands
    * somewhere else.
    */
-  it("raises, activates, focuses, then sends command-V, in that order", async () => {
+  it("raises, activates, focuses, then sends the stroke, in that order", async () => {
     const { env, seen } = await hostStub({ focus: { focused: true } });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 })).resolves.toBe(true);
+    await expect(
+      lane.keys({ window: "w1", body: "e7", index: 0 }, [{ key: "v", modifiers: ["command"] }]),
+    ).resolves.toBe(true);
     expect(seen.map((c) => c.tool)).toEqual(["raise_window", "activate", "focus", "key"]);
     // The paste names the body it was focused into, so the desktop server brings
     // Mail forward first and posts nothing if the person has switched away.
@@ -445,7 +416,9 @@ describe("paste", () => {
   it("does not send the keystroke when the focus did not take", async () => {
     const { env, seen } = await hostStub({ focus: { focused: false } });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 30)).resolves.toBe(false);
+    await expect(
+      lane.keys({ window: "w1", body: "e7", index: 0 }, [{ key: "v", modifiers: ["command"] }], 30),
+    ).resolves.toBe(false);
     expect(seen.map((c) => c.tool)).not.toContain("key");
     lane.close();
   });
@@ -453,43 +426,22 @@ describe("paste", () => {
   /*
    * MEASURED, three fresh composers: the body is readable ~140 ms before it will
    * take the focus, and the FIRST attempt failed on every one. Asking once made
-   * this a coin flip that `compose.ts`'s unrelated retry happened to cover.
+   * this a coin flip that a retry that no longer exists happened to cover.
    */
   it("keeps asking for the focus, because readable is not ready", async () => {
     const { env, seen } = await hostStub({
       focus: (_args: unknown, nth: number) => ({ focused: nth > 2 }),
     });
     const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 2_000)).resolves.toBe(true);
+    await expect(
+      lane.keys(
+        { window: "w1", body: "e7", index: 0 },
+        [{ key: "v", modifiers: ["command"] }],
+        2_000,
+      ),
+    ).resolves.toBe(true);
     expect(seen.filter((c) => c.tool === "focus")).toHaveLength(3);
     expect(seen.at(-1)?.tool).toBe("key");
-    lane.close();
-  });
-});
-
-describe("maxQuoteLevel", () => {
-  it("reports the deepest level any element carries", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" }), el({ handle: "e9" }), el({ handle: "e10" })] },
-      get_attribute: (args) => ({ value: args.handle === "e9" ? 2 : 0 }),
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.maxQuoteLevel("e7")).resolves.toBe(2);
-    lane.close();
-  });
-
-  /*
-   * An element that does not carry the attribute answers null, which the driver
-   * returns rather than throwing — structural absences outnumber the nodes on a
-   * healthy walk.
-   */
-  it("treats a missing attribute as level zero", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" })] },
-      get_attribute: { value: null },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.maxQuoteLevel("e7")).resolves.toBe(0);
     lane.close();
   });
 });

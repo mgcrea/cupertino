@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MailAxLane } from "../src/client/ax.js";
-import { composeNatively, type Clipboard } from "../src/client/compose.js";
+import { awaitNewComposer, composeNatively } from "../src/client/compose.js";
 import { SENT_SINCE } from "../src/client/jxa/read.js";
 
 const open = new Set<Server>();
@@ -22,18 +22,45 @@ afterEach(() => {
  * What Mail's window list says before the composer exists.
  *
  * Call 1 to `list_windows` is always the pre-flight reach, taken BEFORE the
- * composer is opened, so the composer cannot be in it. A stub that lists
- * "Re: lunch" there is describing a composer that was already open.
+ * composer is opened, so the composer cannot be in it.
  */
 const BEFORE_OPENING = { windows: [{ handle: "w0", index: 0, title: "Inbox" }] };
 
-/** A composer that behaves: window appears, paste lands, send closes it. */
-const healthyHost = (over: Record<string, unknown> = {}) => ({
+/** One composer as the app's `mail_composers` verb reports it. */
+const composer = (handle: string, subject: string, over: Record<string, unknown> = {}) => ({
+  composer: handle,
+  subject,
+  recipients: [],
+  text: "",
+  quoted: true,
+  files: [],
+  ...over,
+});
+
+/** What the verb answers when it filled the composer. */
+const filled = (args: { body?: string; attachments?: string[]; save?: boolean }) => ({
+  replaced: true,
+  method: "inPlace",
+  text: args.body ?? "",
+  quoteKept: true,
+  filesAdded: args.attachments?.length ?? 0,
+  saved: args.save === true,
+  note: "",
+});
+
+/**
+ * A composer that behaves. `mail_composers` is empty on the first call, which
+ * is the one taken before Mail is asked to open anything, and holds the new
+ * composer after it. The verb fills what it is given and reads it back.
+ */
+const healthyHost = (over: Record<string, unknown> = {}, subject = "Re: lunch") => ({
   list_windows: (_a: unknown, n: number) =>
-    n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+    n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: subject }] },
   ui_tree: { elements: [{ handle: "e7", role: "AXWebArea", depth: 2 }] },
-  expand: { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "PASTED" }] },
-  focus: { focused: true },
+  mail_composers: (_a: unknown, n: number) => ({
+    composers: n === 1 ? [] : [composer("mc-1", subject)],
+  }),
+  mail_composer_edit: (args: Record<string, unknown>) => filled(args),
   ...over,
 });
 
@@ -94,29 +121,6 @@ const laneOver = async (
   return { lane, seen };
 };
 
-const fakeClipboard = (): Clipboard & {
-  history: string[];
-  current: string | null;
-  files: string[] | null;
-} => {
-  const state = {
-    history: [] as string[],
-    current: "something the user had copied" as string | null,
-    files: null as string[] | null,
-    read: async () => state.current,
-    write: async (text: string) => {
-      state.history.push(text);
-      state.current = text;
-      state.files = null;
-    },
-    writeFiles: async (paths: string[]) => {
-      state.current = null;
-      state.files = paths;
-    },
-  };
-  return state;
-};
-
 const runnerReturning = (subject: string) => ({ run: async () => ({ subject }) }) as never;
 
 /**
@@ -131,22 +135,21 @@ const runnerWithSent = (subject: string, sent: Record<string, unknown>) =>
     run: async (s: string) => (s === SENT_SINCE ? sent : { subject }),
   }) as never;
 
-/** Present while the body is pasted, gone by the time anything is read back. */
+/** Present while it is filled, gone from the window list once anything is pressed. */
 const composerThatVanishes = (over: Record<string, unknown> = {}) =>
   healthyHost({
-    // Found, raised and focused; gone from the window list once the paste has
-    // been posted — which is what a person pressing command-shift-D looks like.
-    // Calls 1 and 2 are the pre-flight reach and findComposer; the third is the
-    // presence check in the failure branch.
+    // Call 1 is the pre-flight reach; later calls are
+    // the presence check in a failure branch, after someone took the window.
     list_windows: (_a: unknown, n: number) =>
-      n === 1
-        ? BEFORE_OPENING
-        : n > 2
-          ? { windows: [{ handle: "w1", index: 0, title: "All Sent" }] }
-          : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
-    // The handle died with the window.
-    expand: (_a: unknown, n: number) =>
-      n === 1 ? { elements: [], matched: 40 } : { refusal: "Element 'e7' no longer exists" },
+      n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: "All Sent" }] },
+    // The verb cannot reach a window that went.
+    mail_composer_edit: {
+      replaced: false,
+      degraded: true,
+      capability: "composer",
+      reason: "No such composer.",
+      hint: "Reopen it.",
+    },
     ...over,
   });
 
@@ -161,79 +164,191 @@ const PARAMS = {
   sendNow: true,
 };
 
+const TIMEOUTS = { sendTimeoutMs: 50, composerTimeoutMs: 50 };
+
+const edits = (seen: { tool: string; args: Record<string, unknown> }[]) =>
+  seen.filter((c) => c.tool === "mail_composer_edit");
+const presses = (seen: { tool: string; args: Record<string, unknown> }[], key: string) =>
+  seen.filter((c) => c.tool === "key" && c.args["key"] === key);
+
+describe("awaitNewComposer", () => {
+  it("returns the handle that appeared", async () => {
+    const { lane } = await laneOver({
+      mail_composers: (_a: unknown, n: number) => ({
+        composers:
+          n < 3
+            ? [composer("mc-1", "Re: lunch")]
+            : [composer("mc-1", "Re: lunch"), composer("mc-4", "Re: lunch")],
+      }),
+    });
+    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toBe("mc-4");
+    lane.close();
+  });
+
+  it("returns null when nothing new appears in time", async () => {
+    const { lane } = await laneOver({
+      mail_composers: { composers: [composer("mc-1", "Re: lunch")] },
+    });
+    await expect(awaitNewComposer(lane, ["mc-1"], 30)).resolves.toBeNull();
+    lane.close();
+  });
+});
+
 describe("composeNatively", () => {
-  it("opens, pastes, verifies, then sends — and confirms the window went", async () => {
+  it("opens, fills without saving, sends, and confirms the window went", async () => {
     const { lane, seen } = await laneOver(
       healthyHost({
-        // The composer is there while pasting and gone after the send, which is
-        // how the send is confirmed.
+        // The composer is there while it is filled and gone after the send, which
+        // is how the send is confirmed.
         list_windows: (_a: unknown, n: number) =>
           n === 1 || n > 3
             ? { windows: [{ handle: "w1", index: 0, title: "Inbox" }] }
             : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
       }),
     );
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
-    expect(result).toMatchObject({ ok: true, sent: true, bodyVerified: true });
-    expect(seen.map((c) => c.tool)).toContain("key");
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(result).toMatchObject({ ok: true, sent: true, bodyVerified: true, verifiedChars: 6 });
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-1", body: "PASTED", save: false });
+    expect(presses(seen, "d")).toHaveLength(1);
     lane.close();
   });
 
   /*
-   * The pasteboard is borrowed, not taken. What the person had copied goes back
-   * afterwards — the same cost the System Events path documents, and the same
-   * courtesy.
+   * A composer from an earlier call under the same subject used to be refused,
+   * because the subject was the only identity there was. Handles are stable now,
+   * so the one that APPEARED is the one this call opened.
    */
-  it("puts the clipboard back", async () => {
-    const { lane } = await laneOver(healthyHost());
-    const clipboard = fakeClipboard();
-    await composeNatively(
+  it("fills the new composer when one with the same subject was already open", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [composer("mc-1", "Re: lunch", { text: "an older reply" })]
+              : [
+                  composer("mc-1", "Re: lunch", { text: "an older reply" }),
+                  composer("mc-2", "Re: lunch"),
+                ],
+        }),
+        list_windows: { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+      }),
+    );
+    const result = await composeNatively(
       lane,
       runnerReturning("Re: lunch"),
       { ...PARAMS, sendNow: false },
-      { clipboard, sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
-    expect(clipboard.history).toEqual(["PASTED", "something the user had copied"]);
-    expect(clipboard.current).toBe("something the user had copied");
+    expect(result).toMatchObject({ ok: true, sent: false, bodyVerified: true });
+    expect(edits(seen)).toHaveLength(1);
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-2", body: "PASTED", save: true });
+    lane.close();
+  });
+
+  it("reports no composer when none appears within the timeout", async () => {
+    const { lane, seen } = await laneOver(healthyHost({ mail_composers: { composers: [] } }));
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null, verifiedChars: 0 });
+    expect(result.note).toContain("no such window was readable within");
+    expect(result.note).toContain("Nothing was written");
+    expect(edits(seen)).toEqual([]);
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
   });
 
   /*
-   * The opposite failure, and it shipped: a draft that was RIGHT, reported as
-   * one that had failed.
-   *
-   * MEASURED on macOS 27.0 — a two-line reply pasted into a composer quoting a
-   * 322-element newsletter read back empty and came back "SOMETHING DID land in
-   * it that could not be read back", while the tree a moment later held both
-   * lines exactly as sent. `apple_desktop_key` answers when the event is POSTED;
-   * WebKit has not yet taken it, edited the document and republished a tree. So
-   * the read-back is polled, and the stub below lies exactly once.
+   * The send shortcut is aimed by subject, so the verb having filled the right
+   * composer does not make it safe to press: with two under one title the key
+   * could land on either, and the wrong message sent is the one failure this
+   * path is built to refuse.
    */
-  it("waits for a slow composer instead of calling a landed paste a failure", async () => {
+  it("a sendNow compose still waits for the Sent verdict", async () => {
     const { lane, seen } = await laneOver(
       healthyHost({
-        expand: (_a: unknown, n: number) =>
-          n === 1
-            ? // The paste is in, the accessibility tree has not caught up.
-              { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "" }] }
-            : { elements: [{ handle: "e8", role: "AXStaticText", depth: 3, value: "PASTED" }] },
+        // Open for the fill and the first poll, closed by the second.
+        list_windows: (_a: unknown, n: number) =>
+          n === 1 || n > 3
+            ? { windows: [{ handle: "w1", index: 0, title: "Inbox" }] }
+            : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
       }),
     );
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 2000,
+    const result = await composeNatively(
+      lane,
+      runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: true, scanned: 5 }),
+      PARAMS,
+      TIMEOUTS,
+    );
+    // Sent is confirmed by the window going, not by the key having been posted.
+    expect(result).toMatchObject({ ok: true, sent: true });
+    expect(result.note).toBe("Sent.");
+    expect(seen.map((c) => c.tool).lastIndexOf("key")).toBeGreaterThan(
+      seen.map((c) => c.tool).indexOf("mail_composer_edit"),
+    );
+    lane.close();
+  });
+
+  it("a sendNow with two same-subject composers fills but does not send", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [composer("mc-1", "Re: lunch")]
+              : [composer("mc-1", "Re: lunch"), composer("mc-2", "Re: lunch")],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: true });
+    expect(result.note).toContain("NOT sent");
+    expect(result.note).toContain("open in Mail for review");
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-2", save: false });
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    lane.close();
+  });
+
+  it("hands attachments to the verb and reports how many", async () => {
+    const { lane, seen } = await laneOver(healthyHost());
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false, attachments: ["/Users/me/chart.png"] },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true, attachments: 1 });
+    expect(edits(seen)[0]?.args).toMatchObject({
+      attachments: ["/Users/me/chart.png"],
+      save: true,
     });
-    expect(result.bodyVerified).toBe(true);
-    expect(result.note).not.toContain("could not be read back");
-    // One paste, not two: the poll must not be mistaken for a retry.
-    expect(seen.filter((call) => call.tool === "key" && call.args.key === "v")).toHaveLength(1);
+    lane.close();
+  });
+
+  it("maps a refusal from the verb to a failed compose carrying its reason and hint", async () => {
+    const { lane } = await laneOver(
+      healthyHost({
+        mail_composer_edit: {
+          replaced: false,
+          degraded: true,
+          capability: "attachments",
+          reason: "chart.png did not read back.",
+          hint: "Attach it by hand.",
+        },
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, degraded: true, sent: false });
+    expect(result.note).toContain("chart.png did not read back.");
+    expect(result.note).toContain("Attach it by hand.");
     lane.close();
   });
 
@@ -241,83 +356,63 @@ describe("composeNatively", () => {
    * The failure this whole path is shaped around: a draft correct in every
    * visible respect except the words, reported as a success.
    */
-  it("refuses to report a draft ready when the body cannot be read back", async () => {
+  it("refuses to report a draft ready when the read-back is not the body", async () => {
     const { lane } = await laneOver(
-      healthyHost({ expand: { elements: [{ handle: "e8", depth: 3, value: "" }] } }),
+      healthyHost({
+        mail_composer_edit: { ...filled({ body: "SOMETHING ELSE", save: true }) },
+      }),
     );
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
-    expect(result.ok).toBe(false);
-    expect(result.bodyVerified).toBe(false);
-    expect(result.sent).toBe(false);
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, bodyVerified: false, sent: false });
     expect(result.note).toContain("MUST NOT be described to the user as ready");
     lane.close();
   });
 
-  /*
-   * A paste that landed and could not be read is a different thing from one
-   * that never landed, and the advice differs: retrying the first puts the
-   * reply in the draft twice, with nothing here able to undo it.
-   */
-  it("warns against a retry when something landed that could not be matched", async () => {
-    let calls = 0;
+  it("compares the read-back with whitespace folded", async () => {
     const { lane } = await laneOver(
       healthyHost({
-        expand: () => {
-          calls += 1;
-          // Empty text throughout, but a growing element count: something went
-          // in that cannot be matched.
-          return { elements: [{ handle: "e8", depth: 3, value: "" }], matched: calls };
-        },
+        mail_composer_edit: { ...filled({ body: "Thanks —\n  Tuesday   works.", save: true }) },
       }),
     );
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
-    expect(result.ok).toBe(false);
-    expect(result.note).toContain("retry would paste the reply in twice");
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, body: "Thanks — Tuesday works.", sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
     lane.close();
   });
 
   /*
-   * The incident this path was rebuilt around, 2026-09-09.
-   *
-   * A reply was composed correctly and sent by hand while the call was still
-   * running. The composer closed, its element handle died with it, and every
-   * read after that came back as a refusal — which the lane reported as -1 and
-   * the caller compared as a count. The tool said the body had not gone in and
-   * warned against a retry on the grounds that it would paste twice. All of it
-   * was wrong, and the one true sentence — the composer is gone, so someone
-   * took it — was never said.
+   * The incident this path was rebuilt around, 2026-09-09: a reply composed
+   * correctly and sent by hand while the call was still running. The tool said
+   * the body had not gone in. The one true sentence — the composer is gone, so
+   * someone took it — was never said.
    */
-  it("reports a composer that vanished mid-paste as gone, not as a body that failed", async () => {
+  it("reports a composer that vanished mid-fill as gone, not as a body that failed", async () => {
     const { lane } = await laneOver(composerThatVanishes());
     const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
       PARAMS,
-      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
     expect(result.note).toContain("is GONE");
-    // The two claims that sent the last investigation the wrong way.
     expect(result.note).not.toContain("the body did not go in");
-    expect(result.note).not.toContain("paste the reply in twice");
-    // Unknown, NOT false: nothing here established that the body was wrong.
     expect(result.bodyVerified).toBeNull();
     lane.close();
   });
 
   /*
    * Sent and discarded leave exactly the same empty screen, and only Mail can
-   * tell them apart. Getting it wrong either way is expensive: a sent reply
-   * called a failure invites a retry that sends it twice.
+   * tell them apart. A sent reply called a failure invites a retry that sends
+   * it twice.
    */
   it("says the reply went when Sent holds it, and does not invite a retry", async () => {
     const { lane } = await laneOver(composerThatVanishes());
@@ -331,7 +426,7 @@ describe("composeNatively", () => {
         messages: [{ dateSent: "2026-09-09T20:56:54.000Z" }],
       }),
       PARAMS,
-      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
     expect(result.sent).toBe(true);
     expect(result.note).toContain("WAS SENT");
@@ -340,11 +435,6 @@ describe("composeNatively", () => {
     lane.close();
   });
 
-  /*
-   * `found: false` is only evidence if the listing was showing recent mail at
-   * all. A newest older than the call means it never did, and "not sent" would
-   * be a false negative on the dangerous side.
-   */
   it("refuses to call it unsent when Sent's newest entry predates the call", async () => {
     const { lane } = await laneOver(composerThatVanishes());
     const result = await composeNatively(
@@ -357,7 +447,7 @@ describe("composeNatively", () => {
         newest: "2019-01-01T00:00:00.000Z",
       }),
       PARAMS,
-      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
     expect(result.sent).toBeNull();
     expect(result.note).toContain("could NOT be told");
@@ -365,66 +455,36 @@ describe("composeNatively", () => {
   });
 
   /*
-   * The same vanishing, one step later: the body verified, and the window gone
-   * before the send. Nothing may be pressed into an unknown foreground.
+   * The same vanishing, one step later: filled, and the window gone before the
+   * send. Nothing may be pressed into an unknown foreground.
    */
   it("does not press send into whatever replaced a composer that went", async () => {
     const { lane, seen } = await laneOver(
-      healthyHost({ raise_window: (_a: unknown, n: number) => (n > 1 ? { refusal: "gone" } : {}) }),
+      healthyHost({ raise_window: (_a: unknown, n: number) => (n > 0 ? { refusal: "gone" } : {}) }),
     );
     const result = await composeNatively(
       lane,
       runnerWithSent("Re: lunch", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
       PARAMS,
-      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
     expect(result.note).toContain("is GONE");
-    expect(seen.filter((c) => c.tool === "key" && c.args["key"] === "d")).toEqual([]);
+    expect(presses(seen, "d")).toEqual([]);
     lane.close();
   });
 
-  /*
-   * An element can report itself focusable and not take it. Pressing on would
-   * paste into whatever DID have the focus.
-   */
-  it("does not claim a body when the composer never took the focus", async () => {
-    const { lane, seen } = await laneOver(healthyHost({ focus: { focused: false } }));
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-      // Short, or this test would sit through the real focus poll twice.
-      focusTimeoutMs: 30,
-    });
-    expect(result.bodyVerified).toBe(false);
-    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
-    lane.close();
-  });
-
-  /*
-   * A send that was not confirmed must not be reported as sent. Mail closes the
-   * window when it accepts one, so a window still on screen is the tell.
-   */
   it("does not report a send whose window is still open", async () => {
     const { lane } = await laneOver(healthyHost());
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
-    expect(result.sent).toBe(false);
-    expect(result.ok).toBe(false);
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(result).toMatchObject({ ok: false, sent: false });
     expect(result.note).toContain("may not have gone");
     lane.close();
   });
 
   /*
-   * The send key names the composer now, so the desktop server refuses it when
-   * Mail will not come forward — somebody kept their own window in front. That
-   * is a composer still on screen with nothing pressed, and reporting it as
-   * GONE, "someone sent it or closed it", would send the user looking for a
+   * The send key names the composer's window, so the desktop server refuses it
+   * when Mail will not come forward. That is a composer still on screen with
+   * nothing pressed, and reporting it as GONE would send the user looking for a
    * message that is sitting unsent in front of them.
    */
   it("does not call a composer that would not come forward gone", async () => {
@@ -436,12 +496,7 @@ describe("composeNatively", () => {
             : {},
       }),
     );
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
     expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: true });
     expect(result.note).not.toContain("GONE");
     expect(result.note).toContain("still open");
@@ -449,15 +504,35 @@ describe("composeNatively", () => {
     lane.close();
   });
 
-  it("saves a draft without waiting for any window to close", async () => {
+  it("saves through the verb, with no keystroke of its own", async () => {
     const { lane, seen } = await laneOver(healthyHost());
     const result = await composeNatively(
       lane,
       runnerReturning("Re: lunch"),
       { ...PARAMS, sendNow: false },
-      { clipboard: fakeClipboard(), sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      TIMEOUTS,
     );
     expect(result).toMatchObject({ ok: true, sent: false, bodyVerified: true });
+    expect(edits(seen)[0]?.args).toMatchObject({ save: true });
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    lane.close();
+  });
+
+  /*
+   * A forward's body is optional. With neither a body nor files there is
+   * nothing for the verb to do, so it is not called, and the draft is saved the
+   * way it always was.
+   */
+  it("saves a forward with no body and no files with command-S, without the verb", async () => {
+    const { lane, seen } = await laneOver(healthyHost({}, "Fwd: lunch"));
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, sent: false, bodyVerified: null });
+    expect(edits(seen)).toEqual([]);
     expect(seen.at(-1)).toEqual({
       tool: "key",
       args: { key: "s", modifiers: ["command"], handle: "w1" },
@@ -465,75 +540,75 @@ describe("composeNatively", () => {
     lane.close();
   });
 
-  /*
-   * The incident, 2026-09-10.
-   *
-   * A composer from an earlier call was still open under the same subject —
-   * this path never closes one — and Mail keeps composers as tabs, so both sat
-   * on the window list. The title matched the leftover, which was readable
-   * before the new one was: ⌘V went to the new composer Mail had in front, the
-   * read-back went to the leftover, and a reply that was fine came back as
-   * "SOMETHING DID land in it that could not be read back".
-   */
-  it("drives nothing when a composer with this subject was already open", async () => {
-    const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
-    const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
-    const clipboard = fakeClipboard();
+  it("fills only the files of a forward with no body", async () => {
+    const { lane, seen } = await laneOver(healthyHost({}, "Fwd: lunch"));
     const result = await composeNatively(
       lane,
-      runnerReturning("Re: lunch"),
-      { ...PARAMS, sendNow: false },
-      { clipboard, sendTimeoutMs: 50, composerTimeoutMs: 50 },
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, attachments: ["/a.pdf"], sendNow: false },
+      TIMEOUTS,
     );
-    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null, verifiedChars: 0 });
-    expect(result.note).toContain("already open");
-    expect(result.note).not.toContain("the body did not go in");
-    const driven = ["raise_window", "activate", "focus", "key"];
-    expect(seen.filter((c) => driven.includes(c.tool))).toEqual([]);
-    expect(clipboard.history).toEqual([]);
+    expect(result).toMatchObject({ ok: true, bodyVerified: null, attachments: 1 });
+    expect(edits(seen)[0]?.args).toEqual({ composer: "mc-1", attachments: ["/a.pdf"], save: true });
     lane.close();
   });
 
   /*
-   * The same collision with a send is the dangerous one: the send shortcut
-   * names the composer it found, and that was the leftover.
+   * `opts.opened` hands over a composer the caller opened itself, which is how a
+   * draft being recreated gets its replacement filled. It alone keeps a subject
+   * guard: the composer is the single one under that subject.
    */
-  it("never presses send when a composer with this subject was already open", async () => {
-    const leftover = { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] };
-    const { lane, seen } = await laneOver(healthyHost({ list_windows: leftover }));
-    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, {
-      clipboard: fakeClipboard(),
-      sendTimeoutMs: 50,
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
-    expect(result).toMatchObject({ ok: false, sent: false });
-    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+  it("fills the single composer under an opened subject", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: { composers: [composer("mc-9", "Re: lunch"), composer("mc-2", "Other")] },
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("unused"),
+      { ...PARAMS, mode: "new", sendNow: false },
+      { ...TIMEOUTS, opened: { subject: "Re: lunch", windowsBefore: [] } },
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-9" });
+    lane.close();
+  });
+
+  it("refuses an opened subject that several composers share", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: {
+          composers: [composer("mc-1", "Re: lunch"), composer("mc-2", "Re: lunch")],
+        },
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("unused"),
+      { ...PARAMS, mode: "new", sendNow: false },
+      { ...TIMEOUTS, opened: { subject: "Re: lunch", windowsBefore: [] } },
+    );
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null });
+    expect(result.note).toContain("already open");
+    expect(edits(seen)).toEqual([]);
     lane.close();
   });
 
   /*
-   * Asked BEFORE anything is opened, keeping the ordering the System Events path
-   * established: the failure this tool was best known for left an empty reply
-   * window on screen on every attempt.
+   * Asked BEFORE anything is opened: the failure this tool was best known for
+   * left an empty reply window on screen on every attempt.
    */
   it("refuses before opening a composer when Mail's windows cannot be read", async () => {
-    const { lane, seen } = await laneOver({
-      list_windows: () => {
-        throw new Error("unreachable");
-      },
-    });
-    // The stub cannot throw across the wire, so refuse by closing instead.
+    const { lane, seen } = await laneOver({});
     lane.close();
     const dead = MailAxLane.open({
       CUPERTINO_AX_SOCKET: "/nonexistent.sock",
       CUPERTINO_AX_FOR: "mail",
     })!;
-    await expect(
-      composeNatively(dead, runnerReturning("Re: lunch"), PARAMS, {
-        clipboard: fakeClipboard(),
-      }),
-    ).rejects.toThrow(/Accessibility/);
+    await expect(composeNatively(dead, runnerReturning("Re: lunch"), PARAMS, {})).rejects.toThrow(
+      /Accessibility/,
+    );
     expect(seen).toEqual([]);
   });
 });
@@ -541,9 +616,8 @@ describe("composeNatively", () => {
 /*
  * A NEW message, composed the way a reply is. The incident this exists for,
  * 2026-10-21: a new message's body was assigned to `content`, Mail wrapped it
- * in a quotation it hides and Outlook shows, and the person it went to read
- * the whole mail as a quote. Nothing here may assign it; it is pasted and read
- * back like a reply's.
+ * in a quotation it hides and Outlook shows. Nothing here may assign it; the
+ * verb types it and reads it back.
  */
 /** A runner that opens "GPU VMs" and records what it was asked. */
 const recording = () => {
@@ -556,8 +630,6 @@ const recording = () => {
   } as never;
   return { calls, runner };
 };
-const saves = (seen: { tool: string; args: Record<string, unknown> }[]) =>
-  seen.filter((c) => c.tool === "key" && c.args.key === "s").length;
 
 describe("composeNatively, a new message", () => {
   const NEW = {
@@ -571,94 +643,38 @@ describe("composeNatively, a new message", () => {
     bcc: [],
     sendNow: false,
   };
-  const newHost = (over: Record<string, unknown> = {}) =>
-    healthyHost({
-      list_windows: (_a: unknown, n: number) =>
-        n === 1 ? BEFORE_OPENING : { windows: [{ handle: "w1", index: 0, title: "GPU VMs" }] },
-      ...over,
-    });
-  it("opens it without a body, pastes the body, and saves", async () => {
+  const newHost = (over: Record<string, unknown> = {}) => healthyHost(over, "GPU VMs");
+
+  it("opens it without a body, fills the body through the verb, and saves", async () => {
     const { lane, seen } = await laneOver(newHost());
     const { calls, runner } = recording();
-    const result = await composeNatively(lane, runner, NEW, {
-      clipboard: fakeClipboard(),
-      composerTimeoutMs: 50,
-      renderTimeoutMs: 50,
-    });
+    const result = await composeNatively(lane, runner, NEW, TIMEOUTS);
     lane.close();
     expect(result).toMatchObject({ ok: true, bodyVerified: true, sent: false });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.params).toMatchObject({ mode: "new", subject: "GPU VMs" });
-    // The body never travels to Mail's scripting object.
+    // Neither the body nor the files travel to Mail's scripting object.
     expect(calls[0]?.params).not.toHaveProperty("attachments");
-    expect(saves(seen)).toBe(1);
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-1", body: "PASTED", save: true });
   });
 
-  it("refuses before opening anything when the subject is already a window", async () => {
-    const { lane, seen } = await laneOver(
-      newHost({ list_windows: { windows: [{ handle: "w1", index: 0, title: "GPU VMs" }] } }),
-    );
-    const { calls, runner } = recording();
-    const result = await composeNatively(lane, runner, NEW, {
-      clipboard: fakeClipboard(),
-      composerTimeoutMs: 50,
-    });
-    lane.close();
-    expect(result).toMatchObject({ ok: false, sent: false });
-    expect(result.note).toMatch(/Nothing was opened/);
-    expect(calls).toHaveLength(0);
-    expect(seen.some((c) => c.tool === "key")).toBe(false);
-  });
-
-  it("pastes the files after the body and saves once they read back", async () => {
-    const clipboard = fakeClipboard();
-    // The body as the tree shows it: the pasted text, and the file once a
-    // command-V has gone in with its URL on the pasteboard.
-    let pastedFiles = false;
+  it("no longer refuses a subject that is already a window", async () => {
     const { lane, seen } = await laneOver(
       newHost({
-        expand: () => ({
-          elements: [
-            { handle: "g0", role: "AXGroup", depth: 0 },
-            { handle: "e8", role: "AXStaticText", depth: 1, value: "PASTED" },
-            ...(pastedFiles
-              ? [{ handle: "f0", role: "AXImage", depth: 1, name: "chart.png" }]
-              : []),
-          ],
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [composer("mc-1", "GPU VMs")]
+              : [composer("mc-1", "GPU VMs"), composer("mc-3", "GPU VMs")],
         }),
-        get_attribute: { value: 0 },
-        key: (args: Record<string, unknown>) => {
-          if (args.key === "v" && clipboard.files) pastedFiles = true;
-          return {};
-        },
+        list_windows: { windows: [{ handle: "w1", index: 0, title: "GPU VMs" }] },
       }),
     );
-    const { runner } = recording();
-    const result = await composeNatively(
-      lane,
-      runner,
-      { ...NEW, attachments: ["/Users/me/chart.png"] },
-      { clipboard, composerTimeoutMs: 50, renderTimeoutMs: 300 },
-    );
+    const { calls, runner } = recording();
+    const result = await composeNatively(lane, runner, NEW, TIMEOUTS);
     lane.close();
-    expect(result).toMatchObject({ ok: true, bodyVerified: true, attachments: 1 });
-    expect(clipboard.files).toBeNull();
-    expect(clipboard.current).toBe("something the user had copied");
-    expect(saves(seen)).toBe(1);
-  });
-
-  it("does not save when the files never read back", async () => {
-    const { lane, seen } = await laneOver(newHost({ get_attribute: { value: 0 } }));
-    const { runner } = recording();
-    const result = await composeNatively(
-      lane,
-      runner,
-      { ...NEW, attachments: ["/Users/me/chart.png"] },
-      { clipboard: fakeClipboard(), composerTimeoutMs: 50, renderTimeoutMs: 100 },
-    );
-    lane.close();
-    expect(result).toMatchObject({ ok: false, degraded: true, bodyVerified: true, sent: false });
-    expect(result.note).toMatch(/NOT saved/);
-    expect(saves(seen)).toBe(0);
+    expect(result).toMatchObject({ ok: true, sent: false });
+    expect(calls).toHaveLength(1);
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-3" });
   });
 });

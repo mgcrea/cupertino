@@ -187,7 +187,7 @@ describe("OPEN_COMPOSER", () => {
   });
 
   /*
-   * Files are pasted into the window by the native half, never pushed onto
+   * Files are attached by the native half's verb, never pushed onto
    * `content` here. MEASURED, macOS 27.0: pushing an attachment onto it is a
    * write to it, and any write makes Mail wrap the body in a quotation that
    * recipients see. So a list of files reaching this script changes nothing.

@@ -209,15 +209,11 @@ export type ComposerBody = {
  * is an `AXImage` NAMED with its filename (`attach-probe.png`), and anything
  * else an `AXButton` named with the filename and its size (`attach-probe.txt,
  * 23 bytes`). The size is localised and the filename is not, so a file is
- * matched by the name or by the name followed by a comma — see `isFileNamed`.
+ * matched by the name or by the name followed by a comma.
  * Neither has a value, so neither disturbs the text read beside it. The image's
  * own child button is unnamed, and is not counted.
  */
 const FILE_ROLES = new Set(["AXImage", "AXButton"]);
-
-/** Does this element name read as the file called `name`? */
-export const isFileNamed = (element: string, name: string): boolean =>
-  element === name || element.startsWith(`${name}, `);
 
 /**
  * One compose window as a person would read it, for reviewing what they wrote.
@@ -400,33 +396,6 @@ export class MailAxLane {
     }
   }
 
-  /**
-   * Every composer currently under this subject, in window order.
-   *
-   * `findComposer` takes the first match because it is looking for a window it
-   * just opened. Rewriting one that was already there is the opposite problem:
-   * the caller has to know whether the subject picks out ONE composer, because
-   * two under one title cannot be told apart — handles are minted per call —
-   * and replacing the body of the wrong one destroys what somebody wrote. So
-   * this returns the list and lets `revise.ts` refuse on its length.
-   *
-   * Does not poll. Nothing here opened a window, so there is nothing to wait
-   * for: the composer either is on screen or is not.
-   */
-  async findComposers(subject: string): Promise<ComposerRef[]> {
-    const listed = (await this.#call("list_windows", {
-      bundleId: MAIL_BUNDLE,
-      includeTitles: true,
-    })) as Windows;
-    const found: ComposerRef[] = [];
-    for (const win of listed.windows ?? []) {
-      if ((win.title ?? "") !== subject) continue;
-      const body = await this.#bodyOf(win.index);
-      if (body) found.push({ window: win.handle, body, index: win.index });
-    }
-    return found;
-  }
-
   async #bodyOf(windowIndex: number): Promise<string | null> {
     const tree = (await this.#call("ui_tree", {
       bundleId: MAIL_BUNDLE,
@@ -468,72 +437,6 @@ export class MailAxLane {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * How many elements the body holds.
-   *
-   * A fingerprint, not a reading. Taken before and after a paste it answers "did
-   * anything at all land", which is what decides whether pasting again is safe:
-   * a paste that landed and cannot be read must NOT be repeated, or the reply
-   * ends up in the draft twice with no way to undo it from here.
-   *
-   * `matched` rather than the returned length, because the response is byte
-   * capped and a long quoted message will truncate — a fingerprint taken from a
-   * truncated list would compare two different bounds rather than two states.
-   *
-   * **Null when the body cannot be read at all, and that is the whole point.**
-   * This returned -1 for a failed read, and the caller compared it as a count.
-   * A composer that CLOSES takes its element handle with it — the driver answers
-   * `staleHandle` — so a body that had gone in perfectly read back as -1 and
-   * compared unequal to the size before, which is the signature of "something
-   * landed that cannot be matched". A reply sent by hand mid-call was reported
-   * as a body that never went in, with a warning against the retry that was in
-   * fact the safe move. Blind and different are not the same answer, exactly as
-   * `bodyText` above insists, and this is where that was forgotten.
-   */
-  async bodySize(body: string): Promise<number | null> {
-    try {
-      const tree = (await this.#call("expand", {
-        handle: body,
-        detail: "all",
-        maxDepth: BODY_DEPTH,
-      })) as Tree;
-      return tree.matched ?? (tree.elements ?? []).length;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Focus the body and paste, and say whether the focus took.
-   *
-   * Focus is not a raise: a raise orders a window forward inside Mail while the
-   * keystroke goes wherever the focus actually is. Both are needed, and the
-   * focus is read back because an element can report itself focusable and not
-   * take it.
-   *
-   * **What "read back" has to mean here, learned the hard way.** Mail's composer
-   * web area answers `AXFocused: false` while holding the keyboard — measured
-   * over 1.2 s without ever flipping, with a command-V landing in it the whole
-   * time. `apple_desktop_focus` used to return that flag, so this guard refused
-   * to press command-V and every native reply came back "Nothing landed in it"
-   * for a body that would have gone in. The driver now answers from the
-   * APPLICATION's `AXFocusedUIElement`, which is what the window server routes
-   * keystrokes by and so cannot disagree with where one will land.
-   *
-   * The guard itself stays. Posting command-V without knowing where the focus is
-   * types into whatever happens to be in front, and that is the user's window.
-   *
-   * **A composer that has gone answers false rather than throwing.** Both handles
-   * die with the window, so raising or focusing one afterwards is a `staleHandle`
-   * — and letting that escape turns a describable failure into a bare channel
-   * error with no note attached, on the one path whose whole job is to say what
-   * happened. False is the honest answer: the focus was not taken, so nothing was
-   * typed.
-   */
-  async paste(ref: ComposerRef, focusTimeoutMs = FOCUS_TIMEOUT_MS): Promise<boolean> {
-    return this.keys(ref, [{ key: "v", modifiers: ["command"] }], focusTimeoutMs);
   }
 
   /**
@@ -630,14 +533,9 @@ export class MailAxLane {
     return null;
   }
 
-  async composerBody(body: string): Promise<ComposerBody | null> {
-    const split = await this.#split(body);
-    return split ? split.own : null;
-  }
-
   /**
    * The body read once, split at the quote: the sender's own text, and the
-   * blocks from the boundary down. Null exactly when `composerBody` is.
+   * blocks from the boundary down. Null when the boundary cannot be established.
    */
   async #split(
     body: string,
@@ -892,37 +790,6 @@ export class MailAxLane {
       if (Date.now() >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-  }
-
-  /** Select everything in the body, for the quote strip. */
-  async selectAll(): Promise<void> {
-    await this.#call("key", { key: "a", modifiers: ["command"] });
-  }
-
-  /**
-   * The deepest quote level anywhere in the body; 0 once the citation is gone.
-   *
-   * `AXBlockQuoteLevel` is not in the tree's field set, which is chosen for
-   * addressing controls — so it is read one element at a time. That is
-   * affordable only natively: 343 elements at 0.2 ms is well under a tenth of a
-   * second, where the same walk through System Events would be sixteen.
-   */
-  async maxQuoteLevel(body: string): Promise<number> {
-    const tree = (await this.#call("expand", {
-      handle: body,
-      detail: "all",
-      maxDepth: BODY_DEPTH,
-    })) as Tree;
-    let worst = 0;
-    for (const el of tree.elements ?? []) {
-      const read = (await this.#call("get_attribute", {
-        handle: el.handle,
-        attribute: "AXBlockQuoteLevel",
-      })) as { value?: unknown };
-      const level = typeof read.value === "number" ? read.value : 0;
-      if (level > worst) worst = level;
-    }
-    return worst;
   }
 }
 

@@ -82,7 +82,7 @@ const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
  */
 const world = (
   composers: number,
-  over: { stages?: boolean; finish?: "pressed" | "refused" } = {},
+  over: { stages?: boolean; finish?: "pressed" | "refused"; refuseEdit?: boolean } = {},
 ) => {
   const scripts: string[] = [];
   const runner = runnerSeeing(scripts, over.stages);
@@ -117,8 +117,8 @@ const world = (
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
-    composers: async () =>
-      Array.from({ length: Math.max(composers, 0) }, (_, at) => ({
+    composers: async () => [
+      ...Array.from({ length: Math.max(composers, 0) }, (_, at) => ({
         composer: `mc-${at}`,
         subject: "Re: Quarterly numbers",
         recipients: [],
@@ -126,9 +126,32 @@ const world = (
         quoted: true,
         files: [...files],
       })),
+      // A composer Mail was asked to open appears in the list once it has been:
+      // the one handle that was not there before.
+      ...(scripts.includes("OPEN_COMPOSER") || scripts.includes("STAGE_REPLACEMENT")
+        ? [
+            {
+              composer: "mc-new",
+              subject: scripts.includes("OPEN_COMPOSER") ? "Hello" : "Quarterly numbers",
+              recipients: [],
+              text: shown,
+              quoted: false,
+              files: [...files],
+            },
+          ]
+        : []),
+    ],
     // The native verb: it replaces the body and adds files in one step, and the
     // pasteboard is never touched.
     editComposer: async (args: { body?: string; attachments?: string[] }) => {
+      if (over.refuseEdit)
+        return {
+          replaced: false,
+          degraded: true,
+          capability: "composer",
+          reason: "The window would not take the edit.",
+          hint: "Look at it in Mail.",
+        };
       if (args.body !== undefined) shown = args.body;
       const added = (args.attachments ?? []).map((path) => basename(path));
       files.push(...added);
@@ -142,20 +165,11 @@ const world = (
         note: "ok",
       };
     },
-    findComposers: async () =>
-      Array.from({ length: composers }, (_, at) => ({
-        window: `w${at}`,
-        body: `b${at}`,
-        index: at,
-      })),
-    composerBody: async () => ({ text: shown, blocks: 1, quoted: true, files: [...files] }),
     keys,
     finish: async () => over.finish ?? ("pressed" as const),
     // What the recreate route's composer needs: a window, and a body to read.
     findComposer: async () => ({ window: "w9", body: "b9", index: 9 }),
-    bodySize: async () => shown.length,
     bodyText: async () => shown,
-    paste: async (ref: unknown) => keys(ref, [{ key: "v", modifiers: ["command"] }]),
     composerGone: async () => false,
   } as unknown as MailAxLane;
 
@@ -193,7 +207,7 @@ describe("which lane a draft rewrite takes", () => {
    * The route that replaced assigning the body. The replacement's window is
    * filled and saved like a reply's, and only then is the original deleted.
    */
-  it("recreates by pasting into the staged replacement, then commits", async () => {
+  it("recreates by filling the staged replacement, then commits", async () => {
     const { client, scripts, runner, shownNow } = world(0, { stages: true });
     const result = await client.updateDraft(REF, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: true, method: "recreate", bodyVerified: true });
@@ -205,7 +219,7 @@ describe("which lane a draft rewrite takes", () => {
 
   /* Unsaved replacement, untouched original: commit is never reached. */
   it("does not commit a replacement it could not save", async () => {
-    const { client, scripts } = world(0, { stages: true, finish: "refused" });
+    const { client, scripts } = world(0, { stages: true, refuseEdit: true });
     const result = await client.updateDraft(REF, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
     expect(String((result as { reason: string }).reason)).toMatch(/original draft was not changed/);
@@ -312,7 +326,7 @@ describe("adding files to a draft", () => {
     expect(scripts).toEqual([]);
   });
 
-  it("pastes the files into the recreated draft when a body comes with them", async () => {
+  it("adds the files to the recreated draft when a body comes with them", async () => {
     const { client, scripts, runner, files } = world(0, { stages: true });
     const result = await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
     expect(result).toMatchObject({ replaced: true });
@@ -361,7 +375,7 @@ describe("adding files to a draft", () => {
 describe("which lane a new message takes", () => {
   const message = { to: ["dave@example.com"], cc: [], bcc: [], body: "Hi Dave", sendNow: false };
 
-  it("pastes the body natively when the app hosts this server", async () => {
+  it("fills the body natively when the app hosts this server", async () => {
     const { client, scripts, shownNow } = world(0);
     const result = await client.sendMessage({ ...message, subject: "Hello" });
     expect(result).toMatchObject({ ok: true, bodyVerified: true });

@@ -1,24 +1,16 @@
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
 import { promisify } from "node:util";
 
 import { interferenceNote, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 
-import {
-  containsText,
-  isFileNamed,
-  MailAxLane,
-  squash,
-  type ComposerBody,
-  type ComposerRef,
-} from "./ax.js";
+import { MailAxLane, squash } from "./ax.js";
 import { SENT_SINCE } from "./jxa/read.js";
 import { OPEN_COMPOSER } from "./jxa/write.js";
 
 const run = promisify(execFile);
 
 /**
- * Reply or forward, with the body driven natively.
+ * Reply, forward or new message, with the body filled natively.
  *
  * ## Why this is two halves rather than one script
  *
@@ -29,14 +21,12 @@ const run = promisify(execFile);
  * necessarily ends the reference before the send.
  *
  * The arrangement that needs no reference: `OPEN_COMPOSER` opens and addresses
- * the composer and returns the SUBJECT, which is an identity the native half can
- * find a window by; everything after is Accessibility, including the send, which
- * becomes command-shift-D rather than `draft.send()`.
- *
- * The alternative — re-finding the draft in a third Apple Events call — was
- * rejected: drafts are discovered by subject, so two with the same one are
- * indistinguishable, and this is the single path whose named failure is sending
- * the wrong thing.
+ * the composer, and the composer it opened is the handle that APPEARS in the
+ * app's `mail_composers` list afterwards (taken before, so a leftover under the
+ * same subject is no longer a clash). The app's `mail_composer_edit` verb then
+ * fills it and reads it back. The one step it cannot do is send, which stays
+ * command-shift-D, and which is aimed by subject — so it is pressed only when
+ * exactly one composer carries that subject.
  *
  * ## What is given up, and it is stated rather than hidden
  *
@@ -54,38 +44,8 @@ const COMPOSER_TIMEOUT_MS = 8_000;
 /** How long to wait for the window to close before calling a send unconfirmed. */
 const SEND_TIMEOUT_MS = 5_000;
 
-/**
- * Confirm the opening of the body rather than all of it.
- *
- * A paste either arrives whole or does not arrive, which is what was measured,
- * so the top of it is the tell.
- */
-const VERIFY_CHARS = 400;
-
-/**
- * How long to keep re-reading the body for text that was just pasted.
- *
- * **A paste is not on screen when the keystroke returns.** `apple_desktop_key`
- * answers once the event is POSTED; WebKit then has to take it, edit the
- * document and republish an accessibility tree. Reading once, immediately, races
- * that — and loses on exactly the mail where it hurts, because the re-layout is
- * paid for the whole document and a reply carries the original inside it.
- *
- * MEASURED, macOS 27.0 (build 26A428): a two-line reply pasted into a composer
- * quoting a 322-element newsletter came back `bodyVerified: false` with "SOMETHING
- * DID land in it that could not be read back" — and the tree, read again a
- * moment later, held both lines exactly as sent. A correct reply reported as a
- * failure, which then tells its reader not to retry.
- *
- * So the read is polled, like the focus above it and for the same reason
- * `docs/desktop.md` gives: readable is not ready, and no fixed settle time is
- * right. Costs nothing on the common path — the first read still usually
- * answers — and the bound only has to be longer than a slow re-layout.
- */
-const RENDER_TIMEOUT_MS = 3_000;
-
-/** Between read-backs. Each is a round trip over a subtree, so not a spin. */
-const RENDER_POLL_MS = 150;
+/** Between reads of the composer list while waiting for a new one. */
+const COMPOSER_POLL_MS = 100;
 
 /**
  * How far back to accept a message in Sent as this call's.
@@ -110,22 +70,6 @@ export type ComposeResult = {
   note: string;
   /** Files put on the composer. The number pushed, not read back: see OPEN_COMPOSER. */
   attachments?: number;
-};
-
-/**
- * Did anything at all reach the composer?
- *
- * Three answers rather than two, and the third is the bug this path was rebuilt
- * around. "unknown" is a body that cannot be READ — which is what a composer
- * that has closed looks like from here, because its element handle dies with it.
- * Folding that into "different from before" reported a reply sent by hand as a
- * body that never went in.
- */
-type Landed = "yes" | "no" | "unknown";
-
-const compare = (before: number | null, after: number | null): Landed => {
-  if (before === null || after === null) return "unknown";
-  return after === before ? "no" : "yes";
 };
 
 /**
@@ -217,157 +161,6 @@ export const systemClipboard: Clipboard = {
     await run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WRITE_FILES, ...paths]);
   },
 };
-
-/**
- * Borrow the clipboard, and put it back.
- *
- * The same cost the System Events path documents and for the same reason: this
- * is a paste, so the pasteboard is the mechanism. A clipboard holding an image
- * or a file promise still comes back as text, because there is no way to carry
- * an arbitrary item across without knowing its type.
- */
-export const borrowClipboard = async <T>(
-  clipboard: Clipboard,
-  body: () => Promise<T>,
-): Promise<T> => {
-  const saved = await clipboard.read();
-  try {
-    return await body();
-  } finally {
-    if (saved !== null) {
-      try {
-        await clipboard.write(saved);
-      } catch {
-        // The clipboard is a courtesy; failing to restore it must not turn a
-        // sent reply into a reported failure.
-      }
-    }
-  }
-};
-
-const withClipboard = <T>(clipboard: Clipboard, text: string, body: () => Promise<T>): Promise<T> =>
-  borrowClipboard(clipboard, async () => {
-    await clipboard.write(text);
-    return body();
-  });
-
-/**
- * Wait for text to appear in the body, rather than reading for it once.
- *
- * Returns as soon as it matches, so the poll costs nothing when the tree is
- * already current. See `RENDER_TIMEOUT_MS` for the measurement that put it here.
- */
-const awaitBody = async (
-  lane: MailAxLane,
-  body: string,
-  expected: string,
-  timeoutMs = RENDER_TIMEOUT_MS,
-): Promise<boolean> => {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const after = await lane.bodyText(body);
-    if (after !== null && containsText(after, expected)) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, RENDER_POLL_MS));
-  }
-};
-
-const paste = async (
-  lane: MailAxLane,
-  clipboard: Clipboard,
-  ref: ComposerRef,
-  text: string,
-  focusTimeoutMs: number | undefined,
-  renderTimeoutMs: number | undefined,
-): Promise<{ verified: boolean; landed: Landed }> => {
-  const expected = text.length > VERIFY_CHARS ? text.slice(0, VERIFY_CHARS) : text;
-  const sizeBefore = await lane.bodySize(ref.body);
-
-  return withClipboard(clipboard, text, async () => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const focused = await lane.paste(ref, focusTimeoutMs);
-      if (focused && (await awaitBody(lane, ref.body, expected, renderTimeoutMs)))
-        return { verified: true, landed: "yes" as const };
-      // Something went in that cannot be matched, or the body can no longer be
-      // read at all. Pasting again would put the reply in the draft twice, and
-      // nothing here can undo that — so an UNKNOWN reading stops the retry just
-      // as firmly as a changed one.
-      if (compare(sizeBefore, await lane.bodySize(ref.body)) !== "no") break;
-    }
-    return { verified: false, landed: compare(sizeBefore, await lane.bodySize(ref.body)) };
-  });
-};
-
-/** How many of these element names read as the file called `name`. */
-const countFiles = (files: string[], name: string): number =>
-  files.filter((file) => isFileNamed(file, name)).length;
-
-/**
- * Wait for the files just pasted to read back in the sender's own text.
- *
- * Each requested name has to appear once more than it did before the paste, so
- * a draft already carrying a file of the same name is not taken as proof. The
- * sender's text must also read exactly as it did: a paste that replaced a
- * selection instead of landing at a caret would show the files and lose words.
- */
-const awaitFiles = async (
-  lane: MailAxLane,
-  ref: ComposerRef,
-  before: ComposerBody,
-  names: string[],
-  timeoutMs: number,
-): Promise<ComposerBody | null> => {
-  const wanted = squash(before.text);
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const shown = await lane.composerBody(ref.body);
-    if (
-      shown &&
-      squash(shown.text) === wanted &&
-      names.every(
-        (name) =>
-          countFiles(shown.files, name) >=
-          countFiles(before.files, name) + names.filter((n) => n === name).length,
-      )
-    )
-      return shown;
-    if (Date.now() >= deadline) return null;
-    await new Promise((resolve) => setTimeout(resolve, RENDER_POLL_MS));
-  }
-};
-
-/**
- * Paste files at the composer's caret, and prove they arrived.
- *
- * File URLs on the pasteboard, then command-V, which is what pasting a file
- * copied in Finder does — MEASURED, macOS 27.0, and the only way to attach one
- * that leaves `content` alone (see OPEN_COMPOSER). The caller owns the caret
- * and the clipboard borrow; `before` is the composer as read just before.
- */
-export const pasteFiles = async (
-  lane: MailAxLane,
-  clipboard: Clipboard,
-  ref: ComposerRef,
-  before: ComposerBody,
-  paths: string[],
-  focusTimeoutMs: number | undefined,
-  timeoutMs: number,
-): Promise<{ kind: "done"; shown: ComposerBody } | { kind: "unfocused" | "unconfirmed" }> => {
-  await clipboard.writeFiles(paths);
-  if (!(await lane.keys(ref, [{ key: "v", modifiers: ["command"] }], focusTimeoutMs)))
-    return { kind: "unfocused" };
-  const shown = await awaitFiles(
-    lane,
-    ref,
-    before,
-    paths.map((path) => basename(path)),
-    timeoutMs,
-  );
-  return shown ? { kind: "done", shown } : { kind: "unconfirmed" };
-};
-
-/** How long files get to show up in a composer, which may be reading them in. */
-const FILES_TIMEOUT_MS = 12_000;
 
 /**
  * What became of a composer that is no longer on screen.
@@ -478,9 +271,43 @@ export type ComposeParams = {
   sendNow: boolean;
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Compose natively: open and address over Apple Events, then paste the body
- * and any files into the window and read both back before saving or sending.
+ * Wait for a composer that was not there before, and return its handle.
+ *
+ * `before` is the handles `composers()` listed BEFORE Mail was asked to open
+ * anything. That is what makes a leftover under the same subject harmless: the
+ * handle is stable for the window's life, so the one that APPEARS is the one
+ * this call opened, whatever it is titled. Null when nothing new shows within
+ * `timeoutMs`.
+ *
+ * Polled rather than waited for: a window existing is not the app listing it.
+ * A read that fails is retried until the deadline, since a composer that has
+ * just opened can be momentarily unreadable.
+ */
+export const awaitNewComposer = async (
+  lane: MailAxLane,
+  before: string[],
+  timeoutMs: number,
+): Promise<string | null> => {
+  const known = new Set(before);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const fresh = (await lane.composers()).find((c) => !known.has(c.composer));
+      if (fresh) return fresh.composer;
+    } catch {
+      // Retried below; the deadline decides.
+    }
+    if (Date.now() >= deadline) return null;
+    await sleep(COMPOSER_POLL_MS);
+  }
+};
+
+/**
+ * Compose natively: open and address over Apple Events, then fill the body and
+ * any files through the app's `mail_composer_edit` verb, which reads both back.
  *
  * Nothing here assigns `content`, which is what keeps a NEW message from going
  * out as one long quotation — see OPEN_COMPOSER.
@@ -493,26 +320,19 @@ export const composeNatively = async (
     /**
      * The composer was already opened by the caller, with the window titles
      * read just before it was — how a draft being recreated hands over the
-     * replacement `STAGE_REPLACEMENT` made.
+     * replacement `STAGE_REPLACEMENT` made. The only mode that finds its
+     * composer by subject, and so the only one that refuses a shared one.
      */
     opened?: { subject: string; windowsBefore: string[] };
+    /** Unused: nothing is pasted any more. Kept until the callers that pass it are gone. */
     clipboard?: Clipboard;
     /** Overridable so a test can pin the unconfirmed-send path without waiting for it. */
     composerTimeoutMs?: number;
     sendTimeoutMs?: number;
-    /** Same, for the focus poll — see FOCUS_TIMEOUT_MS in `ax.ts`. */
-    focusTimeoutMs?: number;
-    /** Same, for the read-back poll — see RENDER_TIMEOUT_MS above. */
-    renderTimeoutMs?: number;
   } = {},
 ): Promise<ComposeResult> => {
-  const clipboard = opts.clipboard ?? systemClipboard;
   const composerTimeoutMs = opts.composerTimeoutMs ?? COMPOSER_TIMEOUT_MS;
   const sendTimeoutMs = opts.sendTimeoutMs ?? SEND_TIMEOUT_MS;
-  // Asked BEFORE anything is opened, keeping the ordering the System Events path
-  // established: the failure this tool was best known for left an empty reply
-  // window on screen on every attempt, and nothing about the check needs the
-  // window to exist.
   // Watched from before anything is opened, so a disturbed run says so instead
   // of blaming Mail. Every refusal below appends the finding when there is one.
   const watch = lane.watch();
@@ -520,72 +340,54 @@ export const composeNatively = async (
   // cannot exclude the very message this call is about.
   const startedAt = Date.now();
 
+  // Asked BEFORE anything is opened, keeping the ordering the System Events path
+  // established: the failure this tool was best known for left an empty reply
+  // window on screen on every attempt.
   const reach = opts.opened ? { ok: true, windows: opts.opened.windowsBefore } : await lane.reach();
   if (!reach.ok) throw new Error(MailAxLane.grantMessage(params.mode));
 
-  // A new message's subject is known before anything opens, so a clash is
-  // refused while there is still nothing on screen to clean up.
-  if (
-    !opts.opened &&
-    params.mode === "new" &&
-    (reach.windows ?? []).includes(params.subject ?? "")
-  ) {
-    return {
-      ok: false,
-      subject: params.subject ?? "",
-      bodyVerified: null,
-      verifiedChars: 0,
-      sent: false,
-      note:
-        `A window titled "${params.subject}" is already open in Mail, and the new message would ` +
-        `carry the same title, so this path could not tell the two apart. Nothing was opened. ` +
-        `Finish or close that window, or use another subject, then retry.`,
-    };
-  }
-
-  // Files are pasted below, never handed to Mail's scripting object.
+  // Files go through the verb below, never to Mail's scripting object.
   const { attachments: files = [], ...toOpen } = params;
-  const subject = opts.opened
-    ? opts.opened.subject
-    : ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
 
-  /**
-   * A composer under this subject was open BEFORE this call opened one.
-   *
-   * The subject is the only identity the native half has, and it stops being
-   * one the moment a composer from an earlier call survives — which is routine,
-   * because nothing here ever closes one. The incident, 2026-09-10: Mail keeps
-   * composers as tabs, the leftover was readable before the new one was, and
-   * the title matched it first. ⌘V went to the composer Mail had in front, the
-   * read-back went to the leftover, and a reply that was fine came back as
-   * "SOMETHING DID land in it that could not be read back". With `sendNow` the
-   * send shortcut would have named the leftover too: the wrong message sent,
-   * which is the one failure this path is built to refuse.
-   *
-   * Refused rather than disambiguated. Handles are minted per call, so there is
-   * nothing to tell the two apart by, and a guess here is a guess about which
-   * message to send. The pre-flight list is the one moment the new composer
-   * provably was not on screen.
-   */
-  if ((reach.windows ?? []).includes(subject)) {
-    return {
-      ok: false,
-      subject,
-      bodyVerified: null,
-      verifiedChars: 0,
-      sent: false,
-      note:
-        `A ${params.mode} window titled "${subject}" was already open in Mail before this call, ` +
-        `most likely left by an earlier attempt, and this call has now opened another. With two ` +
-        `under one title this path cannot tell which one it opened, so nothing was pasted, ` +
-        `pressed or sent. The one just opened has no text above the quoted message. Close it, ` +
-        `finish or discard the older one, then retry.` +
-        interferenceNote(await watch.check()),
-    };
+  let subject: string;
+  let handle: string | null;
+  if (opts.opened) {
+    subject = opts.opened.subject;
+    const deadline = Date.now() + composerTimeoutMs;
+    let same: { composer: string }[] = [];
+    for (;;) {
+      try {
+        same = (await lane.composers()).filter((c) => c.subject === subject);
+      } catch {
+        same = [];
+      }
+      if (same.length > 0 || Date.now() >= deadline) break;
+      await sleep(COMPOSER_POLL_MS);
+    }
+    if (same.length > 1) {
+      return {
+        ok: false,
+        subject,
+        bodyVerified: null,
+        verifiedChars: 0,
+        sent: false,
+        note:
+          `More than one ${params.mode} window is already open under this title ("${subject}"), ` +
+          `so this path cannot tell which one it was handed. Nothing was filled, pressed or ` +
+          `sent. Close or finish the extra ones, then retry.` +
+          interferenceNote(await watch.check()),
+      };
+    }
+    handle = same[0]?.composer ?? null;
+  } else {
+    // Taken before Mail is asked to open anything: the new composer is the
+    // handle that is absent from this list afterwards.
+    const before = (await lane.composers()).map((c) => c.composer);
+    subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
+    handle = await awaitNewComposer(lane, before, composerTimeoutMs);
   }
 
-  const ref = await lane.findComposer(subject, composerTimeoutMs);
-  if (!ref) {
+  if (!handle) {
     return {
       ok: false,
       subject,
@@ -613,11 +415,10 @@ export const composeNatively = async (
    * on double-paste grounds when the real hazard was sending the mail twice.
    */
   const vanished = async (
-    // What was known about the body before the window went. Null from the paste,
-    // which is the case that could not read it; true when the vanishing arrived
-    // later, after a body had been read back and matched — and that is worth
-    // keeping, because it says the message that may have gone out was the right
-    // one.
+    // What was known about the body before the window went. Null when nothing
+    // had been read back; true when the vanishing arrived after a body had been
+    // read back and matched — worth keeping, because it says the message that
+    // may have gone out was the right one.
     knownBody: { verified: boolean; chars: number } | null = null,
   ): Promise<ComposeResult> => {
     const verdict = await sentVerdict(runner, params.accountUuid, subject, startedAt);
@@ -636,69 +437,79 @@ export const composeNatively = async (
     };
   };
 
+  const body = params.body ?? "";
+  const filling = body !== "" || files.length > 0;
   let bodyVerified: boolean | null = null;
   let verifiedChars = 0;
-  if (params.body) {
-    const result = await paste(
-      lane,
-      clipboard,
-      ref,
-      params.body,
-      opts.focusTimeoutMs,
-      opts.renderTimeoutMs,
-    );
-    bodyVerified = result.verified;
-    verifiedChars = result.verified ? Math.min(params.body.length, VERIFY_CHARS) : 0;
-    if (!result.verified) {
-      // Asked before anything is claimed about the body: a composer that has
-      // gone reads exactly like one whose body is unreadable, and only this
-      // tells them apart.
+
+  if (filling) {
+    let edit: Record<string, unknown>;
+    try {
+      edit = await lane.editComposer({
+        composer: handle,
+        ...(body !== "" ? { body } : {}),
+        ...(files.length > 0 ? { attachments: files } : {}),
+        // The verb has no send. A send is pressed below, once it is known which
+        // composer the shortcut would reach.
+        save: !params.sendNow,
+      });
+    } catch (error) {
       if (await lane.composerGone(subject, 0)) return vanished();
       return {
         ok: false,
+        degraded: true,
         subject,
-        bodyVerified: false,
+        bodyVerified: null,
         verifiedChars: 0,
         sent: false,
         note:
-          `The ${params.mode} window for "${subject}" was opened and correctly addressed, but ` +
-          `the body did not go in: reading the composer back does not show the text that was ` +
-          `sent. It MUST NOT be described to the user as ready. ` +
-          (result.landed === "no"
-            ? "Nothing landed in it. It was left open rather than discarded, because closing an " +
-              "unsaved composer raises a save sheet whose buttons are localised. Close it in " +
-              "Mail, then retry."
-            : result.landed === "yes"
-              ? "SOMETHING DID land in it that could not be read back — look at it in Mail " +
-                "before retrying, because a retry would paste the reply in twice."
-              : "The window is still there but its body could not be READ, so whether anything " +
-                "landed is unknown — look at it in Mail before retrying, because a retry would " +
-                "paste the reply in twice.") +
+          `The ${params.mode} window for "${subject}" was opened and addressed, but filling it ` +
+          `failed: ${error instanceof Error ? error.message : String(error)} Its window is ` +
+          `still open in Mail: finish it there, or close it without saving and retry.` +
           interferenceNote(await watch.check()),
       };
     }
-  }
 
-  if (files.length > 0) {
-    // The caret is at the end of the body just pasted, or at the top of a
-    // composer that was given none — above a quoted original either way.
-    const before = await lane.composerBody(ref.body);
-    const pasted = before
-      ? await borrowClipboard(clipboard, () =>
-          pasteFiles(
-            lane,
-            clipboard,
-            ref,
-            before,
-            files,
-            opts.focusTimeoutMs,
-            opts.renderTimeoutMs ?? FILES_TIMEOUT_MS,
-          ),
-        )
-      : null;
-    if (pasted?.kind !== "done") {
-      if (await lane.composerGone(subject, 0))
-        return vanished(bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
+    if (edit["replaced"] !== true) {
+      // A composer that has gone refuses like one that cannot be filled; only
+      // this tells them apart.
+      if (await lane.composerGone(subject, 0)) return vanished();
+      const reason = typeof edit["reason"] === "string" ? edit["reason"] : "The edit was refused.";
+      const hint = typeof edit["hint"] === "string" ? ` ${edit["hint"]}` : "";
+      return {
+        ok: false,
+        degraded: true,
+        subject,
+        bodyVerified: null,
+        verifiedChars: 0,
+        sent: false,
+        note:
+          `${reason}${hint} The ${params.mode} window for "${subject}" is still open in Mail.` +
+          interferenceNote(await watch.check()),
+      };
+    }
+
+    const text = typeof edit["text"] === "string" ? edit["text"] : "";
+    if (body !== "") {
+      bodyVerified = squash(text) === squash(body);
+      verifiedChars = text.length;
+      if (!bodyVerified) {
+        return {
+          ok: false,
+          subject,
+          bodyVerified: false,
+          verifiedChars,
+          sent: false,
+          note:
+            `The ${params.mode} window for "${subject}" was opened and correctly addressed, but ` +
+            `reading the composer back does not show the text that was sent. It MUST NOT be ` +
+            `described to the user as ready. It was left open rather than discarded, and may ` +
+            `already be saved as it stands: look at it in Mail, then fix or close it.` +
+            interferenceNote(await watch.check()),
+        };
+      }
+    }
+    if (!params.sendNow && edit["saved"] === false) {
       return {
         ok: false,
         degraded: true,
@@ -706,20 +517,84 @@ export const composeNatively = async (
         bodyVerified,
         verifiedChars,
         sent: false,
+        ...(files.length > 0 ? { attachments: files.length } : {}),
         note:
-          `The ${params.mode} window for "${subject}" was composed` +
+          `The ${params.mode} window for "${subject}" was filled` +
           (bodyVerified ? " and its body verified" : "") +
-          `, but ` +
-          (pasted === null
-            ? `where its own text ends could not be read, so the files were not pasted. `
-            : pasted.kind === "unfocused"
-              ? `it would not take the keyboard for the files, so they were not pasted. `
-              : `the files did not read back in it, with the text around them unchanged. `) +
-          `It was NOT ${params.sendNow ? "sent" : "saved"}, and its window is still open in ` +
-          `Mail: attach the files there, or close it without saving and retry.` +
+          `, but it was NOT saved. Its window is still open in Mail: save it there.` +
           interferenceNote(await watch.check()),
       };
     }
+  }
+
+  const known = () => (bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
+
+  // Filled and saved by the verb: there is nothing left to press.
+  if (filling && !params.sendNow) {
+    return {
+      ok: true,
+      subject,
+      bodyVerified,
+      verifiedChars,
+      sent: false,
+      ...(files.length > 0 ? { attachments: files.length } : {}),
+      note: "Draft window is open in Mail for review.",
+    };
+  }
+
+  /*
+   * What is left to press is aimed by SUBJECT: the send shortcut (the verb has
+   * no send) and, for a forward with nothing to fill, command-S. With two
+   * composers under one title it could reach either, and the wrong message
+   * sent is the failure this path is built to refuse. So it is pressed only
+   * when exactly one composer carries the subject, and the filled draft is left
+   * open for review otherwise.
+   */
+  let sharing: string[] | null;
+  try {
+    sharing = (await lane.composers()).filter((c) => c.subject === subject).map((c) => c.composer);
+  } catch {
+    sharing = null;
+  }
+  if (sharing !== null && sharing.length === 0) return vanished(known());
+  const action = params.sendNow ? "sent" : "saved";
+  if (sharing === null || sharing.length !== 1 || sharing[0] !== handle) {
+    return {
+      ok: false,
+      degraded: true,
+      subject,
+      bodyVerified,
+      verifiedChars,
+      sent: false,
+      ...(files.length > 0 ? { attachments: files.length } : {}),
+      note:
+        `The ${params.mode} for "${subject}" was ${filling ? "filled" : "opened"}` +
+        (bodyVerified ? " and its body verified" : "") +
+        `, but it was NOT ${action}: ` +
+        (sharing === null
+          ? `Mail's composers could not be listed, so it is not known that the title picks out one.`
+          : `${sharing.length} composers in Mail carry this title, and the shortcut is aimed by ` +
+            `title, so it could reach the wrong one.`) +
+        ` The draft is open in Mail for review: ${params.sendNow ? "send" : "save"} it from there.` +
+        interferenceNote(await watch.check()),
+    };
+  }
+
+  const ref = await lane.findComposer(subject, composerTimeoutMs);
+  if (!ref) {
+    if (await lane.composerGone(subject, 0)) return vanished(known());
+    return {
+      ok: false,
+      degraded: true,
+      subject,
+      bodyVerified,
+      verifiedChars,
+      sent: false,
+      note:
+        `The ${params.mode} for "${subject}" was composed, but its window could not be read to ` +
+        `press anything, so it was NOT ${action}. It is open in Mail for review.` +
+        interferenceNote(await watch.check()),
+    };
   }
 
   // Nothing was pressed unless `finish` says so, and its two refusals must not
@@ -728,8 +603,7 @@ export const composeNatively = async (
   // composer where it was: the key names it, and the desktop server will not
   // post into somebody else's window when Mail does not come forward.
   const finished = await lane.finish(params.sendNow, ref);
-  if (finished === "gone")
-    return vanished(bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
+  if (finished === "gone") return vanished(known());
   if (finished === "refused") {
     return {
       ok: false,
@@ -739,7 +613,7 @@ export const composeNatively = async (
       sent: false,
       note:
         `The ${params.mode} for "${subject}" was composed, but Mail could not be brought to the ` +
-        `front, so nothing was pressed and it was not ${params.sendNow ? "sent" : "saved"}. ` +
+        `front, so nothing was pressed and it was not ${action}. ` +
         `Its window is still open in Mail. Someone is probably using the Mac; retry once it ` +
         `is free, or finish it in Mail.` +
         interferenceNote(await watch.check()),
@@ -755,7 +629,6 @@ export const composeNatively = async (
     bodyVerified,
     verifiedChars,
     sent,
-    // Read back out of the window, by name, before anything was pressed.
     ...(files.length > 0 ? { attachments: files.length } : {}),
     note: params.sendNow
       ? sent
