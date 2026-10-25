@@ -15,9 +15,9 @@
 
 ## Why now, and what isn't urgent
 
-- **The date:** the v1.x README (rewritten in 1.32.1, 2026-10-05) promises "bug fixes and security updates for at least six months after the v2 release (2026-07-27)". That makes 2027-01-27 the end of a *promise*, not an end-of-life. "Support for the 2026-07-28 spec is not planned for v1.x."
-- **The undated risk:** in the spec's compatibility matrix (modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle), *Modern client → Legacy server* is **Fails**. Today every Cupertino surface is legacy. Dual-era clients fall back to `initialize`, so nothing is broken yet. No modern-only host had been found as of 2026-10-24.
-- **Not in scope:** the app's own clients (`SurfaceCatalog.swift:306-312`, `MCPChatClient.swift:165-171`, both `initialize` at `2025-06-18`). The matrix says *Legacy client → Dual-era server* works, so they can wait. Skills over MCP (SEP-2640, `skills.attach`, experimental) stays in Watch.
+- **The date:** the v1.x README (rewritten in 1.32.1, 2026-10-05) promises "bug fixes and security updates for at least six months after the v2 release (2026-07-27)". That makes 2027-01-27 the end of a _promise_, not an end-of-life. "Support for the 2026-07-28 spec is not planned for v1.x."
+- **The undated risk:** in the spec's compatibility matrix (modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle), _Modern client → Legacy server_ is **Fails**. Today every Cupertino surface is legacy. Dual-era clients fall back to `initialize`, so nothing is broken yet. No modern-only host had been found as of 2026-10-24.
+- **Not in scope:** the app's own clients (`SurfaceCatalog.swift:306-312`, `MCPChatClient.swift:165-171`, both `initialize` at `2025-06-18`). The matrix says _Legacy client → Dual-era server_ works, so they can wait. Skills over MCP (SEP-2640, `skills.attach`, experimental) stays in Watch.
 
 ## Global Constraints
 
@@ -32,7 +32,7 @@
 1. **`listing.ts`'s `execution.taskSupport` paragraph** (`packages/core/src/listing.ts:18-33`). It keeps `"forbidden"` on purpose because v1 stamps it on every tool. v2 removed experimental tasks (SEP-2663, per the upgrade guide). Re-measure what v2's `tools/list` actually emits, in both eras, and rewrite the paragraph to match. Don't assume either way.
 2. **`$schema` stamping.** The trim exists because v1's generator stamps draft-07 on every `inputSchema` (4,836 B across eight servers). v2 converts through zod's `~standard.jsonSchema` and advertises draft 2020-12. Re-measure, and keep the trim only if there's still something to trim.
 3. **Error texts.** v2 renames `McpError` to `ProtocolError`, re-emits `-32002` as `-32602`, and changes the default "Resource not found" message. Tests that pin strings need re-baselining against codes and URIs, not just updating.
-4. **Tools registered without `inputSchema`.** In v2 the callback receives the *context* as its only argument, not an args object. Any zero-argument tool whose handler reads `args` breaks silently. Grep for them in Phase 1.
+4. **Tools registered without `inputSchema`.** In v2 the callback receives the _context_ as its only argument, not an args object. Any zero-argument tool whose handler reads `args` breaks silently. Grep for them in Phase 1.
 5. **Client identity on a modern connection.** `RequestObserver.swift:213` names a session from `initialize`'s `clientInfo` alone. A modern client never sends `initialize`, so its session would show unnamed in Connections. Phase 3, Task 7.
 
 ---
@@ -86,7 +86,7 @@
   - `server/discover` returns the supported versions (`2026-07-28` plus the legacy one), capabilities, `serverInfo` and the `instructions` that `initialize` carries today.
   - A modern request with an unsupported version in `_meta` returns `-32022` with `data.supported` / `data.requested` (spec example).
   - `initialize` still answers exactly as now.
-- [ ] **Step 3:** Implement it. Era selection follows the spec: a request carrying modern `_meta` is served statelessly, and `initialize` selects legacy for the connection. The current `-32601` for an unknown method stays, since it's what makes a dual-era *client* fall back correctly today.
+- [ ] **Step 3:** Implement it. Era selection follows the spec: a request carrying modern `_meta` is served statelessly, and `initialize` selects legacy for the connection. The current `-32601` for an unknown method stays, since it's what makes a dual-era _client_ fall back correctly today.
 - [ ] **Step 4:** Revisit `protocolVersion = "2024-11-05"` (`:18`). Its comment says it "matches what the node servers negotiate". After Phase 1 that may no longer be true. Measure what v2 answers to a `2025-11-25` `initialize`, and match it.
 
 ### Task 6: Bridge pass-through

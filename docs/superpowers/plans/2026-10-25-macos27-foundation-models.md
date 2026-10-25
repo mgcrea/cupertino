@@ -60,6 +60,7 @@
     }
   }
   ```
+
 - [ ] **Step 2: Write the failing check.** `scripts/chat-overflow-check.swift`, in the same `check(label, condition)` style as `chat-check.swift`:
   - `LanguageModelError.contextSizeExceeded(.init(contextSize: 8192, tokenCount: 9000, debugDescription: "x"))` → true (macOS 27 only, inside `#available`).
   - `LanguageModelError.timeout(…)` or `.guardrailViolation(…)` → false. Build them from their public inits; check the interface for each one's fields.
@@ -97,8 +98,8 @@
 - Modify: `apps/apple/Cupertino/AccessibilityDriver.swift:498`
 
 - [ ] **Step 1:** Replace `String(cString: path)` with a decode that stops at the first NUL, as the deprecation message suggests:
-  `String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)`.
-  This runs once per pid in `proc_listallpids`'s result, so the map's allocation is fine. Say so in a comment only if a reviewer asks.
+      `String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)`.
+      This runs once per pid in `proc_listallpids`'s result, so the map's allocation is fine. Say so in a comment only if a reviewer asks.
 - [ ] **Step 2:** `make desktop-check` (or whichever check covers the pid lookup) still passes. A clean build shows no `#DeprecatedDeclaration` warnings.
 
 ### Task 5: `probe:passwords` reads Full Disk Access from a file that macOS 27 deleted
