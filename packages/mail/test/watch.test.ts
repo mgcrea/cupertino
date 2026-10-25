@@ -264,13 +264,15 @@ describe("MailArrivalSource", () => {
   it("counts a Gmail label as membership: a watch scoped to Gmail INBOX reads the labelled row", () => {
     const index = open();
     try {
+      const source = new MailArrivalSource({ index, ownAddresses: [], lookup });
+      // A read never pages before its watch began, so the watch begins before the fixture.
       const registry = new WatchRegistry({
         surface: "mail",
-        source: new MailArrivalSource({ index, ownAddresses: [], lookup }),
+        source: { head: () => 100, since: (after, limit) => source.since(after, limit) },
         onUpdate: () => {},
       });
       const watch = registry.add(normalizeFilter({ from: ["sam@example.com"], scope: ["6"] }));
-      const read = registry.read(watch.id, 100);
+      const read = registry.read(watch.id);
       expect(read?.messages.map((m) => m.cursor)).toEqual([108]);
     } finally {
       index.close();

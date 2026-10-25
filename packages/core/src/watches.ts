@@ -126,6 +126,32 @@ export type ArrivalRow = {
   scope?: string[];
 };
 
+/**
+ * Every field `ArrivalRow` declares, which is to say every field that is the
+ * registry's and not a reader's. Typed as a record over its keys so a field
+ * added to `ArrivalRow` fails to compile here until it is listed.
+ */
+const INTERNAL: Record<keyof ArrivalRow, true> = {
+  cursor: true,
+  key: true,
+  sender: true,
+  excluded: true,
+  scope: true,
+};
+
+/** What a read hands a client for one row: the surface's fields, none of the registry's. */
+export type PublicArrival<R extends ArrivalRow> = Omit<R, keyof ArrivalRow>;
+
+/**
+ * A row as a read returns it. The cursor is the read's, once, not each row's;
+ * `sender` is the lowercased matching form beside the surface's own; `scope`
+ * and `excluded` are bookkeeping; `key` names the row to nobody outside.
+ */
+export const publicView = <R extends ArrivalRow>(row: R): PublicArrival<R> =>
+  Object.fromEntries(
+    Object.entries(row).filter(([k]) => !Object.hasOwn(INTERNAL, k)),
+  ) as PublicArrival<R>;
+
 export type ArrivalSource<R extends ArrivalRow> = {
   /** Highest cursor in the store now. */
   head(): number;
@@ -136,6 +162,7 @@ export type ArrivalSource<R extends ArrivalRow> = {
 export type Watch = { id: string; uri: string; filter: WatchFilter; createdAt: number };
 
 export type WatchRead<R> = {
+  /** The watch's id (`w_…`), as the tool returned it. */
   watch: string;
   filter: WatchFilter;
   cursor: number;
@@ -260,7 +287,9 @@ export class WatchRegistry<R extends ArrivalRow> {
 
   /**
    * The matches after `after` (default: when the watch was created), oldest
-   * first, at most `readLimit` of them.
+   * first, at most `readLimit` of them. An `after` below the watch's start is
+   * raised to it: a watch is a statement about what arrives once it is set, and
+   * a client's cursor must not turn it into a search of the past.
    *
    * One call examines at most `scanLimit` rows, so a filter that matches almost
    * nothing in a huge backlog cannot hold the process. When the scan stops
@@ -270,9 +299,10 @@ export class WatchRegistry<R extends ArrivalRow> {
   read(id: string, after?: number): WatchRead<R> | null {
     const watch = this.#watches.get(id);
     if (!watch) return null;
-    const rows = this.#source.since(after ?? watch.createdAt, this.#scanLimit);
+    const from = Math.max(after ?? watch.createdAt, watch.createdAt);
+    const rows = this.#source.since(from, this.#scanLimit);
     const messages: R[] = [];
-    let cursor = after ?? watch.createdAt;
+    let cursor = from;
     let more = false;
     for (const row of rows) {
       if (
@@ -291,7 +321,7 @@ export class WatchRegistry<R extends ArrivalRow> {
     if (!more && rows.length === this.#scanLimit) {
       more = this.#source.since(cursor, 1).length > 0;
     }
-    return { watch: watch.uri, filter: watch.filter, cursor, messages, more };
+    return { watch: watch.id, filter: watch.filter, cursor, messages, more };
   }
 
   /** Scan what arrived since the last tick and notify each watch it concerns. */

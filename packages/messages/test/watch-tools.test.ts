@@ -281,11 +281,12 @@ describe("reading a watch", () => {
     addMessage(fx.db, { rowid: 11, handle: 1 });
 
     const body = await read(client, made.uri);
-    expect(body.watch).toBe(made.uri);
+    expect(body.watch).toBe(made.watch);
     expect(body.cursor).toBe(11);
     expect(body.messages).toHaveLength(1);
     const [m] = body.messages;
-    expect(Object.keys(m)).toEqual(expect.arrayContaining(["id", "handle", "chat", "date"]));
+    // The spec's fields and nothing else: no cursor, key, sender, scope or excluded.
+    expect(Object.keys(m).toSorted()).toEqual(["chat", "date", "handle", "id"]);
     expect(m).not.toHaveProperty("text");
     expect(m.handle).toBe("+33612345678");
     expect(m.id).toBe(encodeMessageRef("guid-11"));

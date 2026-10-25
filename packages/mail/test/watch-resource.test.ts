@@ -103,17 +103,26 @@ describe("reading a watch", () => {
       name: "apple_mail_watch",
       arguments: { from: ["sam@example.com"] },
     });
-    const { uri, cursor } = JSON.parse((made.content as { text: string }[])[0]!.text);
+    const { watch, uri, cursor } = JSON.parse((made.content as { text: string }[])[0]!.text);
     expect(cursor).toBe(10);
     addMessage(fx.db, 11, 1);
 
     const res = await c.readResource({ uri });
     const body = JSON.parse(String((res.contents[0] as { text?: string }).text));
     expect(Object.keys(body).toSorted()).toEqual(["cursor", "filter", "messages", "more", "watch"]);
-    expect(body.watch).toBe(uri);
+    expect(body.watch).toBe(watch);
     expect(body.cursor).toBe(11);
     expect(body.more).toBe(false);
     expect(body.messages).toHaveLength(1);
+    // The spec's fields and nothing else: no cursor, key, sender, scope or excluded.
+    expect(Object.keys(body.messages[0]).toSorted()).toEqual([
+      "dateReceived",
+      "mailbox",
+      "ref",
+      "senderAddress",
+      "senderName",
+      "subject",
+    ]);
     expect(body.messages[0]).toMatchObject({
       mailbox: "INBOX",
       senderAddress: "sam@example.com",

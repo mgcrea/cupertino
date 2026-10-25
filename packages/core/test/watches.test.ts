@@ -279,6 +279,26 @@ describe("WatchRegistry.read", () => {
     expect(got?.cursor).toBe(2);
   });
 
+  it("never pages before the watch began, whatever `after` says", () => {
+    const { registry, push } = setup();
+    for (let i = 0; i < 3; i++) push("jo@acme.com");
+    const watch = registry.add(jo);
+    expect(registry.read(watch.id, 0)?.messages).toEqual([]);
+    expect(registry.read(watch.id, 0)?.cursor).toBe(3);
+    push("jo@acme.com");
+    push("jo@acme.com");
+    for (const after of [0, 1, 3]) {
+      expect(registry.read(watch.id, after)?.messages.map((m) => m.cursor)).toEqual([4, 5]);
+    }
+    expect(registry.read(watch.id, 4)?.messages.map((m) => m.cursor)).toEqual([5]);
+  });
+
+  it("names the watch by its id", () => {
+    const { registry } = setup();
+    const watch = registry.add(jo);
+    expect(registry.read(watch.id)?.watch).toBe(watch.id);
+  });
+
   it("returns null for an unknown id", () => {
     const { registry } = setup();
     expect(registry.read("w_nope")).toBeNull();

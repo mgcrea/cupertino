@@ -10,6 +10,7 @@ import {
 import type { Era } from "./cli.js";
 import { guardedRead, surfaceUri } from "./resources.js";
 import {
+  publicView,
   WatchRegistry,
   type ArrivalRow,
   type ArrivalSource,
@@ -178,7 +179,9 @@ export const createWatches = <R extends ArrivalRow>(
           missing = true;
           return null;
         }
-        return read;
+        // The rows are projected here, where the result is built, so nothing the
+        // registry keeps for itself (cursor, sender, scope) reaches a client.
+        return { ...read, messages: read.messages.map(publicView) };
       });
       if (missing) throw new ResourceNotFoundError(uri.href);
       return res;

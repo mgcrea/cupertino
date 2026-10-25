@@ -6,7 +6,8 @@ import { registerSurfaceResources } from "../src/resources.js";
 import { createWatches, type WatchesOptions } from "../src/watch-resources.js";
 import { normalizeFilter, type ArrivalRow, type ArrivalSource } from "../src/watches.js";
 
-type Row = ArrivalRow;
+/** `at` stands in for a surface's public fields: everything else on a row is the registry's. */
+type Row = ArrivalRow & { at: number };
 
 /** A store whose rows the test appends to; `since` can be made to fail. */
 const fakeSource = (initial: Row[] = []) => {
@@ -21,7 +22,8 @@ const fakeSource = (initial: Row[] = []) => {
   };
   return {
     source,
-    arrive: (cursor: number, sender: string) => rows.push({ cursor, key: `g${cursor}`, sender }),
+    arrive: (cursor: number, sender: string, extra: Partial<Row> = {}) =>
+      rows.push({ cursor, key: `g${cursor}`, sender, at: cursor, ...extra }),
     fail: (on: boolean) => {
       failing = on;
     },
@@ -128,10 +130,29 @@ describe("createWatches: reading a handle", () => {
     const w = watches.add(acme);
     for (const c of [3, 4, 5, 6, 7]) store.arrive(c, "jo@acme.com");
     const all = await readJson(client, w.uri);
-    expect(all.messages.map((m: Row) => m.cursor)).toEqual([3, 4, 5, 6, 7]);
+    expect(all.messages.map((m: Row) => m.at)).toEqual([3, 4, 5, 6, 7]);
     const rest = await readJson(client, `${w.uri}?after=5`);
-    expect(rest.messages.map((m: Row) => m.cursor)).toEqual([6, 7]);
+    expect(rest.messages.map((m: Row) => m.at)).toEqual([6, 7]);
     expect(rest.cursor).toBe(7);
+  });
+
+  it("names the watch by id and returns only each row's public fields", async () => {
+    const { client, watches, store } = await setup();
+    const w = watches.add(acme);
+    store.arrive(1, "jo@acme.com", { scope: ["1"] });
+    const body = await readJson(client, w.uri);
+    expect(body.watch).toBe(w.id);
+    expect(body.messages).toEqual([{ at: 1 }]);
+  });
+
+  it("never pages before the watch began", async () => {
+    const { client, watches, store } = await setup({
+      initial: [{ cursor: 1, key: "g1", sender: "jo@acme.com", at: 1 }],
+    });
+    const w = watches.add(acme);
+    store.arrive(2, "jo@acme.com");
+    const body = await readJson(client, `${w.uri}?after=0`);
+    expect(body.messages.map((m: Row) => m.at)).toEqual([2]);
   });
 
   it("turns a failing store into degraded data, not a protocol error", async () => {
