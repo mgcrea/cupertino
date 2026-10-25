@@ -105,7 +105,7 @@ struct DesktopCheck {
     "apple_desktop_raise_window", "apple_desktop_set_value",
     "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
     "apple_desktop_release", "apple_desktop_press_menu", "apple_desktop_show_menu",
-    "apple_desktop_drag",
+    "apple_desktop_drag", "apple_desktop_select",
   ]
 
   static func json(_ text: String) -> [String: Any]? {
@@ -903,6 +903,16 @@ struct DesktopCheck {
     check(
       "show_menu and drag are steps a run can take",
       DesktopServer.runSteps.contains("show_menu") && DesktopServer.runSteps.contains("drag"))
+    let (selectText, selectError) = callText(
+      "apple_desktop_select", ["handle": "e999999"], writes: true)
+    check(
+      "select on a handle nobody minted is refused",
+      selectError && !selectText.isEmpty)
+    let (selectBare, selectBareError) = callText("apple_desktop_select", [:], writes: true)
+    check(
+      "select without a handle is refused, naming the argument",
+      selectBareError && selectBare.contains("'handle'"))
+    check("select is a step a run can take", DesktopServer.runSteps.contains("select"))
 
     // What the tree says about menus, without opening one.
     let menuElement = AccessibilityDriver.Element(
@@ -913,6 +923,13 @@ struct DesktopCheck {
       handle: "e2", role: "AXButton", subrole: nil, identifier: nil, name: nil, value: nil,
       rect: nil, point: nil, pressable: true, depth: 0)
     check("and one that does not carries no key for it", plainElement.json["showsMenu"] == nil)
+    let rowElement = AccessibilityDriver.Element(
+      handle: "e3", role: "AXRow", subrole: "AXOutlineRow", identifier: nil, name: nil,
+      value: nil, rect: nil, point: nil, pressable: false, depth: 0, selectable: true)
+    check("a row select can choose says so", rowElement.json["selectable"] as? Bool == true)
+    check(
+      "and an element that is not one carries no key for it",
+      plainElement.json["selectable"] == nil)
     var withMenu = AccessibilityDriver.Tree(
       elements: [], visited: 0, seconds: 0, stoppedBy: nil, recovered: 0)
     check(
