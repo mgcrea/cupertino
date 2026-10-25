@@ -385,7 +385,7 @@ type BodyFrom = "text/plain" | "text/html" | "none";
  * only because a single part was ever chosen as the body. Joining the parts
  * made it visible, as an attached notes.txt landing in the mail it came with.
  */
-const isAttachmentPart = (p: MimePart): boolean =>
+export const isAttachmentPart = (p: MimePart): boolean =>
   p.disposition === "attachment" ||
   (p.filename !== null && !p.contentType.startsWith("multipart/"));
 

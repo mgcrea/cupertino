@@ -28,7 +28,6 @@ import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/
 import {
   COMPOSER_ACCESS,
   CHECK_FOR_NEW_MAIL,
-  COMMIT_REPLACEMENT,
   CREATE_MAILBOX,
   DELETE_MESSAGES,
   DRAFT_FACTS,
@@ -36,7 +35,6 @@ import {
   REPLY_OR_FORWARD,
   SEND_MESSAGE,
   SET_FLAGS,
-  STAGE_REPLACEMENT,
   UPDATE_DRAFT,
 } from "./jxa/write.js";
 import { locateEnvelopeIndex, type LocateResult } from "./locate.js";
@@ -47,6 +45,7 @@ import {
   type OsascriptRunner,
   withBusyRetry,
 } from "./osascript.js";
+import { rebuildDraft, type OriginalLookup } from "./rebuild.js";
 import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref.js";
 import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
 
@@ -1253,8 +1252,8 @@ export class AppleMailClient {
   }
 
   /**
-   * Replace a saved draft's body, editing it where that is possible and
-   * recreating it where it is not.
+   * Change a saved draft, editing it where its window is open and rebuilding
+   * it where it is not.
    *
    * ## Two lanes, and the order between them is the whole point
    *
@@ -1264,15 +1263,16 @@ export class AppleMailClient {
    * the save lands on the same draft. Threading, attachments and the quoted
    * original survive because nothing is remade. See `revise.ts`.
    *
-   * **Recreating is the fallback.** It composes a replacement and deletes the
-   * original, which is the only thing Mail's scripting interface allows, and it
-   * is why `UPDATE_DRAFT` refuses a reply or a draft carrying attachments.
-   * Those refusals are costs of recreating, not of editing, so they must never
-   * be reached while a window that could simply be edited is open.
+   * **Rebuilding is the fallback**, for a draft whose window is closed. A reply
+   * is reopened as a reply to its original and filled with the draft's own
+   * HTML and files; the old draft is deleted only once the new one is confirmed
+   * in Drafts. See `rebuild.ts`. A new subject can only be set this way, so it
+   * is refused while the draft's window is open, rather than closing it.
    *
-   * The preflight that decides is only paid when there is a lane to decide for:
-   * with no accessibility lane — a package installed from npm and run by hand —
-   * this goes straight to recreation and costs exactly what it always did.
+   * With no accessibility lane — a package installed from npm and run by hand —
+   * there is no window to fill, and a body rewrite goes to `UPDATE_DRAFT`,
+   * which recreates the draft by assigning it and costs exactly what it always
+   * did, refusing a reply or a draft carrying attachments.
    *
    * The refusals on both lanes come back as ordinary results carrying
    * `replaced: false` rather than as thrown errors: a caller that cannot rewrite
@@ -1325,7 +1325,7 @@ export class AppleMailClient {
     if (target.ref === undefined) {
       if (opts.subject !== undefined) {
         throw new PreconditionError(
-          "A new subject can only be set by recreating a saved draft, which needs its ref. " +
+          "A new subject can only be set by rebuilding a saved draft, which needs its ref. " +
             "Editing a composer by handle, or the one open, leaves the subject as it is.",
         );
       }
@@ -1348,16 +1348,42 @@ export class AppleMailClient {
       id: decoded.id,
     };
 
-    let subjectChanging = opts.subject !== undefined;
     if (this.#ax) {
+      const lane = this.#ax;
       const facts = await withBusyRetry(() =>
-        this.runner.run<DraftFacts>(DRAFT_FACTS, decodedTarget),
+        this.runner.run<DraftFacts>(DRAFT_FACTS, {
+          ...decodedTarget,
+          subject: opts.subject ?? null,
+        }),
       );
-      // A new subject cannot be typed into the composer's subject field by this
-      // path, so asking for one sends the draft down the lane that can set it.
-      subjectChanging = opts.subject !== undefined && opts.subject !== facts.subject;
-      if (!subjectChanging) {
-        const edited = await reviseDraftInPlace(this.#ax, facts, {
+      const subjectChanging = opts.subject !== undefined && opts.subject !== facts.subject;
+      if (subjectChanging) {
+        // The subject field is not typed into, so a new subject is set by
+        // rebuilding, and rebuilding beside the draft's own open window would
+        // leave two. Closing that window is the person's to do.
+        const reach = await lane.reach();
+        const open = reach.ok
+          ? (await lane.composers()).filter((c) => c.subject === facts.subject)
+          : [];
+        if (open.length > 0) {
+          return {
+            replaced: false,
+            degraded: true,
+            method: "rebuild",
+            capability: "composer",
+            reason:
+              `The draft's window is open in Mail (${open.map((c) => c.composer).join(", ")}), ` +
+              "and a new subject can only be set by rebuilding the draft, which needs that " +
+              "window closed: close the draft's window first, then change the subject. " +
+              "Nothing was changed.",
+            hint:
+              "Save and close the draft's window in Mail, then try again; or leave the subject " +
+              "out to edit the open window.",
+            composers: open.map((c) => ({ composer: c.composer, subject: c.subject })),
+          };
+        }
+      } else {
+        const edited = await reviseDraftInPlace(lane, facts, {
           body: opts.body,
           edits: opts.edits,
           attachments,
@@ -1365,16 +1391,35 @@ export class AppleMailClient {
         // Null, and only null, means there was no composer to edit.
         if (edited) return edited;
       }
+      return rebuildDraft(
+        {
+          lane,
+          runner: this.runner,
+          messageFile: async (ref) => {
+            const located = await this.#lookupMessageFile(ref);
+            return located.found
+              ? { found: true, path: located.path }
+              : { found: false, explain: located.explain };
+          },
+          findOriginal: (messageId) => this.#findByMessageIdHeader(messageId),
+        },
+        decodedTarget,
+        {
+          facts,
+          body: opts.body,
+          edits: opts.edits,
+          subject: opts.subject,
+          attachments,
+        },
+      );
     }
 
-    // Recreating writes a body, so with none to write there is nothing to make
-    // the replacement from -- and the old one's text, read back as plain text,
-    // would quietly lose its formatting. Edits are never recreated from: they
-    // change part of a text this side cannot read exactly.
+    // No accessibility lane from here on. Recreating writes a body, so with
+    // none to write there is nothing to make the replacement from.
     if (opts.body === undefined) {
       const gone =
-        "none is open for this one" +
-        (this.#ax ? "" : " that this server can reach: it was not started by Cupertino");
+        "none is open for this one that this server can reach: it was not started by Cupertino";
+      const subjectChanging = opts.subject !== undefined;
       return {
         replaced: false,
         degraded: true,
@@ -1383,22 +1428,15 @@ export class AppleMailClient {
         reason: subjectChanging
           ? "A new subject can only be set by recreating the draft, and recreating it needs a " +
             "body to write. Nothing was changed."
-          : opts.edits !== undefined
-            ? `Edits need the draft's window open in Mail for now, and ${gone}. Nothing was changed.`
-            : `Files can only be added to a draft through its composer window, and ${gone}. ` +
-              "Nothing was changed.",
+          : `Files can only be added to a draft through its composer window, and ${gone}. ` +
+            "Nothing was changed.",
         hint: subjectChanging
-          ? "Pass the body as well, or leave the subject out to edit in place."
-          : opts.edits !== undefined
-            ? "Open the draft in Mail and try again, or pass the whole new text as body to " +
-              "rewrite it."
-            : "Open the draft in Mail and try again, or pass a body too: recreating a draft that " +
-              "is not a reply and carries no files of its own attaches them to the replacement.",
+          ? "Pass the body as well, or run the Mail server from Cupertino.app."
+          : "Run the Mail server from Cupertino.app, or pass a body too: recreating a draft " +
+            "that is not a reply and carries no files of its own attaches them to the replacement.",
       };
     }
 
-    if (this.#ax)
-      return this.#recreateNatively(this.#ax, decodedTarget, opts.body, opts.subject, attachments);
     return withBusyRetry(() =>
       this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
         ...decodedTarget,
@@ -1407,6 +1445,29 @@ export class AppleMailClient {
         attachments,
       }),
     );
+  }
+
+  /**
+   * The message a reply answers, by the Message-ID in its `In-Reply-To`.
+   *
+   * Through the Envelope Index's `message_global_data.message_id_header`, and
+   * the first row whose mailbox maps onto an account and mailbox Mail can
+   * script. Says which of the three ways it failed, because a rebuild refuses
+   * on each and the reason is what the person acts on.
+   */
+  async #findByMessageIdHeader(messageId: string): Promise<OriginalLookup> {
+    const index = await this.index();
+    if (!index) return { missing: "index" };
+    const rows = index.findByMessageIdHeader(messageId);
+    if (rows === null) return { missing: "column" };
+    if (rows.length === 0) return { missing: "not-found" };
+    const lookup = await this.#mailboxLookup();
+    for (const row of rows) {
+      const entry = lookup.get(row.mailbox);
+      if (entry)
+        return { ref: { accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid } };
+    }
+    return { missing: "not-found" };
   }
 
   /**
@@ -1481,96 +1542,6 @@ export class AppleMailClient {
       attachmentsAdded: Array.isArray(answer.filesAdded) ? answer.filesAdded.length : 0,
       ...answer,
     };
-  }
-
-  /**
-   * Recreate a draft with its body PASTED, never assigned.
-   *
-   * `UPDATE_DRAFT` assigns `content`, and Mail wraps any body set that way in a
-   * quotation that it hides and every other client shows. So the replacement is
-   * staged with no body, filled through its window the way a reply is, saved,
-   * and only then is the original deleted — by `COMMIT_REPLACEMENT`, which
-   * shares `UPDATE_DRAFT`'s confirmation, so the order that protects the
-   * original is the same on both routes.
-   */
-  async #recreateNatively(
-    lane: MailAxLane,
-    target: { accountUuid: string; mailbox: string; id: number },
-    body: string,
-    subject: string | undefined,
-    attachments: string[],
-  ): Promise<Record<string, unknown>> {
-    const reach = await lane.reach();
-    if (!reach.ok) {
-      return {
-        replaced: false,
-        degraded: true,
-        method: "recreate",
-        capability: "accessibility",
-        reason: MailAxLane.grantMessage("replacement"),
-        hint: "Run apple_mail_diagnostics.",
-      };
-    }
-    const staged = await withBusyRetry(() =>
-      this.runner.run<Record<string, unknown>>(STAGE_REPLACEMENT, {
-        ...target,
-        subject: subject ?? null,
-      }),
-    );
-    // A refusal, made before anything opened.
-    if (staged.staged !== true) return staged;
-    const newSubject = String(staged.subject);
-
-    const composed = await composeNatively(
-      lane,
-      this.runner,
-      {
-        mode: "new",
-        accountUuid: target.accountUuid,
-        subject: newSubject,
-        body,
-        to: [],
-        attachments,
-        sendNow: false,
-      },
-      { opened: { subject: newSubject, windowsBefore: reach.windows ?? [] } },
-    );
-    if (!composed.ok) {
-      return {
-        replaced: false,
-        degraded: true,
-        method: "recreate",
-        capability: "composer",
-        reason: `${composed.note} The original draft was not changed.`,
-        hint:
-          "Look at the replacement's window in Mail: finish and save it there and delete the " +
-          "original yourself, or close it without saving.",
-      };
-    }
-
-    try {
-      const committed = await withBusyRetry(() =>
-        this.runner.run<Record<string, unknown>>(COMMIT_REPLACEMENT, {
-          ...target,
-          subject: newSubject,
-          before: staged.before,
-          attachmentsAdded: composed.attachments ?? 0,
-        }),
-      );
-      return { ...committed, bodyVerified: composed.bodyVerified };
-    } catch (err) {
-      return {
-        replaced: false,
-        degraded: true,
-        method: "recreate",
-        capability: "confirmation",
-        reason:
-          `The replacement was pasted, verified and saved, but the original could not be ` +
-          `reached again to confirm it and delete it (${err instanceof Error ? err.message : err}). ` +
-          `THE ORIGINAL WAS NOT DELETED — there may now be two drafts under "${newSubject}".`,
-        hint: "Look in Drafts and delete the one you do not want. Nothing here will.",
-      };
-    }
   }
 
   /**

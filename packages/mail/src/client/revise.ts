@@ -1,14 +1,13 @@
 import { squash, type MailAxLane } from "./ax.js";
 
 /**
- * Rewrite a draft by editing its open composer, instead of recreating it.
+ * Rewrite a draft by editing its open composer, instead of rebuilding it.
  *
- * `UPDATE_DRAFT` replaces a draft by composing a new one and deleting the old,
- * because Mail's scripting interface offers no way to edit a saved draft, and
- * recreation cannot carry threading or attachments across. A composer's body can
- * however be rewritten in place: the save lands on the same draft, and threading,
- * attachments and the quoted original are all still there afterwards because
- * nothing was ever remade.
+ * Mail's scripting interface offers no way to edit a saved draft, so one whose
+ * window is closed is rebuilt (`rebuild.ts`): a new draft is made and the old
+ * one deleted. A composer's body can however be rewritten in place: the save
+ * lands on the same draft, and threading, attachments and the quoted original
+ * are all still there afterwards because nothing was ever remade.
  *
  * The editing itself now happens in the app, in one verified native step
  * (`mail_composer_edit`): it selects, replaces, reads the result back and saves
@@ -43,6 +42,12 @@ export type DraftFacts = {
   /** The opening of what the draft actually holds, for matching a window to it. */
   contentHead: string;
   draftsMailbox: string;
+  /**
+   * Row ids already in Drafts under the subject a rebuild will save under (the
+   * new one when it changes), the draft's own included, so that none of them
+   * can be taken for the rebuilt draft. See `COMMIT_REPLACEMENT`.
+   */
+  siblings?: number[];
 };
 
 export type ReviseOptions = {
@@ -104,7 +109,7 @@ const sameDraft = (stored: string, shown: string): boolean => {
  * Edit a draft in its open composer, or add files to it, or both.
  *
  * Null — and only null — means there is no composer for this draft, which is the
- * caller's signal to fall back to recreating it. Every other outcome, including
+ * caller's signal to fall back to rebuilding it. Every other outcome, including
  * every refusal the app makes, is a result the caller returns as it stands.
  */
 export const reviseDraftInPlace = async (
@@ -113,8 +118,8 @@ export const reviseDraftInPlace = async (
   opts: ReviseOptions,
 ): Promise<Record<string, unknown> | null> => {
   const reach = await lane.reach();
-  // Not a refusal: without the accessibility lane this path does not exist, and
-  // recreation may still be able to do the job.
+  // Not a refusal here: the rebuild that follows asks the same question and
+  // refuses with the grant to fix.
   if (!reach.ok) return null;
 
   let handle = opts.composer;
@@ -164,8 +169,8 @@ export const reviseDraftInPlace = async (
 
   return {
     subject: facts.subject,
-    // The recreate route reports a count, this one names the files; both are
-    // here so a caller reads one field whichever route ran.
+    // The assigning route (`UPDATE_DRAFT`) reports a count, this one names the
+    // files; both are here so a caller reads one field whichever route ran.
     attachmentsAdded: Array.isArray(answer.filesAdded) ? answer.filesAdded.length : 0,
     ...(opts.body !== undefined ? { bodyLength: opts.body.length } : {}),
     threadingKept: facts.isReply,

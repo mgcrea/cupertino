@@ -225,3 +225,135 @@ describe("OPEN_COMPOSER", () => {
     expect(opened.mode).toBeNull();
   });
 });
+
+/*
+ * The overrides a closed draft's rebuild passes: the draft's own recipients and
+ * subject, put on the composer Mail opened. Mail's recipient lists are
+ * element lists, so this fake keeps them as such: callable for their items,
+ * indexable, pushable, and `delete` takes an item out.
+ */
+describe("OPEN_COMPOSER overrides", () => {
+  type Item = { address: () => string };
+  const elementList = (initial: string[], all: Item[][]) => {
+    const items: Item[] = initial.map((a) => ({ address: () => a }));
+    all.push(items);
+    const call: any = () => items.slice();
+    call.push = (r: { address: string }) => items.push({ address: () => r.address });
+    return new Proxy(call, {
+      get: (target, key) =>
+        typeof key === "string" && /^\d+$/.test(key) ? items[Number(key)] : target[key],
+    });
+  };
+
+  const runOverride = (
+    params: Record<string, unknown>,
+    opts: { replyTo?: string[]; replyCc?: string[]; deleteFails?: boolean } = {},
+  ) => {
+    const lists: Item[][] = [];
+    const log: string[] = [];
+    let subject = "Re: lunch";
+    const draft: any = {
+      toRecipients: elementList(opts.replyTo ?? ["ann@example.com"], lists),
+      ccRecipients: elementList(opts.replyCc ?? [], lists),
+      bccRecipients: elementList([], lists),
+    };
+    Object.defineProperty(draft, "subject", {
+      get: () => () => subject,
+      set: (v: string) => {
+        log.push(`subject=${v}`);
+        subject = v;
+      },
+    });
+    const message = { subject: () => "lunch" };
+    const mail: any = {
+      reply: () => draft,
+      OutgoingMessage: () => {
+        const fresh: any = {
+          toRecipients: elementList([], lists),
+          ccRecipients: elementList([], lists),
+          bccRecipients: elementList([], lists),
+        };
+        return fresh;
+      },
+      outgoingMessages: { push: () => undefined },
+      ToRecipient: (spec: { address: string }) => spec,
+      CcRecipient: (spec: { address: string }) => spec,
+      BccRecipient: (spec: { address: string }) => spec,
+      delete: (item: Item) => {
+        if (opts.deleteFails) throw new Error("-10000");
+        for (const list of lists) {
+          const at = list.indexOf(item);
+          if (at !== -1) {
+            log.push(`delete ${item.address()}`);
+            list.splice(at, 1);
+          }
+        }
+      },
+    };
+    const account = {
+      id: () => "UUID",
+      name: () => "Work",
+      mailboxes: () => [{ name: () => "INBOX", messages: { byId: () => message } }],
+    };
+    mail.accounts = () => [account];
+    const Application = () => mail;
+    const ObjC = { import: () => undefined, unwrap: (v: { value: string }) => v.value };
+    const factory = new Function(
+      "ObjC",
+      "Application",
+      "$",
+      "Path",
+      `${OPEN_COMPOSER}\nreturn run;`,
+    );
+    const run = factory(ObjC, Application, makeDollar(), Path) as (argv: string[]) => string;
+    const envelope = JSON.parse(
+      run([JSON.stringify({ accountUuid: "UUID", mailbox: "INBOX", id: 42, ...params })]),
+    );
+    return { envelope, log };
+  };
+
+  it("puts the draft's recipients and subject on a reply, and reads them back", () => {
+    const { envelope, log } = runOverride({
+      mode: "reply",
+      subject: "Re: lunch on Friday",
+      recipients: { to: ["bob@example.com"], cc: ["cy@example.com"], bcc: [] },
+    });
+    expect(envelope.data).toEqual({
+      subject: "Re: lunch on Friday",
+      recipients: { to: ["bob@example.com"], cc: ["cy@example.com"], bcc: [] },
+    });
+    expect(log).toEqual(["subject=Re: lunch on Friday", "delete ann@example.com"]);
+  });
+
+  /* The usual case: the reply already holds the draft's recipients. Nothing is touched. */
+  it("leaves a list alone when it already holds those addresses", () => {
+    const { envelope, log } = runOverride({
+      mode: "reply",
+      subject: "Re: lunch",
+      recipients: { to: ["ANN@example.com"], cc: [], bcc: [] },
+    });
+    expect(envelope.data.recipients).toEqual({ to: ["ann@example.com"], cc: [], bcc: [] });
+    expect(log).toEqual([]);
+  });
+
+  /* What the client compares: the read-back, not what was asked for. */
+  it("reports what the lists hold when Mail would not change them", () => {
+    const { envelope } = runOverride(
+      { mode: "reply", recipients: { to: ["bob@example.com"], cc: [], bcc: [] } },
+      { deleteFails: true },
+    );
+    expect(envelope.data.recipients.to).toEqual(["ann@example.com", "bob@example.com"]);
+  });
+
+  it("addresses a new message from the overrides, and reads them back", () => {
+    const { envelope } = runOverride({
+      mode: "new",
+      subject: "GPU VMs",
+      recipients: { to: ["dave@example.com"], cc: [], bcc: ["me@example.com"] },
+    });
+    expect(envelope.data).toEqual({
+      subject: "GPU VMs",
+      recipients: { to: ["dave@example.com"], cc: [], bcc: ["me@example.com"] },
+    });
+  });
+});

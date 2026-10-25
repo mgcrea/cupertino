@@ -202,9 +202,15 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "it does: when a `find` matches zero or several places, when two windows could be the " +
         "draft, when the open window holds a different message, or when the draft's own text " +
         "cannot be told apart from the quote. In every refusal nothing was changed. " +
-        "If the draft's window is not open, `edits` and a bare `attachments` call are refused " +
-        "for now, and a `body` rewrite recreates the draft instead (a reply or a draft carrying " +
-        "files is refused there): the result's `method` says which. " +
+        "If the draft's window is not open (a `ref` with no window for it), the draft is " +
+        "REBUILT: a reply is reopened as a reply to its original, so it stays in the thread, " +
+        "filled with the draft's own formatted text (with your edits or body) and its files, " +
+        "saved, and the old draft deleted only once the new one is confirmed in Drafts. It " +
+        "refuses, changing nothing, for a forward, a reply whose original is not in Mail's " +
+        "index, an edit that runs across formatting, or a window already open under the " +
+        "subject; and if the quote Mail writes into the new reply is not the old one, it " +
+        "stops with that window open, unsaved, for you to close without saving. A rebuilt " +
+        "draft gets a new ref. The result's `method` says which route ran. " +
         "In the result `filesAdded` names the files put in, and `attachmentsAdded` counts them.",
       inputSchema: z
         .object({
@@ -255,10 +261,10 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
             .string()
             .optional()
             .describe(
-              "A new subject, only with a ref and a body. OMIT IT unless the subject really is " +
-                "changing: it forces the draft to be recreated (a composer's subject field " +
-                "cannot be retyped from here), which refuses a reply. A draft with no subject " +
-                "at all is refused on that route unless you pass one.",
+              "A new subject, only with a ref, and with a body, edits or attachments. OMIT IT " +
+                "unless the subject really is changing: it forces the draft to be rebuilt (a " +
+                "composer's subject field cannot be retyped from here), which is refused while " +
+                "the draft's window is open: the person closes it first.",
             ),
           confirm: confirmArg,
         })

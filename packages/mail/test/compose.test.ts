@@ -621,48 +621,6 @@ describe("composeNatively", () => {
   });
 
   /*
-   * `opts.opened` hands over a composer the caller opened itself, which is how a
-   * draft being recreated gets its replacement filled. It alone keeps a subject
-   * guard: the composer is the single one under that subject.
-   */
-  it("fills the single composer under an opened subject", async () => {
-    const { lane, seen } = await laneOver(
-      healthyHost({
-        mail_composers: { composers: [composer("mc-9", "Re: lunch"), composer("mc-2", "Other")] },
-      }),
-    );
-    const result = await composeNatively(
-      lane,
-      runnerReturning("unused"),
-      { ...PARAMS, mode: "new", sendNow: false },
-      { ...TIMEOUTS, opened: { subject: "Re: lunch", windowsBefore: [] } },
-    );
-    expect(result).toMatchObject({ ok: true, bodyVerified: true });
-    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-9" });
-    lane.close();
-  });
-
-  it("refuses an opened subject that several composers share", async () => {
-    const { lane, seen } = await laneOver(
-      healthyHost({
-        mail_composers: {
-          composers: [composer("mc-1", "Re: lunch"), composer("mc-2", "Re: lunch")],
-        },
-      }),
-    );
-    const result = await composeNatively(
-      lane,
-      runnerReturning("unused"),
-      { ...PARAMS, mode: "new", sendNow: false },
-      { ...TIMEOUTS, opened: { subject: "Re: lunch", windowsBefore: [] } },
-    );
-    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null });
-    expect(result.note).toContain("already open");
-    expect(edits(seen)).toEqual([]);
-    lane.close();
-  });
-
-  /*
    * Asked BEFORE anything is opened: the failure this tool was best known for
    * left an empty reply window on screen on every attempt.
    */

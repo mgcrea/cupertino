@@ -239,13 +239,6 @@ export const composeNatively = async (
   runner: OsascriptRunner,
   params: ComposeParams,
   opts: {
-    /**
-     * The composer was already opened by the caller, with the window titles
-     * read just before it was — how a draft being recreated hands over the
-     * replacement `STAGE_REPLACEMENT` made. The only mode that finds its
-     * composer by subject, and so the only one that refuses a shared one.
-     */
-    opened?: { subject: string; windowsBefore: string[] };
     /** Overridable so a test can pin the unconfirmed-send path without waiting for it. */
     composerTimeoutMs?: number;
     sendTimeoutMs?: number;
@@ -263,66 +256,34 @@ export const composeNatively = async (
   // Asked BEFORE anything is opened, keeping the ordering the System Events path
   // established: the failure this tool was best known for left an empty reply
   // window on screen on every attempt.
-  const reach = opts.opened ? { ok: true, windows: opts.opened.windowsBefore } : await lane.reach();
+  const reach = await lane.reach();
   if (!reach.ok) throw new Error(MailAxLane.grantMessage(params.mode));
 
   // Files go through the verb below, never to Mail's scripting object.
   const { attachments: files = [], ...toOpen } = params;
 
-  let subject: string;
-  let handle: string | null;
-  if (opts.opened) {
-    subject = opts.opened.subject;
-    const deadline = Date.now() + composerTimeoutMs;
-    let same: { composer: string }[] = [];
-    for (;;) {
-      try {
-        same = (await lane.composers()).filter((c) => c.subject === subject);
-      } catch {
-        same = [];
-      }
-      if (same.length > 0 || Date.now() >= deadline) break;
-      await sleep(COMPOSER_POLL_MS);
-    }
-    if (same.length > 1) {
-      return {
-        ok: false,
-        subject,
-        bodyVerified: null,
-        verifiedChars: 0,
-        sent: false,
-        note:
-          `More than one ${params.mode} window is already open under this title ("${subject}"), ` +
-          `so this path cannot tell which one it was handed. Nothing was filled, pressed or ` +
-          `sent. Close or finish the extra ones, then retry.` +
-          interferenceNote(await watch.check()),
-      };
-    }
-    handle = same[0]?.composer ?? null;
-  } else {
-    // Taken before Mail is asked to open anything: the new composer is the
-    // handle that is absent from this list afterwards.
-    const before = (await lane.composers()).map((c) => c.composer);
-    subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
-    const found = await awaitNewComposer(lane, before, composerTimeoutMs, subject);
-    if (found && "ambiguous" in found) {
-      return {
-        ok: false,
-        subject,
-        bodyVerified: null,
-        verifiedChars: 0,
-        sent: false,
-        note:
-          `Mail was asked to open a ${params.mode} window for "${subject}", and ` +
-          `${found.ambiguous.length} new composers titled that appeared (${found.ambiguous.join(", ")}), ` +
-          `so this path cannot tell which one it opened. Nothing was filled, pressed or sent, and ` +
-          `all of them are left open in Mail. Close the extra one, finish the other by hand, ` +
-          `then retry.` +
-          interferenceNote(await watch.check()),
-      };
-    }
-    handle = found?.handle ?? null;
+  // Taken before Mail is asked to open anything: the new composer is the
+  // handle that is absent from this list afterwards.
+  const before = (await lane.composers()).map((c) => c.composer);
+  const subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
+  const found = await awaitNewComposer(lane, before, composerTimeoutMs, subject);
+  if (found && "ambiguous" in found) {
+    return {
+      ok: false,
+      subject,
+      bodyVerified: null,
+      verifiedChars: 0,
+      sent: false,
+      note:
+        `Mail was asked to open a ${params.mode} window for "${subject}", and ` +
+        `${found.ambiguous.length} new composers titled that appeared (${found.ambiguous.join(", ")}), ` +
+        `so this path cannot tell which one it opened. Nothing was filled, pressed or sent, and ` +
+        `all of them are left open in Mail. Close the extra one, finish the other by hand, ` +
+        `then retry.` +
+        interferenceNote(await watch.check()),
+    };
   }
+  const handle = found?.handle ?? null;
 
   if (!handle) {
     return {

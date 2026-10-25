@@ -73,6 +73,13 @@ const seed = (db: DatabaseSync) => {
 
     INSERT INTO attachments (ROWID, message, attachment_id, name) VALUES
       (1, 101, 'att-1', 'invoice.pdf');
+
+    -- The Message-ID header, as a reply's In-Reply-To names it. One kept with
+    -- its angle brackets and one without: which form Mail stores is not assumed.
+    INSERT INTO message_global_data (ROWID, message_id, message_id_header) VALUES
+      (1, 1001, '<inv-5753@domaine.fr>'),
+      (2, 1002, 'lunch-1@example.com'),
+      (7, 1007, '<gone@domaine.fr>');
   `);
 };
 
@@ -341,6 +348,41 @@ describe("threads", () => {
   it("returns null for a row that does not exist", () => {
     const index = open();
     expect(index.conversationOf(999_999)).toBeNull();
+    index.close();
+  });
+});
+
+describe("finding a message by its Message-ID header", () => {
+  it("finds it with or without angle brackets, whichever form the index keeps", () => {
+    const index = open();
+    expect(index.findByMessageIdHeader("<inv-5753@domaine.fr>")).toEqual([
+      { rowid: 101, mailbox: 1 },
+    ]);
+    expect(index.findByMessageIdHeader("inv-5753@domaine.fr")).toEqual([
+      { rowid: 101, mailbox: 1 },
+    ]);
+    expect(index.findByMessageIdHeader("<lunch-1@example.com>")).toEqual([
+      { rowid: 102, mailbox: 1 },
+    ]);
+    index.close();
+  });
+
+  it("finds nothing for an unknown or deleted message", () => {
+    const index = open();
+    expect(index.findByMessageIdHeader("<nobody@example.com>")).toEqual([]);
+    expect(index.findByMessageIdHeader("<gone@domaine.fr>")).toEqual([]);
+    index.close();
+  });
+
+  it("answers null when the index has no Message-ID column", () => {
+    const path = join(dir, "No Header Index");
+    const db = new DatabaseSync(path);
+    seed(db);
+    db.exec("ALTER TABLE message_global_data DROP COLUMN message_id_header");
+    db.close();
+    const index = new EnvelopeIndex(openIndex(path, "ro"));
+    expect(index.caps.has.messageIdHeader).toBe(false);
+    expect(index.findByMessageIdHeader("<inv-5753@domaine.fr>")).toBeNull();
     index.close();
   });
 });

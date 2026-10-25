@@ -5,12 +5,12 @@ import { basename, join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { MailAxLane } from "../src/client/ax.js";
+import { LIST_ACCOUNTS } from "../src/client/jxa/read.js";
 import {
   COMMIT_REPLACEMENT,
   DRAFT_FACTS,
   OPEN_COMPOSER,
   SEND_MESSAGE,
-  STAGE_REPLACEMENT,
   UPDATE_DRAFT,
 } from "../src/client/jxa/write.js";
 import { AppleMailClient } from "../src/client/mail.js";
@@ -20,11 +20,11 @@ import { loadConfig } from "../src/config.js";
 /**
  * Which lane a draft rewrite takes, and when.
  *
- * The choice is the whole feature. Editing the open composer keeps threading,
- * attachments and the quoted original; recreating the draft refuses the first
- * two outright. So arriving at recreation while an editable window is open is
- * not a slower answer, it is a REFUSAL that did not have to happen — and that is
- * what these pin.
+ * The choice is the whole feature. Editing the open composer keeps the draft
+ * itself; rebuilding a closed one (`rebuild.ts`, tested in rebuild.test.ts)
+ * makes a new draft and deletes the old. So arriving at a rebuild while an
+ * editable window is open is not a slower answer, it is a second draft that did
+ * not have to happen, and that is what these pin.
  *
  * The preflight is also a cost, so the other half of the contract is that it is
  * never paid by a server with no accessibility lane to spend it on. Those are
@@ -36,8 +36,8 @@ const REF = "m1:98AC2C3D-408C-47E4-8FE4-6E64D1F58E99/Drafts#42";
 const NAMES = new Map<string, string>([
   [DRAFT_FACTS, "DRAFT_FACTS"],
   [UPDATE_DRAFT, "UPDATE_DRAFT"],
-  [STAGE_REPLACEMENT, "STAGE_REPLACEMENT"],
   [COMMIT_REPLACEMENT, "COMMIT_REPLACEMENT"],
+  [LIST_ACCOUNTS, "LIST_ACCOUNTS"],
   [OPEN_COMPOSER, "OPEN_COMPOSER"],
   [SEND_MESSAGE, "SEND_MESSAGE"],
 ]);
@@ -45,9 +45,11 @@ const NAMES = new Map<string, string>([
 /**
  * A runner that records which scripts it was asked for, by name.
  *
- * Staging refuses unless told to stage, which is what a reply draft does.
+ * It lists no accounts, so a rebuild reaches the draft's message file and
+ * refuses there (`capability: "file"`): enough to pin that it was the route
+ * taken, without a mail store on disk.
  */
-const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
+const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
   run: vi.fn(async (script: string) => {
     const name = NAMES.get(script) ?? "OTHER";
     scripts.push(name);
@@ -61,9 +63,7 @@ const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
         draftsMailbox: "Drafts",
       };
     }
-    if (name === "STAGE_REPLACEMENT" && stages) {
-      return { staged: true, subject: "Quarterly numbers", before: [42], draftsMailbox: "Drafts" };
-    }
+    if (name === "LIST_ACCOUNTS") return [];
     if (name === "COMMIT_REPLACEMENT") return { replaced: true, method: "recreate", newId: 99 };
     if (name === "OPEN_COMPOSER") return { subject: "Hello" };
     if (name === "SEND_MESSAGE") return { sent: false, draft: true };
@@ -74,10 +74,10 @@ const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
 /** Some composers and a client that share one world: an edit changes what they show. */
 const world = (
   composers: number,
-  over: { stages?: boolean; finish?: "pressed" | "refused"; refuseEdit?: boolean } = {},
+  over: { finish?: "pressed" | "refused"; refuseEdit?: boolean } = {},
 ) => {
   const scripts: string[] = [];
-  const runner = runnerSeeing(scripts, over.stages);
+  const runner = runnerSeeing(scripts);
   // What the composer shows above its quote. An edit changes it.
   let shown = "ALPHA one";
   // The files the composer shows.
@@ -104,11 +104,11 @@ const world = (
       })),
       // A composer Mail was asked to open appears in the list once it has been:
       // the one handle that was not there before.
-      ...(scripts.includes("OPEN_COMPOSER") || scripts.includes("STAGE_REPLACEMENT")
+      ...(scripts.includes("OPEN_COMPOSER")
         ? [
             {
               composer: "mc-new",
-              subject: scripts.includes("OPEN_COMPOSER") ? "Hello" : "Quarterly numbers",
+              subject: "Hello",
               recipients: [],
               text: shown,
               quoted: false,
@@ -147,7 +147,7 @@ const world = (
       };
     },
     finish: async () => over.finish ?? ("pressed" as const),
-    // What the recreate route's composer needs: a window, and a body to read.
+    // What a send needs: a window, and a body to read.
     findComposer: async () => ({ window: "w9", body: "b9", index: 9 }),
     composerGone: async () => false,
   } as unknown as MailAxLane;
@@ -173,46 +173,30 @@ describe("which lane a draft rewrite takes", () => {
     expect(shownNow()).toBe("BRAVO");
   });
 
-  it("falls back to recreating when no composer is open", async () => {
+  it("falls back to rebuilding when no composer is open", async () => {
     const { client, scripts } = world(0);
     const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
-    expect(result).toMatchObject({ method: "recreate" });
-    // Staged, so the body is pasted rather than assigned; a reply refuses there.
-    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
-  });
-
-  /*
-   * The route that replaced assigning the body. The replacement's window is
-   * filled and saved like a reply's, and only then is the original deleted.
-   */
-  it("recreates by filling the staged replacement, then commits", async () => {
-    const { client, scripts, runner, shownNow } = world(0, { stages: true });
-    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
-    expect(result).toMatchObject({ replaced: true, method: "recreate", bodyVerified: true });
-    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
-    expect(shownNow()).toBe("BRAVO");
-    const commit = vi.mocked(runner.run).mock.calls.at(-1)?.[1];
-    expect(commit).toMatchObject({ subject: "Quarterly numbers", before: [42] });
-  });
-
-  /* Unsaved replacement, untouched original: commit is never reached. */
-  it("does not commit a replacement it could not save", async () => {
-    const { client, scripts } = world(0, { stages: true, refuseEdit: true });
-    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
-    expect(result).toMatchObject({ replaced: false, capability: "composer" });
-    expect(String((result as { reason: string }).reason)).toMatch(/original draft was not changed/);
-    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
+    expect(result).toMatchObject({ replaced: false, method: "rebuild", capability: "file" });
+    expect(scripts).toEqual(["DRAFT_FACTS", "LIST_ACCOUNTS"]);
   });
 
   /*
    * A composer's subject field is not typed into by this path, so a rewrite that
-   * changes the subject has to go the way that can set one — even with a window
-   * open. Silently keeping the old subject would be the worst of both.
+   * changes the subject goes the way that can set one: a rebuild, with the
+   * window closed. With it open, see rebuild.test.ts.
    */
-  it("goes the recreate way when the subject is changing", async () => {
-    const { client, scripts } = world(1);
-    await client.updateDraft({ ref: REF }, { body: "BRAVO", subject: "A different subject" });
-    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
+  it("rebuilds when the subject is changing and the window is closed", async () => {
+    const { client, scripts, runner } = world(0);
+    const result = await client.updateDraft(
+      { ref: REF },
+      { body: "BRAVO", subject: "A different subject" },
+    );
+    expect(result).toMatchObject({ method: "rebuild" });
+    expect(scripts).toEqual(["DRAFT_FACTS", "LIST_ACCOUNTS"]);
+    // The facts list the rows already under the subject the rebuild saves under.
+    expect(vi.mocked(runner.run).mock.calls[0]?.[1]).toMatchObject({
+      subject: "A different subject",
+    });
   });
 
   /* A subject that is passed but unchanged is not a change. */
@@ -286,12 +270,12 @@ describe("adding files to a draft", () => {
     expect(files).toEqual(["report.pdf"]);
   });
 
-  /* No window, no body: recreating would have nothing to write, so it is not tried. */
-  it("refuses files alone when no composer is open, without recreating", async () => {
+  /* No window: the draft is rebuilt with its own text, and the files added. */
+  it("rebuilds for files alone when no composer is open", async () => {
     const { client, scripts } = world(0);
     const result = await client.updateDraft({ ref: REF }, { attachments: [report] });
-    expect(result).toMatchObject({ replaced: false, capability: "composer" });
-    expect(scripts).toEqual(["DRAFT_FACTS"]);
+    expect(result).toMatchObject({ replaced: false, method: "rebuild", capability: "file" });
+    expect(scripts).toEqual(["DRAFT_FACTS", "LIST_ACCOUNTS"]);
   });
 
   it("refuses files alone without an accessibility lane, asking Mail nothing", async () => {
@@ -300,16 +284,6 @@ describe("adding files to a draft", () => {
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
     expect(String((result as { reason: string }).reason)).toMatch(/not started by Cupertino/);
     expect(scripts).toEqual([]);
-  });
-
-  it("adds the files to the recreated draft when a body comes with them", async () => {
-    const { client, scripts, runner, files } = world(0, { stages: true });
-    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO", attachments: [report] });
-    expect(result).toMatchObject({ replaced: true });
-    expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
-    expect(files).toEqual(["report.pdf"]);
-    const commit = vi.mocked(runner.run).mock.calls.at(-1)?.[1];
-    expect(commit).toMatchObject({ attachmentsAdded: 1 });
   });
 
   /* Without a lane, files ride on the assigned body, as they always did. */
@@ -475,15 +449,13 @@ describe("editing a draft by find and replace", () => {
     expect(shownNow()).toBe("BRAVO one");
   });
 
-  /* Recreating from edits would need the old text, and could only guess at it. */
-  it("edits with a ref and no open composer refuse without recreating", async () => {
-    const { client, scripts } = world(0, { stages: true });
+  /* The rebuild reads the draft's own text from its file and edits that. */
+  it("edits with a ref and no open composer go to the rebuild", async () => {
+    const { client, scripts, edited } = world(0);
     const result = await client.updateDraft({ ref: REF }, { edits });
-    expect(result).toMatchObject({ replaced: false, method: "recreate", capability: "composer" });
-    expect(String((result as { reason: string }).reason)).toMatch(
-      /edits need the draft's window open.*nothing was changed/is,
-    );
-    expect(scripts).toEqual(["DRAFT_FACTS"]);
+    expect(result).toMatchObject({ replaced: false, method: "rebuild", capability: "file" });
+    expect(scripts).toEqual(["DRAFT_FACTS", "LIST_ACCOUNTS"]);
+    expect(edited).toEqual([]);
   });
 
   it("edits the one open composer with no ref at all", async () => {
