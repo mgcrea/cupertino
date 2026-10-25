@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMessagesClient } from "../client/messages.js";
@@ -34,7 +34,7 @@ export const registerAttachmentTools = (server: McpServer, client: AppleMessages
         "Write-gated because it puts a file on the user's disk, even though it changes nothing " +
         "in Messages. An attachment iCloud has offloaded has no bytes on this Mac and is " +
         "refused with that reason — open the conversation in Messages to pull it down first.",
-      inputSchema: {
+      inputSchema: z.object({
         attachmentId: z
           .string()
           .min(1)
@@ -47,7 +47,7 @@ export const registerAttachmentTools = (server: McpServer, client: AppleMessages
           .optional()
           .describe("Override the target directory. Must still resolve inside the configured one."),
         overwrite: z.boolean().optional().describe("Replace an existing file. Default false."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ attachmentId, directory, overwrite }) =>

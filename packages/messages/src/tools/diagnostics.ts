@@ -1,5 +1,6 @@
 import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
 import type { AppleMessagesClient } from "../client/messages.js";
@@ -86,7 +87,7 @@ export const registerDiagnosticsTools = (server: McpServer, client: AppleMessage
         "Report whether the Messages store could be opened, how much is in it, whether names " +
         "are being resolved, and what this server cannot do. Start here when a read returns " +
         "nothing.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => buildDiagnostics(client)),

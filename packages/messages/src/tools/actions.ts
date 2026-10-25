@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { PreconditionError } from "../client/errors.js";
@@ -78,7 +78,7 @@ export const registerActionTools = (
         "slow network — read the chat back, do NOT send again), and `unavailable` means there " +
         "was no existing chat to look in. " +
         PAYLOAD_HELP(ctx.allowFileSend),
-      inputSchema: {
+      inputSchema: z.object({
         chatRef: z
           .string()
           .optional()
@@ -134,7 +134,7 @@ export const registerActionTools = (
               "when chatRef is given, since the chat already knows its service.",
           ),
         confirm: confirmArg,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async (args) =>

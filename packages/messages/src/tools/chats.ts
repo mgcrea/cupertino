@@ -1,4 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import type { AppleMessagesClient } from "../client/messages.js";
 import { limitArg, wrap } from "./util.js";
@@ -18,7 +19,7 @@ export const registerChatTools = (server: McpServer, client: AppleMessagesClient
         "counts. Names come from Contacts where they resolve; where they do not, the raw phone " +
         "number or email is shown and `resolution` says why. Use the returned ref to read one " +
         "conversation with apple_messages_list_messages.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ limit }) => wrap(async () => client.listChats(limit)),
