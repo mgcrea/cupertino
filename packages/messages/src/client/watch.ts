@@ -24,7 +24,8 @@ export type MessageArrival = ArrivalRow & {
   /** The chat's public ref, as listing tools emit it. */
   chat: string | null;
   handle: string | null;
-  date: string;
+  /** As search and range render it; null when the row has no date. */
+  date: string | null;
 };
 
 export type MessagesArrivalSourceOptions = { store: MessagesStore };
@@ -54,7 +55,7 @@ export class MessagesArrivalSource implements ArrivalSource<MessageArrival> {
         id: encodeMessageRef(r.guid),
         chat: r.chatGuid ? encodeChatRef(r.chatGuid) : null,
         handle: r.handle,
-        date: renderInstant(r.sentAt) ?? "",
+        date: renderInstant(r.sentAt),
       };
     });
   }

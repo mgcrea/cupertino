@@ -360,12 +360,18 @@ export class MessagesStore {
    * cursor advances over every ROWID and the caller decides what is excluded.
    * `message` is AUTOINCREMENT, so a ROWID is never handed out twice and the
    * cursor can only move forward.
+   *
+   * Exactly one row per ROWID. `#joins` yields a row per chat for a message in
+   * several, which would give one cursor two rows and spend two slots of a read's
+   * limit on one message, so the chat here is picked: the lowest `chat_id`.
    */
   arrivalsAfter(after: number, limit: number): (MessageRow & { rowid: number })[] {
     const sql = `
       SELECT m."ROWID" AS rowid, ${this.#messageColumns()}
         FROM "message" m
-        ${this.#joins()}
+        LEFT JOIN "handle" h ON h."ROWID" = m."handle_id"
+        LEFT JOIN "chat" c ON c."ROWID" =
+          (SELECT MIN(cmj."chat_id") FROM "chat_message_join" cmj WHERE cmj."message_id" = m."ROWID")
        WHERE m."ROWID" > ?
        ORDER BY m."ROWID" ASC
        LIMIT ?`;

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
+import { normalizeFilter, WatchRegistry } from "@mgcrea/mcp-apple-core";
 import { describe, expect, it } from "vitest";
 
 import { toAppleSeconds } from "../src/client/dates.js";
@@ -172,5 +173,41 @@ describe("MessagesArrivalSource", () => {
     expect(a).toBeDefined();
     expect("text" in (a as object)).toBe(false);
     expect(JSON.stringify(a)).not.toContain("secret body");
+  });
+
+  it("returns one arrival for a message joined to several chats, and a read holds it once", () => {
+    const { db, store } = build();
+    db.exec(`INSERT INTO chat (ROWID, guid, chat_identifier, style, service_name)
+      VALUES (2, 'iMessage;+;chat9001', 'chat9001', 43, 'iMessage')`);
+    const arrivals = new MessagesArrivalSource({ store });
+    const registry = new WatchRegistry({
+      surface: "messages",
+      source: arrivals,
+      onUpdate: () => {},
+    });
+    const watch = registry.add(normalizeFilter({ from: ["+15551234567"] }));
+    // Joined to chat 2 first, then chat 1: the lowest chat_id still wins.
+    addMessage(db, { rowid: 1, guid: "multi", chat: 2 });
+    db.prepare(
+      `INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (1, 1, 0)`,
+    ).run();
+    addMessage(db, { rowid: 2, guid: "after" });
+
+    // LIMIT counts messages, not join rows.
+    expect(arrivals.since(0, 1).map((r) => r.key)).toEqual(["multi"]);
+    const rows = arrivals.since(0, 10);
+    expect(rows.map((r) => r.cursor)).toEqual([1, 2]);
+    expect(rows[0]?.chat).toBe(encodeChatRef("iMessage;-;+15551234567"));
+    expect(registry.read(watch.id)?.messages.map((m) => m.key)).toEqual(["multi", "after"]);
+  });
+
+  it("keeps a missing date null rather than inventing one", () => {
+    const { db, store } = build();
+    db.prepare(
+      `INSERT INTO message (ROWID, guid, service, date) VALUES (1, 'zero', 'iMessage', 0)`,
+    ).run();
+    db.prepare(`INSERT INTO message (ROWID, guid, service) VALUES (2, 'null', 'iMessage')`).run();
+    const rows = new MessagesArrivalSource({ store }).since(0, 10);
+    expect(rows.map((r) => r.date)).toEqual([null, null]);
   });
 });
