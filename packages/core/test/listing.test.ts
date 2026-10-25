@@ -1,7 +1,6 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
+import type { JSONRPCMessage } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -24,19 +23,18 @@ describe("trimToolListing", () => {
     expect(toolsOf(trimmed)[0]?.["inputSchema"]).toEqual({ type: "object" });
   });
 
-  it("keeps execution, which is boilerplate but not free to remove", () => {
-    // Pinned deliberately. `taskSupport` is optional with no default, so an
-    // absent `execution` means "unspecified" to a client rather than
-    // "forbidden" — see the header of listing.ts. This assertion exists so the
-    // remaining 3.5% is not reclaimed by someone who only counted the bytes.
-    const trimmed = trimToolListing(
-      listing({
-        name: "apple_widget_list",
-        inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object" },
-        execution: { taskSupport: "forbidden" },
-      }),
-    );
-    expect(toolsOf(trimmed)[0]?.["execution"]).toEqual({ taskSupport: "forbidden" });
+  it("leaves every other tool key alone", () => {
+    const tool = {
+      name: "apple_widget_list",
+      description: "List widgets.",
+      inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object" },
+      annotations: { readOnlyHint: true },
+      execution: { taskSupport: "forbidden" },
+    };
+    expect(toolsOf(trimToolListing(listing(tool)))[0]).toEqual({
+      ...tool,
+      inputSchema: { type: "object" },
+    });
   });
 
   it("never edits the message it was handed", () => {
@@ -62,31 +60,61 @@ describe("trimToolListing", () => {
   });
 });
 
+const widget = () => {
+  const server = new McpServer({ name: "test", version: "0.0.0" });
+  server.registerTool(
+    "apple_widget_list",
+    {
+      description: "List widgets.",
+      inputSchema: z.object({ limit: z.number().optional().describe("How many.") }),
+      annotations: { readOnlyHint: true },
+    },
+    () => ({ content: [{ type: "text" as const, text: "{}" }] }),
+  );
+  server.registerTool("apple_widget_diagnostics", { description: "Report." }, () => ({
+    content: [{ type: "text" as const, text: "{}" }],
+  }));
+  return server;
+};
+
 describe("withTrimmedListing", () => {
-  it("trims what a real server puts on the wire, and keeps the rest intact", async () => {
-    const server = new McpServer({ name: "test", version: "0.0.0" });
-    server.registerTool(
-      "apple_widget_list",
-      {
-        description: "List widgets.",
-        inputSchema: { limit: z.number().optional().describe("How many.") },
-        annotations: { readOnlyHint: true },
-      },
-      () => ({ content: [{ type: "text" as const, text: "{}" }] }),
-    );
-
+  /** The `tools/list` frame as the server's transport sent it, before any client parsing. */
+  const wire = async (trim: boolean): Promise<Record<string, unknown>[]> => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
+    const sent: JSONRPCMessage[] = [];
+    const send = st.send.bind(st);
+    st.send = (message, options) => {
+      sent.push(message);
+      return send(message, options);
+    };
     const client = new Client({ name: "test", version: "0.0.0" });
-    await Promise.all([server.connect(withTrimmedListing(st)), client.connect(ct)]);
+    await Promise.all([widget().connect(trim ? withTrimmedListing(st) : st), client.connect(ct)]);
+    await client.listTools();
+    const frame = sent.find((m) => "result" in m && "tools" in (m.result as object));
+    return toolsOf(frame as JSONRPCMessage);
+  };
 
-    const { tools } = await client.listTools();
-    const listed = tools[0];
-    expect(listed?.name).toBe("apple_widget_list");
-    expect(listed?.inputSchema).not.toHaveProperty("$schema");
+  it("has something to trim: the SDK stamps the 2020-12 dialect and no task support", async () => {
+    // Measured, not assumed: if a later SDK stops stamping, or starts emitting
+    // `execution`, this fails and listing.ts's header needs rewriting.
+    const [list, diagnostics] = await wire(false);
+    expect(list?.["inputSchema"]).toHaveProperty(
+      "$schema",
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    expect(diagnostics?.["inputSchema"]).not.toHaveProperty("$schema");
+    expect(list?.["execution"]).toBeUndefined();
+  });
+
+  it("trims what a real server puts on the wire, and keeps the rest intact", async () => {
+    const [list] = await wire(true);
+    const schema = list?.["inputSchema"] as Record<string, unknown>;
+    expect(list?.["name"]).toBe("apple_widget_list");
+    expect(schema).not.toHaveProperty("$schema");
     // The properties the schema exists for must survive the trim.
-    expect(listed?.inputSchema).toHaveProperty("type", "object");
-    expect(listed?.inputSchema.properties).toHaveProperty("limit");
-    expect(listed?.description).toBe("List widgets.");
-    expect(listed?.annotations).toEqual({ readOnlyHint: true });
+    expect(schema).toHaveProperty("type", "object");
+    expect(schema["properties"]).toHaveProperty("limit");
+    expect(list?.["description"]).toBe("List widgets.");
+    expect(list?.["annotations"]).toEqual({ readOnlyHint: true });
   });
 });

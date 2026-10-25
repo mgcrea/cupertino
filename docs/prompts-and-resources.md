@@ -132,17 +132,15 @@ nothing to add to `surfaces.json`.
 
 ## A known upstream sharp edge
 
-The MCP spec makes `GetPromptRequest.params.arguments` **optional**, but the SDK parses whatever
-arrives against the declared object schema, and `z.object({…}).safeParse(undefined)` fails however
-optional every key is. So a prompt that declares any argument rejects a request that omits the
-field entirely — even a prompt where nothing is required.
-
-Hosts that render an argument form send `{}` and are unaffected. A host that skips the form on an
-all-optional prompt (`whats_due`, `whats_my_day`, `catch_up`) would see an error instead of the
-prompt. There is no way to soften this through `registerPrompt`: the parse happens inside the SDK's
-own handler, before our callback is reached. The behaviour is pinned by a test in
-[`packages/core/test/prompts.test.ts`](../packages/core/test/prompts.test.ts) so it is not mistaken
-for a bug in this repo, and the fix belongs upstream.
+The MCP spec makes `GetPromptRequest.params.arguments` **optional**. Version 1 of the SDK parsed
+whatever arrived against the declared object schema, and `z.object({…}).safeParse(undefined)` fails
+however optional every key is, so a prompt that declared any argument rejected a request that
+omitted the field entirely, even a prompt where nothing is required. Version 2 accepts the omission
+and runs the callback with no arguments, so a host that skips the argument form on an all-optional
+prompt (`whats_due`, `whats_my_day`, `catch_up`) gets the prompt rather than an error. The behaviour
+is pinned by a test in
+[`packages/core/test/prompts.test.ts`](../packages/core/test/prompts.test.ts) so it does not
+regress.
 
 ## What it costs
 

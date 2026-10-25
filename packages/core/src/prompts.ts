@@ -1,5 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer, GetPromptResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { surfaceUri } from "./resources.js";
@@ -96,7 +95,7 @@ export const registerWorkflowPrompt = <Args extends z.ZodRawShape>(
     {
       title: prompt.title,
       description: prompt.description,
-      ...(prompt.argsSchema ? { argsSchema: prompt.argsSchema } : {}),
+      ...(prompt.argsSchema ? { argsSchema: z.object(prompt.argsSchema) as never } : {}),
     },
     // The SDK hands an args object only when a schema was declared. Both
     // callback arities are assignable here; the cast keeps one code path.

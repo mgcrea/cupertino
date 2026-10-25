@@ -1,36 +1,28 @@
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { Transport, JSONRPCMessage } from "@modelcontextprotocol/server";
 
 /**
  * Trimming the SDK's own boilerplate out of `tools/list`.
  *
  * ## What this drops
  *
- * The SDK builds each tool's `inputSchema` from its zod shape at listing time,
- * and the generator stamps every one with
- * `"$schema": "http://json-schema.org/draft-07/schema#"`. Measured across the
- * eight servers with writes on, that one constant is 4,836 B of a 106,157 B
- * listing — 4.6%, paid by every client on every connect, to name a JSON Schema
- * draft the client already has to assume in order to read the rest of the
- * document. Nothing in the protocol reads it and no client needs it, so it is
- * the rare cut that is free rather than a trade.
+ * The SDK builds each tool's `inputSchema` from its zod schema at listing time,
+ * and the generator stamps every one that has properties with
+ * `"$schema": "https://json-schema.org/draft/2020-12/schema"`. A tool with no
+ * arguments comes out without it. Measured on the notes server with writes on,
+ * the stamp is 570 B (ten tools at 57 B each) of an 8,224 B listing, 6.9%,
+ * paid by every client on every connect to name a JSON Schema dialect the
+ * client already has to assume in order to read the rest of the document.
+ * Nothing in the protocol reads it and no client needs it, so it is the rare
+ * cut that is free rather than a trade.
  *
- * ## What this deliberately does NOT drop
+ * ## What there is no longer to drop
  *
- * `"execution": {"taskSupport": "forbidden"}` is another 3,720 B (3.5%) of
- * identical constant — `registerTool` hardcodes it on every tool — and it looks
- * like the same kind of waste. It is not, and the difference is worth the
- * paragraph so nobody "finishes the job" later.
- *
- * Server-side the two spellings are the same: the SDK's `tools/call` path
- * branches only on `'required'` and `'optional'`, so an absent `execution` and
- * an explicit `'forbidden'` both fall through to the normal handler. Client-side
- * they are not. `taskSupport` is declared `.optional()` with no default, so
- * absence means "unspecified" rather than "forbidden", and a task-capable client
- * reading a listing with no `execution` is entitled to try task augmentation on
- * a tool that was registered without a task handler. `'forbidden'` is the value
- * that tells it not to. Dropping it would trade 930 tokens for a behavioural
- * change on a path nothing here tests.
+ * Version 1 of the SDK also stamped `"execution": {"taskSupport": "forbidden"}`
+ * on every tool, which this file used to leave alone because an absent
+ * `execution` read as "unspecified" to a task-capable client. Version 2 removed
+ * experimental tasks and emits no `execution` at all, so the listing a client
+ * sees has no task claim to keep or to trim. Absent means no task support,
+ * which is what `"forbidden"` said.
  *
  * ## Why it is done to the outgoing frame
  *

@@ -1,6 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
 import { registerSurfaceResources, surfaceUri } from "../src/resources.js";
@@ -92,6 +91,17 @@ describe("registerSurfaceResources", () => {
       details: { pane: "Privacy & Security" },
     });
     expect(body.hint).toContain("cupertino://widget/diagnostics");
+  });
+
+  it("answers an unknown URI with -32602 and the URI, whatever the message says", async () => {
+    // v1 said "MCP error -32602: Resource … not found"; v2 reworded it and put
+    // the URI in `data`. Pinned on the code and the URI, the parts a client can
+    // act on, rather than on the sentence.
+    const client = await withResources();
+    await expect(client.readResource({ uri: "cupertino://widget/nope" })).rejects.toMatchObject({
+      code: -32602,
+      data: { uri: "cupertino://widget/nope" },
+    });
   });
 
   it("does the same for a failing inventory, naming the surface it belongs to", async () => {

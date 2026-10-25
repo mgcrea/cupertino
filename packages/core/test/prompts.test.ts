@@ -1,6 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
 import { promptArg, registerWorkflowPrompt, requiredPromptArg } from "../src/prompts.js";
@@ -106,20 +105,16 @@ describe("registerWorkflowPrompt", () => {
 });
 
 /**
- * An upstream boundary, pinned here so a future reader does not mistake it for
- * a bug in this package.
+ * An upstream boundary that v2 of the SDK lifted, pinned so it does not
+ * quietly come back.
  *
- * The MCP spec makes `GetPromptRequest.params.arguments` OPTIONAL, but the SDK
- * parses whatever arrives against the declared object schema, and
- * `z.object({…}).safeParse(undefined)` fails however optional every key is. So
- * a prompt that declares any argument rejects a request that omits the field
- * entirely, even when nothing was required.
- *
- * Hosts that render an argument form send `{}` and are unaffected. A host that
- * skips the form on an all-optional prompt would see an error, and the fix
- * belongs upstream: there is no way to soften it through `registerPrompt`,
- * because the parse happens inside the SDK's own handler before our callback
- * is reached.
+ * The MCP spec makes `GetPromptRequest.params.arguments` OPTIONAL. Version 1
+ * of the SDK parsed whatever arrived against the declared object schema, and
+ * `z.object({…}).safeParse(undefined)` fails however optional every key is, so
+ * a prompt that declared any argument rejected a request that omitted the
+ * field entirely. Version 2 accepts the omission and runs the callback with no
+ * arguments, which is what hosts that skip the argument form on an
+ * all-optional prompt needed.
  */
 describe("SDK argument handling", () => {
   const withArgs = () =>
@@ -138,9 +133,8 @@ describe("SDK argument handling", () => {
     expect(textOf(got.messages[1])).toBe("since:-");
   });
 
-  it("rejects an omitted arguments field, even with every argument optional", async () => {
-    await expect((await withArgs()).getPrompt({ name: "widget_optional" })).rejects.toThrow(
-      /expected object, received undefined/,
-    );
+  it("accepts an omitted arguments field when every argument is optional", async () => {
+    const got = await (await withArgs()).getPrompt({ name: "widget_optional" });
+    expect(textOf(got.messages[1])).toBe("since:-");
   });
 });
