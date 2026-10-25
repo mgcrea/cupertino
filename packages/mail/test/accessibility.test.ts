@@ -154,6 +154,8 @@ describe("a missing Accessibility grant", () => {
     expect(text).toContain("System Settings › Privacy & Security › Accessibility");
     expect(text).toContain("then run apple_mail_diagnostics");
     expect(text).not.toContain("\u2014");
+    // Shared by a read as well as the writes, so it claims nothing about either.
+    expect(text).not.toContain("written");
   });
 
   it("is the same text whatever the mode", () => {
@@ -173,7 +175,7 @@ describe("a missing Accessibility grant", () => {
         replyToAll: false,
         sendNow: false,
       } as never),
-    ).rejects.toThrow(text);
+    ).rejects.toThrow(`${text} Nothing was written.`);
     await expect(
       client.sendMessage({
         to: ["a@b.c"],
@@ -183,23 +185,32 @@ describe("a missing Accessibility grant", () => {
         body: "x",
         sendNow: false,
       }),
-    ).rejects.toThrow(text);
+    ).rejects.toThrow(`${text} Nothing was written.`);
   });
 
   it("is the reason when editing an open composer", async () => {
     const result = await client.updateDraft({ composer: "mc-0" }, { body: "x" });
-    expect(result).toMatchObject({ capability: "accessibility", reason: text });
+    expect(result).toMatchObject({
+      capability: "accessibility",
+      reason: text,
+      hint: "Nothing was written.",
+    });
   });
 
   it("is the reason when rebuilding a closed draft", async () => {
     const result = await client.updateDraft({ ref: REF }, { body: "x" });
-    expect(result).toMatchObject({ capability: "accessibility", reason: text });
+    expect(result).toMatchObject({
+      capability: "accessibility",
+      reason: text,
+      hint: "Nothing was written.",
+    });
   });
 
   it("is the reason when listing open drafts, and still says nothing was read", async () => {
     const result = await client.listOpenDrafts();
     expect(result).toMatchObject({ capability: "accessibility", reason: text, drafts: [] });
     expect(String(result["hint"])).toContain("does NOT mean no draft is open");
+    expect(String(result["reason"])).not.toContain("written");
   });
 
   it("keeps its own wording for a server Cupertino did not start", async () => {

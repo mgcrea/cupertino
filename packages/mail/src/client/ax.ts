@@ -218,9 +218,12 @@ export class MailAxLane {
       "Cupertino needs Accessibility to write Mail drafts. Turn it on for Cupertino in " +
       "System Settings › Privacy & Security › Accessibility (if it is already listed, toggle " +
       "it off and on: the grant goes stale when the app is reinstalled), then run " +
-      "apple_mail_diagnostics. Nothing was written."
+      "apple_mail_diagnostics."
     );
   }
+
+  /** What a WRITE refusal adds to `grantMessage`; a read has no use for it. */
+  static readonly nothingWritten = "Nothing was written.";
 
   /**
    * Poll for the composer window, and for its body.

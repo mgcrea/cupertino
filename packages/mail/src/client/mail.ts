@@ -1491,7 +1491,7 @@ export class AppleMailClient {
         method: "inPlace",
         capability: "accessibility",
         reason: MailAxLane.grantMessage("edit"),
-        hint: "Run apple_mail_diagnostics.",
+        hint: MailAxLane.nothingWritten,
       };
     }
     const open = await lane.composers();

@@ -333,7 +333,7 @@ export const rebuildDraft = async (
     return refuse(
       "accessibility",
       MailAxLane.grantMessage("replacement"),
-      "Run apple_mail_diagnostics.",
+      MailAxLane.nothingWritten,
     );
   }
 
