@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
@@ -33,7 +33,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "range runs past it, `truncated` is set and says what is missing rather than returning a " +
         "short list silently. `hasMore` is the other reason a list can be partial: more events " +
         "matched than `limit` allowed. Returns a `ref` per event for get_event.",
-      inputSchema: { from: fromArg, to: toArg, ...filterSchema },
+      inputSchema: z.object({ from: fromArg, to: toArg, ...filterSchema }),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -52,7 +52,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "Search events by text, most recent first. Unbounded in time unless you give `from` or " +
         "`to`. Matches each event ONCE at its series start — it does not expand occurrences, so " +
         "use list_events with a range to see individual instances of a repeating event.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for. Matched case-insensitively."),
         scope: z
           .enum(["summary", "full"])
@@ -61,7 +61,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         from: fromArg,
         to: toArg,
         ...filterSchema,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -80,7 +80,7 @@ export const registerEventTools = (server: McpServer, client: AppleCalendarClien
         "Full detail for one event: notes, location, URL, conference link, and whether it has " +
         "attendees or repeats. A ref naming one occurrence reports that occurrence's times and " +
         "carries a `seriesRef` pointing at the whole series.",
-      inputSchema: { ref: eventRefArg },
+      inputSchema: z.object({ ref: eventRefArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) => wrap(async () => client.getEvent(ref)),

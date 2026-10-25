@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
@@ -52,7 +52,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
         "meant to share it. Read-only calendars are refused. This tool cannot add attendees, " +
         "which would email a person. The result reports what Calendar actually stored, which is " +
         "not always what was asked for.",
-      inputSchema: {
+      inputSchema: z.object({
         summary: z.string().min(1).describe("The event's title."),
         calendar: calendarArg,
         start: startArg,
@@ -67,7 +67,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
         location: z.string().optional(),
         description: z.string().optional().describe("The event's notes."),
         url: z.string().optional(),
-      },
+      }),
     },
     async (args) => wrap(() => client.createEvent(args)),
   );
@@ -85,7 +85,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
         "single occurrence and applying the change to the series would move every other one too. " +
         'To change a single occurrence, delete it with scope "occurrence" and create a ' +
         "replacement.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: eventRefArg,
         summary: z.string().min(1).optional(),
         start: startArg.optional(),
@@ -95,7 +95,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
         location: z.string().optional(),
         description: z.string().optional(),
         url: z.string().optional(),
-      },
+      }),
     },
     async (args) => wrap(() => client.updateEvent(args)),
   );
@@ -113,7 +113,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
         "Calendar.app, or pass the `seriesRef` from get_event to remove the whole series. " +
         '"All future occurrences" is not offered either — it needs two writes with no ' +
         "transaction between them.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: z
           .array(z.string().min(1))
           .min(1)
@@ -123,7 +123,7 @@ export const registerActionTools = (server: McpServer, client: AppleCalendarClie
               "occurrence of a repeating one.",
           ),
         confirm: confirmArg,
-      },
+      }),
     },
     async ({ refs }) => wrap(() => client.deleteEvents(refs)),
   );

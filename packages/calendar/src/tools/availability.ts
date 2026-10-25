@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { WEEKDAY_KEYS } from "../client/availability.js";
@@ -43,7 +43,7 @@ export const registerAvailabilityTools = (server: McpServer, client: AppleCalend
         "not free. An empty `slots` list means BOOKED; `degraded` means UNKNOWN. " +
         "Declined and cancelled events do not block time; all-day events do not either, but " +
         "they are listed in `allDayEvents` so you can see the holiday you are about to book over.",
-      inputSchema: {
+      inputSchema: z.object({
         durationMinutes: z
           .number()
           .int()
@@ -113,7 +113,7 @@ export const registerAvailabilityTools = (server: McpServer, client: AppleCalend
         includeDeclined: includeDeclinedArg,
         includeCancelled: includeCancelledArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
