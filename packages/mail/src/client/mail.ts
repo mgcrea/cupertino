@@ -1584,7 +1584,9 @@ export class AppleMailClient {
    * candidates rather than asserted; `updateDraft` matches content before it
    * touches anything, so a wrong candidate is refused rather than edited.
    */
-  async listOpenDrafts(): Promise<Record<string, unknown>> {
+  async listOpenDrafts(
+    opts: { quoteChars?: number | undefined } = {},
+  ): Promise<Record<string, unknown>> {
     if (!this.#ax) {
       return {
         degraded: true,
@@ -1612,7 +1614,7 @@ export class AppleMailClient {
       };
     }
 
-    const composers = await this.#ax.composers();
+    const composers = await this.#ax.composers(opts.quoteChars);
     const index = composers.length > 0 ? await this.index() : null;
     const drafts = [];
     for (const composer of composers) {

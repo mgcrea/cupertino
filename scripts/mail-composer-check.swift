@@ -4,12 +4,16 @@ import Foundation
 /// with no Accessibility and no Mail running.
 final class FakeComposer: ComposerWindow {
   var subject: String
-  var recipientNames: [String]
+  var to: [String]
+  var cc: [String] = []
+  var bcc: [String]? = nil
+  var from: String? = nil
+  var isMain = false
   var body: [ComposerBlock]
   var isAlive = true
   init(subject: String, recipients: [String] = [], body: [ComposerBlock] = []) {
     self.subject = subject
-    self.recipientNames = recipients
+    self.to = recipients
     self.body = body
   }
   func blocks() throws -> [ComposerBlock] { body }
@@ -32,7 +36,11 @@ final class FakeComposer: ComposerWindow {
 /// selection was meant to read as to what it reads as.
 final class EditFake: ComposerWindow {
   var subject = "Re: plans"
-  var recipientNames: [String] = []
+  var to: [String] = []
+  var cc: [String] = []
+  var bcc: [String]? = nil
+  var from: String? = nil
+  var isMain = false
   var own: String
   var ownFiles: [String]
   var quote: [String]
@@ -283,6 +291,41 @@ struct MailComposerCheck {
     let oddEntry = MailComposer.listing([odd])[0]
     check("an unreadable level makes quoted null", oddEntry["quoted"] is NSNull)
     check("and own text stops before that block", oddEntry["text"] as? String == "kept")
+
+    // The sender, the split recipients, the quote and the front window.
+    let rich = FakeComposer(
+      subject: "Rich", recipients: ["Ann"],
+      body: [
+        ComposerBlock(text: "mine", quoteLevel: 0, fileNames: []),
+        ComposerBlock(text: "On Monday, X wrote:", quoteLevel: 1, fileNames: []),
+        ComposerBlock(text: "the original text", quoteLevel: 1, fileNames: []),
+      ])
+    rich.cc = ["Cy"]
+    rich.bcc = []
+    rich.from = "Me – me@example.com"
+    rich.isMain = true
+    let full = MailComposer.listing([rich])[0]
+    check(
+      "from, main, to and cc are listed",
+      full["from"] as? String == "Me – me@example.com" && full["main"] as? Bool == true
+        && full["to"] as? [String] == ["Ann"] && full["cc"] as? [String] == ["Cy"])
+    check("recipients stay to plus cc", full["recipients"] as? [String] == ["Ann", "Cy"])
+    check("a shown but empty bcc is an empty list", full["bcc"] as? [String] == [])
+    check(
+      "the quote is every block from the boundary, joined",
+      full["quote"] as? String == "On Monday, X wrote:\nthe original text"
+        && full["quoteTruncated"] as? Bool == false)
+    let cut = MailComposer.listing([rich], quoteChars: 10)[0]
+    check(
+      "a quote past quoteChars is cut and says so",
+      cut["quote"] as? String == "On Monday," && cut["quoteTruncated"] as? Bool == true)
+    let none = MailComposer.listing([rich], quoteChars: 0)[0]
+    check(
+      "quoteChars 0 means no quote",
+      none["quote"] is NSNull && none["quoteTruncated"] as? Bool == false)
+    check("a hidden bcc is null", listed[1]["bcc"] is NSNull && listed[1]["from"] is NSNull)
+    check("an unquoted window has no quote", listed[1]["quote"] is NSNull)
+    check("an unreadable level has no quote", oddEntry["quote"] is NSNull)
 
     a.isAlive = false
     check("a dead window no longer resolves", MailComposer.resolve(handles[0]) == nil)

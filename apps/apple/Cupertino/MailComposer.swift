@@ -13,7 +13,14 @@ import Foundation
 nonisolated protocol ComposerWindow: AnyObject {
   var subject: String { get }
   /// Display names, never addresses: Mail's recipient tokens carry only the name.
-  var recipientNames: [String] { get }
+  var to: [String] { get }
+  var cc: [String] { get }
+  /// Nil when the Bcc field is not shown, which is not the same as empty.
+  var bcc: [String]? { get }
+  /// The account picker's value, `Name – address`.
+  var from: String? { get }
+  /// Whether Mail considers this its main window (the one in front, when Mail is).
+  var isMain: Bool { get }
   /// The body's top-level blocks, in order, quote included.
   func blocks() throws -> [ComposerBlock]
   /// False once the window has been sent or closed.
@@ -50,6 +57,8 @@ nonisolated protocol ComposerWindow: AnyObject {
 }
 
 extension ComposerWindow {
+  /// To and Cc together, as the listing's `recipients` has always been.
+  nonisolated var recipientNames: [String] { to + cc }
   func isSame(as other: ComposerWindow) -> Bool { self === other }
 }
 
@@ -153,11 +162,16 @@ nonisolated enum MailComposer {
   /// `quoted` is a Bool when every block's level was readable, and NSNull when
   /// one was not, in which case own text stops before that block: a body that
   /// cannot be split is not offered as if it had been.
-  static func listing(_ windows: [ComposerWindow]) -> [[String: Any]] {
+  ///
+  /// `quote` is the text of the blocks from the first quoted one down, joined
+  /// with newlines and cut at `quoteChars` (`quoteTruncated` says whether it
+  /// was). It is null unless `quoted` is true, and when `quoteChars` is 0.
+  static func listing(_ windows: [ComposerWindow], quoteChars: Int = 2000) -> [[String: Any]] {
     let handles = register(windows)
     return zip(windows, handles).map { window, handle in
       var own: [String] = []
       var files: [String] = []
+      var quoteBlocks: [String] = []
       var quoted: Any = NSNull()
       if let blocks = try? window.blocks() {
         var boundary = false
@@ -169,19 +183,32 @@ nonisolated enum MailComposer {
           }
           if level > 0 {
             boundary = true
-            break
+          }
+          if boundary {
+            quoteBlocks.append(block.text)
+            continue
           }
           own.append(block.text)
           files += block.fileNames
         }
         if !unreadable { quoted = boundary }
       }
+      let whole = quoteBlocks.joined(separator: "\n")
+      let cut = max(quoteChars, 0)
+      let showQuote = (quoted as? Bool) == true && cut > 0
       return [
         "composer": handle,
         "subject": window.subject,
+        "main": window.isMain,
+        "from": window.from ?? NSNull(),
+        "to": window.to,
+        "cc": window.cc,
+        "bcc": window.bcc ?? NSNull(),
         "recipients": window.recipientNames,
         "text": own.joined(separator: "\n"),
         "quoted": quoted,
+        "quote": showQuote ? String(whole.prefix(cut)) : NSNull(),
+        "quoteTruncated": showQuote && whole.count > cut,
         "files": files,
       ]
     }
@@ -941,28 +968,41 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     return CFEqual(window, other.window)
   }
 
-  var recipientNames: [String] {
-    ["Mail.toField", "Mail.ccField"].flatMap { id -> [String] in
-      guard let field = Self.field(in: window, id) else { return [] }
-      let value = Self.attr(field, kAXValueAttribute as String) as? String ?? ""
-      var names: [String] = []
-      if value.contains(Self.tokenChar) {
-        for token in Self.descendants(of: field, depth: 2)
-        where Self.attr(token, kAXSubroleAttribute as String) as? String == "AXTextAttachment" {
-          if let name = (Self.attr(token, kAXValueAttribute as String) as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
-          {
-            names.append(name)
-          }
+  var to: [String] { Self.field(in: window, "Mail.toField").map(Self.names(in:)) ?? [] }
+  var cc: [String] { Self.field(in: window, "Mail.ccField").map(Self.names(in:)) ?? [] }
+  var bcc: [String]? { Self.field(in: window, "Mail.bccField").map(Self.names(in:)) }
+
+  /// `popup_from`'s value reads `Name – address`.
+  var from: String? {
+    Self.field(in: window, "popup_from").flatMap {
+      Self.attr($0, kAXValueAttribute as String) as? String
+    }
+  }
+
+  var isMain: Bool {
+    (Self.attr(window, kAXMainAttribute as String) as? NSNumber)?.boolValue == true
+  }
+
+  /// The names in one recipient field: its tokens, then whatever is still being
+  /// typed, which sits between the tokens in the value.
+  private static func names(in field: AXUIElement) -> [String] {
+    let value = attr(field, kAXValueAttribute as String) as? String ?? ""
+    var names: [String] = []
+    if value.contains(tokenChar) {
+      for token in descendants(of: field, depth: 2)
+      where attr(token, kAXSubroleAttribute as String) as? String == "AXTextAttachment" {
+        if let name = (attr(token, kAXValueAttribute as String) as? String)?
+          .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        {
+          names.append(name)
         }
       }
-      // Whatever is still being typed sits between the tokens in the value.
-      let typed =
-        value.split(separator: Self.tokenChar, omittingEmptySubsequences: false)
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-      return names + typed
     }
+    let typed =
+      value.split(separator: tokenChar, omittingEmptySubsequences: false)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    return names + typed
   }
 
   struct NoBody: Error {}

@@ -361,3 +361,14 @@ describe("composerGone", () => {
     lane.close();
   });
 });
+
+describe("composers", () => {
+  it("passes quoteChars on only when given", async () => {
+    const { env, seen } = await hostStub({ mail_composers: { composers: [] } });
+    const lane = MailAxLane.open(env)!;
+    await lane.composers();
+    await lane.composers(0);
+    expect(seen.map((c) => c.args)).toEqual([{}, { quoteChars: 0 }]);
+    lane.close();
+  });
+});

@@ -126,7 +126,19 @@ export type NativeComposer = {
   /** The handle, `mc-<n>`. */
   composer: string;
   subject: string;
+  /** To and Cc names together. */
   recipients: string[];
+  /** The window Mail considers main: the one in front, when Mail is. */
+  main?: boolean;
+  /** The account picker's value, `Name – address`; null when there is none. */
+  from?: string | null;
+  to?: string[];
+  cc?: string[];
+  /** Null when the Bcc field is not shown, which is not the same as empty. */
+  bcc?: string[] | null;
+  /** The opening of the quoted original; null when none, or none was asked for. */
+  quote?: string | null;
+  quoteTruncated?: boolean;
   /** The sender's own text, blocks joined by newlines. */
   text: string;
   /** Null when a quote level was unreadable. */
@@ -179,8 +191,11 @@ export class MailAxLane {
   }
 
   /** Every open composer, with its handle and own text. */
-  async composers(): Promise<NativeComposer[]> {
-    const result = (await this.#call("mail_composers")) as { composers?: NativeComposer[] };
+  async composers(quoteChars?: number): Promise<NativeComposer[]> {
+    const result = (await this.#call(
+      "mail_composers",
+      quoteChars === undefined ? {} : { quoteChars },
+    )) as { composers?: NativeComposer[] };
     return result.composers ?? [];
   }
 

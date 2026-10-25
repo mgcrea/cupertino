@@ -1194,7 +1194,13 @@ nonisolated enum DesktopServer {
         guard AccessibilityDriver.isTrusted() else {
           return failure(id, "Accessibility is not granted to Cupertino.")
         }
-        return ok(id, ["composers": MailComposer.listing(try AXComposerWindow.all(scope: scope))])
+        let quoteChars = (args["quoteChars"] as? NSNumber)?.intValue ?? 2000
+        return ok(
+          id,
+          [
+            "composers": MailComposer.listing(
+              try AXComposerWindow.all(scope: scope), quoteChars: quoteChars)
+          ])
 
       // One verified edit of one compose window: every check before anything
       // destructive, and a refusal answered as a result (not an error) in the

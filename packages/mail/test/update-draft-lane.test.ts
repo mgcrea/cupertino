@@ -86,13 +86,20 @@ const world = (
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
-    composers: async () => [
+    composers: async (quoteChars = 2000) => [
       ...Array.from({ length: Math.max(composers, 0) }, (_, at) => ({
         composer: `mc-${at}`,
         subject: "Re: Quarterly numbers",
-        recipients: [],
+        recipients: ["Ann", "Cy"],
+        main: at === 0,
+        from: "Me – me@example.com",
+        to: ["Ann"],
+        cc: ["Cy"],
+        bcc: null,
         text: shown,
         quoted: true,
+        quote: quoteChars > 0 ? "On Monday, Ann wrote:".slice(0, quoteChars) : null,
+        quoteTruncated: quoteChars > 0 && quoteChars < "On Monday, Ann wrote:".length,
         files: [...files],
       })),
       // A composer Mail was asked to open appears in the list once it has been:
@@ -516,12 +523,39 @@ describe("listing the open drafts", () => {
     expect(result.drafts[0]).toMatchObject({
       composer: "mc-0",
       subject: "Re: Quarterly numbers",
-      recipients: [],
+      recipients: ["Ann", "Cy"],
       text: "ALPHA one",
       quoted: true,
     });
     expect(result.drafts[1]).toMatchObject({ composer: "mc-1" });
     expect(result.note).toMatch(/`composer`.*apple_mail_update_draft/s);
+  });
+
+  it("keeps the sender, recipients, front window and quote it always had", async () => {
+    const { client } = world(2);
+    const result = (await client.listOpenDrafts()) as { drafts: Record<string, unknown>[] };
+    expect(result.drafts[0]).toMatchObject({
+      main: true,
+      from: "Me – me@example.com",
+      to: ["Ann"],
+      cc: ["Cy"],
+      bcc: null,
+      quote: "On Monday, Ann wrote:",
+      quoteTruncated: false,
+    });
+    expect(result.drafts[1]).toMatchObject({ main: false });
+  });
+
+  it("passes quoteChars on, and 0 gives no quote", async () => {
+    const { client } = world(1);
+    const cut = (await client.listOpenDrafts({ quoteChars: 9 })) as {
+      drafts: Record<string, unknown>[];
+    };
+    expect(cut.drafts[0]).toMatchObject({ quote: "On Monday", quoteTruncated: true });
+    const none = (await client.listOpenDrafts({ quoteChars: 0 })) as {
+      drafts: Record<string, unknown>[];
+    };
+    expect(none.drafts[0]).toMatchObject({ quote: null, quoteTruncated: false });
   });
 
   it("says plainly that none is open", async () => {
