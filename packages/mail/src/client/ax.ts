@@ -247,6 +247,30 @@ export type OpenComposer = {
   quoteTruncated: boolean;
 };
 
+/** One open composer, as the app's `mail_composers` verb reports it. */
+export type NativeComposer = {
+  /** The handle, `mc-<n>`. */
+  composer: string;
+  subject: string;
+  recipients: string[];
+  /** The sender's own text, blocks joined by newlines. */
+  text: string;
+  /** Null when a quote level was unreadable. */
+  quoted: boolean | null;
+  /** Named files in the own text. */
+  files: string[];
+};
+
+export type EditComposerArgs = {
+  composer: string;
+  body?: string;
+  html?: string;
+  edits?: { find: string; replace: string }[];
+  attachments?: string[];
+  save?: boolean;
+  expectHead?: string;
+};
+
 export type ReachReport = {
   ok: boolean;
   /** `accessibility` when Mail's windows cannot be read; null when they can. */
@@ -278,6 +302,21 @@ export class MailAxLane {
 
   #call(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     return this.#channel.call({ tool: `apple_desktop_${tool}`, args });
+  }
+
+  /** Every open composer, with its handle and own text. */
+  async composers(): Promise<NativeComposer[]> {
+    const result = (await this.#call("mail_composers")) as { composers?: NativeComposer[] };
+    return result.composers ?? [];
+  }
+
+  /**
+   * Edit a composer in one verified native step. The verb's JSON comes back
+   * verbatim: a refusal is an answer, not an error. A failure of the call itself
+   * (bad arguments, Accessibility not trusted) throws, as every `#call` does.
+   */
+  async editComposer(args: EditComposerArgs): Promise<Record<string, unknown>> {
+    return (await this.#call("mail_composer_edit", { ...args })) as Record<string, unknown>;
   }
 
   /**

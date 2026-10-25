@@ -117,6 +117,31 @@ const world = (
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
+    composers: async () =>
+      Array.from({ length: Math.max(composers, 0) }, (_, at) => ({
+        composer: `mc-${at}`,
+        subject: "Re: Quarterly numbers",
+        recipients: [],
+        text: shown,
+        quoted: true,
+        files: [...files],
+      })),
+    // The native verb: it replaces the body and adds files in one step, and the
+    // pasteboard is never touched.
+    editComposer: async (args: { body?: string; attachments?: string[] }) => {
+      if (args.body !== undefined) shown = args.body;
+      const added = (args.attachments ?? []).map((path) => basename(path));
+      files.push(...added);
+      return {
+        replaced: true,
+        method: "inPlace",
+        text: shown,
+        quoteKept: true,
+        filesAdded: added,
+        saved: true,
+        note: "ok",
+      };
+    },
     findComposers: async () =>
       Array.from({ length: composers }, (_, at) => ({
         window: `w${at}`,
@@ -254,7 +279,7 @@ describe("adding files to a draft", () => {
     expect(result).toMatchObject({
       replaced: true,
       method: "inPlace",
-      attachmentsAdded: ["report.pdf"],
+      filesAdded: ["report.pdf"],
       threadingKept: true,
     });
     expect(result).not.toHaveProperty("bodyLength");
