@@ -189,9 +189,20 @@ Notifications already flow through the stdio pumps untouched. Two things need do
 3. **Cost of the watch query** on the 181k-message index: run against the `ROWID > cursor` range it
    should be a few ms, since it is an index range. Measure it anyway.
 4. **Does SDK v2's `McpServer` answer `resources/subscribe` on its own** when `subscribe: true` is
-   declared? The 2.4.0 package carries the request schemas and no handler, so it looks like the
-   server has to register one. Confirm against the installed version. The era is not a guess
-   either: `serveStdio` passes `{ era: "legacy" | "modern" }` to the server factory.
+   declared? **No, the server has to register the handler.** In the installed 2.4.0,
+   `McpServer` registers only `resources/list`, `resources/templates/list` and `resources/read`
+   (`dist/mcp-oHn3ureC.mjs:1704-1732`), and `assertRequestHandlerCapability` has no case for the
+   subscribe methods (`:1141-1165`), so declaring `resources: { subscribe: true }` advertises the
+   bit and nothing more. Until a handler exists, the request is answered `-32601 Method not found` (verified over an in-memory transport). The
+   method is `server.server.setRequestHandler("resources/subscribe", (request, ctx) => ({}))`, and
+   likewise `"resources/unsubscribe"`: `McpServer.server` is the low-level `Server`, and the
+   two-argument form takes the method name, typed through `RequestTypeMap` (result
+   `EmptyResult`; `request.params.uri` is the URI). No schema is passed. `SubscribeRequestSchema`
+   and `UnsubscribeRequestSchema` exist only inside the package (`dist/src-DdvbAHrR.mjs:998-1008`)
+   and are not exported from `@modelcontextprotocol/server`; only the types `SubscribeRequest` and
+   `UnsubscribeRequest` are. Sending is `server.server.sendResourceUpdated({ uri })`
+   (`mcp-oHn3ureC.mjs:1419`), which emits `notifications/resources/updated`. The era is not a
+   guess either: `serveStdio` passes `{ era: "legacy" | "modern" }` to the server factory.
 
 ## Non-goals (v1)
 
