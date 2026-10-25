@@ -184,6 +184,42 @@ nonisolated enum CallCapture {
     frame["method"] == nil && frame["id"] != nil
   }
 
+  // MARK: - Subscriptions
+
+  /// The bytes of an update notification's method, which is what the server→client
+  /// pump looks for BEFORE it splits or parses anything.
+  ///
+  /// A chunk is mostly results, and results are the big frames; paying a JSON
+  /// parse per line to find the rare push would be the most expensive thing on
+  /// the hot path. A byte search over the chunk costs next to nothing and lets
+  /// every chunk without one keep taking `FrameSplitter.skip`.
+  static let pushMarker = Data("notifications/resources/updated".utf8)
+
+  /// Whether a method asks the server to push updates, in either protocol era.
+  ///
+  /// 2025 clients send `resources/subscribe`; 2026-07-28 clients open a
+  /// `subscriptions/listen` stream. Neither is a call that returns a result a
+  /// reader is waiting on, so neither belongs in the table of calls in flight.
+  static func isSubscription(_ method: String) -> Bool {
+    method == "subscriptions/listen" || method == "resources/subscribe"
+  }
+
+  /// The resources a subscription request asks about, in either era's shape.
+  ///
+  /// A listen that asks only for list-changed notifications names no resource,
+  /// which is an empty list rather than a malformed request.
+  static func subscribedUris(_ params: [String: Any]?) -> [String] {
+    if let uri = params?["uri"] as? String { return [uri] }
+    let notifications = params?["notifications"] as? [String: Any]
+    return (notifications?["resourceSubscriptions"] as? [Any])?.compactMap { $0 as? String } ?? []
+  }
+
+  /// The resource a `notifications/resources/updated` frame is about, else nil.
+  static func pushedUri(_ object: [String: Any]) -> String? {
+    guard object["method"] as? String == "notifications/resources/updated" else { return nil }
+    return (object["params"] as? [String: Any])?["uri"] as? String
+  }
+
   /// A JSON-RPC id as a dictionary key.
   ///
   /// Ids may be a string or a number and the two are distinct — `1` and `"1"`

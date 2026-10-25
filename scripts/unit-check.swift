@@ -169,6 +169,40 @@ struct UnitCheck {
     check("a numeric and a string id differ", CallCapture.idKey(1) != CallCapture.idKey("1"))
     check("a missing id has no key", CallCapture.idKey(nil) == nil)
 
+    print("\nCall capture: subscriptions and pushed updates")
+
+    check("subscriptions/listen is a subscription", CallCapture.isSubscription("subscriptions/listen"))
+    check("resources/subscribe is a subscription", CallCapture.isSubscription("resources/subscribe"))
+    check("resources/read is not", !CallCapture.isSubscription("resources/read"))
+    check(
+      "a 2026 listen names its uris",
+      CallCapture.subscribedUris([
+        "notifications": ["resourceSubscriptions": ["mail://a", "mail://b"]]
+      ]) == ["mail://a", "mail://b"])
+    check(
+      "a 2025 subscribe names its uri",
+      CallCapture.subscribedUris(["uri": "messages://x"]) == ["messages://x"])
+    check(
+      "a listen for tool changes only names no uri",
+      CallCapture.subscribedUris(["notifications": ["toolsListChanged": true]]).isEmpty)
+    check("no params names no uri", CallCapture.subscribedUris(nil).isEmpty)
+    check(
+      "an updated notification yields its uri",
+      CallCapture.pushedUri([
+        "method": "notifications/resources/updated", "params": ["uri": "mail://a"],
+      ]) == "mail://a")
+    check(
+      "a response is not a push",
+      CallCapture.pushedUri(["id": 1, "result": ["uri": "mail://a"]]) == nil)
+    check(
+      "a progress notification is not a push",
+      CallCapture.pushedUri([
+        "method": "notifications/progress", "params": ["uri": "mail://a"],
+      ]) == nil)
+    check(
+      "an updated notification without a uri is not a push",
+      CallCapture.pushedUri(["method": "notifications/resources/updated", "params": [:] as [String: Any]]) == nil)
+
     print("\nCall capture: malformed input")
 
     check(

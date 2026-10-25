@@ -112,13 +112,43 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// without it left a partial frame behind, the first chunk fed once a notice
   /// was held was glued onto it, and the reply that should have let the notice
   /// go never parsed — so it ran to its thirty-second cap.
+  ///
+  /// **A pushed update is the exception, and it is looked for first.** Which
+  /// resources a server pushed into this session is as much a record of what
+  /// Cupertino did as which tools were called, in every capture mode. The cost
+  /// is one byte search per chunk (`CallCapture.pushMarker`), done before any
+  /// splitting or parsing so a chunk without one still takes `skip` exactly as
+  /// before. `collecting` carries a match across chunks: a frame whose marker
+  /// arrived in one chunk and whose newline arrives in the next must not be
+  /// skipped half way, or the push is lost.
   func answered(_ chunk: Data) {
     let holding = !visible.withLock { $0.flight.isEmpty }
-    guard mode >= .argumentsAndResults || holding else {
+    let parsing = mode >= .argumentsAndResults || holding
+    let pushed = collecting || chunk.range(of: CallCapture.pushMarker) != nil
+    guard parsing || pushed else {
       responses.skip(chunk)
       return
     }
-    for line in responses.lines(chunk) { reply(line) }
+    collecting = pushed && chunk.last != UInt8(ascii: "\n")
+    for line in responses.lines(chunk) {
+      if pushed { push(line) }
+      if parsing { reply(line) }
+    }
+  }
+
+  /// Only touched by the server→client pump, like `responses`.
+  private var collecting = false
+
+  /// Record one pushed update as a call of its own, with no arguments.
+  ///
+  /// The cheap byte test again, per line, because a chunk that matched may hold
+  /// many frames and only the matching ones are worth a parse.
+  private func push(_ line: Data) {
+    guard line.range(of: CallCapture.pushMarker) != nil,
+      let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+      let uri = CallCapture.pushedUri(object)
+    else { return }
+    hostCall(surface.id, "pushed \(uri)", arguments: nil)
   }
 
   private func reply(_ line: Data) {
@@ -150,6 +180,19 @@ nonisolated final class RequestObserver: @unchecked Sendable {
     else { return }
 
     let params = object["params"] as? [String: Any]
+
+    // A subscription is opened here and, for `subscriptions/listen`, answered only
+    // when it ends, so remembering it as a call would show a row that never
+    // returns for as long as the session watches anything. It is logged once and
+    // kept out of `waiting`. The response that ends a listen is not logged as an
+    // unsubscribe: correlating it would need a table of open listens beside
+    // `waiting`, for a line that says nothing the missing pushes do not.
+    if CallCapture.isSubscription(method) {
+      let uris = CallCapture.subscribedUris(params)
+      hostLog(
+        surface.id, .info, uris.isEmpty ? method : "subscribed \(uris.joined(separator: ", "))")
+      return
+    }
 
     // The three ways a client asks a server to DO something, each identified by
     // the one param that names what was asked for.
