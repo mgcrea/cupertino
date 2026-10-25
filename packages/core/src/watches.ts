@@ -25,9 +25,11 @@ const MAX_FILTER_ENTRIES = 50;
 
 export type WatchFilter = { from: string[]; domains: string[] };
 
-const clean = (values: readonly string[] | undefined, strip: RegExp): string[] => [
+const clean = (values: readonly string[] | undefined, strip?: RegExp): string[] => [
   ...new Set(
-    (values ?? []).map((v) => v.trim().toLowerCase().replace(strip, "")).filter((v) => v !== ""),
+    (values ?? [])
+      .map((v) => (strip ? v.trim().toLowerCase().replace(strip, "") : v.trim().toLowerCase()))
+      .filter((v) => v !== ""),
   ),
 ];
 
@@ -38,7 +40,7 @@ const clean = (values: readonly string[] | undefined, strip: RegExp): string[] =
  * `@acme.com`, and they mean the same thing.
  */
 export const normalizeFilter = (input: { from?: string[]; domains?: string[] }): WatchFilter => {
-  const from = clean(input.from, /^$/);
+  const from = clean(input.from);
   const domains = clean(input.domains, /^@+/);
   if (from.length === 0 && domains.length === 0) {
     throw new PreconditionError(
@@ -74,7 +76,13 @@ export const matchesSender = (filter: WatchFilter, sender: string | null): boole
 /** `cupertino://mail/watch/w_1a2b3c4d`. */
 export const watchUri = (surface: string, id: string): string => surfaceUri(surface, `watch/${id}`);
 
-/** `excluded` rows advance the cursor but never match: own mail, tapbacks, Junk. */
+/**
+ * One arrival.
+ *
+ * `key` is the row's own identity (a message guid), carried so a result can name
+ * what it found; nothing in the registry compares on it. `excluded` rows advance
+ * the cursor but never match: own mail, tapbacks, Junk.
+ */
 export type ArrivalRow = { cursor: number; key: string; sender: string | null; excluded?: boolean };
 
 export type ArrivalSource<R extends ArrivalRow> = {
@@ -111,20 +119,26 @@ export type WatchRegistryOptions<R extends ArrivalRow> = {
 
 const defaultMintId = (): string => `w_${randomBytes(4).toString("hex")}`;
 
-/** Where the last scan stopped. `key` tells a reused cursor from the same row. */
-type Mark = { cursor: number; key: string | null };
-
 /**
  * The watches of one connection, and the scan that tells them something arrived.
  *
- * ## Why rows carry a key as well as a cursor
+ * ## The cursor is a ROWID, and it only ever grows
  *
- * Arrival order is ROWID order, but SQLite hands out `max(ROWID) + 1`, so when
- * the newest row is deleted the next insert takes the same ROWID. A cursor
- * alone would then sit at the old head and never see the replacement. So a scan
- * restarts one row early, re-reading the row at the remembered head, and drops
- * it only when its key still equals the remembered one. A different key at the
- * same cursor is a new arrival.
+ * Arrival order is ROWID order, so a scan asks the store for rows past the last
+ * cursor it saw. That is only sound because both stores declare their message
+ * table `INTEGER PRIMARY KEY AUTOINCREMENT` (Mail's `messages`, Messages'
+ * `message`; the captured DDL is in each package's test fixtures), which makes
+ * SQLite never hand out a ROWID twice, even after the newest row is deleted. A
+ * store that dropped AUTOINCREMENT would reuse the top id, and a row inserted
+ * under it would sit at or below the cursor and be missed.
+ *
+ * ## Why a lower head resets the mark
+ *
+ * The one way a cursor goes backwards is a store rebuilt from scratch, such as
+ * Mail re-indexing and renumbering. Rows under the old mark would then never be
+ * scanned, so a head below the mark resets the mark to the head. It notifies
+ * nothing, because the rows now there are not arrivals; it is the old numbering
+ * that is gone. Watches created above the new head are lowered with it.
  *
  * ## Why a tick scans once for every watch
  *
@@ -143,9 +157,8 @@ export class WatchRegistry<R extends ArrivalRow> {
   readonly #readLimit: number;
   readonly #mintId: () => string;
   readonly #watches = new Map<string, Watch>();
-  /** Each watch's head at creation, so a row that reused that cursor still counts as new. */
-  readonly #born = new Map<string, Mark>();
-  #mark: Mark = { cursor: 0, key: null };
+  /** Highest cursor already scanned. */
+  #mark = 0;
   #trigger: { stop(): void } | undefined;
 
   constructor(opts: WatchRegistryOptions<R>) {
@@ -169,15 +182,13 @@ export class WatchRegistry<R extends ArrivalRow> {
         `This connection already has ${this.#maxWatches} watches. Remove one before adding another.`,
       );
     }
-    const born = this.#markHead();
-    const createdAt = born.cursor;
+    const createdAt = this.#source.head();
     // With no watches nothing was scanning, so the old mark is stale.
-    if (this.#watches.size === 0) this.#mark = born;
+    if (this.#watches.size === 0) this.#mark = createdAt;
     let id = this.#mintId();
     while (this.#watches.has(id)) id = this.#mintId();
     const watch: Watch = { id, uri: watchUri(this.#surface, id), filter, createdAt };
     this.#watches.set(id, watch);
-    this.#born.set(id, born);
     if (this.#trigger === undefined && this.#startTrigger) {
       this.#trigger = this.#startTrigger(() => this.tick());
     }
@@ -186,7 +197,6 @@ export class WatchRegistry<R extends ArrivalRow> {
 
   remove(id: string): boolean {
     const removed = this.#watches.delete(id);
-    this.#born.delete(id);
     if (removed && this.#watches.size === 0) this.#stopTrigger();
     return removed;
   }
@@ -226,61 +236,51 @@ export class WatchRegistry<R extends ArrivalRow> {
   /** Scan what arrived since the last tick and notify each watch it concerns. */
   tick(): void {
     if (this.#watches.size === 0) return;
+    const head = this.#source.head();
+    if (head < this.#mark) {
+      this.#mark = head;
+      // A watch born above the new head would otherwise never see a row again.
+      for (const [id, watch] of this.#watches) {
+        if (watch.createdAt > head) this.#watches.set(id, { ...watch, createdAt: head });
+      }
+      return;
+    }
     const hit = new Set<string>();
-    const start = this.#mark;
-    let after = Math.max(start.cursor - 1, 0);
-    let first = true;
-    let last: Mark | undefined;
+    let after = this.#mark;
     for (;;) {
       const rows = this.#source.since(after, this.#scanLimit);
       for (const row of rows) {
-        if (first && row.cursor === start.cursor && row.key === start.key) continue;
         if (row.excluded) continue;
         for (const watch of this.#watches.values()) {
-          if (this.#isNewTo(watch, row) && matchesSender(watch.filter, row.sender)) {
+          if (row.cursor > watch.createdAt && matchesSender(watch.filter, row.sender)) {
             hit.add(watch.id);
           }
         }
       }
-      first = false;
       const tail = rows.at(-1);
-      if (tail) {
-        last = { cursor: tail.cursor, key: tail.key };
-        after = tail.cursor;
-      }
+      if (tail) after = tail.cursor;
       if (rows.length < this.#scanLimit) break;
     }
-    // No rows at all means the head moved backwards (rows deleted), so re-read it.
-    this.#mark = last ?? this.#markHead();
+    this.#mark = after;
     for (const id of hit) {
       const watch = this.#watches.get(id);
-      if (watch) this.#onUpdate(watch.uri);
+      if (!watch) continue;
+      // One listener failing must not cost the other watches their notification.
+      try {
+        this.#onUpdate(watch.uri);
+      } catch {
+        // The registry has no log; a listener owns its own failures.
+      }
     }
   }
 
   close(): void {
     this.#watches.clear();
-    this.#born.clear();
     this.#stopTrigger();
-  }
-
-  /** Arrived after the watch did: a later cursor, or the same cursor holding a different row. */
-  #isNewTo(watch: Watch, row: R): boolean {
-    const born = this.#born.get(watch.id);
-    if (!born) return false;
-    return row.cursor > born.cursor || (row.cursor === born.cursor && row.key !== born.key);
   }
 
   #stopTrigger(): void {
     this.#trigger?.stop();
     this.#trigger = undefined;
-  }
-
-  /** The head's cursor and key, read together so a reused cursor can be told apart. */
-  #markHead(): Mark {
-    const cursor = this.#source.head();
-    const rows = this.#source.since(Math.max(cursor - 1, 0), 2);
-    const row = rows.find((r) => r.cursor === cursor);
-    return { cursor, key: row?.key ?? null };
   }
 }

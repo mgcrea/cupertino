@@ -26,7 +26,7 @@
 ## Review Focus
 
 1. **The server factory runs more than once.** `serveStdio` builds and discards an instance for a `server/discover` probe. A discarded instance must start no watcher and hold no file handle, so the trigger starts on the first `add`, never at construction. Task 4 pins it.
-2. **A reused top `ROWID`.** The newest row is deleted and the next insert takes its id. That row must still fire, and must not fire twice. Task 2 pins it with a source whose head row changes key.
+2. **A rebuilt store.** An index rebuilt with lower `ROWID`s must reset the mark without notifying, and must keep firing for later arrivals. Task 2 pins it with a source whose head drops below the mark.
 3. **Your own reply in Gmail.** A domain watch on a correspondent's domain must not fire on mail you sent, which Gmail files under All Mail. Task 5 pins it.
 4. **A burst of arrivals.** A 40-message sync must produce one notification per watch, not 40. Task 3 pins the debounce and Task 2 pins the one-notify-per-tick rule.
 5. **Unsubscribed legacy URIs.** On a 2025 connection, a watch nobody subscribed to must send nothing. Task 4 pins it.
@@ -114,12 +114,12 @@ export class WatchRegistry<R extends ArrivalRow> {
   - `add`: returns `uri === "cupertino://mail/watch/w_00000001"` with an injected `mintId`, and `createdAt === source.head()`. The 11th `add` throws `PreconditionError` containing `"10 watches"`.
   - `tick`: push 40 rows, 3 of them matching watch A and none matching B. One `tick()` calls `onUpdate` exactly once, with A's URI.
   - `tick` with `excluded: true` on a matching row: no `onUpdate`. The next `tick` does not re-scan that row.
-  - **Reused head:** the source is at head 10 with key `"k10"`. Delete row 10, push a new row with `cursor: 10, key: "k10b"` that matches. `tick()` calls `onUpdate` once, and a second `tick()` calls nothing.
+  - **Rebuilt store:** the source is at head 10 and a watch exists. Empty it and push 3 matching rows. `tick()` calls nothing. One more matching row, then `tick()` calls `onUpdate` once.
   - `read(id)`: returns matches after `createdAt`, oldest first. With 60 matches it returns 50, `more: true`, and `cursor` equals the 50th row's cursor. With 1,200 rows of which 2 match, it returns the matches found in the first 1,000 rows, `more: true`, and `cursor` equals row 1,000's cursor (the last row scanned). `read(id, cursor)` resumes after it.
   - `read("w_nope")` returns `null`.
   - `startTrigger` is called once on the first `add` and its `stop` once when `remove` brings `size` to 0. Constructing a registry never calls it.
 - [ ] **Step 2: Run the tests and confirm they fail.** Run `pnpm --filter @mgcrea/mcp-apple-core test -- watches`. Expected: FAIL, module not found.
-- [ ] **Step 3: Implement `watches.ts`.** `tick` scans from `head - 1` so the row sitting at the remembered head is re-read. It is dropped only if its key equals the remembered head key. It loops `since` in `scanLimit` batches until a batch comes back short, then remembers the new head and head key.
+- [ ] **Step 3: Implement `watches.ts`.** `tick` loops `since(mark, scanLimit)` in batches until a batch comes back short, then sets the mark to the last cursor scanned. If `head()` is below the mark the store was rebuilt, so it resets the mark and notifies nothing.
 - [ ] **Step 4: Run the tests and confirm they pass.** Same command. Expected: PASS.
 - [ ] **Step 5: Commit.**
 
@@ -264,6 +264,7 @@ export const isMailRunning: (exec?: ExecImpl) => Promise<boolean>; // `/usr/bin/
   - `arrivalsAfter(101, 10)` on the fixture returns rowids 102 onwards, ascending, with sender joined. `headRowid()` equals the max seeded ROWID.
   - The source marks `excluded: true` on a row in `Sent Messages`, and on a row in `[Gmail]/All Mail` whose sender is `me@icloud.com` when `ownAddresses` holds `ME@icloud.com`. An inbox row from `sam@example.com` is not excluded.
   - With `mailboxRowids: [2]`, every row outside mailbox 2 is excluded.
+  - A test pins that the fixture's `messages` table is `AUTOINCREMENT`: a deleted top row's id is not reused by the next insert.
   - `key` is the row's `global_message_id`. `ref` is built the way search results build theirs (`client/ref.ts`), and `dateReceived` is rendered the way search renders it.
   - `isMailRunning` resolves true on exit 0 and false on exit 1, with an injected `exec`.
 - [ ] **Step 2: Run the tests and confirm they fail.** Run `pnpm --filter @mgcrea/mcp-apple-mail test -- watch`. Expected: FAIL.
@@ -346,7 +347,7 @@ export class MessagesArrivalSource implements ArrivalSource<MessageArrival> {
 - [ ] **Step 1: Write the failing tests.**
   - `arrivalsAfter` returns rows past the cursor, ascending, with `handle` joined.
   - The source marks `excluded: true` on `is_from_me = 1` rows and on tapbacks (`associated_message_type != 0`).
-  - `key` is the message `guid`, and the reused-ROWID case from Task 2 holds against a real table: delete the top row, insert a new one, and check that the new row is reported.
+  - `key` is the message `guid`. A test pins that the fixture's `message` table is `AUTOINCREMENT`: a deleted top row's id is not reused by the next insert.
   - No arrival carries a `text` field, even for a row whose `text` column is set. The body stays behind `get_message`.
 - [ ] **Step 2: Run the tests and confirm they fail.** Run `pnpm --filter @mgcrea/mcp-apple-messages test -- watch`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Reuse `#messageColumns()` and `#joins()` with `WHERE m."ROWID" > ? ORDER BY m."ROWID" LIMIT ?`.

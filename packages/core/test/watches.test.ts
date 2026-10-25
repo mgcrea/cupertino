@@ -39,7 +39,7 @@ const ids = () => {
   return () => `w_${String(++n).padStart(8, "0")}`;
 };
 
-const setup = (opts: { startTrigger?: never } = {}) => {
+const setup = () => {
   const store = makeSource();
   const onUpdate = vi.fn();
   const registry = new WatchRegistry({
@@ -47,7 +47,6 @@ const setup = (opts: { startTrigger?: never } = {}) => {
     source: store.source,
     onUpdate,
     mintId: ids(),
-    ...opts,
   });
   return { ...store, onUpdate, registry };
 };
@@ -131,32 +130,62 @@ describe("WatchRegistry.tick", () => {
   });
 
   it("advances past excluded rows without matching them", () => {
-    const { registry, push, onUpdate, source } = setup();
+    const { registry, push, onUpdate } = setup();
     registry.add(jo);
     push("jo@acme.com", { excluded: true });
     registry.tick();
-    expect(onUpdate).not.toHaveBeenCalled();
-    const since = vi.spyOn(source, "since");
     registry.tick();
     expect(onUpdate).not.toHaveBeenCalled();
-    // The second tick restarts one row early, never at the beginning.
-    expect(since.mock.calls[0]?.[0]).toBe(0);
     push("jo@acme.com");
     registry.tick();
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("sees a row that reused the head cursor", () => {
-    const { registry, push, rows, deleteAt, onUpdate } = setup();
+  it("resets without notifying when the store was rebuilt with lower cursors", () => {
+    const { registry, push, rows, onUpdate } = setup();
     for (let i = 0; i < 10; i++) push("noise@x.com");
-    expect(rows.at(-1)?.key).toBe("k10");
     registry.add(jo);
-    deleteAt(10);
-    rows.push({ cursor: 10, key: "k10b", sender: "jo@acme.com" });
+    rows.length = 0;
+    for (let i = 0; i < 3; i++) push("jo@acme.com");
+    registry.tick();
+    expect(onUpdate).not.toHaveBeenCalled();
+    push("jo@acme.com");
+    registry.tick();
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires once for a match in the second scan batch", () => {
+    const { registry, push, onUpdate } = setup();
+    registry.add(jo);
+    for (let i = 0; i < 1200; i++) push("noise@x.com");
+    push("jo@acme.com");
     registry.tick();
     expect(onUpdate).toHaveBeenCalledTimes(1);
     registry.tick();
     expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires from an empty store", () => {
+    const { registry, push, onUpdate } = setup();
+    const watch = registry.add(jo);
+    expect(watch.createdAt).toBe(0);
+    push("jo@acme.com");
+    registry.tick();
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(registry.read(watch.id)?.messages).toHaveLength(1);
+  });
+
+  it("keeps notifying the other watches when a listener throws", () => {
+    const { registry, push, onUpdate } = setup();
+    registry.add(jo);
+    const b = registry.add(jo);
+    onUpdate.mockImplementationOnce(() => {
+      throw new Error("listener");
+    });
+    push("jo@acme.com");
+    expect(() => registry.tick()).not.toThrow();
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+    expect(onUpdate).toHaveBeenLastCalledWith(b.uri);
   });
 
   it("does not fire for rows that predate the watch", () => {
@@ -200,6 +229,16 @@ describe("WatchRegistry.read", () => {
     expect(rest?.more).toBe(false);
   });
 
+  it("leaves excluded rows out", () => {
+    const { registry, push } = setup();
+    const watch = registry.add(jo);
+    push("jo@acme.com", { excluded: true });
+    push("jo@acme.com");
+    const got = registry.read(watch.id);
+    expect(got?.messages.map((m) => m.cursor)).toEqual([2]);
+    expect(got?.cursor).toBe(2);
+  });
+
   it("returns null for an unknown id", () => {
     const { registry } = setup();
     expect(registry.read("w_nope")).toBeNull();
@@ -228,6 +267,21 @@ describe("WatchRegistry trigger", () => {
     expect(registry.size).toBe(0);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(registry.remove(b.id)).toBe(false);
+  });
+
+  it("stops the trigger on close", () => {
+    const stop = vi.fn();
+    const store = makeSource();
+    const registry = new WatchRegistry({
+      surface: "mail",
+      source: store.source,
+      onUpdate: vi.fn(),
+      startTrigger: () => ({ stop }),
+    });
+    registry.add(jo);
+    registry.close();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(registry.size).toBe(0);
   });
 
   it("ticks when the trigger fires", () => {

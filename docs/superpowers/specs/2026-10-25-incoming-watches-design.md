@@ -129,9 +129,11 @@ One watcher per server process, started by the first watch and stopped by the la
   newest mail is precisely what it misses. If only `immutable` opens, the watch tool refuses with
   that reason rather than watching blind.
 - **Cursor:** arrival order is ROWID order, which is what "came in" means. Mail can sync an old
-  message late, and that should still fire, so `date_received` is not the cursor. SQLite reuses the
-  top ROWID if that row is deleted before the next insert. The watcher keeps the refs of the last
-  poll's rows, so a reused id is compared by ref and not silently skipped.
+  message late, and that should still fire, so `date_received` is not the cursor. The table is
+  declared `INTEGER PRIMARY KEY AUTOINCREMENT` (`packages/mail/test/fixtures/envelope-index.sql`),
+  so SQLite never reuses a ROWID, even after the newest row is deleted, and a cursor past the last
+  ROWID seen cannot miss an arrival. If the index is rebuilt with lower ROWIDs (a re-index), the
+  watcher sees the head below its cursor, resets to the new head and notifies nothing.
 - **Mail has to be running.** The index only changes when Mail.app fetches. The `watch` result says
   so when Mail is not running, rather than staying quiet.
 
@@ -143,10 +145,11 @@ The same shape on `chat.db`: `apple_messages_watch({ from: string[] })`, with
 - `from` is handles, resolved by the same resolver `handles` already goes through in `store.ts`.
   `domains` applies to email handles only.
 - `is_from_me = 0`, and tapbacks (`associated_message_type != 0`) are excluded by default.
-- ROWIDs are reused constantly here (`ref.ts`), so the dedup set is by `guid`, which the refs
-  already use.
+- `message` is also `INTEGER PRIMARY KEY AUTOINCREMENT` (`packages/messages/test/fixtures/chat-db.sql`),
+  so the same ROWID cursor and the same rebuild guard apply. The row's `key` is its `guid`, which
+  the refs already use.
 
-The watcher, the handle table, the cursor/dedup logic and the legacy subscribe bookkeeping live in
+The watcher, the handle table, the cursor logic and the legacy subscribe bookkeeping live in
 core (`packages/core/src/watches.ts`), so the second surface is mostly a query and a filter.
 
 ### Switches
