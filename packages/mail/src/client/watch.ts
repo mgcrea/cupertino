@@ -76,17 +76,40 @@ export type MailArrivalSourceOptions = {
    * how `local://` mailboxes and accounts hidden by the allowlist drop out.
    */
   lookup: MailboxLookup;
+  /**
+   * Every mailbox rowid the lookup was built from, resolved or not. A row in a
+   * mailbox outside it was created since, and is what `holdNewMailboxes` holds.
+   */
+  knownMailboxes?: ReadonlySet<number> | undefined;
 };
 
 export class MailArrivalSource implements ArrivalSource<MailArrival> {
   readonly #index: EnvelopeIndex;
   readonly #own: Set<string>;
   readonly #lookup: MailboxLookup;
+  readonly #known: ReadonlySet<number> | undefined;
+  #held = false;
+
+  /**
+   * While set, `since` stops before the first row whose mailbox is not among
+   * `knownMailboxes`, so the cursor stays below a row the lookup cannot judge
+   * yet. The watch service sets it around a tick, refreshes when `takeHeld()`
+   * says it stopped, and ticks again; a read never sees it set.
+   */
+  holdNewMailboxes = false;
 
   constructor(opts: MailArrivalSourceOptions) {
     this.#index = opts.index;
     this.#own = new Set([...opts.ownAddresses].map((a) => a.trim().toLowerCase()));
     this.#lookup = opts.lookup;
+    this.#known = opts.knownMailboxes;
+  }
+
+  /** Whether a scan held back since the last call, and clear it. */
+  takeHeld(): boolean {
+    const held = this.#held;
+    this.#held = false;
+    return held;
   }
 
   head(): number {
@@ -94,7 +117,16 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
   }
 
   since(after: number, limit: number): MailArrival[] {
-    return this.#index.arrivalsAfter(after, limit).map((r) => {
+    let scanned = this.#index.arrivalsAfter(after, limit);
+    const known = this.#known;
+    if (this.holdNewMailboxes && known) {
+      const at = scanned.findIndex((r) => !known.has(r.mailboxRowid));
+      if (at >= 0) {
+        scanned = scanned.slice(0, at);
+        this.#held = true;
+      }
+    }
+    return scanned.map((r) => {
       const where = this.#lookup(r.mailboxRowid);
       const sender = r.senderAddress?.trim().toLowerCase() ?? null;
       // Which mailboxes a row is "in" is the watch's question, not the source's:

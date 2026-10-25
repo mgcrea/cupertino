@@ -81,7 +81,10 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     // long-lived host (a test, an embedder) from keeping a timer and two watchers
     // after the connection ends.
     // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event.
-    server.server.onclose = () => registry.close();
+    server.server.onclose = () => {
+      registry.close();
+      service.close();
+    };
   }
 
   withLazyTools(

@@ -188,6 +188,7 @@ describe("WatchRegistry.tick", () => {
     expect(since).toHaveBeenCalledTimes(10);
     expect(since.mock.calls.at(-1)?.[0]).toBe(90);
     expect(onUpdate).toHaveBeenCalledExactlyOnceWith(a.uri);
+    expect(registry.mark).toBe(100);
 
     since.mockClear();
     registry.tick();

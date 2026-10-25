@@ -177,9 +177,10 @@ describe("apple_mail_watch", () => {
     expect(one.isError).toBeFalsy();
     expect(two.isError).toBeFalsy();
     expect(json(one).watch).not.toBe(json(two).watch);
-    // One setup asks for the index twice: its own open, and the mailbox lookup. A setup
-    // per watch would make it four.
-    expect(index).toHaveBeenCalledTimes(2);
+    // One setup asks the client for its index once, to check it opens and is not
+    // immutable; the watch then reads through a handle of its own. A setup per watch
+    // would make it two.
+    expect(index).toHaveBeenCalledTimes(1);
   });
 
   it("refuses when the index only opens immutable, naming the WAL", async () => {

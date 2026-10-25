@@ -280,6 +280,14 @@ export class WatchRegistry<R extends ArrivalRow> {
     return this.#watches.size;
   }
 
+  /**
+   * The highest cursor already scanned. A source compares its head to this to
+   * know whether the next tick has rows to judge, before paying to prepare them.
+   */
+  get mark(): number {
+    return this.#mark;
+  }
+
   add(filter: WatchFilter): Watch {
     if (this.#watches.size >= this.#maxWatches) {
       throw new PreconditionError(

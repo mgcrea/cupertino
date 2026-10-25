@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAIL_SURFACE, MailNotRunningError } from "../src/client/errors.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
+import { decodeRef } from "../src/client/ref.js";
 import type { MailArrival } from "../src/client/watch.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
@@ -176,123 +177,264 @@ describe("per-watch mailboxes", () => {
   });
 });
 
-describe("MailWatchService freshness", () => {
-  it("picks up a mailbox created after the watch started, once the TTL has passed", async () => {
-    const fx = copyIndex();
-    const config = loadConfig({
-      APPLE_MAIL_ENVELOPE_INDEX: fx.path,
-      APPLE_MAIL_MAILBOX_CACHE_TTL_MS: "1000",
-    });
-    const client = new AppleMailClient({ config, osascript: runner() });
-    let clock = 1_000_000;
-    const service = new MailWatchService({ client, config, now: () => clock });
-    await service.ensure();
+/** A runner that counts `LIST_ACCOUNTS`, the one osascript a watch can cost, and can fail it. */
+const countingRunner = () => {
+  const state = { listAccounts: 0, open: true };
+  const run: OsascriptRunner = {
+    run: vi.fn(async (script: string) => {
+      if (!script.includes("a.emailAddresses()")) return [];
+      state.listAccounts += 1;
+      if (!state.open) throw new MailNotRunningError(MAIL_SURFACE);
+      return ACCOUNTS;
+    }) as OsascriptRunner["run"],
+  };
+  return { state, run };
+};
 
+/**
+ * A service over `path` with a registry bound to it, the way `createServer`
+ * wires them, and a clock the test moves. The clock is `Date` itself, faked, so
+ * the client's own account cache ages with the service's TTL as it does live.
+ */
+const serviceOn = (
+  path: string,
+  opts: { ttlMs?: number; isMailRunning?: () => Promise<boolean> } = {},
+) => {
+  // Before anything is built: the client captures `Date.now` when it is constructed.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const config = loadConfig({
+    APPLE_MAIL_ENVELOPE_INDEX: path,
+    APPLE_MAIL_MAILBOX_CACHE_TTL_MS: String(opts.ttlMs ?? 60_000),
+  });
+  const counted = countingRunner();
+  const warn = vi.fn();
+  const client = new AppleMailClient({ config, osascript: counted.run, ax: null });
+  const clock = {
+    advance: (ms: number) => vi.setSystemTime(Date.now() + ms),
+  };
+  const service = new MailWatchService({
+    client,
+    config,
+    logger: { warn },
+    isMailRunning: opts.isMailRunning ?? running,
+  });
+  const onUpdate = vi.fn();
+  const registry = new WatchRegistry<MailArrival>({
+    surface: "mail",
+    source: service.source,
+    onUpdate,
+  });
+  service.bind(registry);
+  cleanups.push(() => {
+    registry.close();
+    service.close();
+    vi.useRealTimers();
+  });
+  const trigger = () => service.onTrigger(() => registry.tick());
+  const warned = (pattern: RegExp) =>
+    warn.mock.calls.filter(([message]) => pattern.test(String(message))).length;
+  return { client, service, registry, onUpdate, runner: counted.state, clock, trigger, warned };
+};
+
+const sam = normalizeFilter({ from: ["sam@example.com"] });
+
+/** A tick that fails the way a locked index does. */
+const busy = () => {
+  throw new Error("SQLITE_BUSY");
+};
+
+describe("MailWatchService: what a trigger costs", () => {
+  it("runs no osascript on an idle poll, however long past the TTL", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+    for (let i = 0; i < 5; i++) {
+      w.clock.advance(10 * 60_000);
+      await w.trigger();
+    }
+    expect(w.runner.listAccounts).toBe(before);
+  });
+
+  it("refreshes past the TTL only once rows are waiting to be judged", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+    w.clock.advance(120_000);
+    await w.trigger();
+    expect(w.runner.listAccounts).toBe(before);
+    addMessage(fx.db, 30, 1);
+    await w.trigger();
+    expect(w.runner.listAccounts).toBe(before + 1);
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+  });
+
+  it("refreshes exactly once for a row in a mailbox it has never seen, then judges the row", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+
+    // Inside the TTL: only the unknown mailbox can justify a refresh.
+    w.clock.advance(500);
     fx.db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
                 VALUES (2, 'imap://${UUID}/Receipts', 0, 0)`);
     addMessage(fx.db, 20, 2);
+    await w.trigger();
+    expect(w.runner.listAccounts).toBe(before + 1);
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    expect(w.registry.read(watch.id)?.messages.map((m) => m.mailbox)).toEqual(["Receipts"]);
 
-    // Inside the TTL the lookup is the old one: the new mailbox is unknown, so excluded.
-    clock += 500;
-    await service.onTrigger(() => {});
-    expect(service.source.since(0, 10)[0]?.excluded).toBe(true);
-
-    clock += 1000;
-    await service.onTrigger(() => {});
-    const row = service.source.since(0, 10)[0];
-    expect(row?.excluded).toBeUndefined();
-    expect(row?.mailbox).toBe("Receipts");
+    addMessage(fx.db, 21, 2);
+    await w.trigger();
+    expect(w.runner.listAccounts).toBe(before + 1);
+    expect(w.onUpdate).toHaveBeenCalledTimes(2);
   });
 
+  it("does not refresh for a mailbox it knew and could not resolve", async () => {
+    const fx = copyIndex();
+    fx.db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
+                VALUES (3, 'local://Notes', 0, 0)`);
+    const w = serviceOn(fx.path);
+    await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+    addMessage(fx.db, 20, 3);
+    await w.trigger();
+    expect(w.runner.listAccounts).toBe(before);
+    expect(w.onUpdate).not.toHaveBeenCalled();
+    expect(w.registry.mark).toBe(20);
+  });
+
+  it("logs a failed refresh once until one succeeds", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    await w.service.add(sam, undefined);
+    w.runner.open = false;
+    for (const rowid of [30, 31, 32]) {
+      w.clock.advance(120_000);
+      addMessage(fx.db, rowid, 1);
+      await w.trigger();
+    }
+    expect(w.warned(/refresh/)).toBe(1);
+    w.runner.open = true;
+    w.clock.advance(120_000);
+    addMessage(fx.db, 33, 1);
+    await w.trigger();
+    w.runner.open = false;
+    w.clock.advance(120_000);
+    addMessage(fx.db, 34, 1);
+    await w.trigger();
+    expect(w.warned(/refresh/)).toBe(2);
+  });
+
+  it("logs a failing tick once until a tick succeeds", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    await w.service.add(sam, undefined);
+    await w.service.runTrigger(busy);
+    await w.service.runTrigger(busy);
+    await w.service.runTrigger(busy);
+    expect(w.warned(/tick failed/)).toBe(1);
+    await w.service.runTrigger(() => {});
+    await w.service.runTrigger(busy);
+    expect(w.warned(/tick failed/)).toBe(2);
+  });
+});
+
+describe("MailWatchService freshness", () => {
   it("never scans before the first mailbox lookup has succeeded", async () => {
     const fx = copyIndex();
-    const config = loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: fx.path });
-    let accountsAnswer = false;
-    const runnerNow: OsascriptRunner = {
-      run: vi.fn(async (script: string) => {
-        if (!script.includes("a.emailAddresses()")) return [];
-        if (!accountsAnswer) throw new MailNotRunningError(MAIL_SURFACE);
-        return ACCOUNTS;
-      }) as OsascriptRunner["run"],
-    };
-    const client = new AppleMailClient({ config, osascript: runnerNow });
     let mailUp = false;
-    const service = new MailWatchService({
-      client,
-      config,
-      now: () => 1_000_000,
-      isMailRunning: async () => mailUp,
-    });
-    const onUpdate = vi.fn();
-    const registry = new WatchRegistry<MailArrival>({
-      surface: "mail",
-      source: service.source,
-      onUpdate,
-    });
-    service.bind(registry);
+    const w = serviceOn(fx.path, { isMailRunning: async () => mailUp });
+    w.runner.open = false;
 
     // Set with Mail closed: the lookup starts empty.
-    const { watch } = await service.add(normalizeFilter({ from: ["sam@example.com"] }), undefined);
+    const { watch } = await w.service.add(sam, undefined);
     addMessage(fx.db, 40, 1);
 
     // Mail is launching: it has written the index, but cannot answer for its accounts yet.
     mailUp = true;
-    await service.onTrigger(() => registry.tick());
-    expect(onUpdate).not.toHaveBeenCalled();
+    await w.trigger();
+    expect(w.onUpdate).not.toHaveBeenCalled();
     // A read must not hand out the row as excluded-by-emptiness, nor move the cursor.
-    const early = registry.read(watch.id);
+    const early = w.registry.read(watch.id);
     expect(early?.messages).toEqual([]);
     expect(early?.cursor).toBe(watch.createdAt);
 
     // Mail answers: the same trigger path now loads, ticks, and the arrival is whole.
-    accountsAnswer = true;
-    await service.onTrigger(() => registry.tick());
-    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
-    const late = registry.read(watch.id);
+    w.runner.open = true;
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    const late = w.registry.read(watch.id);
     expect(late?.messages.map((m) => m.mailbox)).toEqual(["INBOX"]);
     expect(late?.cursor).toBe(40);
   });
 
   it("keeps working when Mail has quit and the TTL has passed", async () => {
     const fx = copyIndex();
-    // A zero TTL makes the client's own account cache stale too, so the refresh really runs.
-    const config = loadConfig({
-      APPLE_MAIL_ENVELOPE_INDEX: fx.path,
-      APPLE_MAIL_MAILBOX_CACHE_TTL_MS: "0",
-    });
-    let open = true;
-    const toggling: OsascriptRunner = {
-      run: vi.fn(async (script: string) => {
-        if (!script.includes("a.emailAddresses()")) return [];
-        if (!open) throw new MailNotRunningError(MAIL_SURFACE);
-        return ACCOUNTS;
-      }) as OsascriptRunner["run"],
-    };
-    const client = new AppleMailClient({ config, osascript: toggling });
-    let clock = 1_000_000;
-    const service = new MailWatchService({ client, config, now: () => clock });
-    await service.ensure();
+    const w = serviceOn(fx.path, { ttlMs: 0 });
+    const { watch } = await w.service.add(sam, undefined);
 
-    open = false;
-    clock += 10 * 60_000;
+    w.runner.open = false;
+    w.clock.advance(10 * 60_000);
     // A later `watch` call must not fail for want of a refresh it can do without.
-    await expect(service.ensure()).resolves.toBeUndefined();
-    const ticked = vi.fn();
-    await service.onTrigger(ticked);
-    expect(ticked).toHaveBeenCalledTimes(1);
+    await expect(w.service.ensure()).resolves.toBeUndefined();
+    addMessage(fx.db, 50, 1);
+    await w.trigger();
+    // The refresh failed, and the tick still ran on the last lookup.
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
   });
 
   it("ticks only after the refresh has settled", async () => {
     const fx = copyIndex();
-    const config = loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: fx.path });
-    const client = new AppleMailClient({ config, osascript: runner() });
-    let clock = 1_000_000;
-    const service = new MailWatchService({ client, config, now: () => clock });
-    await service.ensure();
-    clock += 120_000;
+    const w = serviceOn(fx.path);
+    await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+    w.clock.advance(120_000);
+    addMessage(fx.db, 60, 1);
     const order: string[] = [];
-    const spy = vi.spyOn(client, "mailboxLookup");
-    await service.onTrigger(() => order.push(`tick after ${spy.mock.calls.length} lookups`));
-    expect(order).toEqual(["tick after 1 lookups"]);
+    await w.service.onTrigger(() =>
+      order.push(`tick after ${w.runner.listAccounts - before} refreshes`),
+    );
+    expect(order).toEqual(["tick after 1 refreshes"]);
+  });
+});
+
+describe("MailWatchService: an index replaced underneath a watch", () => {
+  it("is reopened on the next trigger, resets without notifying, and later arrivals fire", async () => {
+    const fx = copyIndex();
+    for (let rowid = 1; rowid <= 50; rowid++) addMessage(fx.db, rowid, 1);
+    const w = serviceOn(fx.path);
+    const searchIndex = await w.client.index();
+    const { watch } = await w.service.add(sam, undefined);
+    expect(watch.createdAt).toBe(50);
+
+    // Mail re-indexes: a new file, renumbered from 1, renamed over the old one.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = new DatabaseSync(next);
+    rebuilt.exec(DDL);
+    rebuilt.exec(`
+      INSERT INTO mailboxes (ROWID, url, total_count, unread_count) VALUES
+        (1, 'imap://${UUID}/INBOX', 0, 0);
+      INSERT INTO subjects (ROWID, subject) VALUES (1, 'Hello');
+      INSERT INTO addresses (ROWID, address, comment) VALUES (1, 'sam@example.com', 'Sam');
+    `);
+    for (let rowid = 1; rowid <= 3; rowid++) addMessage(rebuilt, rowid, 1);
+    rebuilt.close();
+    renameSync(next, fx.path);
+
+    await w.trigger();
+    expect(w.onUpdate).not.toHaveBeenCalled();
+    expect(w.registry.read(watch.id)?.cursor).toBe(3);
+
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    addMessage(live, 4, 1);
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    expect(w.registry.read(watch.id)?.messages.map((m) => decodeRef(m.ref).id)).toEqual([4]);
+    // Search keeps the handle it had: only the watch reopened.
+    expect(await w.client.index()).toBe(searchIndex);
   });
 });
