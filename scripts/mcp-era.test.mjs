@@ -109,3 +109,21 @@ test("initialize after server/discover still answers, the probe instance is disc
   assertDiscovered(res[1]);
   assertInitialized(res[2]);
 });
+
+test("a server that cannot start exits non-zero and says why", async () => {
+  const child = spawn("node", [join(root, "packages", "notes", "dist", "cli.js")], {
+    env: { ...isolatedEnv(), APPLE_NOTES_MAX_RESULTS: "0" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  const timeout = setTimeout(() => child.kill(), 20_000);
+  const exited = new Promise((ok) => child.once("exit", (code) => ok(code)));
+  child.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: initialize[1], params: initialize[2] })}\n`,
+  );
+  const code = await exited;
+  clearTimeout(timeout);
+  assert.equal(code, 1);
+  assert.match(stderr, /Invalid configuration/);
+});

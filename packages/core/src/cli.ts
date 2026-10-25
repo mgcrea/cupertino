@@ -66,11 +66,23 @@ export const runStdioServer = async (opts: StdioServerOptions): Promise<void> =>
   // at its default, `serve`: `reject` would turn away every 2025-era host.
   serveStdio(
     async ({ era }) => {
-      const { server, banner } = await opts.start(logger, { era });
-      logger.warn(`${logPrefix} connected, ${era} era (${banner})`);
-      return server;
+      let started;
+      try {
+        started = await opts.start(logger, { era });
+      } catch (err) {
+        // The SDK would answer -32603 and keep serving, re-running `start` on
+        // every request. A server that cannot start should die saying why, as
+        // it did when `start` ran before the connection.
+        logger.error("fatal:", err);
+        process.exit(1);
+      }
+      logger.warn(`${logPrefix} connected, ${era} era (${started.banner})`);
+      return started.server;
     },
-    { transport: withTrimmedListing(new StdioServerTransport()) },
+    {
+      transport: withTrimmedListing(new StdioServerTransport()),
+      onerror: (err) => logger.error(err),
+    },
   );
 
   const shutdown = (signal: string): void => {
