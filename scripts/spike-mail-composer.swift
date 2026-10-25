@@ -55,9 +55,19 @@ import Foundation
 ///
 /// ## RUN 2 2026-10-25, macOS 27.0, a fresh reply to "cupertino quote probe 1103"
 ///
-/// SUBBLOCK = yes
+/// SUBBLOCK = yes, for one case only: an ASCII span ("ALPHA two") inside a single
+///   block, at the end of that block, with nothing after it. STILL UNMEASURED: a
+///   mid-block span with text after it; a span across two blocks; non-BMP
+///   characters (whether `AXTextMarkerForIndex` counts UTF-16 units or something
+///   else).
 /// HTML_PASTE = yes
-/// XUUID_STABLE = yes
+/// XUUID_STABLE = yes (across two saves of one open composer; close/reopen untested)
+///   CAUTION: `0B3369D2-E513-4069-9457-668E2F5905B7` is the SAME value the first
+///   run (RUN 2026-10-25, a different composer opened earlier that evening,
+///   replying to the same message) saw in its saved draft. So the header may
+///   identify the replied-to message, or be reused, rather than identify the
+///   draft. Do not use it as a draft address without measuring two different
+///   drafts.
 ///
 /// - **Sub-paragraph selection** (`--select-text "ALPHA two"`). In the own range
 ///   `"SPIKE ALPHA one\nSPIKE ALPHA two"` the find sat at offset 22, length 9.
@@ -115,7 +125,9 @@ let subject = option("--subject")
 let selectText = option("--select-text")
 let htmlFile = option("--paste-html")
 let htmlSource = htmlFile.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
-let htmlPlain = htmlSource.map { $0.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) }
+let htmlPlain = htmlSource.map {
+  $0.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+}
 let replacement = option("--replace") ?? htmlPlain
 let newSubject = option("--set-subject")
 let reopen = option("--reopen")
@@ -126,7 +138,8 @@ let doActivate = flag("--activate")
 let previous = NSWorkspace.shared.frontmostApplication
 
 func row(_ key: String, _ value: Any?) {
-  print("\(key.padding(toLength: 34, withPad: " ", startingAt: 0)) \(value.map { "\($0)" } ?? "nil")")
+  print(
+    "\(key.padding(toLength: 34, withPad: " ", startingAt: 0)) \(value.map { "\($0)" } ?? "nil")")
 }
 
 // MARK: - AX helpers
@@ -140,7 +153,9 @@ func param(_ el: AXUIElement, _ name: String, _ arg: CFTypeRef) -> (AXError, CFT
   let err = AXUIElementCopyParameterizedAttributeValue(el, name as CFString, arg, &out)
   return (err, out)
 }
-func children(_ el: AXUIElement) -> [AXUIElement] { (attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? [] }
+func children(_ el: AXUIElement) -> [AXUIElement] {
+  (attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+}
 func string(_ el: AXUIElement, _ name: String) -> String? { attr(el, name) as? String }
 
 func find(_ el: AXUIElement, depth: Int, where test: (AXUIElement) -> Bool) -> AXUIElement? {
@@ -171,7 +186,8 @@ guard AXIsProcessTrusted() else {
   print("AXIsProcessTrusted() is false: grant Accessibility to the terminal running this.")
   exit(1)
 }
-guard let mail = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").first
+guard
+  let mail = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").first
 else {
   print("Mail is not running.")
   exit(1)
@@ -180,18 +196,28 @@ let app = AXUIElementCreateApplication(mail.processIdentifier)
 
 if let messageId = reopen {
   // Q3. Open the draft by its Message-ID and see what kind of window arrives.
-  let before = Set(((attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []).compactMap { string($0, kAXTitleAttribute) })
+  let before = Set(
+    ((attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []).compactMap {
+      string($0, kAXTitleAttribute)
+    })
   let bare = messageId.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
-  let encoded = "%3C" + (bare.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? bare) + "%3E"
-  guard let url = URL(string: "message://\(encoded)") else { print("bad Message-ID"); exit(1) }
+  let encoded =
+    "%3C" + (bare.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? bare) + "%3E"
+  guard let url = URL(string: "message://\(encoded)") else {
+    print("bad Message-ID")
+    exit(1)
+  }
   row("opening", url.absoluteString)
   NSWorkspace.shared.open(url)
   Thread.sleep(forTimeInterval: 3)
   for window in (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? [] {
     let title = string(window, kAXTitleAttribute) ?? "?"
-    let subjectField = find(window, depth: 3) { string($0, kAXIdentifierAttribute) == "Mail.subjectField" }
-    row(before.contains(title) ? "window (already open)" : "window (NEW)",
-        "\(title) | subjectField=\(subjectField != nil)")
+    let subjectField = find(window, depth: 3) {
+      string($0, kAXIdentifierAttribute) == "Mail.subjectField"
+    }
+    row(
+      before.contains(title) ? "window (already open)" : "window (NEW)",
+      "\(title) | subjectField=\(subjectField != nil)")
   }
   exit(0)
 }
@@ -203,15 +229,18 @@ guard let subject else {
 
 let windows = (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
 let composers = windows.compactMap { window -> (AXUIElement, AXUIElement)? in
-  guard let field = find(window, depth: 3, where: { string($0, kAXIdentifierAttribute) == "Mail.subjectField" }),
-        string(field, kAXValueAttribute) == subject
+  guard
+    let field = find(
+      window, depth: 3, where: { string($0, kAXIdentifierAttribute) == "Mail.subjectField" }),
+    string(field, kAXValueAttribute) == subject
   else { return nil }
   return (window, field)
 }
 row("Mail windows", windows.count)
 row("composers titled the subject", composers.count)
 guard composers.count == 1, let (window, subjectField) = composers.first else { exit(1) }
-guard let web = find(window, depth: 10, where: { string($0, kAXRoleAttribute) == "AXWebArea" }) else {
+guard let web = find(window, depth: 10, where: { string($0, kAXRoleAttribute) == "AXWebArea" })
+else {
   print("No AXWebArea in the composer.")
   exit(1)
 }
@@ -223,8 +252,14 @@ var own: [AXUIElement] = []
 var boundaryFound = false
 for block in blocks {
   let level = (attr(block, "AXBlockQuoteLevel") as? NSNumber)?.intValue
-  if level == nil { print("a block's quote level is unreadable; stopping"); exit(1) }
-  if level! > 0 { boundaryFound = true; break }
+  if level == nil {
+    print("a block's quote level is unreadable; stopping")
+    exit(1)
+  }
+  if level! > 0 {
+    boundaryFound = true
+    break
+  }
   own.append(block)
 }
 let ownText = own.map { text(of: $0) }.joined(separator: "\n")
@@ -282,20 +317,28 @@ if doSelect {
 if let selectText {
   let ns = rangedText as NSString
   let hit = ns.range(of: selectText)
-  row("find in own range", hit.location == NSNotFound ? "NOT FOUND" : "offset \(hit.location) length \(hit.length)")
+  row(
+    "find in own range",
+    hit.location == NSNotFound ? "NOT FOUND" : "offset \(hit.location) length \(hit.length)")
   if hit.location != NSNotFound {
     // Offsets are relative to the own range; markers index the whole web area.
-    let (_, baseIdx) = param(web, "AXIndexForTextMarker", AXTextMarkerRangeCopyStartMarker(ownRange as! AXTextMarkerRange))
+    let (_, baseIdx) = param(
+      web, "AXIndexForTextMarker", AXTextMarkerRangeCopyStartMarker(ownRange as! AXTextMarkerRange))
     let base = (baseIdx as? NSNumber)?.intValue ?? 0
     row("own range start index", baseIdx.map { "\($0)" } ?? "nil")
     let (e3, m1) = param(web, "AXTextMarkerForIndex", NSNumber(value: base + hit.location))
-    let (e4, m2) = param(web, "AXTextMarkerForIndex", NSNumber(value: base + hit.location + hit.length))
+    let (e4, m2) = param(
+      web, "AXTextMarkerForIndex", NSNumber(value: base + hit.location + hit.length))
     row("AXTextMarkerForIndex start/end", "\(e3.rawValue)/\(e4.rawValue)")
     if let m1, let m2 {
       let (_, i1) = param(web, "AXIndexForTextMarker", m1)
       let (_, i2) = param(web, "AXIndexForTextMarker", m2)
-      row("AXIndexForTextMarker round trip", "\(i1.map { "\($0)" } ?? "nil") \(i2.map { "\($0)" } ?? "nil") (want \(base + hit.location) \(base + hit.location + hit.length))")
-      let sub: CFTypeRef = AXTextMarkerRangeCreate(kCFAllocatorDefault, m1 as! AXTextMarker, m2 as! AXTextMarker)
+      row(
+        "AXIndexForTextMarker round trip",
+        "\(i1.map { "\($0)" } ?? "nil") \(i2.map { "\($0)" } ?? "nil") (want \(base + hit.location) \(base + hit.location + hit.length))"
+      )
+      let sub: CFTypeRef = AXTextMarkerRangeCreate(
+        kCFAllocatorDefault, m1 as! AXTextMarker, m2 as! AXTextMarker)
       let err = AXUIElementSetAttributeValue(web, "AXSelectedTextMarkerRange" as CFString, sub)
       row("set sub-range selection", err == .success ? "ok" : "AXError \(err.rawValue)")
       Thread.sleep(forTimeInterval: 0.2)
@@ -339,14 +382,19 @@ if let replacement {
   } else {
     board.setString(replacement, forType: .string)
   }
-  let expected = selectText.map { ownText.replacingOccurrences(of: $0, with: replacement) } ?? replacement
+  let expected =
+    selectText.map { ownText.replacingOccurrences(of: $0, with: replacement) } ?? replacement
   let changeCount = board.changeCount
 
   if doActivate {
     mail.activate()
     let t = Date()
-    while NSWorkspace.shared.frontmostApplication?.processIdentifier != mail.processIdentifier, Date().timeIntervalSince(t) < 2 { Thread.sleep(forTimeInterval: 0.05) }
-    row("Mail frontmost", NSWorkspace.shared.frontmostApplication?.processIdentifier == mail.processIdentifier)
+    while NSWorkspace.shared.frontmostApplication?.processIdentifier != mail.processIdentifier,
+      Date().timeIntervalSince(t) < 2
+    { Thread.sleep(forTimeInterval: 0.05) }
+    row(
+      "Mail frontmost",
+      NSWorkspace.shared.frontmostApplication?.processIdentifier == mail.processIdentifier)
   }
   // Raise the composer and post command-V to Mail alone. The selection set above
   // is what the paste replaces; the window is raised, not the app activated.
@@ -358,12 +406,21 @@ if let replacement {
 
   var landed = false
   while Date().timeIntervalSince(t0) < 5 {
-    let nowOwn = children(web).prefix { ((attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue ?? 1) == 0 }
-    if squash(nowOwn.map { text(of: $0) }.joined(separator: "\n")) == squash(expected) { landed = true; break }
+    let nowOwn = children(web).prefix {
+      ((attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue ?? 1) == 0
+    }
+    if squash(nowOwn.map { text(of: $0) }.joined(separator: "\n")) == squash(expected) {
+      landed = true
+      break
+    }
     Thread.sleep(forTimeInterval: 0.05)
   }
-  row("paste landed", landed ? "yes, \(Int(Date().timeIntervalSince(t0) * 1000)) ms" : "NO within 5 s")
-  let quoteAfter = children(web).contains { ((attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue ?? 0) > 0 }
+  row(
+    "paste landed", landed ? "yes, \(Int(Date().timeIntervalSince(t0) * 1000)) ms" : "NO within 5 s"
+  )
+  let quoteAfter = children(web).contains {
+    ((attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue ?? 0) > 0
+  }
   row("quote still present", quoteAfter)
   row("pasteboard untouched by others", board.changeCount == changeCount)
 
@@ -383,7 +440,8 @@ var subjectSettable: DarwinBoolean = false
 AXUIElementIsAttributeSettable(subjectField, kAXValueAttribute as CFString, &subjectSettable)
 row("subject field settable", subjectSettable.boolValue)
 if let newSubject {
-  let err = AXUIElementSetAttributeValue(subjectField, kAXValueAttribute as CFString, newSubject as CFString)
+  let err = AXUIElementSetAttributeValue(
+    subjectField, kAXValueAttribute as CFString, newSubject as CFString)
   row("set subject", err == .success ? "ok" : "AXError \(err.rawValue)")
   Thread.sleep(forTimeInterval: 0.3)
   row("subject field reads", string(subjectField, kAXValueAttribute))
@@ -404,7 +462,10 @@ if doClose {
     let err = AXUIElementPerformAction(close as! AXUIElement, kAXPressAction as CFString)
     Thread.sleep(forTimeInterval: 0.5)
     let sheet = find(window, depth: 1) { string($0, kAXRoleAttribute) == "AXSheet" }
-    row("close", err == .success ? (sheet == nil ? "pressed" : "pressed, a SHEET is asking") : "AXError \(err.rawValue)")
+    row(
+      "close",
+      err == .success
+        ? (sheet == nil ? "pressed" : "pressed, a SHEET is asking") : "AXError \(err.rawValue)")
   }
 }
 
