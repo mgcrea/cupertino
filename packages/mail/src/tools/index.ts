@@ -8,6 +8,7 @@ import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerMessageTools } from "./messages.js";
 import { registerQueryTools } from "./query.js";
 import { registerSearchTools } from "./search.js";
+import { registerWatchTools, type MailWatchService } from "./watch.js";
 
 export type ToolContext = {
   /**
@@ -15,12 +16,18 @@ export type ToolContext = {
    * not merely refused, they are invisible and cannot be called at all.
    */
   allowWrites: boolean;
+  /**
+   * Present only when `allowWatches` is on. Independent of `allowWrites`: both
+   * watch tools are reads, so they register on read-only servers too.
+   */
+  watches?: MailWatchService | undefined;
 };
 
 /**
  * Register the Apple Mail tools.
  *
- * The registered set is a pure function of `allowWrites` and nothing else. In
+ * The registered set is a pure function of `allowWrites` and the `allowWatches` gate
+ * (`ctx.watches`), and nothing else. In
  * particular it does NOT vary with whether Full Disk Access is granted: that is
  * a runtime condition which can change while the process lives, and MCP clients
  * cache the tool list, so a tool that appears and disappears would leave clients
@@ -45,6 +52,7 @@ export const registerTools = (
    * docs/mail-query.md.
    */
   registerQueryTools(server, client);
+  if (ctx.watches) registerWatchTools(server, ctx.watches);
 
   if (!ctx.allowWrites) return;
 

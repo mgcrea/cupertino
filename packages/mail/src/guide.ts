@@ -56,6 +56,35 @@ Mailbox \`unread\` from the AppleScript lane is Mail's cached badge value and ca
 disagree with the truth — 0 has been observed for a mailbox holding 1618 unread
 messages. Prefer the index; results are labelled with their source.
 
+## Watches
+
+\`apple_mail_watch\` and \`apple_mail_unwatch\` exist only when the watch gate
+(\`APPLE_MAIL_ALLOW_WATCHES\`) is on. If you cannot see them, watches are off.
+
+- **A sender is required.** Give \`from\` (exact addresses) or \`domains\` (the
+  domain and its subdomains). There is no watch on all mail.
+- **The host subscribes, not you.** \`apple_mail_watch\` returns a handle and a
+  \`uri\`. Subscribing to that uri is something the host does; there is no tool
+  for it, so do not promise the user a push. A host that never subscribes still
+  has a working watch: read the uri whenever you want to know what came in.
+- **\`after\` is yours to keep.** A read returns what arrived since the watch
+  began, or since the \`after\` you pass, oldest first. The \`cursor\` it returns
+  is the last row scanned; pass it back as \`after\` next time. The server does
+  not remember what you have seen. When \`more\` is true, read again from
+  \`cursor\`.
+- **Reads carry no bodies.** Each message is envelope metadata with a \`ref\`.
+  Use \`apple_mail_get_message\` with that ref for the text.
+- **Mail has to be running.** The index only changes while Mail fetches. If it
+  was not running when you set the watch, the result says so in \`note\`.
+- **A move counts as an arrival.** Moving or archiving mail from a watched
+  sender into a watched mailbox shows up as a new message.
+- **Scope.** Sent, Drafts, Junk and Trash never match, nor does mail from the
+  account's own addresses. \`mailboxes\` narrows a watch, and every watch on one
+  connection shares a single scope. At most ten watches per connection, and they
+  end with it: after a reconnect, call \`apple_mail_watch\` again.
+- **Reading a watch that does not exist** is a not-found error, which is also what
+  a reconnect looks like.
+
 ## Writes
 
 Mutating tools are registered only when writes are enabled. If you cannot see

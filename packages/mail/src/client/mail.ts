@@ -457,6 +457,20 @@ export class AppleMailClient {
     return map;
   }
 
+  /**
+   * Index rowids for mailbox names, each resolved exactly as `searchMessages`
+   * resolves its `mailbox` filter (same lookup, same refusal naming an unknown
+   * one), then united. A watch scopes itself with this so "Archive" means the
+   * same mailboxes in both places.
+   */
+  async mailboxRowidsFor(names: string[]): Promise<number[]> {
+    const rowids = new Set<number>();
+    for (const mailbox of names) {
+      for (const id of (await this.#targetMailboxRowids({ mailbox })) ?? []) rowids.add(id);
+    }
+    return [...rowids].toSorted((a, b) => a - b);
+  }
+
   /** Resolve account/mailbox filters down to the index rowids they cover. */
   async #targetMailboxRowids(opts: {
     account?: string | undefined;

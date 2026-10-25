@@ -1,4 +1,9 @@
-import { registerSurfaceResources, withLazyTools } from "@mgcrea/mcp-apple-core";
+import {
+  createWatches,
+  registerSurfaceResources,
+  withLazyTools,
+  type Era,
+} from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/server";
 
 import { BUILD_INFO } from "./build-info.js";
@@ -9,6 +14,7 @@ import { MAIL_GUIDE } from "./guide.js";
 import { registerPrompts } from "./prompts.js";
 import { buildDiagnostics } from "./tools/diagnostics.js";
 import { registerTools } from "./tools/index.js";
+import { MailWatchService } from "./tools/watch.js";
 
 export const SERVER_NAME = BUILD_INFO.name;
 export const SERVER_VERSION = BUILD_INFO.version;
@@ -18,6 +24,10 @@ export type CreateServerOptions = {
   logger?: Logger;
   /** Injected by tests so nothing spawns a process or touches a real Mail. */
   osascript?: OsascriptRunner;
+  /** Which protocol era this instance serves. Only watches care. Default `legacy`. */
+  era?: Era;
+  /** Injected by tests so a watch never runs `pgrep`. */
+  isMailRunning?: () => Promise<boolean>;
 };
 
 export type CreatedServer = {
@@ -40,6 +50,36 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.osascript ? { osascript: opts.osascript } : {}),
   });
 
+  /*
+   * Built here, outside `withLazyTools`, because the facade registers the tools
+   * twice to sort reads from writes and `createWatches` must run once. Nothing
+   * opens until a `watch` call (see MailWatchService), so a server built for a
+   * discarded `server/discover` probe leaves nothing behind.
+   */
+  let watches: MailWatchService | undefined;
+  if (config.allowWatches) {
+    watches = new MailWatchService({
+      client,
+      config,
+      ...(opts.logger ? { logger: opts.logger } : {}),
+      ...(opts.isMailRunning ? { isMailRunning: opts.isMailRunning } : {}),
+    });
+    const service = watches;
+    const registry = createWatches(server, {
+      surface: "mail",
+      displayName: "Mail",
+      era: opts.era ?? "legacy",
+      source: service.source,
+      startTrigger: service.startTrigger,
+    });
+    service.bind(registry);
+    // The registry's trigger is `unref`ed and its watchers non-persistent, so a
+    // closing process needs no help; this just stops a long-lived host (a test,
+    // an embedder) from keeping a timer and two watchers after the connection ends.
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event; serveStdio chains whatever is set here.
+    server.server.onclose = () => registry.close();
+  }
+
   withLazyTools(
     server,
     {
@@ -48,7 +88,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       lazy: config.lazyTools,
       allowWrites: config.allowWrites,
     },
-    (target, allowWrites) => registerTools(target, client, { allowWrites }),
+    (target, allowWrites) => registerTools(target, client, { allowWrites, watches }),
   );
   /*
    * One flag, both primitives — see `exposePrompts` in core's config. A prompt

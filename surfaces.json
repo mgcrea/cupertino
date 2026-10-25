@@ -40,6 +40,14 @@
         "The V number moves between macOS releases, which is why",
         "packages/mail/src/client/locate.ts asks Mail itself first. For a",
         "status row a glob is enough; the server does the real resolution."
+      ],
+      "gates": [
+        {
+          "id": "allowWatches",
+          "envSuffix": "ALLOW_WATCHES",
+          "label": "Watch for incoming mail",
+          "description": "Lets a client register a watch on senders or domains and be notified when matching mail arrives. Off by default."
+        }
       ]
     },
     {

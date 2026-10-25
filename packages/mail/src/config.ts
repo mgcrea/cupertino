@@ -84,6 +84,18 @@ const ConfigSchema = BaseConfigSchema.extend({
    * reads as a boundary.
    */
   allowFileSend: z.boolean().default(false),
+  /**
+   * Lets a client register a watch on senders or domains and be told when
+   * matching mail arrives. Off by default, and independent of `allowWrites` and
+   * `exposePrompts`.
+   *
+   * Not a write gate: a watch only reads the Envelope Index. It is a gate because
+   * it is the one thing here that runs unasked, a file watcher in a process that
+   * otherwise has none, and because the sender filter it takes is what decides
+   * whose mail may reach a session without the model asking for it. Off, neither
+   * watch tool is registered and the server does not declare `resources.subscribe`.
+   */
+  allowWatches: z.boolean().default(false),
   mailboxCacheTtlMs: z.number().int().min(0).max(3_600_000).default(60_000),
 }).strict();
 
@@ -111,6 +123,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     bodyScanBytes: parseIntOpt(env.APPLE_MAIL_BODY_SCAN_BYTES),
     attachmentDir: trimmed(env.APPLE_MAIL_ATTACHMENT_DIR),
     allowFileSend: parseBool(env.APPLE_MAIL_ALLOW_FILE_SEND),
+    allowWatches: parseBool(env.APPLE_MAIL_ALLOW_WATCHES),
     mailboxCacheTtlMs: parseIntOpt(env.APPLE_MAIL_MAILBOX_CACHE_TTL_MS),
   };
 

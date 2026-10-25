@@ -212,7 +212,9 @@ nonisolated struct Surface: Identifiable, Hashable {
       storePermission: .fullDiskAccess,
       envPrefix: "APPLE_MAIL_",
       runtime: .node,
-      gates: []
+      gates: [
+        Surface.Gate(id: "allowWatches", envSuffix: "ALLOW_WATCHES", label: "Watch for incoming mail", description: "Lets a client register a watch on senders or domains and be notified when matching mail arrives. Off by default."),
+      ]
     ),
     Surface(
       id: "notes",
