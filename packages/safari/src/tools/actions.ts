@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
@@ -88,7 +88,7 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
           "(APPLE_SAFARI_ALLOW_CODES). In both cases `hasValue` still says whether the field " +
           "is filled, which is usually the thing you actually needed to know.",
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         limit: z
           .number()
@@ -108,7 +108,7 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
               "recognise a field; raise it to read a long textarea whole. A value cut by this " +
               "cap carries `valueTruncated: true` and its full `valueLength`.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, limit, maxValueChars }) =>
@@ -147,7 +147,7 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "Only the tab whose page_elements handed out the id can run it; `clicked` echoes that " +
           "id, so the result names the page load that acted.",
       ),
-      inputSchema: { url: urlArg, elementId: elementIdArg },
+      inputSchema: z.object({ url: urlArg, elementId: elementIdArg }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, elementId }) =>
@@ -192,14 +192,14 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "digits land in the first box or are rejected on the next render. Enumerate again " +
           "afterwards and check, rather than assuming it took.",
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         elementId: elementIdArg,
         text: z
           .string()
           .max(8_192)
           .describe("The text to put in the field. An empty string clears it."),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ url, elementId, text }) =>
@@ -218,10 +218,10 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "loads only when scrolled to, and for changing which elements report `inView`. " +
           "Re-enumerate afterwards: scrolling can add elements to a page that lazy-loads.",
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         direction: z.enum(["up", "down"]).optional().describe('Defaults to "down".'),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, direction }) =>

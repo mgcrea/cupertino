@@ -11,8 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";

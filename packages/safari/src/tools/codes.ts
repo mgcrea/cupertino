@@ -1,5 +1,5 @@
 import { extractCode } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
@@ -56,7 +56,7 @@ export const registerCodeTools = (server: McpServer, client: AppleSafariClient):
         "Passwords app, and no setting changes that.\n\n" +
         "Returning nothing is the normal result. It does NOT mean the code was missed: prefer " +
         "asking the user to trigger a new one, or check the page is the one holding the code.",
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .min(1)
@@ -71,7 +71,7 @@ export const registerCodeTools = (server: McpServer, client: AppleSafariClient):
           .max(40)
           .optional()
           .describe("Maximum passages to scan for digits. Defaults to 10."),
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, limit }) =>

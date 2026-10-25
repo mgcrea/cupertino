@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
@@ -20,13 +20,13 @@ export const registerBookmarkTools = (server: McpServer, client: AppleSafariClie
         "List Safari bookmarks, with the folder each one sits in. Needs Full Disk Access. Reads " +
         "the bookmarks file directly and does NOT require Safari to be running. Reading List " +
         "entries are excluded — use apple_safari_list_reading_list for those.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z
           .string()
           .optional()
           .describe("Case-insensitive substring match against the title, the URL and the folder."),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ query, limit }) =>
@@ -65,10 +65,10 @@ export const registerBookmarkTools = (server: McpServer, client: AppleSafariClie
         "NOT require Safari to be running. Unread state is derived from whether the entry has " +
         "ever been opened: there is no read/unread flag in Safari's data, only the presence or " +
         "absence of a last-viewed date. Entries may carry a short preview of the page text.",
-      inputSchema: {
+      inputSchema: z.object({
         unreadOnly: z.boolean().optional().describe("Only entries that have never been opened."),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ unreadOnly, limit }) =>

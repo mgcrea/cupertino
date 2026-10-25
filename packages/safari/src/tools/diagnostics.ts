@@ -1,5 +1,6 @@
 import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
 import { isQuiet } from "../client/pages.js";
@@ -170,7 +171,7 @@ export const registerDiagnosticsTools = (server: McpServer, client: AppleSafariC
         "Report which of Safari's two lanes are working, what each one can answer, and what " +
         "this server deliberately cannot do. Start here when a read returns nothing — on this " +
         "surface one lane failing while the other works is normal.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => buildDiagnostics(client)),

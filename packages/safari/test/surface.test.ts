@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import { loadConfig, type Config } from "../src/config.js";
@@ -107,11 +106,14 @@ describe("safari exposePrompts", () => {
 
   it("registers neither when it is off, and stops advertising the capability", async () => {
     const client = await connect({ APPLE_SAFARI_EXPOSE_PROMPTS: "0" });
-    // Not an empty list — the capability is never declared, so a client asking
-    // gets "method not found". That is the same shape as the write gate: the
-    // thing is absent rather than present-and-empty.
-    await expect(client.listResources()).rejects.toThrow();
-    await expect(client.listPrompts()).rejects.toThrow();
+    // Pinned on what initialize declares, not on a rejected call: the v2 client
+    // answers resources/list and prompts/list with an empty list on its own when
+    // the capability is absent, so a call proves nothing about the server. The
+    // wire is unchanged, and a 2025-era client asking still gets "method not found".
+    const caps = client.getServerCapabilities();
+    expect(caps?.resources).toBeUndefined();
+    expect(caps?.prompts).toBeUndefined();
+    expect(caps?.tools).toBeDefined();
   });
 
   it("leaves the tools untouched", async () => {

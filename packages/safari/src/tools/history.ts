@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { parseRange } from "../client/dates.js";
@@ -35,7 +35,7 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
         "Needs Full Disk Access — there is no second lane for history, so without the grant this " +
         "returns an error rather than an empty list. Results are pages (one per URL), newest " +
         "visit first, each with a visit count and a ref for apple_safari_get_page.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z
           .string()
           .optional()
@@ -47,7 +47,7 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
         from: fromArg,
         to: toArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ query, scope, from, to, limit }) =>
@@ -102,7 +102,7 @@ export const registerHistoryTools = (server: McpServer, client: AppleSafariClien
       description:
         "Get one page from browsing history by its ref, with visit counts and first/last visit " +
         "times. Needs Full Disk Access.",
-      inputSchema: { ref: historyRefArg },
+      inputSchema: z.object({ ref: historyRefArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ ref }) =>

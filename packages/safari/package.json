@@ -56,10 +56,11 @@
   },
   "dependencies": {
     "@mgcrea/mcp-apple-core": "workspace:^",
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.4.3"
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^24.10.0",
     "tsdown": "^0.22.14",
     "typescript": "^7.0.2",
