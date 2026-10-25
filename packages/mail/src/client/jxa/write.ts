@@ -783,18 +783,23 @@ export const UPDATE_DRAFT = script(
  * ## How the new draft is recognised
  *
  * Not by row id or Message-ID: MEASURED, both change on every save of a draft,
- * and Mail autosaves while the window is open. By what it holds instead:
+ * and sync renumbers rows within seconds, so a row that was there before the
+ * rebuild (an older copy, or the original itself) can come back under a new
+ * id. What renumbering leaves alone is what the row holds, so a row is the
+ * rebuilt draft only when ALL of these hold:
  *
- *   * its subject, which is `whose` can ask for cheaply;
- *   * for a reply, an `In-Reply-To` naming the original (`p.inReplyTo`), which
- *     only Mail's own reply command writes;
- *   * the opening of its text (`p.head`, the app's read-back, whitespace
- *     squashed), so an older copy of the draft is not taken for the new one;
- *   * not one of `p.before`, the rows that were already there before the
- *     composer was opened, the original among them.
+ *   * its `Date` header, which Mail stamps on every save, is at or after
+ *     `p.openedAt` (when the rebuild asked for its composer, ms) minus 2 s, the
+ *     header's whole-second resolution and some slack;
+ *   * it sits under `p.subject` (what `whose` asks for) and, for a reply, its
+ *     `In-Reply-To` names the original (`p.inReplyTo`);
+ *   * its text opens with `p.head` (the app's read-back, whitespace squashed);
+ *     and when there is no text to go by, its attachments' names are exactly
+ *     `p.files`, the files the app put in;
+ *   * it is not the original's id, nor one of `p.before`.
  *
- * The newest row passing all of them is the new draft. With none after the
- * polling, nothing is deleted.
+ * Exactly one row may pass. None after the polling, or several, and nothing
+ * is deleted: the result says two (or more) drafts now exist.
  *
  * ## Deleting the original
  *
@@ -824,49 +829,81 @@ export const COMMIT_REPLACEMENT = script(
   };
   var head = squash(p.head || "");
   var wantedReply = p.inReplyTo ? String(p.inReplyTo).toLowerCase() : null;
+  var since = Number(p.openedAt) - 2000;
+  var nameKey = function (list) {
+    return list.map(function (x) { return String(x).toLowerCase(); }).sort().join("/");
+  };
+  var wantedFiles = nameKey(p.files || []);
+  var headerOf = function (headers, name) {
+    var line = new RegExp("^" + name + ":[ \\t]*(.*(?:\\r?\\n[ \\t]+.*)*)", "im").exec(headers);
+    return line ? line[1] : null;
+  };
 
   // Is this row the rebuilt draft? Only rows that pass every check count.
   var isRebuilt = function (row) {
+    var headers = String(prop(function () { return row.allHeaders(); }, ""));
+    var stamped = Date.parse(String(headerOf(headers, "date") || "").replace(/\\s+/g, " "));
+    if (!(stamped >= since)) return false;
     if (wantedReply !== null) {
-      var headers = String(prop(function () { return row.allHeaders(); }, ""));
-      var line = /^in-reply-to:[ \\t]*(.*(?:\\r?\\n[ \\t]+.*)*)/im.exec(headers);
-      if (!line || line[1].toLowerCase().indexOf(wantedReply) === -1) return false;
+      var answers = headerOf(headers, "in-reply-to");
+      if (answers === null || answers.toLowerCase().indexOf(wantedReply) === -1) return false;
     }
     if (head) {
       var text = squash(prop(function () { return row.content(); }, ""));
       if (text.slice(0, head.length) !== head) return false;
+    } else {
+      var held = prop(function () { return row.mailAttachments(); }, []);
+      var names = [];
+      for (var a = 0; a < held.length; a++) {
+        var one = held[a];
+        names.push(String(prop(function () { return one.name(); }, "")));
+      }
+      if (nameKey(names) !== wantedFiles) return false;
     }
     return true;
   };
 
-  var newId = null;
-  for (var attempt = 0; attempt < 15 && newId === null; attempt++) {
+  var found = [];
+  for (var attempt = 0; attempt < 15 && found.length === 0; attempt++) {
     pause(0.4);
     var matches = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
     for (var k = 0; k < matches.length; k++) {
       var row = matches[k];
       var mid = prop(function () { return row.id(); }, null);
       if (mid === null || before[mid]) continue;
-      if (newId !== null && mid < newId) continue;
-      if (isRebuilt(row)) newId = mid;
+      if (isRebuilt(row)) found.push(mid);
     }
   }
 
-  if (newId === null) {
+  if (found.length === 0) {
     return ok({
       replaced: false, degraded: true, capability: "confirmation", draftsMailbox: draftsName,
       originalDeleted: false,
       reason:
-        "The new draft was filled, read back and saved in its window, but it never appeared in " +
-        draftsName + " within six seconds as a draft under \\"" + subject + "\\"" +
-        (wantedReply !== null ? " answering the original" : "") + " and holding the new text, " +
-        "so it could not be confirmed. THE ORIGINAL DRAFT WAS NOT DELETED. Two drafts now exist " +
-        "if the new one did save.",
+        "The new draft was filled, read back and saved in its window, but no draft saved since " +
+        "then appeared in " + draftsName + " within six seconds under \\"" + subject + "\\"" +
+        (wantedReply !== null ? " answering the original" : "") + " and holding the new " +
+        (head ? "text" : "files") + ", so it could not be confirmed. THE ORIGINAL DRAFT WAS NOT " +
+        "DELETED. Two drafts now exist if the new one did save.",
       hint:
         "Look in " + draftsName + " and at the open window in Mail, then delete the draft you do " +
         "not want. Nothing here will delete either of them."
     });
   }
+  if (found.length > 1) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", draftsMailbox: draftsName,
+      originalDeleted: false, candidates: found,
+      reason:
+        found.length + " drafts saved since the rebuild began under \\"" + subject + "\\" hold the " +
+        "new " + (head ? "text" : "files") + ", so which one is the rebuilt draft cannot be told. " +
+        "Nothing was deleted: the original and all of them are kept, so at least three drafts " +
+        "now exist.",
+      hint:
+        "Look in " + draftsName + " and keep the one you want. Nothing here will delete any of them."
+    });
+  }
+  var newId = found[0];
 
   // Re-found by id now, and only that: a held reference may have gone stale.
   var original = null;
@@ -880,12 +917,12 @@ export const COMMIT_REPLACEMENT = script(
   }
   if (original === null) {
     return ok({
-      replaced: true, degraded: true, newId: newId, confirmedId: newId, draftsMailbox: draftsName,
-      subject: subject, originalDeleted: false,
+      replaced: false, degraded: true, capability: "confirmation", newId: newId,
+      draftsMailbox: draftsName, subject: subject, originalDeleted: false,
       reason:
-        "The new draft is confirmed in " + draftsName + ", but the one it replaces could no " +
-        "longer be found by its id, most likely because Mail renumbered it while syncing. " +
-        "Nothing is deleted on a guess, so two drafts now exist.",
+        "A new draft holding the change was found in " + draftsName + ", but the one it " +
+        "replaces could no longer be found by its id, most likely because Mail renumbered it " +
+        "while syncing. Nothing is deleted on a guess, so two drafts now exist.",
       hint: "Look in " + draftsName + " and delete the old draft yourself."
     });
   }
@@ -895,12 +932,12 @@ export const COMMIT_REPLACEMENT = script(
     M.delete(original);
   } catch (e) {
     return ok({
-      replaced: true, degraded: true, newId: newId, confirmedId: newId, draftsMailbox: draftsName,
-      subject: subject, originalDeleted: false,
+      replaced: false, degraded: true, capability: "confirmation", newId: newId,
+      draftsMailbox: draftsName, subject: subject, originalDeleted: false,
       removeError: String(e && e.message ? e.message : e),
       reason:
-        "The new draft is confirmed in " + draftsName + ", but Mail would not delete the one it " +
-        "replaces, so two drafts now exist.",
+        "A new draft holding the change was found in " + draftsName + ", but Mail would not " +
+        "delete the one it replaces, so two drafts now exist.",
       hint: "Look in " + draftsName + " and delete the old draft yourself."
     });
   }

@@ -8,7 +8,12 @@ import type { MailAxLane, NativeComposer } from "../src/client/ax.js";
 import { COMMIT_REPLACEMENT, DRAFT_FACTS, OPEN_COMPOSER } from "../src/client/jxa/write.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
-import { rebuildDraft, type OriginalLookup, type RebuildDeps } from "../src/client/rebuild.js";
+import {
+  pickOriginal,
+  rebuildDraft,
+  type OriginalLookup,
+  type RebuildDeps,
+} from "../src/client/rebuild.js";
 import type { DraftFacts } from "../src/client/revise.js";
 import { loadConfig } from "../src/config.js";
 
@@ -71,7 +76,11 @@ const emlx = (mime: string): string => {
 };
 
 /** A draft carrying a file, in Mail's shape: the HTML split around it. */
-const withAttachment = (filename = "report.pdf"): string => {
+const withAttachment = (
+  filename = "report.pdf",
+  /** An image the QUOTED original shows, by Content-ID; stored, or stripped with no sidecar. */
+  quoteImage?: "stored" | "missing",
+): string => {
   const html1 =
     '<html><head></head><body style="overflow-wrap: break-word;"><div>Here is the report.</div>' +
     "<div><br></div></body></html>";
@@ -80,7 +89,19 @@ const withAttachment = (filename = "report.pdf"): string => {
     '<div class="AppleOriginalContents" style="direction: ltr;"><br><blockquote type="cite">' +
     "<div>On 22 Oct 2026, at 11:30, Ann Example &lt;ann@example.com&gt; wrote:</div>" +
     '<br class="Apple-interchange-newline"><div><div>Here are the quarterly numbers.</div></div>' +
+    (quoteImage ? '<div><img src="cid:chart@example.com" alt="chart"></div>' : "") +
     "</blockquote></div></body></html>";
+  const image = quoteImage
+    ? [
+        "--MIX",
+        "Content-Transfer-Encoding: base64",
+        'Content-Disposition: inline; filename="chart.png"',
+        'Content-Type: image/png; name="chart.png"',
+        "Content-Id: <chart@example.com>",
+        "",
+        quoteImage === "stored" ? Buffer.from("PNG the chart").toString("base64") : "",
+      ]
+    : [];
   return emlx(
     [
       "From: Olivier Louvignes <olivier@example.com>",
@@ -113,6 +134,7 @@ const withAttachment = (filename = "report.pdf"): string => {
       "Content-Type: text/html; charset=utf-8",
       "",
       html2,
+      ...image,
       "--MIX--",
       "--ALT--",
       "",
@@ -131,6 +153,10 @@ type Over = {
   original?: OriginalLookup;
   commit?: Record<string, unknown> | Error;
   editThrows?: boolean;
+  /** OPEN_COMPOSER fails after Mail opened a window (COMPOSER_NOT_FOUND). */
+  openThrows?: boolean;
+  /** The verb answers replaced without a reading of the text. */
+  noReadBack?: boolean;
   /** The verb refuses, or fills and verifies but cannot save. */
   editRefuses?: boolean;
   unsaved?: boolean;
@@ -186,6 +212,8 @@ const world = (over: Over = {}) => {
       for (const path of (args.attachments as string[] | undefined) ?? [])
         filesSeen.push({ path, existed: existsSync(path) });
       if (over.editThrows) throw new Error("the app went away");
+      if (over.noReadBack)
+        return { replaced: true, method: "inPlace", filesAdded: [], saved: true, note: "ok" };
       if (over.editRefuses)
         return {
           replaced: false,
@@ -220,6 +248,7 @@ const world = (over: Over = {}) => {
       calls.push({ name, params });
       if (name === "DRAFT_FACTS") return FACTS;
       if (name === "OPEN_COMPOSER") {
+        if (over.openThrows) throw new Error("Mail did not return a composer for the reply.");
         opened = { subject: String(params.subject) };
         const recipients = params.recipients as Record<string, string[]>;
         return {
@@ -292,7 +321,12 @@ describe("rebuilding a closed reply draft", () => {
       inReplyTo: ORIGINAL_ID,
       head: "BRAVO",
       before: [42],
+      files: [],
     });
+    // When the composer was asked for, which the new draft's Date header must follow.
+    const openedAt = named("COMMIT_REPLACEMENT")[0]?.params.openedAt as number;
+    expect(openedAt).toBeGreaterThan(Date.now() - 60_000);
+    expect(openedAt).toBeLessThanOrEqual(Date.now());
   });
 
   it("rebuilds a formatted draft by pasting its own HTML with its text as body", async () => {
@@ -408,6 +442,14 @@ describe("rebuilding a closed reply draft", () => {
     expect(timeline).not.toContain("OPEN_COMPOSER");
   });
 
+  it("refuses when the original is only in another account than the draft's", async () => {
+    const { deps, timeline } = world({ original: { missing: "other-account" } });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS, body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "original" });
+    expect(String(result.reason)).toMatch(/only in another account/);
+    expect(timeline).not.toContain("OPEN_COMPOSER");
+  });
+
   it("refuses when the index cannot look a message up by its Message-ID", async () => {
     const { deps, timeline } = world({ original: { missing: "column" } });
     const result = await rebuildDraft(deps, TARGET, { facts: FACTS, body: "BRAVO" });
@@ -467,9 +509,59 @@ describe("rebuilding a closed reply draft", () => {
 
   it("removes the temp directory when a step throws", async () => {
     const { deps, filesSeen } = world({ path: withAttachment(), editThrows: true });
-    await expect(rebuildDraft(deps, TARGET, { facts: FACTS })).rejects.toThrow(/went away/);
+    await rebuildDraft(deps, TARGET, { facts: FACTS });
     expect(filesSeen).toHaveLength(1);
     expect(existsSync(dirname((filesSeen[0] as { path: string }).path))).toBe(false);
+  });
+
+  /* A throw once a window exists is a refusal that names the window, never a bare error. */
+  it("refuses, naming the open window, when the app throws mid-fill", async () => {
+    const { deps, timeline } = world({ path: withAttachment(), editThrows: true });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS });
+    expect(result).toMatchObject({
+      replaced: false,
+      capability: "confirmation",
+      composer: "mc-new",
+    });
+    expect(String(result.reason)).toMatch(/went away/);
+    expect(String(result.reason)).toMatch(/original draft was not changed/i);
+    expect(String(result.hint)).toMatch(/without saving/i);
+    expect(timeline).not.toContain("COMMIT_REPLACEMENT");
+  });
+
+  it("refuses with the window unknown when Mail fails after opening it", async () => {
+    const { deps, timeline } = world({ openThrows: true });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS, body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer", composer: "unknown" });
+    expect(String(result.reason)).toMatch(/did not return a composer/);
+    expect(String(result.hint)).toMatch(/without saving/i);
+    expect(timeline).not.toContain("edit");
+  });
+
+  /* Nothing is reported as the draft's text that the app did not read back. */
+  it("refuses when the app gives back no reading of the text", async () => {
+    const { deps, timeline } = world({ noReadBack: true });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS, body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(String(result.hint)).toMatch(/without saving/i);
+    expect(timeline).not.toContain("COMMIT_REPLACEMENT");
+  });
+
+  /* The quote's images are the original's: the new reply quotes them itself. */
+  it("does not re-attach an image the quoted original shows", async () => {
+    const { deps, edits } = world({ path: withAttachment("report.pdf", "stored") });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS });
+    expect(result).toMatchObject({ replaced: true, attachmentsKept: 1 });
+    const args = edits[0] as { attachments: string[] };
+    expect(args.attachments.map((p) => basename(p))).toEqual(["report.pdf"]);
+  });
+
+  it("is not stopped by a quoted image that is not stored on this Mac", async () => {
+    const { deps, edits } = world({ path: withAttachment("report.pdf", "missing") });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS });
+    expect(result).toMatchObject({ replaced: true });
+    const args = edits[0] as { attachments: string[] };
+    expect(args.attachments.map((p) => basename(p))).toEqual(["report.pdf"]);
   });
 
   /* Unfilled or unsaved new draft, untouched original: the commit is never reached. */
@@ -630,5 +722,40 @@ describe("the route a closed draft takes through updateDraft", () => {
     );
     expect(scripts).toEqual(["DRAFT_FACTS"]);
     expect(vi.mocked(lane.editComposer)).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * Which copy of the original to reply to. Mail sends a reply from the account
+ * the original is in, so only a copy in the draft's own account will do.
+ */
+describe("picking the original", () => {
+  const OTHER = "0F5CB1CC-7912-4AAE-90EA-4D28AD6DD98D";
+  const places = new Map([
+    [1, { accountUuid: OTHER, mailbox: "INBOX" }],
+    [2, { accountUuid: TARGET.accountUuid, mailbox: "Archive" }],
+  ]);
+  const place = (mailbox: number) => places.get(mailbox);
+
+  it("prefers a row in the draft's own account over an earlier one elsewhere", () => {
+    const rows = [
+      { rowid: 501, mailbox: 1 },
+      { rowid: 502, mailbox: 2 },
+    ];
+    expect(pickOriginal(rows, place, TARGET.accountUuid)).toEqual({
+      ref: { accountUuid: TARGET.accountUuid, mailbox: "Archive", id: 502 },
+    });
+  });
+
+  it("says so when the original is only in another account", () => {
+    expect(pickOriginal([{ rowid: 501, mailbox: 1 }], place, TARGET.accountUuid)).toEqual({
+      missing: "other-account",
+    });
+  });
+
+  it("is not found when no row maps onto a mailbox at all", () => {
+    expect(pickOriginal([{ rowid: 503, mailbox: 9 }], place, TARGET.accountUuid)).toEqual({
+      missing: "not-found",
+    });
   });
 });

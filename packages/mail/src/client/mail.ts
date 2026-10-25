@@ -45,7 +45,7 @@ import {
   type OsascriptRunner,
   withBusyRetry,
 } from "./osascript.js";
-import { rebuildDraft, type OriginalLookup } from "./rebuild.js";
+import { pickOriginal, rebuildDraft, type OriginalLookup } from "./rebuild.js";
 import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref.js";
 import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
 
@@ -1401,7 +1401,8 @@ export class AppleMailClient {
               ? { found: true, path: located.path }
               : { found: false, explain: located.explain };
           },
-          findOriginal: (messageId) => this.#findByMessageIdHeader(messageId),
+          findOriginal: (messageId, accountUuid) =>
+            this.#findByMessageIdHeader(messageId, accountUuid),
         },
         decodedTarget,
         {
@@ -1451,23 +1452,18 @@ export class AppleMailClient {
    * The message a reply answers, by the Message-ID in its `In-Reply-To`.
    *
    * Through the Envelope Index's `message_global_data.message_id_header`, and
-   * the first row whose mailbox maps onto an account and mailbox Mail can
-   * script. Says which of the three ways it failed, because a rebuild refuses
-   * on each and the reason is what the person acts on.
+   * only a row in the draft's own account (`pickOriginal`). Says which way it
+   * failed, because a rebuild refuses on each and the reason is what the person
+   * acts on.
    */
-  async #findByMessageIdHeader(messageId: string): Promise<OriginalLookup> {
+  async #findByMessageIdHeader(messageId: string, accountUuid: string): Promise<OriginalLookup> {
     const index = await this.index();
     if (!index) return { missing: "index" };
     const rows = index.findByMessageIdHeader(messageId);
     if (rows === null) return { missing: "column" };
     if (rows.length === 0) return { missing: "not-found" };
     const lookup = await this.#mailboxLookup();
-    for (const row of rows) {
-      const entry = lookup.get(row.mailbox);
-      if (entry)
-        return { ref: { accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid } };
-    }
-    return { missing: "not-found" };
+    return pickOriginal(rows, (mailbox) => lookup.get(mailbox), accountUuid);
   }
 
   /**

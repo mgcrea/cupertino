@@ -59,12 +59,20 @@ type MailBehaviour = {
   /** What the replacement holds once it is in Drafts. */
   replacementHeaders?: string;
   replacementContent?: string;
+  /** The names of the files the replacement holds. */
+  replacementFiles?: string[];
   /** The original's id finds nothing once the polling has begun: Mail renumbered it. */
   originalGoneAfterPolls?: boolean;
 };
 
 /** A row in the Drafts mailbox. */
-type Row = { id: number; subject: string; headers?: string; content?: string };
+type Row = { id: number; subject: string; headers?: string; content?: string; files?: string[] };
+
+/** A `Date` header just after the rebuild opened its composer, and one long before it. */
+const SAVED_NOW = "Date: Sat, 25 Oct 2026 10:00:03 +0000\r\n";
+const SAVED_EARLIER = "Date: Sat, 25 Oct 2026 09:00:00 +0000\r\n";
+/** When the rebuild opened its composer, as `COMMIT_REPLACEMENT` is told. */
+const OPENED_AT = Date.parse("2026-10-25T10:00:00Z");
 
 const ORIGINAL_ID = 42;
 
@@ -79,6 +87,7 @@ const row = (r: Row) => ({
   subject: () => r.subject,
   allHeaders: () => r.headers ?? "",
   content: () => r.content ?? "",
+  mailAttachments: () => (r.files ?? []).map((name) => ({ name: () => name })),
 });
 
 const runScript = (
@@ -102,8 +111,9 @@ const runScript = (
     attachFails = false,
     citationStrips = true,
     alreadySaved = false,
-    replacementHeaders = "From: me@example.com\r\nIn-Reply-To: <abc@example.com>\r\n",
+    replacementHeaders = `From: me@example.com\r\n${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
     replacementContent = "The revised numbers.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
+    replacementFiles = [],
     originalGoneAfterPolls = false,
   } = behaviour;
 
@@ -155,6 +165,7 @@ const runScript = (
               subject: state.composed?.subject ?? subject,
               headers: replacementHeaders,
               content: replacementContent,
+              files: replacementFiles,
             });
           }
         }
@@ -597,6 +608,8 @@ describe("committing a rebuilt draft", () => {
     inReplyTo: "<abc@example.com>",
     head: "The revised numbers.",
     before: [42],
+    openedAt: OPENED_AT,
+    files: [],
   };
 
   it("deletes the original once the rebuilt reply is confirmed", () => {
@@ -608,7 +621,7 @@ describe("committing a rebuilt draft", () => {
   it("confirms a draft that is not a reply by its subject and text", () => {
     const { envelope, state } = runScript(
       { ...commit, inReplyTo: null },
-      { alreadySaved: true, replacementHeaders: "From: me@example.com\r\n" },
+      { alreadySaved: true, replacementHeaders: `From: me@example.com\r\n${SAVED_NOW}` },
       COMMIT_REPLACEMENT,
     );
     expect(envelope.data).toMatchObject({ replaced: true, newId: 99 });
@@ -636,7 +649,7 @@ describe("committing a rebuilt draft", () => {
           {
             id: 50,
             subject: "Quarterly numbers",
-            headers: "In-Reply-To: <abc@example.com>\r\n",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
             content: "The revised numbers.",
           },
         ],
@@ -661,10 +674,118 @@ describe("committing a rebuilt draft", () => {
   it("does not take a draft answering another message", () => {
     const { envelope, state } = runScript(
       commit,
-      { alreadySaved: true, replacementHeaders: "In-Reply-To: <other@example.com>\r\n" },
+      {
+        alreadySaved: true,
+        replacementHeaders: `${SAVED_NOW}In-Reply-To: <other@example.com>\r\n`,
+      },
       COMMIT_REPLACEMENT,
     );
     expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /*
+   * Sync renumbers rows, so an id missing from `before` proves nothing: an older
+   * copy, or the original itself, can come back under a new id holding the same
+   * text. What tells them apart is when they were saved.
+   */
+  it("does not take a renumbered older copy holding the same text", () => {
+    const { envelope, state } = runScript(
+      commit,
+      {
+        otherDrafts: [
+          {
+            id: 120,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_EARLIER}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The revised numbers.",
+          },
+        ],
+        savedAfterPolls: Infinity,
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("does not take the original back under a new id", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "The numbers as they stand." },
+      {
+        otherDrafts: [
+          {
+            id: 121,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_EARLIER}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:",
+          },
+        ],
+        savedAfterPolls: Infinity,
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* With no text to go by, the files are what the new draft holds. */
+  it("confirms a draft with no text by the files it holds", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "", files: ["report.pdf"] },
+      {
+        alreadySaved: true,
+        replacementContent: "",
+        replacementFiles: ["report.pdf"],
+        otherDrafts: [
+          {
+            id: 130,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+            content: "",
+            files: ["notes.txt"],
+          },
+        ],
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: true, newId: 99, originalDeleted: true });
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
+  });
+
+  it("does not confirm a draft with no text whose files are not the ones put in", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "", files: ["report.pdf"] },
+      { alreadySaved: true, replacementContent: "", replacementFiles: [] },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("deletes nothing when two drafts could each be the new one", () => {
+    const { envelope, state } = runScript(
+      commit,
+      {
+        alreadySaved: true,
+        otherDrafts: [
+          {
+            id: 140,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The revised numbers.",
+          },
+        ],
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({
+      replaced: false,
+      capability: "confirmation",
+      originalDeleted: false,
+    });
+    expect([...envelope.data.candidates].toSorted((a, b) => a - b)).toEqual([99, 140]);
+    expect(envelope.data.reason).toMatch(/cannot be told/);
     expect(state.deleted).toEqual([]);
   });
 
@@ -675,8 +796,10 @@ describe("committing a rebuilt draft", () => {
       { alreadySaved: true, originalGoneAfterPolls: true },
       COMMIT_REPLACEMENT,
     );
-    expect(envelope.data).toMatchObject({ replaced: true, originalDeleted: false, newId: 99 });
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false, newId: 99 });
     expect(envelope.data.reason).toMatch(/two drafts now exist/i);
+    // Nothing was deleted, so nothing is called confirmed.
+    expect(envelope.data.reason).not.toMatch(/confirmed/i);
     expect(state.deleted).toEqual([]);
   });
 
@@ -686,7 +809,7 @@ describe("committing a rebuilt draft", () => {
       { alreadySaved: true },
       COMMIT_REPLACEMENT,
     );
-    expect(envelope.data).toMatchObject({ replaced: true, originalDeleted: false });
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
     expect(state.deleted).toEqual([]);
   });
 
@@ -696,8 +819,9 @@ describe("committing a rebuilt draft", () => {
       { alreadySaved: true, deleteThrows: true },
       COMMIT_REPLACEMENT,
     );
-    expect(envelope.data).toMatchObject({ replaced: true, originalDeleted: false });
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
     expect(envelope.data.reason).toMatch(/two drafts now exist/i);
+    expect(envelope.data.reason).not.toMatch(/confirmed/i);
     expect(state.deleted).toEqual([]);
   });
 
