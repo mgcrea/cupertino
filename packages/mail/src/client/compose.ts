@@ -274,29 +274,46 @@ export type ComposeParams = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * What `awaitNewComposer` found: the one composer that appeared, several that
+ * could each be it (never picked between), or nothing in time (null).
+ */
+export type NewComposer = { handle: string } | { ambiguous: string[] };
+
+/**
  * Wait for a composer that was not there before, and return its handle.
  *
  * `before` is the handles `composers()` listed BEFORE Mail was asked to open
  * anything. That is what makes a leftover under the same subject harmless: the
  * handle is stable for the window's life, so the one that APPEARS is the one
- * this call opened, whatever it is titled. Null when nothing new shows within
- * `timeoutMs`.
+ * this call opened, whatever it is titled.
+ *
+ * A person can open a window by hand during the poll, and an empty composer
+ * gives nothing to tell theirs from ours. So the candidates are every fresh
+ * handle, narrowed to those titled `subject` when it is given (the subject
+ * `OPEN_COMPOSER` returned). Exactly one candidate is returned as `{ handle }`;
+ * more than one is `{ ambiguous }` and nothing is picked, because filling the
+ * wrong one puts a message in somebody else's window. Zero keeps polling until
+ * `timeoutMs`, then null. A fresh composer under another subject is not a
+ * candidate when a subject is given.
  *
  * Polled rather than waited for: a window existing is not the app listing it.
- * A read that fails is retried until the deadline, since a composer that has
- * just opened can be momentarily unreadable.
+ * A read that fails is retried until the deadline.
  */
 export const awaitNewComposer = async (
   lane: MailAxLane,
   before: string[],
   timeoutMs: number,
-): Promise<string | null> => {
+  subject?: string,
+): Promise<NewComposer | null> => {
   const known = new Set(before);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      const fresh = (await lane.composers()).find((c) => !known.has(c.composer));
-      if (fresh) return fresh.composer;
+      const fresh = (await lane.composers()).filter((c) => !known.has(c.composer));
+      const candidates = subject === undefined ? fresh : fresh.filter((c) => c.subject === subject);
+      if (candidates.length === 1)
+        return { handle: (candidates[0] as { composer: string }).composer };
+      if (candidates.length > 1) return { ambiguous: candidates.map((c) => c.composer) };
     } catch {
       // Retried below; the deadline decides.
     }
@@ -384,7 +401,24 @@ export const composeNatively = async (
     // handle that is absent from this list afterwards.
     const before = (await lane.composers()).map((c) => c.composer);
     subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
-    handle = await awaitNewComposer(lane, before, composerTimeoutMs);
+    const found = await awaitNewComposer(lane, before, composerTimeoutMs, subject);
+    if (found && "ambiguous" in found) {
+      return {
+        ok: false,
+        subject,
+        bodyVerified: null,
+        verifiedChars: 0,
+        sent: false,
+        note:
+          `Mail was asked to open a ${params.mode} window for "${subject}", and ` +
+          `${found.ambiguous.length} new composers titled that appeared (${found.ambiguous.join(", ")}), ` +
+          `so this path cannot tell which one it opened. Nothing was filled, pressed or sent, and ` +
+          `all of them are left open in Mail. Close the extra one, finish the other by hand, ` +
+          `then retry.` +
+          interferenceNote(await watch.check()),
+      };
+    }
+    handle = found?.handle ?? null;
   }
 
   if (!handle) {

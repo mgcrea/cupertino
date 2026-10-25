@@ -181,7 +181,27 @@ describe("awaitNewComposer", () => {
             : [composer("mc-1", "Re: lunch"), composer("mc-4", "Re: lunch")],
       }),
     });
-    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toBe("mc-4");
+    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toEqual({ handle: "mc-4" });
+    lane.close();
+  });
+
+  it("does not pick a new composer under another subject", async () => {
+    const { lane } = await laneOver({
+      mail_composers: (_a: unknown, n: number) => ({
+        composers: n < 2 ? [] : [composer("mc-7", "Something the person typed")],
+      }),
+    });
+    await expect(awaitNewComposer(lane, [], 30, "Re: lunch")).resolves.toBeNull();
+    lane.close();
+  });
+
+  it("prefers the one with the subject over a hand-opened one", async () => {
+    const { lane } = await laneOver({
+      mail_composers: {
+        composers: [composer("mc-7", "Mine"), composer("mc-8", "Re: lunch")],
+      },
+    });
+    await expect(awaitNewComposer(lane, [], 30, "Re: lunch")).resolves.toEqual({ handle: "mc-8" });
     lane.close();
   });
 
@@ -308,6 +328,53 @@ describe("composeNatively", () => {
     expect(result.note).toContain("NOT sent");
     expect(result.note).toContain("open in Mail for review");
     expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-2", save: false });
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    lane.close();
+  });
+
+  it("a compose window opened by hand during the poll, with another subject, is not picked", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? []
+              : n === 2
+                ? [composer("mc-7", "Something the person typed")]
+                : [composer("mc-7", "Something the person typed"), composer("mc-1", "Re: lunch")],
+        }),
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      { sendTimeoutMs: 50, composerTimeoutMs: 1000 },
+    );
+    expect(result.ok).toBe(true);
+    expect(edits(seen)).toHaveLength(1);
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-1" });
+    lane.close();
+  });
+
+  it("two new composers with the subject refuse to fill", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 ? [] : [composer("mc-1", "Re: lunch"), composer("mc-2", "Re: lunch")],
+        }),
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null });
+    expect(result.note).toContain("mc-1, mc-2");
+    expect(result.note).toContain("left open");
+    expect(edits(seen)).toEqual([]);
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
   });
