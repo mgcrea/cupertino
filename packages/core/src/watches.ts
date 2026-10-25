@@ -356,6 +356,8 @@ export type TriggerOptions = {
   names: string[];
   /** Quiet time after the last event before `onChange` runs. Default 500. */
   debounceMs?: number;
+  /** Longest a burst may defer `onChange`, from its first event. Default 3000. */
+  maxWaitMs?: number;
   /** Floor for a missed event: `onChange` runs this often regardless. Default 60_000. */
   pollMs?: number;
   /** Injected by tests. */
@@ -385,7 +387,11 @@ export type TriggerOptions = {
  * ## Two independent timers
  *
  * Events are debounced from the last one, because an arrival is a burst of
- * writes. The poll is separate and unconditional: `fs.watch` can drop events
+ * writes. A burst that never goes quiet (a long sync writes the `-wal` many
+ * times a second for minutes) would keep restarting that wait, and the arrivals
+ * in it would be left to the poll. So a burst also has a ceiling: `onChange`
+ * runs `maxWaitMs` after its first event however busy it still is, and the next
+ * event starts a new burst. The poll is separate and unconditional: `fs.watch` can drop events
  * (a network volume, a replaced directory, a watcher that errored), and a
  * missed event must cost one interval of latency, not an arrival never seen.
  * Both are `unref`ed and the watchers are non-persistent, so none of this keeps
@@ -399,6 +405,7 @@ export const fileTrigger =
   (onChange: () => void): { stop(): void } => {
     const { dir, names, logger } = opts;
     const debounceMs = opts.debounceMs ?? 500;
+    const maxWaitMs = opts.maxWaitMs ?? 3000;
     const pollMs = opts.pollMs ?? 60_000;
     const watch = opts.watch ?? fsWatch;
     const wanted = new Set(names);
@@ -408,6 +415,8 @@ export const fileTrigger =
     let dirWatcher: FSWatcher | undefined;
     const files = new Map<string, FSWatcher>();
     let debounce: NodeJS.Timeout | undefined;
+    /** Set on a burst's first event, cleared when the burst fires. */
+    let ceiling: NodeJS.Timeout | undefined;
 
     const warn = (path: string, err: unknown): void => {
       if (warned) return;
@@ -431,13 +440,24 @@ export const fileTrigger =
       }
     };
 
+    const settle = (): void => {
+      if (debounce) clearTimeout(debounce);
+      if (ceiling) clearTimeout(ceiling);
+      debounce = undefined;
+      ceiling = undefined;
+    };
+
     const schedule = (): void => {
       if (stopped) return;
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        debounce = undefined;
+        settle();
         fire();
-      }, debounceMs);
+      }, debounceMs).unref();
+      ceiling ??= setTimeout(() => {
+        settle();
+        fire();
+      }, maxWaitMs).unref();
     };
 
     const disarm = (name: string): void => {
@@ -495,8 +515,7 @@ export const fileTrigger =
       stop() {
         stopped = true;
         clearInterval(poll);
-        if (debounce) clearTimeout(debounce);
-        debounce = undefined;
+        settle();
         for (const name of files.keys()) disarm(name);
         try {
           dirWatcher?.close();

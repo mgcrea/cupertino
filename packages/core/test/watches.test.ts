@@ -387,6 +387,26 @@ describe("fileTrigger", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("fires 3 s after the first event of a burst that never goes quiet", () => {
+    vi.useFakeTimers();
+    const fake = makeFakeWatch();
+    const onChange = vi.fn();
+    fileTrigger({ ...base, watch: fake.watch })(onChange);
+    const wal = fake.at("/s/chat.db-wal");
+    // A long sync: an event every 100 ms for 7 s, never 500 ms of quiet.
+    const at: number[] = [];
+    onChange.mockImplementation(() => at.push(Date.now() - start));
+    const start = Date.now();
+    for (let t = 0; t < 7000; t += 100) {
+      wal.emit("change", "change", "chat.db-wal");
+      vi.advanceTimersByTime(100);
+    }
+    expect(at).toEqual([3000, 6000]);
+    // The burst ends: the debounce fires once more, 500 ms after the last event.
+    vi.advanceTimersByTime(500);
+    expect(onChange).toHaveBeenCalledTimes(3);
+  });
+
   it("watches the directory and each named file, non-persistent", () => {
     const fake = makeFakeWatch();
     fileTrigger({ ...base, watch: fake.watch })(() => {});
