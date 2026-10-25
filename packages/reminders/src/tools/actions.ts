@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleRemindersClient } from "../client/reminders.js";
@@ -30,7 +30,7 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
       description:
         "Create a reminder. With no list, it goes to the list Reminders itself treats as the " +
         "default — the same one the app would have used.",
-      inputSchema: {
+      inputSchema: z.object({
         name: z.string().min(1).describe("The reminder's title."),
         body: z.string().optional().describe("Notes attached to the reminder."),
         list: listArg,
@@ -40,7 +40,7 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
           .describe("When to actually alert, if different from the due date."),
         priority: priorityArg,
         flagged: z.boolean().optional().describe("Flag it."),
-      },
+      }),
     },
     async (args) => wrap(() => client.createReminder(args)),
   );
@@ -51,7 +51,7 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
       description:
         "Change fields on one reminder. Anything you omit is left alone. Setting `due` to a " +
         "bare day converts it to an all-day reminder; setting a date-time makes it timed.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: reminderRefArg,
         name: z.string().optional(),
         body: z
@@ -62,7 +62,7 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
         remindMe: dateArg.optional(),
         priority: priorityArg,
         flagged: z.boolean().optional(),
-      },
+      }),
     },
     async ({ ref, ...fields }) => wrap(() => client.updateReminder(ref, fields)),
   );
@@ -73,13 +73,13 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
       description:
         "Tick reminders off, or un-tick them with `completed: false`. Separate from update " +
         "because it is the common case and takes several at once.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: reminderRefsArg,
         completed: z
           .boolean()
           .optional()
           .describe("Defaults to true. Pass false to mark them not done again."),
-      },
+      }),
     },
     async ({ refs, completed }) => wrap(() => client.completeReminders(refs, completed ?? true)),
   );
@@ -92,11 +92,11 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
         "read-only on a reminder, so this is a copy followed by a delete. Each moved reminder " +
         "therefore gets a NEW ref (returned alongside the old one) and a new creation date. " +
         "The original is deleted only after the copy is confirmed.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: reminderRefsArg,
         list: z.string().min(1).describe("Target list name or id."),
         confirm: confirmArg,
-      },
+      }),
     },
     async ({ refs, list }) => wrap(() => client.moveReminders(refs, list)),
   );
@@ -107,7 +107,7 @@ export const registerActionTools = (server: McpServer, client: AppleRemindersCli
       description:
         "Delete reminders. Unlike Notes, Reminders has no Recently Deleted — this is " +
         "irreversible, so it requires an explicit confirm.",
-      inputSchema: { refs: reminderRefsArg, confirm: confirmArg },
+      inputSchema: z.object({ refs: reminderRefsArg, confirm: confirmArg }),
     },
     async ({ refs }) => wrap(() => client.deleteReminders(refs)),
   );

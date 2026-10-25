@@ -1,4 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import type { AppleRemindersClient } from "../client/reminders.js";
 import { wrap } from "./util.js";
@@ -10,7 +11,7 @@ export const registerAccountTools = (server: McpServer, client: AppleRemindersCl
       description:
         "List the Reminders accounts, with how many lists and reminders each holds. Start here " +
         "to discover account names for the other tools.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => client.accounts()),
@@ -23,7 +24,7 @@ export const registerAccountTools = (server: McpServer, client: AppleRemindersCl
         "List every Reminders list, across accounts. Lists nest inside other lists (Reminders " +
         "calls those groups), so each entry carries its depth. Each also reports its total and " +
         "incomplete counts, which is the cheapest way to see where the live work is.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => client.lists()),
