@@ -86,24 +86,45 @@ other requests, and a watch is created by a tool call. The template
 `cupertino://<surface>/watch/{id}{?after}` is registered without a list callback, so a handle is
 readable and subscribable by whoever holds the URI and never enumerable.
 
-**What a read returns.** Envelope metadata for what arrived since the watch began, or since `after`,
-oldest first, at most 50: no bodies and no message text, which stay a `get_message` call away. The
-`cursor` is the last row _scanned_, so reading again with `after=cursor` resumes exactly, and `more`
-says to. The cursor is the client's to keep; the server holds no per-client read state. An unknown
-handle is `-32602`, which is what a reconnect looks like: handles live as long as the stdio
-connection that made them, at most ten of them. A read fails like any other surface resource
-(`guardedRead`) when the store itself is unreadable.
+**What a read returns.** `watch` (the id), `filter`, `cursor`, `messages` and `more`. The messages
+are what arrived since the watch began, or since `after`, oldest first, at most 50, and carry the
+surface's fields only: Mail's `ref`, `mailbox`, `senderAddress`, `senderName`, `subject` and
+`dateReceived`; Messages' `id`, `chat`, `handle` and `date`. No bodies and no message text, which stay
+a `get_message` call away, and none of the scan's own bookkeeping. The `cursor` is the last row
+_scanned_, so reading again with `after=cursor` resumes exactly, and `more` says to. An `after` below
+where the watch began is raised to it, so a read never pages through mail that predates the watch.
+The cursor is the client's to keep; the server holds no per-client read state. An unknown handle is
+`-32602` not-found, which is what a reconnect looks like: handles live as long as the stdio
+connection that made them. A query other than one `after` (`?foo=1`, `?after=5&x=1`) is `-32602`
+too, but as a bad query, so a client is never told to re-create a watch that exists. A read fails
+like any other surface resource (`guardedRead`) when the store itself is unreadable.
+
+**Limits.** Ten watches per connection; the eleventh is refused with the count. At most 50 entries
+across `from` and `domains` in one filter, and at most 20 `mailboxes` per Mail watch. A read returns
+at most 50 matches and scans at most 1,000 rows; `more` says when either stopped it.
 
 **What fires it.** One watcher per process, started by the first watch and stopped by the last
 unwatch. The trigger watches each store file (`Envelope Index` and its `-wal`; `chat.db` and its
 `-wal`) _and_ the directory: a directory watch alone does not fire when SQLite appends to an
 existing `-wal` (measured on macOS), and a file watch goes quiet when SQLite replaces the file, so
-the directory watch and the poll re-arm the file watchers. It is debounced 500 ms, with a 60 s poll
-beneath it for dropped events. The cursor is the message table's ROWID, which both stores declare
-`AUTOINCREMENT`, so a row can never land below a cursor that has passed it. The one way the mark
-goes backwards is a store rebuilt from scratch, and then it resets to the new head and notifies
-nothing. The store opens read-only and never `immutable`, which cannot see the WAL where the newest
-row is; if only `immutable` opens, the watch tool refuses and says why.
+the directory watch and the poll re-arm the file watchers. It is debounced 500 ms, but fires at most
+3 s after the first event of a burst, so a long sync does not leave its arrivals to the 60 s poll
+that runs beneath it for dropped events. One tick scans at most ten batches of 1,000 rows and leaves
+the rest of a backlog to the next trigger, so a large sync never holds the process. The cursor is
+the message table's ROWID, which both stores declare `AUTOINCREMENT`, so a row can never land below a
+cursor that has passed it. The one way the mark goes backwards is a store rebuilt from scratch, and
+then it resets to the new head and notifies nothing. A rebuild usually writes a new file and renames
+it over the old one, and a connection keeps reading the inode it opened, so each watch holds its own
+handle on the store, compares the file's inode on every trigger, and reopens before the tick when it
+changed; that tick is the one that sees the lower head. The store opens read-only and never
+`immutable`, which cannot see the WAL where the newest row is; if only `immutable` opens, the watch
+tool refuses and says why.
+
+**What a trigger costs.** An idle trigger is one `MAX(ROWID)` on the store. Mail's lookup of
+mailboxes and own addresses comes from an Apple Event, and it is refreshed only when rows are waiting
+to be judged and the lookup is past its TTL (`APPLE_MAIL_MAILBOX_CACHE_TTL_MS`) or has never loaded,
+or when a row sits in a mailbox created since the last refresh. A refresh or a tick that fails is
+logged once until one succeeds.
 
 **What a watch may follow.** A sender filter is required: `from`, `domains`, or both. There is no
 watch on everything, and the filter is the trust boundary, a line in a tool call the user can see
@@ -112,8 +133,8 @@ Mail's `mailboxes` resolve to Envelope Index rowids, and each row carries its ow
 Gmail labels as keys; a watch with none takes every mailbox but Sent, Drafts, Junk and Trash, and
 mail from the account's own addresses never matches. Naming mailboxes needs Mail running, since
 Mail is what resolves them; a watch without them works with Mail closed, though nothing arrives
-until Mail fetches. Messages needs no running app, skips your own messages and tapbacks, and wants
-phone numbers in international form (`+33612345678`): an entry the store does not hold is reported
+until Mail fetches. Messages needs no running app, skips your own messages, tapbacks and group
+events (a rename, someone joining or leaving), and wants phone numbers in international form (`+33612345678`): an entry the store does not hold is reported
 as `unresolved`, with `suggestions` when it holds near misses.
 
 **Both eras.** On a 2026-era connection the router does the matching and the server sends

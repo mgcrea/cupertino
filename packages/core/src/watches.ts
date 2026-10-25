@@ -230,6 +230,14 @@ const defaultMintId = (): string => `w_${randomBytes(4).toString("hex")}`;
  * nothing, because the rows now there are not arrivals; it is the old numbering
  * that is gone. Watches created above the new head are lowered with it.
  *
+ * The registry only sees a rebuild if its source reads the new file. A rebuild
+ * usually writes a new file and renames it over the old name, and a connection
+ * opened before that keeps reading the deleted inode: its head never moves,
+ * nothing fires and nothing errors. So each surface's watch service records the
+ * store file's inode when it opens it, compares on every trigger, and reopens
+ * before ticking when the file changed (Mail's `MailWatchService`, Messages'
+ * `MessagesWatchService`). The tick after that is the one that resets.
+ *
  * ## Why a tick scans once for every watch
  *
  * The store is read once per trigger however many watches exist, and each row

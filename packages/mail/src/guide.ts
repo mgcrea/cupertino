@@ -83,10 +83,14 @@ messages. Prefer the index; results are labelled with their source.
   as a new message.
 - **Scope.** Sent, Drafts, Junk and Trash never match, nor does mail from the
   account's own addresses. \`mailboxes\` narrows one watch to those mailboxes,
-  and each watch has its own. At most ten watches per connection, and they
-  end with it: after a reconnect, call \`apple_mail_watch\` again.
+  and each watch has its own. Watches end with the connection: after a
+  reconnect, call \`apple_mail_watch\` again.
+- **Limits.** At most 10 watches per connection, 50 entries across \`from\` and
+  \`domains\` in one watch, and 20 \`mailboxes\`. A read returns at most 50
+  matches and scans at most 1,000 rows; \`more\` says when either stopped it.
 - **Reading a watch that does not exist** is a not-found error, which is also what
-  a reconnect looks like.
+  a reconnect looks like. A uri with a query other than \`after\` is refused as a
+  bad query.
 
 ## Writes
 

@@ -192,7 +192,8 @@ Notifications already flow through the stdio pumps untouched. Two things need do
 `RequestObserver`:
 
 - **A `subscriptions/listen` request is answered only when it ends.** Today it would sit in
-  `waiting` as a call that never returns. It should be logged as a subscription, opened and closed.
+  `waiting` as a call that never returns. It is logged as a subscription when it opens. Its closing
+  is not logged, which the final review accepted.
 - **The subscription shows in the Activity log only.** The audit file keeps calls, and a
   subscription is a log entry, not a call.
 - **Each `notifications/resources/updated` is recorded** in the Activity log and the audit file, so

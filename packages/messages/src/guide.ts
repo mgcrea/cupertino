@@ -85,12 +85,17 @@ are off.
   \`cursor\`.
 - **Reads carry no text.** Each message is \`id\`, \`handle\`, \`chat\` and \`date\`.
   Use \`apple_messages_get_message\` with that \`id\` for the text.
-- **Your own messages and tapbacks never fire a watch.**
+- **Your own messages, tapbacks and group events never fire a watch.** A group
+  event is a rename, or someone joining or leaving.
+- **Limits.** At most 10 watches per connection and 50 entries across \`from\`
+  and \`domains\` in one watch. A read returns at most 50 matches and scans at
+  most 1,000 rows; \`more\` says when either stopped it.
 - **Messages need not be running.** The store is written by the system, not by
   the app, so a watch works with Messages closed.
-- At most ten watches per connection, and they end with it: after a reconnect,
-  call \`apple_messages_watch\` again. Reading a watch that does not exist is a
-  not-found error, which is also what a reconnect looks like.
+- Watches end with the connection: after a reconnect, call
+  \`apple_messages_watch\` again. Reading a watch that does not exist is a
+  not-found error, which is also what a reconnect looks like. A uri with a query
+  other than \`after\` is refused as a bad query.
 
 ## Sending
 
