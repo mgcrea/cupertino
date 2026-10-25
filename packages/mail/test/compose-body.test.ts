@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { clipboardEnv } from "../src/client/compose.js";
 import { REPLY_OR_FORWARD } from "../src/client/jxa/write.js";
 
 /**
@@ -534,20 +533,3 @@ describe("opening nothing it cannot fill", () => {
  * that really called `pbcopy` would clobber whatever the person running it had
  * copied, which `compose.ts` says is not a thing a test suite may do.
  */
-describe("the system clipboard's encoding", () => {
-  it("names UTF-8, so the pasteboard verbs do not fall back to MacRoman", () => {
-    expect(clipboardEnv.LC_CTYPE).toBe("UTF-8");
-  });
-
-  /*
-   * Inherited rather than replaced. `pbcopy` is found by absolute path, but a
-   * bare environment is still a change of behaviour for anything else the child
-   * reads, and the narrowest fix is the one that only names the encoding.
-   */
-  it("keeps the rest of the environment", () => {
-    for (const key of Object.keys(process.env)) {
-      if (key === "LC_CTYPE") continue;
-      expect(clipboardEnv[key]).toBe(process.env[key]);
-    }
-  });
-});

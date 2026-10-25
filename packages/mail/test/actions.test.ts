@@ -410,6 +410,72 @@ describe("apple_mail_update_draft", () => {
     });
   });
 
+  const edits = [{ find: "old", replace: "new" }];
+
+  it("takes edits and a composer handle, and no longer requires a ref", async () => {
+    const { runner } = harness();
+    const { tools } = await (await connect(WRITES, runner)).listTools();
+    const schema = tools.find((t) => t.name === "apple_mail_update_draft")?.inputSchema as {
+      properties: Record<string, unknown>;
+      required?: string[];
+    };
+    expect(Object.keys(schema.properties)).toEqual(
+      expect.arrayContaining(["ref", "composer", "body", "edits"]),
+    );
+    expect(schema.required ?? []).not.toContain("ref");
+  });
+
+  /* Before Mail is touched, and by the schema rather than by a script. */
+  it("rejects body together with edits in the schema", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const res = await client.callTool({
+      name: "apple_mail_update_draft",
+      arguments: { ref: refFor("Drafts", 1), body: "text", edits, confirm: true },
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/body or edits/);
+    expect(recorded).toEqual([]);
+  });
+
+  it("rejects composer and ref together in the schema", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const res = await client.callTool({
+      name: "apple_mail_update_draft",
+      arguments: { ref: refFor("Drafts", 1), composer: "mc-1", body: "text", confirm: true },
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/ref or composer/);
+    expect(recorded).toEqual([]);
+  });
+
+  it("bounds edits to 1..50, each with a non-empty find", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const call = (value: unknown) =>
+      client.callTool({
+        name: "apple_mail_update_draft",
+        arguments: { ref: refFor("Drafts", 1), edits: value, confirm: true },
+      });
+    expect((await call([])).isError).toBe(true);
+    expect((await call([{ find: "", replace: "x" }])).isError).toBe(true);
+    expect((await call(Array.from({ length: 51 }, () => edits[0]))).isError).toBe(true);
+    expect(recorded).toEqual([]);
+  });
+
+  /* No Cupertino here: the System Events route cannot find-and-replace. */
+  it("refuses edits without the native lane, touching nothing", async () => {
+    const { runner, recorded } = harness();
+    const client = await connect(WRITES, runner);
+    const res = await client.callTool({
+      name: "apple_mail_update_draft",
+      arguments: { ref: refFor("Drafts", 1), edits, confirm: true },
+    });
+    expect(JSON.parse(textOf(res))).toMatchObject({ replaced: false, capability: "composer" });
+    expect(recorded).toEqual([]);
+  });
+
   /** Deleting the user's draft is not something to do on an inferred intent. */
   it("is marked destructive", async () => {
     const { runner } = harness();

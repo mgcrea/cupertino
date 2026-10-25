@@ -71,49 +71,18 @@ const runnerSeeing = (scripts: string[], stages = false): OsascriptRunner => ({
   }) as OsascriptRunner["run"],
 });
 
-/**
- * A composer, a pasteboard, and a client that share one world.
- *
- * Not optional that they share it: the in-place lane copies its selection back
- * to read it, so a stub lane copying into one pasteboard while the client reads
- * another can never prove a selection and always refuses. And the pasteboard
- * has to be a fake at all because the real one is the machine's — a test that
- * wrote to it would clobber whatever the person running the suite had copied.
- */
+/** Some composers and a client that share one world: an edit changes what they show. */
 const world = (
   composers: number,
   over: { stages?: boolean; finish?: "pressed" | "refused"; refuseEdit?: boolean } = {},
 ) => {
   const scripts: string[] = [];
   const runner = runnerSeeing(scripts, over.stages);
-  let pasteboard: string | null = "whatever was already copied";
-  // What the composer shows above its quote. The paste changes it.
+  // What the composer shows above its quote. An edit changes it.
   let shown = "ALPHA one";
-  // File URLs on the pasteboard, and the files the composer shows.
-  let copiedFiles: string[] | null = null;
+  // The files the composer shows.
   const files: string[] = [];
-  const clipboard = {
-    read: async () => pasteboard,
-    write: async (text: string) => {
-      pasteboard = text;
-      copiedFiles = null;
-    },
-    writeFiles: async (paths: string[]) => {
-      pasteboard = null;
-      copiedFiles = paths;
-    },
-  };
-  const keys = async (_ref: unknown, strokes: { key: string; modifiers?: string[] }[]) => {
-    for (const stroke of strokes) {
-      // command-C puts the selection on the pasteboard; the selection here is
-      // the whole of the composer's own text. command-V replaces it.
-      if (stroke.key === "c") pasteboard = shown;
-      if (stroke.key === "v" && copiedFiles)
-        files.push(...copiedFiles.map((path) => basename(path)));
-      else if (stroke.key === "v") shown = String(pasteboard);
-    }
-    return true;
-  };
+  const edited: Record<string, unknown>[] = [];
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
@@ -141,9 +110,13 @@ const world = (
           ]
         : []),
     ],
-    // The native verb: it replaces the body and adds files in one step, and the
-    // pasteboard is never touched.
-    editComposer: async (args: { body?: string; attachments?: string[] }) => {
+    // The native verb: it replaces the body and adds files in one step.
+    editComposer: async (args: {
+      body?: string;
+      edits?: { find: string; replace: string }[];
+      attachments?: string[];
+    }) => {
+      edited.push(args);
       if (over.refuseEdit)
         return {
           replaced: false,
@@ -153,6 +126,7 @@ const world = (
           hint: "Look at it in Mail.",
         };
       if (args.body !== undefined) shown = args.body;
+      for (const edit of args.edits ?? []) shown = shown.replace(edit.find, edit.replace);
       const added = (args.attachments ?? []).map((path) => basename(path));
       files.push(...added);
       return {
@@ -165,11 +139,9 @@ const world = (
         note: "ok",
       };
     },
-    keys,
     finish: async () => over.finish ?? ("pressed" as const),
     // What the recreate route's composer needs: a window, and a body to read.
     findComposer: async () => ({ window: "w9", body: "b9", index: 9 }),
-    bodyText: async () => shown,
     composerGone: async () => false,
   } as unknown as MailAxLane;
 
@@ -177,9 +149,8 @@ const world = (
     config: loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: "/nonexistent/Envelope Index" }),
     osascript: runner,
     ax: composers < 0 ? null : lane,
-    clipboard,
   });
-  return { client, clipboard, scripts, runner, shownNow: () => shown, files };
+  return { client, scripts, runner, edited, shownNow: () => shown, files };
 };
 
 describe("which lane a draft rewrite takes", () => {
@@ -189,7 +160,7 @@ describe("which lane a draft rewrite takes", () => {
    */
   it("edits the open composer rather than recreating a reply draft", async () => {
     const { client, scripts, shownNow } = world(1);
-    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: true, method: "inPlace", threadingKept: true });
     expect(scripts).toEqual(["DRAFT_FACTS"]);
     expect(shownNow()).toBe("BRAVO");
@@ -197,7 +168,7 @@ describe("which lane a draft rewrite takes", () => {
 
   it("falls back to recreating when no composer is open", async () => {
     const { client, scripts } = world(0);
-    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(result).toMatchObject({ method: "recreate" });
     // Staged, so the body is pasted rather than assigned; a reply refuses there.
     expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
@@ -209,7 +180,7 @@ describe("which lane a draft rewrite takes", () => {
    */
   it("recreates by filling the staged replacement, then commits", async () => {
     const { client, scripts, runner, shownNow } = world(0, { stages: true });
-    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: true, method: "recreate", bodyVerified: true });
     expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
     expect(shownNow()).toBe("BRAVO");
@@ -220,7 +191,7 @@ describe("which lane a draft rewrite takes", () => {
   /* Unsaved replacement, untouched original: commit is never reached. */
   it("does not commit a replacement it could not save", async () => {
     const { client, scripts } = world(0, { stages: true, refuseEdit: true });
-    const result = await client.updateDraft(REF, { body: "BRAVO" });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
     expect(String((result as { reason: string }).reason)).toMatch(/original draft was not changed/);
     expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
@@ -233,17 +204,20 @@ describe("which lane a draft rewrite takes", () => {
    */
   it("goes the recreate way when the subject is changing", async () => {
     const { client, scripts } = world(1);
-    await client.updateDraft(REF, { body: "BRAVO", subject: "A different subject" });
+    await client.updateDraft({ ref: REF }, { body: "BRAVO", subject: "A different subject" });
     expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT"]);
   });
 
   /* A subject that is passed but unchanged is not a change. */
   it("still edits in place when the subject passed is the one it already has", async () => {
     const { client, scripts } = world(1);
-    const result = await client.updateDraft(REF, {
-      body: "BRAVO",
-      subject: "Re: Quarterly numbers",
-    });
+    const result = await client.updateDraft(
+      { ref: REF },
+      {
+        body: "BRAVO",
+        subject: "Re: Quarterly numbers",
+      },
+    );
     expect(result).toMatchObject({ method: "inPlace" });
     expect(scripts).toEqual(["DRAFT_FACTS"]);
   });
@@ -254,7 +228,7 @@ describe("which lane a draft rewrite takes", () => {
    */
   it("does not read the preflight at all without an accessibility lane", async () => {
     const { client, scripts } = world(-1);
-    await client.updateDraft(REF, { body: "BRAVO" });
+    await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(scripts).toEqual(["UPDATE_DRAFT"]);
   });
 
@@ -264,15 +238,10 @@ describe("which lane a draft rewrite takes", () => {
    */
   it("refuses an empty body on either lane", async () => {
     const { client, scripts } = world(1);
-    await expect(client.updateDraft(REF, { body: "   " })).rejects.toThrow(/cannot be empty/);
+    await expect(client.updateDraft({ ref: REF }, { body: "   " })).rejects.toThrow(
+      /cannot be empty/,
+    );
     expect(scripts).toEqual([]);
-  });
-
-  /* The pasteboard is borrowed, and put back. */
-  it("puts the clipboard back after editing in place", async () => {
-    const { client, clipboard } = world(1);
-    await client.updateDraft(REF, { body: "BRAVO" });
-    expect(await clipboard.read()).toBe("whatever was already copied");
   });
 });
 
@@ -289,7 +258,7 @@ describe("adding files to a draft", () => {
 
   it("pastes them into the open composer and leaves the text alone", async () => {
     const { client, scripts, shownNow, files } = world(1);
-    const result = await client.updateDraft(REF, { attachments: [report] });
+    const result = await client.updateDraft({ ref: REF }, { attachments: [report] });
     expect(result).toMatchObject({
       replaced: true,
       method: "inPlace",
@@ -304,7 +273,7 @@ describe("adding files to a draft", () => {
 
   it("replaces the body and adds the files in one call", async () => {
     const { client, shownNow, files } = world(1);
-    const result = await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO", attachments: [report] });
     expect(result).toMatchObject({ replaced: true, method: "inPlace", bodyLength: 5 });
     expect(shownNow()).toBe("BRAVO");
     expect(files).toEqual(["report.pdf"]);
@@ -313,14 +282,14 @@ describe("adding files to a draft", () => {
   /* No window, no body: recreating would have nothing to write, so it is not tried. */
   it("refuses files alone when no composer is open, without recreating", async () => {
     const { client, scripts } = world(0);
-    const result = await client.updateDraft(REF, { attachments: [report] });
+    const result = await client.updateDraft({ ref: REF }, { attachments: [report] });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
     expect(scripts).toEqual(["DRAFT_FACTS"]);
   });
 
   it("refuses files alone without an accessibility lane, asking Mail nothing", async () => {
     const { client, scripts } = world(-1);
-    const result = await client.updateDraft(REF, { attachments: [report] });
+    const result = await client.updateDraft({ ref: REF }, { attachments: [report] });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
     expect(String((result as { reason: string }).reason)).toMatch(/not started by Cupertino/);
     expect(scripts).toEqual([]);
@@ -328,7 +297,7 @@ describe("adding files to a draft", () => {
 
   it("adds the files to the recreated draft when a body comes with them", async () => {
     const { client, scripts, runner, files } = world(0, { stages: true });
-    const result = await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
+    const result = await client.updateDraft({ ref: REF }, { body: "BRAVO", attachments: [report] });
     expect(result).toMatchObject({ replaced: true });
     expect(scripts).toEqual(["DRAFT_FACTS", "STAGE_REPLACEMENT", "COMMIT_REPLACEMENT"]);
     expect(files).toEqual(["report.pdf"]);
@@ -339,7 +308,7 @@ describe("adding files to a draft", () => {
   /* Without a lane, files ride on the assigned body, as they always did. */
   it("hands the files to the assigning route without a lane", async () => {
     const { client, scripts, runner } = world(-1);
-    await client.updateDraft(REF, { body: "BRAVO", attachments: [report] });
+    await client.updateDraft({ ref: REF }, { body: "BRAVO", attachments: [report] });
     expect(scripts).toEqual(["UPDATE_DRAFT"]);
     const calls = vi.mocked(runner.run).mock.calls;
     expect(calls.at(-1)?.[1]).toMatchObject({ body: "BRAVO", attachments: [report] });
@@ -348,22 +317,16 @@ describe("adding files to a draft", () => {
   /* Checked before Mail is asked anything, on either lane. */
   it("refuses a call with nothing to change", async () => {
     const { client, scripts } = world(1);
-    await expect(client.updateDraft(REF, {})).rejects.toThrow(/Nothing to change/);
+    await expect(client.updateDraft({ ref: REF }, {})).rejects.toThrow(/Nothing to change/);
     expect(scripts).toEqual([]);
   });
 
   it("refuses a path that is not absolute", async () => {
     const { client, scripts } = world(1);
-    await expect(client.updateDraft(REF, { attachments: ["report.pdf"] })).rejects.toThrow(
+    await expect(client.updateDraft({ ref: REF }, { attachments: ["report.pdf"] })).rejects.toThrow(
       /not an absolute path/,
     );
     expect(scripts).toEqual([]);
-  });
-
-  it("puts the clipboard back after pasting files", async () => {
-    const { client, clipboard } = world(1);
-    await client.updateDraft(REF, { attachments: [report] });
-    expect(await clipboard.read()).toBe("whatever was already copied");
   });
 });
 
@@ -394,5 +357,177 @@ describe("which lane a new message takes", () => {
     const { client, scripts } = world(-1);
     await client.sendMessage({ ...message, subject: "Hello" });
     expect(scripts).toEqual(["SEND_MESSAGE"]);
+  });
+});
+
+/*
+ * Which composer an edit is aimed at. A ref finds it by content; a handle names
+ * it; with neither, the one open composer is it. Every refusal changes nothing.
+ */
+describe("choosing the composer to edit", () => {
+  it("edits the one open composer when given neither a ref nor a handle", async () => {
+    const { client, scripts, edited, shownNow } = world(1);
+    const result = await client.updateDraft({}, { body: "BRAVO" });
+    expect(result).toMatchObject({
+      replaced: true,
+      method: "inPlace",
+      subject: "Re: Quarterly numbers",
+    });
+    // No ref, so there is nothing to ask Mail about.
+    expect(scripts).toEqual([]);
+    expect(edited).toEqual([{ composer: "mc-0", body: "BRAVO", save: true }]);
+    expect(shownNow()).toBe("BRAVO");
+  });
+
+  it("refuses with no target when two composers are open, naming both", async () => {
+    const { client, edited } = world(2);
+    const result = await client.updateDraft({}, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer" });
+    expect(result).toMatchObject({
+      composers: [
+        { composer: "mc-0", subject: "Re: Quarterly numbers" },
+        { composer: "mc-1", subject: "Re: Quarterly numbers" },
+      ],
+    });
+    expect(String((result as { reason: string }).reason)).toMatch(/mc-0.*mc-1/s);
+    expect(edited).toEqual([]);
+  });
+
+  it("refuses with no target when no composer is open", async () => {
+    const { client, edited } = world(0);
+    const result = await client.updateDraft({}, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer" });
+    expect(String((result as { reason: string }).reason)).toMatch(
+      /No compose window is open in Mail/,
+    );
+    expect(edited).toEqual([]);
+  });
+
+  it("goes straight to the handle it is given, asking Mail nothing", async () => {
+    const { client, scripts, edited } = world(2);
+    const result = await client.updateDraft({ composer: "mc-1" }, { body: "BRAVO" });
+    expect(result).toMatchObject({
+      replaced: true,
+      method: "inPlace",
+      subject: "Re: Quarterly numbers",
+    });
+    expect(scripts).toEqual([]);
+    // No facts, so no identity check to pass along.
+    expect(edited).toEqual([{ composer: "mc-1", body: "BRAVO", save: true }]);
+  });
+
+  it("returns the verb's refusal for a handle as it answered", async () => {
+    const { client } = world(1, { refuseEdit: true });
+    const result = await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer" });
+  });
+
+  it("refuses a ref and a handle together, before anything is read", async () => {
+    const { client, scripts } = world(1);
+    await expect(
+      client.updateDraft({ ref: REF, composer: "mc-0" }, { body: "BRAVO" }),
+    ).rejects.toThrow(/not both/);
+    expect(scripts).toEqual([]);
+  });
+
+  it("refuses body and edits together", async () => {
+    const { client } = world(1);
+    await expect(
+      client.updateDraft({}, { body: "BRAVO", edits: [{ find: "a", replace: "b" }] }),
+    ).rejects.toThrow(/either/);
+  });
+
+  it("refuses a target-less call that only names a new subject", async () => {
+    const { client } = world(1);
+    await expect(client.updateDraft({}, { subject: "New" })).rejects.toThrow(/Nothing to change/);
+  });
+
+  /* The native verb is the only way to edit a composer by handle. */
+  it("refuses edits and handles without an accessibility lane", async () => {
+    const { client, scripts } = world(-1);
+    const edits = [{ find: "ALPHA", replace: "BRAVO" }];
+    const byEdits = await client.updateDraft({ ref: REF }, { edits });
+    expect(byEdits).toMatchObject({ replaced: false, capability: "composer" });
+    expect(String((byEdits as { reason: string }).reason)).toMatch(/Cupertino/);
+    const byHandle = await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
+    expect(byHandle).toMatchObject({ replaced: false, capability: "composer" });
+    const byNothing = await client.updateDraft({}, { body: "BRAVO" });
+    expect(byNothing).toMatchObject({ replaced: false, capability: "composer" });
+    expect(scripts).toEqual([]);
+  });
+});
+
+describe("editing a draft by find and replace", () => {
+  const edits = [{ find: "ALPHA", replace: "BRAVO" }];
+
+  it("passes the edits to the draft's own composer, with its identity check", async () => {
+    const { client, edited, shownNow } = world(1);
+    const result = await client.updateDraft({ ref: REF }, { edits });
+    expect(result).toMatchObject({ replaced: true, method: "inPlace", threadingKept: true });
+    expect(edited).toEqual([{ composer: "mc-0", edits, expectHead: "ALPHA one" }]);
+    expect(shownNow()).toBe("BRAVO one");
+  });
+
+  /* Recreating from edits would need the old text, and could only guess at it. */
+  it("edits with a ref and no open composer refuse without recreating", async () => {
+    const { client, scripts } = world(0, { stages: true });
+    const result = await client.updateDraft({ ref: REF }, { edits });
+    expect(result).toMatchObject({ replaced: false, method: "recreate", capability: "composer" });
+    expect(String((result as { reason: string }).reason)).toMatch(
+      /edits need the draft's window open.*nothing was changed/is,
+    );
+    expect(scripts).toEqual(["DRAFT_FACTS"]);
+  });
+
+  it("edits the one open composer with no ref at all", async () => {
+    const { client, edited } = world(1);
+    await client.updateDraft({}, { edits });
+    expect(edited).toEqual([{ composer: "mc-0", edits, save: true }]);
+  });
+});
+
+describe("the in-place result", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mail-draft-count-"));
+  const report = join(dir, "report.pdf");
+  writeFileSync(report, "%PDF-1.4");
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("carries attachmentsAdded as a count", async () => {
+    const { client } = world(1);
+    const result = await client.updateDraft({ ref: REF }, { attachments: [report] });
+    expect(result).toMatchObject({ filesAdded: ["report.pdf"], attachmentsAdded: 1 });
+  });
+
+  it("carries it on a handle edit too", async () => {
+    const { client } = world(1);
+    const result = await client.updateDraft({ composer: "mc-0" }, { attachments: [report] });
+    expect(result).toMatchObject({ filesAdded: ["report.pdf"], attachmentsAdded: 1 });
+  });
+});
+
+describe("listing the open drafts", () => {
+  it("gives each one its handle, with the text and recipients the window shows", async () => {
+    const { client } = world(2);
+    const result = (await client.listOpenDrafts()) as {
+      drafts: Record<string, unknown>[];
+      note: string;
+    };
+    expect(result.drafts).toHaveLength(2);
+    expect(result.drafts[0]).toMatchObject({
+      composer: "mc-0",
+      subject: "Re: Quarterly numbers",
+      recipients: [],
+      text: "ALPHA one",
+      quoted: true,
+    });
+    expect(result.drafts[1]).toMatchObject({ composer: "mc-1" });
+    expect(result.note).toMatch(/`composer`.*apple_mail_update_draft/s);
+  });
+
+  it("says plainly that none is open", async () => {
+    const { client } = world(0);
+    const result = (await client.listOpenDrafts()) as { drafts: unknown[]; note: string };
+    expect(result.drafts).toEqual([]);
+    expect(result.note).toMatch(/No compose window is open in Mail/);
   });
 });

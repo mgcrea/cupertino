@@ -6,7 +6,7 @@ import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
 import type { Config } from "../config.js";
 import { MailAxLane } from "./ax.js";
 import { scanBodies } from "./body-scan.js";
-import { composeNatively, type Clipboard } from "./compose.js";
+import { composeNatively } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
@@ -140,16 +140,21 @@ export type AppleMailClientOptions = {
    * what the server does.
    */
   ax?: MailAxLane | null | undefined;
-  /**
-   * The pasteboard, for tests.
-   *
-   * The same seam `compose.ts` already documents, hoisted to the client because
-   * `updateDraft` reaches the composer through it too. The real pasteboard is
-   * shared machine state and a test that wrote to it would clobber whatever the
-   * person running it had copied.
-   */
-  clipboard?: Clipboard | undefined;
 };
+
+/** What a call that needs the app's composer verb answers when the app is not hosting this server. */
+const nativeOnlyRefusal = (what: string): Record<string, unknown> => ({
+  replaced: false,
+  degraded: true,
+  method: "inPlace",
+  capability: "composer",
+  reason:
+    `${what} needs Cupertino's native composer, and this server was not started by Cupertino. ` +
+    "Nothing was changed.",
+  hint:
+    "Run the Mail server from Cupertino.app, or pass a ref and a whole body to rewrite the " +
+    "draft the older way.",
+});
 
 export class AppleMailClient {
   readonly config: Config;
@@ -166,9 +171,6 @@ export class AppleMailClient {
    * which one is live.
    */
   readonly #ax: MailAxLane | null;
-
-  /** Undefined means the system pasteboard — see `AppleMailClientOptions`. */
-  readonly #clipboard: Clipboard | undefined;
 
   #located: LocateResult | null = null;
   #index: EnvelopeIndex | null = null;
@@ -192,7 +194,6 @@ export class AppleMailClient {
       ttlMs: opts.config.mailboxCacheTtlMs,
     });
     this.#ax = opts.ax !== undefined ? opts.ax : MailAxLane.open();
-    this.#clipboard = opts.clipboard;
   }
 
   /** Which composer lane is live, for `diagnostics` to report. */
@@ -1283,16 +1284,30 @@ export class AppleMailClient {
    * which is the one outcome nothing downstream could distinguish from success.
    */
   async updateDraft(
-    ref: string,
+    target: { ref?: string | undefined; composer?: string | undefined },
     opts: {
       body?: string | undefined;
+      edits?: { find: string; replace: string }[] | undefined;
       subject?: string | undefined;
       attachments?: string[] | undefined;
     },
   ): Promise<Record<string, unknown>> {
-    if (opts.body === undefined && !opts.attachments?.length) {
+    if (target.ref !== undefined && target.composer !== undefined) {
       throw new PreconditionError(
-        "Nothing to change: pass a body, attachments, or both. A new subject alone needs a body.",
+        "Pass either ref or composer, not both: a ref finds the draft's window by its content, " +
+          "and a composer handle already names the window.",
+      );
+    }
+    if (opts.body !== undefined && opts.edits !== undefined) {
+      throw new PreconditionError(
+        "Pass either body or edits, not both: a body replaces the whole text and edits change " +
+          "only what they match.",
+      );
+    }
+    if (opts.body === undefined && !opts.edits?.length && !opts.attachments?.length) {
+      throw new PreconditionError(
+        "Nothing to change: pass a body, edits, attachments, or a combination. A new subject " +
+          "alone needs a body.",
       );
     }
     if (opts.body !== undefined && !opts.body.trim()) {
@@ -1304,8 +1319,30 @@ export class AppleMailClient {
     }
     // Never sent from here, so a file needs only writes -- as on a compose draft.
     const attachments = this.#resolveAttachments(opts.attachments, false);
-    const decoded = decodeRef(ref);
-    const target = {
+
+    // A handle, or no target at all: the composer is addressed directly, and
+    // nothing about the saved draft is needed or asked.
+    if (target.ref === undefined) {
+      if (opts.subject !== undefined) {
+        throw new PreconditionError(
+          "A new subject can only be set by recreating a saved draft, which needs its ref. " +
+            "Editing a composer by handle, or the one open, leaves the subject as it is.",
+        );
+      }
+      if (!this.#ax)
+        return nativeOnlyRefusal(
+          target.composer !== undefined
+            ? "Editing a composer by handle"
+            : "Editing the open composer",
+        );
+      return this.#editComposerDirectly(this.#ax, target.composer, opts, attachments);
+    }
+    // Edits are the native verb's, and the System Events route has no way to make them.
+    if (opts.edits !== undefined && !this.#ax)
+      return nativeOnlyRefusal("Editing by find and replace");
+
+    const decoded = decodeRef(target.ref);
+    const decodedTarget = {
       accountUuid: decoded.accountUuid,
       mailbox: decoded.mailbox,
       id: decoded.id,
@@ -1313,15 +1350,17 @@ export class AppleMailClient {
 
     let subjectChanging = opts.subject !== undefined;
     if (this.#ax) {
-      const facts = await withBusyRetry(() => this.runner.run<DraftFacts>(DRAFT_FACTS, target));
+      const facts = await withBusyRetry(() =>
+        this.runner.run<DraftFacts>(DRAFT_FACTS, decodedTarget),
+      );
       // A new subject cannot be typed into the composer's subject field by this
       // path, so asking for one sends the draft down the lane that can set it.
       subjectChanging = opts.subject !== undefined && opts.subject !== facts.subject;
       if (!subjectChanging) {
         const edited = await reviseDraftInPlace(this.#ax, facts, {
           body: opts.body,
+          edits: opts.edits,
           attachments,
-          clipboard: this.#clipboard,
         });
         // Null, and only null, means there was no composer to edit.
         if (edited) return edited;
@@ -1330,8 +1369,12 @@ export class AppleMailClient {
 
     // Recreating writes a body, so with none to write there is nothing to make
     // the replacement from -- and the old one's text, read back as plain text,
-    // would quietly lose its formatting.
+    // would quietly lose its formatting. Edits are never recreated from: they
+    // change part of a text this side cannot read exactly.
     if (opts.body === undefined) {
+      const gone =
+        "none is open for this one" +
+        (this.#ax ? "" : " that this server can reach: it was not started by Cupertino");
       return {
         replaced: false,
         degraded: true,
@@ -1340,27 +1383,104 @@ export class AppleMailClient {
         reason: subjectChanging
           ? "A new subject can only be set by recreating the draft, and recreating it needs a " +
             "body to write. Nothing was changed."
-          : "Files can only be added to a draft through its composer window, and none is open " +
-            "for this one" +
-            (this.#ax ? "" : " that this server can reach: it was not started by Cupertino") +
-            ". Nothing was changed.",
+          : opts.edits !== undefined
+            ? `Edits need the draft's window open in Mail for now, and ${gone}. Nothing was changed.`
+            : `Files can only be added to a draft through its composer window, and ${gone}. ` +
+              "Nothing was changed.",
         hint: subjectChanging
-          ? "Pass the body as well, or leave the subject out to add the files in place."
-          : "Open the draft in Mail and try again, or pass a body too: recreating a draft that " +
-            "is not a reply and carries no files of its own attaches them to the replacement.",
+          ? "Pass the body as well, or leave the subject out to edit in place."
+          : opts.edits !== undefined
+            ? "Open the draft in Mail and try again, or pass the whole new text as body to " +
+              "rewrite it."
+            : "Open the draft in Mail and try again, or pass a body too: recreating a draft that " +
+              "is not a reply and carries no files of its own attaches them to the replacement.",
       };
     }
 
     if (this.#ax)
-      return this.#recreateNatively(this.#ax, target, opts.body, opts.subject, attachments);
+      return this.#recreateNatively(this.#ax, decodedTarget, opts.body, opts.subject, attachments);
     return withBusyRetry(() =>
       this.runner.run<Record<string, unknown>>(UPDATE_DRAFT, {
-        ...target,
+        ...decodedTarget,
         body: opts.body,
         subject: opts.subject ?? null,
         attachments,
       }),
     );
+  }
+
+  /**
+   * Edit a composer named by handle, or the only one open, with no saved draft
+   * to compare it with.
+   *
+   * There are no facts to check the window against, so none are sent: the caller
+   * either named the handle or there was exactly one window to mean. Anything
+   * else is refused with the choices listed, and the refusal touches nothing.
+   */
+  async #editComposerDirectly(
+    lane: MailAxLane,
+    handle: string | undefined,
+    opts: {
+      body?: string | undefined;
+      edits?: { find: string; replace: string }[] | undefined;
+    },
+    attachments: string[],
+  ): Promise<Record<string, unknown>> {
+    const reach = await lane.reach();
+    if (!reach.ok) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "inPlace",
+        capability: "accessibility",
+        reason: MailAxLane.grantMessage("edit"),
+        hint: "Run apple_mail_diagnostics.",
+      };
+    }
+    const open = await lane.composers();
+    let chosen = handle;
+    if (chosen === undefined) {
+      if (open.length === 0) {
+        return {
+          replaced: false,
+          degraded: true,
+          method: "inPlace",
+          capability: "composer",
+          reason: "No compose window is open in Mail. Nothing was changed.",
+          hint: "Open the draft in Mail, or pass the ref of a saved draft.",
+        };
+      }
+      if (open.length > 1) {
+        const listed = open.map((c) => `${c.composer} ("${c.subject}")`).join(", ");
+        return {
+          replaced: false,
+          degraded: true,
+          method: "inPlace",
+          capability: "composer",
+          reason:
+            `${open.length} compose windows are open in Mail (${listed}), and without a ref or a ` +
+            "composer handle there is no telling which is meant. Nothing was changed.",
+          hint: "Pass one of these handles as composer.",
+          composers: open.map((c) => ({ composer: c.composer, subject: c.subject })),
+        };
+      }
+      chosen = (open[0] as { composer: string }).composer;
+    }
+    const answer = await lane.editComposer({
+      composer: chosen,
+      ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
+      ...(opts.body !== undefined ? { body: opts.body } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      save: true,
+    });
+    if (answer.replaced !== true) return answer;
+    const subject = open.find((c) => c.composer === chosen)?.subject;
+    return {
+      ...(subject !== undefined ? { subject } : {}),
+      ...(opts.body !== undefined ? { bodyLength: opts.body.length } : {}),
+      attachmentsAdded: Array.isArray(answer.filesAdded) ? answer.filesAdded.length : 0,
+      ...answer,
+    };
   }
 
   /**
@@ -1413,10 +1533,7 @@ export class AppleMailClient {
         attachments,
         sendNow: false,
       },
-      {
-        opened: { subject: newSubject, windowsBefore: reach.windows ?? [] },
-        ...(this.#clipboard ? { clipboard: this.#clipboard } : {}),
-      },
+      { opened: { subject: newSubject, windowsBefore: reach.windows ?? [] } },
     );
     if (!composed.ok) {
       return {
@@ -1460,16 +1577,14 @@ export class AppleMailClient {
    * The drafts being written right now: every compose window open in Mail.
    *
    * Read from the windows, because nothing else sees them all — see
-   * `MailAxLane.listComposers`. Each one is paired with the saved copies Mail
+   * `MailAxLane.composers`. Each one is paired with the saved copies Mail
    * has autosaved under the same subject in a Drafts mailbox, which is where
    * the recipients' ADDRESSES are (the window only shows names) and what
-   * `updateDraft` takes. The pairing is by subject, so it is offered as
+   * `updateDraft` takes by ref (the window's own handle is `composer`). The pairing is by subject, so it is offered as
    * candidates rather than asserted; `updateDraft` matches content before it
    * touches anything, so a wrong candidate is refused rather than edited.
    */
-  async listOpenDrafts(
-    opts: { quoteChars?: number | undefined } = {},
-  ): Promise<Record<string, unknown>> {
+  async listOpenDrafts(): Promise<Record<string, unknown>> {
     if (!this.#ax) {
       return {
         degraded: true,
@@ -1497,7 +1612,7 @@ export class AppleMailClient {
       };
     }
 
-    const composers = await this.#ax.listComposers(opts.quoteChars);
+    const composers = await this.#ax.composers();
     const index = composers.length > 0 ? await this.index() : null;
     const drafts = [];
     for (const composer of composers) {
@@ -1511,7 +1626,8 @@ export class AppleMailClient {
       note:
         composers.length === 0
           ? "No compose window is open in Mail."
-          : "Recipients are the names Mail shows in the window, not addresses — read a saved " +
+          : "`composer` is the window's handle, which apple_mail_update_draft takes to edit that " +
+            "window directly. Recipients are the names Mail shows in the window, not addresses — read a saved " +
             "draft with apple_mail_get_message for those. `savedDrafts` are the copies Mail has " +
             "autosaved under the same subject, newest first: a composer opened seconds ago may " +
             "have none yet, and the newest one can lag what the window shows. The window is " +
@@ -1565,23 +1681,18 @@ export class AppleMailClient {
      * half has on the window, and a subjectless one is titled in the locale.
      */
     if (this.#ax && opts.subject.trim()) {
-      return composeNatively(
-        this.#ax,
-        this.runner,
-        {
-          mode: "new",
-          accountUuid: account?.id ?? null,
-          subject: opts.subject,
-          senderAddress: account?.emailAddresses[0] ?? null,
-          body: opts.body,
-          to: opts.to,
-          cc: opts.cc,
-          bcc: opts.bcc,
-          attachments,
-          sendNow: opts.sendNow,
-        },
-        this.#clipboard ? { clipboard: this.#clipboard } : {},
-      );
+      return composeNatively(this.#ax, this.runner, {
+        mode: "new",
+        accountUuid: account?.id ?? null,
+        subject: opts.subject,
+        senderAddress: account?.emailAddresses[0] ?? null,
+        body: opts.body,
+        to: opts.to,
+        cc: opts.cc,
+        bcc: opts.bcc,
+        attachments,
+        sendNow: opts.sendNow,
+      });
     }
     return this.runner.run(SEND_MESSAGE, {
       senderAddress: account?.emailAddresses[0] ?? null,
@@ -1624,13 +1735,7 @@ export class AppleMailClient {
     // artifacts that have to work with no Cupertino on the machine — the
     // difference a person sees is that the native path needs ONE grant where
     // the other needs two.
-    if (this.#ax)
-      return composeNatively(
-        this.#ax,
-        this.runner,
-        params,
-        this.#clipboard ? { clipboard: this.#clipboard } : {},
-      );
+    if (this.#ax) return composeNatively(this.#ax, this.runner, params);
     return this.runner.run(REPLY_OR_FORWARD, params);
   }
 

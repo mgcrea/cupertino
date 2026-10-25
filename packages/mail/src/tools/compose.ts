@@ -115,7 +115,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "draft: read the note, which says what was actually found — including that the composer " +
         "was taken by someone using the Mac, in which case the reply may already have been SENT " +
         "and a retry would send it twice. Filling the composer brings Mail to the front for a " +
-        "moment and borrows the clipboard, both of which are put back.",
+        "moment to paste; the clipboard is borrowed by the app and restored.",
       inputSchema: {
         ref: messageRefArg,
         body: bodyArg,
@@ -149,8 +149,8 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "Forward a message to new recipients. By default it opens a draft in Mail for review. " +
         "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
         "When a note is given, success means it was read back out of the composer window and " +
-        "matched. Filling the composer brings Mail to the front for a moment and borrows the " +
-        "clipboard, both of which are put back.",
+        "matched. Filling the composer brings Mail to the front for a moment to paste; the " +
+        "clipboard is borrowed by the app and restored.",
       inputSchema: {
         ref: messageRefArg,
         to: z.array(z.string().email()).min(1).describe("Who to forward to."),
@@ -178,70 +178,111 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     "apple_mail_update_draft",
     {
       description:
-        "Replace the body of an unsent draft, add files to it, or both — including a REPLY " +
-        "draft you have just written and been asked to revise or attach something to, which is " +
-        "the usual reason to reach for this. For a draft " +
-        "the user has open, apple_mail_list_open_drafts gives its ref under `savedDrafts`. " +
-        "It takes one of two routes and the result says which in `method`. " +
-        "`inPlace`: the draft's own composer window is still open in Mail, so the body is " +
-        "edited in that window and files are pasted in after the text, above any quoted " +
-        "original; each file must read back in the window before anything is saved. Nothing is " +
-        "recreated, so threading, earlier attachments and the quoted " +
-        "original all survive, no second draft appears, and your ref stays valid — though Mail " +
-        "may renumber a saved draft within seconds, so re-find it by subject rather than " +
-        "reusing a ref across turns. " +
-        "`recreate`: no composer is open, so a new draft is composed with the same recipients " +
-        "and the old one deleted once the replacement is confirmed present; the ref you passed " +
-        "in is DEAD afterwards and the result carries the new one; files go on the replacement, " +
-        "and adding files with no body is refused on this route. " +
+        "Change an unsent draft in its open composer window in Mail: replace its text (`body`), " +
+        "change only some of it (`edits`), add files (`attachments`), or combine files with " +
+        "either — including a REPLY draft you have just written and been asked to revise or " +
+        "attach something to, which is the usual reason to reach for this. " +
+        "Name the draft one of three ways: `ref`, a saved draft's ref (apple_mail_list_open_drafts " +
+        "gives them under `savedDrafts`), whose window is found by its content; `composer`, a " +
+        "window's handle from apple_mail_list_open_drafts or a previous result, which edits " +
+        "that window directly; or neither, which edits the one compose window open and refuses " +
+        "when there are none or several, listing them. Not both ref and composer. " +
+        "`edits` are find-and-replace pairs applied to the text the sender wrote, never the " +
+        "quoted original: each `find` must match exactly once, ignoring differences in " +
+        "whitespace, and only the matched text is replaced, so the rest of the draft is " +
+        "untouched. Prefer them to `body` for a correction, because `body` replaces everything " +
+        "and anything you leave out is lost. Edits and body are exclusive. " +
+        "The edit is made in the draft's own window, so threading, earlier attachments and the " +
+        "quoted original all survive, no second draft appears, and the ref stays valid — " +
+        "though Mail may renumber a saved draft within seconds, so re-find it by subject " +
+        "rather than reusing a ref across turns. The app reads the window back before it " +
+        "reports anything, and saves only what it could verify. Mail comes to the front " +
+        "briefly to paste; the clipboard is borrowed by the app and restored. " +
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
-        "it does. Editing in place refuses when two composers share the subject, when the open " +
-        "window turns out to hold a different message, or when the draft's own text cannot be " +
-        "selected exactly — it will not risk swallowing the quoted original. Recreating refuses " +
-        "on a reply or forward draft, because In-Reply-To is set by Mail's reply command and a " +
-        "recreated one would silently start a new thread; on a draft carrying attachments, " +
-        "because their bytes are not available as files to re-attach; and on anything not in " +
-        "the Drafts mailbox, because deleting a sent or received message and writing a " +
-        "lookalike is not editing. In every refusal the original is untouched. If a recreated " +
-        "replacement cannot be confirmed the original is KEPT and you are told there are now " +
-        "two — never assume a clean swap without reading `replaced`. " +
-        "Editing in place brings Mail to the front for a moment and borrows the clipboard, " +
-        "both of which are put back.",
-      inputSchema: {
-        ref: messageRefArg,
-        body: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "The complete new body. This REPLACES the draft's text rather than appending to it, " +
-              "so include everything that should remain — read the draft first with " +
-              "apple_mail_get_message if you are editing rather than rewriting. Omit it to only " +
-              "add attachments, which leaves the text exactly as it is.",
-          ),
-        attachments: attachmentsArg,
-        subject: z
-          .string()
-          .optional()
-          .describe(
-            "A new subject. Defaults to the draft's existing one — OMIT IT unless the subject " +
-              "really is changing, because changing it forces the recreate route (a composer's " +
-              "subject field cannot be retyped from here), which in turn refuses a reply. " +
-              "On that route a draft with no subject at all is refused unless you pass one, " +
-              "because the subject is how the replacement is found again before the original " +
-              "is deleted.",
-          ),
-        confirm: confirmArg,
-      },
+        "it does: when a `find` matches zero or several places, when two windows could be the " +
+        "draft, when the open window holds a different message, or when the draft's own text " +
+        "cannot be told apart from the quote. In every refusal nothing was changed. " +
+        "If the draft's window is not open, `edits` and a bare `attachments` call are refused " +
+        "for now, and a `body` rewrite recreates the draft instead (a reply or a draft carrying " +
+        "files is refused there): the result's `method` says which. " +
+        "In the result `filesAdded` names the files put in, and `attachmentsAdded` counts them.",
+      inputSchema: z
+        .object({
+          ref: messageRefArg.optional(),
+          composer: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "A compose window's handle (looks like mc-3), from apple_mail_list_open_drafts. " +
+                "Edits that window directly. Omit both ref and composer to edit the one open " +
+                "window. Not together with ref.",
+            ),
+          body: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "The complete new body. This REPLACES the draft's text rather than appending to it, " +
+                "so include everything that should remain. To change only part of it, use " +
+                "`edits` instead. Not together with edits. Omit it to only add attachments, which " +
+                "leaves the text exactly as it is.",
+            ),
+          edits: z
+            .array(
+              z.object({
+                find: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    "Text to find in what the sender wrote. It must occur exactly once, " +
+                      "ignoring differences in whitespace; quote enough to be unique.",
+                  ),
+                replace: z
+                  .string()
+                  .describe("What takes its place. Empty deletes the matched text."),
+              }),
+            )
+            .min(1)
+            .max(50)
+            .optional()
+            .describe(
+              "Find-and-replace pairs, applied in order to the sender's own text. Only the " +
+                "matched text changes. Not together with body.",
+            ),
+          attachments: attachmentsArg,
+          subject: z
+            .string()
+            .optional()
+            .describe(
+              "A new subject, only with a ref and a body. OMIT IT unless the subject really is " +
+                "changing: it forces the draft to be recreated (a composer's subject field " +
+                "cannot be retyped from here), which refuses a reply. A draft with no subject " +
+                "at all is refused on that route unless you pass one.",
+            ),
+          confirm: confirmArg,
+        })
+        .refine((args) => args.body === undefined || args.edits === undefined, {
+          message: "Pass either body or edits, not both.",
+          path: ["edits"],
+        })
+        .refine((args) => args.ref === undefined || args.composer === undefined, {
+          message: "Pass either ref or composer, not both.",
+          path: ["composer"],
+        }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
-    async ({ ref, body, subject, attachments }) =>
+    async ({ ref, composer, body, edits, subject, attachments }) =>
       wrap(async () =>
-        client.updateDraft(ref, {
-          ...(body !== undefined ? { body } : {}),
-          ...(subject ? { subject } : {}),
-          ...(attachments?.length ? { attachments } : {}),
-        }),
+        client.updateDraft(
+          { ...(ref !== undefined ? { ref } : {}), ...(composer ? { composer } : {}) },
+          {
+            ...(body !== undefined ? { body } : {}),
+            ...(edits ? { edits } : {}),
+            ...(subject ? { subject } : {}),
+            ...(attachments?.length ? { attachments } : {}),
+          },
+        ),
       ),
   );
 };

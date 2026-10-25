@@ -54,8 +54,6 @@ export type ReviseOptions = {
   edits?: { find: string; replace: string }[] | undefined;
   /** Edit this composer handle, skipping the match by content. */
   composer?: string | undefined;
-  /** Accepted for callers that still pass one; the native verb borrows nothing. */
-  clipboard?: unknown;
 };
 
 /** A refusal, shaped like `UPDATE_DRAFT`'s so a caller reads one thing. */
@@ -166,6 +164,9 @@ export const reviseDraftInPlace = async (
 
   return {
     subject: facts.subject,
+    // The recreate route reports a count, this one names the files; both are
+    // here so a caller reads one field whichever route ran.
+    attachmentsAdded: Array.isArray(answer.filesAdded) ? answer.filesAdded.length : 0,
     ...(opts.body !== undefined ? { bodyLength: opts.body.length } : {}),
     threadingKept: facts.isReply,
     attachmentsKept: facts.attachments,

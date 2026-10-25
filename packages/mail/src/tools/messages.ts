@@ -108,31 +108,21 @@ export const registerMessageTools = (
     {
       description:
         "Read the drafts the user has open in Mail right now — every compose window, with its " +
-        "subject, From, the recipients' names as shown, the text they wrote separated from the " +
-        "quoted message below it, and the opening of that quote. Reach for this when the user " +
-        "says 'review my draft', 'check this email before I send it' or 'what do you think of " +
-        "my reply' without naming a message: the draft in front of them may never have been " +
-        "saved where a search finds it, and the window is the current text either way. " +
-        "`main: true` marks the window in front. Each draft carries `savedDrafts`, the refs Mail " +
-        "autosaved under the same subject: read one with apple_mail_get_message for recipient " +
-        "ADDRESSES, or pass it to apple_mail_update_draft to rewrite the body or add files in " +
-        "place. " +
+        "`composer` handle, subject, the recipients' names as shown, and the text they wrote " +
+        "separated from the quoted message below it (`quoted` says whether one follows). Reach " +
+        "for this when the user says 'review my draft', 'check this email before I send it' or " +
+        "'what do you think of my reply' without naming a message: the draft in front of them " +
+        "may never have been saved where a search finds it, and the window is the current text " +
+        "either way. `composer` is what apple_mail_update_draft takes to edit that window " +
+        "directly. Each draft also carries `savedDrafts`, the refs Mail autosaved under the " +
+        "same subject: read one with apple_mail_get_message for recipient ADDRESSES, or pass it " +
+        "to apple_mail_update_draft instead. " +
         "Read-only: nothing is focused, typed or brought to the front. `degraded: true` means " +
         "the windows could not be read, which is NOT the same as no draft being open.",
-      inputSchema: {
-        quoteChars: z
-          .number()
-          .int()
-          .min(0)
-          .max(20_000)
-          .optional()
-          .describe(
-            "How much of the quoted original to return per draft. Default 2000; 0 for none.",
-          ),
-      },
+      inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async ({ quoteChars }) => wrap(async () => client.listOpenDrafts({ quoteChars })),
+    async () => wrap(async () => client.listOpenDrafts()),
   );
 
   server.registerTool(

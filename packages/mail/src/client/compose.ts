@@ -1,13 +1,8 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { interferenceNote, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 
 import { MailAxLane, squash } from "./ax.js";
 import { SENT_SINCE } from "./jxa/read.js";
 import { OPEN_COMPOSER } from "./jxa/write.js";
-
-const run = promisify(execFile);
 
 /**
  * Reply, forward or new message, with the body filled natively.
@@ -70,96 +65,6 @@ export type ComposeResult = {
   note: string;
   /** Files put on the composer. The number pushed, not read back: see OPEN_COMPOSER. */
   attachments?: number;
-};
-
-/**
- * The pasteboard, as a seam.
- *
- * Injectable because the real one is shared machine state: a test that called
- * `pbcopy` would clobber whatever the person running it had copied, which is
- * not a thing a test suite may do.
- */
-export type Clipboard = {
-  read(): Promise<string | null>;
-  write(text: string): Promise<void>;
-  /** Put these files on the pasteboard, the way Finder's Copy does. */
-  writeFiles(paths: string[]): Promise<void>;
-};
-
-/**
- * File URLs onto the pasteboard, as `public.file-url` and `NSFilenamesPboardType`.
- *
- * `pbcopy` only carries text, so this goes through the ObjC bridge. The paths
- * arrive as arguments and are never spliced into the source, so a filename
- * holding a quote is a filename and not code. Throws when the pasteboard
- * refuses, rather than leaving whatever was there to be pasted in their place.
- *
- * The array is built as an NSMutableArray on purpose. MEASURED, macOS 27.0:
- * `$(jsArray)` of two NSURLs wrote ONE pasteboard item and `writeObjects`
- * still answered true, so the second file would have gone missing without a
- * word. Hence the count check as well.
- */
-const WRITE_FILES = `
-function run(argv) {
-  ObjC.import("AppKit");
-  var pb = $.NSPasteboard.generalPasteboard;
-  pb.clearContents;
-  var urls = $.NSMutableArray.array;
-  argv.forEach(function (path) { urls.addObject($.NSURL.fileURLWithPath(path)); });
-  if (!pb.writeObjects(urls)) throw new Error("the pasteboard refused the files");
-  // Bridged, not a JS number: compared as one, it never equals argv.length.
-  var held = Number(pb.pasteboardItems.count);
-  if (held !== argv.length) {
-    throw new Error("the pasteboard holds " + held + " of " + argv.length + " files");
-  }
-  return "ok";
-}`;
-
-/**
- * `pbcopy` and `pbpaste` speak the locale's encoding, NOT UTF-8.
- *
- * With no `LANG` or `LC_CTYPE` in the environment they fall back to MacRoman,
- * and this server is spawned by the app with a minimal environment that has
- * neither. Every byte outside ASCII is then wrong in both directions:
- *
- *     echo 'em dash — here' | pbcopy   (no locale)  ->  pasted as 'em dash ‚Äî here'
- *     echo 'em dash — here' | pbcopy   (LC_CTYPE)   ->  pasted as 'em dash — here'
- *
- * MEASURED, macOS 27.0, and found in a live composer: a body pasted through this
- * path arrived with `—` turned into `‚Äî` — the UTF-8 bytes of the dash read back
- * as MacRoman. It is not a display artefact; that is what went into the draft,
- * and it would have gone into the mail. For anyone writing French or German it
- * mangles every accent, and the reader's own quotation marks with them.
- *
- * The read matters just as much, and is worse in kind. This clipboard is
- * BORROWED — read, overwritten, and put back — so a `pbpaste` that mis-decodes
- * hands back a corrupted copy of whatever the person had copied. Replying to a
- * mail should not quietly rewrite their clipboard.
- *
- * `LC_CTYPE=UTF-8` is the narrowest fix: it names the character encoding and
- * nothing else, so no message, date or sort order changes with it.
- */
-export const clipboardEnv: NodeJS.ProcessEnv = { ...process.env, LC_CTYPE: "UTF-8" };
-
-export const systemClipboard: Clipboard = {
-  async read() {
-    try {
-      return (await run("/usr/bin/pbpaste", [], { env: clipboardEnv })).stdout;
-    } catch {
-      return null;
-    }
-  },
-  async write(text) {
-    const child = execFile("/usr/bin/pbcopy", [], { env: clipboardEnv });
-    child.stdin?.end(text);
-    await new Promise((resolve, reject) => {
-      child.on("close", resolve);
-      child.on("error", reject);
-    });
-  },
-  async writeFiles(paths) {
-    await run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WRITE_FILES, ...paths]);
-  },
 };
 
 /**
@@ -341,8 +246,6 @@ export const composeNatively = async (
      * composer by subject, and so the only one that refuses a shared one.
      */
     opened?: { subject: string; windowsBefore: string[] };
-    /** Unused: nothing is pasted any more. Kept until the callers that pass it are gone. */
-    clipboard?: Clipboard;
     /** Overridable so a test can pin the unconfirmed-send path without waiting for it. */
     composerTimeoutMs?: number;
     sendTimeoutMs?: number;
