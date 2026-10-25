@@ -5,10 +5,10 @@ check are in (rebuild text, files on a full-body edit). This document awaits his
 
 ## Why
 
-A customer bought Cupertino on 2026-10-24 and asked for the 30-day refund the next day: *"des
-difficultés persistantes pour créer et modifier des brouillons dans Apple Mail"*. The refund went
-out, and the reply promised to prioritise drafts. Olivier's own verdict: *"draft editing is indeed
-a pain"*, and on the how: *"don't want to be tied to the nodejs runtime if it leads to subpar UX"*,
+A customer bought Cupertino on 2026-10-24 and asked for the 30-day refund the next day: _"des
+difficultés persistantes pour créer et modifier des brouillons dans Apple Mail"_. The refund went
+out, and the reply promised to prioritise drafts. Olivier's own verdict: _"draft editing is indeed
+a pain"_, and on the how: _"don't want to be tied to the nodejs runtime if it leads to subpar UX"_,
 with native Swift explicitly on the table.
 
 The cause of that customer's failure is unknown. They were not asked. This design fixes what the
@@ -41,14 +41,14 @@ code and [docs/mail-compose.md](../../mail-compose.md) show to be painful, not o
 on macOS 27.0 against a reply composer addressed to Olivier himself. Its header carries the raw
 readings. What they decide:
 
-| Question | Answer | Consequence |
-| --- | --- | --- |
-| Can the sender's own text be selected exactly, natively? | **Yes.** `AXTextMarkerRangeForUIElement` per own block, joined with the public `AXTextMarkerRangeCopyStartMarker`/`CopyEndMarker`/`AXTextMarkerRangeCreate`. `AXStringForTextMarkerRange` reads it, and `AXSelectedTextMarkerRange` is settable, honoured with Mail in the background, and reads back identical. | The keyboard walk and the copy-to-verify loop go. Selection is verified by reading it. |
-| Does a paste land? | **Only with Mail active.** Posted to Mail's pid in the background it was ignored. Activated, on the HID tap: 65 ms and 67 ms, exactly over the selection, quote intact. | One short activation per edit stays. Everything before it (finding, verifying, selecting) happens in the background. |
-| Does the subject field take an AXValue write? | **No.** Accepted and displayed, but the title did not change and the saved draft kept the old subject. | Subject changes need another route (see below). |
-| Is a draft's Message-ID stable across saves? | **No.** It changed on each save, and so did the row id. | Neither can address a draft. |
-| Does `message://<Message-ID>` reopen a draft for editing? | **No.** It opens the read-only viewer, like `M.open`. | Closed drafts are rebuilt, not reopened. |
-| Does a saved reply draft know what it replies to? | **Yes.** `In-Reply-To` and `References` carry the original's Message-ID. | A rebuild can call Mail's own `reply` on the original and keep threading. |
+| Question                                                  | Answer                                                                                                                                                                                                                                                                                                           | Consequence                                                                                                          |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Can the sender's own text be selected exactly, natively?  | **Yes.** `AXTextMarkerRangeForUIElement` per own block, joined with the public `AXTextMarkerRangeCopyStartMarker`/`CopyEndMarker`/`AXTextMarkerRangeCreate`. `AXStringForTextMarkerRange` reads it, and `AXSelectedTextMarkerRange` is settable, honoured with Mail in the background, and reads back identical. | The keyboard walk and the copy-to-verify loop go. Selection is verified by reading it.                               |
+| Does a paste land?                                        | **Only with Mail active.** Posted to Mail's pid in the background it was ignored. Activated, on the HID tap: 65 ms and 67 ms, exactly over the selection, quote intact.                                                                                                                                          | One short activation per edit stays. Everything before it (finding, verifying, selecting) happens in the background. |
+| Does the subject field take an AXValue write?             | **No.** Accepted and displayed, but the title did not change and the saved draft kept the old subject.                                                                                                                                                                                                           | Subject changes need another route (see below).                                                                      |
+| Is a draft's Message-ID stable across saves?              | **No.** It changed on each save, and so did the row id.                                                                                                                                                                                                                                                          | Neither can address a draft.                                                                                         |
+| Does `message://<Message-ID>` reopen a draft for editing? | **No.** It opens the read-only viewer, like `M.open`.                                                                                                                                                                                                                                                            | Closed drafts are rebuilt, not reopened.                                                                             |
+| Does a saved reply draft know what it replies to?         | **Yes.** `In-Reply-To` and `References` carry the original's Message-ID.                                                                                                                                                                                                                                         | A rebuild can call Mail's own `reply` on the original and keep threading.                                            |
 
 ## Goals
 
@@ -114,6 +114,7 @@ unchanged.
 
   Any failed check stops before the save, as revise.ts does today. The verbs return the same
   refusal shape (`replaced`, `capability`, `reason`, `hint`) so Node passes them through.
+
 - **Compose.** New messages, replies and forwards keep using Apple Events to open the composer
   (that is how threading and recipients arrive), then fill it with the edit verb above in place of
   today's paste-and-read-back sequence.
