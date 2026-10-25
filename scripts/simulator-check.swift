@@ -82,7 +82,7 @@ struct SimulatorCheck {
   static let driving = [
     "apple_simulator_key", "apple_simulator_press", "apple_simulator_press_button",
     "apple_simulator_swipe", "apple_simulator_tap", "apple_simulator_type",
-    "apple_simulator_release",
+    "apple_simulator_release", "apple_simulator_set_pose",
   ]
 
   static let observing = [
@@ -147,7 +147,7 @@ struct SimulatorCheck {
         name,
         [
           "handle": "e1", "x": 1, "y": 1, "fromX": 1, "fromY": 1, "toX": 2, "toY": 2,
-          "text": "a", "key": "return", "button": "home",
+          "text": "a", "key": "return", "button": "home", "pose": "open",
         ],
         writes: false)
       check(
@@ -163,6 +163,13 @@ struct SimulatorCheck {
     check(
       "release with nothing driven is an answer, not an error",
       !releaseFailed && json(releaseText)?["released"] is NSNull)
+    // Refused on its argument, before any window is read, so it is safe with
+    // writes on.
+    let (poseText, poseFailed) = callText(
+      "apple_simulator_set_pose", ["pose": "half"], writes: true)
+    check(
+      "set_pose with an unknown pose is refused, naming the three",
+      poseFailed && poseText.contains("closed") && poseText.contains("partially_open"))
     let instructions =
       (ask("initialize", writes: true)?["result"] as? [String: Any])?["instructions"] as? String
       ?? ""
@@ -386,6 +393,71 @@ struct SimulatorCheck {
     check(
       "DeviceHub is not brokered either",
       !AccessibilityDriver.inScope(SimulatorServer.deviceHub, scope: .brokered))
+
+    // iPhone Duo, as Xcode 27.1's capabilities.plist lists it: two panels among
+    // a TV-out, a CarPlay screen and a resizable scene.
+    func display(_ name: String, _ id: Int, _ w: Int, _ h: Int, _ scale: Double, _ type: String)
+      -> [String: Any]
+    {
+      [
+        "displayName": name, "screenID": id, "width": w, "height": h, "scale": scale,
+        "displayType": type,
+      ]
+    }
+    let duo = CoreSimulatorCatalog.panels(capabilities: [
+      "capabilities": [
+        "displays": [
+          display("LCD-1", 3, 2007, 2853, 3, "integrated"),
+          display("TVOut", 2, 720, 480, 1, "tvOut"),
+          display("LCD", 1, 1398, 2034, 3, "integrated"),
+          display("Wireless", 4, 720, 480, 1, "carPlay"),
+          display("Resizable", 5, 7680, 4320, 3, "scene"),
+        ]
+      ]
+    ])
+    check(
+      "a Duo's panels are its two integrated displays, outer first",
+      duo.map(\.name) == ["LCD", "LCD-1"]
+        && duo.map(\.profile.points) == [
+          CGSize(width: 466, height: 678), CGSize(width: 669, height: 951),
+        ])
+    check(
+      "a device type that lists no displays has no panels, and falls back to its main screen",
+      CoreSimulatorCatalog.panels(capabilities: [:]).isEmpty)
+    check(
+      "the Duo's inner panel resolves at DeviceHub's zoom, measured 626x890",
+      SimulatorGeometry.resolve(
+        groupOrigin: .zero, groupSize: CGSize(width: 626, height: 890),
+        portraitPoints: duo[1].profile.points) != nil
+        && SimulatorGeometry.resolve(
+          groupOrigin: .zero, groupSize: CGSize(width: 626, height: 890),
+          portraitPoints: duo[0].profile.points) == nil
+    )
+    let hubWindow: [Double] = [246, 185, 1100, 800]
+    check(
+      "an iPhone 18 Pro's screen, as measured, is on its window",
+      SimulatorGeometry.onWindow(screen: [657.27, 265.73, 297.5, 646.8], window: hubWindow))
+    check(
+      "the Duo's, as DeviceHub reports it, is not",
+      !SimulatorGeometry.onWindow(screen: [-190, 907, 466, 678], window: hubWindow)
+        && !SimulatorGeometry.onWindow(screen: [-190, 695, 626, 890], window: hubWindow))
+    check(
+      "a NaN window is never on-window",
+      !SimulatorGeometry.onWindow(screen: [0, 0, 1, 1], window: [.nan, 0, 10, 10]))
+    func displays(_ active: [Int: Bool]) -> Data {
+      let list = active.keys.sorted().map { ["displayId": $0, "active": active[$0]!] }
+      return try! JSONSerialization.data(withJSONObject: [
+        "info": ["jsonVersion": 5], "result": ["displays": list],
+      ])
+    }
+    check(
+      "devicectl's active panel is read by its displayId",
+      CoreSimulatorCatalog.activeScreenID(devicectlJSON: displays([1: false, 3: true])) == 3)
+    check(
+      "no active panel, or two, is no answer rather than a guess",
+      CoreSimulatorCatalog.activeScreenID(devicectlJSON: displays([1: false, 3: false])) == nil
+        && CoreSimulatorCatalog.activeScreenID(devicectlJSON: displays([1: true, 3: true])) == nil
+        && CoreSimulatorCatalog.activeScreenID(devicectlJSON: Data("{}".utf8)) == nil)
     // Absent and unreadable are different answers. A path that does not exist
     // is the Xcode-less Mac; nothing is created to test it.
     let nowhere = FileManager.default.temporaryDirectory

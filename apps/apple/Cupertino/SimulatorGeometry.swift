@@ -88,6 +88,23 @@ nonisolated enum SimulatorGeometry {
     }
     return nil
   }
+
+  /// Whether the screen group lies inside its window, both as AX `[x, y, w, h]`.
+  ///
+  /// It always has, until iPhone Duo. Measured 2026-10-25 on Xcode 27.1:
+  /// DeviceHub publishes the Duo's `iOSContentGroup` at (-190, 907) at 466x678,
+  /// in a window at (246, 185) 1100x800, while it draws the screen at about
+  /// (716, 453) 185x265. Nothing in the tree sits where the screen is drawn. An
+  /// iPhone 18 Pro in the same window resolved to (657, 266) at 0.74, inside it.
+  /// A point mapped through a frame like the Duo's lands somewhere else on the
+  /// Mac, so `tap` and `swipe` refuse a screen this answers false for.
+  static func onWindow(screen: [Double], window: [Double], slack: Double = 1) -> Bool {
+    guard screen.count == 4, window.count == 4, (screen + window).allSatisfy(\.isFinite)
+    else { return false }
+    return screen[0] >= window[0] - slack && screen[1] >= window[1] - slack
+      && screen[0] + screen[2] <= window[0] + window[2] + slack
+      && screen[1] + screen[3] <= window[1] + window[3] + slack
+  }
 }
 
 /// CoreSimulator's own records, read from the plists it keeps and never from
@@ -122,6 +139,16 @@ nonisolated enum CoreSimulatorCatalog {
     var points: CGSize {
       CGSize(width: (pixelWidth / scale).rounded(), height: (pixelHeight / scale).rounded())
     }
+  }
+
+  /// One built-in panel of a device type, as its `capabilities.plist` lists it.
+  /// Every device has one; iPhone Duo has two, and draws one at a time.
+  struct Panel: Equatable {
+    /// `displayName`: `LCD`, and `LCD-1` for the Duo's inner panel.
+    let name: String
+    /// The id `simctl io --display` and `devicectl` name the panel by.
+    let screenID: Int
+    let profile: Profile
   }
 
   /// Absent and unreadable are different facts, and a caller has to be able
@@ -174,6 +201,62 @@ nonisolated enum CoreSimulatorCatalog {
   /// found by its `CFBundleIdentifier`, which equals the device's `deviceType`,
   /// rather than by guessing a directory name from it.
   static func profile(deviceType: String, root: URL = deviceTypesRoot) -> Profile? {
+    guard let resources = resources(deviceType: deviceType, root: root) else { return nil }
+    return screen(
+      profile: read(resources.appendingPathComponent("profile.plist")),
+      capabilities: read(resources.appendingPathComponent("capabilities.plist")))
+  }
+
+  /// Every built-in panel of a device type, outer first. Empty for an Xcode
+  /// whose device types list no displays, where the main screen is all there is.
+  static func panels(deviceType: String, root: URL = deviceTypesRoot) -> [Panel] {
+    guard let resources = resources(deviceType: deviceType, root: root) else { return [] }
+    return panels(capabilities: read(resources.appendingPathComponent("capabilities.plist")))
+  }
+
+  /// The panels out of `capabilities.displays`, which also lists a TV-out, a
+  /// CarPlay screen and a "Resizable" scene on every iPhone: only the
+  /// `integrated` ones are the device's. Measured on Xcode 27.1, iPhone Duo:
+  /// `LCD` (screen 1) 1398x2034 and `LCD-1` (screen 3) 2007x2853, both at 3x,
+  /// the second with a native rotation of 270. Split out so simulator-check can
+  /// pin it with no Xcode.
+  static func panels(capabilities: [String: Any]?) -> [Panel] {
+    let displays =
+      (capabilities?["capabilities"] as? [String: Any])?["displays"] as? [[String: Any]] ?? []
+    return displays.compactMap { display -> Panel? in
+      guard display["displayType"] as? String == "integrated",
+        let name = display["displayName"] as? String,
+        let screenID = number(display["screenID"]),
+        let width = number(display["width"]), let height = number(display["height"]),
+        let scale = number(display["scale"]), scale > 0
+      else { return nil }
+      return Panel(
+        name: name, screenID: Int(screenID),
+        profile: Profile(pixelWidth: width, pixelHeight: height, scale: scale))
+    }
+    .sorted { $0.screenID < $1.screenID }
+  }
+
+  /// The screen id of the panel a device is drawing, out of
+  /// `devicectl device info displays --json-output`, whose JSON is versioned
+  /// and stable by devicectl's own account (measured at `jsonVersion` 5).
+  ///
+  /// Needed because DeviceHub's tree cannot answer it. Measured 2026-10-25 on
+  /// Xcode 27.1: once an iPhone Duo had been opened, DeviceHub kept an
+  /// `iOSContentGroup` for each panel, both at made-up frames, while drawing
+  /// only one; devicectl said `LCD` active as the window showed it closed and
+  /// six reads of the tree in a row held the inner panel's group.
+  static func activeScreenID(devicectlJSON data: Data) -> Int? {
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let displays = (root["result"] as? [String: Any])?["displays"] as? [[String: Any]]
+    else { return nil }
+    let active = displays.filter { $0["active"] as? Bool == true }
+    guard active.count == 1, let id = number(active[0]["displayId"]) else { return nil }
+    return Int(id)
+  }
+
+  /// A device type's `Contents/Resources`, found by its `CFBundleIdentifier`.
+  private static func resources(deviceType: String, root: URL) -> URL? {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
       return nil
     }
@@ -182,10 +265,7 @@ nonisolated enum CoreSimulatorCatalog {
       guard let info = read(bundle.appendingPathComponent("Contents/Info.plist")),
         info["CFBundleIdentifier"] as? String == deviceType
       else { continue }
-      let resources = bundle.appendingPathComponent("Contents/Resources")
-      return screen(
-        profile: read(resources.appendingPathComponent("profile.plist")),
-        capabilities: read(resources.appendingPathComponent("capabilities.plist")))
+      return bundle.appendingPathComponent("Contents/Resources")
     }
     return nil
   }

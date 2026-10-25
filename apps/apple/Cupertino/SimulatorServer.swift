@@ -105,6 +105,14 @@ nonisolated enum SimulatorServer {
     "rotate_right": ("right", ["command"]),
   ]
 
+  /// A foldable's poses, by the name a caller passes, to the label of the
+  /// button DeviceHub draws under the device for it. Measured on Xcode 27.1
+  /// with iPhone Duo; no menu item and no `simctl` or `devicectl` command sets
+  /// one, so the button is the only way.
+  static let poses: [String: String] = [
+    "closed": "Closed", "partially_open": "Partially Open", "open": "Open",
+  ]
+
   private static func tools(writesAllowed: Bool) -> [[String: Any]] {
     let empty: [String: Any] = [
       "type": "object", "properties": [String: Any](), "required": [Any](),
@@ -222,7 +230,8 @@ nonisolated enum SimulatorServer {
         "description":
           "Tap a point on the device" + pointDescription
           + " Brings the Simulator to the front first, because a synthetic click lands in "
-          + "whatever covers the window. Refused outside the screen.",
+          + "whatever covers the window. Refused outside the screen, and wherever the point "
+          + "would not land on the Simulator's own window, which on iPhone Duo is everywhere.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -300,6 +309,26 @@ nonisolated enum SimulatorServer {
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
       [
+        "name": "apple_simulator_set_pose",
+        "description":
+          "Fold or unfold a foldable simulator such as iPhone Duo: closed shows the outer "
+          + "screen, partially_open and open the inner one. DeviceHub only (Xcode 27), whose "
+          + "pose buttons are the one way to set it; the device is selected in DeviceHub's "
+          + "sidebar first if no window shows it. 'confirmed' says the screen switched to the "
+          + "expected panel, which cannot tell partially_open from open. The pose resets when "
+          + "the simulator reboots, and quitting DeviceHub shuts it down. DeviceHub misplaces "
+          + "the Duo's screen, so tap and swipe are refused on it: press handles from ui_tree.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "pose": ["type": "string", "enum": poses.keys.sorted()],
+            "device": deviceProperty,
+          ],
+          "required": ["pose"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
         "name": "apple_simulator_release",
         "description":
           "Hand the Mac back when you have finished driving the Simulator. Ends the driving "
@@ -317,7 +346,7 @@ nonisolated enum SimulatorServer {
   static let drivingNames = [
     "apple_simulator_press", "apple_simulator_tap", "apple_simulator_swipe",
     "apple_simulator_type", "apple_simulator_key", "apple_simulator_press_button",
-    "apple_simulator_release",
+    "apple_simulator_release", "apple_simulator_set_pose",
   ]
 
   // ─── the device screen ─────────────────────────────────────────────────────
@@ -329,6 +358,12 @@ nonisolated enum SimulatorServer {
     /// The device-screen group's handle and frame, or nil with the reason.
     let screen: (handle: String, frame: SimulatorGeometry.DeviceFrame)?
     let problem: String?
+    /// Which panel the screen matched, set only for a device with more than
+    /// one: the Duo's outer `LCD` folded, its inner `LCD-1` open.
+    var panel: CoreSimulatorCatalog.Panel? = nil
+    /// Whether the screen group lies inside its window, which a point needs.
+    /// See `SimulatorGeometry.onWindow` for the device where it does not.
+    var onWindow = true
 
     var json: [String: Any] {
       var out: [String: Any] = ["window": window.index, "title": window.title ?? ""]
@@ -338,12 +373,21 @@ nonisolated enum SimulatorServer {
       if let screen {
         out["screen"] = screen.frame.json
         out["screenHandle"] = screen.handle
+        if let panel { out["display"] = panel.name }
+        if !onWindow { out["pointer"] = SimulatorServer.offWindow }
       } else {
         out["screen"] = problem ?? "not found"
       }
       return out
     }
   }
+
+  /// What `tap` and `swipe` refuse with, and what the window listings say,
+  /// when the screen group is not on its window.
+  static let offWindow =
+    "refused: DeviceHub reports this device's screen outside its window, so a point cannot be "
+    + "placed on it and tap and swipe would land elsewhere on the Mac. Use press with a handle "
+    + "from ui_tree, and type and key after it."
 
   /// Profiles by device type, because the lookup scans 124 bundles and a
   /// device type's screen does not change while the app runs.
@@ -361,6 +405,49 @@ nonisolated enum SimulatorServer {
     guard let found = CoreSimulatorCatalog.profile(deviceType: deviceType) else { return nil }
     profileLock.lock()
     profileCache[deviceType] = found
+    profileLock.unlock()
+    return found
+  }
+
+  private nonisolated(unsafe) static var panelCache: [String: [CoreSimulatorCatalog.Panel]] = [:]
+
+  /// Which panel a booted device is drawing, by screen id, from `devicectl`:
+  /// about 80 ms a read, so it is asked only of a device with more than one
+  /// panel. Nil when devicectl is missing, slow or says nothing usable, and the
+  /// tree is matched as before. See `CoreSimulatorCatalog.activeScreenID`.
+  static func activePanel(udid: String) -> Int? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = [
+      "devicectl", "--quiet", "--timeout", "5", "--json-output", "-",
+      "device", "info", "displays", "--device", udid,
+    ]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { return nil }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    return CoreSimulatorCatalog.activeScreenID(devicectlJSON: data)
+  }
+
+  /// The screens a device's window may show: each built-in panel, or the main
+  /// screen alone where the device type lists none.
+  static func panels(for deviceType: String) -> [CoreSimulatorCatalog.Panel] {
+    profileLock.lock()
+    if let cached = panelCache[deviceType] {
+      profileLock.unlock()
+      return cached
+    }
+    profileLock.unlock()
+    var found = CoreSimulatorCatalog.panels(deviceType: deviceType)
+    if found.isEmpty, let main = profile(for: deviceType) {
+      found = [CoreSimulatorCatalog.Panel(name: "LCD", screenID: 1, profile: main)]
+    }
+    guard !found.isEmpty else { return [] }
+    profileLock.lock()
+    panelCache[deviceType] = found
     profileLock.unlock()
     return found
   }
@@ -417,24 +504,42 @@ nonisolated enum SimulatorServer {
           window: window, device: byTitle, screen: nil,
           problem: "no booted device to match the window against")
       }
+      // Every panel, not only the main screen: an unfolded iPhone Duo draws its
+      // inner panel, 669x951 points, which the main screen's 466x678 never
+      // matched, so the device was "not found" the moment it opened.
       for device in candidates {
-        guard let profile = profile(for: device.deviceType) else { continue }
-        for group in groups {
-          let rect = group.rect!
-          if let frame = SimulatorGeometry.resolve(
-            groupOrigin: CGPoint(x: rect[0], y: rect[1]),
-            groupSize: CGSize(width: rect[2], height: rect[3]),
-            portraitPoints: profile.points)
-          {
-            return Target(
-              window: window, device: device, screen: (group.handle, frame), problem: nil)
+        let shapes = panels(for: device.deviceType)
+        // DeviceHub keeps a group per panel once a foldable has been opened, so
+        // only the one devicectl says is drawn may match.
+        var tried = shapes
+        if shapes.count > 1, device.booted, let active = activePanel(udid: device.udid) {
+          let drawn = shapes.filter { $0.screenID == active }
+          if !drawn.isEmpty { tried = drawn }
+        }
+        for shape in tried {
+          for group in groups {
+            let rect = group.rect!
+            if let frame = SimulatorGeometry.resolve(
+              groupOrigin: CGPoint(x: rect[0], y: rect[1]),
+              groupSize: CGSize(width: rect[2], height: rect[3]),
+              portraitPoints: shape.profile.points)
+            {
+              var found = Target(
+                window: window, device: device, screen: (group.handle, frame), problem: nil)
+              if shapes.count > 1 { found.panel = shape }
+              found.onWindow =
+                window.rect.map {
+                  SimulatorGeometry.onWindow(screen: rect, window: $0)
+                } ?? false
+              return found
+            }
           }
         }
       }
       let sizes = groups.map { "\(Int($0.rect![2]))x\(Int($0.rect![3]))" }.joined(separator: ", ")
-      let wanted = candidates.compactMap { d in
-        profile(for: d.deviceType).map {
-          "\(d.name) \(Int($0.points.width))x\(Int($0.points.height))"
+      let wanted = candidates.flatMap { d in
+        panels(for: d.deviceType).map {
+          "\(d.name) \(Int($0.profile.points.width))x\(Int($0.profile.points.height))"
         }
       }.joined(separator: ", ")
       return Target(
@@ -462,10 +567,20 @@ nonisolated enum SimulatorServer {
         bounds: .init(depth: 1, nodes: 200, seconds: 2), scope: scope)
       return tree.elements.filter { $0.depth == 1 && $0.role == "AXGroup" && $0.rect != nil }
     }
-    let tree = try AccessibilityDriver.tree(
-      bundleId: host, windowIndex: windowIndex, detail: .all,
-      bounds: .init(depth: 10, nodes: 1500, seconds: 3), scope: scope)
-    return deviceHubScreens(tree.elements)
+    // Depth 8 first. Measured 2026-10-25, Xcode 27.1: the group sat at depth 6
+    // and 7 for an iPhone 18 Pro, 7 and 8 for iPhone Duo's two panels, and
+    // everything below it is the iOS app's own tree. Walking into that to depth
+    // 10 took 2.4 s on the iPhone and 4.9 s on the Duo, so the 3 s budget ran
+    // out on the Duo before the walk reached the group being drawn; to 8 it
+    // took 0.7 s and 0.9 s. 10 stays as the fallback it was written against.
+    for depth in [8, 10] {
+      let tree = try AccessibilityDriver.tree(
+        bundleId: host, windowIndex: windowIndex, detail: .all,
+        bounds: .init(depth: depth, nodes: 1500, seconds: 3), scope: scope)
+      let screens = deviceHubScreens(tree.elements)
+      if !screens.isEmpty || depth == 10 { return screens }
+    }
+    return []
   }
 
   /// Split out so simulator-check can pin it with no DeviceHub running.
@@ -620,6 +735,7 @@ nonisolated enum SimulatorServer {
           return failure(id, "Both 'x' and 'y' are required, in iOS points.")
         }
         let target = try target(surface: surface, args: args)
+        guard target.onWindow else { return failure(id, "Tap " + offWindow) }
         let frame = target.screen!.frame
         let point = CGPoint(x: x, y: y)
         guard frame.contains(point) else {
@@ -631,6 +747,7 @@ nonisolated enum SimulatorServer {
         }
         try front(simulator, scope: reach)
         let at = frame.toScreen(point)
+        try requireOnHost(simulator, at: at)
         try AccessibilityDriver.click(x: at.x, y: at.y, scope: reach, announcing: simulator)
         return ok(
           id,
@@ -647,6 +764,7 @@ nonisolated enum SimulatorServer {
         }
         let durationMs = max(16, min(args["durationMs"] as? Int ?? 400, 5000))
         let target = try target(surface: surface, args: args)
+        guard target.onWindow else { return failure(id, "Swipe " + offWindow) }
         let frame = target.screen!.frame
         let from = CGPoint(x: fromX, y: fromY)
         let to = CGPoint(x: toX, y: toY)
@@ -658,6 +776,8 @@ nonisolated enum SimulatorServer {
           )
         }
         try front(simulator, scope: reach)
+        try requireOnHost(simulator, at: frame.toScreen(from))
+        try requireOnHost(simulator, at: frame.toScreen(to))
         try AccessibilityDriver.drag(
           from: frame.toScreen(from), to: frame.toScreen(to), durationMs: durationMs,
           scope: reach, announcing: simulator)
@@ -712,6 +832,13 @@ nonisolated enum SimulatorServer {
           chord.key, modifiers: chord.modifiers, scope: reach, announcing: simulator)
         return ok(id, ["pressed": button])
 
+      case "apple_simulator_set_pose":
+        guard let pose = (args["pose"] as? String)?.lowercased(), poses[pose] != nil else {
+          return failure(
+            id, "'pose' is one of \(poses.keys.sorted().joined(separator: ", ")).")
+        }
+        return ok(id, try setPose(pose, args: args, surface: surface))
+
       default:
         return failure(id, "unknown tool '\(name)'")
       }
@@ -729,6 +856,160 @@ nonisolated enum SimulatorServer {
         "\(hostName(simulator)) did not come to the front, so nothing was "
           + "posted — a synthetic event "
           + "lands in whatever is frontmost, which would have been someone else's window.")
+    }
+  }
+
+  // ─── poses ─────────────────────────────────────────────────────────────────
+
+  /// Press DeviceHub's button for `pose` under the device, and read back which
+  /// panel the device then draws.
+  ///
+  /// Measured 2026-10-25, Xcode 27.1, iPhone Duo: Closed draws the outer `LCD`,
+  /// and both Partially Open and Open draw the inner `LCD-1` (devicectl's
+  /// `info displays` agreed: the inner panel active, the outer not). So the read
+  /// back confirms the fold, never which of the two open poses it is.
+  private static func setPose(_ pose: String, args: [String: Any], surface: Surface) throws
+    -> [String: Any]
+  {
+    let reach = scope(surface)
+    guard host(surface) == deviceHub else {
+      throw AccessibilityDriver.Failure.refused(
+        "A pose is set in DeviceHub, Xcode 27's device window, and \(hostName(host(surface))) "
+          + "is hosting the simulator here.")
+    }
+    let device = try poseDevice(args: args, surface: surface)
+    let shapes = panels(for: device.deviceType)
+    guard shapes.count > 1 else {
+      throw AccessibilityDriver.Failure.refused(
+        "\(device.name) has one screen and no pose; only a foldable such as iPhone Duo has one.")
+    }
+    guard device.booted else {
+      throw AccessibilityDriver.Failure.refused(
+        "\(device.name) is not booted; boot it with ios_simulator_boot or simctl first.")
+    }
+    let window = try windowShowing(device, surface: surface)
+
+    let label = poses[pose]!
+    let found = try AccessibilityDriver.tree(
+      bundleId: deviceHub, windowIndex: window, detail: .interactive,
+      bounds: .init(depth: 10, nodes: 1500, seconds: 3), scope: reach,
+      match: { $0.name == label })
+    guard let button = found.elements.first else {
+      throw AccessibilityDriver.Failure.refused(
+        "DeviceHub shows no '\(label)' button under \(device.name). The pose buttons are found "
+          + "by their English labels, which another language renames.")
+    }
+    try AccessibilityDriver.press(handle: button.handle, scope: reach)
+
+    // The outer panel is the lowest screen id, `LCD`, which is also the device
+    // type's main screen.
+    let wantOuter = pose == "closed"
+    var panel: CoreSimulatorCatalog.Panel?
+    let started = Date()
+    repeat {
+      panel =
+        (try? targets(surface: surface))?
+        .first { $0.device?.udid == device.udid && $0.screen != nil }?.panel
+      if let panel, (panel == shapes[0]) == wantOuter { break }
+      usleep(150_000)
+    } while Date().timeIntervalSince(started) < 3
+    let confirmed = panel.map { ($0 == shapes[0]) == wantOuter } ?? false
+
+    var answer: [String: Any] = [
+      "device": device.name, "pose": pose, "display": panel?.name ?? NSNull(),
+      "confirmed": confirmed,
+    ]
+    answer["note"] =
+      confirmed
+      ? "The pose holds until the simulator reboots. tap and swipe are refused on this device; "
+        + "press handles from ui_tree."
+      : "The button was pressed and the screen did not switch to the expected panel within "
+        + "3 seconds. Read list_devices before relying on the pose."
+    return answer
+  }
+
+  /// The device a pose is for: the one named, else the one foldable a window
+  /// shows.
+  private static func poseDevice(args: [String: Any], surface: Surface) throws
+    -> CoreSimulatorCatalog.Device
+  {
+    if let wanted = (args["device"] as? String)?.trimmingCharacters(in: .whitespaces),
+      !wanted.isEmpty
+    {
+      guard case .found(let devices) = CoreSimulatorCatalog.devices() else {
+        throw AccessibilityDriver.Failure.refused("CoreSimulator's devices could not be read.")
+      }
+      let named = devices.filter {
+        $0.udid.caseInsensitiveCompare(wanted) == .orderedSame
+          || $0.name.caseInsensitiveCompare(wanted) == .orderedSame
+      }
+      // A name can be shared across runtimes; the booted one is the one meant.
+      guard let device = named.first(where: \.booted) ?? named.first else {
+        throw AccessibilityDriver.Failure.refused("No simulator named '\(wanted)'.")
+      }
+      return device
+    }
+    let foldables = try targets(surface: surface).compactMap(\.device)
+      .filter { panels(for: $0.deviceType).count > 1 }
+    guard foldables.count == 1 else {
+      throw AccessibilityDriver.Failure.refused(
+        foldables.isEmpty
+          ? "No DeviceHub window shows a foldable simulator; pass 'device' to say which."
+          : "Several windows show a foldable; pass 'device' to say which.")
+    }
+    return foldables[0]
+  }
+
+  /// The DeviceHub window showing `device`, selecting it in the sidebar first
+  /// when none does. Its row carries the identifier `TableRow.Device.<UDID>` on
+  /// the labels inside it; `select` walks up to the row (docs/desktop.md,
+  /// "Selecting a row").
+  private static func windowShowing(_ device: CoreSimulatorCatalog.Device, surface: Surface)
+    throws -> Int
+  {
+    func showing() -> Int? {
+      (try? targets(surface: surface))?.first { $0.device?.udid == device.udid }?.window.index
+    }
+    if let window = showing() { return window }
+    let reach = scope(surface)
+    let wanted = "TableRow.Device.\(device.udid)"
+    let rows = try AccessibilityDriver.tree(
+      bundleId: deviceHub, windowIndex: nil, detail: .all,
+      bounds: .init(depth: 12, nodes: 3000, seconds: 3), scope: reach,
+      match: { $0.identifier?.caseInsensitiveCompare(wanted) == .orderedSame })
+    guard let label = rows.elements.first else {
+      throw AccessibilityDriver.Failure.refused(
+        "\(device.name) is not in DeviceHub's sidebar, so it cannot be shown. Open DeviceHub's "
+          + "device list and try again.")
+    }
+    _ = try AccessibilityDriver.select(handle: label.handle, scope: reach)
+    let started = Date()
+    repeat {
+      if let window = showing() { return window }
+      usleep(150_000)
+    } while Date().timeIntervalSince(started) < 3
+    throw AccessibilityDriver.Failure.refused(
+      "\(device.name) was selected in DeviceHub's sidebar and no window showed it within 3 "
+        + "seconds.")
+  }
+
+  /// The Mac point a tap or a swipe end resolved to must be on the host's own
+  /// window, the check desktop `click` makes. `tap` used to post wherever the
+  /// device frame mapped the point, and for a frame DeviceHub misreports that
+  /// is someone else's window. Polled for half a second, because the window
+  /// list trails the activation `front` waited for (docs/desktop.md, 2026-10-12).
+  private static func requireOnHost(_ simulator: String, at point: CGPoint) throws {
+    let started = Date()
+    var onWindow = AccessibilityDriver.pointOnWindow(of: simulator, at: point)
+    while !onWindow, Date().timeIntervalSince(started) < 0.5 {
+      usleep(20_000)
+      onWindow = AccessibilityDriver.pointOnWindow(of: simulator, at: point)
+    }
+    guard onWindow else {
+      throw AccessibilityDriver.Failure.refused(
+        "(\(Int(point.x)), \(Int(point.y))) on the Mac is not on \(hostName(simulator))'s window, "
+          + "so nothing was posted. Something covers the device there, or its frame is wrong; "
+          + "press a handle from ui_tree instead.")
     }
   }
 
@@ -803,6 +1084,8 @@ nonisolated enum SimulatorServer {
           if let device = target.device { row["device"] = device.name }
           if let screen = target.screen {
             row["screen"] = screen.frame.json
+            if let panel = target.panel { row["display"] = panel.name }
+            if !target.onWindow { row["pointer"] = offWindow }
             if let device = target.device {
               row["windowScalePreference"] = CoreSimulatorCatalog.windowScalePreferences(
                 udid: device.udid)
@@ -973,8 +1256,21 @@ nonisolated enum SimulatorServer {
     at a time on the Mac's current layout, and a character the layout cannot produce is
     reported back rather than silently dropped.
 
+    ## A foldable: iPhone Duo
+
+    `set_pose` folds and unfolds it through DeviceHub's pose buttons, the only way there is:
+    `closed` draws the outer screen (466x678 points), `partially_open` and `open` the inner
+    one (669x951). The window listings name the panel as `display` (`LCD` outer, `LCD-1`
+    inner). The pose resets when the simulator reboots, and quitting DeviceHub shuts it down.
+
+    DeviceHub places the Duo's screen in its accessibility tree away from where it draws it,
+    folded or open, so a point cannot be mapped onto it. `tap` and `swipe` are refused there,
+    and the listings say so under `pointer`. `press` with a handle from `ui_tree`, then `type`
+    and `key`, still work. The `rect`s come out of that same frame, and open they overrun the
+    screen's width, so on the Duo go by handles and labels, not coordinates.
+
     \(writesAllowed
-      ? "Writes are ON: press, tap, swipe, type, key, press_button and release are available."
+      ? "Writes are ON: press, tap, swipe, type, key, press_button, set_pose and release are available."
       : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
     """
   }
