@@ -182,7 +182,17 @@ describe("reviseDraftInPlace", () => {
     expect(result).toEqual(refusal);
   });
 
-  it("answers null when no composer matches", async () => {
+  it("answers null when no composer has this subject", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: "Inbox", text: "ALPHA one ALPHA two" }],
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(reviseDraftInPlace(lane, facts(), { body: "BRAVO" })).resolves.toBeNull();
+    lane.close();
+    expect(edits(seen)).toHaveLength(0);
+  });
+
+  it("refuses a composer under this subject whose text is a different message, and does not call edit", async () => {
     const { env, seen } = await hostStub({
       composers: [
         { composer: "mc-1", subject: "Inbox", text: "ALPHA one ALPHA two" },
@@ -190,8 +200,16 @@ describe("reviseDraftInPlace", () => {
       ],
     });
     const lane = MailAxLane.open(env)!;
-    await expect(reviseDraftInPlace(lane, facts(), { body: "BRAVO" })).resolves.toBeNull();
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
     lane.close();
+    expect(result).toMatchObject({
+      replaced: false,
+      degraded: true,
+      method: "inPlace",
+      capability: "identity",
+      composerText: "a different reply entirely",
+      draftText: facts().contentHead,
+    });
     expect(edits(seen)).toHaveLength(0);
   });
 

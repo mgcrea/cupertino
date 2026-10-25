@@ -121,10 +121,25 @@ export const reviseDraftInPlace = async (
 
   let handle = opts.composer;
   if (handle === undefined) {
-    const matches = (await lane.composers()).filter(
-      (c) => c.subject === facts.subject && sameDraft(facts.contentHead, c.text),
-    );
-    if (matches.length === 0) return null;
+    const sameSubject = (await lane.composers()).filter((c) => c.subject === facts.subject);
+    // Null only when nothing is open under this subject at all.
+    if (sameSubject.length === 0) return null;
+    const matches = sameSubject.filter((c) => sameDraft(facts.contentHead, c.text));
+    if (matches.length === 0) {
+      return refuse(
+        "identity",
+        facts,
+        `A composer titled "${facts.subject}" is open, but what it holds is not what this draft ` +
+          `holds — most likely a different message under the same subject, such as another reply ` +
+          `in the thread. Rewriting it would destroy text belonging to something else, so nothing ` +
+          `was touched.`,
+        "Check which windows are open in Mail, or edit the draft there directly.",
+        {
+          composerText: (sameSubject[0] as { text: string }).text.slice(0, 200),
+          draftText: facts.contentHead.slice(0, 200),
+        },
+      );
+    }
     if (matches.length > 1) {
       return refuse(
         "identity",
