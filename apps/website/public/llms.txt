@@ -38,8 +38,8 @@ hold.
   Its reads need no Automation grant — only the two write tools reach Apple Events. There is
   no delete tool because Contacts' scripting dictionary has no delete command.
 - Messages — 11 tools (6 always registered, 2 write-gated, 1 behind its own flag for reading 2FA
-  codes, 2 behind another for watching incoming messages). `@mgcrea/mcp-apple-messages`. iMessage, SMS and RCS out of chat.db, with names resolved
-  through Contacts. The only surface with no read fallback at all: every read through Messages' own
+  codes, 2 behind another for watching incoming messages). `@mgcrea/mcp-apple-messages`. iMessage,
+  SMS and RCS out of chat.db, with names resolved through Contacts. The only surface with no read fallback at all: every read through Messages' own
   scripting interface fails, so Full Disk Access is mandatory rather than an upgrade. `send` and
   `save_attachment` are the two mutating tools; there is no edit, delete, mark-as-read or reaction
   verb to expose. Roughly 3% of messages across all history keep their text only in an archived

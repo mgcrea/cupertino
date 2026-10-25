@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { PreconditionError } from "../client/errors.js";
 import type { AppleMessagesClient } from "../client/messages.js";
+import type { MessagesStore } from "../client/store.js";
 import { MessagesArrivalSource, type MessageArrival } from "../client/watch.js";
 import { wrap } from "./util.js";
 
@@ -41,9 +42,9 @@ import { wrap } from "./util.js";
  */
 
 const WAL_REASON =
-  "The Messages store only opened in immutable mode, which cannot see its WAL, so the " +
-  "newest messages are exactly what a watch would miss. Grant Full Disk Access so the " +
-  "store opens read-only (or leave APPLE_MESSAGES_INDEX_MODE on auto), then try again.";
+  "The Messages store was opened in immutable mode, which cannot see its WAL, so the newest " +
+  "messages are exactly what a watch would miss. APPLE_MESSAGES_INDEX_MODE=immutable asks for " +
+  "that: set it to auto or ro, or unset it, then try again.";
 
 export type MessagesWatchServiceOptions = {
   client: AppleMessagesClient;
@@ -63,6 +64,7 @@ export class MessagesWatchService {
   #registry: WatchRegistry<MessageArrival> | undefined;
   #inner: MessagesArrivalSource | undefined;
   #dir: string | undefined;
+  #store: MessagesStore | undefined;
   #init: Promise<void> | undefined;
 
   /** What `createWatches` is given. Delegates to the source `ensure()` builds. */
@@ -110,7 +112,8 @@ export class MessagesWatchService {
     // Throws the store's own reason when it is off or unreadable.
     const { store, path } = this.#client.watchStore();
     // `immutable` is WAL-blind, and the WAL is where the newest message is.
-    if (store.mode === "immutable") throw new PreconditionError(WAL_REASON);
+    if (store.mode !== "ro") throw new PreconditionError(WAL_REASON);
+    this.#store = store;
     this.#inner = new MessagesArrivalSource({ store });
     this.#dir = dirname(path);
   }
@@ -136,28 +139,38 @@ export class MessagesWatchService {
    * so a typed value counts as resolved only when a candidate equals it after
    * normalisation. A short "+336" therefore resolves nothing, rather than every
    * French number. What does not resolve is kept, normalised and lowercased, and
-   * reported: the person may simply not have written yet.
+   * reported (with `suggestions` when the store holds near misses).
    */
-  resolveFrom(typed: readonly string[]): { from: string[]; unresolved: string[] } {
+  resolveFrom(typed: readonly string[]): {
+    from: string[];
+    unresolved: string[];
+    suggestions: { typed: string; candidates: string[] }[];
+  } {
     const from: string[] = [];
     const unresolved: string[] = [];
+    const suggestions: { typed: string; candidates: string[] }[] = [];
+    // One read of the store's handles for the whole call, not one per entry.
+    const pool = this.#store?.handles();
     for (const entry of typed) {
       const key = handleKey(entry);
       if (key === "") continue;
-      const exact = this.#client.storeHandlesFor(entry).filter((h) => handleKey(h) === key);
+      const candidates = this.#client.storeHandlesFor(entry, pool);
+      const exact = candidates.filter((h) => handleKey(h) === key);
       if (exact.length > 0) from.push(...exact);
       else {
         from.push(key);
         unresolved.push(key);
+        if (candidates.length > 0) suggestions.push({ typed: entry, candidates });
       }
     }
-    return { from: [...new Set(from)], unresolved: [...new Set(unresolved)] };
+    return { from: [...new Set(from)], unresolved: [...new Set(unresolved)], suggestions };
   }
 
-  async add(input: {
-    from?: string[] | undefined;
-    domains?: string[] | undefined;
-  }): Promise<{ watch: Watch; unresolved: string[] }> {
+  async add(input: { from?: string[] | undefined; domains?: string[] | undefined }): Promise<{
+    watch: Watch;
+    unresolved: string[];
+    suggestions: { typed: string; candidates: string[] }[];
+  }> {
     const registry = this.#registry;
     if (!registry) throw new Error("Messages watches are not bound to a registry.");
     // Refuse an empty filter before anything opens.
@@ -166,12 +179,12 @@ export class MessagesWatchService {
       ...(input.domains ? { domains: input.domains } : {}),
     });
     await this.ensure();
-    const { from, unresolved } = this.resolveFrom(input.from ?? []);
+    const { from, unresolved, suggestions } = this.resolveFrom(input.from ?? []);
     const filter = normalizeFilter({
       ...(from.length ? { from } : {}),
       ...(input.domains ? { domains: input.domains } : {}),
     });
-    return { watch: registry.add(filter), unresolved };
+    return { watch: registry.add(filter), unresolved, suggestions };
   }
 }
 
@@ -180,8 +193,8 @@ export const registerWatchTools = (server: McpServer, service: MessagesWatchServ
     "apple_messages_watch",
     {
       description:
-        "Watch for new messages from chosen handles. Give `from` (phone numbers or email " +
-        "addresses, as you would type them) and/or `domains` (email handles only; matches the " +
+        "Watch for new messages from chosen handles. Give `from` (email addresses, or phone " +
+        "numbers in international form such as +33612345678) and/or `domains` (email handles only; matches the " +
         "domain and its subdomains); a sender is required, there is no watch on all messages. " +
         "Returns a handle and its `uri`. The HOST subscribes to the uri to be told when to read " +
         "it, not you; reading it lists what arrived since the watch began (or since `after`), " +
@@ -193,8 +206,12 @@ export const registerWatchTools = (server: McpServer, service: MessagesWatchServ
           .array(z.string().min(1))
           .optional()
           .describe(
-            "Phone numbers or email addresses. Spaces and punctuation in a number are ignored. " +
-              "A handle the store does not hold yet is kept as typed and listed in `unresolved`.",
+            "Email addresses, or phone numbers in international form (+33612345678: no trunk 0, " +
+              "no (0)); spaces and punctuation are ignored, but a local spelling like 06 12 34 56 " +
+              "78 never matches. An entry the store does not hold is kept without spaces or " +
+              "punctuation, lowercased, and listed in `unresolved`, which does not prove the " +
+              "person has not written: it fires only if the store later holds exactly that " +
+              "spelling. Near misses come back as `suggestions` to retry with.",
           ),
         domains: z
           .array(z.string().min(1))
@@ -207,13 +224,14 @@ export const registerWatchTools = (server: McpServer, service: MessagesWatchServ
     },
     async ({ from, domains }) =>
       wrap(async () => {
-        const { watch, unresolved } = await service.add({ from, domains });
+        const { watch, unresolved, suggestions } = await service.add({ from, domains });
         return {
           watch: watch.id,
           uri: watch.uri,
           filter: { from: watch.filter.from, domains: watch.filter.domains },
           cursor: watch.createdAt,
           unresolved,
+          ...(suggestions.length ? { suggestions } : {}),
         };
       }),
   );

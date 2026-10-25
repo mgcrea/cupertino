@@ -7,6 +7,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toAppleSeconds } from "../src/client/dates.js";
+import { AppleMessagesClient } from "../src/client/messages.js";
+import { encodeChatRef, encodeMessageRef } from "../src/client/ref.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -30,6 +32,7 @@ const opened: Client[] = [];
 afterEach(async () => {
   while (opened.length) await opened.pop()?.close();
   while (cleanups.length) cleanups.pop()?.();
+  vi.restoreAllMocks();
 });
 
 type Fixture = { path: string; db: DatabaseSync };
@@ -107,10 +110,14 @@ describe("the allowWatches gate", () => {
   });
 
   it("lists both tools with the gate on, even with prompts off", async () => {
+    const off = await names((await connect(makeStore())).client);
     const { client } = await connect(makeStore(), { ...ON, APPLE_MESSAGES_EXPOSE_PROMPTS: "0" });
-    const tools = await names(client);
-    expect(tools).toContain("apple_messages_watch");
-    expect(tools).toContain("apple_messages_unwatch");
+    const on = await names(client);
+    expect(on.filter((n) => !off.includes(n)).toSorted()).toEqual([
+      "apple_messages_unwatch",
+      "apple_messages_watch",
+    ]);
+    expect(off.filter((n) => !on.includes(n))).toEqual([]);
     expect(client.getServerCapabilities()?.resources?.subscribe).toBe(true);
   });
 
@@ -123,10 +130,11 @@ describe("the allowWatches gate", () => {
   });
 
   it("opens nothing on a server that never sees a watch call", async () => {
-    const { client, messages } = await connect(makeStore(), ON);
-    const store = vi.spyOn(messages, "store");
-    const located = vi.spyOn(messages, "located");
-    const watchStore = vi.spyOn(messages, "watchStore");
+    // Spies go on the prototype first, so even a call made while the server is built is seen.
+    const store = vi.spyOn(AppleMessagesClient.prototype, "store");
+    const located = vi.spyOn(AppleMessagesClient.prototype, "located");
+    const watchStore = vi.spyOn(AppleMessagesClient.prototype, "watchStore");
+    const { client } = await connect(makeStore(), ON);
     await client.listTools();
     expect(store).not.toHaveBeenCalled();
     expect(located).not.toHaveBeenCalled();
@@ -169,6 +177,31 @@ describe("apple_messages_watch", () => {
     expect(out.unresolved).toEqual(["nobody@example.org"]);
   });
 
+  it("leaves a local spelling unresolved, with the stored handle as a suggestion, and never fires", async () => {
+    const fx = makeStore();
+    const { client } = await connect(fx, ON);
+    const out = json(await watch(client, { from: ["06 12 34 56 78"] }));
+    expect(out.filter.from).toEqual(["0612345678"]);
+    expect(out.unresolved).toEqual(["0612345678"]);
+    expect(out.suggestions).toEqual([{ typed: "06 12 34 56 78", candidates: ["+33612345678"] }]);
+    addMessage(fx.db, { rowid: 1, handle: 1 });
+    expect((await read(client, out.uri)).messages).toEqual([]);
+  });
+
+  it("returns no suggestions when nothing is near", async () => {
+    const { client } = await connect(makeStore(), ON);
+    const out = json(await watch(client, { from: ["nobody@example.org"] }));
+    expect(out.suggestions).toBeUndefined();
+  });
+
+  it("reads the store's handles once per call, however many entries", async () => {
+    const { client, messages } = await connect(makeStore(), ON);
+    await watch(client, { domains: ["a.com"] });
+    const handles = vi.spyOn(messages.watchStore().store, "handles");
+    await watch(client, { from: ["+33 6 12 34 56 78", "friend@example.com", "x@y.z"] });
+    expect(handles).toHaveBeenCalledTimes(1);
+  });
+
   it("does not let a short prefix match every number that starts with it", async () => {
     const { client } = await connect(makeStore(), ON);
     const out = json(await watch(client, { from: ["+336"] }));
@@ -197,6 +230,8 @@ describe("apple_messages_watch", () => {
     const res = await watch(client, { domains: ["example.com"] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain("WAL");
+    expect(textOf(res)).toContain("APPLE_MESSAGES_INDEX_MODE");
+    expect(textOf(res)).not.toContain("Full Disk Access");
   });
 
   it("refuses with the client's store error when it cannot be opened", async () => {
@@ -253,9 +288,9 @@ describe("reading a watch", () => {
     expect(Object.keys(m)).toEqual(expect.arrayContaining(["id", "handle", "chat", "date"]));
     expect(m).not.toHaveProperty("text");
     expect(m.handle).toBe("+33612345678");
-    expect(typeof m.id).toBe("string");
-    expect(m.chat).toBeTruthy();
-    expect(m.date).toBeTruthy();
+    expect(m.id).toBe(encodeMessageRef("guid-11"));
+    expect(m.chat).toBe(encodeChatRef("iMessage;-;+33612345678"));
+    expect(m.date).toBe("2026-08-01T12:00:00.000Z");
     expect(JSON.stringify(body)).not.toContain("secret body");
   });
 
@@ -295,7 +330,7 @@ describe("reading a watch", () => {
     const { watch: id, uri } = json(await watch(client, { domains: ["a.com"] }));
     await expect(client.readResource({ uri })).resolves.toBeDefined();
     await client.callTool({ name: "apple_messages_unwatch", arguments: { watch: id } });
-    await expect(client.readResource({ uri })).rejects.toThrow();
+    await expect(client.readResource({ uri })).rejects.toMatchObject({ code: -32602 });
   });
 });
 

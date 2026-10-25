@@ -65,11 +65,15 @@ and should not be summarised as one.
 gate (\`APPLE_MESSAGES_ALLOW_WATCHES\`) is on. If you cannot see them, watches
 are off.
 
-- **A filter is required.** Give \`from\` (phone numbers or email addresses, as
-  you would type them) or \`domains\` (email handles only; a phone number never
-  matches a domain). There is no watch on all messages. A number is matched to
-  the store's own spelling, ignoring spaces and punctuation; one the store does
-  not hold yet is kept as typed and listed in \`unresolved\`.
+- **A filter is required.** Give \`from\` or \`domains\` (email handles only; a
+  phone number never matches a domain). There is no watch on all messages.
+- **Spell phone numbers in international form**: \`+33612345678\`, with no trunk
+  \`0\` and no \`(0)\`. Spaces and punctuation are ignored, but a local spelling
+  such as \`06 12 34 56 78\` never matches. An entry the store does not hold is
+  kept without spaces or punctuation, lowercased, and listed in \`unresolved\`.
+  That is NOT proof the person has not written: it fires only if the store later
+  holds exactly that spelling. When the store holds near misses they come back
+  as \`suggestions\` (\`typed\`, \`candidates\`); retry with the right spelling.
 - **The host subscribes, not you.** \`apple_messages_watch\` returns a handle and a
   \`uri\`. Subscribing to that uri is something the host does; there is no tool
   for it, so do not promise the user a push. A host that never subscribes still
