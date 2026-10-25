@@ -187,9 +187,15 @@ final class FakeBoard: Pasteboard {
     changeCount += 1
     contents = saved as? [String] ?? []
   }
+  /// Writes that clear the board, then refuse, as `LivePasteboard.write` can:
+  /// `clearContents` moves the count before `writeObjects` says no.
+  var refuses: (PasteContent) -> Bool = { _ in false }
+  struct Refused: Error {}
   func write(_ content: PasteContent) throws {
     writes.append(content)
     changeCount += 1
+    contents = []
+    guard !refuses(content) else { throw Refused() }
     contents = ["ours"]
   }
   /// The person copies something while the edit runs.
@@ -820,6 +826,33 @@ struct MailComposerCheck {
         "and the board restored at once",
         Date().timeIntervalSince(started) < 1.5 && board.untouchedOrRestored
           && board.restores == 1)
+    }
+
+    // Round 2. A write that clears the board and then throws.
+    do {
+      let board = FakeBoard()
+      board.refuses = { _ in true }
+      let fake = EditFake(own: "Old")
+      let (result, _, front) = run(fake, Request(body: "New"), board: board)
+      check("a first write that fails is a composer refusal", capability(result) == "composer")
+      check("with nothing pasted", fake.pasted.isEmpty)
+      check(
+        "and the person's clipboard restored after it",
+        board.contents == ["the person's clipboard"] && board.restores == 1
+          && front.given == [4242])
+    }
+    do {
+      let pdf = tempFile("d.pdf")
+      let board = FakeBoard()
+      board.refuses = { if case .files = $0 { return true } else { return false } }
+      let fake = EditFake(own: "Old")
+      let (result, _, _) = run(fake, Request(body: "New", files: [pdf]), board: board)
+      check(
+        "a files write failing after the body is a refusal, not saved",
+        capability(result) == "composer" && fake.saves == 0)
+      check(
+        "and the person's clipboard restored after it",
+        board.contents == ["the person's clipboard"] && board.restores == 1)
     }
 
     // IMPORTANT 2c. Nothing read the draft on disk back.

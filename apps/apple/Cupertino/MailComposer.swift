@@ -506,8 +506,11 @@ nonisolated enum MailComposer {
 
     func write(_ content: PasteContent) throws {
       if saved == nil { saved = board.snapshot() }
+      // Recorded whether or not the write throws: `LivePasteboard.write` clears
+      // the board before it can refuse, so a failed write has already moved the
+      // count and wiped the person's clipboard, and must still be given back.
+      defer { ours = board.changeCount }
       try board.write(content)
-      ours = board.changeCount
     }
 
     func giveBack() {
