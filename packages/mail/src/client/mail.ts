@@ -1572,12 +1572,10 @@ export class AppleMailClient {
         degraded: true,
         capability: "accessibility",
         drafts: [],
-        reason:
-          "Mail's windows could not be read, so nothing was checked — this does NOT mean no " +
-          "draft is open.",
+        reason: MailAxLane.grantMessage("list"),
         hint:
-          "Grant Accessibility to Cupertino.app in System Settings > Privacy & Security > " +
-          "Accessibility, then run apple_mail_diagnostics.",
+          "Nothing was read, so this does NOT mean no draft is open. Run apple_mail_diagnostics " +
+          "once Accessibility is on.",
       };
     }
 

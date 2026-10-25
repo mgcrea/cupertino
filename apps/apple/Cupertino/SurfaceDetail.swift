@@ -33,11 +33,15 @@ struct SurfaceDetail: View {
   /// the moment the switch moves. Same reason `CapabilitiesCard` keeps one for
   /// the write flag.
   @AppStorage private var enabled: Bool
+  /// The write flag `WritesToggle` writes, read here for the one row that
+  /// depends on it: Mail's drafts need Accessibility only when writes are on.
+  @AppStorage private var writes: Bool
 
   init(surface: Surface, model: StatusModel) {
     self.surface = surface
     self.model = model
     _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
+    _writes = AppStorage(wrappedValue: false, "allowWrites.\(surface.id)")
   }
 
   var body: some View {
@@ -315,6 +319,32 @@ struct SurfaceDetail: View {
         // the licence, and this toggle behaves identically either way.
         WritesToggle(surface: surface, model: model)
           .padding(.leading, 0)
+
+        // Mail's drafts are written by the app's own composer driver, which
+        // runs on the Accessibility grant, while everything else Mail does
+        // needs none. Desktop and Simulator already carry a grant row of their
+        // own above (`storePermission`), so this is Mail's alone rather than a
+        // second row for a surface that has one. Same row, same button as
+        // that one: the request first so the app is listed, then the pane.
+        if surface.id == "mail",
+          Permissions.mailDraftsNeedAccessibility(
+            mailEnabled: enabled, mailWrites: writes, accessibility: model.accessibility)
+        {
+          Divider()
+          HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(Color.orange)
+            Text(Permissions.mailDraftsNeedAccessibilityMessage)
+            Spacer()
+            Button("Allow…") {
+              Permissions.requestAccessibility()
+              Permissions.openAccessibilitySettings()
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+          }
+          .font(.callout)
+        }
       }
 
       // Separate from the write gate above, and deliberately below it so the

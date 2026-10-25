@@ -200,20 +200,25 @@ export class MailAxLane {
   }
 
   /**
-   * The sentence to say when the composer cannot be reached natively.
+   * The sentence to say when the app is there but Mail's windows cannot be read.
+   *
+   * Said once, in one wording, by every draft entry point (compose, edit,
+   * rebuild, list open drafts), so whoever meets it from any of them is led to
+   * the same switch. `mode` is accepted so callers can keep naming what they
+   * were doing, and is deliberately not part of the text.
    *
    * One grant rather than two, and none of the "quit Cupertino and open it
-   * again" ritual the System Events path needs — that exists because a node
+   * again" ritual the System Events path needs: that exists because a node
    * child started before the grant does not inherit it, and this driver runs in
-   * the app itself.
+   * the app itself. A server Cupertino did not start has no lane to be refused
+   * on, and says so in its own words.
    */
-  static grantMessage(mode: string): string {
+  static grantMessage(_mode?: string): string {
     return (
-      `Cupertino cannot read Mail's windows, which is the only route into a ${mode} composer, ` +
-      `so it was not started and nothing was written. This needs Accessibility for ` +
-      `Cupertino.app in System Settings > Privacy & Security > Accessibility. If the app is ` +
-      `already listed, toggle it off and on — the grant goes stale when the bundle is ` +
-      `reinstalled. Run apple_mail_diagnostics to check; it names the windows it can see.`
+      "Cupertino needs Accessibility to write Mail drafts. Turn it on for Cupertino in " +
+      "System Settings › Privacy & Security › Accessibility (if it is already listed, toggle " +
+      "it off and on: the grant goes stale when the app is reinstalled), then run " +
+      "apple_mail_diagnostics. Nothing was written."
     );
   }
 
