@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { MAIL_SURFACE, MailNotRunningError } from "../src/client/errors.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
@@ -33,10 +34,16 @@ const ACCOUNTS = [
   },
 ];
 
-const runner = (): OsascriptRunner => ({
-  run: vi.fn(async (script: string) =>
-    script.includes("a.emailAddresses()") ? ACCOUNTS : [],
-  ) as OsascriptRunner["run"],
+/**
+ * Answers `LIST_ACCOUNTS` like the real prelude does while Mail is closed:
+ * with `MailNotRunningError`, whether or not the answer is canned.
+ */
+const runner = (open: () => boolean = () => true): OsascriptRunner => ({
+  run: vi.fn(async (script: string) => {
+    if (!script.includes("a.emailAddresses()")) return [];
+    if (!open()) throw new MailNotRunningError(MAIL_SURFACE);
+    return ACCOUNTS;
+  }) as OsascriptRunner["run"],
 });
 
 let dir: string;
@@ -63,20 +70,31 @@ beforeAll(() => {
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-const build = (env: NodeJS.ProcessEnv, extra: { isMailRunning?: () => Promise<boolean> } = {}) => {
+type Extra = { isMailRunning?: () => Promise<boolean>; osascript?: OsascriptRunner };
+
+const build = (env: NodeJS.ProcessEnv, extra: Extra = {}) => {
   const config = loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: dbPath, ...env });
-  return createServer({ config, osascript: runner(), era: "modern", ...extra });
+  return createServer({
+    config,
+    osascript: extra.osascript ?? runner(),
+    era: "modern",
+    ...(extra.isMailRunning ? { isMailRunning: extra.isMailRunning } : {}),
+  });
 };
 
-const connect = async (
-  env: NodeJS.ProcessEnv,
-  extra: { isMailRunning?: () => Promise<boolean> } = {},
-) => {
+/** Every connection a test opens, closed after it so no watcher outlives the temp dir. */
+const opened: Client[] = [];
+afterEach(async () => {
+  while (opened.length) await opened.pop()?.close();
+});
+
+const connect = async (env: NodeJS.ProcessEnv, extra: Extra = {}) => {
   const created = build(env, extra);
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([created.server.connect(a), client.connect(b)]);
-  return { ...created, client };
+  opened.push(client);
+  return { client, mail: created.client, server: created.server, watches: created.watches };
 };
 
 type Result = Awaited<ReturnType<Client["callTool"]>>;
@@ -86,6 +104,7 @@ const names = async (c: Client) => (await c.listTools()).tools.map((t) => t.name
 
 const ON = { APPLE_MAIL_ALLOW_WATCHES: "1" };
 const running = async () => true;
+const closed = async () => false;
 
 describe("the allowWatches gate", () => {
   it("lists neither tool, and declares no subscribe, with the gate off", async () => {
@@ -113,14 +132,11 @@ describe("the allowWatches gate", () => {
   });
 
   it("opens nothing on a server that never sees a watch call", async () => {
-    const created = build(ON);
-    const index = vi.spyOn(created.client, "index");
-    const locate = vi.spyOn(created.client, "locate");
-    const accounts = vi.spyOn(created.client, "accounts");
-    const c = new Client({ name: "test", version: "0" });
-    const [a, b] = InMemoryTransport.createLinkedPair();
-    await Promise.all([created.server.connect(a), c.connect(b)]);
-    await c.listTools();
+    const { client, mail } = await connect(ON);
+    const index = vi.spyOn(mail, "index");
+    const locate = vi.spyOn(mail, "locate");
+    const accounts = vi.spyOn(mail, "accounts");
+    await client.listTools();
     expect(index).not.toHaveBeenCalled();
     expect(locate).not.toHaveBeenCalled();
     expect(accounts).not.toHaveBeenCalled();
@@ -152,20 +168,18 @@ describe("apple_mail_watch", () => {
   });
 
   it("shares one setup between two concurrent watches", async () => {
-    const created = build(ON, { isMailRunning: running });
-    const index = vi.spyOn(created.client, "index");
-    const c = new Client({ name: "test", version: "0" });
-    const [a, b] = InMemoryTransport.createLinkedPair();
-    await Promise.all([created.server.connect(a), c.connect(b)]);
+    const { client, mail } = await connect(ON, { isMailRunning: running });
+    const index = vi.spyOn(mail, "index");
     const [one, two] = await Promise.all([
-      c.callTool({ name: "apple_mail_watch", arguments: { domains: ["a.com"] } }),
-      c.callTool({ name: "apple_mail_watch", arguments: { domains: ["b.com"] } }),
+      client.callTool({ name: "apple_mail_watch", arguments: { domains: ["a.com"] } }),
+      client.callTool({ name: "apple_mail_watch", arguments: { domains: ["b.com"] } }),
     ]);
     expect(one.isError).toBeFalsy();
     expect(two.isError).toBeFalsy();
     expect(json(one).watch).not.toBe(json(two).watch);
-    // One init: the index is asked for by init's own call and by the lookup, never once per watch.
-    expect(index.mock.calls.length).toBeLessThanOrEqual(3);
+    // One setup asks for the index twice: its own open, and the mailbox lookup. A setup
+    // per watch would make it four.
+    expect(index).toHaveBeenCalledTimes(2);
   });
 
   it("refuses when the index only opens immutable, naming the WAL", async () => {
@@ -183,7 +197,7 @@ describe("apple_mail_watch", () => {
 
   it("refuses with the index's own reason when it cannot be opened", async () => {
     const missing = join(dir, "missing", "Envelope Index");
-    const { client } = await connect(
+    const { client, mail } = await connect(
       { ...ON, APPLE_MAIL_ENVELOPE_INDEX: missing },
       { isMailRunning: running },
     );
@@ -192,15 +206,8 @@ describe("apple_mail_watch", () => {
       arguments: { domains: ["example.com"] },
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res).length).toBeGreaterThan(0);
-  });
-
-  it("says Mail must be running when it is not", async () => {
-    const { client } = await connect(ON, { isMailRunning: async () => false });
-    const out = json(
-      await client.callTool({ name: "apple_mail_watch", arguments: { domains: ["example.com"] } }),
-    );
-    expect(out.note).toMatch(/Mail has to be running/);
+    expect(mail.indexError).toBeTruthy();
+    expect(textOf(res)).toContain(mail.indexError!);
   });
 
   it("scopes to mailboxes through the resolver search uses", async () => {
@@ -224,6 +231,33 @@ describe("apple_mail_watch", () => {
     expect(textOf(res)).toContain("Nowhere");
   });
 
+  it.each(["Junk", "Sent Messages", "[Gmail]/Trash", "Drafts"])(
+    "refuses %s, which can never fire, and says why",
+    async (name) => {
+      const { client } = await connect(ON, { isMailRunning: running });
+      const res = await client.callTool({
+        name: "apple_mail_watch",
+        arguments: { domains: ["example.com"], mailboxes: [name] },
+      });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toContain(name);
+      expect(textOf(res)).toMatch(/never|excluded/i);
+    },
+  );
+
+  it("bounds the mailboxes it takes", async () => {
+    const { client } = await connect(ON, { isMailRunning: running });
+    const res = await client.callTool({
+      name: "apple_mail_watch",
+      arguments: {
+        domains: ["example.com"],
+        mailboxes: Array.from({ length: 21 }, (_, i) => `Box ${i}`),
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/20/);
+  });
+
   it("allows watches with different mailboxes on one connection", async () => {
     const { client } = await connect(ON, { isMailRunning: running });
     const one = json(
@@ -237,6 +271,61 @@ describe("apple_mail_watch", () => {
     );
     expect(one.filter.mailboxes).toEqual(["Archive"]);
     expect(two.filter.mailboxes).toBe("default");
+  });
+
+  it("stops its watches when the server closes", async () => {
+    const { client, server, watches } = await connect(ON, { isMailRunning: running });
+    await client.callTool({ name: "apple_mail_watch", arguments: { domains: ["a.com"] } });
+    expect(watches?.count).toBe(1);
+    await server.close();
+    expect(watches?.count).toBe(0);
+  });
+});
+
+describe("apple_mail_watch while Mail is closed", () => {
+  it("sets a watch with no mailboxes, and returns the note", async () => {
+    const { client } = await connect(ON, {
+      isMailRunning: closed,
+      osascript: runner(() => false),
+    });
+    const res = await client.callTool({
+      name: "apple_mail_watch",
+      arguments: { domains: ["example.com"] },
+    });
+    expect(res.isError).toBeFalsy();
+    const out = json(res);
+    expect(out.watch).toMatch(/^w_/);
+    expect(out.cursor).toBe(101);
+    expect(out.note).toMatch(/Mail has to be running/);
+  });
+
+  it("refuses mailboxes, saying names cannot be resolved until Mail is running", async () => {
+    const { client } = await connect(ON, {
+      isMailRunning: closed,
+      osascript: runner(() => false),
+    });
+    const res = await client.callTool({
+      name: "apple_mail_watch",
+      arguments: { domains: ["example.com"], mailboxes: ["Archive"] },
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/mailbox names/i);
+    expect(textOf(res)).toMatch(/until Mail is running/);
+  });
+
+  it("still fails for a real reason when Mail is running", async () => {
+    // Mail is running by `pgrep`, yet the account listing fails: that is not "closed".
+    const failing: OsascriptRunner = {
+      run: vi.fn(async () => {
+        throw new Error("boom");
+      }) as OsascriptRunner["run"],
+    };
+    const { client } = await connect(ON, { isMailRunning: running, osascript: failing });
+    const res = await client.callTool({
+      name: "apple_mail_watch",
+      arguments: { domains: ["example.com"] },
+    });
+    expect(res.isError).toBe(true);
   });
 });
 

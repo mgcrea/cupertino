@@ -16,6 +16,7 @@ import type { AppleMailClient } from "../client/mail.js";
 import type { Logger } from "../client/osascript.js";
 import {
   isMailRunning as defaultIsMailRunning,
+  isUnwatchedMailbox,
   MailArrivalSource,
   type MailArrival,
 } from "../client/watch.js";
@@ -61,6 +62,13 @@ const IMMUTABLE_REASON =
   "newest mail is exactly what a watch would miss. Grant Full Disk Access so the index " +
   "opens read-only (or leave APPLE_MAIL_INDEX_MODE on auto), then try again.";
 
+/**
+ * What one watch may follow, in mailboxes. A name can match a mailbox in every
+ * account ("INBOX"), and core caps a filter's scope keys at 50; this keeps the
+ * refusal in the tool's own terms.
+ */
+const MAX_WATCHED_MAILBOXES = 50;
+
 export type MailWatchServiceOptions = {
   client: AppleMailClient;
   config: Pick<Config, "mailboxCacheTtlMs">;
@@ -101,6 +109,11 @@ export class MailWatchService {
     this.#now = opts.now ?? Date.now;
   }
 
+  /** How many watches this connection holds. */
+  get count(): number {
+    return this.#registry?.size ?? 0;
+  }
+
   /** Called once, by `createServer`, after `createWatches` returns. */
   bind(registry: WatchRegistry<MailArrival>): void {
     this.#registry = registry;
@@ -113,15 +126,30 @@ export class MailWatchService {
 
   /**
    * Open the index and build the source, once. Idempotent and concurrency-safe:
-   * two simultaneous `watch` calls share the promise. A failure is not kept, so a
-   * later call can try again.
+   * two simultaneous `watch` calls share the promise.
+   *
+   * A failure is not kept, so a later call runs setup again. What that recovers
+   * is a failed `#load`; an index that would not open stays unopenable, because
+   * `client.index()` memoizes its own failure and answers the same thing again.
+   *
+   * A stale lookup is refreshed on the way out, and a refresh that fails is
+   * tolerated exactly as `onTrigger` tolerates it: the watch is still usable on
+   * the last lookup, so a later `watch` call must not fail for want of one.
    */
   ensure(): Promise<void> {
     this.#init ??= this.#setUp().catch((err: unknown) => {
       this.#init = undefined;
       throw err;
     });
-    return this.#init.then(() => this.#refreshIfStale());
+    return this.#init.then(() => this.#refreshIfStaleSoftly());
+  }
+
+  async #refreshIfStaleSoftly(): Promise<void> {
+    try {
+      await this.#refreshIfStale();
+    } catch (err) {
+      this.#logger?.warn?.("watch: could not refresh the mailbox map, using the last one", err);
+    }
   }
 
   async #setUp(): Promise<void> {
@@ -141,7 +169,20 @@ export class MailWatchService {
     if (!located.envelopeIndexPath) {
       throw new PreconditionError(located.reason ?? "The Envelope Index was not located.");
     }
-    await this.#load();
+    try {
+      await this.#load();
+    } catch (err) {
+      // Asking Mail for its accounts needs Mail running, and a watch is allowed
+      // to be set before it is: `watch` then says so in its `note`. Start with an
+      // empty lookup and leave `#refreshedAt` at 0, so the first trigger refreshes.
+      // Any other failure with Mail running is a real one and is not hidden.
+      if (await this.#isMailRunning()) throw err;
+      this.#logger?.warn?.("watch: Mail is not running, starting with an empty mailbox map", err);
+      this.#lookup = toLookup(new Map());
+      this.#own = [];
+      this.#refreshedAt = 0;
+      this.#rebuild();
+    }
     this.#dir = dirname(located.envelopeIndexPath);
   }
 
@@ -214,12 +255,32 @@ export class MailWatchService {
   ): Promise<{ watch: Watch; running: boolean }> {
     const registry = this.#registry;
     if (!registry) throw new Error("Mail watches are not bound to a registry.");
-    await this.ensure();
-    const scope =
-      mailboxes && mailboxes.length > 0
-        ? (await this.#client.mailboxRowidsFor(mailboxes)).map(String)
-        : [];
     const running = await this.#isMailRunning();
+    if (!running && mailboxes && mailboxes.length > 0) {
+      throw new PreconditionError(
+        "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
+          "mailboxes an account has. Open Mail and try again, or watch without `mailboxes`.",
+      );
+    }
+    for (const name of mailboxes ?? []) {
+      // The source excludes these for every watch, so a watch on one would never fire.
+      if (isUnwatchedMailbox(`imap://x/${name}`)) {
+        throw new PreconditionError(
+          `"${name}" is never watched: Sent, Drafts, Junk and Trash are excluded, so a watch ` +
+            "on it could never fire.",
+        );
+      }
+    }
+    await this.ensure();
+    const rowids =
+      mailboxes && mailboxes.length > 0 ? await this.#client.mailboxRowidsFor(mailboxes) : [];
+    if (rowids.length > MAX_WATCHED_MAILBOXES) {
+      throw new PreconditionError(
+        `Those names cover ${rowids.length} mailboxes across the accounts, more than a watch can ` +
+          `follow (${MAX_WATCHED_MAILBOXES}). Name fewer mailboxes.`,
+      );
+    }
+    const scope = rowids.map(String);
     const watch = registry.add(normalizeFilter({ ...filter, scope }));
     return { watch, running };
   }
@@ -255,6 +316,7 @@ export const registerWatchTools = (server: McpServer, service: MailWatchService)
           .describe("Sender domains, e.g. acme.com. Matches @acme.com and any subdomain."),
         mailboxes: z
           .array(z.string().min(1))
+          .max(20)
           .optional()
           .describe(
             "Only mail in these mailboxes, named as in apple_mail_list_mailboxes. Omit for every " +

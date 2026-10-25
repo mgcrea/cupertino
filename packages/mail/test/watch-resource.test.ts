@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { MAIL_SURFACE, MailNotRunningError } from "../src/client/errors.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { loadConfig } from "../src/config.js";
@@ -43,7 +44,10 @@ const runner = (): OsascriptRunner => ({
 const running = async () => true;
 
 const cleanups: (() => void)[] = [];
-afterEach(() => {
+/** Connections are closed first, so no watcher outlives the temp dir it watches. */
+const opened: Client[] = [];
+afterEach(async () => {
+  while (opened.length) await opened.pop()?.close();
   while (cleanups.length) cleanups.pop()?.();
 });
 
@@ -91,6 +95,7 @@ describe("reading a watch", () => {
     const c = new Client({ name: "test", version: "0" });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await Promise.all([created.server.connect(a), c.connect(b)]);
+    opened.push(c);
 
     const made = await c.callTool({
       name: "apple_mail_watch",
@@ -134,6 +139,7 @@ describe("per-watch mailboxes", () => {
     const c = new Client({ name: "test", version: "0" });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await Promise.all([created.server.connect(a), c.connect(b)]);
+    opened.push(c);
     const watch = async (mailboxes?: string[]) => {
       const made = await c.callTool({
         name: "apple_mail_watch",
@@ -185,6 +191,35 @@ describe("MailWatchService freshness", () => {
     const row = service.source.since(0, 10)[0];
     expect(row?.excluded).toBeUndefined();
     expect(row?.mailbox).toBe("Receipts");
+  });
+
+  it("keeps working when Mail has quit and the TTL has passed", async () => {
+    const fx = copyIndex();
+    // A zero TTL makes the client's own account cache stale too, so the refresh really runs.
+    const config = loadConfig({
+      APPLE_MAIL_ENVELOPE_INDEX: fx.path,
+      APPLE_MAIL_MAILBOX_CACHE_TTL_MS: "0",
+    });
+    let open = true;
+    const toggling: OsascriptRunner = {
+      run: vi.fn(async (script: string) => {
+        if (!script.includes("a.emailAddresses()")) return [];
+        if (!open) throw new MailNotRunningError(MAIL_SURFACE);
+        return ACCOUNTS;
+      }) as OsascriptRunner["run"],
+    };
+    const client = new AppleMailClient({ config, osascript: toggling });
+    let clock = 1_000_000;
+    const service = new MailWatchService({ client, config, now: () => clock });
+    await service.ensure();
+
+    open = false;
+    clock += 10 * 60_000;
+    // A later `watch` call must not fail for want of a refresh it can do without.
+    await expect(service.ensure()).resolves.toBeUndefined();
+    const ticked = vi.fn();
+    await service.onTrigger(ticked);
+    expect(ticked).toHaveBeenCalledTimes(1);
   });
 
   it("ticks only after the refresh has settled", async () => {

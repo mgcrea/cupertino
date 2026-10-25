@@ -33,6 +33,8 @@ export type CreateServerOptions = {
 export type CreatedServer = {
   server: McpServer;
   client: AppleMailClient;
+  /** Present only with `allowWatches` on. */
+  watches?: MailWatchService | undefined;
 };
 
 /**
@@ -73,10 +75,12 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       startTrigger: service.startTrigger,
     });
     service.bind(registry);
-    // The registry's trigger is `unref`ed and its watchers non-persistent, so a
-    // closing process needs no help; this just stops a long-lived host (a test,
-    // an embedder) from keeping a timer and two watchers after the connection ends.
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event; serveStdio chains whatever is set here.
+    // `Protocol._onclose` calls `onclose` when the channel closes; nothing in
+    // serveStdio assigns it for us. The registry's trigger is `unref`ed and its
+    // watchers non-persistent, so a closing process needs no help; this stops a
+    // long-lived host (a test, an embedder) from keeping a timer and two watchers
+    // after the connection ends.
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event.
     server.server.onclose = () => registry.close();
   }
 
@@ -122,5 +126,5 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     });
   }
 
-  return { server, client };
+  return { server, client, watches };
 };
