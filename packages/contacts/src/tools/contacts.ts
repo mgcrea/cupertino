@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleContactsClient } from "../client/contacts.js";
@@ -21,10 +21,10 @@ export const registerContactTools = (server: McpServer, client: AppleContactsCli
         "match, plus which account it came from — the same person can legitimately appear twice " +
         "if they are in two accounts. Use apple_contacts_get_contact for phone numbers and " +
         "email addresses.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for in names and organisations."),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ query, limit }) =>
@@ -45,7 +45,7 @@ export const registerContactTools = (server: McpServer, client: AppleContactsCli
       description:
         "List contacts across every account. This is the whole address book, so prefer " +
         "apple_contacts_search_contacts when you are looking for someone specific.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ limit }) =>
@@ -65,7 +65,7 @@ export const registerContactTools = (server: McpServer, client: AppleContactsCli
       description:
         "One contact in full: name, organisation, job title, every phone number and every " +
         "email address, each with its label.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: z
           .string()
           .min(1)
@@ -73,7 +73,7 @@ export const registerContactTools = (server: McpServer, client: AppleContactsCli
             'An opaque contact ref from a list or search result (looks like "k1:<account>/<id>"). ' +
               "Do not construct one by hand.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) =>

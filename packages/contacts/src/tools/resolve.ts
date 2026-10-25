@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleContactsClient } from "../client/contacts.js";
@@ -32,7 +32,7 @@ export const registerResolveTools = (server: McpServer, client: AppleContactsCli
         "Phone matching is by trailing digits, because Contacts stores numbers as typed " +
         '("06 12 34 56 78") while most systems hand you E.164 ("+33612345678"). Exact string ' +
         "matching resolves almost nothing and is not used.",
-      inputSchema: {
+      inputSchema: z.object({
         handles: z
           .array(z.string().min(1))
           .min(1)
@@ -41,7 +41,7 @@ export const registerResolveTools = (server: McpServer, client: AppleContactsCli
             'Phone numbers or email addresses, in any format — "+33612345678", "06 12 34 56 78" ' +
               'and "user@example.com" all work.',
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ handles }) =>

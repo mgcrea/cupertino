@@ -3,7 +3,7 @@ import {
   requiredPromptArg,
   type PromptContext,
 } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 import { CONTACTS_GUIDE } from "./guide.js";
 
