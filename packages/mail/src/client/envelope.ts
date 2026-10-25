@@ -84,6 +84,19 @@ export type GroupResult = {
   totalRows: number;
 };
 
+/** One message as the arrival scan sees it: envelope fields only, `dateReceived` in store units. */
+export type ArrivalScanRow = {
+  rowid: number;
+  /** `global_message_id` as a string. Row identity, not a dedup key. */
+  key: string;
+  mailboxRowid: number;
+  mailboxUrl: string;
+  subject: string | null;
+  senderAddress: string | null;
+  senderName: string | null;
+  dateReceived: number;
+};
+
 export { escapeLike, toFileUri };
 
 const contains = (value: string): string => `%${escapeLike(value)}%`;
@@ -471,6 +484,47 @@ export class EnvelopeIndex {
       conversationId: (r.conversationId as number) ?? null,
       hasAttachment: false,
     }));
+  }
+
+  /** Highest message ROWID now, or 0 for an empty index. */
+  headRowid(): number {
+    const row = this.#db.prepare("SELECT MAX(ROWID) AS head FROM messages").get() as {
+      head: number | null;
+    };
+    return row.head ?? 0;
+  }
+
+  /**
+   * Messages with ROWID above `after`, ascending, at most `limit`.
+   *
+   * Deleted and moved rows are NOT filtered out: a watch cursor advances over
+   * every ROWID, and the caller decides what is excluded. Uses the same joins
+   * and subject expression as the listings.
+   */
+  arrivalsAfter(after: number, limit: number): ArrivalScanRow[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT m.ROWID AS rowid, m.global_message_id AS gid, m.mailbox AS mailboxRowid, ` +
+          `mb.url AS mailboxUrl, ${this.#subjectExpr} AS subject, ` +
+          `a.address AS senderAddress, a.comment AS senderName, m.date_received AS dateReceived ` +
+          `${EnvelopeIndex.#FROM} WHERE m.ROWID > ? ORDER BY m.ROWID ASC LIMIT ?`,
+      )
+      .all(after, limit) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      rowid: Number(r.rowid),
+      key: String(r.gid),
+      mailboxRowid: Number(r.mailboxRowid),
+      mailboxUrl: String(r.mailboxUrl),
+      subject: (r.subject as string) || null,
+      senderAddress: (r.senderAddress as string) ?? null,
+      senderName: (r.senderName as string) || null,
+      dateReceived: Number(r.dateReceived),
+    }));
+  }
+
+  /** A stored `date_received` rendered exactly as search results render theirs. */
+  renderDate(value: number | null): string | null {
+    return this.#toIso(value);
   }
 
   /** conversation_id for one message, so get_thread can start from a ref. */
