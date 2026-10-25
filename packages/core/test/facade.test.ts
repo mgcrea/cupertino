@@ -436,3 +436,51 @@ describe("withLazyTools, with a raw-shape inputSchema", () => {
     expect(textOf(bad)).toContain("Invalid arguments for apple_widget_find_parts");
   });
 });
+
+/*
+ * `tools/call` with the `arguments` key left out altogether.
+ *
+ * v1 rejected it on any tool with an input schema ("expected object, received
+ * undefined"); v2 reads it as `{}`. That is the tool-side twin of `prompts/get`
+ * without `arguments`, and was accepted for the same reason. The second half of
+ * each pair is what keeps the leniency from becoming a bypass: `{}` still has to
+ * satisfy the schema, so a required field is still refused.
+ */
+describe("a tools/call that omits arguments", () => {
+  for (const lazy of [false, true]) {
+    const path = lazy ? "behind the facade" : "eager";
+    // Eager, the SDK validates; behind the facade, `invoke` does. Either way the
+    // call carries no `arguments` key for the tool.
+    const call = (client: Client, tool: string) =>
+      lazy
+        ? client.callTool({ name: "apple_widget_call_tool", arguments: { name: tool } })
+        : client.callTool({ name: tool });
+
+    it(`runs a tool whose fields are all optional, ${path}`, async () => {
+      const client = await connect({ lazy, allowWrites: false });
+      const result = await call(client, "apple_widget_list_things");
+      expect(result.isError).toBeFalsy();
+      expect(textOf(result)).toBe("listed 0");
+    });
+
+    it(`still refuses a missing required field, ${path}`, async () => {
+      const client = await connect({ lazy, allowWrites: false });
+      const result = await call(client, "apple_widget_search_gadgets");
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("Invalid arguments for");
+      expect(textOf(result)).toContain("query");
+    });
+  }
+
+  it("runs a tool that declares no schema at all", async () => {
+    const client = await connect({ lazy: false, allowWrites: false });
+    expect(textOf(await client.callTool({ name: "apple_widget_diagnostics" }))).toBe("diagnostics");
+  });
+
+  it("still refuses a facade tool called without the name it needs", async () => {
+    const client = await connect({ lazy: true, allowWrites: false });
+    const result = await client.callTool({ name: "apple_widget_call_tool" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("name");
+  });
+});
