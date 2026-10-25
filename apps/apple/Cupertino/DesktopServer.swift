@@ -768,7 +768,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
       "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
-      "apple_desktop_select",
+      "apple_desktop_select", "apple_desktop_mail_composer_edit",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -1179,6 +1179,18 @@ nonisolated enum DesktopServer {
             // carry that attribute" is an answer worth stating.
             "value": value ?? NSNull(),
           ])
+
+      // The Mail composer verbs. Never in `tools/list`, and answered only on the
+      // channel `ServerHost` lends to Mail: anywhere else they fall through to
+      // the unknown-tool answer below, as if they did not exist.
+      case "apple_desktop_mail_composers" where scope == .only(["com.apple.mail"]):
+        guard AccessibilityDriver.isTrusted() else {
+          return failure(id, "Accessibility is not granted to Cupertino.")
+        }
+        return ok(id, ["composers": MailComposer.listing(AXComposerWindow.all())])
+
+      case "apple_desktop_mail_composer_edit" where scope == .only(["com.apple.mail"]):
+        return failure(id, "apple_desktop_mail_composer_edit is not available yet.")
 
       default:
         return failure(id, "unknown tool '\(name)'")
