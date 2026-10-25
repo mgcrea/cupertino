@@ -313,7 +313,7 @@ type FakeWatcher = EventEmitter & { path: string; close: ReturnType<typeof vi.fn
 /** A `fs.watch` stand-in that serves directory and file watchers alike. */
 const makeFakeWatch = (opts: { throws?: Error; missing?: Set<string> } = {}) => {
   const watchers: FakeWatcher[] = [];
-  const watch = vi.fn((path: string) => {
+  const watch = vi.fn((path: string, _options?: { persistent?: boolean }) => {
     if (opts.throws) throw opts.throws;
     if (opts.missing?.has(path)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     const w = Object.assign(new EventEmitter(), { path, close: vi.fn() }) as FakeWatcher;

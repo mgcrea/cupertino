@@ -128,7 +128,7 @@ export const createWatches = <R extends ArrivalRow>(
   const registry = new WatchRegistry<R>({
     surface,
     source: opts.source,
-    startTrigger: opts.startTrigger,
+    ...(opts.startTrigger ? { startTrigger: opts.startTrigger } : {}),
     onUpdate: (uri) => {
       if (era === "legacy" && !subscribed.has(uri)) return;
       // The registry's `onUpdate` is synchronous and a send is not. A transport
