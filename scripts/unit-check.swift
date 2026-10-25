@@ -382,7 +382,7 @@ struct UnitCheck {
       "a marker split with no earlier newline is found",
       drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == ["mail://a"])
     check(
-      "a push frame split after its pushFrame marker is found",
+      "a push frame split after its marker is found",
       drive([String(pushFrame.dropLast(12)), String(pushFrame.suffix(12))]).pushed == ["mail://a"])
     check(
       "a head of one byte at a time is found",
