@@ -374,9 +374,7 @@ describe("a store replaced underneath a watch", () => {
     addMessage(live, { rowid: 4, handle: 1 });
     service.onTrigger(() => registry.tick());
     expect(onUpdate).toHaveBeenCalledExactlyOnceWith(made.uri);
-    expect(registry.read(made.id)?.messages.map((m) => m.id)).toEqual([
-      encodeMessageRef("guid-4"),
-    ]);
+    expect(registry.read(made.id)?.messages.map((m) => m.id)).toEqual([encodeMessageRef("guid-4")]);
     registry.close();
     service.close();
   });

@@ -121,7 +121,9 @@ describe("createWatches: reading a handle", () => {
     for (const bad of ["abc", "-1", "1.5", ""]) {
       await expect(client.readResource({ uri: `${w.uri}?after=${bad}` })).rejects.toMatchObject({
         code: -32602,
-        message: expect.stringContaining(`"after" must be a non-negative integer cursor, got "${bad}"`),
+        message: expect.stringContaining(
+          `"after" must be a non-negative integer cursor, got "${bad}"`,
+        ),
       });
     }
   });
