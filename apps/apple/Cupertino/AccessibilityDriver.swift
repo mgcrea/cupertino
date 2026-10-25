@@ -622,6 +622,9 @@ nonisolated enum AccessibilityDriver {
     /// Carries `AXShowMenu`, so `show_menu` opens its context menu. Emitted
     /// only when true, as `pressable` is.
     var showsMenu = false
+    /// A row whose `AXSelected` is settable, so `select` can choose it. Emitted
+    /// only when true, as `pressable` is.
+    var selectable = false
 
     var json: [String: Any] {
       var out: [String: Any] = ["handle": handle, "role": role, "depth": depth]
@@ -633,6 +636,7 @@ nonisolated enum AccessibilityDriver {
       if let point { out["point"] = point }
       if pressable { out["pressable"] = true }
       if showsMenu { out["showsMenu"] = true }
+      if selectable { out["selectable"] = true }
       if recovered { out["via"] = "hit-test" }
       return out
     }
@@ -786,13 +790,17 @@ nonisolated enum AccessibilityDriver {
       let offered = actions(el)
       let pressable = offered.contains(kAXPressAction as String)
       let showsMenu = offered.contains(kAXShowMenuAction as String)
+      // Asked of rows only, so the walk pays one more round trip per row and
+      // none per anything else. Device Hub's sidebar rows offer no AXPress, so
+      // without this the default tree left out the very thing to choose.
+      let selectable = role == (kAXRowRole as String) && isSettable(el, kAXSelectedAttribute)
 
       var keep: Bool
       switch detail {
       // Not widened to `showsMenu`: every element the Simulator bridges from
       // iOS offers AXShowMenu, containers included (docs/simulator.md's tab
       // bar), so the default tree would fill with groups nobody can press.
-      case .interactive: keep = pressable
+      case .interactive: keep = pressable || selectable
       case .labelled: keep = identifier != nil || title != nil || description != nil
       case .all: keep = true
       }
@@ -819,7 +827,8 @@ nonisolated enum AccessibilityDriver {
             pressable: pressable,
             depth: depth,
             recovered: viaHitTest,
-            showsMenu: showsMenu))
+            showsMenu: showsMenu,
+            selectable: selectable))
       }
 
       if depth >= bounds.depth {
@@ -868,9 +877,93 @@ nonisolated enum AccessibilityDriver {
     try announce(handle)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
+      // A row's label is what a search by name finds, and pressing it is the
+      // obvious thing to try. Pointing at select keeps that from becoming a
+      // click, which would take the focus to do what select does without.
+      if enclosingRow(of: element) != nil {
+        throw Failure.refused(
+          "That element has no AXPress, but it is in a list row: use select with this handle.")
+      }
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
     }
     if let problem = failure(for: err, doing: "Pressing '\(handle)'") { throw problem }
+  }
+
+  // ─── rows ──────────────────────────────────────────────────────────────────
+
+  /// Select a table or outline row by its handle, or by the handle of anything
+  /// inside it, without a click.
+  ///
+  /// Measured 2026-10-25 on Device Hub's device sidebar (SwiftUI, an
+  /// `AXOutline`): its rows offer only `AXShowDefaultUI` and `AXShowAlternateUI`,
+  /// carry no name or identifier of their own (both sit on the `AXStaticText`
+  /// inside), and the only way to choose a device was a click at its point,
+  /// which brought Device Hub forward. Setting the row's `AXSelected`, or the
+  /// outline's `AXSelectedRows`, selected it: the window retitled to the device,
+  /// the row read back selected at once, and the frontmost application did not
+  /// change. Three of three on each path.
+  ///
+  /// `AXSelected` first because it names the row alone. `AXSelectedRows` is the
+  /// fallback for a row that will not take it, and replaces the selection, which
+  /// is what a click does too.
+  static func select(handle: String, scope: Scope) throws -> (row: String, confirmed: Bool) {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let entry = try resolveEntry(handle, scope: scope)
+    guard let row = enclosingRow(of: entry.element) else {
+      throw Failure.refused(
+        "That element is not a list row or inside one. Use press, or click with its point.")
+    }
+    try announce(handle)
+
+    let err: AXError
+    if isSettable(row, kAXSelectedAttribute) {
+      err = AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+    } else if let list = enclosingList(of: row), isSettable(list, kAXSelectedRowsAttribute) {
+      err = AXUIElementSetAttributeValue(
+        list, kAXSelectedRowsAttribute as CFString, [row] as CFArray)
+    } else {
+      throw Failure.refused(
+        "The application does not let that row be selected through Accessibility. Click its "
+          + "point instead.")
+    }
+    if let problem = failure(for: err, doing: "Selecting '\(handle)'") { throw problem }
+
+    // The row's own handle, so the caller can tell which row a label resolved
+    // to. Not re-minted when the handle already was the row.
+    let rowHandle =
+      CFEqual(row, entry.element) ? handle : handles.put(row, bundleId: entry.bundleId)
+    return (rowHandle, (copy(row, kAXSelectedAttribute as String) as? Bool) ?? false)
+  }
+
+  /// The nearest `AXRow` at or above `element`, a few parents up at most: far
+  /// enough for a label inside a cell inside a row, not so far that a control
+  /// in a row's detail view selects the row it happens to sit in.
+  private static func enclosingRow(of element: AXUIElement) -> AXUIElement? {
+    var current: AXUIElement? = element
+    for _ in 0..<4 {
+      guard let node = current else { return nil }
+      if string(node, kAXRoleAttribute as String) == (kAXRowRole as String) { return node }
+      current = copy(node, kAXParentAttribute as String).map { $0 as! AXUIElement }
+    }
+    return nil
+  }
+
+  /// The table or outline that holds `row`.
+  private static func enclosingList(of row: AXUIElement) -> AXUIElement? {
+    var current = copy(row, kAXParentAttribute as String).map { $0 as! AXUIElement }
+    for _ in 0..<3 {
+      guard let node = current else { return nil }
+      let role = string(node, kAXRoleAttribute as String)
+      if role == (kAXOutlineRole as String) || role == (kAXTableRole as String) { return node }
+      current = copy(node, kAXParentAttribute as String).map { $0 as! AXUIElement }
+    }
+    return nil
+  }
+
+  private static func isSettable(_ el: AXUIElement, _ key: String) -> Bool {
+    var settable: DarwinBoolean = false
+    return AXUIElementIsAttributeSettable(el, key as CFString, &settable) == .success
+      && settable.boolValue
   }
 
   // ─── context menus ─────────────────────────────────────────────────────────

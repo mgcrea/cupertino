@@ -113,8 +113,8 @@ nonisolated enum DesktopServer {
       "type": "string",
       "enum": ["interactive", "labelled", "all"],
       "description":
-        "interactive (default) returns only what a press can land on; labelled returns anything "
-        + "carrying an identifier, title or description; all returns everything.",
+        "interactive (default) returns only what a press or a select can land on; labelled "
+        + "returns anything carrying an identifier, title or description; all returns everything.",
     ]
     let menuPathProperty: [String: Any] = [
       "type": "array",
@@ -417,6 +417,22 @@ nonisolated enum DesktopServer {
           + "marks it 'showsMenu'. The open menu's items then lead apple_desktop_ui_tree and "
           + "apple_desktop_find_elements, pressable with apple_desktop_press; key escape, with "
           + "the 'bundleId', closes it without choosing.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["handle": ["type": "string"]],
+          "required": ["handle"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
+      ],
+      [
+        "name": "apple_desktop_select",
+        "description":
+          "Select a list row — a sidebar entry, a table or outline row — by its handle, or by the "
+          + "handle of anything inside it, such as the label apple_desktop_find_elements finds "
+          + "by name. What clicking the row does, without moving the pointer or bringing the "
+          + "application forward. The tree marks such rows 'selectable'; they usually have no "
+          + "AXPress, so press refuses them. Replaces the current selection. 'selected' is the "
+          + "row's own handle and 'confirmed' whether it read back selected.",
         "inputSchema": [
           "type": "object",
           "properties": ["handle": ["type": "string"]],
@@ -752,6 +768,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
       "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
+      "apple_desktop_select",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -957,6 +974,19 @@ nonisolated enum DesktopServer {
             "note": "Read the menu with ui_tree or find_elements, where its items come first. "
               + "Press one to choose it, or key escape with the bundleId to close it.",
           ])
+
+      case "apple_desktop_select":
+        guard let handle = args["handle"] as? String else {
+          return failure(id, "The 'handle' argument is required.")
+        }
+        let selected = try AccessibilityDriver.select(handle: handle, scope: scope)
+        var answer: [String: Any] = ["selected": selected.row, "confirmed": selected.confirmed]
+        if !selected.confirmed {
+          answer["note"] =
+            "The application accepted the selection and the row does not read back selected. "
+            + "Read the tree again before relying on it."
+        }
+        return ok(id, answer)
 
       case "apple_desktop_drag":
         guard let fromSpec = args["from"] as? [String: Any],
@@ -1165,9 +1195,9 @@ nonisolated enum DesktopServer {
   /// large enough to swamp the one this builds; not `run` or `release`, which are
   /// not steps of a sequence.
   static let runSteps = [
-    "press", "press_menu", "show_menu", "set_value", "click", "hover", "drag", "type", "key",
-    "focus", "activate", "raise_window", "set_window_frame", "find_elements", "get_attribute",
-    "list_windows", "menu", "user_activity", "wait",
+    "press", "press_menu", "show_menu", "select", "set_value", "click", "hover", "drag", "type",
+    "key", "focus", "activate", "raise_window", "set_window_frame", "find_elements",
+    "get_attribute", "list_windows", "menu", "user_activity", "wait",
   ]
   static let runStepCeiling = 25
   static let runWaitCeilingMs = 5000
@@ -1575,6 +1605,11 @@ nonisolated enum DesktopServer {
       clickable heading or row you could not have guessed. The tree already marks
       `pressable`, which is the answer to "what has an AXPress".
 
+      A list row — a sidebar entry, a table or outline row — often has no AXPress, and its
+      name sits on a label inside it. The tree marks such a row `selectable`; choose it
+      with `apple_desktop_select`, passing the row or the label `find_elements` found by
+      name. It is what clicking the row does, without the click.
+
       ## The tree is bounded on purpose
 
       A content-heavy window can hold ten thousand elements, and cost per element varies
@@ -1675,7 +1710,7 @@ nonisolated enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, press_menu, show_menu, set_value, click, hover, drag, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
+        ? "Writes are ON: press, press_menu, show_menu, select, set_value, click, hover, drag, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

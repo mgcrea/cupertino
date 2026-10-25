@@ -381,6 +381,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Desktop can select a list row without clicking it.",
+            body: [
+              "`apple_desktop_select` chooses a sidebar entry or a table or outline row, given the row or the label inside it that a search by name finds. It is what a click on the row does, without moving the pointer or bringing the app forward. Rows like these usually have no press action, so they were missing from the default tree and a click was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }
