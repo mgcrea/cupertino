@@ -169,6 +169,42 @@ describe("WatchRegistry.tick", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
+  it("scans at most 10 batches per tick, and the next ticks finish the backlog", () => {
+    const store = makeSource();
+    const onUpdate = vi.fn();
+    const since = vi.spyOn(store.source, "since");
+    const registry = new WatchRegistry({
+      surface: "mail",
+      source: store.source,
+      onUpdate,
+      scanLimit: 10,
+      mintId: ids(),
+    });
+    const a = registry.add(jo);
+    // 250 rows is 25 batches of 10, with a match in the first, second and third tick's share.
+    for (let i = 1; i <= 250; i++) store.push([50, 150, 240].includes(i) ? "jo@acme.com" : "x@y.z");
+
+    registry.tick();
+    expect(since).toHaveBeenCalledTimes(10);
+    expect(since.mock.calls.at(-1)?.[0]).toBe(90);
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(a.uri);
+
+    since.mockClear();
+    registry.tick();
+    // It resumes where the first stopped, not from the start.
+    expect(since.mock.calls[0]?.[0]).toBe(100);
+    expect(since).toHaveBeenCalledTimes(10);
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+
+    since.mockClear();
+    registry.tick();
+    expect(since.mock.calls[0]?.[0]).toBe(200);
+    expect(onUpdate).toHaveBeenCalledTimes(3);
+
+    registry.tick();
+    expect(onUpdate).toHaveBeenCalledTimes(3);
+  });
+
   it("fires from an empty store", () => {
     const { registry, push, onUpdate } = setup();
     const watch = registry.add(jo);

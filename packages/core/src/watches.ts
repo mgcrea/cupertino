@@ -153,6 +153,8 @@ export type WatchRegistryOptions<R extends ArrivalRow> = {
   maxWatches?: number;
   /** Rows examined per scan. Default 1000. */
   scanLimit?: number;
+  /** Scans one tick may run before it stops and leaves the rest to the next. Default 10. */
+  tickBatches?: number;
   /** Matches returned per read. Default 50. */
   readLimit?: number;
   mintId?: () => string;
@@ -189,6 +191,16 @@ const defaultMintId = (): string => `w_${randomBytes(4).toString("hex")}`;
  * `read`. A tick only says *that* something matched;
  * `read` is what returns the rows, so a missed or coalesced notification costs
  * nothing: the next read still finds everything after the cursor.
+ *
+ * ## Why a tick stops after `tickBatches` scans
+ *
+ * The store is read synchronously, on the event loop. A backlog of many
+ * thousand rows above the mark (Mail syncing an account it had not fetched, or
+ * re-adding mail under new ROWIDs) would otherwise be one scan that holds the
+ * process until it ends. So a tick reads at most `tickBatches` × `scanLimit`
+ * rows, keeps the mark where it stopped, and the next trigger or poll carries
+ * on from there. A watch hit in that share is notified now; the rest of the
+ * backlog notifies on the ticks that reach it.
  */
 export class WatchRegistry<R extends ArrivalRow> {
   readonly #surface: string;
@@ -197,6 +209,7 @@ export class WatchRegistry<R extends ArrivalRow> {
   readonly #startTrigger: WatchRegistryOptions<R>["startTrigger"];
   readonly #maxWatches: number;
   readonly #scanLimit: number;
+  readonly #tickBatches: number;
   readonly #readLimit: number;
   readonly #mintId: () => string;
   readonly #watches = new Map<string, Watch>();
@@ -211,6 +224,7 @@ export class WatchRegistry<R extends ArrivalRow> {
     this.#startTrigger = opts.startTrigger;
     this.#maxWatches = opts.maxWatches ?? 10;
     this.#scanLimit = opts.scanLimit ?? 1000;
+    this.#tickBatches = opts.tickBatches ?? 10;
     this.#readLimit = opts.readLimit ?? 50;
     this.#mintId = opts.mintId ?? defaultMintId;
   }
@@ -294,7 +308,7 @@ export class WatchRegistry<R extends ArrivalRow> {
     }
     const hit = new Set<string>();
     let after = this.#mark;
-    for (;;) {
+    for (let batch = 0; batch < this.#tickBatches; batch++) {
       const rows = this.#source.since(after, this.#scanLimit);
       for (const row of rows) {
         if (row.excluded) continue;
