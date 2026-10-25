@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMapsClient } from "../client/maps.js";
@@ -40,7 +40,7 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
         "to the user's other Apple devices through iCloud. Idempotent: asking twice for the same " +
         "place returns the existing favourite rather than creating a second. Needs Full Disk " +
         "Access.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z
           .string()
           .min(1)
@@ -48,7 +48,7 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
         latitude: z.number().min(-90).max(90).optional().describe("Latitude, when known."),
         longitude: z.number().min(-180).max(180).optional().describe("Longitude, when known."),
         name: z.string().min(1).optional().describe("Label to save it under. Defaults to `query`."),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: true },
     },
     async ({ query, latitude, longitude, name }) =>
@@ -89,7 +89,7 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
       // `confirm`, like the destructive store writes on every other surface.
       // This one had none — and its blast radius is every device on the
       // account.
-      inputSchema: { ref: placeRefArg, confirm: confirmArg },
+      inputSchema: z.object({ ref: placeRefArg, confirm: confirmArg }),
       annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true },
     },
     async ({ ref }) =>
