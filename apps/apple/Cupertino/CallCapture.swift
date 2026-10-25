@@ -381,7 +381,12 @@ nonisolated struct FrameSplitter {
     kept = false
     pending.append(chunk)
     guard let lastNewline = pending.lastIndex(of: UInt8(ascii: "\n")) else {
-      if pending.count > limit { pending.removeAll(keepingCapacity: false) }
+      if pending.count > limit {
+        pending.removeAll(keepingCapacity: false)
+        // The rest of that frame is not a frame either, and must not be held by
+        // `skip` as if it were the head of one.
+        discarding = true
+      }
       return []
     }
     let complete = pending[..<lastNewline]
@@ -450,7 +455,7 @@ nonisolated struct FrameSplitter {
 ///                 be split until a read happened to end on a newline.
 nonisolated struct PushScanner {
   private let marker: Data
-  private var carry = Data()
+  private(set) var carry = Data()
   private(set) var collecting = false
 
   init(marker: Data = CallCapture.pushMarker) { self.marker = marker }
@@ -466,13 +471,22 @@ nonisolated struct PushScanner {
     }
     let split = parsing || hit || collecting
 
-    if let newline = chunk.lastIndex(of: UInt8(ascii: "\n")) {
+    // A chunk with no marker costs no more than the search above: the frame open
+    // at its end cannot hold one, so the only question is whether a newline
+    // closed the frame that was open before it, and that is asked only while one
+    // is.
+    if !hit {
+      if collecting, chunk.contains(UInt8(ascii: "\n")) { collecting = false }
+    } else if let newline = chunk.lastIndex(of: UInt8(ascii: "\n")) {
       // The frame open at the end is only what follows the last newline.
       collecting = chunk[chunk.index(after: newline)...].range(of: marker) != nil
     } else {
-      collecting = collecting || hit
+      collecting = true
     }
-    carry = Data((carry + chunk).suffix(width))
+    // Copying the whole chunk to take its tail would be an allocation and a
+    // memcpy of a full pipe read on every call, which is the cost this type
+    // exists to avoid. Only a chunk shorter than the carry needs the old bytes.
+    carry = chunk.count >= width ? Data(chunk.suffix(width)) : Data((carry + chunk).suffix(width))
     return split
   }
 }

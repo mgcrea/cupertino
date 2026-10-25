@@ -311,7 +311,11 @@ struct UnitCheck {
     _ = runaway.lines(Data(String(repeating: "x", count: 64).utf8))
     check(
       "a runaway line is dropped rather than buffered",
-      runaway.lines(Data("y\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "y")
+      runaway.lines(Data("y\n".utf8)).isEmpty)
+    // The newline ends the runaway frame, so it is the tail of one, not a frame.
+    check(
+      "and the frame after it is read whole",
+      runaway.lines(Data("z\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "z")
 
     // `RequestObserver` collects responses only while a notice is held, and
     // skips the chunks in between. Skipping by not calling at all left a partial
@@ -403,6 +407,17 @@ struct UnitCheck {
     check("a frame open after a marker is collecting", open.collecting)
     _ = open.needsSplit(Data("\"params\":{}}\n{\"id\":1".utf8), parsing: false)
     check("and stops collecting once it closes", !open.collecting)
+
+    var quiet = PushScanner()
+    let longChunk = Data((String(repeating: "x", count: 70_000) + "{\"id\":1}").utf8)
+    check("a long marker-free chunk does not split", !quiet.needsSplit(longChunk, parsing: false))
+    check(
+      "and leaves the carry as its last marker.count - 1 bytes",
+      quiet.carry == Data(longChunk.suffix(CallCapture.pushMarker.count - 1)))
+    _ = quiet.needsSplit(Data("ab".utf8), parsing: false)
+    check(
+      "a short chunk extends the carry rather than replacing it",
+      quiet.carry == Data((longChunk + Data("ab".utf8)).suffix(CallCapture.pushMarker.count - 1)))
 
     var head = FrameSplitter()
     head.skip(Data("{\"method\":\"notifications/res".utf8))
