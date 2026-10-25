@@ -287,6 +287,12 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/desktop-check.swift
 	@apps/apple/.build/desktop-check
 
+mail-composer-check: ## Assert the Mail composer's pure text matching
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/mail-composer-check \
+		apps/apple/Cupertino/MailComposerText.swift scripts/mail-composer-check.swift
+	@apps/apple/.build/mail-composer-check
+
 simulator-check: ## Assert the in-process simulator server speaks MCP, answers in iOS points, and cannot drive with writes off
 	@# The same gate scripts/verify-servers.sh cannot be, for the reason
 	@# screen-check gives. Stricter than desktop-check about what it may touch:
@@ -1292,7 +1298,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check desktop-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \

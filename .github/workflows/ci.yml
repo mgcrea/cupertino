@@ -221,6 +221,8 @@ jobs:
       # keep an unbrokered application out of reach.
       - name: Desktop server 🔍
         run: make desktop-check
+      - name: Mail composer text 🔍
+        run: make mail-composer-check
       # Same shape as the Desktop check, one step stricter: a runner has Xcode,
       # so CoreSimulator's device types are there to read, and no count is
       # asserted because how many devices a runner keeps is not this repo's
