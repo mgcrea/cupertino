@@ -19,18 +19,32 @@
 // any call that gets as far as a handler, and is why the one call is built to
 // fail.
 //
-// This covers the requests, not the server's own startup. Some surfaces open
+// This covers the requests, not the server's own startup. Four surfaces open
 // their store while booting (their `cli.ts` calls `client.status()` before
-// connecting), which no request choice can avoid. Check a surface's startup
-// before recording it, or pass `--env APPLE_<SURFACE>_INDEX_MODE=off`.
+// connecting), which no request choice can avoid. So the environment below
+// points every store somewhere that does not exist.
 //
 // ## Environment
 //
 // The child gets the caller's environment minus every `APPLE_*` and
 // `CUPERTINO_*` variable, so a shell's `APPLE_NOTES_ACCOUNTS`, `*_STORE`,
 // `*_OSASCRIPT_PATH` or a `CUPERTINO_AX_SOCKET` pointing at the running app
-// cannot change the transcript or reach real data. Then only
-// `APPLE_<SURFACE>_ALLOW_WRITES` is set, plus each `--env KEY=VALUE` given.
+// cannot change the transcript or reach real data. Then, in this order:
+// `APPLE_<SURFACE>_ALLOW_WRITES`, the isolation table below, and each
+// `--env KEY=VALUE` given (which may override either).
+//
+// ## Isolation
+//
+// A transcript must not depend on the machine's data, so `ISOLATION` points
+// each surface's store, index or root at a path under the temp directory that
+// does not exist. A missing explicit path is treated as "no store" by every
+// surface's `locate` (no fallback to discovery), so nothing is opened. Safari
+// also stats its Bookmarks, Downloads and CloudTabs files next to the history
+// store, and Messages opens Contacts to resolve names, hence `BOOKMARKS` and
+// `RESOLVE_CONTACTS`. `HOME` moves too, so any default path computed from
+// `homedir()` lands in the same empty place, and `*_OSASCRIPT_PATH` names a
+// binary that does not exist, so an Apple Event fails to spawn instead of
+// reaching the app.
 //
 // ## Normalisation
 //
@@ -45,6 +59,7 @@
 // migrated build) so both eras can be recorded from one script.
 
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -107,7 +122,30 @@ const env = {};
 for (const [k, v] of Object.entries(process.env)) {
   if (!k.startsWith("APPLE_") && !k.startsWith("CUPERTINO_")) env[k] = v;
 }
-env[`APPLE_${surface.toUpperCase()}_ALLOW_WRITES`] = writes ? "1" : "0";
+const NOWHERE = join(tmpdir(), "mcp-transcript-nonexistent");
+const gone = (name) => join(NOWHERE, name);
+const S = surface.toUpperCase();
+
+// Variable names are from each surface's `src/config.ts`.
+const ISOLATION = {
+  notes: { STORE: gone("notes/NoteStore.sqlite") },
+  messages: { STORE: gone("messages/chat.db"), RESOLVE_CONTACTS: "0" },
+  safari: {
+    STORE: gone("safari/History.db"),
+    BOOKMARKS: gone("safari/Bookmarks.plist"),
+    PAGES: gone("safari/pages"),
+  },
+  mail: { ROOT: gone("mail") },
+  maps: { STORE: gone("maps/MapsSync.sqlite") },
+  contacts: { STORE: gone("contacts/AddressBook-v22.abcddb") },
+  reminders: { STORE: gone("reminders/Data.sqlite") },
+  calendar: { STORE: gone("calendar/Calendar.sqlitedb") },
+};
+
+env[`APPLE_${S}_ALLOW_WRITES`] = writes ? "1" : "0";
+env.HOME = gone("home");
+env[`APPLE_${S}_OSASCRIPT_PATH`] = gone("osascript");
+for (const [k, v] of Object.entries(ISOLATION[surface] ?? {})) env[`APPLE_${S}_${k}`] = v;
 Object.assign(env, extraEnv);
 
 const requests = [
