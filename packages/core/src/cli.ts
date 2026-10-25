@@ -1,11 +1,17 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 import type { BuildInfo } from "./build-info.js";
 import { parseBool } from "./config.js";
 import type { SurfaceContext } from "./errors.js";
 import { withTrimmedListing } from "./listing.js";
 import type { Logger } from "./osascript.js";
+
+/**
+ * Which MCP revision a server instance speaks: `legacy` is the 2025 handshake
+ * (`initialize`), `modern` is 2026-07-28 (per-request `_meta`, `server/discover`).
+ */
+export type Era = "legacy" | "modern";
 
 export type StdioServerOptions = {
   build: BuildInfo;
@@ -15,8 +21,13 @@ export type StdioServerOptions = {
   /**
    * Build and return the server, plus a one-line summary of the settings it
    * came up with. Called only after the platform guard passes.
+   *
+   * Called once per instance the SDK asks for, not once per process: a client
+   * that opens with `server/discover` gets a probe instance that is thrown
+   * away if it then falls back to `initialize`. So `start` must be safe to run
+   * more than once, and `ctx.era` says which protocol the instance will serve.
    */
-  start: (logger: Logger) => Promise<{ server: McpServer; banner: string }>;
+  start: (logger: Logger, ctx: { era: Era }) => Promise<{ server: McpServer; banner: string }>;
 };
 
 /**
@@ -51,9 +62,16 @@ export const runStdioServer = async (opts: StdioServerOptions): Promise<void> =>
     process.exit(1);
   }
 
-  const { server, banner } = await opts.start(logger);
-  await server.connect(withTrimmedListing(new StdioServerTransport()));
-  logger.warn(`${logPrefix} connected (${banner})`);
+  // The SDK owns the era decision and calls this per instance. `legacy` stays
+  // at its default, `serve`: `reject` would turn away every 2025-era host.
+  serveStdio(
+    async ({ era }) => {
+      const { server, banner } = await opts.start(logger, { era });
+      logger.warn(`${logPrefix} connected, ${era} era (${banner})`);
+      return server;
+    },
+    { transport: withTrimmedListing(new StdioServerTransport()) },
+  );
 
   const shutdown = (signal: string): void => {
     logger.warn(`received ${signal}, shutting down`);

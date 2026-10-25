@@ -237,6 +237,14 @@ smoke: ## Handshake both servers through the bridge, as CI does directly
 			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"serverInfo"' \
 			&& echo "  ok   $$s" || { echo "  FAIL $$s"; exit 1; }; \
 	done
+	@# The npm surfaces also answer `server/discover` (the 2026-07-28 opening). The
+	@# sleep holds stdin open: the server drops a request still in flight when its
+	@# input closes, and the instance behind a discover is built on demand.
+	@for s in $(NODE_SURFACES); do \
+		{ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"make","version":"0"},"io.modelcontextprotocol/clientCapabilities":{}}}}'; sleep 1; } \
+			| "$(BRIDGE)" --server=$$s 2>/dev/null | grep -q '"supportedVersions"' \
+			&& echo "  ok   $$s (discover)" || { echo "  FAIL $$s (discover)"; exit 1; }; \
+	done
 
 screen-check: ## Assert the in-process screen server speaks MCP, with no app
 	@# The gate scripts/verify-servers.sh cannot be: it scans a cli.js and
