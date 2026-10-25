@@ -15,6 +15,15 @@ import type { Transport, JSONRPCMessage } from "@modelcontextprotocol/server";
  * Nothing in the protocol reads it and no client needs it, so it is the rare
  * cut that is free rather than a trade.
  *
+ * ## What it puts back
+ *
+ * Zod 4.5 writes `.nullable()` as `"type": ["string", "null"]`, where the zod
+ * this listing was first built on wrote `"anyOf": [{"type": "string"}, {"type":
+ * "null"}]`. Same meaning, different bytes, and a client that read the old form
+ * may not read the new one: the app's chat pane does not (`make chat-check`
+ * pins that). `legacySchema` rewrites it back, so a 2025-era client receives the
+ * schemas it always did. Only contacts has a nullable field today.
+ *
  * ## What there is no longer to drop
  *
  * Version 1 of the SDK also stamped `"execution": {"taskSupport": "forbidden"}`
@@ -37,19 +46,75 @@ import type { Transport, JSONRPCMessage } from "@modelcontextprotocol/server";
 /** The one key removed, spelled once. */
 const GENERATED_SCHEMA_KEY = "$schema";
 
+/** Keywords that describe the field rather than its type, so they stay outside an `anyOf`. */
+const ANNOTATIONS = new Set([
+  "title",
+  "description",
+  "default",
+  "examples",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+  "$comment",
+]);
+
+/** Keywords whose value is data, not a schema, and so is never walked into. */
+const DATA_KEYWORDS = new Set(["default", "const", "enum", "examples"]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 /**
- * A schema object without its `$schema` stamp, or the value unchanged.
+ * `{ type: ["string", "null"], ... }` as `{ anyOf: [{ type: "string", ... }, { type: "null" }] }`.
+ *
+ * Zod 4.5 spells `.nullable()` as a type array; every release before it, and
+ * so every listing a client has seen from these servers, spelled it as the
+ * `anyOf`. The two mean the same, but the pane's converter reads only the
+ * second (`make chat-check` pins the first as unreadable), so a type array
+ * would take contacts' create and update out of it. Anything that is not a
+ * single type plus `"null"` is left as it came.
+ */
+const nullableAsAnyOf = (node: Record<string, unknown>): Record<string, unknown> => {
+  const type = node["type"];
+  if (!Array.isArray(type) || !type.every((t) => typeof t === "string")) return node;
+  const others = type.filter((t) => t !== "null");
+  if (others.length !== 1 || others.length === type.length) return node;
+  const outer: Record<string, unknown> = {};
+  const inner: Record<string, unknown> = { type: others[0] };
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "type") continue;
+    (ANNOTATIONS.has(key) ? outer : inner)[key] = value;
+  }
+  return { ...outer, anyOf: [inner, { type: "null" }] };
+};
+
+/**
+ * A schema as a 2025-era listing carried it: without its `$schema` stamp, with
+ * nullable fields as an `anyOf`, or the value unchanged.
  *
  * Returns the ORIGINAL reference when there is nothing to do, which is what
  * lets `trimToolListing` decide by identity whether it needs to rebuild
  * anything at all.
  */
-const withoutSchemaKey = (schema: unknown): unknown => {
-  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return schema;
-  if (!(GENERATED_SCHEMA_KEY in schema)) return schema;
-  const rest = { ...(schema as Record<string, unknown>) };
-  delete rest[GENERATED_SCHEMA_KEY];
-  return rest;
+export const legacySchema = (schema: unknown): unknown => {
+  if (Array.isArray(schema)) {
+    const items = schema.map(legacySchema);
+    return items.every((item, i) => item === schema[i]) ? schema : items;
+  }
+  if (!isRecord(schema)) return schema;
+  let changed = false;
+  const walked: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === GENERATED_SCHEMA_KEY) {
+      changed = true;
+      continue;
+    }
+    const next = DATA_KEYWORDS.has(key) ? value : legacySchema(value);
+    if (next !== value) changed = true;
+    walked[key] = next;
+  }
+  const out = nullableAsAnyOf(walked);
+  return changed || out !== walked ? out : schema;
 };
 
 /**
@@ -70,8 +135,8 @@ export const trimToolListing = (message: JSONRPCMessage): JSONRPCMessage => {
   const trimmed = tools.map((tool) => {
     if (tool === null || typeof tool !== "object") return tool;
     const entry = tool as Record<string, unknown>;
-    const inputSchema = withoutSchemaKey(entry["inputSchema"]);
-    const outputSchema = withoutSchemaKey(entry["outputSchema"]);
+    const inputSchema = legacySchema(entry["inputSchema"]);
+    const outputSchema = legacySchema(entry["outputSchema"]);
     if (inputSchema === entry["inputSchema"] && outputSchema === entry["outputSchema"]) return tool;
     changed = true;
     return {

@@ -32,7 +32,7 @@ const tryGit = (cmd: string): string => {
  * Distinct from each package's own `tsdown.config.ts`, which builds for npm and
  * leaves dependencies external — correct there, because npm installs them.
  * Inside the app bundle there is no `node_modules` to resolve against, so
- * `dist/cli.js` importing `@modelcontextprotocol/sdk` would fail at startup.
+ * `dist/cli.js` importing `@modelcontextprotocol/server` would fail at startup.
  *
  * `deps.alwaysBundle` inlines everything, which is also what docs/distribution.md
  * already assumes: it lists `Resources/servers/{mail,notes,reminders,calendar}/cli.js`, one file

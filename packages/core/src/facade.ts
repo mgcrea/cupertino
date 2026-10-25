@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { legacySchema } from "./listing.js";
 import { fail, okText, type ToolResult } from "./tools.js";
 
 /**
@@ -334,12 +335,14 @@ const renderSearch = (result: SearchResult, total: number, names: FacadeNames): 
  *
  * Built from the recorded zod shape rather than re-derived by hand, so
  * `describe` and a non-lazy listing cannot drift. `$schema` is dropped for the
- * same reason `listing.ts` drops it from `tools/list`.
+ * same reason `listing.ts` drops it from `tools/list`, and writes a nullable
+ * field the way that listing does.
  */
 const describe = (decl: Declaration): Record<string, unknown> => {
   const input = asSchema(decl.config.inputSchema);
-  const schema = input ? (z.toJSONSchema(input) as Record<string, unknown>) : undefined;
-  if (schema) delete schema["$schema"];
+  const schema = input
+    ? (legacySchema(z.toJSONSchema(input)) as Record<string, unknown>)
+    : undefined;
   return {
     name: decl.name,
     ...(decl.config.description === undefined ? {} : { description: decl.config.description }),

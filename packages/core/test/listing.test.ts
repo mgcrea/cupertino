@@ -4,7 +4,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { trimToolListing, withTrimmedListing } from "../src/listing.js";
+import { legacySchema, trimToolListing, withTrimmedListing } from "../src/listing.js";
 
 const listing = (tool: Record<string, unknown>): JSONRPCMessage =>
   ({ jsonrpc: "2.0", id: 1, result: { tools: [tool] } }) as JSONRPCMessage;
@@ -76,6 +76,70 @@ const widget = () => {
   }));
   return server;
 };
+
+describe("legacySchema", () => {
+  it("writes a nullable field as the anyOf a 2025-era listing carried", () => {
+    const wire = z.toJSONSchema(z.object({ name: z.string().nullable().optional() }));
+    // Measured: if zod goes back to anyOf, the rewrite has nothing to do and
+    // listing.ts's header needs rewriting.
+    expect(wire.properties).toEqual({ name: { type: ["string", "null"] } });
+    expect(legacySchema(wire)).toEqual({
+      type: "object",
+      properties: { name: { anyOf: [{ type: "string" }, { type: "null" }] } },
+      additionalProperties: false,
+    });
+  });
+
+  it("keeps a description outside the anyOf and a constraint inside it", () => {
+    const wire = z.toJSONSchema(
+      z.object({ name: z.string().min(1).nullable().describe("Who it is.") }),
+    );
+    expect(legacySchema(wire)).toMatchObject({
+      properties: {
+        name: {
+          description: "Who it is.",
+          anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+        },
+      },
+    });
+  });
+
+  it("finds a nullable field inside an array's items", () => {
+    const wire = z.toJSONSchema(
+      z.object({ rows: z.array(z.object({ a: z.number().nullable() })) }),
+    );
+    expect(JSON.stringify(legacySchema(wire))).toContain(
+      '"a":{"anyOf":[{"type":"number"},{"type":"null"}]}',
+    );
+  });
+
+  it("leaves other type arrays, and schemas with nothing to do, by identity", () => {
+    const plain = { type: "object", properties: { n: { type: "string" } } };
+    expect(legacySchema(plain)).toBe(plain);
+    const several = { type: ["string", "number", "null"] };
+    expect(legacySchema(several)).toBe(several);
+    const only = { type: ["string", "number"] };
+    expect(legacySchema(only)).toBe(only);
+  });
+
+  it("does not walk into a default or a const", () => {
+    const schema = { type: "object", properties: { x: { default: { type: ["string", "null"] } } } };
+    expect(legacySchema(schema)).toBe(schema);
+  });
+
+  it("is what trimToolListing puts on the wire", () => {
+    const trimmed = trimToolListing(
+      listing({
+        name: "apple_widget_create",
+        inputSchema: { type: "object", properties: { a: { type: ["string", "null"] } } },
+      }),
+    );
+    expect(toolsOf(trimmed)[0]?.["inputSchema"]).toEqual({
+      type: "object",
+      properties: { a: { anyOf: [{ type: "string" }, { type: "null" }] } },
+    });
+  });
+});
 
 describe("withTrimmedListing", () => {
   /** The `tools/list` frame as the server's transport sent it, before any client parsing. */
