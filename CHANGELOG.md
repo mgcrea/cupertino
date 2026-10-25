@@ -12,6 +12,17 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Desktop can select a list row without clicking it.** `apple_desktop_select` chooses a sidebar
+  entry or a table or outline row, given the row or the label inside it that a search by name finds.
+  It is what a click on the row does, without moving the pointer or bringing the app forward. Rows
+  like these usually have no press action, so they were missing from the default tree and a click
+  was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use
+  `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.
+
 ## [1.30.0] - 2026-10-22
 
 **New mail no longer arrives quoted.** A new message is written the way a reply is, so people
