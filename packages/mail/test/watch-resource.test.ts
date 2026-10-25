@@ -116,6 +116,49 @@ describe("reading a watch", () => {
   });
 });
 
+describe("per-watch mailboxes", () => {
+  it("fires each watch only for its own mailbox, on one connection", async () => {
+    const fx = copyIndex();
+    fx.db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
+                VALUES (2, 'imap://${UUID}/Receipts', 0, 0)`);
+    const config = loadConfig({
+      APPLE_MAIL_ENVELOPE_INDEX: fx.path,
+      APPLE_MAIL_ALLOW_WATCHES: "1",
+    });
+    const created = createServer({
+      config,
+      osascript: runner(),
+      era: "modern",
+      isMailRunning: running,
+    });
+    const c = new Client({ name: "test", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([created.server.connect(a), c.connect(b)]);
+    const watch = async (mailboxes?: string[]) => {
+      const made = await c.callTool({
+        name: "apple_mail_watch",
+        arguments: { from: ["sam@example.com"], ...(mailboxes ? { mailboxes } : {}) },
+      });
+      return JSON.parse((made.content as { text: string }[])[0]!.text) as { uri: string };
+    };
+    const inbox = await watch(["INBOX"]);
+    const receipts = await watch(["Receipts"]);
+    const everything = await watch();
+    addMessage(fx.db, 30, 1);
+    addMessage(fx.db, 31, 2);
+    const read = async (uri: string) => {
+      const res = await c.readResource({ uri });
+      const body = JSON.parse(String((res.contents[0] as { text?: string }).text));
+      return { cursors: body.messages.length as number, filter: body.filter };
+    };
+    expect((await read(inbox.uri)).cursors).toBe(1);
+    expect((await read(receipts.uri)).cursors).toBe(1);
+    expect((await read(everything.uri)).cursors).toBe(2);
+    expect((await read(inbox.uri)).filter.scope).toEqual(["1"]);
+    expect((await read(everything.uri)).filter.scope).toBeUndefined();
+  });
+});
+
 describe("MailWatchService freshness", () => {
   it("picks up a mailbox created after the watch started, once the TTL has passed", async () => {
     const fx = copyIndex();

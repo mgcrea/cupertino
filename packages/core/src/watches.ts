@@ -26,7 +26,18 @@ import { surfaceUri } from "./resources.js";
 /** The most addresses and domains one filter may carry, together. */
 const MAX_FILTER_ENTRIES = 50;
 
-export type WatchFilter = { from: string[]; domains: string[] };
+/** The most scope keys one filter may carry. Counted apart from the sender entries. */
+const MAX_SCOPE_KEYS = 50;
+
+/**
+ * Who a watch follows, and optionally where.
+ *
+ * `scope` is a list of opaque keys. Core never reads them: a surface's source
+ * stamps each row with the keys it belongs to (Mail: its mailbox and its Gmail
+ * labels), the watch carries the keys it wants, and a row is for the watch only
+ * if the two lists share one. A watch with no `scope` takes rows from anywhere.
+ */
+export type WatchFilter = { from: string[]; domains: string[]; scope?: string[] };
 
 const clean = (values: readonly string[] | undefined, strip?: RegExp): string[] => [
   ...new Set(
@@ -42,7 +53,11 @@ const clean = (values: readonly string[] | undefined, strip?: RegExp): string[] 
  * Domains lose a leading `@` because people write both `acme.com` and
  * `@acme.com`, and they mean the same thing.
  */
-export const normalizeFilter = (input: { from?: string[]; domains?: string[] }): WatchFilter => {
+export const normalizeFilter = (input: {
+  from?: string[];
+  domains?: string[];
+  scope?: string[];
+}): WatchFilter => {
   const from = clean(input.from);
   const domains = clean(input.domains, /^@+/);
   if (from.length === 0 && domains.length === 0) {
@@ -55,8 +70,21 @@ export const normalizeFilter = (input: { from?: string[]; domains?: string[] }):
       `A watch takes at most ${MAX_FILTER_ENTRIES} entries across \`from\` and \`domains\`.`,
     );
   }
-  return { from, domains };
+  // Keys are opaque, so they are trimmed and de-duplicated but never case-folded.
+  const scope = [...new Set((input.scope ?? []).map((k) => k.trim()).filter((k) => k !== ""))];
+  if (scope.length > MAX_SCOPE_KEYS) {
+    throw new PreconditionError(`A watch takes at most ${MAX_SCOPE_KEYS} scope keys.`);
+  }
+  return scope.length > 0 ? { from, domains, scope } : { from, domains };
 };
+
+/**
+ * Whether a row is in the watch's scope: always when the watch has none, else
+ * when the row carries at least one of the watch's keys. A row with no scope is
+ * outside every scoped watch.
+ */
+export const inScope = (filter: WatchFilter, rowScope: readonly string[] | undefined): boolean =>
+  filter.scope === undefined || (rowScope?.some((k) => filter.scope!.includes(k)) ?? false);
 
 /**
  * Whether `sender` is one the filter names.
@@ -86,7 +114,17 @@ export const watchUri = (surface: string, id: string): string => surfaceUri(surf
  * what it found; nothing in the registry compares on it. `excluded` rows advance
  * the cursor but never match: own mail, tapbacks, Junk.
  */
-export type ArrivalRow = { cursor: number; key: string; sender: string | null; excluded?: boolean };
+export type ArrivalRow = {
+  cursor: number;
+  key: string;
+  sender: string | null;
+  excluded?: boolean;
+  /**
+   * Opaque keys the source files this row under. `excluded` is for what no watch
+   * should ever see; `scope` is for what only some watches asked for.
+   */
+  scope?: string[];
+};
 
 export type ArrivalSource<R extends ArrivalRow> = {
   /** Highest cursor in the store now. */
@@ -146,7 +184,9 @@ const defaultMintId = (): string => `w_${randomBytes(4).toString("hex")}`;
  * ## Why a tick scans once for every watch
  *
  * The store is read once per trigger however many watches exist, and each row
- * is then tried against each filter. A tick only says *that* something matched;
+ * is then tried against each filter: a row is a match when `matchesSender` passes
+ * and the row is in the watch's `scope` (see `inScope`), identically in `tick` and
+ * `read`. A tick only says *that* something matched;
  * `read` is what returns the rows, so a missed or coalesced notification costs
  * nothing: the next read still finds everything after the cursor.
  */
@@ -221,7 +261,11 @@ export class WatchRegistry<R extends ArrivalRow> {
     let cursor = after ?? watch.createdAt;
     let more = false;
     for (const row of rows) {
-      if (!row.excluded && matchesSender(watch.filter, row.sender)) {
+      if (
+        !row.excluded &&
+        matchesSender(watch.filter, row.sender) &&
+        inScope(watch.filter, row.scope)
+      ) {
         if (messages.length === this.#readLimit) {
           more = true;
           break;
@@ -255,7 +299,11 @@ export class WatchRegistry<R extends ArrivalRow> {
       for (const row of rows) {
         if (row.excluded) continue;
         for (const watch of this.#watches.values()) {
-          if (row.cursor > watch.createdAt && matchesSender(watch.filter, row.sender)) {
+          if (
+            row.cursor > watch.createdAt &&
+            matchesSender(watch.filter, row.sender) &&
+            inScope(watch.filter, row.scope)
+          ) {
             hit.add(watch.id);
           }
         }

@@ -79,8 +79,8 @@ messages. Prefer the index; results are labelled with their source.
 - **A move counts as an arrival.** Moving or archiving mail from a watched
   sender into a watched mailbox shows up as a new message.
 - **Scope.** Sent, Drafts, Junk and Trash never match, nor does mail from the
-  account's own addresses. \`mailboxes\` narrows a watch, and every watch on one
-  connection shares a single scope. At most ten watches per connection, and they
+  account's own addresses. \`mailboxes\` narrows one watch to those mailboxes,
+  and each watch has its own. At most ten watches per connection, and they
   end with it: after a reconnect, call \`apple_mail_watch\` again.
 - **Reading a watch that does not exist** is a not-found error, which is also what
   a reconnect looks like.

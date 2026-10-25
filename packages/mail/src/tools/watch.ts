@@ -47,20 +47,19 @@ import { wrap } from "./util.js";
  * refresh runs when the client's mailbox cache TTL (`mailboxCacheTtlMs`) has
  * passed, so at most once per TTL however often the trigger fires.
  *
- * ## Why a connection has one mailbox scope
+ * ## Mailboxes are per watch
  *
- * The registry matches on sender only, and `MailArrivalSource` scopes rows by
- * mailbox for the whole source, not per watch. Rather than let a narrow watch
- * receive mail from a wider one's mailboxes, the first watch fixes the scope and a
- * later one with a different scope is refused until the watches are removed.
+ * `mailboxes` names resolve to Envelope Index rowids through the resolver search
+ * uses, and go into the watch's filter as `scope` (as strings). The source stamps
+ * each row with its own mailbox rowid and its Gmail label rowids, and core's
+ * matching needs a shared key, so two watches on one connection can follow
+ * different mailboxes.
  */
 
 const IMMUTABLE_REASON =
   "The Envelope Index only opened in immutable mode, which cannot see Mail's WAL, so the " +
   "newest mail is exactly what a watch would miss. Grant Full Disk Access so the index " +
   "opens read-only (or leave APPLE_MAIL_INDEX_MODE on auto), then try again.";
-
-type Scope = { names: string[]; rowids: number[]; key: string };
 
 export type MailWatchServiceOptions = {
   client: AppleMailClient;
@@ -83,7 +82,6 @@ export class MailWatchService {
   #inner: MailArrivalSource | undefined;
   #lookup: ReturnType<typeof toLookup> | undefined;
   #own: string[] = [];
-  #scope: Scope | null = null;
   #dir: string | undefined;
   #init: Promise<void> | undefined;
   #refreshing: Promise<void> | undefined;
@@ -147,26 +145,14 @@ export class MailWatchService {
     this.#dir = dirname(located.envelopeIndexPath);
   }
 
-  /** Rebuild the lookup, own addresses and, when scoped, the scope's rowids. */
+  /** Rebuild the lookup and the own addresses. */
   async #load(): Promise<void> {
     const [map, accounts] = await Promise.all([
       this.#client.mailboxLookup(),
       this.#client.accounts(),
     ]);
-    let scope = this.#scope;
-    if (scope) {
-      try {
-        const rowids = await this.#client.mailboxRowidsFor(scope.names);
-        scope = { ...scope, rowids };
-      } catch (err) {
-        // A scoped mailbox that vanished keeps its last rowids: dropping the scope
-        // would widen the watch, and failing here would stop a running one.
-        this.#logger?.warn?.("watch: could not re-resolve the mailbox scope", err);
-      }
-    }
     this.#lookup = toLookup(map);
     this.#own = accounts.flatMap((a) => a.emailAddresses);
-    this.#scope = scope;
     this.#refreshedAt = this.#now();
     this.#rebuild();
   }
@@ -177,7 +163,6 @@ export class MailWatchService {
       index: this.#index,
       ownAddresses: this.#own,
       lookup: this.#lookup,
-      ...(this.#scope ? { mailboxRowids: this.#scope.rowids } : {}),
     });
   }
 
@@ -222,41 +207,21 @@ export class MailWatchService {
     return this.#registry?.remove(id) ?? false;
   }
 
-  /** Resolve `mailboxes`, fix or check the connection's scope, and register the watch, in one synchronous step after the last await. */
+  /** Resolve `mailboxes` to scope keys and register the watch. */
   async add(
     filter: ReturnType<typeof normalizeFilter>,
     mailboxes: string[] | undefined,
-  ): Promise<{ watch: Watch; scope: string[] | "default"; running: boolean }> {
+  ): Promise<{ watch: Watch; running: boolean }> {
     const registry = this.#registry;
     if (!registry) throw new Error("Mail watches are not bound to a registry.");
     await this.ensure();
-    const requested: Scope | null =
+    const scope =
       mailboxes && mailboxes.length > 0
-        ? {
-            names: mailboxes,
-            rowids: await this.#client.mailboxRowidsFor(mailboxes),
-            key: [...mailboxes]
-              .map((m) => m.toLowerCase())
-              .toSorted()
-              .join("\n"),
-          }
-        : null;
+        ? (await this.#client.mailboxRowidsFor(mailboxes)).map(String)
+        : [];
     const running = await this.#isMailRunning();
-
-    // Everything below is synchronous, so two concurrent calls cannot interleave
-    // between the scope check and the `add` that makes it binding.
-    if (registry.size === 0) {
-      this.#scope = requested;
-      this.#rebuild();
-    } else if ((this.#scope?.key ?? "") !== (requested?.key ?? "")) {
-      const held = this.#scope ? this.#scope.names.join(", ") : "the default mailboxes";
-      throw new PreconditionError(
-        `This connection's watches all share one mailbox scope, currently ${held}. ` +
-          "Remove its watches before watching a different set of mailboxes.",
-      );
-    }
-    const watch = registry.add(filter);
-    return { watch, scope: this.#scope ? this.#scope.names : "default", running };
+    const watch = registry.add(normalizeFilter({ ...filter, scope }));
+    return { watch, running };
   }
 }
 
@@ -293,7 +258,7 @@ export const registerWatchTools = (server: McpServer, service: MailWatchService)
           .optional()
           .describe(
             "Only mail in these mailboxes, named as in apple_mail_list_mailboxes. Omit for every " +
-              "mailbox except Sent, Drafts, Junk and Trash. One scope per connection.",
+              "mailbox except Sent, Drafts, Junk and Trash.",
           ),
       }),
       annotations: { readOnlyHint: true },
@@ -304,11 +269,15 @@ export const registerWatchTools = (server: McpServer, service: MailWatchService)
           ...(from ? { from } : {}),
           ...(domains ? { domains } : {}),
         });
-        const { watch, scope, running } = await service.add(filter, mailboxes);
+        const { watch, running } = await service.add(filter, mailboxes);
         return {
           watch: watch.id,
           uri: watch.uri,
-          filter: { ...watch.filter, mailboxes: scope },
+          filter: {
+            from: watch.filter.from,
+            domains: watch.filter.domains,
+            mailboxes: mailboxes && mailboxes.length > 0 ? mailboxes : "default",
+          },
           cursor: watch.createdAt,
           ...(running
             ? {}

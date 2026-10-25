@@ -224,18 +224,19 @@ describe("apple_mail_watch", () => {
     expect(textOf(res)).toContain("Nowhere");
   });
 
-  it("refuses a second watch whose mailbox scope differs, naming the scope", async () => {
+  it("allows watches with different mailboxes on one connection", async () => {
     const { client } = await connect(ON, { isMailRunning: running });
-    await client.callTool({
-      name: "apple_mail_watch",
-      arguments: { domains: ["a.com"], mailboxes: ["Archive"] },
-    });
-    const res = await client.callTool({
-      name: "apple_mail_watch",
-      arguments: { domains: ["b.com"] },
-    });
-    expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("Archive");
+    const one = json(
+      await client.callTool({
+        name: "apple_mail_watch",
+        arguments: { domains: ["a.com"], mailboxes: ["Archive"] },
+      }),
+    );
+    const two = json(
+      await client.callTool({ name: "apple_mail_watch", arguments: { domains: ["b.com"] } }),
+    );
+    expect(one.filter.mailboxes).toEqual(["Archive"]);
+    expect(two.filter.mailboxes).toBe("default");
   });
 });
 

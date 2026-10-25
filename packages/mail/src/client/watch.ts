@@ -11,6 +11,10 @@ import { encodeRef } from "./ref.js";
  * Envelope metadata only: a `MailArrival` carries no body and no snippet.
  * The `messages` table is AUTOINCREMENT, so the ROWID is the cursor and never
  * repeats; `key` is row identity only.
+ *
+ * What the source drops for every watch (`excluded`): Sent, Drafts, Junk and
+ * Trash, the account's own addresses, and rows whose mailbox the lookup does not
+ * know. What only some watches want, the mailbox, is `scope`.
  */
 
 export type MailArrival = ArrivalRow & {
@@ -72,20 +76,16 @@ export type MailArrivalSourceOptions = {
    * how `local://` mailboxes and accounts hidden by the allowlist drop out.
    */
   lookup: MailboxLookup;
-  /** When given, rows in no listed mailbox, by their own mailbox or by label, are excluded. */
-  mailboxRowids?: number[];
 };
 
 export class MailArrivalSource implements ArrivalSource<MailArrival> {
   readonly #index: EnvelopeIndex;
   readonly #own: Set<string>;
-  readonly #scope: Set<number> | null;
   readonly #lookup: MailboxLookup;
 
   constructor(opts: MailArrivalSourceOptions) {
     this.#index = opts.index;
     this.#own = new Set([...opts.ownAddresses].map((a) => a.trim().toLowerCase()));
-    this.#scope = opts.mailboxRowids ? new Set(opts.mailboxRowids) : null;
     this.#lookup = opts.lookup;
   }
 
@@ -97,21 +97,18 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
     return this.#index.arrivalsAfter(after, limit).map((r) => {
       const where = this.#lookup(r.mailboxRowid);
       const sender = r.senderAddress?.trim().toLowerCase() ?? null;
-      // Membership is the row's own mailbox or any label, as `#mailboxPredicate`
-      // has it. Whether Mail writes a label row in the same transaction as the
-      // message is not established anywhere in this repo (docs/envelope-index.md
-      // only records the schema), so a row can be scanned a moment before its
-      // label lands. The live run measures that.
-      const inScope =
-        this.#scope === null ||
-        this.#scope.has(r.mailboxRowid) ||
-        r.labelMailboxIds.some((id) => this.#scope!.has(id));
+      // Which mailboxes a row is "in" is the watch's question, not the source's:
+      // the row carries its own mailbox and its Gmail labels as scope keys, and a
+      // watch scoped to mailboxes needs one of them. Whether Mail writes a label
+      // row in the same transaction as the message is not established anywhere in
+      // this repo, so a row can be scanned a moment before its label lands. The
+      // live run measures that.
+      const scope = [r.mailboxRowid, ...r.labelMailboxIds].map(String);
       const excluded =
         where === null ||
         r.mailboxUrl === null ||
         isUnwatchedMailbox(r.mailboxUrl) ||
-        (sender !== null && this.#own.has(sender)) ||
-        !inScope;
+        (sender !== null && this.#own.has(sender));
       return {
         cursor: r.rowid,
         key: r.key,
@@ -123,6 +120,7 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
         senderName: r.senderName,
         subject: r.subject,
         dateReceived: this.#index.renderDate(r.dateReceived),
+        scope,
       };
     });
   }

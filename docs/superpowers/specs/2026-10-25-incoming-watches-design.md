@@ -63,6 +63,12 @@ apple_mail_unwatch({ watch: "w_7f3a" })
   mailbox URL's last path component. Mail stores no mailbox roles in the index. **Mail from the
   account's own addresses never matches either.** Gmail files sent mail under All Mail, so the
   mailbox rule alone would let every reply Olivier sends to a watched domain fire his own watch.
+- **`mailboxes` is per watch, and core knows it only as `scope`.** The tool resolves each name to
+  Envelope Index rowids the way `search_messages` resolves `mailbox`, and registers the watch with
+  those rowids (as strings) as opaque `scope` keys. Each row carries its own mailbox rowid plus its
+  Gmail label rowids as its `scope`, and a row is for a watch only if the sender matches and, when
+  the watch has a `scope`, the two share a key. A watch with none takes every mailbox the source
+  does not exclude. The tool's own result echoes `mailboxes` by name; a read echoes the keys.
 - **The handle is the server's.** Its id is minted in-process. It lives exactly as long as the stdio
   connection that created it, which is the server process: no daemon, nothing to clean up when the
   client disconnects. At most 10 watches per connection; the 11th is refused with the count.
@@ -88,7 +94,7 @@ without appearing in `resources/list`.
 ```json
 {
   "watch": "w_7f3a",
-  "filter": { "domains": ["acme.com"], "mailboxes": "default" },
+  "filter": { "from": [], "domains": ["acme.com"], "scope": ["1", "6"] },
   "cursor": 198611,
   "messages": [
     {

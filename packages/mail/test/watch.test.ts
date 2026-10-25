@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { normalizeFilter, WatchRegistry } from "@mgcrea/mcp-apple-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { EnvelopeIndex, openIndex } from "../src/client/envelope.js";
@@ -237,38 +238,40 @@ describe("MailArrivalSource", () => {
     }
   });
 
-  it("excludes rows outside the mailbox scope", () => {
+  it("tags every row with its own mailbox rowid, plus its labels, as scope keys", () => {
     const index = open();
     try {
-      const source = new MailArrivalSource({
-        index,
-        ownAddresses: [],
-        lookup,
-        mailboxRowids: [2],
-      });
-      const rows = source.since(100, 20);
-      expect(rows.filter((r) => !r.excluded).map((r) => r.cursor)).toEqual([106]);
-      expect(rows).toHaveLength(11);
+      const by = rowsOf(new MailArrivalSource({ index, ownAddresses: [], lookup }));
+      expect(by.get(106)?.scope).toEqual(["2"]);
+      // 108 lives in All Mail (3) and is in INBOX (6) only by its label.
+      expect([...(by.get(108)?.scope ?? [])].toSorted()).toEqual(["3", "6"]);
     } finally {
       index.close();
     }
   });
 
-  it("counts a Gmail label as membership: a watch on Gmail INBOX sees the labelled row", () => {
+  it("does not drop out-of-scope rows itself: scope is the watch's to apply", () => {
     const index = open();
     try {
-      const source = new MailArrivalSource({
-        index,
-        ownAddresses: [],
-        lookup,
-        mailboxRowids: [6],
+      const rows = new MailArrivalSource({ index, ownAddresses: [], lookup }).since(100, 20);
+      expect(rows.filter((r) => !r.excluded).map((r) => r.cursor)).toContain(106);
+      expect(rows.filter((r) => !r.excluded).map((r) => r.cursor)).toContain(101);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("counts a Gmail label as membership: a watch scoped to Gmail INBOX reads the labelled row", () => {
+    const index = open();
+    try {
+      const registry = new WatchRegistry({
+        surface: "mail",
+        source: new MailArrivalSource({ index, ownAddresses: [], lookup }),
+        onUpdate: () => {},
       });
-      const kept = source
-        .since(100, 20)
-        .filter((r) => !r.excluded)
-        .map((r) => r.cursor);
-      // 108 lives in All Mail (3) and is in INBOX (6) only by its label.
-      expect(kept).toEqual([108]);
+      const watch = registry.add(normalizeFilter({ from: ["sam@example.com"], scope: ["6"] }));
+      const read = registry.read(watch.id, 100);
+      expect(read?.messages.map((m) => m.cursor)).toEqual([108]);
     } finally {
       index.close();
     }
@@ -289,6 +292,7 @@ describe("MailArrivalSource", () => {
         senderName: "Sam Rivers",
         subject: "Re: Lunch on Friday?",
         dateReceived: new Date(t("2026-08-05T09:00:05Z") * 1000).toISOString(),
+        scope: ["1"],
       });
       expect(decodeRef(row!.ref)).toEqual({ accountUuid: ICLOUD, mailbox: "INBOX", id: 102 });
     } finally {
