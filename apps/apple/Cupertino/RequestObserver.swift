@@ -33,13 +33,15 @@ import os
 /// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
 /// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
 /// `answered`, or both by the one in-process serving thread — so neither is ever reached
-/// from two threads at once.
+/// from two threads at once. `pushes` is the same kind of state as `responses`: touched
+/// only by whichever thread calls `answered` (the pump, or the in-process serving thread).
 nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
   private let session: UUID
 
   private var requests = FrameSplitter()
   private var responses = FrameSplitter()
+  private var pushes = PushScanner()
 
   /// JSON-RPC id → the log row that call was recorded in.
   ///
@@ -118,31 +120,25 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// Cupertino did as which tools were called, in every capture mode. The cost
   /// is one byte search per chunk (`CallCapture.pushMarker`), done before any
   /// splitting or parsing so a chunk without one still takes `skip` exactly as
-  /// before. `collecting` carries a match across chunks: a frame whose marker
-  /// arrived in one chunk and whose newline arrives in the next must not be
-  /// skipped half way, or the push is lost.
+  /// before. `PushScanner` decides, and carries what a read boundary would
+  /// otherwise lose: a marker cut in two, and a push frame still open.
   func answered(_ chunk: Data) {
     let holding = !visible.withLock { $0.flight.isEmpty }
     let parsing = mode >= .argumentsAndResults || holding
-    let pushed = collecting || chunk.range(of: CallCapture.pushMarker) != nil
-    guard parsing || pushed else {
+    guard pushes.needsSplit(chunk, parsing: parsing) else {
       responses.skip(chunk)
       return
     }
-    collecting = pushed && chunk.last != UInt8(ascii: "\n")
     for line in responses.lines(chunk) {
-      if pushed { push(line) }
+      push(line)
       if parsing { reply(line) }
     }
   }
 
-  /// Only touched by the server→client pump, like `responses`.
-  private var collecting = false
-
   /// Record one pushed update as a call of its own, with no arguments.
   ///
-  /// The cheap byte test again, per line, because a chunk that matched may hold
-  /// many frames and only the matching ones are worth a parse.
+  /// The cheap byte test first, because a chunk being split may hold many
+  /// frames and only the matching ones are worth a parse.
   private func push(_ line: Data) {
     guard line.range(of: CallCapture.pushMarker) != nil,
       let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
