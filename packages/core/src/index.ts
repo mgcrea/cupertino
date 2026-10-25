@@ -116,3 +116,15 @@ export {
   wrapResult,
   type ToolResult,
 } from "./tools.js";
+export {
+  matchesSender,
+  normalizeFilter,
+  watchUri,
+  WatchRegistry,
+  type ArrivalRow,
+  type ArrivalSource,
+  type Watch,
+  type WatchFilter,
+  type WatchRead,
+  type WatchRegistryOptions,
+} from "./watches.js";
