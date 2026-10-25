@@ -129,8 +129,9 @@ asked", but nothing is pushed. Whether a given host acts on the push is the host
 [alternatives.md](alternatives.md).
 
 In the app, a `subscriptions/listen` is logged as a subscription rather than a call that never
-returns, and each pushed `notifications/resources/updated` is a row in the Activity log and the
-audit file (`subscribed …`, `pushed …`), so "what did Cupertino push into this session" has the
+returns, and the Activity log shows it as `subscribed …`. Each pushed
+`notifications/resources/updated` is a row (`pushed …`) in both the Activity log and the audit file,
+so "what did Cupertino push into this session" has the
 same answer as "what did it call". The design is in
 [the incoming-watches spec](superpowers/specs/2026-10-25-incoming-watches-design.md).
 

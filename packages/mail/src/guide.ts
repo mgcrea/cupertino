@@ -78,8 +78,9 @@ messages. Prefer the index; results are labelled with their source.
   fetches. You can set a watch while Mail is closed, unless you give
   \`mailboxes\`, which needs Mail to resolve names. If it was not running, the
   result says so in \`note\`.
-- **A move counts as an arrival.** Moving or archiving mail from a watched
-  sender into a watched mailbox shows up as a new message.
+- **A move is expected to count as an arrival** (pending the live run). Moving
+  or archiving mail from a watched sender into a watched mailbox should show up
+  as a new message.
 - **Scope.** Sent, Drafts, Junk and Trash never match, nor does mail from the
   account's own addresses. \`mailboxes\` narrows one watch to those mailboxes,
   and each watch has its own. At most ten watches per connection, and they

@@ -145,8 +145,9 @@ One watcher per server process, started by the first watch and stopped by the la
   so SQLite never reuses a ROWID, even after the newest row is deleted, and a cursor past the last
   ROWID seen cannot miss an arrival. If the index is rebuilt with lower ROWIDs (a re-index), the
   watcher sees the head below its cursor, resets to the new head and notifies nothing.
-- **A move fires.** Mail gives a moved message a new ROWID, so moving or archiving mail from a
-  watched sender into a watched mailbox arrives as a new row. That is accepted for now; the live
+- **A move is expected to fire.** Mail is expected to give a moved message a new ROWID (pending the
+  live run), so moving or archiving mail from a watched sender into a watched mailbox would arrive
+  as a new row. That is accepted for now; the live
   run measures whether moves create new rows and whether `global_message_id` survives, before any
   horizon or dedup is decided.
 - **Nothing arrives until Mail runs.** The index only changes when Mail.app fetches. A watch can be
@@ -192,6 +193,8 @@ Notifications already flow through the stdio pumps untouched. Two things need do
 
 - **A `subscriptions/listen` request is answered only when it ends.** Today it would sit in
   `waiting` as a call that never returns. It should be logged as a subscription, opened and closed.
+- **The subscription shows in the Activity log only.** The audit file keeps calls, and a
+  subscription is a log entry, not a call.
 - **Each `notifications/resources/updated` is recorded** in the Activity log and the audit file, so
   "what did Cupertino push into this session" has the same answer as "what did it call".
 

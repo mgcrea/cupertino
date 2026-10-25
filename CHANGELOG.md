@@ -27,8 +27,8 @@ summary.
   `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything.
   A watch carries envelope metadata only, never a body or message text. It works with both the 2025
   and the 2026-07-28 protocol, and lives as long as the connection that made it. The Activity log
-  and the audit file record each subscription and each push, so what Cupertino sent into a session
-  reads the same as what it was asked.
+  shows each subscription, and the Activity log and the audit file record each push, so what
+  Cupertino sent into a session reads the same as what it was asked.
 
 ## [1.31.0] - 2026-10-25
 
