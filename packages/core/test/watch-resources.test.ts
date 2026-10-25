@@ -115,12 +115,24 @@ describe("createWatches: reading a handle", () => {
     ).rejects.toMatchObject({ code: -32602 });
   });
 
-  it("refuses a bad `after` with -32602", async () => {
+  it("refuses a bad `after` with -32602, saying what `after` must be", async () => {
     const { client, watches } = await setup();
     const w = watches.add(acme);
     for (const bad of ["abc", "-1", "1.5", ""]) {
       await expect(client.readResource({ uri: `${w.uri}?after=${bad}` })).rejects.toMatchObject({
         code: -32602,
+        message: expect.stringContaining(`"after" must be a non-negative integer cursor, got "${bad}"`),
+      });
+    }
+  });
+
+  it("refuses an unknown or malformed query with -32602 bad query, not not-found", async () => {
+    const { client, watches } = await setup();
+    const w = watches.add(acme);
+    for (const query of ["foo=1", "after=5&x=1", "x=1&after=5", "after=1&after=2", ""]) {
+      await expect(client.readResource({ uri: `${w.uri}?${query}` })).rejects.toMatchObject({
+        code: -32602,
+        message: expect.stringMatching(/bad query/),
       });
     }
   });

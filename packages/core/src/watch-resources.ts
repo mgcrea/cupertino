@@ -88,14 +88,24 @@ const parseAfter = (raw: string | string[] | undefined): number | undefined => {
   return n;
 };
 
+/** A variable no template can declare, carrying a query the watch template does not take. */
+const BAD_QUERY = "#badQuery";
+
 /**
  * `…/watch/{id}{?after}`, which also matches the bare handle.
  *
  * The SDK's matcher treats a `{?after}` expression as required: it matches
  * `…/watch/w_1?after=5` and returns null for `…/watch/w_1`, so the URI a tool
  * hands out, and the one a host subscribes to, would answer "not found". The
- * template is still advertised in its RFC 6570 form; only the match is widened,
- * by falling back to the same path without the query.
+ * template is still advertised in its RFC 6570 form; only the match is widened.
+ *
+ * The bare template is a fallback for a URI with no `?` at all. Tried on one
+ * with a query, it would read `w_1?foo=1` as the id and answer "not found" for
+ * a watch that exists, which tells the client to set it again when its only
+ * fault was the query. So a query the full template refused is parsed here: a
+ * lone `after` goes on to `parseAfter`, which says what is wrong with its value
+ * (the matcher refuses `after=` outright), and anything else is marked for the
+ * read to refuse as a bad query.
  */
 class WatchUriTemplate extends UriTemplate {
   readonly #bare: UriTemplate;
@@ -106,7 +116,17 @@ class WatchUriTemplate extends UriTemplate {
   }
 
   override match(uri: string): ReturnType<UriTemplate["match"]> {
-    return super.match(uri) ?? this.#bare.match(uri);
+    const full = super.match(uri);
+    if (full) return full;
+    const q = uri.indexOf("?");
+    if (q < 0) return this.#bare.match(uri);
+    const bare = this.#bare.match(uri.slice(0, q));
+    if (!bare) return null;
+    const query = uri.slice(q + 1);
+    const params = [...new URLSearchParams(query)];
+    const [only] = params;
+    if (params.length === 1 && only?.[0] === "after") return { ...bare, after: only[1] };
+    return { ...bare, [BAD_QUERY]: query };
   }
 }
 
@@ -167,6 +187,14 @@ export const createWatches = <R extends ArrivalRow>(
     },
     async (uri, variables) => {
       const id = Array.isArray(variables.id) ? variables.id[0] : variables.id;
+      const bad = variables[BAD_QUERY];
+      if (bad !== undefined) {
+        throw new SdkProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `bad query "${String(bad)}": a watch URI takes only \`after\`, a non-negative ` +
+            "integer cursor, as in `?after=198611`.",
+        );
+      }
       const after = parseAfter(variables.after);
       // An unknown id is an error, not `degraded` data: after a reconnect the
       // handle really is gone, and not-found is what tells the client to call
