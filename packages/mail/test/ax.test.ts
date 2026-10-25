@@ -182,63 +182,6 @@ describe("findComposer", () => {
   });
 });
 
-describe("keys", () => {
-  /*
-   * The order is load-bearing. A raise orders the window forward inside Mail; an
-   * activate makes Mail the app a synthetic keystroke reaches; the focus decides
-   * which element inside it receives the key. Drop any one and command-V lands
-   * somewhere else.
-   */
-  it("raises, activates, focuses, then sends the stroke, in that order", async () => {
-    const { env, seen } = await hostStub({ focus: { focused: true } });
-    const lane = MailAxLane.open(env)!;
-    await expect(
-      lane.keys({ window: "w1", body: "e7", index: 0 }, [{ key: "v", modifiers: ["command"] }]),
-    ).resolves.toBe(true);
-    expect(seen.map((c) => c.tool)).toEqual(["raise_window", "activate", "focus", "key"]);
-    // The paste names the body it was focused into, so the desktop server brings
-    // Mail forward first and posts nothing if the person has switched away.
-    expect(seen[3]?.args).toEqual({ key: "v", modifiers: ["command"], handle: "e7" });
-    lane.close();
-  });
-
-  /*
-   * An element can report itself focusable and not take the focus. Pressing on
-   * regardless would paste into whatever DID have it.
-   */
-  it("does not send the keystroke when the focus did not take", async () => {
-    const { env, seen } = await hostStub({ focus: { focused: false } });
-    const lane = MailAxLane.open(env)!;
-    await expect(
-      lane.keys({ window: "w1", body: "e7", index: 0 }, [{ key: "v", modifiers: ["command"] }], 30),
-    ).resolves.toBe(false);
-    expect(seen.map((c) => c.tool)).not.toContain("key");
-    lane.close();
-  });
-
-  /*
-   * MEASURED, three fresh composers: the body is readable ~140 ms before it will
-   * take the focus, and the FIRST attempt failed on every one. Asking once made
-   * this a coin flip that a retry that no longer exists happened to cover.
-   */
-  it("keeps asking for the focus, because readable is not ready", async () => {
-    const { env, seen } = await hostStub({
-      focus: (_args: unknown, nth: number) => ({ focused: nth > 2 }),
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(
-      lane.keys(
-        { window: "w1", body: "e7", index: 0 },
-        [{ key: "v", modifiers: ["command"] }],
-        2_000,
-      ),
-    ).resolves.toBe(true);
-    expect(seen.filter((c) => c.tool === "focus")).toHaveLength(3);
-    expect(seen.at(-1)?.tool).toBe("key");
-    lane.close();
-  });
-});
-
 describe("containsText", () => {
   it("ignores where a WebKit view chose to break lines", () => {
     expect(containsText("Thanks —\n  Tuesday   works.", "Thanks — Tuesday works.")).toBe(true);

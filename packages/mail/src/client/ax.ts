@@ -60,45 +60,6 @@ const BODY_ROLE = "AXWebArea";
  */
 const BODY_DEPTH = 8;
 
-/**
- * How long to keep asking the composer's body to take the focus.
- *
- * **Readable is not ready, and the gap is not zero.** `findComposer` returns as
- * soon as the window and its web area can be READ; the body cannot take the
- * keyboard for about another 140 ms after that. Measured over three fresh
- * composers, driving the real driver:
- *
- *     web area readable at 395 ms   focus -> false at 421 ms, true at 560 ms
- *     web area readable at 637 ms   focus -> false at 671 ms, true at 812 ms
- *     web area readable at 640 ms   focus -> false at 665 ms, true at 805 ms
- *
- * The first attempt failed on every trial. Without a poll here that is a
- * coin-flip resting on how long the surrounding round trips happen to take —
- * `compose.ts` retries the whole paste once, for an unrelated reason, and that
- * retry was silently carrying this.
- *
- * Which is `docs/desktop.md`'s most expensive lesson arriving in a new place:
- * *the control must be polled for, not waited for*. It was written about a
- * window's chrome appearing before its content; this is the same shape one level
- * down, where the content is there and the focus is not.
- */
-const FOCUS_TIMEOUT_MS = 2_000;
-
-/** Between focus attempts. Each one is a round trip, so this is not a spin. */
-const FOCUS_POLL_MS = 100;
-
-/** One keystroke, as `apple_desktop_key` takes it. */
-type Keystroke = { key: string; modifiers?: string[] };
-
-/**
- * How many keystrokes go in one `apple_desktop_run`.
- *
- * The verb caps a run at 25 steps. Staying under it here means a burst is
- * chunked rather than refused, which matters because the number of strokes is
- * the number of lines in somebody's draft.
- */
-const KEY_BURST = 20;
-
 type Element = {
   handle: string;
   role: string;
@@ -302,56 +263,6 @@ export class MailAxLane {
   /** Bring Mail to the front. A synthetic keystroke lands in whatever is frontmost. */
   async activate(): Promise<void> {
     await this.#call("activate", { bundleId: MAIL_BUNDLE });
-  }
-
-  /**
-   * Focus the composer's body and send a burst of keystrokes to it.
-   *
-   * What `paste` was, generalised, because replacing a reply's text without
-   * touching its quote is a sequence rather than one key: the caret goes to the
-   * top of the document, the selection is walked down to the end of the
-   * sender's own text, and only then is anything pasted over it.
-   *
-   * Sent through `apple_desktop_run` so a burst is ONE round trip. That is not
-   * only speed: every stroke in a run is checked before the first one is posted,
-   * and the run stops at the first failure, so a selection cannot be left
-   * half-extended by a refusal partway through.
-   *
-   * Each stroke names the body's handle, so the desktop server brings Mail
-   * forward before posting and refuses rather than typing into whatever the
-   * person at the keyboard just switched to.
-   */
-  async keys(
-    ref: ComposerRef,
-    strokes: Keystroke[],
-    focusTimeoutMs = FOCUS_TIMEOUT_MS,
-  ): Promise<boolean> {
-    if (strokes.length === 0) return true;
-    try {
-      await this.#call("raise_window", { handle: ref.window });
-      await this.activate();
-      const deadline = Date.now() + focusTimeoutMs;
-      for (;;) {
-        const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
-        if (focused.focused === true) break;
-        if (Date.now() >= deadline) return false;
-        await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
-      }
-      for (let at = 0; at < strokes.length; at += KEY_BURST) {
-        const chunk = strokes.slice(at, at + KEY_BURST);
-        if (chunk.length === 1) {
-          const only = chunk[0] as Keystroke;
-          await this.#call("key", { ...only, handle: ref.body });
-          continue;
-        }
-        await this.#call("run", {
-          steps: chunk.map((stroke) => ({ tool: "key", ...stroke, handle: ref.body })),
-        });
-      }
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   /**
