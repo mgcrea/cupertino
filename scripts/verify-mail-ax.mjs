@@ -50,6 +50,32 @@
  * `AXSelectedText` reads null on Mail's composer, so a copy is the only way to
  * read it. If Apple changes any of that, this is what notices.
  *
+ * ## Then the native edit, the rebuild and the handles (2026-10-26)
+ *
+ * The composer moved into the app (docs/mail-compose.md, "The composer moved
+ * into the app"), and `--compose` goes on to check what only a live Mail can:
+ *
+ *   1. `update_draft` with `edits` on the open forward: only the matched word
+ *      changes, the forward's files and quote survive, and the SAVED source says so.
+ *   2. Two composers under ONE subject: `list_open_drafts` gives each a handle,
+ *      `update_draft` with `composer` edits the right one and leaves the other
+ *      alone, and an edit that names no target refuses while several are open.
+ *   3. Route B: the forward's window is closed, a self-sent message is reply-drafted,
+ *      that window is closed too, and `update_draft` by `ref` REBUILDS it as a
+ *      reply. The saved source must keep `In-Reply-To`, and exactly one draft may
+ *      remain under the subject.
+ *   4. (Manual, printed at the end.) A rebuild refuses when the quote was edited
+ *      by hand. It needs a person, so it is not automated.
+ *
+ * Every draft these make goes to the user's own address and none is sent. Cases
+ * 2 and 3 are CLEANED UP, even on failure: their saved drafts are deleted, and
+ * the script can only ask for their windows to be closed, not close them (the
+ * app's driver is not lent to a terminal, which is the point of the peer check
+ * above). So it WAITS, up to two minutes per window, polling `list_open_drafts`,
+ * and says which window it is waiting for. Close each with command-W; a saved
+ * composer closes without a sheet. The forward and new-message drafts of the
+ * older cases are still left as evidence, as described above.
+ *
  * What a failure means, in order of likelihood:
  *
  *   * `no socket`      — Cupertino is not running, or this shell is not one of
@@ -81,6 +107,69 @@ const check = (label, ok, detail = "") => {
   else failed += 1;
   console.log(`  ${ok ? "ok  " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
 };
+
+// Helpers for the --compose cases. Consts, so they must precede the top-level
+// `await composeCheck()` below: a function declaration hoists, a const does not.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Poll `fn` until it returns something truthy, `tries` times, `ms` apart. */
+const until = async (fn, tries = 10, ms = 1000) => {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    if (attempt > 0) await sleep(ms);
+    const value = await fn();
+    if (value) return value;
+  }
+  return null;
+};
+
+/** Saved drafts with exactly this subject, newest first. */
+const draftsBySubject = async (mail, subject) => {
+  const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
+  return (listed?.messages ?? []).filter((m) => m.subject === subject);
+};
+
+/** The compose windows open now, or null when Mail could not be asked. */
+const openComposers = async (mail, quoteChars = 0) => {
+  const listed = await mail.call("apple_mail_list_open_drafts", { quoteChars });
+  return listed?.degraded === true ? null : (listed?.drafts ?? []);
+};
+
+/**
+ * Wait for a person (or the controller) to close the window titled `subject`.
+ * The script cannot close it: the app's driver is not lent to a terminal.
+ */
+const waitForClose = async (mail, subject, seconds = 120) => {
+  console.log(`  ...  close the Mail window "${subject}" (command-W); waiting up to ${seconds}s`);
+  const gone = await until(
+    async () => {
+      const composers = await openComposers(mail);
+      return composers !== null && !composers.some((c) => c.subject === subject);
+    },
+    seconds,
+    1000,
+  );
+  return gone !== null;
+};
+
+/**
+ * Delete the drafts of one subject that THIS run made. The caller owns that
+ * subject: it is stamped, or it was checked absent before the run made one.
+ */
+const deleteDrafts = async (mail, subject) => {
+  try {
+    const found = await draftsBySubject(mail, subject);
+    if (found.length === 0) return;
+    await mail.call("apple_mail_delete_messages", { refs: found.map((m) => m.ref), confirm: true });
+    console.log(`  ok   cleaned up ${found.length} draft(s) titled "${subject}"`);
+  } catch (error) {
+    console.log(`  FAIL could not delete drafts titled "${subject}": ${error.message}`);
+    failed += 1;
+  }
+};
+
+/** The addresses in a header value, lower-cased. */
+const addressesIn = (value) =>
+  (String(value ?? "").match(/[\w.+'-]+@[\w.-]+\.[a-z]{2,}/gi) ?? []).map((a) => a.toLowerCase());
 
 /**
  * Speak the lent handshake, as `packages/core/src/ax.ts` does.
@@ -341,7 +430,19 @@ async function composeCheck() {
     // The forward left a saved draft and its composer window, which is exactly
     // the state a revision starts from — so the rewrite is checked here rather
     // than in a run of its own.
-    if (result?.ok === true) await reviseCheck(mail, result.subject);
+    if (result?.ok === true) {
+      await reviseCheck(mail, result.subject);
+      await editsCheck(mail, result.subject);
+      await handlesCheck(mail, address);
+      await rebuildCheck(mail, address, result.subject);
+      console.log(
+        "\n  MANUAL (needs a person, not run): a rebuild refuses when the quote was edited\n" +
+          "  by hand. Reply to any message to yourself, type a word INSIDE the quoted\n" +
+          "  original, save (command-S), close the window, then ask update_draft by ref\n" +
+          "  for an edit. Expect replaced: false, a reason saying the quote is not the\n" +
+          "  one Mail would write, the original draft untouched and no second draft.",
+      );
+    }
 
     // What is actually on screen differs by outcome, and saying "a draft" after
     // a failure would send someone looking for one that was never saved: the
@@ -349,7 +450,8 @@ async function composeCheck() {
     console.log(
       result?.ok === true
         ? `\n  Left in Mail, on purpose, as the evidence:\n` +
-            `    a saved draft "${result.subject}" addressed to ${address},\n` +
+            `    a saved draft "${result.subject}" addressed to ${address}\n` +
+            `    (its window is closed by the rebuild case when that ran),\n` +
             `    a new-message draft "Cupertino verify-mail-ax new …" beside it,\n` +
             `    and its composer window. Its note now reads REVISED, two files\n` +
             `    (verify-note.txt, verify-dot.png) follow it, and the forwarded\n` +
@@ -557,6 +659,329 @@ async function attachCheck(mail, subject) {
   } finally {
     // Mail copies a file into the draft when it saves, so the originals can go.
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ─── the native edit, the handles and the rebuild ───────────────────────────
+
+/**
+ * Case 1: `edits` on the open forward. Only the matched word may change, and
+ * what the forward already carries (its files, its quote) must survive, as the
+ * SAVED source says, not the window.
+ */
+async function editsCheck(mail, subject) {
+  const composers = await openComposers(mail);
+  const mine = (composers ?? []).filter((c) => c.subject === subject);
+  if (mine.length !== 1) {
+    check(
+      "the forward's window could be addressed by a handle",
+      false,
+      composers === null
+        ? "open drafts could not be read"
+        : `${mine.length} windows titled "${subject}"`,
+    );
+    return;
+  }
+  let result;
+  try {
+    result = await mail.call("apple_mail_update_draft", {
+      composer: mine[0].composer,
+      edits: [{ find: "REVISED", replace: "EDITED" }],
+      confirm: true,
+    });
+  } catch (error) {
+    check("the find/replace edit was accepted", false, error.message);
+    return;
+  }
+  check(
+    "edits changed only the matched text, in the composer",
+    result?.method === "inPlace" && result?.replaced === true && result?.quoteKept === true,
+    result?.replaced === true
+      ? `method: ${result.method}, quoteKept: ${result.quoteKept}`
+      : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
+  );
+  check("the edit was saved", result?.saved === true, result?.note ?? "");
+
+  const draft = await until(async () => (await draftsBySubject(mail, subject))[0] ?? null);
+  if (!draft?.ref) {
+    check("the edited draft was found in Drafts", false, `no draft "${subject}"`);
+    return;
+  }
+  const raw = String(
+    (await mail.call("apple_mail_get_message_source", { ref: draft.ref }))?.source ?? "",
+  );
+  check(
+    "the saved draft holds the edit and kept its file",
+    /EDITED/.test(raw) && !/REVISED/.test(raw) && /verify-note\.txt/.test(raw),
+    `EDITED: ${/EDITED/.test(raw)}, REVISED gone: ${!/REVISED/.test(raw)}, verify-note.txt: ${/verify-note\.txt/.test(raw)}`,
+  );
+}
+
+/**
+ * Case 2: two composers under one subject. Each has its own handle, the right
+ * one is edited, and an edit naming no target refuses while several are open.
+ */
+async function handlesCheck(mail, address) {
+  const subject = `Cupertino verify-mail-ax dup ${new Date().toISOString()}`;
+  let owned = false;
+  try {
+    for (const word of ["VERIFYALPHA", "VERIFYBETA"]) {
+      let made;
+      try {
+        made = await mail.call("apple_mail_send_message", {
+          to: [address],
+          subject,
+          body: `${word} first line.\nA check made this, never sent.`,
+          sendNow: false,
+        });
+      } catch (error) {
+        check(`the ${word} composer was made under the shared subject`, false, error.message);
+        return;
+      }
+      owned = true;
+      check(
+        `the ${word} composer was made under the shared subject`,
+        made?.ok === true,
+        made?.note ?? "",
+      );
+      if (made?.ok !== true) return;
+    }
+
+    const composers = (await openComposers(mail)) ?? [];
+    const same = composers.filter((c) => c.subject === subject);
+    const handles = new Set(same.map((c) => c.composer));
+    check(
+      "list_open_drafts gives each of the two windows its own handle",
+      same.length === 2 && handles.size === 2,
+      `${same.length} windows, handles: ${[...handles].join(", ")}`,
+    );
+    const beta = same.find((c) => /VERIFYBETA/.test(c.text));
+    const alpha = same.find((c) => /VERIFYALPHA/.test(c.text));
+    if (!beta || !alpha) {
+      check("each window could be told apart by what it holds", false, "texts did not match");
+      return;
+    }
+
+    // No target, several windows open: it must refuse and change nothing.
+    let untargeted = null;
+    try {
+      untargeted = await mail.call("apple_mail_update_draft", {
+        edits: [{ find: "VERIFYBETA", replace: "VERIFYWRONG" }],
+        confirm: true,
+      });
+    } catch (error) {
+      untargeted = { replaced: false, reason: error.message };
+    }
+    check(
+      "an edit that names no draft refuses while several are open",
+      untargeted?.replaced === false,
+      untargeted?.replaced === false
+        ? (untargeted.reason ?? "").slice(0, 120)
+        : "IT EDITED SOMETHING",
+    );
+
+    let result;
+    try {
+      result = await mail.call("apple_mail_update_draft", {
+        composer: beta.composer,
+        edits: [{ find: "VERIFYBETA", replace: "VERIFYGAMMA" }],
+        confirm: true,
+      });
+    } catch (error) {
+      check("the edit by handle was accepted", false, error.message);
+      return;
+    }
+    check(
+      "the edit by handle went in",
+      result?.method === "inPlace" && result?.replaced === true,
+      result?.replaced === true ? "" : `${result?.method} — ${result?.reason ?? "no reason given"}`,
+    );
+
+    const after = ((await openComposers(mail)) ?? []).filter((c) => c.subject === subject);
+    const edited = after.find((c) => c.composer === beta.composer);
+    const other = after.find((c) => c.composer === alpha.composer);
+    check(
+      "the right window was edited and the other left alone",
+      !!edited &&
+        !!other &&
+        /VERIFYGAMMA/.test(edited.text) &&
+        !/VERIFYBETA/.test(edited.text) &&
+        /VERIFYALPHA/.test(other.text) &&
+        !/VERIFYGAMMA/.test(other.text),
+      `edited: ${JSON.stringify(edited?.text)}, other: ${JSON.stringify(other?.text)}`,
+    );
+  } finally {
+    if (owned) {
+      // Windows first: deleting the saved copy under an open composer can leave it asking to save.
+      const closed = await waitForClose(mail, subject);
+      if (!closed)
+        console.log(`  note a window titled "${subject}" is still open; close it by hand`);
+      await deleteDrafts(mail, subject);
+    }
+  }
+}
+
+/**
+ * Case 3, route B: close the forward, reply-draft a message the user sent
+ * themselves, close that window, and rebuild the draft by ref. The saved source
+ * must keep `In-Reply-To`, and exactly one draft may remain under the subject.
+ */
+async function rebuildCheck(mail, address, forwardSubject) {
+  // The forward's window is closed first: the rebuild is for a window that is gone.
+  if (!(await waitForClose(mail, forwardSubject))) {
+    check("the forward's window was closed", false, "still open after two minutes");
+    return;
+  }
+
+  // A message the user sent to themselves alone, so the reply is addressed to them alone.
+  const self = address.toLowerCase();
+  const found = await mail.call("apple_mail_search_messages", { sender: address, limit: 20 });
+  let target = null;
+  for (const candidate of found?.messages ?? []) {
+    if (!candidate.ref || /\/Drafts#/.test(candidate.ref)) continue;
+    let message;
+    try {
+      message = await mail.call("apple_mail_get_message", { ref: candidate.ref });
+    } catch {
+      continue;
+    }
+    const to = addressesIn(message?.headers?.to);
+    const cc = addressesIn(message?.headers?.cc);
+    if (
+      to.length > 0 &&
+      cc.length === 0 &&
+      [...to, ...addressesIn(message?.sender)].every((a) => a === self)
+    ) {
+      target = { ...candidate, subject: message.subject ?? candidate.subject };
+      break;
+    }
+  }
+  if (!target) {
+    console.log(
+      `  skip the rebuild case: no message from ${address} to ${address} alone was found.\n` +
+        "       Send yourself one (any subject) and run again.",
+    );
+    return;
+  }
+
+  // Nothing of the user's may share the reply's subject: the cleanup deletes by it.
+  const predicted = /^re:/i.test(target.subject) ? target.subject : `Re: ${target.subject}`;
+  const preexisting = (await draftsBySubject(mail, predicted)).length;
+  const windows = ((await openComposers(mail)) ?? []).filter((c) => c.subject === predicted).length;
+  if (preexisting > 0 || windows > 0) {
+    console.log(
+      `  skip the rebuild case: a draft or window titled "${predicted}" already exists, and the\n` +
+        "       cleanup deletes by subject. Pick another self-sent message, or remove that draft.",
+    );
+    return;
+  }
+
+  console.log(`\n  reply-drafting "${target.subject}" (a message to yourself), nothing sent\n`);
+  let subject = predicted;
+  let owned = false;
+  try {
+    let replied;
+    try {
+      replied = await mail.call("apple_mail_reply_to_message", {
+        ref: target.ref,
+        body: "VERIFYBASE the reply a check wrote. It was never sent.",
+        sendNow: false,
+      });
+    } catch (error) {
+      check("the reply draft was composed", false, error.message);
+      return;
+    }
+    subject = replied?.subject ?? predicted;
+    owned = true;
+    check("the reply draft was composed", replied?.ok === true, replied?.note ?? "");
+    if (replied?.ok !== true) return;
+
+    const saved = await until(async () => {
+      const drafts = await draftsBySubject(mail, subject);
+      return drafts.length === 1 ? drafts : null;
+    });
+    if (!saved) {
+      owned = false;
+      check(
+        "exactly one saved reply draft exists",
+        false,
+        `not one draft titled "${subject}" after 10s; nothing deleted`,
+      );
+      return;
+    }
+    const recipients = addressesIn(
+      (await mail.call("apple_mail_get_message", { ref: saved[0].ref }))?.headers?.to,
+    );
+    check(
+      "the reply is addressed to the user's own account alone",
+      recipients.length > 0 && recipients.every((a) => a === self),
+      recipients.join(", "),
+    );
+
+    if (!(await waitForClose(mail, subject))) {
+      check("the reply's window was closed", false, "still open after two minutes");
+      return;
+    }
+
+    // Re-found by subject: Mail renumbers a saved draft within seconds.
+    const draft = (await draftsBySubject(mail, subject))[0];
+    if (!draft?.ref) {
+      check("the closed draft was found in Drafts", false, `no draft "${subject}"`);
+      return;
+    }
+    let result;
+    try {
+      result = await mail.call("apple_mail_update_draft", {
+        ref: draft.ref,
+        edits: [{ find: "VERIFYBASE", replace: "VERIFYREBUILT" }],
+        confirm: true,
+      });
+    } catch (error) {
+      check("the rebuild was accepted", false, error.message);
+      return;
+    }
+    check(
+      "a closed draft was REBUILT as a reply, threading kept",
+      result?.method === "rebuild" && result?.replaced === true && result?.threadingKept === true,
+      result?.replaced === true
+        ? `inReplyTo: ${result.inReplyTo}, filesAdded: ${JSON.stringify(result.filesAdded)}`
+        : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
+    );
+    if (result?.replaced !== true) return;
+
+    const rebuilt = await until(async () => {
+      const drafts = await draftsBySubject(mail, subject);
+      return drafts.length === 1 ? drafts[0] : null;
+    });
+    check(
+      "exactly one draft remains under the subject (the original was deleted)",
+      !!rebuilt,
+      `${(await draftsBySubject(mail, subject)).length} draft(s)`,
+    );
+    if (!rebuilt) return;
+    const raw = String(
+      (await mail.call("apple_mail_get_message_source", { ref: rebuilt.ref }))?.source ?? "",
+    );
+    const header = /^In-Reply-To:\s*(<[^>\r\n]+>)/im.exec(raw)?.[1] ?? null;
+    check(
+      "the saved source keeps In-Reply-To",
+      header !== null &&
+        (result.inReplyTo ? String(result.inReplyTo).includes(header.slice(1, -1)) : true),
+      `In-Reply-To: ${header}`,
+    );
+    check(
+      "the saved source holds the edit and not the old text",
+      /VERIFYREBUILT/.test(raw) && !/VERIFYBASE/.test(raw),
+      `VERIFYREBUILT: ${/VERIFYREBUILT/.test(raw)}, VERIFYBASE gone: ${!/VERIFYBASE/.test(raw)}`,
+    );
+  } finally {
+    if (owned) {
+      // The rebuild leaves its new window open, saved. Close it, then delete.
+      const closed = await waitForClose(mail, subject);
+      if (!closed)
+        console.log(`  note a window titled "${subject}" is still open; close it by hand`);
+      await deleteDrafts(mail, subject);
+    }
   }
 }
 
