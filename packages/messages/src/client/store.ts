@@ -242,12 +242,19 @@ export class MessagesStore {
     return { text: null, source: "none" };
   }
 
-  #messageColumns(): string {
+  /**
+   * `bodies: false` projects NULL for both text columns, for a read that never
+   * shows a body: `#toRow` would otherwise decode `attributedBody` on every row
+   * only for the caller to drop it.
+   */
+  #messageColumns({ bodies = true }: { bodies?: boolean } = {}): string {
     const m = this.caps.messageColumns;
     return [
       `m."guid" AS guid`,
-      `m."text" AS text`,
-      m.has("attributedBody") ? `m."attributedBody" AS attributedBody` : `NULL AS attributedBody`,
+      bodies ? `m."text" AS text` : `NULL AS text`,
+      bodies && m.has("attributedBody")
+        ? `m."attributedBody" AS attributedBody`
+        : `NULL AS attributedBody`,
       this.#col(m, "m", "subject"),
       this.#col(m, "m", "service"),
       this.#col(m, "m", "is_from_me", "isFromMe"),
@@ -364,10 +371,13 @@ export class MessagesStore {
    * Exactly one row per ROWID. `#joins` yields a row per chat for a message in
    * several, which would give one cursor two rows and spend two slots of a read's
    * limit on one message, so the chat here is picked: the lowest `chat_id`.
+   *
+   * No text: a watch carries metadata only, so `text` is always null here and
+   * the scan never pays for decoding a body.
    */
   arrivalsAfter(after: number, limit: number): (MessageRow & { rowid: number })[] {
     const sql = `
-      SELECT m."ROWID" AS rowid, ${this.#messageColumns()}
+      SELECT m."ROWID" AS rowid, ${this.#messageColumns({ bodies: false })}
         FROM "message" m
         LEFT JOIN "handle" h ON h."ROWID" = m."handle_id"
         LEFT JOIN "chat" c ON c."ROWID" =

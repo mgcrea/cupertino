@@ -31,14 +31,15 @@ type Seed = {
   iso?: string;
   fromMe?: 0 | 1;
   reactionType?: number | null;
+  itemType?: number;
 };
 
 const addMessage = (db: DatabaseSync, m: Seed): void => {
   const date = appleNanos(m.iso ?? "2026-08-01T12:00:00Z");
   db.prepare(
     `INSERT INTO message
-       (ROWID, guid, text, handle_id, service, date, is_from_me, associated_message_type)
-     VALUES (?, ?, ?, ?, 'iMessage', ?, ?, ?)`,
+       (ROWID, guid, text, handle_id, service, date, is_from_me, associated_message_type, item_type)
+     VALUES (?, ?, ?, ?, 'iMessage', ?, ?, ?, ?)`,
   ).run(
     m.rowid,
     m.guid,
@@ -47,6 +48,7 @@ const addMessage = (db: DatabaseSync, m: Seed): void => {
     date,
     m.fromMe ?? 0,
     m.reactionType === undefined ? 0 : m.reactionType,
+    m.itemType ?? 0,
   );
   db.prepare(
     `INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (?, ?, ?)`,
@@ -93,6 +95,15 @@ describe("MessagesStore watch reads", () => {
     // Reactions come back too: they advance the cursor.
     expect(rows[0]?.reactionType).toBe(2000);
     expect(store.arrivalsAfter(0, 2).map((r) => r.rowid)).toEqual([1, 2]);
+  });
+
+  it("arrivalsAfter leaves the text out, so a scan decodes no body", () => {
+    const { store } = build((db) => addMessage(db, { rowid: 1, guid: "g1", text: "secret body" }));
+    const [row] = store.arrivalsAfter(0, 10);
+    expect(row?.text).toBeNull();
+    expect(row?.textSource).toBe("none");
+    // The same row through a listing still has its text: only the scan skips it.
+    expect(store.range({ limit: 10 })[0]?.text).toBe("secret body");
   });
 
   it("pins that the message table is AUTOINCREMENT, which the watch cursor relies on", () => {
@@ -163,6 +174,28 @@ describe("MessagesArrivalSource", () => {
       ["untap", true],
       ["plain", false],
     ]);
+  });
+
+  it("excludes group events (item_type != 0), and returns them", () => {
+    const rows = source((db) => {
+      addMessage(db, { rowid: 1, guid: "renamed", itemType: 2 });
+      addMessage(db, { rowid: 2, guid: "left", itemType: 3 });
+      addMessage(db, { rowid: 3, guid: "said", itemType: 0 });
+    }).since(0, 10);
+    expect(rows.map((r) => [r.key, r.excluded === true])).toEqual([
+      ["renamed", true],
+      ["left", true],
+      ["said", false],
+    ]);
+  });
+
+  it("does not exclude anything for item_type on a store without the column", () => {
+    const { db } = build((d) => addMessage(d, { rowid: 1, guid: "renamed", itemType: 2 }));
+    const caps = introspect(db);
+    const without = new Set([...caps.messageColumns].filter((c) => c !== "item_type"));
+    const store = new MessagesStore(db, "ro", { ...caps, messageColumns: without });
+    const [row] = new MessagesArrivalSource({ store }).since(0, 10);
+    expect(row?.excluded).toBeUndefined();
   });
 
   it("carries no text, even when the row has one", () => {

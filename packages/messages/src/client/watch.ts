@@ -13,8 +13,10 @@ import type { MessagesStore } from "./store.js";
  * `message` is AUTOINCREMENT, so the ROWID is the cursor and never repeats; `key`
  * is the guid, which is also what the public ref carries.
  *
- * What the source drops for every watch (`excluded`): my own messages and
- * tapbacks. Messages has no per-watch scope, so `scope` stays undefined.
+ * What the source drops for every watch (`excluded`): my own messages,
+ * tapbacks, and group events (`item_type` other than 0: a rename, someone added
+ * or leaving), which are rows from a handle that nobody typed. Messages has no
+ * per-watch scope, so `scope` stays undefined.
  */
 
 /** No `text`: a message's text is its body, and watch reads carry metadata only. */
@@ -44,9 +46,10 @@ export class MessagesArrivalSource implements ArrivalSource<MessageArrival> {
   since(after: number, limit: number): MessageArrival[] {
     return this.#store.arrivalsAfter(after, limit).map((r) => {
       // The store projects NULL for a column this schema lacks, and `#toRow` turns
-      // a missing or zero reaction type into null, so both checks degrade to
+      // a missing or zero reaction type into null, so these checks degrade to
       // "not excluded" the way `range()` does.
-      const excluded = r.isFromMe || r.reactionType !== null;
+      const excluded =
+        r.isFromMe || r.reactionType !== null || (r.itemType !== null && r.itemType !== 0);
       return {
         cursor: r.rowid,
         key: r.guid,
