@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
@@ -16,7 +16,7 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         "across a six-figure archive. Returns a `ref` per message for the read and action tools. " +
         "Requires Full Disk Access; without it this returns degraded:true and you should fall back " +
         "to apple_mail_list_messages on a specific mailbox.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z
           .string()
           .optional()
@@ -43,7 +43,7 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         dateTo: z.string().optional().describe("ISO date/time upper bound."),
         limit: limitArg,
         offset: z.number().int().min(0).optional().describe("Skip this many results, for paging."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -105,10 +105,10 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         "Get every message in the conversation containing a given message, oldest first, across " +
         "mailboxes and accounts. Metadata only — use apple_mail_get_message for bodies. Requires " +
         "Full Disk Access.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref, limit }) =>
@@ -138,11 +138,11 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         "and is capped (default 50) because each additional message costs about 40ms per field — " +
         "ask for 20 unless you have a reason not to. For anything involving a filter, use " +
         "apple_mail_search_messages.",
-      inputSchema: {
+      inputSchema: z.object({
         account: accountArg,
         mailbox: mailboxArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ account, mailbox, limit }) =>
@@ -185,10 +185,10 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         "The `unread` figure is reported per source: Mail's own cached count is fast but can be " +
         "flatly wrong (observed reporting 0 for a mailbox holding 1618 unread messages), so treat " +
         "the index figure as authoritative when it is present.",
-      inputSchema: {
+      inputSchema: z.object({
         account: accountArg,
         mailbox: mailboxArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ account, mailbox }) =>

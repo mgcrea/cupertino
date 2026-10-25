@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { GROUP_FIELDS } from "../client/envelope.js";
@@ -49,7 +49,7 @@ export const registerQueryTools = (server: McpServer, client: AppleMailClient): 
         "Body search is not offered here (it is a linear file scan, which does not belong " +
         "behind an aggregate) — use apple_mail_search_messages for that. " +
         "Requires Full Disk Access; without it this returns degraded:true.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().optional().describe("Free text matched against subject and sender."),
         sender: z.string().optional().describe("Match the sender address or display name."),
         recipient: z.string().optional().describe("Match any recipient address."),
@@ -70,7 +70,7 @@ export const registerQueryTools = (server: McpServer, client: AppleMailClient): 
           .min(0)
           .optional()
           .describe("Skip this many rows, for paging. Ignored when grouping."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ groupBy, select, limit, offset, ...filters }) =>

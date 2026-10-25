@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
@@ -22,7 +22,7 @@ export const registerAccountTools = (server: McpServer, client: AppleMailClient)
         "List the mail accounts configured in Apple Mail: display name, UUID, type, addresses and " +
         "mailbox names. Start here — the account name or UUID is what every other tool takes, and " +
         "the mailbox names come back exactly as Mail spells them.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -47,7 +47,7 @@ export const registerAccountTools = (server: McpServer, client: AppleMailClient)
         "(~0.3s each), so `withCounts` is off by default — turn it on for one account, not for all " +
         "of them. Note that `unread` here is Mail's cached badge value and can be wrong; " +
         "apple_mail_count_messages reports both sources.",
-      inputSchema: {
+      inputSchema: z.object({
         account: accountArg,
         withCounts: z
           .boolean()
@@ -55,7 +55,7 @@ export const registerAccountTools = (server: McpServer, client: AppleMailClient)
           .describe(
             "Include total and unread per mailbox. Costs ~0.3s per mailbox. Default false.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ account, withCounts }) =>
