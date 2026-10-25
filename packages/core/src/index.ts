@@ -118,13 +118,16 @@ export {
 } from "./tools.js";
 export { createWatches, type WatchesOptions } from "./watch-resources.js";
 export {
+  fileIdentity,
   fileTrigger,
   matchesSender,
   normalizeFilter,
+  sameFile,
   watchUri,
   WatchRegistry,
   type ArrivalRow,
   type ArrivalSource,
+  type FileIdentity,
   type TriggerOptions,
   type Watch,
   type WatchFilter,

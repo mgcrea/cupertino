@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { watch as fsWatch, type FSWatcher } from "node:fs";
+import { watch as fsWatch, statSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 
 import { PreconditionError } from "./errors.js";
@@ -103,6 +103,26 @@ export const matchesSender = (filter: WatchFilter, sender: string | null): boole
   const domain = who.slice(at + 1);
   return filter.domains.some((d) => domain === d || domain.endsWith(`.${d}`));
 };
+
+/**
+ * What tells a file replaced by rename from the same file written to: a store
+ * rebuilt as a new file and renamed over the old name has a new inode, while
+ * SQLite appending to it, or to its `-wal`, keeps the one it had.
+ */
+export type FileIdentity = { dev: number; ino: number };
+
+/** `path`'s identity now, or null when it cannot be read (missing mid-replace, EACCES). */
+export const fileIdentity = (path: string): FileIdentity | null => {
+  try {
+    const { dev, ino } = statSync(path);
+    return { dev, ino };
+  } catch {
+    return null;
+  }
+};
+
+export const sameFile = (a: FileIdentity, b: FileIdentity): boolean =>
+  a.dev === b.dev && a.ino === b.ino;
 
 /** `cupertino://mail/watch/w_1a2b3c4d`. */
 export const watchUri = (surface: string, id: string): string => surfaceUri(surface, `watch/${id}`);

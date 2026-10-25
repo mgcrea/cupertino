@@ -1,9 +1,12 @@
 import { dirname } from "node:path";
 
 import {
+  fileIdentity,
   fileTrigger,
   normalizeFilter,
+  sameFile,
   type ArrivalSource,
+  type FileIdentity,
   type Logger,
   type Watch,
   type WatchRegistry,
@@ -13,7 +16,7 @@ import { z } from "zod";
 
 import { PreconditionError } from "../client/errors.js";
 import type { AppleMessagesClient } from "../client/messages.js";
-import type { MessagesStore } from "../client/store.js";
+import { openStore, type MessagesStore } from "../client/store.js";
 import { MessagesArrivalSource, type MessageArrival } from "../client/watch.js";
 import { wrap } from "./util.js";
 
@@ -33,6 +36,20 @@ import { wrap } from "./util.js";
  *
  * `imagent` writes chat.db, not Messages.app, so there is no running check and no
  * lookup to refresh: the trigger just ticks the registry.
+ *
+ * ## The watch keeps its own handle, and reopens it when the file is replaced
+ *
+ * A connection opened on chat.db reads that inode for as long as it lives. A
+ * store rebuilt as a new file and renamed over the old name leaves it reading
+ * the deleted one: nothing new ever arrives there, and nothing errors. So the
+ * service records the file's inode when it opens, compares on every trigger, and
+ * reopens before the tick when it changed. The registry then sees the renumbered
+ * head below its mark and resets without notifying, which is what a rebuild is.
+ *
+ * The handle is the service's own rather than the client's: the client closes
+ * its store to reopen it after a send (`#reconcile`), which would close a shared
+ * handle under a running watch, and reopening the client's would change what
+ * every other tool reads in the middle of its call.
  *
  * ## Handles
  *
@@ -64,7 +81,11 @@ export class MessagesWatchService {
   #registry: WatchRegistry<MessageArrival> | undefined;
   #inner: MessagesArrivalSource | undefined;
   #dir: string | undefined;
+  /** The service's own handle on chat.db, never the client's. */
   #store: MessagesStore | undefined;
+  #path: string | undefined;
+  #identity: FileIdentity | null = null;
+  #reopenFailing = false;
   #init: Promise<void> | undefined;
 
   /** What `createWatches` is given. Delegates to the source `ensure()` builds. */
@@ -113,9 +134,43 @@ export class MessagesWatchService {
     const { store, path } = this.#client.watchStore();
     // `immutable` is WAL-blind, and the WAL is where the newest message is.
     if (store.mode !== "ro") throw new PreconditionError(WAL_REASON);
-    this.#store = store;
-    this.#inner = new MessagesArrivalSource({ store });
+    this.#open(path);
     this.#dir = dirname(path);
+  }
+
+  /** Open (or reopen) the service's own handle, and only then let go of the old one. */
+  #open(path: string): void {
+    // Read before the open: a replacement between the two is then seen as one
+    // on the next trigger, rather than missed for good.
+    const identity = fileIdentity(path);
+    const store = openStore(path, "ro", this.#logger);
+    if (!store) throw new PreconditionError("The Messages store was not located.");
+    const old = this.#store;
+    this.#store = store;
+    this.#path = path;
+    this.#identity = identity;
+    this.#inner = new MessagesArrivalSource({ store });
+    old?.close();
+  }
+
+  /**
+   * Reopen when chat.db is now a different file. A path that cannot be read is
+   * a replacement in progress, so it is left for the next trigger. A reopen that
+   * fails keeps the old handle and is logged once until one succeeds.
+   */
+  #reopenIfReplaced(): void {
+    if (!this.#path) return;
+    const now = fileIdentity(this.#path);
+    if (now === null || (this.#identity !== null && sameFile(now, this.#identity))) return;
+    try {
+      this.#open(this.#path);
+      this.#reopenFailing = false;
+    } catch (err) {
+      if (!this.#reopenFailing) {
+        this.#logger?.warn?.("watch: chat.db was replaced and could not be reopened", err);
+      }
+      this.#reopenFailing = true;
+    }
   }
 
   /** What `createWatches` is given as `startTrigger`. Reads the directory now, not at construction. */
@@ -125,8 +180,23 @@ export class MessagesWatchService {
       dir: this.#dir,
       names: ["chat.db", "chat.db-wal"],
       ...(this.#logger ? { logger: this.#logger } : {}),
-    })(onChange);
+    })(() => this.onTrigger(onChange));
   };
+
+  /** The trigger's callback: reopen a replaced store, then tick. */
+  onTrigger(tick: () => void): void {
+    this.#reopenIfReplaced();
+    tick();
+  }
+
+  /** Close the service's own handle. Called when the connection ends. */
+  close(): void {
+    this.#store?.close();
+    this.#store = undefined;
+    this.#inner = undefined;
+    this.#path = undefined;
+    this.#init = undefined;
+  }
 
   remove(id: string): boolean {
     return this.#registry?.remove(id) ?? false;

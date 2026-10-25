@@ -1,16 +1,19 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { WatchRegistry } from "@mgcrea/mcp-apple-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toAppleSeconds } from "../src/client/dates.js";
 import { AppleMessagesClient } from "../src/client/messages.js";
 import { encodeChatRef, encodeMessageRef } from "../src/client/ref.js";
+import { MessagesStore } from "../src/client/store.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { MessagesWatchService } from "../src/tools/watch.js";
 
 /**
  * The watch tools, over a real chat.db fixture.
@@ -37,9 +40,8 @@ afterEach(async () => {
 
 type Fixture = { path: string; db: DatabaseSync };
 
-const makeStore = (): Fixture => {
-  const dir = mkdtempSync(join(tmpdir(), "mcp-apple-messages-watch-tools-"));
-  const path = join(dir, "chat.db");
+/** A fresh chat.db at `path`, schema, handles and chats only. */
+const seedStore = (path: string): DatabaseSync => {
   const db = new DatabaseSync(path);
   db.exec(schema());
   db.exec(`
@@ -51,6 +53,13 @@ const makeStore = (): Fixture => {
       (1, 'iMessage;-;+33612345678', '+33612345678', NULL, 45, 'iMessage'),
       (2, 'iMessage;-;Friend@Example.com', 'Friend@Example.com', NULL, 45, 'iMessage');
   `);
+  return db;
+};
+
+const makeStore = (): Fixture => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-apple-messages-watch-tools-"));
+  const path = join(dir, "chat.db");
+  const db = seedStore(path);
   cleanups.push(() => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -195,9 +204,10 @@ describe("apple_messages_watch", () => {
   });
 
   it("reads the store's handles once per call, however many entries", async () => {
-    const { client, messages } = await connect(makeStore(), ON);
+    const { client } = await connect(makeStore(), ON);
     await watch(client, { domains: ["a.com"] });
-    const handles = vi.spyOn(messages.watchStore().store, "handles");
+    // The watch reads handles from its own store, so the spy is on every store.
+    const handles = vi.spyOn(MessagesStore.prototype, "handles");
     await watch(client, { from: ["+33 6 12 34 56 78", "friend@example.com", "x@y.z"] });
     expect(handles).toHaveBeenCalledTimes(1);
   });
@@ -332,6 +342,43 @@ describe("reading a watch", () => {
     await expect(client.readResource({ uri })).resolves.toBeDefined();
     await client.callTool({ name: "apple_messages_unwatch", arguments: { watch: id } });
     await expect(client.readResource({ uri })).rejects.toMatchObject({ code: -32602 });
+  });
+});
+
+describe("a store replaced underneath a watch", () => {
+  it("is reopened on the next trigger, resets without notifying, and later arrivals fire", async () => {
+    const fx = makeStore();
+    for (let rowid = 1; rowid <= 50; rowid++) addMessage(fx.db, { rowid, handle: 2 });
+    const config = loadConfig({ APPLE_MESSAGES_STORE: fx.path });
+    const client = new AppleMessagesClient({ config, home: "/nonexistent-home", contacts: null });
+    const service = new MessagesWatchService({ client });
+    const onUpdate = vi.fn();
+    const registry = new WatchRegistry({ surface: "messages", source: service.source, onUpdate });
+    service.bind(registry);
+    const { watch: made } = await service.add({ from: ["+33612345678"] });
+    expect(made.createdAt).toBe(50);
+
+    // Messages rebuilds chat.db: a new file, renumbered from 1, renamed over the old one.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = seedStore(next);
+    for (let rowid = 1; rowid <= 3; rowid++) addMessage(rebuilt, { rowid, handle: 1 });
+    rebuilt.close();
+    renameSync(next, fx.path);
+
+    service.onTrigger(() => registry.tick());
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(registry.read(made.id)?.cursor).toBe(3);
+
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    addMessage(live, { rowid: 4, handle: 1 });
+    service.onTrigger(() => registry.tick());
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(made.uri);
+    expect(registry.read(made.id)?.messages.map((m) => m.id)).toEqual([
+      encodeMessageRef("guid-4"),
+    ]);
+    registry.close();
+    service.close();
   });
 });
 
