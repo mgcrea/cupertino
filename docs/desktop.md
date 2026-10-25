@@ -1190,6 +1190,42 @@ every 20 ms: focus moved at 130 ms and the window at the point at 156 ms. `click
 the same race, hidden because every earlier test clicked an application that was already in front.
 The point check now re-reads the window list for up to half a second before refusing.
 
+## Selecting a row, 2026-10-25
+
+The report came from driving Xcode 27's Device Hub, which replaced Simulator.app, to unfold an
+iPhone Duo simulator for screenshots. The pose buttons (Closed, Partially Open, Open) are ordinary
+`AXButton`s and pressed fine. Getting to them meant choosing the simulator in the sidebar first,
+and that took a click. The sidebar is a SwiftUI `AXOutline`, and its rows:
+
+|                                          |                                                        |
+| ---------------------------------------- | ------------------------------------------------------ |
+| actions on an `AXRow`                    | `AXShowDefaultUI`, `AXShowAlternateUI`: no `AXPress`   |
+| the row's own name or identifier         | none; both sit on the `AXStaticText` children          |
+| `press` on that label                    | `.success`, and nothing selected                       |
+| in `ui_tree` with `interactive`          | absent, because the filter was "has `AXPress`"         |
+| `AXSelected` settable on the row         | yes                                                    |
+| `AXSelectedRows` settable on the outline | yes                                                    |
+| setting either                           | the window retitles to the device; three of three each |
+| `AXSelected` read straight back          | `true`, with no wait                                   |
+| frontmost application, before and after  | VS Code both times                                     |
+
+**`select` sets `AXSelected` on the row, falling back to the list's `AXSelectedRows`.** `AXSelected`
+names the row alone; `AXSelectedRows` replaces the whole selection, which a click does too. Either
+way nothing moves and nothing comes forward. It takes the row or anything up to four parents inside
+it, because the label is what `find_elements` finds by name, and answers with the row's own handle
+and whether it read back selected.
+
+**The press on the label was the trap.** It returned success and did nothing, so it looked like a
+press that worked. `press` cannot know that from the outside, but it can say what to try when an
+element has no `AXPress` at all and sits in a row, so it now points at `select` there instead of at
+`click`.
+
+**`interactive` widened to selectable rows, which `showsMenu` was refused.** A row is something to
+choose, unlike the Simulator's containers that all offer `AXShowMenu`. The question is asked of
+`AXRow`s only, one `AXUIElementIsAttributeSettable` each. Device Hub's default tree went from 31
+elements to 52, all 21 rows `selectable`. Five walks each on main and on the branch, twice: 1.19 s
+against 1.17 s on average, inside the run-to-run spread of 0.67 to 1.77 s.
+
 ## Still open
 
 - **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop
