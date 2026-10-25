@@ -85,6 +85,8 @@ nonisolated protocol Pasteboard {
   func restore(_ saved: Any)
   /// Throws when the pasteboard did not take it, so nothing else on it is pasted.
   func write(_ content: PasteContent) throws
+  /// `NSPasteboard.changeCount`: moves on every write, ours or anyone's.
+  var changeCount: Int { get }
 }
 
 /// Which application has the front, and handing it back.
@@ -275,17 +277,25 @@ nonisolated enum MailComposer {
   ///  3. `expectHead` matches the own text (whitespace-folded);
   ///  4. a `body` over own text holding files is refused, naming them, and so
   ///     is an attachment that is not there;
-  ///  5. the new text is computed, or each edit placed exactly once;
-  ///  6. the own marker range reads as the own text;
+  ///  5. the new text is computed, or each edit placed exactly once. A change
+  ///     the read-back could not see, because it only moves whitespace, is
+  ///     refused: its "match" could be read before the paste is handled;
+  ///  6. the own marker range reads as the own text, and a `body` is refused
+  ///     over an inline image too, named or not;
   ///  7. every selection the pastes need is set and read back, BEFORE anything
   ///     is pasted (each one again right before its own paste);
-  ///  8. the pasteboard is snapshotted and the front noted;
+  ///  8. the front is noted, and the pasteboard snapshotted just before the
+  ///     first write;
   ///  9. Mail is activated, once;
   /// 10. each paste is polled until the own text reads as expected and the
   ///     quote is still there, unchanged;
   /// 11. files are pasted at the end of the own text and their names polled for;
   /// 12. command-S;
-  /// 13. the pasteboard is restored and the front given back.
+  /// 13. the pasteboard is restored, unless someone copied over it meanwhile,
+  ///     and the front given back. When the last command-V went unanswered,
+  ///     the restore waits up to `grace` for Mail to answer a read: a hung Mail
+  ///     handles the keystroke when it wakes, and with the person's clipboard
+  ///     back on the board it would paste THAT into a window Mail autosaves.
   ///
   /// `edits` are pasted one at a time, highest offset first, so an edit never
   /// shifts one still to come. Sub-range selection was measured only for an
@@ -294,7 +304,7 @@ nonisolated enum MailComposer {
   /// the whole own text.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
-    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12
+    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12, grace: TimeInterval = 2
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -372,6 +382,18 @@ nonisolated enum MailComposer {
           "Merge them into one edit, or make them touch separate text.")
       }
     } else if let body = request.body {
+      // Equal to the letter, there is nothing to paste. Equal only once
+      // whitespace is folded, the read-back reads "done" before the paste and
+      // after it alike, so it could not tell a paste that never landed.
+      if same(body, before.text) && !(request.html == nil && body == before.text) {
+        return refusal(
+          "confirmation",
+          "The new body differs from the draft's own text only in whitespace (line breaks or "
+            + "spaces)\(request.html == nil ? "" : " or formatting"), which reading the window "
+            + "back cannot tell apart, so there would be no way to know the paste landed. "
+            + untouched,
+          "Change the words, or adjust the spacing in Mail directly.")
+      }
       result = body
     }
 
@@ -391,6 +413,20 @@ nonisolated enum MailComposer {
         "composer", "The composer's text could not be read (\(describe(error))). \(untouched)",
         "Try again, or edit the draft in Mail directly.")
     }
+    // A file reads as U+FFFC in the marker range whether it has a name or not,
+    // and `squash` drops the character, so an image the blocks could not name
+    // would vanish under a body with a read-back that still passes.
+    let marks = range.unicodeScalars.filter { $0 == "\u{FFFC}" }.count
+    if request.body != nil, marks > before.files.count {
+      let unnamed = marks - before.files.count
+      let named = Array(repeating: "an inline image", count: unnamed)
+      return refusal(
+        "files",
+        "The draft's own text holds \(unnamed == 1 ? "an inline image" : "\(unnamed) inline images") "
+          + "with no name, which a new body would remove. \(untouched)",
+        "Use edits, which change only the text they find and leave images where they are.",
+        ["files": named])
+    }
     var steps: [Step] = []
     if let edits = request.edits {
       guard let placed = place(edits, in: range) else {
@@ -399,6 +435,20 @@ nonisolated enum MailComposer {
           "The edits matched the draft's blocks but not the composer's text range, so they "
             + "cannot be selected there. \(untouched)",
           "Edit the draft in Mail directly.")
+      }
+      // Each paste must leave a text the one before it could not be mistaken
+      // for, or its read-back can pass before Mail has handled the command-V.
+      var previous = range
+      for step in placed {
+        if same(step.expected, previous) {
+          return refusal(
+            "edits",
+            "This edit changes only whitespace (line breaks or spaces), which reading the window "
+              + "back cannot tell apart, so there would be no way to know it landed. \(untouched)",
+            "Change the words around it as well, or adjust the spacing in Mail directly.",
+            ["find": step.find])
+        }
+        previous = step.expected
       }
       steps = placed
     }
@@ -427,29 +477,57 @@ nonisolated enum MailComposer {
     }
 
     // 8. And 13, on every way out from here.
-    let borrowed = board.snapshot()
     let previous = front.current()
-    defer {
-      board.restore(borrowed)
-      front.give(to: previous)
-    }
-    return paste(
-      w, request, before: before, range: range, steps: steps, result: result, board: board,
+    let borrow = Borrow(board)
+    let answer = paste(
+      w, request, before: before, range: range, steps: steps, result: result, board: borrow,
       readbackTimeout: readbackTimeout, filesTimeout: filesTimeout)
+    if borrow.unanswered {
+      let deadline = Date().addingTimeInterval(grace)
+      while Date() < deadline, (try? w.blocks()) == nil, w.isAlive { usleep(50_000) }
+    }
+    borrow.giveBack()
+    front.give(to: previous)
+    return answer
+  }
+
+  /// The pasteboard, borrowed lazily: snapshotted just before the first write,
+  /// and given back only if nobody has written over it since the last one of
+  /// ours. A person who copied something during the edit keeps their copy.
+  private final class Borrow {
+    let board: Pasteboard
+    private var saved: Any?
+    private var ours: Int?
+    /// The last command-V got no answer from Mail at all, so Mail may still
+    /// handle it: see `edit`'s step 13.
+    var unanswered = false
+
+    init(_ board: Pasteboard) { self.board = board }
+
+    func write(_ content: PasteContent) throws {
+      if saved == nil { saved = board.snapshot() }
+      try board.write(content)
+      ours = board.changeCount
+    }
+
+    func giveBack() {
+      guard let saved, let ours, board.changeCount == ours else { return }
+      board.restore(saved)
+    }
   }
 
   /// Steps 9 to 12. Borrowing and handing back are the caller's.
   private static func paste(
     _ w: ComposerWindow, _ request: EditRequest, before: Read, range: String, steps: [Step],
-    result: String?, board: Pasteboard, readbackTimeout: TimeInterval,
+    result: String?, board: Borrow, readbackTimeout: TimeInterval,
     filesTimeout: TimeInterval
   ) -> [String: Any] {
     // Whether the window may now hold something the saved draft does not.
     var changed = false
     func state() -> String {
       changed
-        ? "IT WAS NOT SAVED: the draft on disk is as it was, and the window holds changes this "
-          + "could not verify."
+        ? "This did not save it: the draft keeps whatever Mail last saved, and the window holds "
+          + "changes this could not verify."
         : "Nothing was pasted and the draft is unchanged."
     }
     let look = "Look at the composer in Mail: fix it there, or close it without saving."
@@ -475,10 +553,11 @@ nonisolated enum MailComposer {
           try board.write(content)
           guard try w.paste(content) else { return unfocused(state()) }
           changed = true
-          guard
-            let read = awaitRead(
-              w, timeout: readbackTimeout, until: { same($0.text, step.expected) })
-          else { return unconfirmed(readbackTimeout, state(), look) }
+          let awaited = awaitRead(
+            w, timeout: readbackTimeout, until: { same($0.text, step.expected) })
+          guard case .read(let read) = awaited else {
+            return unconfirmed(awaited, board, readbackTimeout, state(), look)
+          }
           guard quoteIntact(before, read) else { return quoteLost() }
           shown = read
         }
@@ -486,8 +565,8 @@ nonisolated enum MailComposer {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
           return misselected(nil, changed: changed)
         }
-        // An empty body over an empty reply has nothing to paste or delete.
-        if !(body.isEmpty && back.isEmpty) {
+        // A body equal to the own text to the letter has nothing to paste.
+        if !(request.html == nil && body == before.text) {
           let content = request.html.map { PasteContent.html($0, fallback: body) } ?? .text(body)
           try board.write(content)
           guard try w.paste(content) else { return unfocused(state()) }
@@ -495,8 +574,10 @@ nonisolated enum MailComposer {
         }
       }
       if let result {
-        guard let read = awaitRead(w, timeout: readbackTimeout, until: { same($0.text, result) })
-        else { return unconfirmed(readbackTimeout, state(), look) }
+        let awaited = awaitRead(w, timeout: readbackTimeout, until: { same($0.text, result) })
+        guard case .read(let read) = awaited else {
+          return unconfirmed(awaited, board, readbackTimeout, state(), look)
+        }
         guard quoteIntact(before, read) else { return quoteLost() }
         shown = read
       }
@@ -514,18 +595,21 @@ nonisolated enum MailComposer {
         let names = request.files.map(\.lastPathComponent)
         let text = shown.text
         let held = shown.files
-        guard
-          let read = awaitRead(
-            w, timeout: filesTimeout,
-            until: {
-              same($0.text, text) && arrived(names, before: held, now: $0.files)
-                && quoteIntact(before, $0)
-            })
-        else {
+        let awaited = awaitRead(
+          w, timeout: filesTimeout,
+          until: {
+            same($0.text, text) && arrived(names, before: held, now: $0.files)
+              && quoteIntact(before, $0)
+          })
+        guard case .read(let read) = awaited else {
+          if case .timedOut(answered: false) = awaited { board.unanswered = true }
+          let why =
+            awaited == .gone
+            ? "the composer window closed before they read back"
+            : "they did not read back in the draft's own text within \(seconds(filesTimeout)), "
+              + "with that text and the quote unchanged"
           return refusal(
-            "confirmation",
-            "\(names.joined(separator: ", ")) did not read back in the draft's own text within "
-              + "\(seconds(filesTimeout)), with that text and the quote unchanged. \(state())",
+            "confirmation", "\(names.joined(separator: ", ")) were pasted, but \(why). \(state())",
             look)
         }
         shown = read
@@ -551,7 +635,7 @@ nonisolated enum MailComposer {
         case .refused:
           note =
             "The change was read back from the composer, but Mail would not take command-S, so "
-            + "the draft on disk does NOT have it yet. The window is open with the change in it."
+            + "this did not save it. The window is open with the change in it."
         }
       } else {
         note = "The change was read back from the composer and, as asked, not saved."
@@ -589,6 +673,7 @@ nonisolated enum MailComposer {
   /// One edit's paste. `range` indexes the own range's text; `expected` is the
   /// own text once this edit and every one pasted before it have landed.
   private struct Step {
+    let find: String
     let range: Range<String.Index>
     let original: String
     let replace: String
@@ -607,19 +692,41 @@ nonisolated enum MailComposer {
       else { return nil }
       steps.append(
         Step(
-          range: matches[index], original: String(text[matches[index]]),
+          find: edits[index].find, range: matches[index], original: String(text[matches[index]]),
           replace: edits[index].replace, expected: expected))
     }
     return steps
   }
 
+  /// How a poll after a paste ended. `answered` is whether Mail answered any
+  /// read at all: a Mail that answered while the text never moved dropped the
+  /// keystroke, a Mail that answered nothing may still handle it.
+  private enum Awaited: Equatable {
+    case read(Read)
+    case timedOut(answered: Bool)
+    case gone
+
+    static func == (a: Awaited, b: Awaited) -> Bool {
+      switch (a, b) {
+      case (.gone, .gone): return true
+      case (.timedOut(let x), .timedOut(let y)): return x == y
+      default: return false
+      }
+    }
+  }
+
   private static func awaitRead(
     _ w: ComposerWindow, timeout: TimeInterval, until done: (Read) -> Bool
-  ) -> Read? {
+  ) -> Awaited {
     let deadline = Date().addingTimeInterval(timeout)
+    var answered = false
     while true {
-      if let blocks = try? w.blocks(), let read = Read(blocks), done(read) { return read }
-      if Date() >= deadline || !w.isAlive { return nil }
+      if let blocks = try? w.blocks() {
+        answered = true
+        if let read = Read(blocks), done(read) { return .read(read) }
+      }
+      if !w.isAlive { return .gone }
+      if Date() >= deadline { return .timedOut(answered: answered) }
       usleep(50_000)
     }
   }
@@ -685,8 +792,8 @@ nonisolated enum MailComposer {
     let what = text.map { "the text \"\($0)\"" } ?? "the draft's own text"
     let state =
       changed
-      ? "Earlier edits are in the window, verified, but IT WAS NOT SAVED: the draft on disk is "
-        + "as it was."
+      ? "Earlier edits are in the window, verified, but this did not save it: the draft keeps "
+        + "whatever Mail last saved."
       : "Nothing was pasted and the draft is unchanged."
     return refusal(
       "selection",
@@ -706,21 +813,31 @@ nonisolated enum MailComposer {
   }
 
   private static func unconfirmed(
-    _ timeout: TimeInterval, _ state: String, _ hint: String
+    _ awaited: Awaited, _ board: Borrow, _ timeout: TimeInterval, _ state: String, _ hint: String
   ) -> [String: Any] {
-    refusal(
-      "confirmation",
-      "The paste did not read back as the expected text within \(seconds(timeout)). Someone may "
-        + "have typed in the window. \(state)",
-      hint)
+    if awaited == .timedOut(answered: false) { board.unanswered = true }
+    let why: String
+    switch awaited {
+    case .gone:
+      why = "The composer window closed before the paste read back."
+    case .timedOut(answered: false):
+      why =
+        "Mail did not answer a single read within \(seconds(timeout)) of the paste, so it may "
+        + "still be handling it."
+    default:
+      why =
+        "The paste did not read back as the expected text within \(seconds(timeout)). Someone "
+        + "may have typed in the window."
+    }
+    return refusal("confirmation", "\(why) \(state)", hint)
   }
 
   private static func quoteLost() -> [String: Any] {
     refusal(
       "confirmation",
       "The paste went in, but the quoted original below it is gone or changed, so it reached "
-        + "further than the draft's own text. IT WAS NOT SAVED: the draft on disk still has its "
-        + "quote.",
+        + "further than the draft's own text. This did not save it: the draft keeps whatever Mail "
+        + "last saved.",
       "Close the composer in Mail WITHOUT saving, or undo inside it with command-Z.")
   }
 
@@ -1095,6 +1212,8 @@ nonisolated struct LivePasteboard: Pasteboard {
   struct Refused: LocalizedError {
     var errorDescription: String? { "The pasteboard would not take what was to be pasted." }
   }
+
+  var changeCount: Int { NSPasteboard.general.changeCount }
 
   func snapshot() -> Any {
     (NSPasteboard.general.pasteboardItems ?? []).map { item -> Item in

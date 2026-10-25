@@ -44,7 +44,18 @@ final class EditFake: ComposerWindow {
   var pasteTakes = true
   var saveOutcome = SaveOutcome.pressed
   var ignoresFiles = false
+  /// Reads a paste takes to land: AX reads and HID events travel separately,
+  /// so a read can come before Mail has handled the command-V.
+  var lagReads = 0
+  /// After a paste, every read fails for this long: a hung Mail.
+  var hangsFor: TimeInterval = 0
+  /// The keystroke went nowhere: the paste is "posted" and never lands.
+  var pasteLost = false
+  /// The window closes as the paste is posted.
+  var diesOnPaste = false
   var onPaste: ((EditFake) -> Void)?
+  private var pending: (land: () -> Void, reads: Int)?
+  private var hungUntil = Date.distantPast
   private(set) var selection: Range<Int>?
   private(set) var log: [String] = []
   private(set) var pasted: [PasteContent] = []
@@ -56,7 +67,22 @@ final class EditFake: ComposerWindow {
     self.quote = quote
   }
 
+  struct Hung: Error {}
+
   func blocks() throws -> [ComposerBlock] {
+    if Date() < hungUntil {
+      log.append("read-hung")
+      throw Hung()
+    }
+    log.append("read")
+    if let waiting = pending {
+      if waiting.reads <= 1 {
+        pending = nil
+        waiting.land()
+      } else {
+        pending = (waiting.land, waiting.reads - 1)
+      }
+    }
     var out: [ComposerBlock] = []
     if !own.isEmpty || !ownFiles.isEmpty {
       let lines = own.components(separatedBy: "\n")
@@ -110,17 +136,28 @@ final class EditFake: ComposerWindow {
     log.append("paste")
     guard pasteTakes else { return false }
     pasted.append(content)
-    switch content {
-    case .text(let text), .html(_, let text):
-      var utf16 = Array(own.utf16)
-      let span = selection ?? 0..<0
-      utf16.replaceSubrange(span, with: Array(text.utf16))
-      own = String(decoding: utf16, as: UTF16.self)
-      selection = (span.lowerBound + text.utf16.count)..<(span.lowerBound + text.utf16.count)
-    case .files(let urls):
-      if !ignoresFiles { ownFiles += urls.map(\.lastPathComponent) }
+    if hangsFor > 0 { hungUntil = Date().addingTimeInterval(hangsFor) }
+    if diesOnPaste { isAlive = false }
+    guard !pasteLost else { return true }
+    let span = selection ?? 0..<0
+    let land = { [self] in
+      log.append("landed")
+      switch content {
+      case .text(let text), .html(_, let text):
+        var utf16 = Array(own.utf16)
+        utf16.replaceSubrange(span, with: Array(text.utf16))
+        own = String(decoding: utf16, as: UTF16.self)
+        selection = (span.lowerBound + text.utf16.count)..<(span.lowerBound + text.utf16.count)
+      case .files(let urls):
+        if !ignoresFiles { ownFiles += urls.map(\.lastPathComponent) }
+      }
+      onPaste?(self)
     }
-    onPaste?(self)
+    if lagReads > 0 {
+      pending = (land, lagReads)
+    } else {
+      land()
+    }
     return true
   }
 
@@ -134,20 +171,31 @@ final class EditFake: ComposerWindow {
 /// The person's clipboard, and every write over it.
 final class FakeBoard: Pasteboard {
   var contents: [String] = ["the person's clipboard"]
+  private(set) var changeCount = 0
   private(set) var snapshots = 0
   private(set) var restores = 0
   private(set) var writes: [PasteContent] = []
+  /// Called as a restore happens, to see what Mail had been through by then.
+  var onRestore: (() -> Void)?
   func snapshot() -> Any {
     snapshots += 1
     return contents
   }
   func restore(_ saved: Any) {
+    onRestore?()
     restores += 1
+    changeCount += 1
     contents = saved as? [String] ?? []
   }
   func write(_ content: PasteContent) throws {
     writes.append(content)
+    changeCount += 1
     contents = ["ours"]
+  }
+  /// The person copies something while the edit runs.
+  func personCopies(_ text: String) {
+    changeCount += 1
+    contents = [text]
   }
   /// Restored to what the person had, after being borrowed.
   var untouchedOrRestored: Bool { contents == ["the person's clipboard"] }
@@ -245,11 +293,11 @@ struct MailComposerCheck {
   /// does not hold the run for five seconds.
   static func run(
     _ fake: EditFake, _ request: Request, board: FakeBoard = FakeBoard(),
-    front: FakeFront = FakeFront()
+    front: FakeFront = FakeFront(), grace: TimeInterval = 0.3
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
       fake, request: request, board: board, front: front, readbackTimeout: 0.2,
-      filesTimeout: 0.2)
+      filesTimeout: 0.2, grace: grace)
     return (result, board, front)
   }
 
@@ -266,7 +314,8 @@ struct MailComposerCheck {
 
   /// Refused after step 8: the board and the front are handed back, nothing saved.
   static func handedBack(_ fake: EditFake, _ board: FakeBoard, _ front: FakeFront) -> Bool {
-    board.restores == 1 && board.untouchedOrRestored && front.given == [4242] && fake.saves == 0
+    board.restores == (board.writes.isEmpty ? 0 : 1) && board.untouchedOrRestored
+      && front.given == [4242] && fake.saves == 0
   }
 
   /// `a` happened, and before the first `b`.
@@ -318,7 +367,7 @@ struct MailComposerCheck {
       check("and save is never called", fake.saves == 0 && !fake.log.contains("save"))
       check(
         "the refusal says it was not saved",
-        (result["reason"] as? String ?? "").contains("NOT SAVED"))
+        (result["reason"] as? String ?? "").lowercased().contains("this did not save it"))
       check(
         "the board is restored after a step-10 refusal",
         board.restores == 1 && board.untouchedOrRestored)
@@ -554,7 +603,7 @@ struct MailComposerCheck {
       check("with no paste after it", board.writes == [.text("Tuesday")] && fake.pasted.count == 1)
       check(
         "saying an earlier edit is in the window unsaved",
-        (result["reason"] as? String ?? "").contains("NOT SAVED"))
+        (result["reason"] as? String ?? "").lowercased().contains("this did not save it"))
       check("board and front handed back, not saved", handedBack(fake, board, front))
     }
     do {
@@ -624,9 +673,177 @@ struct MailComposerCheck {
       check("the front is still handed back", front.given == [4242])
     }
 
+    fixRoundChecks()
+
     check("a busy AX read is not a dead window", AXComposerWindow.alive(after: .cannotComplete))
     check("an invalid element is", !AXComposerWindow.alive(after: .invalidUIElement))
     check("a successful read is alive", AXComposerWindow.alive(after: .success))
+  }
+
+  /// Review round 1: a read-back a paste could not have changed, an unnamed
+  /// inline image, and the pasteboard around a late or lost command-V.
+  static func fixRoundChecks() {
+    print("\nedit: read-backs the paste must be able to change")
+
+    // CRITICAL 1. A change only in whitespace folds equal to the text before
+    // the paste, so its read-back "matches" before command-V is handled.
+    do {
+      let fake = EditFake(own: "That is the end.\nNext time, then.")
+      fake.lagReads = 3
+      let (result, board, front) = run(
+        fake, Request(edits: [MailComposerText.Edit(find: "end.\nNext", replace: "end. Next")]))
+      check("a whitespace-only edit is refused as edits", capability(result) == "edits")
+      check("echoing its find", result["find"] as? String == "end.\nNext")
+      check("before anything is pasted", untouched(fake, board, front))
+    }
+    do {
+      let fake = EditFake(own: "Fix  the double space")
+      let (result, board, front) = run(
+        fake, Request(edits: [MailComposerText.Edit(find: "Fix  the", replace: "Fix the")]))
+      check("fixing a double space is refused as edits", capability(result) == "edits")
+      check("before anything is pasted", untouched(fake, board, front))
+    }
+    do {
+      let fake = EditFake(own: "One paragraph.\nAnother one.")
+      fake.lagReads = 3
+      let (result, board, front) = run(fake, Request(body: "One paragraph. Another one."))
+      check("a body that only reflows the text is refused", capability(result) == "confirmation")
+      check("saying why", (result["reason"] as? String ?? "").contains("whitespace"))
+      check("before anything is pasted", untouched(fake, board, front))
+    }
+    do {
+      let fake = EditFake(own: "Same words")
+      let (result, board, _) = run(fake, Request(body: "Same words", html: "<b>Same</b> words"))
+      check("an HTML body with the same text is refused too", capability(result) == "confirmation")
+      check("before anything is pasted", fake.pasted.isEmpty && board.writes.isEmpty)
+      let plain = EditFake(own: "Same words")
+      let (unchanged, plainBoard, _) = run(plain, Request(body: "Same words"))
+      check(
+        "a body equal to the text pastes nothing and says so",
+        unchanged["replaced"] as? Bool == true && plain.pasted.isEmpty && plainBoard.writes.isEmpty)
+    }
+    do {
+      // A paste that lands three reads late: nothing is saved before it does.
+      let fake = EditFake(own: "Old text")
+      fake.lagReads = 3
+      let (result, _, _) = run(fake, Request(body: "New text"))
+      check(
+        "a late paste is waited for", result["replaced"] as? Bool == true && fake.own == "New text")
+      check("and saved only once it landed", before("landed", "save", in: fake.log))
+      let edits = EditFake(own: "Hello Ann,\nsee you Monday.")
+      edits.lagReads = 2
+      let (both, _, _) = run(
+        edits,
+        Request(edits: [
+          MailComposerText.Edit(find: "Ann", replace: "Anne"),
+          MailComposerText.Edit(find: "Monday", replace: "Tuesday"),
+        ]))
+      let afterActivate = edits.log.drop { $0 != "activate" }.filter {
+        ["select", "paste", "landed", "save"].contains($0)
+      }
+      check("late edits land each before the next is selected", both["replaced"] as? Bool == true)
+      check(
+        "in order: select, paste, landed, twice, then save",
+        Array(afterActivate)
+          == ["select", "paste", "landed", "select", "paste", "landed", "save"])
+    }
+
+    // IMPORTANT 1. An inline image with no name is still a file.
+    do {
+      let fake = EditFake(own: "Look:  here")
+      fake.rangeText = "Look: \u{FFFC} here"
+      let (result, board, front) = run(fake, Request(body: "New"))
+      check(
+        "a body over an unnamed inline image is refused as files", capability(result) == "files")
+      check(
+        "naming it as an inline image",
+        (result["reason"] as? String ?? "").contains("an inline image"))
+      check("before anything is pasted", untouched(fake, board, front))
+    }
+
+    // IMPORTANT 2a. The person copies something during the edit.
+    do {
+      let board = FakeBoard()
+      let fake = EditFake(own: "Old")
+      fake.onPaste = { _ in board.personCopies("copied mid-edit") }
+      let (result, _, _) = run(fake, Request(body: "New"), board: board)
+      check("an edit the person copied during still succeeds", result["replaced"] as? Bool == true)
+      check(
+        "and their copy is not clobbered by the restore",
+        board.contents == ["copied mid-edit"] && board.restores == 0)
+      let refused = EditFake(own: "Old")
+      refused.activates = false
+      let (_, untouchedBoard, _) = run(refused, Request(body: "New"))
+      check(
+        "a board never written is never restored",
+        untouchedBoard.restores == 0 && untouchedBoard.snapshots == 0)
+    }
+
+    // IMPORTANT 2b. A command-V Mail may still handle after the timeout.
+    do {
+      // Mail answered nothing: the board holds our text through the grace.
+      let fake = EditFake(own: "Old")
+      fake.hangsFor = 60
+      fake.pasteLost = true
+      let started = Date()
+      let (result, board, front) = run(fake, Request(body: "New"), grace: 0.4)
+      let took = Date().timeIntervalSince(started)
+      check("a hung Mail is a confirmation refusal", capability(result) == "confirmation")
+      check("the board is held through the grace before it is restored", took >= 0.55)
+      check("and then restored, front handed back", handedBack(fake, board, front))
+    }
+    do {
+      // Mail comes back during the grace: restored once it answers.
+      let fake = EditFake(own: "Old")
+      fake.hangsFor = 0.35
+      fake.pasteLost = true
+      var readsAtRestore: [String] = []
+      let board = FakeBoard()
+      board.onRestore = { readsAtRestore = fake.log.filter { $0.hasPrefix("read") } }
+      let started = Date()
+      let (result, _, _) = run(fake, Request(body: "New"), board: board, grace: 3)
+      let took = Date().timeIntervalSince(started)
+      check("a Mail that hangs past the read-back is refused", capability(result) == "confirmation")
+      check(
+        "the board is restored only after Mail answered a read",
+        readsAtRestore.last == "read" && readsAtRestore.contains("read-hung"))
+      check("and without waiting out the whole grace", took < 2)
+    }
+    do {
+      // Mail answered and the text never moved: the keystroke went nowhere.
+      let fake = EditFake(own: "Old")
+      fake.pasteLost = true
+      let started = Date()
+      let (result, board, _) = run(fake, Request(body: "New"), grace: 3)
+      check("a lost paste is refused as confirmation", capability(result) == "confirmation")
+      check(
+        "and the board restored at once",
+        Date().timeIntervalSince(started) < 1.5 && board.untouchedOrRestored
+          && board.restores == 1)
+    }
+
+    // IMPORTANT 2c. Nothing read the draft on disk back.
+    do {
+      let fake = EditFake(own: "Old")
+      fake.onPaste = { $0.own += " typed" }
+      let (result, _, _) = run(fake, Request(body: "New"))
+      let reason = result["reason"] as? String ?? ""
+      check(
+        "a refusal says this did not save it, not what the disk holds",
+        reason.lowercased().contains("this did not save it") && !reason.contains("on disk"))
+    }
+
+    // A window that closes under the paste is named as closed.
+    do {
+      let fake = EditFake(own: "Old")
+      fake.pasteLost = true
+      fake.diesOnPaste = true
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "a window gone during the read-back is named as closed",
+        capability(result) == "confirmation"
+          && (result["reason"] as? String ?? "").contains("closed"))
+    }
   }
 
   static let surface = Surface.named("desktop")!
