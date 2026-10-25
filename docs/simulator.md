@@ -43,6 +43,39 @@ Settings.
 > `iOSContentGroup` and no iOS elements — it is a picture. The walk also meets elements whose frame
 > is NaN there, which a reader has to survive.
 
+> **Xcode 27.1: iPhone Duo, a foldable with two screens.** Measured 2026-10-25 on Xcode 27.1
+> (27A9275), iOS 27.1, an iPhone Duo beside an iPhone 18 Pro on iOS 27.0, in one DeviceHub window.
+>
+> - **Two panels, one main screen.** The device type's `capabilities.displays[]` lists `LCD`
+>   (screen 1, 1398x2034 at 3x, 466x678 points) and `LCD-1` (screen 3, 2007x2853, 669x951, native
+>   rotation 270) among a TV-out, a CarPlay screen and a "Resizable" scene; only the `integrated`
+>   ones are panels. `main-screen-*` is the outer one alone, so an unfolded Duo matched nothing:
+>   "groups 626x890; wanted 466x678". Every panel is matched now.
+> - **The pose is three buttons under the device**, Closed, Partially Open and Open, plain
+>   `AXButton`s pressable by name. No menu item, no `simctl` and no `devicectl` command sets it.
+>   Closed draws the outer screen; Partially Open and Open both draw the inner one, so the screen
+>   alone cannot tell those two apart. `set_pose` presses the button.
+> - **DeviceHub misplaces the Duo's screen.** Its `iOSContentGroup` sat at (-190, 907) at 466x678
+>   folded and (-190, 695) at 626x890 open, in a window at (246, 185) 1100x800, while the screen was
+>   drawn at about (716, 453) 185x265. Hit-testing where it is drawn found only the window's
+>   hosting view. The iPhone 18 Pro in the same window resolved to (657, 266) at 0.74, inside it,
+>   as before. `tap` mapped points through that frame and clicked: on a folded Duo, the middle of
+>   the screen was (43, 1246) on the Mac. Nothing was tapped to find out. `tap` and `swipe` now
+>   refuse a screen that is not on its window, and a Mac point that is not on the host's window.
+>   `press` on a handle opened Settings on the folded Duo, so the Duo is driven by handles. Its
+>   `rect`s come from the same frame and, open, overrun the 669-point width.
+> - **Once opened, DeviceHub keeps a group for each panel**, and the tree does not say which is
+>   drawn. With the Duo closed (devicectl: `LCD` active), six reads in a row held the inner group,
+>   some the outer too. `devicectl device info displays` answers it in about 80 ms, versioned
+>   JSON, so the panel devicectl calls `active` is the only one matched.
+> - **The search for the screen walked into the app.** The groups sit at depth 6 and 7 for the
+>   iPhone, 7 and 8 for the Duo; below them is the iOS app's tree. To depth 10 a walk took 2.4 s on
+>   the iPhone and 4.9 s on the Duo, past the 3 s budget, so the Duo's drawn group was sometimes
+>   never reached. To depth 8, 0.7 s and 0.9 s. It walks to 8 first now, and to 10 only when
+>   that finds nothing.
+> - **The iOS 27.1 runtime takes only the Duo**: `simctl create` refused an iPhone 18 Pro and an
+>   iPhone 17 Pro on it with "Incompatible device".
+
 **Verdict: a real capability, and NOT a replacement for WebDriverAgent.** It reaches a strict subset
 of what WDA reaches — but a subset that is 100% named, an order of magnitude smaller, and that
 contradicts WDA on the one thing WDA gets wrong. ~~The simulator is not in the brokered table, so all
