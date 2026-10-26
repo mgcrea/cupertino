@@ -66,6 +66,10 @@ final class EditFake: ComposerWindow {
   /// inside the quoted original (LIVE RUN 2's forward), nil one it would not
   /// resolve at all.
   var caretInQuote: Bool? = false
+  /// Answers for the guard one call at a time, before `caretInQuote` takes over.
+  var caretScript: [Bool?] = []
+  /// Pastes after this many are refused as the window not taking the keyboard.
+  var refusesPasteAfter: Int?
   /// A text paste lands at the start of the first quoted block instead of over
   /// the selection: what LIVE RUN 2's forward did, guard or no guard.
   var landsInQuote = false
@@ -146,7 +150,7 @@ final class EditFake: ComposerWindow {
 
   func selectionReachesQuote() throws -> Bool? {
     quoteChecks += 1
-    return caretInQuote
+    return caretScript.isEmpty ? caretInQuote : caretScript.removeFirst()
   }
 
   func activate() throws -> Bool {
@@ -157,6 +161,7 @@ final class EditFake: ComposerWindow {
   func paste(_ content: PasteContent) throws -> Bool {
     log.append("paste")
     guard pasteTakes else { return false }
+    if let limit = refusesPasteAfter, pasted.count >= limit { return false }
     pasted.append(content)
     if hangsFor > 0 { hungUntil = Date().addingTimeInterval(hangsFor) }
     if diesOnPaste { isAlive = false }
@@ -1307,6 +1312,94 @@ struct MailComposerCheck {
       check(
         "a reply's quote gaining the text is refused too",
         capability(result) == "confirmation" && fake.saves == 0)
+    }
+
+    // Fix round 3: a refusal between pastes says what was verified, and to
+    // discard rather than retry.
+    func reason(_ r: [String: Any]) -> String { r["reason"] as? String ?? "" }
+    func hint(_ r: [String: Any]) -> String { r["hint"] as? String ?? "" }
+    func discards(_ r: [String: Any]) -> Bool {
+      hint(r).contains("WITHOUT saving") && hint(r).contains("Drafts")
+        && !hint(r).contains("Try again")
+    }
+    do {
+      let fake = EditFake(own: "Meet Ann on Monday.")
+      fake.refusesPasteAfter = 1
+      let (result, board, front) = run(
+        fake,
+        Request(edits: [
+          MailComposerText.Edit(find: "Ann", replace: "Anne"),
+          MailComposerText.Edit(find: "Monday", replace: "Tuesday"),
+        ]))
+      check(
+        "the window refusing the keyboard at a second edit is a composer refusal",
+        capability(result) == "composer" && fake.pasted.count == 1 && fake.saves == 0)
+      check(
+        "saying the first edit was pasted and read back, and nothing after it",
+        reason(result).contains("The edit of \"Monday\" was pasted and read back")
+          && reason(result).contains("Nothing after that was pasted")
+          && reason(result).lowercased().contains("this did not save it"))
+      check("telling the person to discard and check Drafts, not to retry", discards(result))
+      check("board and front handed back", handedBack(fake, board, front))
+    }
+    do {
+      let fake = EditFake(own: "Old")
+      fake.refusesPasteAfter = 1
+      let (result, _, _) = run(fake, Request(body: "New", files: [tempFile("late.pdf")]))
+      check(
+        "the window refusing the keyboard at the files, after the body, is refused",
+        capability(result) == "composer" && fake.saves == 0)
+      check(
+        "saying the new body was pasted and read back",
+        reason(result).contains("The new body was pasted and read back"))
+      check("and to discard and check Drafts", discards(result))
+    }
+    do {
+      let fake = EditFake(own: "Old")
+      fake.pasteTakes = false
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "a window refusing the very first paste still says to try again",
+        hint(result).contains("Try again") && !reason(result).contains("autosave"))
+    }
+    do {
+      // The guard passes for the body, before and at its paste, then trips at
+      // the caret the files go to.
+      let fake = EditFake(own: "Old")
+      fake.caretScript = [false, false, true]
+      let (result, board, front) = run(fake, Request(body: "New", files: [tempFile("q2.pdf")]))
+      check(
+        "the quote guard tripping only at the files, after the body, refuses as selection",
+        capability(result) == "selection" && fake.quoteChecks == 3 && fake.saves == 0)
+      check(
+        "saying the body was verified and the files were not pasted",
+        reason(result).contains("inside the quoted original")
+          && reason(result).contains("The new body was pasted and read back")
+          && reason(result).contains("Nothing after that was pasted"))
+      check("and to discard and check Drafts", discards(result))
+      check(
+        "with only the body pasted, board and front handed back",
+        fake.pasted == [.text("New")] && handedBack(fake, board, front))
+    }
+
+    // The walk the live guard takes from a caret's element up to the body.
+    do {
+      // 0 body; 1 own block (level 0) > 2 inline run (no level);
+      // 3 a block that will not say > 4 inline; 5 quote block (1) > 6 inline;
+      // 7 an element with no parent.
+      let parents: [Int: Int] = [1: 0, 2: 1, 3: 0, 4: 3, 5: 0, 6: 5]
+      let levels: [Int: Int] = [1: 0, 5: 1]
+      func walk(_ from: Int) -> Bool? {
+        AXComposerWindow.walkReachesQuote(
+          from: from, isBody: { $0 == 0 }, level: { levels[$0] }, parent: { parents[$0] })
+      }
+      check("a caret in an own block's inline run is outside the quote", walk(2) == false)
+      check("a caret on the body itself is outside the quote", walk(0) == false)
+      check("a caret in a quoted block's inline run is inside it", walk(6) == true)
+      check(
+        "a block of the body that will not say its level is refused, not taken as level 0",
+        walk(3) == nil && walk(4) == nil)
+      check("a walk that never reaches the body is refused", walk(7) == nil)
     }
 
     // Every refusal once a paste reached Mail says Mail may have autosaved.

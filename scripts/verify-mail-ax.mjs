@@ -444,9 +444,10 @@ async function composeCheck() {
       );
     }
 
-    // What is actually on screen differs by outcome, and saying "a draft" after
-    // a failure would send someone looking for one that was never saved: the
-    // compose path returns BEFORE the save when the body cannot be verified.
+    // What is actually on screen differs by outcome. After a failure the compose
+    // path never pressed command-S, but Mail autosaves an open composer on its
+    // own (live run 2 found one in Drafts), so the window may hold unverified
+    // text and Drafts a copy of it.
     console.log(
       result?.ok === true
         ? `\n  Left in Mail, on purpose, as the evidence:\n` +
@@ -458,7 +459,8 @@ async function composeCheck() {
             `    message below should be untouched — that is what the in-place\n` +
             `    rewrite and attach are claiming.\n` +
             `  Open it, read it, then delete both. Nothing here will.\n`
-        : `\n  Left in Mail: an EMPTY composer window "${result?.subject ?? "Fwd: …"}".\n` +
+        : `\n  Left in Mail: the composer window "${result?.subject ?? "Fwd: …"}", empty or\n` +
+            `  holding text this could not verify.\n` +
             `  The compose path stops before command-S when it cannot verify the\n` +
             `  body, but Mail autosaves an open composer on its own (run 2 found\n` +
             `  one in Drafts with X-Apple-Auto-Saved: 1). Close the window in Mail\n` +

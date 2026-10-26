@@ -40,7 +40,8 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// for a reply with nothing written; nil when the range could not be built.
   func ownRangeText() throws -> String?
   /// Select the own blocks. Empty own text selects a collapsed range at the
-  /// start of the body's first block, so a paste lands above the quote.
+  /// start of the document (not of the first block, which in a forward is the
+  /// quote), and `selectionReachesQuote` proves it lands outside the quote.
   func selectOwn() throws -> String?
   /// Select `range` of `own`, the string `ownRangeText` answered.
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String?
@@ -491,19 +492,19 @@ nonisolated enum MailComposer {
         for step in steps {
           guard let back = try w.selectSubrange(step.range, in: range),
             sameSpan(back, step.original)
-          else { return misselected(step.original, changed: false) }
-          if let refused = try outsideQuote(w, changed: false) { return refused }
+          else { return misselected(step.original, state: untouched) }
+          if let refused = try outsideQuote(w, state: untouched) { return refused }
         }
       } else if request.body != nil {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
-          return misselected(nil, changed: false)
+          return misselected(nil, state: untouched)
         }
-        if let refused = try outsideQuote(w, changed: false) { return refused }
+        if let refused = try outsideQuote(w, state: untouched) { return refused }
       } else {
         guard let back = try w.selectOwnEnd(), back.isEmpty else {
-          return misselected(nil, changed: false)
+          return misselected(nil, state: untouched)
         }
-        if let refused = try outsideQuote(w, changed: false) { return refused }
+        if let refused = try outsideQuote(w, state: untouched) { return refused }
       }
     } catch {
       return refusal(
@@ -562,14 +563,24 @@ nonisolated enum MailComposer {
   ) -> [String: Any] {
     // Whether the window may now hold something the saved draft does not.
     var changed = false
+    // The pastes that read back as meant, and whether the last one posted has not.
+    var verified: [String] = []
+    var unverified = false
     func state() -> String {
-      changed
-        ? "The window holds changes this could not verify. \(autosaved)"
-        : "Nothing was pasted and the draft is unchanged."
+      guard changed else { return "Nothing was pasted and the draft is unchanged." }
+      let done =
+        verified.isEmpty
+        ? ""
+        : "\(sentence(verified)) \(verified.count == 1 ? "was" : "were") pasted and read back. "
+      return unverified
+        ? done + "The last paste could not be verified. \(autosaved)"
+        : done + "Nothing after that was pasted. \(autosavedPart)"
     }
     func look() -> String {
       changed ? afterPaste : "Look at the composer in Mail: fix it there, or close it."
     }
+    // For a refusal whose own hint fits only while nothing is pasted.
+    func hint() -> String? { changed ? afterPaste : nil }
 
     do {
       // 9.
@@ -587,12 +598,13 @@ nonisolated enum MailComposer {
         for step in steps {
           guard let back = try w.selectSubrange(step.range, in: range),
             sameSpan(back, step.original)
-          else { return misselected(step.original, changed: changed) }
-          if let refused = try outsideQuote(w, changed: changed) { return refused }
+          else { return misselected(step.original, state: state(), hint: hint()) }
+          if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
           let content = PasteContent.text(step.replace)
           try board.write(content)
-          guard try w.paste(content) else { return unfocused(state()) }
+          guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
           changed = true
+          unverified = true
           let awaited = awaitRead(
             w, timeout: readbackTimeout, quote: before, until: { same($0.text, step.expected) })
           if case .quoteChanged = awaited { return quoteLost() }
@@ -601,18 +613,21 @@ nonisolated enum MailComposer {
           }
           guard quoteIntact(before, read) else { return quoteLost() }
           shown = read
+          unverified = false
+          verified.append("the edit of \"\(step.find)\"")
         }
       } else if let body = request.body {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
-          return misselected(nil, changed: changed)
+          return misselected(nil, state: state(), hint: hint())
         }
-        if let refused = try outsideQuote(w, changed: changed) { return refused }
+        if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
         // A body equal to the own text to the letter has nothing to paste.
         if !(request.html == nil && body == before.text) {
           let content = request.html.map { PasteContent.html($0, fallback: body) } ?? .text(body)
           try board.write(content)
-          guard try w.paste(content) else { return unfocused(state()) }
+          guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
           changed = true
+          unverified = true
         }
       }
       if let result {
@@ -624,19 +639,24 @@ nonisolated enum MailComposer {
         }
         guard quoteIntact(before, read) else { return quoteLost() }
         shown = read
+        if request.body != nil && unverified {
+          unverified = false
+          verified.append("the new body")
+        }
       }
 
       // 11.
       var added: [String] = []
       if !request.files.isEmpty {
         guard let back = try w.selectOwnEnd(), back.isEmpty else {
-          return misselected(nil, changed: changed)
+          return misselected(nil, state: state(), hint: hint())
         }
-        if let refused = try outsideQuote(w, changed: changed) { return refused }
+        if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
         let content = PasteContent.files(request.files)
         try board.write(content)
-        guard try w.paste(content) else { return unfocused(state()) }
+        guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
         changed = true
+        unverified = true
         let names = request.files.map(\.lastPathComponent)
         let text = shown.text
         let held = shown.files
@@ -849,27 +869,41 @@ nonisolated enum MailComposer {
   static let autosaved =
     "This did not save it, but Mail autosaves an open composer on its own, so the unverified "
     + "text may already be in Drafts."
+  /// The same, once every paste so far read back and the rest were not made:
+  /// what Mail may have autosaved is a draft half edited.
+  static let autosavedPart =
+    "This did not save it, but Mail autosaves an open composer on its own, so Drafts may already "
+    + "hold the draft with only those changes."
   static let afterPaste =
     "Close the composer in Mail WITHOUT saving, then check Drafts and delete any copy holding "
     + "text you did not mean."
 
-  private static func misselected(_ text: String?, changed: Bool) -> [String: Any] {
+  /// "The edit of "a" and the new body", capitalised, for `state()`.
+  static func sentence(_ items: [String]) -> String {
+    let joined =
+      items.count <= 1
+      ? items.joined()
+      : items.dropLast().joined(separator: ", ") + " and " + (items.last ?? "")
+    return joined.prefix(1).uppercased() + joined.dropFirst()
+  }
+
+  private static func misselected(_ text: String?, state: String, hint: String? = nil)
+    -> [String: Any]
+  {
     let what = text.map { "the text \"\($0)\"" } ?? "the draft's own text"
-    let state =
-      changed
-      ? "Earlier edits are in the window, verified, and the rest is not. \(autosaved)"
-      : "Nothing was pasted and the draft is unchanged."
     return refusal(
       "selection",
       "The selection over \(what) did not read back as that text, so a paste could reach "
         + "further than it should. \(state)",
-      changed ? afterPaste : "Edit the draft in Mail directly, or replace the whole body.")
+      hint ?? "Edit the draft in Mail directly, or replace the whole body.")
   }
 
   /// The gate after every selection: neither end of it inside the quote.
   /// A selection Mail would not place cannot be shown to be outside it, and is
   /// refused the same way.
-  private static func outsideQuote(_ w: ComposerWindow, changed: Bool) throws -> [String: Any]? {
+  private static func outsideQuote(_ w: ComposerWindow, state: String, hint: String? = nil) throws
+    -> [String: Any]?
+  {
     let reaches = try w.selectionReachesQuote()
     if reaches == false { return nil }
     let why =
@@ -877,23 +911,18 @@ nonisolated enum MailComposer {
       ? "The caret would land inside the quoted original, which a draft's own text never does."
       : "Mail would not say where the selection sits relative to the quoted original, so a "
         + "paste there could land inside it."
-    let state =
-      changed
-      ? "Earlier edits are in the window, verified, and the rest was not pasted. \(autosaved)"
-      : "Nothing was pasted and the draft is unchanged."
     return refusal(
       "selection", "\(why) \(state)",
-      changed
-        ? afterPaste
-        : "Write the draft's own text in Mail directly, above the quoted original.")
+      hint ?? "Write the draft's own text in Mail directly, above the quoted original.")
   }
 
-  private static func unfocused(_ state: String) -> [String: Any] {
+  /// `hint` is the caller's: "try again" only while nothing has been pasted.
+  private static func unfocused(_ state: String, hint: String?) -> [String: Any] {
     refusal(
       "composer",
       "The composer would not take the keyboard, so the paste was not posted. Someone is "
         + "probably using the Mac. \(state)",
-      "Try again once the Mac is free.")
+      hint ?? "Try again once the Mac is free.")
   }
 
   private static func unconfirmed(
@@ -1243,26 +1272,42 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
       guard let raw = Self.param(web, "AXUIElementForTextMarker", end),
         CFGetTypeID(raw) == AXUIElementGetTypeID()
       else { return nil }
-      var element = raw as! AXUIElement
-      var reached = false
-      for _ in 0..<64 {
-        if CFEqual(element, web) {
-          reached = true
-          break
-        }
-        if let level = (Self.attr(element, "AXBlockQuoteLevel") as? NSNumber)?.intValue,
-          level > 0
-        {
-          return true
-        }
-        guard let parent = Self.attr(element, kAXParentAttribute as String),
-          CFGetTypeID(parent) == AXUIElementGetTypeID()
-        else { break }
-        element = parent as! AXUIElement
-      }
-      guard reached else { return nil }
+      let found = Self.walkReachesQuote(
+        from: raw as! AXUIElement, isBody: { CFEqual($0, web) },
+        level: { (Self.attr($0, "AXBlockQuoteLevel") as? NSNumber)?.intValue },
+        parent: {
+          guard let up = Self.attr($0, kAXParentAttribute as String),
+            CFGetTypeID(up) == AXUIElementGetTypeID()
+          else { return nil }
+          return (up as! AXUIElement)
+        })
+      guard let found else { return nil }
+      if found { return true }
     }
     return false
+  }
+
+  /// From an element up to the body: true at the first quote level above 0,
+  /// false on reaching the body, nil when it cannot be told.
+  ///
+  /// Nil, and so a refusal, when the walk never reaches the body, and when the
+  /// body's DIRECT child on the way does not answer its level: `Read` refuses
+  /// an unreadable level the same way, and the body's children are the blocks
+  /// whose levels were measured to always answer. A deeper element that does
+  /// not answer is passed over, as inline runs need not carry one.
+  static func walkReachesQuote<E>(
+    from start: E, isBody: (E) -> Bool, level: (E) -> Int?, parent: (E) -> E?
+  ) -> Bool? {
+    var element = start
+    for _ in 0..<64 {
+      if isBody(element) { return false }
+      let answered = level(element)
+      if let answered, answered > 0 { return true }
+      guard let up = parent(element) else { return nil }
+      if answered == nil && isBody(up) { return nil }
+      element = up
+    }
+    return nil
   }
 
   /// Set the selection and read it back, waiting up to half a second for it to
