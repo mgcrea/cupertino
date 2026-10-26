@@ -205,6 +205,92 @@ describe("awaitNewComposer", () => {
     lane.close();
   });
 
+  /*
+   * LIVE RUN 5: opening a tab re-mints every tab's element, so a tab whose
+   * title another shares comes back with a new handle, and the old composer
+   * under the subject looks as new as the one just opened. A new composer
+   * opens as the SELECTED tab, and only one composer more carries the subject.
+   */
+  describe("when opening a tab re-mints the handles of the tabs beside it", () => {
+    const tab = (handle: string, subject: string, which: "selected" | "background") =>
+      composer(handle, subject, { tab: which, ...(which === "background" ? { text: null } : {}) });
+    const before = [tab("mc-1", "Re: lunch", "selected")];
+
+    it("takes the one selected tab when the subject's count grew by exactly one", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [tab("mc-2", "Re: lunch", "background"), tab("mc-3", "Re: lunch", "selected")],
+        },
+      });
+      await expect(awaitNewComposer(lane, before, 30, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+      });
+      lane.close();
+    });
+
+    it("refuses when two of them read as selected", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [tab("mc-2", "Re: lunch", "selected"), tab("mc-3", "Re: lunch", "selected")],
+        },
+      });
+      await expect(awaitNewComposer(lane, before, 30, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-2", "mc-3"],
+      });
+      lane.close();
+    });
+
+    it("refuses when the subject's count grew by two", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "background"),
+            tab("mc-4", "Re: lunch", "selected"),
+          ],
+        },
+      });
+      await expect(awaitNewComposer(lane, before, 30, "Re: lunch")).resolves.toMatchObject({
+        ambiguous: ["mc-2", "mc-3", "mc-4"],
+      });
+      lane.close();
+    });
+
+    it("refuses when only handles were given, so the count before is unknown", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [tab("mc-2", "Re: lunch", "background"), tab("mc-3", "Re: lunch", "selected")],
+        },
+      });
+      await expect(awaitNewComposer(lane, ["mc-1"], 30, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-2", "mc-3"],
+      });
+      lane.close();
+    });
+
+    it("fills the selected new tab in a compose whose open re-minted the old one", async () => {
+      const { lane, seen } = await laneOver(
+        healthyHost({
+          mail_composers: (_a: unknown, n: number) => ({
+            composers:
+              n === 1
+                ? before
+                : [tab("mc-2", "Re: lunch", "background"), tab("mc-3", "Re: lunch", "selected")],
+          }),
+        }),
+      );
+      const result = await composeNatively(
+        lane,
+        runnerReturning("Re: lunch"),
+        { ...PARAMS, sendNow: false },
+        TIMEOUTS,
+      );
+      expect(result).toMatchObject({ ok: true, bodyVerified: true });
+      expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-3", save: true });
+      lane.close();
+    });
+  });
+
   it("returns null when nothing new appears in time", async () => {
     const { lane } = await laneOver({
       mail_composers: { composers: [composer("mc-1", "Re: lunch")] },

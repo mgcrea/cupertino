@@ -1,6 +1,6 @@
 import { interferenceNote, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 
-import { MailAxLane, squash } from "./ax.js";
+import { MailAxLane, squash, type NativeComposer } from "./ax.js";
 import { SENT_SINCE } from "./jxa/read.js";
 import { OPEN_COMPOSER } from "./jxa/write.js";
 
@@ -187,10 +187,11 @@ export type NewComposer = { handle: string } | { ambiguous: string[] };
 /**
  * Wait for a composer that was not there before, and return its handle.
  *
- * `before` is the handles `composers()` listed BEFORE Mail was asked to open
- * anything. That is what makes a leftover under the same subject harmless: the
- * handle is stable for the window's life, so the one that APPEARS is the one
- * this call opened, whatever it is titled.
+ * `before` is what `composers()` listed BEFORE Mail was asked to open
+ * anything. That is what makes a leftover under the same subject harmless: a
+ * handle is stable for its composer's life (a tab's, while no other tab of its
+ * window shares its title; see below), so the one that APPEARS is the one this
+ * call opened, whatever it is titled.
  *
  * A person can open a window by hand during the poll, and an empty composer
  * gives nothing to tell theirs from ours. So the candidates are every fresh
@@ -203,22 +204,41 @@ export type NewComposer = { handle: string } | { ambiguous: string[] };
  *
  * Polled rather than waited for: a window existing is not the app listing it.
  * A read that fails is retried until the deadline.
+ *
+ * With Mail's composers as tabs, opening one RE-MINTS every tab's element
+ * (MEASURED, LIVE RUN 5), and a tab whose title another tab shares comes back
+ * under a new handle: the composer that was there looks as new as the one
+ * just opened. So when several candidates carry the subject, one is still
+ * taken if the composers under that subject grew by EXACTLY one since
+ * `before` and exactly one candidate is the selected tab: a new composer
+ * opens as the selected tab. That needs `before` as composers, with their
+ * subjects; given as bare handles, the count is unknown and it stays
+ * ambiguous.
  */
 export const awaitNewComposer = async (
   lane: MailAxLane,
-  before: string[],
+  before: readonly (string | Pick<NativeComposer, "composer" | "subject">)[],
   timeoutMs: number,
   subject?: string,
 ): Promise<NewComposer | null> => {
-  const known = new Set(before);
+  const known = new Set(before.map((c) => (typeof c === "string" ? c : c.composer)));
+  const counted = before.every((c) => typeof c !== "string");
+  const had = before.filter((c) => typeof c !== "string" && c.subject === subject).length;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      const fresh = (await lane.composers()).filter((c) => !known.has(c.composer));
+      const listed = await lane.composers();
+      const fresh = listed.filter((c) => !known.has(c.composer));
       const candidates = subject === undefined ? fresh : fresh.filter((c) => c.subject === subject);
       if (candidates.length === 1)
         return { handle: (candidates[0] as { composer: string }).composer };
-      if (candidates.length > 1) return { ambiguous: candidates.map((c) => c.composer) };
+      if (candidates.length > 1) {
+        const selected = candidates.filter((c) => c.tab === "selected");
+        const grew = listed.filter((c) => c.subject === subject).length - had;
+        if (subject !== undefined && counted && grew === 1 && selected.length === 1)
+          return { handle: (selected[0] as { composer: string }).composer };
+        return { ambiguous: candidates.map((c) => c.composer) };
+      }
     } catch {
       // Retried below; the deadline decides.
     }
@@ -265,7 +285,7 @@ export const composeNatively = async (
 
   // Taken before Mail is asked to open anything: the new composer is the
   // handle that is absent from this list afterwards.
-  const before = (await lane.composers()).map((c) => c.composer);
+  const before = await lane.composers();
   const subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
   const found = await awaitNewComposer(lane, before, composerTimeoutMs, subject);
   if (found && "ambiguous" in found) {

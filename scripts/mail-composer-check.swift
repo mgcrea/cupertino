@@ -53,6 +53,9 @@ final class EditFake: ComposerWindow {
   var pasteTakes = true
   var saveOutcome = SaveOutcome.pressed
   var ignoresFiles = false
+  /// How a pasted file's element reads. MEASURED, LIVE RUN 5: an attachment is
+  /// an AXButton with an empty title and the description "name, 6 bytes".
+  var fileLabel: (String) -> String = { $0 }
   /// Reads a paste takes to land: AX reads and HID events travel separately,
   /// so a read can come before Mail has handled the command-V.
   var lagReads = 0
@@ -245,7 +248,7 @@ final class EditFake: ComposerWindow {
         dirty = true
         selection = (span.lowerBound + text.utf16.count)..<(span.lowerBound + text.utf16.count)
       case .files(let urls):
-        if !ignoresFiles { ownFiles += urls.map(\.lastPathComponent) }
+        if !ignoresFiles { ownFiles += urls.map { fileLabel($0.lastPathComponent) } }
       }
       onPaste?(self)
     }
@@ -399,6 +402,72 @@ final class FakeTabGroup {
     let shows = tabs[flagged] === fake && shown.subject == fake.subject
     return valueAnswers && shows ? .selected : .background
   }
+}
+
+/// A window of tabs whose buttons Mail RE-MINTS on every tab opened or closed
+/// (MEASURED, LIVE RUN 5: after a third tab opened, no earlier button was
+/// `CFEqual` to itself). For the registry only: a tab is its button id.
+final class MintWindow {
+  private var next = 0
+  private(set) var tabs: [(title: String, button: Int)] = []
+  var isAlive = true
+  func add(_ title: String) {
+    tabs.append((title, 0))
+    remint()
+  }
+  func remove(_ title: String) {
+    tabs.removeAll { $0.title == title }
+    remint()
+  }
+  private func remint() {
+    tabs = tabs.map { tab in
+      next += 1
+      return (tab.title, next)
+    }
+  }
+  func listing() -> [MintTab] { tabs.map { MintTab(self, button: $0.button) } }
+}
+
+final class MintTab: ComposerWindow {
+  let host: MintWindow
+  let button: Int
+  let listedTitle: String
+  let uniqueAtSighting: Bool
+  init(_ host: MintWindow, button: Int) {
+    self.host = host
+    self.button = button
+    let title = host.tabs.first { $0.button == button }?.title ?? ""
+    listedTitle = title
+    uniqueAtSighting = host.tabs.filter { $0.title == title }.count == 1
+  }
+  var subject: String { listedTitle }
+  var to: [String] = []
+  var cc: [String] = []
+  var bcc: [String]? = nil
+  var from: String? = nil
+  var isMain = false
+  var isAlive: Bool { host.isAlive && host.tabs.contains { $0.button == button } }
+  func isSame(as other: ComposerWindow) -> Bool {
+    (other as? MintTab).map { $0.host === host && $0.button == button } ?? false
+  }
+  var tab: ComposerTab? { .background }
+  func rebound() -> ComposerWindow? {
+    guard host.isAlive,
+      let live = AXComposerWindow.rebind(
+        title: listedTitle, uniqueThen: uniqueAtSighting, among: host.tabs.map(\.button),
+        title: { b in self.host.tabs.first { $0.button == b }?.title })
+    else { return nil }
+    return MintTab(host, button: live)
+  }
+  func blocks() throws -> [ComposerBlock] { [] }
+  func ownRangeText() throws -> String? { nil }
+  func selectOwn() throws -> String? { nil }
+  func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String? { nil }
+  func selectOwnEnd() throws -> String? { nil }
+  func selectionReachesQuote() throws -> Bool? { nil }
+  func activate() throws -> Bool { false }
+  func paste(_ content: PasteContent) throws -> Bool { false }
+  func save() throws -> SaveOutcome { .refused }
 }
 
 /// The person's clipboard, and every write over it.
@@ -2059,6 +2128,106 @@ struct MailComposerCheck {
         "a body that stops answering once Mail is forward refuses before the press, front back",
         capability(result) == "composer" && group.events.contains("forward")
           && group.presses.isEmpty && backedOut([beta, gamma], group, board, front))
+    }
+
+    // Fix round 3: Mail re-mints every tab button when a tab opens or closes.
+    do {
+      let window = MintWindow()
+      for title in ["Alpha", "Dup", "Dup", "Beta"] { window.add(title) }
+      let first = window.listing()
+      let handles = MailComposer.register(first)
+      window.add("Gamma")
+      let second = window.listing()
+      let again = MailComposer.register(second)
+      check(
+        "a unique-titled tab keeps its handle when Mail re-mints the buttons",
+        again[0] == handles[0] && again[3] == handles[3]
+          && (MailComposer.resolve(handles[0]) as? MintTab)?.button == second[0].button)
+      check(
+        "a same-titled tab's handle dies, and its tabs get new ones",
+        MailComposer.resolve(handles[1]) == nil && MailComposer.resolve(handles[2]) == nil
+          && !again.contains(handles[1]) && !again.contains(handles[2]) && again[1] != again[2])
+      window.remove("Gamma")
+      check(
+        "a handle is re-bound on resolve too, with no listing in between",
+        (MailComposer.resolve(handles[3]) as? MintTab)?.button == window.tabs[3].button)
+    }
+    do {
+      let window = MintWindow()
+      for title in ["Same", "Same", "Lone"] { window.add(title) }
+      let handles = MailComposer.register(window.listing())
+      window.remove("Lone")
+      let left = MintWindow()
+      left.add("Solo")
+      let solo = MailComposer.register(left.listing())[0]
+      left.add("Solo")
+      check(
+        "a title unique now but not when last seen does not re-bind",
+        { () -> Bool in
+          let t = MintWindow()
+          for title in ["Twin", "Twin"] { t.add(title) }
+          let h = MailComposer.register(t.listing())
+          t.remove("Twin")
+          t.add("Twin")
+          return MailComposer.resolve(h[0]) == nil && MailComposer.resolve(h[1]) == nil
+        }())
+      check(
+        "nor one unique when last seen but shared now",
+        MailComposer.resolve(solo) == nil && MailComposer.resolve(handles[2]) == nil)
+      let gone = MintWindow()
+      gone.add("Away")
+      let away = MailComposer.register(gone.listing())[0]
+      gone.add("Other")
+      gone.isAlive = false
+      check("nor one whose window is gone", MailComposer.resolve(away) == nil)
+      check(
+        "the rule: unique then and now, by title",
+        AXComposerWindow.rebind(
+          title: "A", uniqueThen: true, among: [7, 8], title: { $0 == 7 ? "A" : "B" }) == 7
+          && AXComposerWindow.rebind(
+            title: "A", uniqueThen: false, among: [7, 8], title: { $0 == 7 ? "A" : "B" }) == nil
+          && AXComposerWindow.rebind(
+            title: "A", uniqueThen: true, among: [7, 8], title: { _ in "A" }) == nil
+          && AXComposerWindow.rebind(
+            title: "", uniqueThen: true, among: [7], title: { _ in "" }) == nil
+      )
+    }
+
+    // Fix round 3: a file in the own text reads "name, 6 bytes" (LIVE RUN 5).
+    do {
+      check(
+        "a file label matches its name, or its name and a size",
+        MailComposer.fileMatches("probe-note.txt", "probe-note.txt")
+          && MailComposer.fileMatches("probe-note.txt, 6 bytes", "probe-note.txt")
+          && !MailComposer.fileMatches("probe-note.txt.bak, 6 bytes", "probe-note.txt")
+          && !MailComposer.fileMatches("probe-note.txt.bak", "probe-note.txt")
+          && !MailComposer.fileMatches("xprobe-note.txt, 6 bytes", "probe-note.txt"))
+      check(
+        "an attachment button's description reads as its name",
+        AXComposerWindow.fileName(
+          role: "AXButton", title: "", description: "probe-note.txt, 6 bytes")
+          == "probe-note.txt"
+          && AXComposerWindow.fileName(
+            role: "AXButton", title: nil, description: "a, b.txt, 1,2 Ko") == "a, b.txt"
+          && AXComposerWindow.fileName(role: "AXButton", title: "", description: "odd name")
+            == "odd name"
+          && AXComposerWindow.fileName(role: "AXImage", title: "photo, 2026.png", description: nil)
+            == "photo, 2026.png"
+          && AXComposerWindow.fileName(role: "AXImage", title: "", description: "") == nil)
+      let pdf = tempFile("probe-note.txt")
+      let fake = EditFake(own: "Here")
+      fake.fileLabel = { "\($0), 6 bytes" }
+      let (result, _, _) = run(fake, Request(files: [pdf]))
+      check(
+        "files whose elements read \"name, 6 bytes\" read back and are saved",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == true
+          && result["filesAdded"] as? [String] == ["probe-note.txt"])
+      let wrong = EditFake(own: "Here")
+      wrong.fileLabel = { "\($0).bak, 6 bytes" }
+      let (missed, _, _) = run(wrong, Request(files: [pdf]))
+      check(
+        "a longer name that only begins with it does not",
+        capability(missed) == "confirmation" && wrong.saves == 0)
     }
 
     // An untabbed window has no tab to press.

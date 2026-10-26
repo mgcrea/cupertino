@@ -103,6 +103,10 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// its last save (`AXEdited`). Nil when it does not answer, or another tab
   /// is shown. What tells a command-S landed, before any tab is switched.
   func edited() -> Bool?
+  /// A live composer standing for this one once its tab's element has died:
+  /// nil unless that holds (see `AXComposerWindow.rebind`). The registry
+  /// keeps the handle on it, number and all.
+  func rebound() -> ComposerWindow?
 }
 
 /// Where a tab stands in its window. Its raw value is the listing's `tab`.
@@ -121,6 +125,7 @@ extension ComposerWindow {
   nonisolated func windowBody() -> AnyObject? { nil }
   nonisolated func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { a === b }
   nonisolated func edited() -> Bool? { nil }
+  nonisolated func rebound() -> ComposerWindow? { nil }
   /// To and Cc together, as the listing's `recipients` has always been.
   nonisolated var recipientNames: [String] { to + cc }
   func isSame(as other: ComposerWindow) -> Bool { self === other }
@@ -188,12 +193,19 @@ nonisolated enum MailComposer {
     func register(_ windows: [ComposerWindow]) -> [String] {
       lock.lock()
       defer { lock.unlock() }
+      // A tab whose element Mail re-minted keeps its handle when it can be
+      // told for sure which live tab it is now (`rebound`).
+      for i in entries.indices where !entries[i].window.isAlive {
+        if let live = entries[i].window.rebound() { entries[i].window = live }
+      }
       // Dead windows are dropped so a long session does not hold every composer
       // it ever saw. Their numbers are not recycled: `next` only goes up.
       entries.removeAll { !$0.window.isAlive }
       return windows.map { window in
-        if let known = entries.first(where: { $0.window.isSame(as: window) }) {
-          return "mc-\(known.number)"
+        if let known = entries.firstIndex(where: { $0.window.isSame(as: window) }) {
+          // This sighting is the last one: what a re-binding goes by.
+          entries[known].window = window
+          return "mc-\(entries[known].number)"
         }
         next += 1
         entries.append((next, window))
@@ -205,9 +217,12 @@ nonisolated enum MailComposer {
       lock.lock()
       defer { lock.unlock() }
       guard handle.hasPrefix("mc-"), let number = Int(handle.dropFirst(3)),
-        let entry = entries.first(where: { $0.number == number }), entry.window.isAlive
+        let at = entries.firstIndex(where: { $0.number == number })
       else { return nil }
-      return entry.window
+      if !entries[at].window.isAlive, let live = entries[at].window.rebound() {
+        entries[at].window = live
+      }
+      return entries[at].window.isAlive ? entries[at].window : nil
     }
   }
 
@@ -1159,8 +1174,8 @@ nonisolated enum MailComposer {
   /// Each name at least once more than it was there before, per time it is added.
   private static func arrived(_ names: [String], before: [String], now: [String]) -> Bool {
     names.allSatisfy { name in
-      now.filter { $0 == name }.count
-        >= before.filter { $0 == name }.count + names.filter { $0 == name }.count
+      now.filter { fileMatches($0, name) }.count
+        >= before.filter { fileMatches($0, name) }.count + names.filter { $0 == name }.count
     }
   }
 
@@ -1175,6 +1190,13 @@ nonisolated enum MailComposer {
   }
 
   static func same(_ a: String, _ b: String) -> Bool { squash(a) == squash(b) }
+  /// Whether a file element's label is the file `name`: equal to it, or the
+  /// name then ", " and what follows, a size. MEASURED, LIVE RUN 5: an
+  /// attachment reads `AXDescription` "probe-note.txt, 6 bytes", with an empty
+  /// title. A longer name that only begins with it ("….bak") is not it.
+  static func fileMatches(_ label: String, _ name: String) -> Bool {
+    label == name || label.hasPrefix(name + ", ")
+  }
 
   /// Stricter, for a selection against the text it is meant to cover: both come
   /// from the same marker-range read, so only a whitespace run's shape may
@@ -1352,10 +1374,18 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   private let subjectField: AXUIElement
   private let pid: pid_t
 
+  /// Whether no other tab of its window carried its title when it was
+  /// listed: half of what lets a re-minted tab keep its handle.
+  private let titleUnique: Bool
+
   private init(window: AXUIElement, tab: AXUIElement?, subjectField: AXUIElement, pid: pid_t) {
     self.window = window
     self.tabButton = tab
-    self.listedTitle = tab.flatMap(Self.title(of:))
+    let title = tab.flatMap(Self.title(of:))
+    self.listedTitle = title
+    self.titleUnique =
+      title.map { name in Self.tabButtons(in: window).filter { Self.title(of: $0) == name }.count }
+      == 1
     self.subjectField = subjectField
     self.pid = pid
   }
@@ -1435,6 +1465,35 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   }
 
   static func alive(after err: AXError) -> Bool { err != .invalidUIElement }
+
+  /// MEASURED, LIVE RUN 5: opening a tab RE-MINTS every tab button of the
+  /// window, so no earlier button is `CFEqual` to its tab any more. A dead
+  /// tab is re-bound to the live tab of the SAME window element carrying its
+  /// title, only when that title was unique among the window's tabs when it
+  /// was last listed, and is unique now. Otherwise it stays dead. What the
+  /// window shows is still proved before anything is pasted (`expectHead`,
+  /// the shown-tab and body checks).
+  func rebound() -> ComposerWindow? {
+    guard tabButton != nil, let listedTitle else { return nil }
+    var out: CFTypeRef?
+    guard
+      Self.alive(after: AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &out)),
+      let live = Self.rebind(
+        title: listedTitle, uniqueThen: titleUnique, among: Self.tabButtons(in: window),
+        title: Self.title(of:))
+    else { return nil }
+    let next = AXComposerWindow(window: window, tab: live, subjectField: subjectField, pid: pid)
+    return next.isAlive ? next : nil
+  }
+
+  /// The one tab titled `title` among `tabs`, when it was unique then too.
+  static func rebind<E>(
+    title: String, uniqueThen: Bool, among tabs: [E], title name: (E) -> String?
+  ) -> E? {
+    guard uniqueThen, !title.isEmpty else { return nil }
+    let same = tabs.filter { name($0) == title }
+    return same.count == 1 ? same.first : nil
+  }
 
   func isSame(as other: ComposerWindow) -> Bool {
     guard let other = other as? AXComposerWindow else { return false }
@@ -1705,6 +1764,21 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
 
   func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { CFEqual(a, b) }
 
+  /// A file element's name: its title, or else its description. MEASURED,
+  /// LIVE RUN 5: an attachment is an AXButton with an empty title and the
+  /// description "probe-note.txt, 6 bytes", the name, ", ", a localised size.
+  /// For that shape the last ", " part is dropped when it starts with a digit;
+  /// anything else is kept as it reads, and the read-back's `fileMatches`
+  /// still takes "name, size" for the name. An image's title is its name.
+  static func fileName(role: String?, title: String?, description: String?) -> String? {
+    if let title, !title.isEmpty { return title }
+    guard let description, !description.isEmpty else { return nil }
+    guard role == "AXButton", let cut = description.range(of: ", ", options: .backwards),
+      description[cut.upperBound...].first?.isNumber == true
+    else { return description }
+    return String(description[..<cut.lowerBound])
+  }
+
   /// `AXEdited` on the window showing this composer: AppKit's "is it dirty?"
   /// for a window (`NSAccessibilityEditedAttribute`), set from the document's
   /// edited state. UNMEASURED on Mail's compose window: if it never answers,
@@ -1972,11 +2046,12 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
 
   private static func files(in el: AXUIElement, depth: Int = 8) -> [String] {
     var names: [String] = []
-    if let role = role(el), fileRoles.contains(role) {
-      let name =
-        (attr(el, kAXTitleAttribute as String) as? String).flatMap { $0.isEmpty ? nil : $0 }
-        ?? (attr(el, kAXDescriptionAttribute as String) as? String)
-      if let name, !name.isEmpty { names.append(name) }
+    if let role = role(el), fileRoles.contains(role),
+      let name = fileName(
+        role: role, title: attr(el, kAXTitleAttribute as String) as? String,
+        description: attr(el, kAXDescriptionAttribute as String) as? String)
+    {
+      names.append(name)
     }
     if depth > 0 { for child in children(el) { names += files(in: child, depth: depth - 1) } }
     return names

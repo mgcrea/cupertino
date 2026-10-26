@@ -598,7 +598,7 @@ export const rebuildDraft = async (
       };
       const found = await awaitNewComposer(
         lane,
-        before.map((c) => c.composer),
+        before,
         deps.composerTimeoutMs ?? COMPOSER_TIMEOUT_MS,
         opened.subject,
       );
