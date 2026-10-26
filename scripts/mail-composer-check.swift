@@ -650,6 +650,15 @@ struct MailComposerCheck {
     let oddEntry = MailComposer.listing([odd])[0]
     check("an unreadable level makes quoted null", oddEntry["quoted"] is NSNull)
     check("and own text stops before that block", oddEntry["text"] as? String == "kept")
+    let blind = FakeComposer(
+      subject: "Blind",
+      body: [
+        ComposerBlock(text: "unknown", quoteLevel: nil, fileNames: []),
+        ComposerBlock(text: "later", quoteLevel: 0, fileNames: []),
+      ])
+    check(
+      "an unreadable FIRST level lists text null, not an empty draft",
+      MailComposer.listing([blind])[0]["text"] is NSNull)
 
     // The sender, the split recipients, the quote and the front window.
     let rich = FakeComposer(
@@ -2295,6 +2304,22 @@ struct MailComposerCheck {
         "a verified edit's read-back is recorded: a re-bound tab reading it clears the mark",
         MailComposer.listing([third])[0]["composer"] as? String == handle
           && !MailComposer.isRebound(handle))
+    }
+    do {
+      // An empty expectHead matches an empty draft and proves nothing: the
+      // edit goes through, the mark stays.
+      let old = EditFake(own: "")
+      old.subject = "Re: empty"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      let other = EditFake(own: "")
+      other.subject = "Re: empty"
+      old.isAlive = false
+      old.reboundTo = other
+      _ = MailComposer.resolve(handle)
+      let (ok, _, _) = run(other, Request(body: "Filled", expectHead: ""), handle: handle)
+      check(
+        "an empty expectHead edit goes through but does not clear the mark",
+        ok["replaced"] as? Bool == true && MailComposer.isRebound(handle))
     }
     do {
       // Fix round 5: a verified edit by an UNMARKED handle records its read-back

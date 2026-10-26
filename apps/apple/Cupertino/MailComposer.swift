@@ -381,6 +381,9 @@ nonisolated enum MailComposer {
       for block in blocks {
         guard let level = block.quoteLevel else {
           unreadable = true
+          // Nothing of the own text read before the level failed: that is no
+          // more an empty draft than an unreadable body is.
+          if own.isEmpty { readable = false }
           break
         }
         if level > 0 {
@@ -706,7 +709,10 @@ nonisolated enum MailComposer {
     -> [String: Any]
   {
     if let handle, answer["replaced"] as? Bool == true, let text = answer["text"] as? String {
-      registry.edited(handle, text: text, proved: request.expectHead != nil)
+      // An empty `expectHead` matches an empty draft, which proves nothing:
+      // the mark never clears on empty text.
+      let proved = request.expectHead.map { !squash($0).isEmpty } ?? false
+      registry.edited(handle, text: text, proved: proved)
     }
     return answer
   }
