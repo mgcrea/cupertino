@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleRemindersClient } from "../client/reminders.js";
@@ -49,7 +49,7 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
         "reminders are excluded unless you ask for them. Every filter is optional; with none, " +
         "this is the whole live list — but check `hasMore` before believing that, and read the " +
         "`note` field if one is present: it means a lane bound, not your `limit`, ended the list.",
-      inputSchema: filterSchema,
+      inputSchema: z.object(filterSchema),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -69,14 +69,14 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
         'notes body; `scope: "title"` matches only the name. Accepts the same filters as ' +
         "list_reminders, so you can search within one list or one date range. Carries the same " +
         "`hasMore` and `note` fields as list_reminders.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for. Case-insensitive substring match."),
         scope: z
           .enum(["full", "title"])
           .optional()
           .describe("full = name and notes body (default). title = name only."),
         ...filterSchema,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ query, scope, ...rest }) =>
@@ -96,7 +96,7 @@ export const registerReminderTools = (server: McpServer, client: AppleRemindersC
         "Read one reminder in full by ref, including its notes body and any subtasks. " +
         "`dueDate` and `alldayDueDate` are reported separately from the combined `due` field, " +
         "so you can see which property actually holds the date.",
-      inputSchema: { ref: reminderRefArg },
+      inputSchema: z.object({ ref: reminderRefArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) => wrap(() => client.getReminder(ref)),

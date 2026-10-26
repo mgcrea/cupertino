@@ -135,6 +135,7 @@ records exactly what that leaves open; the safe way to measure it is a message t
 | `APPLE_MESSAGES_MAX_RESULTS`        | `50`    | Default page size.                      |
 | `APPLE_MESSAGES_ALLOW_WRITES`       | off     | Register `send_message` at all.         |
 | `APPLE_MESSAGES_ALLOW_CODES`        | off     | Register `find_codes` at all.           |
+| `APPLE_MESSAGES_ALLOW_WATCHES`      | off     | Register `watch` and `unwatch`.         |
 | `APPLE_MESSAGES_ALLOW_FILE_SEND`    | off     | Add `filePath` to `send_message`.       |
 | `APPLE_MESSAGES_SEND_RECONCILE_MS`  | `5000`  | How long to wait for the sent row.      |
 

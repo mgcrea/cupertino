@@ -1,5 +1,6 @@
 import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
 import type { AppleMailClient } from "../client/mail.js";
@@ -231,7 +232,7 @@ export const registerDiagnosticsTools = (
         "and reads a real message per account, per-account message caching, and the active " +
         "write/allowlist settings. Call this first whenever a tool returns `degraded: true` or a " +
         "permission error — it names the exact System Settings pane to open.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => buildDiagnostics(client, ctx)),

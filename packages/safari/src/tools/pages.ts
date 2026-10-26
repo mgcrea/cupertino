@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { isQuiet } from "../client/pages.js";
@@ -75,7 +75,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
         "the network. " +
         "Not to be confused with apple_safari_get_page, which returns a HISTORY row — visit " +
         "counts and dates — and no page content at all.",
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .min(1)
@@ -102,7 +102,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
               `${DEFAULT_MAX_CHARS.toLocaleString("en-US")}, which is a long article; raise it ` +
               `to read more. The response says whether it was cut.`,
           ),
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: false },
     },
     async ({ url, format, maxChars }) =>

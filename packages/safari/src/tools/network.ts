@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { INLINE_CAP_CHARS } from "../client/network.js";
@@ -120,7 +120,7 @@ export const registerNetworkTools = (
           " Request ids from before a reload are dead after it; list again." +
           writesNote,
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         action: z
           .enum(["start", "stop", "clear", "status"])
@@ -174,7 +174,7 @@ export const registerNetworkTools = (
             "Arm, then reload the tab so recording starts at the page's first request. " +
               "Defaults to false. Needs APPLE_SAFARI_ALLOW_WRITES.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, action, ...rest }) =>
@@ -214,7 +214,7 @@ export const registerNetworkTools = (
           " " +
           URLS_IN_FULL,
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         kind: z.enum(["fetch", "xhr", "console", "resource"]).optional(),
         urlContains: z.string().optional().describe("Keep entries whose URL contains this text."),
@@ -238,7 +238,7 @@ export const registerNetworkTools = (
           .max(500)
           .optional()
           .describe("Maximum entries to return. Defaults to 50, at most 500."),
-      },
+      }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ url, kind, urlContains, method, status, failed, after, limit }) =>
@@ -301,7 +301,7 @@ export const registerNetworkTools = (
           URLS_IN_FULL +
           writesNote,
       ),
-      inputSchema: {
+      inputSchema: z.object({
         url: urlArg,
         id: z
           .string()
@@ -357,7 +357,7 @@ export const registerNetworkTools = (
           .boolean()
           .optional()
           .describe("Replace an existing file of that name. Defaults to false."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
     async (args) =>

@@ -1,10 +1,12 @@
 import {
+  createWatches,
+  type Era,
   type Logger,
   type OsascriptRunner,
   registerSurfaceResources,
   withLazyTools,
 } from "@mgcrea/mcp-apple-core";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 import { BUILD_INFO } from "./build-info.js";
 import { AppleMessagesClient } from "./client/messages.js";
@@ -13,6 +15,7 @@ import { MESSAGES_GUIDE } from "./guide.js";
 import { registerPrompts } from "./prompts.js";
 import { buildDiagnostics } from "./tools/diagnostics.js";
 import { registerTools } from "./tools/index.js";
+import { MessagesWatchService } from "./tools/watch.js";
 
 export const SERVER_NAME = BUILD_INFO.name;
 export const SERVER_VERSION = BUILD_INFO.version;
@@ -26,11 +29,15 @@ export type CreateServerOptions = {
   home?: string;
   /** Injected by tests, so no test reaches the developer's real address book. */
   contacts?: ConstructorParameters<typeof AppleMessagesClient>[0]["contacts"];
+  /** Which protocol era this instance serves. Only watches care. Default `legacy`. */
+  era?: Era;
 };
 
 export type CreatedServer = {
   server: McpServer;
   client: AppleMessagesClient;
+  /** Present only with `allowWatches` on. */
+  watches?: MessagesWatchService | undefined;
 };
 
 /**
@@ -50,6 +57,39 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.contacts === undefined ? {} : { contacts: opts.contacts }),
   });
 
+  /*
+   * Built here, outside `withLazyTools`, because the facade registers the tools
+   * twice to sort reads from writes and `createWatches` must run once. Nothing
+   * opens until a `watch` call (see MessagesWatchService), so a server built for a
+   * discarded `server/discover` probe leaves nothing behind.
+   */
+  let watches: MessagesWatchService | undefined;
+  if (config.allowWatches) {
+    watches = new MessagesWatchService({
+      client,
+      ...(opts.logger ? { logger: opts.logger } : {}),
+    });
+    const service = watches;
+    const registry = createWatches(server, {
+      surface: "messages",
+      displayName: "Messages",
+      era: opts.era ?? "legacy",
+      source: service.source,
+      startTrigger: service.startTrigger,
+    });
+    service.bind(registry);
+    // `Protocol._onclose` calls `onclose` when the channel closes; nothing in
+    // serveStdio assigns it for us. The registry's trigger is `unref`ed and its
+    // watchers non-persistent, so a closing process needs no help; this stops a
+    // long-lived host (a test, an embedder) from keeping a timer and two watchers
+    // after the connection ends.
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event.
+    server.server.onclose = () => {
+      registry.close();
+      service.close();
+    };
+  }
+
   withLazyTools(
     server,
     {
@@ -63,6 +103,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
         allowWrites,
         allowCodes: config.allowCodes,
         allowFileSend: config.allowFileSend,
+        watches,
       }),
   );
   /*
@@ -85,5 +126,5 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     });
   }
 
-  return { server, client };
+  return { server, client, watches };
 };

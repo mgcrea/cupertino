@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AppleNotesClient } from "../client/notes.js";
 import { registerAccountTools } from "./accounts.js";

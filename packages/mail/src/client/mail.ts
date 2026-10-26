@@ -439,7 +439,7 @@ export class AppleMailClient {
    * no account UUID in the host position, so entries that do not resolve are
    * dropped rather than guessed at.
    */
-  async #mailboxLookup(): Promise<
+  async mailboxLookup(): Promise<
     Map<number, { accountUuid: string; mailbox: string; url: string }>
   > {
     const index = await this.index();
@@ -457,13 +457,27 @@ export class AppleMailClient {
     return map;
   }
 
+  /**
+   * Index rowids for mailbox names, each resolved exactly as `searchMessages`
+   * resolves its `mailbox` filter (same lookup, same refusal naming an unknown
+   * one), then united. A watch scopes itself with this so "Archive" means the
+   * same mailboxes in both places.
+   */
+  async mailboxRowidsFor(names: string[]): Promise<number[]> {
+    const rowids = new Set<number>();
+    for (const mailbox of names) {
+      for (const id of (await this.#targetMailboxRowids({ mailbox })) ?? []) rowids.add(id);
+    }
+    return [...rowids].toSorted((a, b) => a - b);
+  }
+
   /** Resolve account/mailbox filters down to the index rowids they cover. */
   async #targetMailboxRowids(opts: {
     account?: string | undefined;
     mailbox?: string | undefined;
   }): Promise<number[] | undefined> {
     if (!opts.account && !opts.mailbox) return undefined;
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     const wanted = opts.mailbox
       ? account
@@ -538,7 +552,7 @@ export class AppleMailClient {
     const groups =
       field === "mailbox"
         ? await (async () => {
-            const lookup = await this.#mailboxLookup();
+            const lookup = await this.mailboxLookup();
             return result.groups.map((g) => {
               const entry = g.key === null ? undefined : lookup.get(Number(g.key));
               return entry
@@ -576,7 +590,7 @@ export class AppleMailClient {
     if (!index) return null;
 
     const mailboxRowids = await this.#targetMailboxRowids(opts);
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     const scoped = { ...opts, ...(mailboxRowids ? { mailboxRowids } : {}) };
 
     const common = {
@@ -684,7 +698,7 @@ export class AppleMailClient {
     const decoded = decodeRef(ref);
     const conversationId = index.conversationOf(decoded.id);
     if (conversationId === null) return [];
-    const lookup = await this.#mailboxLookup();
+    const lookup = await this.mailboxLookup();
     return index
       .thread(conversationId, limit)
       .map((r) => this.#rowToSummary(r, lookup))

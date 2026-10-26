@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMessagesClient } from "../client/messages.js";
@@ -48,7 +48,7 @@ export const registerCountTools = (server: McpServer, client: AppleMessagesClien
         "onward live in an archived blob that SQL cannot see, and a count that quietly skipped " +
         "them would look exactly like a correct one. Use apple_messages_search_messages for " +
         "anything about what was said. Tapbacks are excluded unless you ask for them.",
-      inputSchema: {
+      inputSchema: z.object({
         chatRef: chatRefArg,
         handle: z
           .string()
@@ -72,7 +72,7 @@ export const registerCountTools = (server: McpServer, client: AppleMessagesClien
         includeReactions: includeReactionsArg,
         groupBy: groupByArg(COUNT_GROUP_FIELDS, "Day and month buckets are LOCAL calendar dates."),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ chatRef, handle, direction, from, to, includeReactions, groupBy, limit }) =>

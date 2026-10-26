@@ -110,11 +110,22 @@ export class MailboxMap {
    * is exact rather than a heuristic on display names.
    */
   async resolveIndexUrl(url: string): Promise<{ account: MailAccount; mailbox: string } | null> {
+    return this.resolveIndexUrlIn(await this.accounts(), url);
+  }
+
+  /**
+   * `resolveIndexUrl` against accounts the caller already holds, with no Apple
+   * Event: a watch rebuilds its lookup after reopening the index, from the
+   * accounts it last asked Mail for.
+   */
+  resolveIndexUrlIn(
+    accounts: readonly MailAccount[],
+    url: string,
+  ): { account: MailAccount; mailbox: string } | null {
     const m = /^([a-z-]+):\/\/([^/]*)\/?(.*)$/i.exec(url);
     if (!m) return null;
     const host = decodeURIComponent(m[2] ?? "");
     const path = decodeURIComponent(m[3] ?? "");
-    const accounts = await this.accounts();
     const account = accounts.find((a) => a.id === host);
     if (!account) return null;
     try {

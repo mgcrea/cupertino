@@ -59,6 +59,44 @@ there, that is this, not silence.
 conversations and reported on the message they target. A "liked" is not a reply
 and should not be summarised as one.
 
+## Watches
+
+\`apple_messages_watch\` and \`apple_messages_unwatch\` exist only when the watch
+gate (\`APPLE_MESSAGES_ALLOW_WATCHES\`) is on. If you cannot see them, watches
+are off.
+
+- **A filter is required.** Give \`from\` or \`domains\` (email handles only; a
+  phone number never matches a domain). There is no watch on all messages.
+- **Spell phone numbers in international form**: \`+33612345678\`, with no trunk
+  \`0\` and no \`(0)\`. Spaces and punctuation are ignored, but a local spelling
+  such as \`06 12 34 56 78\` never matches. An entry the store does not hold is
+  kept without spaces or punctuation, lowercased, and listed in \`unresolved\`.
+  That is NOT proof the person has not written: it fires only if the store later
+  holds exactly that spelling. When the store holds near misses they come back
+  as \`suggestions\` (\`typed\`, \`candidates\`); retry with the right spelling.
+- **The host subscribes, not you.** \`apple_messages_watch\` returns a handle and a
+  \`uri\`. Subscribing to that uri is something the host does; there is no tool
+  for it, so do not promise the user a push. A host that never subscribes still
+  has a working watch: read the uri whenever you want to know what came in.
+- **\`after\` is yours to keep.** A read returns what arrived since the watch
+  began, or since the \`after\` you pass, oldest first. The \`cursor\` it returns
+  is the last row scanned; pass it back as \`after\` next time. The server does
+  not remember what you have seen. When \`more\` is true, read again from
+  \`cursor\`.
+- **Reads carry no text.** Each message is \`id\`, \`handle\`, \`chat\` and \`date\`.
+  Use \`apple_messages_get_message\` with that \`id\` for the text.
+- **Your own messages, tapbacks and group events never fire a watch.** A group
+  event is a rename, or someone joining or leaving.
+- **Limits.** At most 10 watches per connection and 50 entries across \`from\`
+  and \`domains\` in one watch. A read returns at most 50 matches and scans at
+  most 1,000 rows; \`more\` says when either stopped it.
+- **Messages need not be running.** The store is written by the system, not by
+  the app, so a watch works with Messages closed.
+- Watches end with the connection: after a reconnect, call
+  \`apple_messages_watch\` again. Reading a watch that does not exist is a
+  not-found error, which is also what a reconnect looks like. A uri with a query
+  other than \`after\` is refused as a bad query.
+
 ## Sending
 
 \`apple_messages_send_message\` exists only when writes are enabled, and it is the

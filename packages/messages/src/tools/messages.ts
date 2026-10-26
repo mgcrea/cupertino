@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMessagesClient } from "../client/messages.js";
@@ -50,13 +50,13 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
         "Every message carries `from.name` where Contacts resolves it and `from.handle` always. " +
         "`from.resolution` is worth reading: `unknown` is COMMON AND NOT AN ERROR — measured on a " +
         "real store, about one in six of even the busiest correspondents has no contact card.",
-      inputSchema: {
+      inputSchema: z.object({
         chatRef: chatRefArg,
         from: fromArg,
         to: toArg,
         includeReactions: includeReactionsArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ chatRef, from, to, includeReactions, limit }) =>
@@ -84,10 +84,10 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
         "This searches ALL messages, including the roughly 3% whose text lives only in an " +
         "archived blob rather than in a plain column — those are invisible to any SQL query and " +
         "are decoded here. `textSource` on each result says which produced it.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for."),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ query, limit }) => wrap(async () => client.searchMessages(query, limit)),
@@ -100,7 +100,7 @@ export const registerMessageTools = (server: McpServer, client: AppleMessagesCli
         "One message in full, with its tapbacks and attachments. Reactions are reported here " +
         "rather than mixed into the conversation, which is the whole reason list_messages " +
         "filters them out.",
-      inputSchema: { ref: messageRefArg },
+      inputSchema: z.object({ ref: messageRefArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) =>

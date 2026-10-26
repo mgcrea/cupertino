@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
@@ -22,7 +22,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
         "single round-trip. The response reports the state Mail re-read after the change, not what " +
         "was requested — Mail's search index updates on its own schedule, so a follow-up search may " +
         "briefly still show the old value.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: messageRefsArg,
         read: z.boolean().optional().describe("Mark read (true) or unread (false)."),
         flagged: z.boolean().optional().describe("Set or clear the flag."),
@@ -34,7 +34,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
           .optional()
           .describe("Flag colour: 0-6, or -1 to clear. Only meaningful when flagged is true."),
         junk: z.boolean().optional().describe("Mark as junk (true) or not junk (false)."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ refs, read, flagged, flagIndex, junk }) =>
@@ -70,7 +70,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
         "and does nothing — the result says `created: false`. The name comes back as Mail " +
         "re-read it, which is not always the one you asked for: an IMAP server can rename or " +
         "reject it.",
-      inputSchema: {
+      inputSchema: z.object({
         name: z
           .string()
           .min(1)
@@ -86,7 +86,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
               "On My Mac, which stays on this machine.",
           ),
         confirm: confirmArg,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ name, account }) => wrap(async () => client.createMailbox(name, account)),
@@ -99,7 +99,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
         "Move messages to another mailbox, optionally in another account. The refs you passed in " +
         "are DEAD afterwards: a moved message gets a new row id, so the response returns fresh refs " +
         "and reports any message it could not re-locate. Requires confirm: true.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: messageRefsArg,
         destinationMailbox: z
           .string()
@@ -110,7 +110,7 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
           .optional()
           .describe("Target account name or UUID. Defaults to each message's own account."),
         confirm: confirmArg,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ refs, destinationMailbox, destinationAccount }) =>
@@ -130,10 +130,10 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
         "which this server does not control — for an account with that setting off, deletion is " +
         "immediate and NOT recoverable from here. The response reports which behaviour applied. " +
         "Requires confirm: true.",
-      inputSchema: {
+      inputSchema: z.object({
         refs: messageRefsArg,
         confirm: confirmArg,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async ({ refs }) => wrap(async () => client.deleteMessages(refs)),
@@ -146,12 +146,12 @@ export const registerActionTools = (server: McpServer, client: AppleMailClient):
         "Ask Mail to sync now, for one account or all of them. Unlike the read tools this will " +
         "launch Mail if it is not running, and it causes real network activity against the mail " +
         "servers, which is why it is a write-gated tool.",
-      inputSchema: {
+      inputSchema: z.object({
         account: z
           .string()
           .optional()
           .describe("Account name or UUID. Omit to check every account."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ account }) => wrap(async () => client.checkForNewMail(account)),

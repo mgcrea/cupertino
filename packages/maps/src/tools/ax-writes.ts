@@ -1,5 +1,5 @@
 import { interferenceNote } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { MapsAxLane } from "../client/ax.js";
@@ -62,7 +62,7 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
         "Maps performs the write itself, so it cannot produce a malformed record. SIDE EFFECTS: " +
         "opens Maps, brings its window forward, and leaves the place in the user's Recents. " +
         "Syncs to the user's other Apple devices. Needs Accessibility for Cupertino.",
-      inputSchema: place,
+      inputSchema: z.object(place),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (args) =>
@@ -114,7 +114,7 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
       // `confirm`, as `apple_maps_remove_favorite` has: the one other tool on
       // this surface that deletes, and with the same reach — every device on
       // the account. This one arrived after the audit that added it there.
-      inputSchema: { ...place, confirm: confirmArg },
+      inputSchema: z.object({ ...place, confirm: confirmArg }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
     async (args) =>
@@ -165,10 +165,10 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
         "apple_maps_list_collections returns. SIDE EFFECTS: opens Maps, brings its window " +
         "forward, and leaves the place in the user's Recents. Syncs to the user's other Apple " +
         "devices. Needs Accessibility for Cupertino.",
-      inputSchema: {
+      inputSchema: z.object({
         ...place,
         guide: z.string().min(1).describe("Name of the guide to file it into, as Maps shows it."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (args) =>

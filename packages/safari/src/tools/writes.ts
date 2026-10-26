@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
@@ -45,7 +45,7 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
         "means Safari chose, so the page may be in a different window than expected. To read " +
         "what the page then says, use apple_safari_read_page — which needs the Safari extension " +
         "enabled on that site and is a separate lane from this one.",
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .min(1)
@@ -67,7 +67,7 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
               "does not steal focus from what the user is doing. Safari may come forward anyway " +
               "when it had no window to put the tab in.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, target, activate }) =>
@@ -119,7 +119,7 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
         "not be confirmed — usually because Safari has not written that file yet, which is " +
         "normal immediately after an add and is NOT a reason to retry. Use " +
         "apple_safari_list_reading_list to see what is already saved before adding.",
-      inputSchema: {
+      inputSchema: z.object({
         url: z.string().min(1).describe("The http:// or https:// URL to save."),
         title: z
           .string()
@@ -139,7 +139,7 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
               "Safari extracts its own from the fetched page; assume this is overridden on the " +
               "same terms as `title`.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, title, previewText }) =>

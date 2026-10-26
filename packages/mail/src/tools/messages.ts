@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
@@ -26,7 +26,7 @@ export const registerMessageTools = (
         "rather than silently cut. Reads the message file directly when Full Disk Access allows, " +
         "and otherwise asks Mail, which is slower but works — so this tool does not need the " +
         "search index.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         maxBodyBytes: z
           .number()
@@ -35,7 +35,7 @@ export const registerMessageTools = (
           .max(2_000_000)
           .optional()
           .describe("Override the body truncation limit for this call."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref, maxBodyBytes }) =>
@@ -119,7 +119,7 @@ export const registerMessageTools = (
         "place. " +
         "Read-only: nothing is focused, typed or brought to the front. `degraded: true` means " +
         "the windows could not be read, which is NOT the same as no draft being open.",
-      inputSchema: {
+      inputSchema: z.object({
         quoteChars: z
           .number()
           .int()
@@ -129,7 +129,7 @@ export const registerMessageTools = (
           .describe(
             "How much of the quoted original to return per draft. Default 2000; 0 for none.",
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ quoteChars }) => wrap(async () => client.listOpenDrafts({ quoteChars })),
@@ -143,7 +143,7 @@ export const registerMessageTools = (
         "for header forensics (Received chains, SPF/DKIM/DMARC results, List-Unsubscribe), not for " +
         "reading mail: apple_mail_get_message gives you the readable version without the noise. " +
         "Capped and pageable via offset.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         offset: z
           .number()
@@ -158,7 +158,7 @@ export const registerMessageTools = (
           .max(1_000_000)
           .optional()
           .describe("How many bytes to return. Default 32768."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref, offset, maxBytes }) =>
@@ -174,7 +174,7 @@ export const registerMessageTools = (
         "List a message's attachments: filename, MIME type, size and whether the bytes are present " +
         "locally. Metadata only — it never returns file contents. A size of 0 with a filename means " +
         "Mail stored the attachment outside the message file, which is normal.",
-      inputSchema: { ref: messageRefArg },
+      inputSchema: z.object({ ref: messageRefArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) =>
@@ -205,11 +205,11 @@ export const registerMessageTools = (
         "Save one attachment to disk. It can only write into APPLE_MAIL_ATTACHMENT_DIR (default " +
         "~/Downloads) and will not overwrite an existing file unless you ask it to. Write-gated " +
         "because it puts a file on the user's disk, even though it changes nothing in Mail.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         filename: z.string().min(1).describe("Exact filename from apple_mail_list_attachments."),
         overwrite: z.boolean().optional().describe("Replace an existing file. Default false."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ ref, filename, overwrite }) =>

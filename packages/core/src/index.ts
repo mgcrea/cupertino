@@ -9,7 +9,7 @@ export {
   type InterferenceWatch,
 } from "./ax.js";
 export { readPackageIdentity, type BuildInfo, type PackageIdentity } from "./build-info.js";
-export { runStdioServer, type StdioServerOptions } from "./cli.js";
+export { runStdioServer, type Era, type StdioServerOptions } from "./cli.js";
 export {
   buildBaseDiagnostics,
   type BaseDiagnostics,
@@ -116,3 +116,21 @@ export {
   wrapResult,
   type ToolResult,
 } from "./tools.js";
+export { createWatches, type WatchesOptions } from "./watch-resources.js";
+export {
+  fileIdentity,
+  fileTrigger,
+  matchesSender,
+  normalizeFilter,
+  sameFile,
+  watchUri,
+  WatchRegistry,
+  type ArrivalRow,
+  type ArrivalSource,
+  type FileIdentity,
+  type TriggerOptions,
+  type Watch,
+  type WatchFilter,
+  type WatchRead,
+  type WatchRegistryOptions,
+} from "./watches.js";

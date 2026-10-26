@@ -1,6 +1,7 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { legacySchema } from "./listing.js";
 import { fail, okText, type ToolResult } from "./tools.js";
 
 /**
@@ -69,11 +70,18 @@ import { fail, okText, type ToolResult } from "./tools.js";
 
 type ToolConfig = {
   description?: string;
-  inputSchema?: Record<string, z.ZodType>;
+  inputSchema?: z.ZodType | Record<string, z.ZodType>;
   annotations?: Record<string, unknown>;
 };
 
 type ToolHandler = (...args: never[]) => unknown;
+
+/**
+ * The recorded `inputSchema` as a schema object. The SDK takes a `ZodObject`
+ * and, for now, a raw shape too; a surface may hand over either.
+ */
+const asSchema = (input: ToolConfig["inputSchema"]): z.ZodType | undefined =>
+  input === undefined ? undefined : input instanceof z.ZodType ? input : z.object(input);
 
 type Declaration = { name: string; config: ToolConfig; handler: ToolHandler };
 
@@ -327,12 +335,14 @@ const renderSearch = (result: SearchResult, total: number, names: FacadeNames): 
  *
  * Built from the recorded zod shape rather than re-derived by hand, so
  * `describe` and a non-lazy listing cannot drift. `$schema` is dropped for the
- * same reason `listing.ts` drops it from `tools/list`.
+ * same reason `listing.ts` drops it from `tools/list`, and writes a nullable
+ * field the way that listing does.
  */
 const describe = (decl: Declaration): Record<string, unknown> => {
-  const shape = decl.config.inputSchema;
-  const schema = shape ? (z.toJSONSchema(z.object(shape)) as Record<string, unknown>) : undefined;
-  if (schema) delete schema["$schema"];
+  const input = asSchema(decl.config.inputSchema);
+  const schema = input
+    ? (legacySchema(z.toJSONSchema(input)) as Record<string, unknown>)
+    : undefined;
   return {
     name: decl.name,
     ...(decl.config.description === undefined ? {} : { description: decl.config.description }),
@@ -350,17 +360,17 @@ const describe = (decl: Declaration): Record<string, unknown> => {
  * arguments. Skipping this would hand every handler unvalidated input — the one
  * way a facade can be actively less safe than the listing it replaced.
  */
-const invoke = async (decl: Declaration, args: unknown, extra: unknown): Promise<unknown> => {
-  const shape = decl.config.inputSchema;
-  if (!shape) return (decl.handler as unknown as (e: unknown) => unknown)(extra);
-  const parsed = await z.object(shape).safeParseAsync(args ?? {});
+const invoke = async (decl: Declaration, args: unknown, ctx: unknown): Promise<unknown> => {
+  const schema = asSchema(decl.config.inputSchema);
+  if (!schema) return (decl.handler as unknown as (e: unknown) => unknown)(ctx);
+  const parsed = await schema.safeParseAsync(args ?? {});
   if (!parsed.success) {
     const why = parsed.error.issues
       .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
       .join("; ");
     return fail(`Invalid arguments for ${decl.name}: ${why}`);
   }
-  return (decl.handler as unknown as (a: unknown, e: unknown) => unknown)(parsed.data, extra);
+  return (decl.handler as unknown as (a: unknown, e: unknown) => unknown)(parsed.data, ctx);
 };
 
 // ─── the entry point ─────────────────────────────────────────────────────────
@@ -450,12 +460,12 @@ export const withLazyTools = (
           `${callName}` +
           (writes.length > 0 ? ` or ${callWriteName}` : "") +
           `.`,
-        inputSchema: {
+        inputSchema: z.object({
           query: z
             .string()
             .optional()
             .describe("What you want to do, e.g. 'search messages' or 'unread'. Omit to list all."),
-        },
+        }),
         annotations: { readOnlyHint: true, idempotentHint: true },
       },
       ({ query }) =>
@@ -474,9 +484,9 @@ export const withLazyTools = (
         description:
           `Get the full description and input schema of one ${opts.displayName} tool, as it would ` +
           `have appeared in a normal tool listing. Find names with ${searchName} first.`,
-        inputSchema: {
+        inputSchema: z.object({
           name: z.string().describe(`Exact tool name, e.g. ${lazy[0]?.name ?? callName}.`),
-        },
+        }),
         annotations: { readOnlyHint: true, idempotentHint: true },
       },
       ({ name }) => {
@@ -504,16 +514,16 @@ export const withLazyTools = (
           (writes.length > 0
             ? `anything that changes ${opts.displayName} — those go through ${callWriteName}.`
             : `anything that changes ${opts.displayName}, and this server has writes turned off.`),
-        inputSchema: {
+        inputSchema: z.object({
           name: z.string().describe("Exact tool name to run."),
           arguments: z
             .record(z.string(), z.unknown())
             .optional()
             .describe("That tool's arguments."),
-        },
+        }),
         annotations: { readOnlyHint: true },
       },
-      async ({ name, arguments: args }, extra) => {
+      async ({ name, arguments: args }, ctx) => {
         const decl = byName.get(name);
         if (!decl) {
           const suggestions = nearest([...byName.keys()], name, prefix);
@@ -527,7 +537,7 @@ export const withLazyTools = (
             `${name} changes ${opts.displayName}, so it cannot be run through ${callName}. Use ${callWriteName}.`,
           );
         }
-        return (await invoke(decl, args, extra)) as ToolResult;
+        return (await invoke(decl, args, ctx)) as ToolResult;
       },
     );
 
@@ -548,16 +558,16 @@ export const withLazyTools = (
             `Run one of this server's ${writes.length} ${opts.displayName} tools that CHANGE data ` +
             `— ${writeList}. Find arguments ` +
             `with ${describeName}. Read-only tools go through ${callName} instead.`,
-          inputSchema: {
+          inputSchema: z.object({
             name: z.string().describe("Exact tool name to run."),
             arguments: z
               .record(z.string(), z.unknown())
               .optional()
               .describe("That tool's arguments."),
-          },
+          }),
           annotations: { readOnlyHint: false, destructiveHint: true },
         },
-        async ({ name, arguments: args }, extra) => {
+        async ({ name, arguments: args }, ctx) => {
           const decl = byName.get(name);
           if (!decl) {
             const suggestions = nearest([...writeNames], name, prefix);
@@ -569,7 +579,7 @@ export const withLazyTools = (
           if (!writeNames.has(name)) {
             return fail(`${name} is read-only. Use ${callName}.`);
           }
-          return (await invoke(decl, args, extra)) as ToolResult;
+          return (await invoke(decl, args, ctx)) as ToolResult;
         },
       );
     }

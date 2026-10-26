@@ -651,19 +651,38 @@ export class AppleMessagesClient {
    * answered zero while `send_message` to that same string worked. One
    * surface, two ideas of what a handle is.
    */
-  #handlesLike(handle: string): string[] {
+  #handlesLike(handle: string, pool?: readonly string[]): string[] {
     const store = this.store();
     if (!store) return [];
     const wanted = handle.trim();
     const kind = handleKind(wanted);
     const wantedSuffix = kind === "phone" ? suffixKey(wanted) : null;
     const wantedEmail = kind === "email" ? emailKey(wanted) : null;
-    return store.handles().filter((h) => {
+    return (pool ?? store.handles()).filter((h) => {
       if (h === wanted) return true;
       if (wantedEmail) return emailKey(h) === wantedEmail;
       if (wantedSuffix) return suffixKey(h) === wantedSuffix;
       return false;
     });
+  }
+
+  /**
+   * The stored spellings that name the same correspondent as `typed`. Candidates,
+   * not answers: a locally-spelled number reaches `+33…` here, so a caller that
+   * needs an exact spelling still has to compare. `[]` when the store is closed.
+   * `pool` is the store's handles when the caller already read them.
+   */
+  storeHandlesFor(typed: string, pool?: readonly string[]): string[] {
+    return this.#handlesLike(typed, pool);
+  }
+
+  /**
+   * The open store and the file it came from, for a watch. Throws the same
+   * reason every other read throws when the store is off or unreadable.
+   */
+  watchStore(): { store: MessagesStore; path: string } {
+    const store = this.#require();
+    return { store, path: this.located().storePath };
   }
 
   /**

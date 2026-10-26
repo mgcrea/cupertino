@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 /**
  * The surface resources.
@@ -80,7 +80,7 @@ const jsonContents = (uri: string, data: unknown) => ({
  * So a failed read is *data*, shaped like the `degraded` results the tools
  * already return, and the caller can tell an unreadable store from an empty one.
  */
-const guardedRead = async (surface: string, uri: string, read: ResourceReader) => {
+export const guardedRead = async (surface: string, uri: string, read: ResourceReader) => {
   try {
     return jsonContents(uri, await read());
   } catch (err) {

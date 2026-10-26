@@ -1,6 +1,5 @@
 import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig, type Config } from "../src/config.js";
@@ -542,8 +541,12 @@ describe("writes", () => {
   const enabled = () => connect({ APPLE_REMINDERS_ALLOW_WRITES: "1" });
 
   it("refuses a write tool when writes are disabled", async () => {
-    const res = await call(await connect(), "apple_reminders_create_reminder", { name: "x" });
-    expect(res.isError).toBe(true);
+    // The tool is not registered, so the call never reaches a handler. v1 wrapped
+    // that in an isError result; v2 answers with a protocol error, -32602, and the
+    // client rejects. The pin is the code, not the sentence.
+    await expect(
+      call(await connect(), "apple_reminders_create_reminder", { name: "x" }),
+    ).rejects.toMatchObject({ code: -32602 });
   });
 
   it("creates a reminder and returns what Reminders stored", async () => {

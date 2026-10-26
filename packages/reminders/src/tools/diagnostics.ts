@@ -1,5 +1,6 @@
 import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
 import type { AppleRemindersClient } from "../client/reminders.js";
@@ -133,7 +134,7 @@ export const registerDiagnosticsTools = (
         "missing one is blocking. Start here when a tool fails, or answers from the Apple " +
         "Events lane when you expected the index — it names the exact System Settings pane to " +
         "open.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => buildDiagnostics(client, ctx)).then((r) => r ?? ok({})),

@@ -12,13 +12,14 @@ runStdioServer({
   build: BUILD_INFO,
   surface: MAIL_SURFACE,
   logPrefix: LOG_PREFIX,
-  start: async (logger) => {
+  start: async (logger, ctx) => {
     const config = loadConfig();
-    const { server } = createServer({ config, logger });
+    const { server } = createServer({ config, logger, era: ctx.era });
     return {
       server,
       banner:
         `writes=${config.allowWrites ? "ENABLED" : "disabled"}, ` +
+        `watches=${config.allowWatches ? "ENABLED" : "disabled"}, ` +
         `accounts=${config.accounts.length ? config.accounts.join("/") : "all"}, ` +
         `index=${config.indexMode}`,
     };

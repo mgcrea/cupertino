@@ -1,4 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import type { AppleMapsClient } from "../client/maps.js";
 import { decodeCollectionRef, decodePlaceRef } from "../client/ref.js";
@@ -34,7 +35,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "place (`linked: false`); those are the unconfigured Home/Work/School slots, not " +
         "broken rows. This is everything SAVED: Maps' own Pinned panel applies display rules " +
         "that are not in the store and can show fewer.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ limit }) =>
@@ -89,7 +90,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
       description:
         "List the collections (Guides) in Maps. Each carries Maps' own count of the places in " +
         "it. Use apple_maps_list_collection_places to enumerate one. Needs Full Disk Access.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ limit }) =>
@@ -128,7 +129,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "List the places filed in one collection, by its ref. Needs Full Disk Access. Returns " +
         "nothing when this store does not expose collection membership — check " +
         "apple_maps_diagnostics, which reports whether the key was resolved.",
-      inputSchema: { ref: collectionRefArg, limit: limitArg },
+      inputSchema: z.object({ ref: collectionRefArg, limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ ref, limit }) =>
@@ -176,7 +177,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "another Guide, not in recents. Those are reachable through no other tool. Needs Full " +
         "Disk Access. Returns nothing when collection membership could not be resolved, which " +
         "apple_maps_diagnostics reports.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ limit }) =>
@@ -211,7 +212,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "List the places recently looked at in Maps, newest first. This is Maps' Recents list, " +
         "not a search history: it holds places, directions and searches the user actually " +
         "opened. Needs Full Disk Access.",
-      inputSchema: { limit: limitArg },
+      inputSchema: z.object({ limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ limit }) =>
@@ -251,7 +252,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
         "the label the user gave it, or by address. Returns each match with the kind of entry " +
         "it came from. Needs Full Disk Access. This searches what is SAVED on this Mac; it " +
         "does not search Apple's map of the world.",
-      inputSchema: { query: queryArg, limit: limitArg },
+      inputSchema: z.object({ query: queryArg, limit: limitArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ query, limit }) =>
@@ -274,7 +275,7 @@ export const registerPlaceTools = (server: McpServer, client: AppleMapsClient): 
       description:
         "Get one saved place by its ref, with coordinates, address and dates. Needs Full Disk " +
         "Access.",
-      inputSchema: { ref: placeRefArg },
+      inputSchema: z.object({ ref: placeRefArg }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ ref }) =>

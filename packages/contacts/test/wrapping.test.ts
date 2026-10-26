@@ -5,8 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { createOsascriptRunner, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { CONTACTS_SURFACE } from "../src/client/errors.js";

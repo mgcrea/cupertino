@@ -157,6 +157,20 @@ export const SURFACES: readonly Surface[] = [
       "apple_mail_check_for_new_mail",
       "apple_mail_save_attachment",
     ],
+    // Reads, gated on their own flag rather than the write gate: a watch runs a
+    // file watcher unasked and decides whose mail may reach a session. Off by default.
+    gated: [
+      {
+        name: "apple_mail_watch",
+        env: "APPLE_MAIL_ALLOW_WATCHES",
+        why: "Watches for new mail from chosen senders or domains. Off unless you turn it on.",
+      },
+      {
+        name: "apple_mail_unwatch",
+        env: "APPLE_MAIL_ALLOW_WATCHES",
+        why: "Stops a watch. Off unless you turn it on.",
+      },
+    ],
     pitch:
       "The deep one. Search, read, threads, attachments and message source across accounts and mailboxes; ten mutating tools behind the write gate.",
     withoutGrant: "Accounts, mailboxes and writes only — search falls back to the 74-second path.",
@@ -287,6 +301,18 @@ export const SURFACES: readonly Surface[] = [
         name: "apple_messages_find_codes",
         env: "APPLE_MESSAGES_ALLOW_CODES",
         why: "Extracts one-time 2FA codes from recent messages. Off unless you turn it on.",
+      },
+      // Reads, gated on their own flag rather than the write gate: a watch runs a
+      // file watcher unasked and decides whose messages may reach a session. Off by default.
+      {
+        name: "apple_messages_watch",
+        env: "APPLE_MESSAGES_ALLOW_WATCHES",
+        why: "Watches for new messages from chosen handles or email domains. Off unless you turn it on.",
+      },
+      {
+        name: "apple_messages_unwatch",
+        env: "APPLE_MESSAGES_ALLOW_WATCHES",
+        why: "Stops a watch. Off unless you turn it on.",
       },
     ],
     pitch:

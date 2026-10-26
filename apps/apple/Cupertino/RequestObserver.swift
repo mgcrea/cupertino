@@ -33,13 +33,15 @@ import os
 /// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
 /// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
 /// `answered`, or both by the one in-process serving thread — so neither is ever reached
-/// from two threads at once.
+/// from two threads at once. `pushes` is the same kind of state as `responses`: touched
+/// only by whichever thread calls `answered` (the pump, or the in-process serving thread).
 nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
   private let session: UUID
 
   private var requests = FrameSplitter()
   private var responses = FrameSplitter()
+  private var pushes = PushScanner()
 
   /// JSON-RPC id → the log row that call was recorded in.
   ///
@@ -112,13 +114,37 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// without it left a partial frame behind, the first chunk fed once a notice
   /// was held was glued onto it, and the reply that should have let the notice
   /// go never parsed — so it ran to its thirty-second cap.
+  ///
+  /// **A pushed update is the exception, and it is looked for first.** Which
+  /// resources a server pushed into this session is as much a record of what
+  /// Cupertino did as which tools were called, in every capture mode. The cost
+  /// is one byte search per chunk (`CallCapture.pushMarker`), done before any
+  /// splitting or parsing so a chunk without one still takes `skip` exactly as
+  /// before. `PushScanner` decides, and carries what a read boundary would
+  /// otherwise lose: a marker cut in two, and a push frame still open.
   func answered(_ chunk: Data) {
     let holding = !visible.withLock { $0.flight.isEmpty }
-    guard mode >= .argumentsAndResults || holding else {
+    let parsing = mode >= .argumentsAndResults || holding
+    guard pushes.needsSplit(chunk, parsing: parsing) else {
       responses.skip(chunk)
       return
     }
-    for line in responses.lines(chunk) { reply(line) }
+    for line in responses.lines(chunk) {
+      push(line)
+      if parsing { reply(line) }
+    }
+  }
+
+  /// Record one pushed update as a call of its own, with no arguments.
+  ///
+  /// The cheap byte test first, because a chunk being split may hold many
+  /// frames and only the matching ones are worth a parse.
+  private func push(_ line: Data) {
+    guard line.range(of: CallCapture.pushMarker) != nil,
+      let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+      let uri = CallCapture.pushedUri(object)
+    else { return }
+    hostCall(surface.id, "pushed \(uri)", arguments: nil)
   }
 
   private func reply(_ line: Data) {
@@ -150,6 +176,19 @@ nonisolated final class RequestObserver: @unchecked Sendable {
     else { return }
 
     let params = object["params"] as? [String: Any]
+
+    // A subscription is opened here and, for `subscriptions/listen`, answered only
+    // when it ends, so remembering it as a call would show a row that never
+    // returns for as long as the session watches anything. It is logged once and
+    // kept out of `waiting`. The response that ends a listen is not logged as an
+    // unsubscribe: correlating it would need a table of open listens beside
+    // `waiting`, for a line that says nothing the missing pushes do not.
+    if CallCapture.isSubscription(method) {
+      let uris = CallCapture.subscribedUris(params)
+      hostLog(
+        surface.id, .info, uris.isEmpty ? method : "subscribed \(uris.joined(separator: ", "))")
+      return
+    }
 
     // The three ways a client asks a server to DO something, each identified by
     // the one param that names what was asked for.

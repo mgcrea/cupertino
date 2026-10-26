@@ -5,13 +5,12 @@ import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
  *
  * ## Why a GUID rather than a rowid
  *
- * Both exist, and the rowid is faster to look up. The GUID wins anyway because
- * **rowids are reused.** SQLite hands a deleted row's id to the next insert
- * unless the table is `AUTOINCREMENT`, and Messages deletes constantly — every
- * "delete this conversation" frees a block of them. A ref handed to a model in
- * one turn and used two turns later would then resolve to a DIFFERENT message,
- * with no error anywhere. That is the failure this project keeps designing
- * against: plausible, wrong, and silent.
+ * Both exist, and the rowid is faster to look up. The GUID wins anyway, and not
+ * because rowids are reused: `message` is `AUTOINCREMENT`, so a deleted row's id
+ * is never handed to a later insert (the watch cursor relies on exactly that,
+ * and `watch.test.ts` pins it). A rowid is a position in this one database file.
+ * It means nothing on another device or after a sync rebuilds the store, whereas
+ * the GUID is the message's own identity and travels with it.
  *
  * The GUID is also what Apple itself joins on — `associated_message_guid` for
  * reactions, `thread_originator_guid` for replies — so it is the identifier the

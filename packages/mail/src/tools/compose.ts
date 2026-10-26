@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMailClient } from "../client/mail.js";
@@ -68,7 +68,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "Compose a new message. By DEFAULT this does not send: it opens a draft in Mail for the " +
         "user to review, which is almost always what you want. Only pass sendNow: true (with " +
         "confirm: true) when the user has explicitly asked for the mail to go out now.",
-      inputSchema: {
+      inputSchema: z.object({
         account: z
           .string()
           .optional()
@@ -81,7 +81,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         attachments: attachmentsArg,
         sendNow: sendNowArg,
         confirm: z.literal(true).optional().describe("Required when sendNow is true."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async ({ account, to, cc, bcc, subject, body, attachments, sendNow, confirm }) =>
@@ -116,7 +116,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "was taken by someone using the Mac, in which case the reply may already have been SENT " +
         "and a retry would send it twice. Filling the composer brings Mail to the front for a " +
         "moment and borrows the clipboard, both of which are put back.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         body: bodyArg,
         replyToAll: z
@@ -126,7 +126,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         attachments: attachmentsArg,
         sendNow: sendNowArg,
         confirm: z.literal(true).optional().describe("Required when sendNow is true."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async ({ ref, body, replyToAll, attachments, sendNow, confirm }) =>
@@ -151,14 +151,14 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "When a note is given, success means it was read back out of the composer window and " +
         "matched. Filling the composer brings Mail to the front for a moment and borrows the " +
         "clipboard, both of which are put back.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         to: z.array(z.string().email()).min(1).describe("Who to forward to."),
         body: z.string().optional().describe("Optional note to add above the forwarded message."),
         attachments: attachmentsArg,
         sendNow: sendNowArg,
         confirm: z.literal(true).optional().describe("Required when sendNow is true."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async ({ ref, to, body, attachments, sendNow, confirm }) =>
@@ -207,7 +207,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "two — never assume a clean swap without reading `replaced`. " +
         "Editing in place brings Mail to the front for a moment and borrows the clipboard, " +
         "both of which are put back.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: messageRefArg,
         body: z
           .string()
@@ -232,7 +232,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
               "is deleted.",
           ),
         confirm: confirmArg,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     },
     async ({ ref, body, subject, attachments }) =>

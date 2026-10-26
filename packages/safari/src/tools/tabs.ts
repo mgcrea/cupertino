@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
@@ -37,7 +37,7 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
         "path rather than this exact page. Even an exact match can be about a different site " +
         "when the URL is reused — a localhost address is the common case — so if the tab's own " +
         "title disagrees with the matched title, trust the tab.",
-      inputSchema: {
+      inputSchema: z.object({
         enrich: z
           .boolean()
           .optional()
@@ -55,7 +55,7 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
             'Narrow the list. "frontmost" returns just the one tab the user is looking at; ' +
               '"active" returns the selected tab of every window. Omit for every tab.',
           ),
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: false },
     },
     async ({ enrich, only }) =>

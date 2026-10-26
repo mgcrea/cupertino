@@ -1,5 +1,5 @@
 import { type Logger, registerSurfaceResources, withLazyTools } from "@mgcrea/mcp-apple-core";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 import { BUILD_INFO } from "./build-info.js";
 import { AppleMapsClient } from "./client/maps.js";

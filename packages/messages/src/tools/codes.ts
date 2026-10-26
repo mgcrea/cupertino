@@ -1,5 +1,5 @@
 import { extractCode } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleMessagesClient } from "../client/messages.js";
@@ -53,7 +53,7 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
         "Returning nothing is the normal result when no code has arrived. It does NOT mean the " +
         "code was missed, and it is not a reason to re-run with a longer window: if a code was " +
         "sent it is in the store within seconds. Prefer asking the user to trigger a new one.",
-      inputSchema: {
+      inputSchema: z.object({
         service: z
           .string()
           .optional()
@@ -73,7 +73,7 @@ export const registerCodeTools = (server: McpServer, client: AppleMessagesClient
               "usually expired, and a wide window just returns history.",
           ),
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: false },
     },
     async ({ service, withinMinutes, limit }) =>

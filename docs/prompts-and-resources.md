@@ -65,6 +65,97 @@ reach is decided by two switches the guide already states — so it serves a gui
 `diagnostics` URI. The tool of that name still answers; the resource is the thing that would have
 had nothing to add.
 
+## Watches
+
+Mail and Messages can register one more kind of resource, and it is the named exception to "a
+resource that is never the same twice is a tool call wearing a URI". It exists only behind
+`APPLE_MAIL_ALLOW_WATCHES` / `APPLE_MESSAGES_ALLOW_WATCHES` (off by default; the gate registers the
+two tools and the template together, and declares `resources.subscribe`).
+
+**Why a URI at all.** The only way a server speaks unprompted in the 2026-07-28 protocol is
+`notifications/resources/updated`, and that carries a URI and nothing else. `subscriptions/listen`
+names URIs, never tools. So the thing a host subscribes to has to be a resource, and a tool call
+(`apple_mail_watch`, `apple_messages_watch`) is what mints it: it takes the sender filter, returns a
+handle such as `cupertino://mail/watch/w_7f3a`, and the server keeps the filter in-process. The
+filter cannot ride in the URI. SDK v2's `serveStdio` matches subscriptions by exact URI and never
+tells the server what anyone subscribed to, so a URI that encoded the filter would leave the server
+not knowing which filters to evaluate.
+
+**Why it is not listed.** `resources/list` must not vary per connection or as a side effect of
+other requests, and a watch is created by a tool call. The template
+`cupertino://<surface>/watch/{id}{?after}` is registered without a list callback, so a handle is
+readable and subscribable by whoever holds the URI and never enumerable.
+
+**What a read returns.** `watch` (the id), `filter`, `cursor`, `messages` and `more`. The messages
+are what arrived since the watch began, or since `after`, oldest first, at most 50, and carry the
+surface's fields only: Mail's `ref`, `mailbox`, `senderAddress`, `senderName`, `subject` and
+`dateReceived`; Messages' `id`, `chat`, `handle` and `date`. No bodies and no message text, which stay
+a `get_message` call away, and none of the scan's own bookkeeping. The `cursor` is the last row
+_scanned_, so reading again with `after=cursor` resumes exactly, and `more` says to. An `after` below
+where the watch began is raised to it, so a read never pages through mail that predates the watch.
+The cursor is the client's to keep; the server holds no per-client read state. An unknown handle is
+`-32602` not-found, which is what a reconnect looks like: handles live as long as the stdio
+connection that made them. A query other than one `after` (`?foo=1`, `?after=5&x=1`) is `-32602`
+too, but as a bad query, so a client is never told to re-create a watch that exists. A read fails
+like any other surface resource (`guardedRead`) when the store itself is unreadable.
+
+**Limits.** Ten watches per connection; the eleventh is refused with the count. At most 50 entries
+across `from` and `domains` in one filter, and at most 20 `mailboxes` per Mail watch. A read returns
+at most 50 matches and scans at most 1,000 rows; `more` says when either stopped it.
+
+**What fires it.** One watcher per process, started by the first watch and stopped by the last
+unwatch. The trigger watches each store file (`Envelope Index` and its `-wal`; `chat.db` and its
+`-wal`) _and_ the directory: a directory watch alone does not fire when SQLite appends to an
+existing `-wal` (measured on macOS), and a file watch goes quiet when SQLite replaces the file, so
+the directory watch and the poll re-arm the file watchers. It is debounced 500 ms, but fires at most
+3 s after the first event of a burst, so a long sync does not leave its arrivals to the 60 s poll
+that runs beneath it for dropped events. One tick scans at most ten batches of 1,000 rows and leaves
+the rest of a backlog to the next trigger, so a large sync never holds the process. The cursor is
+the message table's ROWID, which both stores declare `AUTOINCREMENT`, so a row can never land below a
+cursor that has passed it. The one way the mark goes backwards is a store rebuilt from scratch, and
+then it resets to the new head and notifies nothing. A rebuild usually writes a new file and renames
+it over the old one, and a connection keeps reading the inode it opened, so each watch holds its own
+handle on the store, compares the file's inode on every trigger, and reopens before the tick when it
+changed; that tick is the one that sees the lower head. The store opens read-only and never
+`immutable`, which cannot see the WAL where the newest row is; if only `immutable` opens, the watch
+tool refuses and says why.
+
+**What a trigger costs.** An idle trigger is one `MAX(ROWID)` on the store. Mail's lookup of
+mailboxes and own addresses comes from an Apple Event, and it is refreshed only when rows are waiting
+to be judged and the lookup is past its TTL (`APPLE_MAIL_MAILBOX_CACHE_TTL_MS`) or has never loaded,
+or when a row sits in a mailbox created since the last refresh. A refresh or a tick that fails is
+logged once until one succeeds.
+
+**What a watch may follow.** A sender filter is required: `from`, `domains`, or both. There is no
+watch on everything, and the filter is the trust boundary, a line in a tool call the user can see
+saying whose messages may arrive unasked. Scope is per watch and core knows it only as opaque keys.
+Mail's `mailboxes` resolve to Envelope Index rowids, and each row carries its own mailbox and its
+Gmail labels as keys; a watch with none takes every mailbox but Sent, Drafts, Junk and Trash, and
+mail from the account's own addresses never matches. Naming mailboxes needs Mail running, since
+Mail is what resolves them; a watch without them works with Mail closed, though nothing arrives
+until Mail fetches. Messages needs no running app, skips your own messages, tapbacks and group
+events (a rename, someone joining or leaving), and wants phone numbers in international form (`+33612345678`): an entry the store does not hold is reported
+as `unresolved`, with `suggestions` when it holds near misses.
+
+**Both eras.** On a 2026-era connection the router does the matching and the server sends
+`notifications/resources/updated` per fired watch. On a 2025-era connection the router passes
+notifications through unsolicited, so the server keeps the subscribed URIs itself, and only in that
+era. MCP SDK v2 has no built-in `resources/subscribe` handler: `McpServer` answers `-32601` until
+one is registered, even with `subscribe: true` declared, so the watch module registers both methods
+by name.
+
+**The model does not subscribe.** `subscriptions/listen` is a message the host sends, not a tool.
+A host that never subscribes still has a working watch, since a read is "what came in since I last
+asked", but nothing is pushed. Whether a given host acts on the push is the host's business; see
+[alternatives.md](alternatives.md).
+
+In the app, a `subscriptions/listen` is logged as a subscription rather than a call that never
+returns, and the Activity log shows it as `subscribed …`. Each pushed
+`notifications/resources/updated` is a row (`pushed …`) in both the Activity log and the audit file,
+so "what did Cupertino push into this session" has the
+same answer as "what did it call". The design is in
+[the incoming-watches spec](superpowers/specs/2026-10-25-incoming-watches-design.md).
+
 ## Prompts: the ordering constraints
 
 The tools hold the constraints that are about **one call** — that a body search wants a narrowing
@@ -130,19 +221,17 @@ header of [`main.swift`](../apps/apple/CupertinoBridge/main.swift). Prompts and 
 reach hosts through Cupertino.app exactly as they do over plain stdio, with no Swift change and
 nothing to add to `surfaces.json`.
 
-## A known upstream sharp edge
+## Omitted prompt arguments
 
-The MCP spec makes `GetPromptRequest.params.arguments` **optional**, but the SDK parses whatever
-arrives against the declared object schema, and `z.object({…}).safeParse(undefined)` fails however
-optional every key is. So a prompt that declares any argument rejects a request that omits the
-field entirely — even a prompt where nothing is required.
-
-Hosts that render an argument form send `{}` and are unaffected. A host that skips the form on an
-all-optional prompt (`whats_due`, `whats_my_day`, `catch_up`) would see an error instead of the
-prompt. There is no way to soften this through `registerPrompt`: the parse happens inside the SDK's
-own handler, before our callback is reached. The behaviour is pinned by a test in
-[`packages/core/test/prompts.test.ts`](../packages/core/test/prompts.test.ts) so it is not mistaken
-for a bug in this repo, and the fix belongs upstream.
+The MCP spec makes `GetPromptRequest.params.arguments` **optional**. Version 1 of the SDK parsed
+whatever arrived against the declared object schema, and `z.object({…}).safeParse(undefined)` fails
+however optional every key is, so a prompt that declared any argument rejected a request that
+omitted the field entirely, even a prompt where nothing is required. Version 2 accepts the omission
+and runs the callback with no arguments, so a host that skips the argument form on an all-optional
+prompt (`whats_due`, `whats_my_day`, `catch_up`) gets the prompt rather than an error. The behaviour
+is pinned by a test in
+[`packages/core/test/prompts.test.ts`](../packages/core/test/prompts.test.ts) so it does not
+regress.
 
 ## What it costs
 
@@ -164,7 +253,7 @@ listing at ~4 chars per token:
 Re-measured 2026-09-05, and the previous figures were stale by roughly half: the table said
 ~18,453 tokens for seven servers while Mail had grown 19 → 21 tools and Maps had shipped. The
 expansion column is the largest prompt that expands with no arguments; Notes and Contacts declare
-arguments on every prompt, which is the upstream sharp edge described above rather than an
+arguments on every prompt, so those two have no argument-free expansion to measure, which is not an
 omission.
 
 Three things follow, and they are why `exposePrompts` defaults on:

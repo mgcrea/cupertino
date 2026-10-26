@@ -169,6 +169,40 @@ struct UnitCheck {
     check("a numeric and a string id differ", CallCapture.idKey(1) != CallCapture.idKey("1"))
     check("a missing id has no key", CallCapture.idKey(nil) == nil)
 
+    print("\nCall capture: subscriptions and pushed updates")
+
+    check("subscriptions/listen is a subscription", CallCapture.isSubscription("subscriptions/listen"))
+    check("resources/subscribe is a subscription", CallCapture.isSubscription("resources/subscribe"))
+    check("resources/read is not", !CallCapture.isSubscription("resources/read"))
+    check(
+      "a 2026 listen names its uris",
+      CallCapture.subscribedUris([
+        "notifications": ["resourceSubscriptions": ["mail://a", "mail://b"]]
+      ]) == ["mail://a", "mail://b"])
+    check(
+      "a 2025 subscribe names its uri",
+      CallCapture.subscribedUris(["uri": "messages://x"]) == ["messages://x"])
+    check(
+      "a listen for tool changes only names no uri",
+      CallCapture.subscribedUris(["notifications": ["toolsListChanged": true]]).isEmpty)
+    check("no params names no uri", CallCapture.subscribedUris(nil).isEmpty)
+    check(
+      "an updated notification yields its uri",
+      CallCapture.pushedUri([
+        "method": "notifications/resources/updated", "params": ["uri": "mail://a"],
+      ]) == "mail://a")
+    check(
+      "a response is not a push",
+      CallCapture.pushedUri(["id": 1, "result": ["uri": "mail://a"]]) == nil)
+    check(
+      "a progress notification is not a push",
+      CallCapture.pushedUri([
+        "method": "notifications/progress", "params": ["uri": "mail://a"],
+      ]) == nil)
+    check(
+      "an updated notification without a uri is not a push",
+      CallCapture.pushedUri(["method": "notifications/resources/updated", "params": [:] as [String: Any]]) == nil)
+
     print("\nCall capture: malformed input")
 
     check(
@@ -277,7 +311,11 @@ struct UnitCheck {
     _ = runaway.lines(Data(String(repeating: "x", count: 64).utf8))
     check(
       "a runaway line is dropped rather than buffered",
-      runaway.lines(Data("y\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "y")
+      runaway.lines(Data("y\n".utf8)).isEmpty)
+    // The newline ends the runaway frame, so it is the tail of one, not a frame.
+    check(
+      "and the frame after it is read whole",
+      runaway.lines(Data("z\n".utf8)).first.map { String(decoding: $0, as: UTF8.self) } == "z")
 
     // `RequestObserver` collects responses only while a notice is held, and
     // skips the chunks in between. Skipping by not calling at all left a partial
@@ -301,6 +339,91 @@ struct UnitCheck {
     check(
       "a skip that ends on a boundary leaves nothing behind",
       text(aligned.lines(Data("{\"id\":4}\n".utf8))) == ["{\"id\":4}"])
+
+    print("\nPushes: found across read boundaries, and skipping resumes")
+
+    // Drives the scanner and the splitter exactly as `RequestObserver.answered`
+    // does, and reports which uris were pushed and how many chunks were skipped.
+    func drive(_ chunks: [String], parsing: Bool = false) -> (pushed: [String], skipped: Int) {
+      var scanner = PushScanner()
+      var splitter = FrameSplitter()
+      var pushed: [String] = []
+      var skipped = 0
+      for piece in chunks {
+        let chunk = Data(piece.utf8)
+        guard scanner.needsSplit(chunk, parsing: parsing) else {
+          splitter.skip(chunk)
+          skipped += 1
+          continue
+        }
+        for line in splitter.lines(chunk) {
+          guard line.range(of: CallCapture.pushMarker) != nil,
+            let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+            let uri = CallCapture.pushedUri(object)
+          else { continue }
+          pushed.append(uri)
+        }
+      }
+      return (pushed, skipped)
+    }
+    func push(_ uri: String) -> String {
+      "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/updated\",\"params\":{\"uri\":\"\(uri)\"}}\n"
+    }
+    let pushFrame = push("mail://a")
+    let markerCut = pushFrame.index(pushFrame.startIndex, offsetBy: 40)  // inside the method name
+
+    check(
+      "a marker split by a read is found in skip mode",
+      drive(["{\"id\":1}\n" + String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == ["mail://a"])
+    check(
+      "a marker split by a read is found in parsing mode",
+      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])], parsing: true).pushed == ["mail://a"])
+    check(
+      "a marker split with no earlier newline is found",
+      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == ["mail://a"])
+    check(
+      "a push frame split after its marker is found",
+      drive([String(pushFrame.dropLast(12)), String(pushFrame.suffix(12))]).pushed == ["mail://a"])
+    check(
+      "a head of one byte at a time is found",
+      drive(pushFrame.map { String($0) }).pushed == ["mail://a"])
+    check(
+      "two pushes in one chunk are both found",
+      drive([push("mail://a") + push("mail://b")]).pushed == ["mail://a", "mail://b"])
+
+    let bulk = "{\"id\":9,\"result\":\"" + String(repeating: "x", count: 5000)
+    let after = drive([
+      push("mail://a") + bulk, String(repeating: "y", count: 3000),
+      String(repeating: "z", count: 3000), "\"}\n", "{\"id\":10}\n",
+    ])
+    check("a push then a large frame start is found", after.pushed == ["mail://a"])
+    check("and the chunks after it are skipped again", after.skipped == 4)
+
+    let plain = drive((0..<20).map { "{\"id\":\($0),\"result\":{}}\n" } + ["{\"id\":99,\"res"])
+    check("a marker-free stream never leaves skip", plain.skipped == 21 && plain.pushed.isEmpty)
+
+    var open = PushScanner()
+    _ = open.needsSplit(Data("{\"method\":\"notifications/resources/updated\",".utf8), parsing: false)
+    check("a frame open after a marker is collecting", open.collecting)
+    _ = open.needsSplit(Data("\"params\":{}}\n{\"id\":1".utf8), parsing: false)
+    check("and stops collecting once it closes", !open.collecting)
+
+    var quiet = PushScanner()
+    let longChunk = Data((String(repeating: "x", count: 70_000) + "{\"id\":1}").utf8)
+    check("a long marker-free chunk does not split", !quiet.needsSplit(longChunk, parsing: false))
+    check(
+      "and leaves the carry as its last marker.count - 1 bytes",
+      quiet.carry == Data(longChunk.suffix(CallCapture.pushMarker.count - 1)))
+    _ = quiet.needsSplit(Data("ab".utf8), parsing: false)
+    check(
+      "a short chunk extends the carry rather than replacing it",
+      quiet.carry == Data((longChunk + Data("ab".utf8)).suffix(CallCapture.pushMarker.count - 1)))
+
+    var head = FrameSplitter()
+    head.skip(Data("{\"method\":\"notifications/res".utf8))
+    check(
+      "a small read holding only a frame head is kept, not discarded",
+      text(head.lines(Data("ources/updated\"}\n".utf8))) == ["{\"method\":\"notifications/resources/updated\"}"])
 
     print("\nSafari captures: what the extension has written")
 

@@ -1,5 +1,6 @@
 import { buildBaseDiagnostics } from "@mgcrea/mcp-apple-core";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
 import type { AppleContactsClient } from "../client/contacts.js";
@@ -99,7 +100,7 @@ export const registerDiagnosticsTools = (server: McpServer, client: AppleContact
       description:
         "Report which Contacts stores were opened, how many contacts each holds, and what this " +
         "server cannot do. Start here when a lookup returns nothing.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(() => buildDiagnostics(client)),

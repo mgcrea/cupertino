@@ -1,6 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -25,7 +24,7 @@ const register = (target: McpServer, allowWrites: boolean): void => {
     "apple_widget_list_things",
     {
       description: "List the things in a widget, newest first.",
-      inputSchema: { limit: z.number().int().min(1).optional() },
+      inputSchema: z.object({ limit: z.number().int().min(1).optional() }),
       annotations: { readOnlyHint: true },
     },
     ({ limit }) => okText(`listed ${limit ?? 0}`),
@@ -34,7 +33,7 @@ const register = (target: McpServer, allowWrites: boolean): void => {
     "apple_widget_search_gadgets",
     {
       description: "Full text search across every gadget attached to a widget.",
-      inputSchema: { query: z.string() },
+      inputSchema: z.object({ query: z.string() }),
       annotations: { readOnlyHint: true },
     },
     ({ query }) => okText(`searched ${query}`),
@@ -57,14 +56,14 @@ const register = (target: McpServer, allowWrites: boolean): void => {
           `List the ${thing} attached to a widget, newest first, with their ids, labels and ` +
           `attachment points. Filters combine, and every one of them is optional; ask for a ` +
           `small limit, because each entry costs the reader tokens it will want for the answer.`,
-        inputSchema: {
+        inputSchema: z.object({
           limit: z.number().int().min(1).max(200).optional().describe("How many to return."),
           query: z.string().optional().describe("Match the label or the id."),
           widget: z.string().optional().describe("Which widget to look in. Defaults to all."),
           since: z.string().optional().describe("Only those attached after this ISO 8601 date."),
           attached: z.boolean().optional().describe("Only those currently attached."),
           order: z.enum(["newest", "oldest", "label"]).optional().describe("How to sort them."),
-        },
+        }),
         annotations: { readOnlyHint: true },
       },
       ({ limit }) => okText(`listed ${limit ?? 0} ${thing}`),
@@ -73,7 +72,10 @@ const register = (target: McpServer, allowWrites: boolean): void => {
   if (!allowWrites) return;
   target.registerTool(
     "apple_widget_delete_things",
-    { description: "Delete things from a widget. Irreversible.", inputSchema: { id: z.string() } },
+    {
+      description: "Delete things from a widget. Irreversible.",
+      inputSchema: z.object({ id: z.string() }),
+    },
     ({ id }) => okText(`deleted ${id}`),
   );
 };
@@ -345,11 +347,13 @@ const registerFewButFat = (target: McpServer, _allowWrites: boolean): void => {
       `apple_widget_list_${thing}`,
       {
         description: `List the ${thing}. `.repeat(40),
-        inputSchema: Object.fromEntries(
-          Array.from({ length: 30 }, (_, i) => [
-            `field${i}`,
-            z.string().optional().describe(`A field with a reasonably wordy description, ${i}.`),
-          ]),
+        inputSchema: z.object(
+          Object.fromEntries(
+            Array.from({ length: 30 }, (_, i) => [
+              `field${i}`,
+              z.string().optional().describe(`A field with a reasonably wordy description, ${i}.`),
+            ]),
+          ),
         ),
         annotations: { readOnlyHint: true },
       },
@@ -389,5 +393,94 @@ describe("the floor", () => {
     const listed = await names(await connect({ lazy: true, allowWrites: true }, registerFewButFat));
     expect(listed).not.toContain("apple_widget_search_tools");
     expect(listed).toContain("apple_widget_list_gizmos");
+  });
+});
+
+describe("withLazyTools, with a raw-shape inputSchema", () => {
+  // Surfaces not yet moved to schema objects still hand over a bare shape, and
+  // the SDK's own `registerTool` takes one for now. The facade records either.
+  const registerRaw = (target: McpServer, allowWrites: boolean): void => {
+    register(target, allowWrites);
+    target.registerTool(
+      "apple_widget_find_parts",
+      {
+        description: "Find the parts of a widget.",
+        inputSchema: { part: z.string() } as never,
+        annotations: { readOnlyHint: true },
+      },
+      (({ part }: { part: string }) => okText(`found ${part}`)) as never,
+    );
+  };
+
+  it("describes and runs it like a schema object", async () => {
+    const client = await connect({ lazy: true, allowWrites: false }, registerRaw);
+    const described = textOf(
+      await client.callTool({
+        name: "apple_widget_describe_tool",
+        arguments: { name: "apple_widget_find_parts" },
+      }),
+    );
+    expect(described).toContain("part");
+    expect(described).not.toContain("$schema");
+
+    const ran = await client.callTool({
+      name: "apple_widget_call_tool",
+      arguments: { name: "apple_widget_find_parts", arguments: { part: "cog" } },
+    });
+    expect(textOf(ran)).toBe("found cog");
+
+    const bad = await client.callTool({
+      name: "apple_widget_call_tool",
+      arguments: { name: "apple_widget_find_parts", arguments: {} },
+    });
+    expect(textOf(bad)).toContain("Invalid arguments for apple_widget_find_parts");
+  });
+});
+
+/*
+ * `tools/call` with the `arguments` key left out altogether.
+ *
+ * v1 rejected it on any tool with an input schema ("expected object, received
+ * undefined"); v2 reads it as `{}`. That is the tool-side twin of `prompts/get`
+ * without `arguments`, and was accepted for the same reason. The second half of
+ * each pair is what keeps the leniency from becoming a bypass: `{}` still has to
+ * satisfy the schema, so a required field is still refused.
+ */
+describe("a tools/call that omits arguments", () => {
+  for (const lazy of [false, true]) {
+    const path = lazy ? "behind the facade" : "eager";
+    // Eager, the SDK validates; behind the facade, `invoke` does. Either way the
+    // call carries no `arguments` key for the tool.
+    const call = (client: Client, tool: string) =>
+      lazy
+        ? client.callTool({ name: "apple_widget_call_tool", arguments: { name: tool } })
+        : client.callTool({ name: tool });
+
+    it(`runs a tool whose fields are all optional, ${path}`, async () => {
+      const client = await connect({ lazy, allowWrites: false });
+      const result = await call(client, "apple_widget_list_things");
+      expect(result.isError).toBeFalsy();
+      expect(textOf(result)).toBe("listed 0");
+    });
+
+    it(`still refuses a missing required field, ${path}`, async () => {
+      const client = await connect({ lazy, allowWrites: false });
+      const result = await call(client, "apple_widget_search_gadgets");
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("Invalid arguments for");
+      expect(textOf(result)).toContain("query");
+    });
+  }
+
+  it("runs a tool that declares no schema at all", async () => {
+    const client = await connect({ lazy: false, allowWrites: false });
+    expect(textOf(await client.callTool({ name: "apple_widget_diagnostics" }))).toBe("diagnostics");
+  });
+
+  it("still refuses a facade tool called without the name it needs", async () => {
+    const client = await connect({ lazy: true, allowWrites: false });
+    const result = await client.callTool({ name: "apple_widget_call_tool" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("name");
   });
 });

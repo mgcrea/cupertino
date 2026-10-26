@@ -181,7 +181,7 @@ iterating.
 
 **The servers are bundled, not copied from `dist/`.** Each package's own `tsdown.config.ts` leaves
 dependencies external, which is right for npm and fatal here — there is no `node_modules` inside
-the bundle for `@modelcontextprotocol/sdk` to resolve against. `apps/apple/tsdown.servers.config.ts`
+the bundle for `@modelcontextprotocol/server` to resolve against. `apps/apple/tsdown.servers.config.ts`
 inlines everything instead.
 
 The `package.json` + `dist/cli.js` shape mirrors an installed package on purpose.

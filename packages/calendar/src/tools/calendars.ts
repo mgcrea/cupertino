@@ -1,4 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import type { AppleCalendarClient } from "../client/calendar.js";
 import { wrap } from "./util.js";
@@ -20,7 +21,7 @@ export const registerCalendarTools = (server: McpServer, client: AppleCalendarCl
         "write there is visible to the others on it. And `isSubscribed` catches URL-subscribed " +
         "calendars but not every read-only one — Birthdays and Siri Suggestions are also " +
         "read-only — so a write can still be refused by Calendar itself.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(async () => client.calendars()),
@@ -32,7 +33,7 @@ export const registerCalendarTools = (server: McpServer, client: AppleCalendarCl
       description:
         "List the accounts Calendar syncs, with how many calendars each holds. Use this to scope " +
         "a search when the same calendar name exists in more than one account.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => wrap(async () => client.accounts()),

@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleContactsClient } from "../client/contacts.js";
@@ -54,11 +54,11 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
         "Contacts, and on an iCloud account it syncs to their other devices within seconds. " +
         "Give at least one of firstName, lastName or organization. " +
         SAVE_CAVEAT,
-      inputSchema: {
+      inputSchema: z.object({
         ...fields,
         phones: z.array(labelledValue).optional(),
         emails: z.array(labelledValue).optional(),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ phones, emails, ...rest }) =>
@@ -90,7 +90,7 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
         "replaced — Contacts models them as separate objects, and there is no way to remove one " +
         "through its scripting dictionary. " +
         SAVE_CAVEAT,
-      inputSchema: {
+      inputSchema: z.object({
         ref: z
           .string()
           .min(1)
@@ -101,7 +101,7 @@ export const registerActionTools = (server: McpServer, client: AppleContactsClie
         ...fields,
         phones: z.array(labelledValue).optional().describe("Added to whatever is already there."),
         emails: z.array(labelledValue).optional().describe("Added to whatever is already there."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ ref, phones, emails, ...rest }) =>

@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AppleContactsClient } from "../client/contacts.js";
 import { registerActionTools } from "./actions.js";

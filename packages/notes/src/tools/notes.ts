@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleNotesClient } from "../client/notes.js";
@@ -27,10 +27,10 @@ export const registerNoteTools = (
         "fast as a library grows. `hasMore` means more notes matched than `limit` allowed; a " +
         "`note` field appears when the Apple Events lane's own cap ended the list early, which " +
         "is a different thing and is worth reading.",
-      inputSchema: {
+      inputSchema: z.object({
         folder: folderArg,
         limit: limitArg,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ folder, limit }) =>
@@ -47,7 +47,7 @@ export const registerNoteTools = (
         "matches only titles and previews and is the cheaper query. Returns `notes` with a " +
         "`ref` per hit, plus `hasMore` — set when more matched than this page carries, so a " +
         "full page is never mistaken for the end of the results.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().min(1).describe("Text to look for. Case-insensitive substring match."),
         scope: z
           .enum(["full", "title"])
@@ -58,7 +58,7 @@ export const registerNoteTools = (
           ),
         limit: limitArg,
         offset: z.number().int().min(0).optional().describe("Skip this many results, for paging."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ query, scope, limit, offset }) =>
@@ -78,13 +78,13 @@ export const registerNoteTools = (
       description:
         "Read one note's full text by ref. Password-protected notes report as locked rather " +
         "than returning an empty body — their text is encrypted at rest.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: noteRefArg,
         format: z
           .enum(["text", "json"])
           .optional()
           .describe("text returns the body as-is (default). json wraps it with the metadata."),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref, format }) =>
@@ -101,7 +101,7 @@ export const registerNoteTools = (
       description:
         "List a note's attachments. Metadata only — retrieving the bytes needs Full Disk " +
         "Access, because the scripting dictionary carries no file path.",
-      inputSchema: { ref: noteRefArg },
+      inputSchema: z.object({ ref: noteRefArg }),
       annotations: { readOnlyHint: true },
     },
     async ({ ref }) => wrap(() => client.attachments(ref)),
@@ -117,7 +117,7 @@ export const registerNoteTools = (
         "APPLE_NOTES_ATTACHMENT_DIR (default ~/Downloads) and will not overwrite an existing " +
         "file unless you ask it to. Write-gated because it puts a file on the user's disk, " +
         "even though it changes nothing in Notes.",
-      inputSchema: {
+      inputSchema: z.object({
         ref: noteRefArg,
         attachmentId: z.string().min(1).describe("An id from apple_notes_list_attachments."),
         directory: z
@@ -125,7 +125,7 @@ export const registerNoteTools = (
           .optional()
           .describe("Override the target directory. Must still resolve inside the configured one."),
         overwrite: z.boolean().optional().describe("Replace an existing file. Default false."),
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
     async ({ ref, attachmentId, directory, overwrite }) =>

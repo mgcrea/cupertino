@@ -84,6 +84,22 @@ export type GroupResult = {
   totalRows: number;
 };
 
+/** One message as the arrival scan sees it: envelope fields only, `dateReceived` in store units. */
+export type ArrivalScanRow = {
+  rowid: number;
+  /** `global_message_id` as a string. Row identity, not a dedup key. */
+  key: string;
+  mailboxRowid: number;
+  /** Null when the row's mailbox has no `mailboxes` row. */
+  mailboxUrl: string | null;
+  /** Mailboxes this row is in by label (Gmail INBOX membership); empty without a `labels` table. */
+  labelMailboxIds: number[];
+  subject: string | null;
+  senderAddress: string | null;
+  senderName: string | null;
+  dateReceived: number | null;
+};
+
 export { escapeLike, toFileUri };
 
 const contains = (value: string): string => `%${escapeLike(value)}%`;
@@ -471,6 +487,65 @@ export class EnvelopeIndex {
       conversationId: (r.conversationId as number) ?? null,
       hasAttachment: false,
     }));
+  }
+
+  /** Highest message ROWID now, or 0 for an empty index. */
+  headRowid(): number {
+    const row = this.#db.prepare("SELECT MAX(ROWID) AS head FROM messages").get() as {
+      head: number | null;
+    };
+    return row.head ?? 0;
+  }
+
+  /**
+   * Messages with ROWID above `after`, ascending, at most `limit`.
+   *
+   * Nothing is filtered out: a watch cursor advances over every ROWID, and the
+   * caller decides what is excluded. That is why `mailboxes` is a LEFT JOIN here
+   * where listings use an inner one: a row with no mailbox row must still come
+   * back. Otherwise it uses the listings' joins and subject expression.
+   *
+   * Label mailbox ids come back too, because Gmail INBOX membership is a
+   * `labels` row on an All Mail message (see `#mailboxPredicate`).
+   */
+  arrivalsAfter(after: number, limit: number): ArrivalScanRow[] {
+    const labels = this.caps.has.labels
+      ? "(SELECT group_concat(l.mailbox_id) FROM labels l WHERE l.message_id = m.ROWID)"
+      : "NULL";
+    const rows = this.#db
+      .prepare(
+        `SELECT m.ROWID AS rowid, m.global_message_id AS gid, m.mailbox AS mailboxRowid, ` +
+          `mb.url AS mailboxUrl, ${labels} AS labelIds, ${this.#subjectExpr} AS subject, ` +
+          `a.address AS senderAddress, a.comment AS senderName, m.date_received AS dateReceived ` +
+          `FROM messages m ` +
+          `LEFT JOIN mailboxes mb ON mb.ROWID = m.mailbox ` +
+          `LEFT JOIN subjects s ON s.ROWID = m.subject ` +
+          `LEFT JOIN addresses a ON a.ROWID = m.sender ` +
+          `WHERE m.ROWID > ? ORDER BY m.ROWID ASC LIMIT ?`,
+      )
+      .all(after, limit) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      rowid: Number(r.rowid),
+      key: String(r.gid),
+      mailboxRowid: Number(r.mailboxRowid),
+      mailboxUrl: (r.mailboxUrl as string | null) ?? null,
+      labelMailboxIds:
+        r.labelIds === null || r.labelIds === undefined
+          ? []
+          : String(r.labelIds)
+              .split(",")
+              .map(Number)
+              .filter((n) => Number.isFinite(n)),
+      subject: (r.subject as string) || null,
+      senderAddress: (r.senderAddress as string) ?? null,
+      senderName: (r.senderName as string) || null,
+      dateReceived: (r.dateReceived as number | null) ?? null,
+    }));
+  }
+
+  /** A stored `date_received` rendered exactly as search results render theirs. */
+  renderDate(value: number | null): string | null {
+    return this.#toIso(value);
   }
 
   /** conversation_id for one message, so get_thread can start from a ref. */

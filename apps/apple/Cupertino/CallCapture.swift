@@ -184,6 +184,42 @@ nonisolated enum CallCapture {
     frame["method"] == nil && frame["id"] != nil
   }
 
+  // MARK: - Subscriptions
+
+  /// The bytes of an update notification's method, which is what the server→client
+  /// pump looks for BEFORE it splits or parses anything.
+  ///
+  /// A chunk is mostly results, and results are the big frames; paying a JSON
+  /// parse per line to find the rare push would be the most expensive thing on
+  /// the hot path. A byte search over the chunk costs next to nothing and lets
+  /// every chunk without one keep taking `FrameSplitter.skip`.
+  static let pushMarker = Data("notifications/resources/updated".utf8)
+
+  /// Whether a method asks the server to push updates, in either protocol era.
+  ///
+  /// 2025 clients send `resources/subscribe`; 2026-07-28 clients open a
+  /// `subscriptions/listen` stream. Neither is a call that returns a result a
+  /// reader is waiting on, so neither belongs in the table of calls in flight.
+  static func isSubscription(_ method: String) -> Bool {
+    method == "subscriptions/listen" || method == "resources/subscribe"
+  }
+
+  /// The resources a subscription request asks about, in either era's shape.
+  ///
+  /// A listen that asks only for list-changed notifications names no resource,
+  /// which is an empty list rather than a malformed request.
+  static func subscribedUris(_ params: [String: Any]?) -> [String] {
+    if let uri = params?["uri"] as? String { return [uri] }
+    let notifications = params?["notifications"] as? [String: Any]
+    return (notifications?["resourceSubscriptions"] as? [Any])?.compactMap { $0 as? String } ?? []
+  }
+
+  /// The resource a `notifications/resources/updated` frame is about, else nil.
+  static func pushedUri(_ object: [String: Any]) -> String? {
+    guard object["method"] as? String == "notifications/resources/updated" else { return nil }
+    return (object["params"] as? [String: Any])?["uri"] as? String
+  }
+
   /// A JSON-RPC id as a dictionary key.
   ///
   /// Ids may be a string or a number and the two are distinct — `1` and `"1"`
@@ -323,6 +359,15 @@ nonisolated struct FrameSplitter {
   /// of one.
   private var discarding = false
 
+  /// Whether `pending` was put there by `skip` (a small head kept on purpose)
+  /// rather than by `lines`. Only a kept head may be grown by a later skip.
+  private var kept = false
+
+  /// How much of an open frame `skip` keeps rather than discards. A push
+  /// notification is a few hundred bytes; a result is not, and is not worth
+  /// holding on to for a reader that is not collecting.
+  private let retain = 4096
+
   init(limit: Int = 1 << 20) { self.limit = limit }
 
   /// Every complete line in what has arrived so far.
@@ -333,9 +378,15 @@ nonisolated struct FrameSplitter {
       chunk = Data(chunk[chunk.index(after: newline)...])
       discarding = false
     }
+    kept = false
     pending.append(chunk)
     guard let lastNewline = pending.lastIndex(of: UInt8(ascii: "\n")) else {
-      if pending.count > limit { pending.removeAll(keepingCapacity: false) }
+      if pending.count > limit {
+        pending.removeAll(keepingCapacity: false)
+        // The rest of that frame is not a frame either, and must not be held by
+        // `skip` as if it were the head of one.
+        discarding = true
+      }
       return []
     }
     let complete = pending[..<lastNewline]
@@ -354,9 +405,18 @@ nonisolated struct FrameSplitter {
   /// keep them.
   mutating func skip(_ chunk: Data) {
     guard let lastNewline = chunk.lastIndex(of: UInt8(ascii: "\n")) else {
+      // A small chunk that starts a frame at a boundary, or carries on a head this
+      // method kept, is held: a tiny read holding only the head of a push frame
+      // must not cost the push. Bounded, so a long frame still falls through.
+      if !discarding, pending.isEmpty || kept, pending.count + chunk.count <= retain {
+        pending.append(chunk)
+        kept = true
+        return
+      }
       // Still inside whatever frame was in progress. Its head is of no use now,
       // and keeping it would grow without bound on a long uncollected frame.
       if !chunk.isEmpty {
+        kept = false
         pending.removeAll(keepingCapacity: false)
         discarding = true
       }
@@ -366,9 +426,67 @@ nonisolated struct FrameSplitter {
     // to `lines` may want it.
     pending = Data(chunk[chunk.index(after: lastNewline)...])
     discarding = false
+    kept = !pending.isEmpty && pending.count <= retain
     if pending.count > limit {
       pending.removeAll(keepingCapacity: false)
       discarding = true
     }
+  }
+}
+
+/// Decides, per chunk of the server→client stream, whether it has to be split
+/// into frames, so that a pushed update is never missed and nothing else pays.
+///
+/// Pure, and here beside `FrameSplitter`, so `make unit` can hold it still: the
+/// two bugs it replaced (a marker split by a read boundary, and a flag that
+/// stayed set after the frame it was for had closed) are both about chunk
+/// boundaries, and neither needs an app to reproduce.
+///
+/// Answering "does this chunk hold the marker" with one byte search keeps the
+/// hot path cheap. Two things make that sound across reads:
+///
+///   `carry`       the last `marker.count - 1` bytes of the stream so far, so a
+///                 marker cut by a read boundary is found when its second half
+///                 arrives. A whole marker cannot hide in fewer bytes than that.
+///   `collecting`  set while the frame still OPEN at the end of a chunk contains
+///                 a marker, and cleared the moment that frame closes. Without
+///                 it a push whose newline arrives in the next read would be
+///                 skipped half way; kept set longer, every later chunk would
+///                 be split until a read happened to end on a newline.
+nonisolated struct PushScanner {
+  private let marker: Data
+  private(set) var carry = Data()
+  private(set) var collecting = false
+
+  init(marker: Data = CallCapture.pushMarker) { self.marker = marker }
+
+  /// Whether `chunk` must go through `FrameSplitter.lines` rather than `skip`.
+  /// `parsing` is the caller's own reason to split, which does not stop this
+  /// from tracking the stream.
+  mutating func needsSplit(_ chunk: Data, parsing: Bool) -> Bool {
+    let width = marker.count - 1
+    var hit = chunk.range(of: marker) != nil
+    if !hit, !carry.isEmpty {
+      hit = (carry + chunk.prefix(width)).range(of: marker) != nil
+    }
+    let split = parsing || hit || collecting
+
+    // A chunk with no marker costs no more than the search above: the frame open
+    // at its end cannot hold one, so the only question is whether a newline
+    // closed the frame that was open before it, and that is asked only while one
+    // is.
+    if !hit {
+      if collecting, chunk.contains(UInt8(ascii: "\n")) { collecting = false }
+    } else if let newline = chunk.lastIndex(of: UInt8(ascii: "\n")) {
+      // The frame open at the end is only what follows the last newline.
+      collecting = chunk[chunk.index(after: newline)...].range(of: marker) != nil
+    } else {
+      collecting = true
+    }
+    // Copying the whole chunk to take its tail would be an allocation and a
+    // memcpy of a full pipe read on every call, which is the cost this type
+    // exists to avoid. Only a chunk shorter than the carry needs the old bytes.
+    carry = chunk.count >= width ? Data(chunk.suffix(width)) : Data((carry + chunk).suffix(width))
+    return split
   }
 }
