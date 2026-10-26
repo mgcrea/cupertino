@@ -1492,6 +1492,57 @@ nonisolated enum AccessibilityDriver {
     return frontmostBundleId() == bundleId
   }
 
+  /// Poll `holds` until it has answered yes for `stable` seconds running, or
+  /// `timeout` has passed. A `stable` of zero returns at the first yes.
+  static func holdsSteadily(
+    for stable: TimeInterval, within timeout: TimeInterval, every poll: TimeInterval = 0.02,
+    _ holds: () -> Bool
+  ) -> Bool {
+    let started = Date()
+    var since: Date?
+    while true {
+      let now = Date()
+      if holds() {
+        let first = since ?? now
+        since = first
+        if now.timeIntervalSince(first) >= stable { return true }
+      } else {
+        since = nil
+      }
+      if now.timeIntervalSince(started) >= timeout { return false }
+      usleep(useconds_t(poll * 1_000_000))
+    }
+  }
+
+  /// How long a "not frontmost" answer is given to clear before a post is refused.
+  static let frontmostGrace: TimeInterval = 1
+
+  /// Whether `bundleId` is frontmost, as `read` (the window server) says,
+  /// allowing a wrong answer a moment to clear.
+  ///
+  /// A yes at the first read is taken at once, as it always was. A no is read
+  /// again for up to `grace`, and only a yes that then HOLDS for 100 ms counts,
+  /// so a front that flickers is never taken for the target's.
+  ///
+  /// MEASURED, LIVE RUN 1 (2026-10-26, macOS 27): a forward's paste was refused
+  /// as "Mail is no longer frontmost" while LaunchServices had Mail in front for
+  /// the whole edit (SETFRONT Mail at 15:46:00.090, the next SETFRONT 14.8 s
+  /// later, after the run had ended), a tenth of a second after this same read
+  /// had said Mail. So the read can answer something other than Mail (another
+  /// pid, or nothing) for a moment, here right after an activation and a focus
+  /// change into a freshly opened web view. Refusing on that one answer refused
+  /// a paste that would have landed where it was meant to.
+  ///
+  /// Not a weaker check: nothing is posted on anything but a yes. A person who
+  /// moved to another application reads as that application for the whole
+  /// grace, and is refused exactly as before, `grace` later.
+  static func frontmostHolds(
+    _ bundleId: String, grace: TimeInterval = frontmostGrace, read: () -> String?
+  ) -> Bool {
+    if read() == bundleId { return true }
+    return holdsSteadily(for: 0.1, within: grace) { read() == bundleId }
+  }
+
   /// The application that holds the focus RIGHT NOW, asked of the window
   /// server through Accessibility rather than of `NSWorkspace`.
   ///
@@ -1739,11 +1790,19 @@ nonisolated enum AccessibilityDriver {
       who = try frontmostInReach(scope)
     }
     try DrivingSession.admit(who)
-    guard frontmostBundleId() == who else {
+    // Waits out a wrong answer for a moment rather than refusing on it: see
+    // `frontmostHolds`. Only a yes posts.
+    guard frontmostHolds(who, read: frontmostBundleId) else {
+      // What the window server answered, so a refusal says what it saw and the
+      // next live run is not left to guess, as LIVE RUN 1 was.
+      let seen =
+        frontmostBundleId().map {
+          " Accessibility reports \(DrivingSession.appName($0)) (\($0)) in front."
+        } ?? " Accessibility could not say which application is in front."
       throw Failure.refused(
         "\(DrivingSession.appName(who)) is no longer frontmost, so nothing was posted — the "
           + "event would have landed in whatever replaced it. Name the application with "
-          + "'bundleId' and it is brought back to the front first.")
+          + "'bundleId' and it is brought back to the front first." + seen)
     }
     DriveActivity.record(who)
     return who

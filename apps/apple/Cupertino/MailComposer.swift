@@ -1063,7 +1063,8 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// land — so this waits for the window server to agree (up to two seconds,
   /// `activateAndWait`), then raises this window and focuses its body, and
   /// requires it to be Mail's focused window: command-V goes to the key window,
-  /// and the viewer's search field is not where a draft goes.
+  /// and the viewer's search field is not where a draft goes. Both that and
+  /// Mail being frontmost must then hold for a moment (`settled`).
   func activate() throws -> Bool {
     let web = try webArea()
     guard try AccessibilityDriver.activateAndWait(bundleId: Self.bundleId, scope: Self.scope)
@@ -1071,12 +1072,25 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
     AXUIElementSetAttributeValue(web, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    let started = Date()
-    repeat {
-      if isFocusedWindow() { return true }
-      usleep(50_000)
-    } while Date().timeIntervalSince(started) < 1
-    return isFocusedWindow()
+    return Self.settled(focused: isFocusedWindow, frontmost: AccessibilityDriver.frontmostBundleId)
+  }
+
+  /// Mail frontmost as the window server says, AND this window Mail's focused
+  /// one, both holding for `stable`.
+  ///
+  /// `isFocusedWindow` alone is Mail's own idea of its key window, which it
+  /// keeps while another application is in front, so it could not tell Mail
+  /// losing the front from Mail having it. And one yes is not enough: the
+  /// focus change just made into the web area, or a hand-back from the edit
+  /// before still landing, can move the front a moment later. A paste starts
+  /// only on a front that has stayed put; if it never does, nothing is pasted.
+  static func settled(
+    stable: TimeInterval = 0.15, timeout: TimeInterval = 1.5, focused: () -> Bool,
+    frontmost: () -> String?
+  ) -> Bool {
+    AccessibilityDriver.holdsSteadily(for: stable, within: timeout) {
+      frontmost() == bundleId && focused()
+    }
   }
 
   /// command-V, or Delete for an empty replacement: an empty pasteboard pastes
@@ -1316,15 +1330,61 @@ nonisolated struct LiveFront: Front {
     return NSWorkspace.shared.frontmostApplication?.processIdentifier
   }
 
+  /// The edit's one hand-back. It returns only once the previous application
+  /// has the front and has kept it, or once it is clear it will not: see
+  /// `handBack`.
   func give(to pid: pid_t?) {
-    guard let pid, pid != current(),
-      AccessibilityDriver.frontmostBundleId() == driven,
-      let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated
+    guard let pid, let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated
     else { return }
-    if let bundleId = app.bundleIdentifier {
-      _ = AccessibilityDriver.handBack(to: bundleId)
-    } else {
-      _ = app.activate()
+    guard let previous = app.bundleIdentifier else {
+      // Nothing to read back by: the old route, unwaited. Only an application
+      // with no bundle id at all takes it.
+      if pid != current(), AccessibilityDriver.frontmostBundleId() == driven { _ = app.activate() }
+      return
     }
+    _ = Self.handBack(
+      to: previous, driven: driven, frontmost: AccessibilityDriver.frontmostBundleId,
+      activate: AccessibilityDriver.handBack(to:))
+  }
+
+  enum HandBack: Equatable {
+    /// The previous application was in front already; nothing was asked.
+    case alreadyThere
+    /// Someone else is in front: the person moved, and is left where they went.
+    case leftAlone
+    /// It came to the front and stayed there for the settle.
+    case landed
+    /// Asked for, and not in front by the deadline.
+    case didNotLand
+  }
+
+  /// Give the front back to `previous`, and wait for it to land.
+  ///
+  /// Activation is asynchronous, so a hand-back that returns on the request
+  /// can land after it, in the middle of the next edit, which is exactly when
+  /// `announceSessionInput` would see Mail gone. `AccessibilityDriver.handBack`
+  /// waits for the first read that says `previous`; this also waits for that
+  /// answer to HOLD for `stable`, so nothing of this hand-back is left in flight
+  /// when the call returns, and says when it did not land.
+  ///
+  /// Gated on `driven` being in front, read with `frontmostHolds` so a wrong
+  /// answer for a moment does not skip it: LIVE RUN 1's gate read wrong, and
+  /// the person's editor stayed behind Mail until the driving session ended
+  /// eleven seconds after the run.
+  static func handBack(
+    to previous: String, driven: String, frontmost: () -> String?,
+    activate: (String) -> Bool, stable: TimeInterval = 0.15, timeout: TimeInterval = 1,
+    grace: TimeInterval = 0.5
+  ) -> HandBack {
+    guard previous != driven else { return .alreadyThere }
+    let now = frontmost()
+    if now == previous { return .alreadyThere }
+    guard now == driven || AccessibilityDriver.frontmostHolds(driven, grace: grace, read: frontmost)
+    else { return .leftAlone }
+    _ = activate(previous)
+    let landed = AccessibilityDriver.holdsSteadily(for: stable, within: timeout) {
+      frontmost() == previous
+    }
+    return landed ? .landed : .didNotLand
   }
 }

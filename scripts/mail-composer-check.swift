@@ -222,6 +222,44 @@ final class FakeFront: Front {
   func give(to pid: pid_t?) { given.append(pid) }
 }
 
+/// What the window server answers for "which application is frontmost", read
+/// by read: the seam `frontmostBundleId` is in the live code.
+///
+/// `script` is answered first, one entry per read (nil is a read that failed);
+/// after it, `front`. An activation is a REQUEST: it lands `lag` reads later,
+/// which is how a hand-back that lands after the call returned is played.
+final class FakeScreen {
+  var front: String?
+  var script: [String?] = []
+  var lag = 0
+  private(set) var reads = 0
+  private(set) var activations: [String] = []
+  private var landing: (app: String, in: Int)?
+
+  init(_ front: String?) { self.front = front }
+
+  func read() -> String? {
+    reads += 1
+    if let pending = landing {
+      if pending.in <= 0 {
+        front = pending.app
+        landing = nil
+      } else {
+        landing = (pending.app, pending.in - 1)
+      }
+    }
+    if !script.isEmpty { return script.removeFirst() }
+    return front
+  }
+
+  /// `AccessibilityDriver.handBack`'s request, without its own wait.
+  func activate(_ app: String) -> Bool {
+    activations.append(app)
+    if lag == 0 { front = app } else { landing = (app, lag) }
+    return true
+  }
+}
+
 /// Asserts the pure text core of the native Mail composer: how a find/replace
 /// edit is located in a draft's own text, and when it is refused.
 ///
@@ -947,6 +985,137 @@ struct MailComposerCheck {
     return (text, result?["isError"] as? Bool ?? false)
   }
 
+  /// The front, as the window server reports it, around one edit and between
+  /// two. LIVE RUN 1 (2026-10-26) refused a forward with "Mail is no longer
+  /// frontmost" while LaunchServices had Mail in front for the whole edit, so
+  /// these play a read that answers wrong for a moment, a hand-back that lands
+  /// late, and the person moving to another app, which must still refuse.
+  static func frontChecks() {
+    print("\nthe front, as the window server reports it")
+    let mail = "com.apple.mail"
+    let code = "com.microsoft.VSCode"
+
+    // The check under every keystroke, `announceSessionInput`.
+    do {
+      let screen = FakeScreen(mail)
+      check(
+        "Mail in front at the first read posts at once",
+        AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read)
+          && screen.reads == 1)
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = [nil, "com.apple.WebKit.WebContent", nil]
+      check(
+        "a read that answers wrong for a moment is waited out, not refused",
+        AccessibilityDriver.frontmostHolds(mail, grace: 0.5, read: screen.read))
+    }
+    do {
+      let screen = FakeScreen(code)
+      let started = Date()
+      let held = AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read)
+      check("the person moving to another app still refuses the keystroke", !held)
+      check("and only once the grace has run out", Date().timeIntervalSince(started) >= 0.3)
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = (0..<60).map { $0 % 2 == 0 ? nil : mail }
+      check(
+        "a front that keeps flickering is never taken as Mail's",
+        !AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read))
+    }
+
+    // Activation, `AXComposerWindow.activate`.
+    do {
+      let screen = FakeScreen(code)
+      screen.lag = 3
+      _ = screen.activate(mail)
+      let settled = AXComposerWindow.settled(
+        timeout: 1, focused: { true }, frontmost: screen.read)
+      check(
+        "activation waits until Mail holds the front, not only the window's focus",
+        settled && screen.front == mail)
+    }
+    do {
+      // The previous edit's hand-back, landing while this one activates.
+      let screen = FakeScreen(mail)
+      screen.lag = 2
+      _ = screen.activate(code)
+      check(
+        "a hand-back landing during activation is not pasted over",
+        !AXComposerWindow.settled(timeout: 0.4, focused: { true }, frontmost: screen.read))
+    }
+    do {
+      let screen = FakeScreen(mail)
+      check(
+        "a window that is not Mail's focused one is not settled",
+        !AXComposerWindow.settled(timeout: 0.3, focused: { false }, frontmost: screen.read))
+    }
+
+    // The hand-back at the end of an edit, `LiveFront.give`.
+    do {
+      let screen = FakeScreen(mail)
+      screen.lag = 4
+      let outcome = LiveFront.handBack(
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+      check(
+        "the hand-back is waited for until it lands", outcome == .landed && screen.front == code)
+      // The next edit brings Mail forward: nothing of this hand-back is left to land.
+      screen.front = mail
+      check(
+        "so a late hand-back cannot land in the next edit",
+        AXComposerWindow.settled(timeout: 0.5, focused: { true }, frontmost: screen.read))
+      check("and the front was asked for once", screen.activations == [code])
+    }
+    do {
+      // LIVE RUN 1 again: the read gating the hand-back answered wrong, and the
+      // person's editor stayed behind Mail until the session ended 11 s later.
+      let screen = FakeScreen(mail)
+      screen.script = [nil, nil]
+      let outcome = LiveFront.handBack(
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+      check(
+        "a wrong read does not skip the hand-back", outcome == .landed && screen.front == code)
+    }
+    do {
+      let screen = FakeScreen("com.apple.Notes")
+      let outcome = LiveFront.handBack(
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate, grace: 0.2)
+      check(
+        "a person who moved to another app is left there",
+        outcome == .leftAlone && screen.activations.isEmpty)
+    }
+    do {
+      let screen = FakeScreen(code)
+      let outcome = LiveFront.handBack(
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+      check(
+        "nothing is handed back to an app already in front",
+        outcome == .alreadyThere && screen.activations.isEmpty)
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.lag = 10_000
+      let outcome = LiveFront.handBack(
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate, timeout: 0.3)
+      check("a hand-back that never lands says so", outcome == .didNotLand)
+      check("and is asked for once", screen.activations == [code])
+    }
+
+    // One hand-back per edit, whichever way it ends.
+    do {
+      let done = EditFake(own: "Old")
+      let (result, _, front) = run(done, Request(body: "New"))
+      check(
+        "an edit that saved hands the front back once",
+        result["replaced"] as? Bool == true && front.given == [4242])
+      let refused = EditFake(own: "Old")
+      refused.pasteTakes = false
+      let (_, _, refusedFront) = run(refused, Request(body: "New"))
+      check("an edit refused at the paste hands it back once", refusedFront.given == [4242])
+    }
+  }
+
   static func dispatchChecks() {
     print("\ndispatch")
     let mail = AccessibilityDriver.Scope.only(["com.apple.mail"])
@@ -1071,6 +1240,7 @@ struct MailComposerCheck {
 
     registryChecks()
     editChecks()
+    frontChecks()
     dispatchChecks()
 
     print("\(checks) checks, \(failures) failures")
