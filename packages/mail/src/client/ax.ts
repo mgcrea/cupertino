@@ -97,9 +97,11 @@ export type NativeComposer = {
    * True while the handle was re-bound to a tab that may be another draft
    * (the person closed the first and opened, or retitled, another under its
    * title). An edit by the handle alone is refused; one by ref, which sends
-   * the draft's text as `expectHead`, goes through when the text matches. It
-   * clears once a listing reads the tab's own text as what the handle was
-   * last listed with. Absent from an app that predates it.
+   * the draft's text as `expectHead`, goes through when the text matches. A
+   * moved handle stays reference-only until its text is proved: a verified
+   * edit by ref clears the mark, and so does a listing that reads the tab's
+   * own text, not empty, as what the handle was last seen with. Absent from
+   * an app that predates it.
    */
   rebound?: boolean;
   /** A tab's subject is its title. */
@@ -125,7 +127,11 @@ export type NativeComposer = {
   /** The opening of the quoted original; null when none, or none was asked for. */
   quote?: string | null;
   quoteTruncated?: boolean;
-  /** The sender's own text, blocks joined by newlines. Null for a background tab. */
+  /**
+   * The sender's own text, blocks joined by newlines. Null for a background
+   * tab, and for a body the app could not read (Mail still loading it, or not
+   * answering): never "" for one, which would read as an empty draft.
+   */
   text: string | null;
   /** Null when a quote level was unreadable, and for a background tab. */
   quoted: boolean | null;

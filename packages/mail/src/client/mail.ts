@@ -1540,8 +1540,9 @@ export class AppleMailClient {
           "be another draft. Nothing was changed.",
         hint:
           "Edit the draft by its saved draft's ref (apple_mail_list_open_drafts gives them under " +
-          "`savedDrafts`), which checks its text first, or list the open drafts again and use " +
-          "the handle once it is listed with `rebound: false`.",
+          "`savedDrafts`), which checks its text first. A moved handle stays reference-only " +
+          "until its text is proved: once an edit by ref has read it back, list the open drafts " +
+          "again and the handle edits on its own.",
       };
     }
     const answer = await lane.editComposer({
@@ -1631,8 +1632,9 @@ export class AppleMailClient {
             (composers.some((c) => c.rebound === true)
               ? " A draft with `rebound: true` is a tab whose window Mail rebuilt since its " +
                 "handle was given, so the handle may now name another draft under the same " +
-                "title: edit it by a ref from `savedDrafts`, which checks its text, or list " +
-                "again once it shows the text it had."
+                "title: it stays reference-only until its text is proved. Edit it by a ref " +
+                "from `savedDrafts`, which checks its text; after that verified edit, list " +
+                "again and the handle edits on its own."
               : "") +
             (index ? "" : " `savedDrafts` is null because the search index cannot be read."),
     };

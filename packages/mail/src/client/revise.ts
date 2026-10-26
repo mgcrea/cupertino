@@ -123,9 +123,13 @@ export const reviseDraftInPlace = async (
   if (!reach.ok) return null;
 
   let handle = opts.composer;
-  // A tab Mail is not showing has no text to match here; the app selects it
-  // and checks the head against what its window then shows, even an empty one.
-  let unread = false;
+  // Matched by content below, rather than named: the head goes along as
+  // `expectHead` even when it is empty, so the app checks the same thing
+  // against the window it edits. That holds for a tab Mail is not showing,
+  // which has no text to match here (the app selects it and checks the head
+  // against what its window then shows), and for a handle Mail's tab rebuild
+  // re-bound, which the app refuses without a head to check.
+  const matched = handle === undefined;
   if (handle === undefined) {
     const sameSubject = (await lane.composers()).filter((c) => c.subject === facts.subject);
     // Null only when nothing is open under this subject at all.
@@ -176,7 +180,6 @@ export const reviseDraftInPlace = async (
     }
     const chosen = (matches[0] ?? hidden[0]) as { composer: string };
     handle = chosen.composer;
-    unread = matches.length === 0;
   }
 
   const files = opts.attachments ?? [];
@@ -186,7 +189,7 @@ export const reviseDraftInPlace = async (
     ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
     ...(opts.body !== undefined ? { body: opts.body } : {}),
     ...(files.length > 0 ? { attachments: files } : {}),
-    ...(head.length > 0 || unread ? { expectHead: head } : {}),
+    ...(matched || head.length > 0 ? { expectHead: head } : {}),
   });
   if (answer.replaced !== true) return answer;
 

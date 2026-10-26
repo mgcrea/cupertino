@@ -281,6 +281,23 @@ describe("reviseDraftInPlace", () => {
       expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-2", expectHead: "" });
     });
 
+    /*
+     * Fix round 5: the head goes along whenever the composer was matched by
+     * content, empty or not. A handle Mail's tab rebuild re-bound is refused
+     * by the app without one, and an empty saved draft is still this draft.
+     */
+    it("sends an empty head for a shown composer matched by its empty text", async () => {
+      const { env, seen } = await hostStub({
+        composers: [{ composer: "mc-1", subject: SUBJECT, text: "", tab: "selected" }],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts({ contentHead: "" }), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+      expect(edits(seen)).toHaveLength(1);
+      expect(edits(seen)[0]!.args).toEqual({ composer: "mc-1", body: "BRAVO", expectHead: "" });
+    });
+
     it("refuses when the shown tab matches but a background tab under the subject could too", async () => {
       const { env, seen } = await hostStub({
         composers: [

@@ -438,13 +438,18 @@ describe("choosing the composer to edit", () => {
    * there is no text to check it against, so it is refused before the app is
    * asked; by ref the draft's text goes along, and the app checks it.
    */
-  it("refuses a re-bound handle, saying to edit by ref or list again", async () => {
+  it("refuses a re-bound handle, saying it stays reference-only until its text is proved", async () => {
     const { client, scripts, edited } = world(2, { rebound: [1] });
     const result = await client.updateDraft({ composer: "mc-1" }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: false, method: "inPlace", capability: "identity" });
     expect(String((result as { reason: string }).reason)).toMatch(/mc-1.*rebuilt.*another draft/s);
-    expect(String((result as { hint: string }).hint)).toMatch(/ref/);
-    expect(String((result as { hint: string }).hint)).toMatch(/list the open drafts again/);
+    const hint = String((result as { hint: string }).hint);
+    expect(hint).toMatch(/by its saved draft's ref/);
+    expect(hint).toMatch(/stays reference-only until its text is proved/);
+    expect(hint).toMatch(/once an edit by ref has read it back, list the open drafts again/);
+    // It never promised the handle would come back listed `rebound: false`
+    // on its own: only a verified edit, or a listing reading its old text, clears it.
+    expect(hint).not.toMatch(/rebound: false/);
     expect(edited).toEqual([]);
     expect(scripts).toEqual([]);
   });
