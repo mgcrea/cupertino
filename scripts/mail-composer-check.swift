@@ -91,7 +91,9 @@ final class EditFake: ComposerWindow {
   private(set) var selection: Range<Int>?
   private(set) var log: [String] = []
   private(set) var pasted: [PasteContent] = []
-  private(set) var saves = 0
+  /// Changed and not saved since: the window's `AXEdited`.
+  var dirty = false
+  fileprivate(set) var saves = 0
 
   init(own: String, files: [String] = [], quote: [String] = ["On Monday, Ann wrote:", "Hi"]) {
     self.own = own
@@ -116,7 +118,18 @@ final class EditFake: ComposerWindow {
     return group?.forward() ?? activates
   }
   /// The window's body: the content shown, whichever tab that is.
-  func windowBody() -> AnyObject? { group?.shown ?? self }
+  func windowBody() -> AnyObject? {
+    guard let group else { return self }
+    return group.body()
+  }
+  /// The window's `AXEdited` while it shows this composer: nil otherwise, or
+  /// when it does not answer.
+  func edited() -> Bool? {
+    guard let group else { return nil }
+    group.tick()
+    guard group.editedAnswers, group.state(of: self) == .selected else { return nil }
+    return group.shown.dirty
+  }
 
   private func note(_ event: String) {
     log.append(event)
@@ -229,6 +242,7 @@ final class EditFake: ComposerWindow {
         var utf16 = Array(own.utf16)
         utf16.replaceSubrange(span, with: Array(text.utf16))
         own = String(decoding: utf16, as: UTF16.self)
+        dirty = true
         selection = (span.lowerBound + text.utf16.count)..<(span.lowerBound + text.utf16.count)
       case .files(let urls):
         if !ignoresFiles { ownFiles += urls.map(\.lastPathComponent) }
@@ -247,7 +261,14 @@ final class EditFake: ComposerWindow {
   func save() throws -> SaveOutcome {
     if shown !== self { return try shown.save() }
     note("save")
-    saves += 1
+    // command-S goes by HID and can be handled after an AX press that follows
+    // it: it then saves whichever tab the window shows when it lands.
+    if let group, group.saveLag > 0 {
+      group.postSave()
+    } else {
+      saves += 1
+      dirty = false
+    }
     return saveOutcome
   }
 }
@@ -290,6 +311,18 @@ final class FakeTabGroup {
   /// Reads of a tab's state the content takes to swap after a press.
   var selectLag = 0
   private var landing: (index: Int, reads: Int)?
+  /// Reads a command-S takes to land, in whatever tab is shown by then.
+  var saveLag = 0
+  private var saving: Int?
+  /// Whether the window answers `AXEdited`.
+  var editedAnswers = true
+  /// The window's body element, per tab: replaced when activation rebuilds it.
+  private var bodies: [Int: NSObject] = [:]
+  var bodyReadable = true
+  /// Mail coming forward rebuilds the body element of the tab it shows.
+  var forwardRebuildsBody = false
+  /// The body stops answering once Mail comes forward.
+  var bodyUnreadableAfterForward = false
   /// Every press, by tab index, in order.
   private(set) var presses: [Int] = []
   /// Presses and each tab's reads and writes, `"<index>:<event>"`, in order.
@@ -318,13 +351,26 @@ final class FakeTabGroup {
   func forward() -> Bool {
     events.append("forward")
     if comesForward { mailFront = true }
+    if comesForward, forwardRebuildsBody { bodies[content] = NSObject() }
+    if comesForward, bodyUnreadableAfterForward { bodyReadable = false }
     return comesForward
   }
 
-  /// As the live type reads it: the one tab reading `AXValue` 1 is this one,
-  /// and the subject field (the content's) reads as its title. Two tabs under
-  /// one title cannot be told apart by that alone.
-  func state(of fake: EditFake) -> ComposerTab {
+  func body() -> AnyObject? {
+    guard bodyReadable else { return nil }
+    if let known = bodies[content] { return known }
+    let made = NSObject()
+    bodies[content] = made
+    return made
+  }
+
+  func postSave() {
+    events.append("command-S posted")
+    saving = saveLag
+  }
+
+  /// A read goes by: whatever was in flight lands one read nearer.
+  func tick() {
     if let pending = landing {
       if pending.reads <= 1 {
         content = pending.index
@@ -333,6 +379,23 @@ final class FakeTabGroup {
         landing = (pending.index, pending.reads - 1)
       }
     }
+    if let left = saving {
+      if left <= 1 {
+        saving = nil
+        shown.saves += 1
+        shown.dirty = false
+        events.append("saved \(content)")
+      } else {
+        saving = left - 1
+      }
+    }
+  }
+
+  /// As the live type reads it: the one tab reading `AXValue` 1 is this one,
+  /// and the subject field (the content's) reads as its title. Two tabs under
+  /// one title cannot be told apart by that alone.
+  func state(of fake: EditFake) -> ComposerTab {
+    tick()
     let shows = tabs[flagged] === fake && shown.subject == fake.subject
     return valueAnswers && shows ? .selected : .background
   }
@@ -557,7 +620,7 @@ struct MailComposerCheck {
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
       fake, request: request, board: board, front: front, readbackTimeout: 0.2,
-      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6)
+      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6, saveTimeout: 0.4)
     return (result, board, front)
   }
 
@@ -1899,6 +1962,103 @@ struct MailComposerCheck {
         capability(result) == "confirmation" && group.presses == [2] && group.content == 2
           && beta.pasted.isEmpty)
       check("and the board and the front are still handed back", handedBack(gamma, board, front))
+    }
+
+    // Fix round 2, IMPORTANT: command-S goes by HID and the reselect's AX press
+    // by Mach message, so the press can be handled first, and command-S then
+    // saves the PREVIOUS tab's draft. The save is the point; the reselect waits
+    // for the window's AXEdited to clear, or does not happen.
+    func index(_ event: String, _ group: FakeTabGroup) -> Int {
+      group.events.firstIndex(of: event) ?? Int.max
+    }
+    func note(_ r: [String: Any]) -> String { r["note"] as? String ?? "" }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.saveLag = 3
+      let (result, _, front) = tabRun(group, gamma, Request(body: "New gamma"))
+      for _ in 0..<5 { group.tick() }
+      check(
+        "a late command-S is waited for: it saves this draft before the shown tab comes back",
+        result["saved"] as? Bool == true && gamma.saves == 1 && beta.saves == 0
+          && group.presses == [2, 1] && index("saved 2", group) < index("press 1", group))
+      check("and the front is handed back after", front.given == [4242])
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.saveLag = 3
+      group.editedAnswers = false
+      let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
+      for _ in 0..<5 { group.tick() }
+      check(
+        "with no readable edited state, this draft's tab is left shown after command-S",
+        group.presses == [2] && group.content == 2 && gamma.saves == 1 && beta.saves == 0)
+      check(
+        "and the note says so",
+        result["saved"] as? Bool == true && note(result).contains("left this draft's tab shown"))
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.saveLag = 100_000
+      let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "a save that never shows is not reported saved, and no tab is switched",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == false
+          && group.presses == [2] && beta.saves == 0
+          && note(result).contains("left this draft's tab shown"))
+    }
+    do {
+      // Already clean when command-S goes: nothing could show the save landing.
+      let (group, _, beta, gamma) = tabbed()
+      gamma.onPaste = { $0.dirty = false }
+      let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "a window not dirty before command-S proves nothing: no reselect",
+        group.presses == [2] && beta.saves == 0
+          && note(result).contains("left this draft's tab shown"))
+    }
+    do {
+      // An untabbed window and the selected tab save as before, with no wait.
+      let fake = EditFake(own: "Old")
+      let (result, _, _) = run(fake, Request(body: "New"))
+      let (group, _, beta, _) = tabbed()
+      let (shown, _, _) = tabRun(group, beta, Request(body: "New beta"))
+      check(
+        "a window of its own, or the tab shown, saves as before",
+        result["saved"] as? Bool == true && !note(result).contains("tab")
+          && shown["saved"] as? Bool == true && !note(shown).contains("left this draft"))
+    }
+
+    // Fix round 2, promoted Minor: the body before the press is read AFTER
+    // Mail comes forward, since activation could rebuild it.
+    do {
+      let (group, alpha, beta, _) = tabbed()
+      group.contentSwaps = false
+      group.forwardRebuildsBody = true
+      let (result, board, front) = tabRun(
+        group, alpha, Request(body: "Into the wrong draft", expectHead: "BETA text"))
+      check(
+        "a body rebuilt by activation is not taken for a switch to the tab",
+        capability(result) == "composer" && beta.own == "BETA text"
+          && backedOut([alpha, beta], group, board, front))
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.bodyReadable = false
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "a body that cannot be read refuses before Mail comes forward",
+        capability(result) == "composer" && !group.events.contains("forward")
+          && group.presses.isEmpty && untouched(gamma, board, front)
+          && untouched(beta, board, front))
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.bodyUnreadableAfterForward = true
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "a body that stops answering once Mail is forward refuses before the press, front back",
+        capability(result) == "composer" && group.events.contains("forward")
+          && group.presses.isEmpty && backedOut([beta, gamma], group, board, front))
     }
 
     // An untabbed window has no tab to press.
