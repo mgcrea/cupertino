@@ -470,7 +470,24 @@ describe("awaitNewComposer", () => {
       lane.close();
     });
 
-    it("refuses when the selected candidate's own text could not be read", async () => {
+    it("polls on while the selected candidate's body is still loading, then takes it", async () => {
+      const { lane } = await laneOver({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "selected", n === 1 ? null : "-- \nOlivier"),
+          ],
+        }),
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+        text: "-- \nOlivier",
+      });
+      lane.close();
+    });
+
+    it("refuses at the deadline when the selected candidate's own text never reads", async () => {
       const { lane } = await laneOver({
         mail_composers: {
           composers: [

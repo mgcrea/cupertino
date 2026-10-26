@@ -245,9 +245,10 @@ export const sameHead = (a: string, b: string): boolean => {
  * or its line breaks may read differently): that is the old draft, and
  * filling it would replace what it holds. An empty text never matches. And
  * when any same-subject composer in `before` had no text to compare (a
- * background tab, or a body the app could not read), or the candidate has
- * none, nothing can tell the old draft from the new one, so it is refused as
- * well. The text returned is what the caller sends as `expectHead`, so the
+ * background tab, or a body the app could not read), nothing can tell the old
+ * draft from the new one, so it is refused as well. A candidate with no text
+ * yet is a body still loading: it is polled on, and refused only if it still
+ * reads none at `timeoutMs`. The text returned is what the caller sends as `expectHead`, so the
  * fill binds to the draft judged here.
  */
 export const awaitNewComposer = async (
@@ -282,9 +283,13 @@ export const awaitNewComposer = async (
         const grew = listed.filter((c) => c.subject === subject).length - had;
         const pick = selected[0];
         const old = pick === undefined || isOld(pick.text);
-        if (subject !== undefined && counted && grew === 1 && selected.length === 1 && !old)
-          return found(pick as NativeComposer);
-        return { ambiguous: candidates.map((c) => c.composer) };
+        const ruleB = subject !== undefined && counted && grew === 1 && selected.length === 1;
+        if (ruleB && !old) return found(pick as NativeComposer);
+        // A just-opened tab's body may not read yet: when its missing text is
+        // the only thing in the way, poll on, and refuse only at the deadline.
+        const waiting = ruleB && !unread && typeof pick?.text !== "string";
+        if (!waiting || Date.now() >= deadline)
+          return { ambiguous: candidates.map((c) => c.composer) };
       }
     } catch {
       // Retried below; the deadline decides.
