@@ -564,7 +564,10 @@ async function newMessageCheck(mail, address) {
     );
     return;
   }
-  const source = await mail.call("apple_mail_get_message_source", { ref: draft.ref });
+  const source = await mail.call("apple_mail_get_message_source", {
+    ref: draft.ref,
+    maxBytes: 1_000_000,
+  });
   const raw = String(source?.source ?? "");
   const quoted = /URLShareWrapperClass|blockquote/i.test(raw);
   check(
@@ -690,9 +693,7 @@ async function attachCheck(mail, subject) {
     }
     check(
       "both files went in IN ITS COMPOSER and read back",
-      result?.method === "inPlace" &&
-        result?.replaced === true &&
-        result?.attachmentsAdded === 2,
+      result?.method === "inPlace" && result?.replaced === true && result?.attachmentsAdded === 2,
       result?.replaced === true
         ? `attachmentsAdded: ${JSON.stringify(result?.attachmentsAdded)}`
         : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
@@ -755,7 +756,8 @@ async function editsCheck(mail, subject) {
     return;
   }
   const raw = String(
-    (await mail.call("apple_mail_get_message_source", { ref: draft.ref }))?.source ?? "",
+    (await mail.call("apple_mail_get_message_source", { ref: draft.ref, maxBytes: 1_000_000 }))
+      ?.source ?? "",
   );
   check(
     "the saved draft holds the edit and kept its file",
@@ -963,7 +965,9 @@ async function tabbedHandlesCheck(mail, subject, same) {
     const out = [];
     for (const draft of await draftsBySubject(mail, subject)) {
       try {
-        const raw = (await mail.call("apple_mail_get_message_source", { ref: draft.ref }))?.source;
+        const raw = (
+          await mail.call("apple_mail_get_message_source", { ref: draft.ref, maxBytes: 1_000_000 })
+        )?.source;
         out.push({ ref: draft.ref, raw: String(raw ?? "") });
       } catch {
         // Renumbered under us: the next poll finds it again.
@@ -1154,7 +1158,8 @@ async function rebuildCheck(mail, address, forwardSubject) {
     );
     if (!rebuilt) return;
     const raw = String(
-      (await mail.call("apple_mail_get_message_source", { ref: rebuilt.ref }))?.source ?? "",
+      (await mail.call("apple_mail_get_message_source", { ref: rebuilt.ref, maxBytes: 1_000_000 }))
+        ?.source ?? "",
     );
     const header = /^In-Reply-To:\s*(<[^>\r\n]+>)/im.exec(raw)?.[1] ?? null;
     check(
