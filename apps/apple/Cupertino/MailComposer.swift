@@ -105,7 +105,9 @@ nonisolated protocol ComposerWindow: AnyObject {
   func edited() -> Bool?
   /// A live composer standing for this one once its tab's element has died:
   /// nil unless that holds (see `AXComposerWindow.rebind`). The registry
-  /// keeps the handle on it, number and all.
+  /// keeps the handle on it, number and all, and marks it `rebound`: the tab
+  /// may hold another draft, so an edit by the handle alone refuses until a
+  /// listing reads it as the text the handle was last seen with.
   func rebound() -> ComposerWindow?
 }
 
@@ -180,24 +182,51 @@ nonisolated protocol Front {
 /// Two composers can carry the same subject, so neither the title nor the
 /// subject names one. A handle is minted per window the first time it is seen
 /// and kept for as long as the process lives; `mc-<n>` numbers are never reused,
-/// so a handle held across a send can only go stale, never point at another draft.
+/// so a handle held across a send goes stale rather than naming a later draft.
+///
+/// One exception, and it is marked: a tab's handle is keyed by its tab button,
+/// which Mail re-mints whenever a tab opens or closes (LIVE RUN 5). A dead tab
+/// is re-bound to the live tab of its window carrying its title, when that
+/// title was unique then and is unique now (`AXComposerWindow.rebind`). That
+/// tab CAN be another draft: the person closed the first and opened or
+/// retitled a second under the same title. So a re-bound handle carries a
+/// `rebound` mark, listed on its row, under which an edit refuses unless
+/// `expectHead` proves the text. The mark clears only once a listing reads
+/// the tab's own text equal to the text recorded for the handle at its last
+/// readable sighting before the turnover; with no text recorded (the tab was
+/// only ever seen in the background), it never clears.
 nonisolated enum MailComposer {
 
   /// `@unchecked Sendable` for the reason `AccessibilityDriver.HandleStore` is:
   /// the lock is the invariant.
   private final class Registry: @unchecked Sendable {
-    private var entries: [(number: Int, window: ComposerWindow)] = []
+    private struct Entry {
+      let number: Int
+      var window: ComposerWindow
+      /// The handle was re-bound to a tab that may be another draft.
+      var rebound = false
+      /// The own text read at the last listing that could read it; what a
+      /// re-bound tab must read as for the mark to clear. Frozen while marked.
+      var ownText: String?
+    }
+
+    private var entries: [Entry] = []
     private var next = 0
     private let lock = NSLock()
+
+    /// Re-bind the entry at `i` when its tab's element has died, and mark it.
+    private func rebind(_ i: Int) {
+      guard !entries[i].window.isAlive, let live = entries[i].window.rebound() else { return }
+      entries[i].window = live
+      entries[i].rebound = true
+    }
 
     func register(_ windows: [ComposerWindow]) -> [String] {
       lock.lock()
       defer { lock.unlock() }
       // A tab whose element Mail re-minted keeps its handle when it can be
-      // told for sure which live tab it is now (`rebound`).
-      for i in entries.indices where !entries[i].window.isAlive {
-        if let live = entries[i].window.rebound() { entries[i].window = live }
-      }
+      // told for sure which live tab is titled as it was (`rebound`).
+      for i in entries.indices { rebind(i) }
       // Dead windows are dropped so a long session does not hold every composer
       // it ever saw. Their numbers are not recycled: `next` only goes up.
       entries.removeAll { !$0.window.isAlive }
@@ -208,7 +237,7 @@ nonisolated enum MailComposer {
           return "mc-\(entries[known].number)"
         }
         next += 1
-        entries.append((next, window))
+        entries.append(Entry(number: next, window: window))
         return "mc-\(next)"
       }
     }
@@ -216,13 +245,34 @@ nonisolated enum MailComposer {
     func resolve(_ handle: String) -> ComposerWindow? {
       lock.lock()
       defer { lock.unlock() }
-      guard handle.hasPrefix("mc-"), let number = Int(handle.dropFirst(3)),
-        let at = entries.firstIndex(where: { $0.number == number })
-      else { return nil }
-      if !entries[at].window.isAlive, let live = entries[at].window.rebound() {
-        entries[at].window = live
-      }
+      guard let at = index(of: handle) else { return nil }
+      rebind(at)
       return entries[at].window.isAlive ? entries[at].window : nil
+    }
+
+    func isRebound(_ handle: String) -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return index(of: handle).map { entries[$0].rebound } ?? false
+    }
+
+    /// A listing read the own text of the composer `handle` names. Unmarked,
+    /// it is the text a later re-binding will be held to; marked, the mark
+    /// clears only when it is that text.
+    func sighted(_ handle: String, text: String) {
+      lock.lock()
+      defer { lock.unlock() }
+      guard let at = index(of: handle) else { return }
+      if entries[at].rebound {
+        if entries[at].ownText == text { entries[at].rebound = false }
+      } else {
+        entries[at].ownText = text
+      }
+    }
+
+    private func index(of handle: String) -> Int? {
+      guard handle.hasPrefix("mc-"), let number = Int(handle.dropFirst(3)) else { return nil }
+      return entries.firstIndex { $0.number == number }
     }
   }
 
@@ -234,6 +284,13 @@ nonisolated enum MailComposer {
 
   static func resolve(_ handle: String) -> ComposerWindow? {
     registry.resolve(handle)
+  }
+
+  /// Whether `handle` was re-bound to a tab that may be another draft, and no
+  /// listing has since read that tab as the text the handle was last seen
+  /// with. The server passes it to `edit`.
+  static func isRebound(_ handle: String) -> Bool {
+    registry.isRebound(handle)
   }
 
   /// One entry per window: its handle, subject, recipients and own text.
@@ -250,6 +307,11 @@ nonisolated enum MailComposer {
   /// window shows, which reads as a window does, and `"background"` for any
   /// other tab: its title and nothing else, every field it cannot read null,
   /// because reading one means switching tabs and a listing never does.
+  ///
+  /// `rebound` is true while the handle was re-bound to a tab that may be
+  /// another draft (see the registry): an edit by that handle alone refuses.
+  /// A row whose text could be read is the handle's sighting: what a later
+  /// re-binding is held to, or what clears the mark.
   static func listing(_ windows: [ComposerWindow], quoteChars: Int = 2000) -> [[String: Any]] {
     let handles = register(windows)
     return zip(windows, handles).map { window, handle in
@@ -258,8 +320,10 @@ nonisolated enum MailComposer {
       var entry = shown(window, handle, quoteChars: quoteChars)
       entry["tab"] = tab?.rawValue ?? NSNull()
       // Switched away from while it was read, what it answered may be the
-      // next tab's: listed as what it now is.
+      // next tab's: listed as what it now is, and not taken as a sighting.
       if tab == .selected, window.tab != .selected { return background(window, handle) }
+      if let text = entry["text"] as? String { registry.sighted(handle, text: text) }
+      entry["rebound"] = registry.isRebound(handle)
       return entry
     }
   }
@@ -269,7 +333,7 @@ nonisolated enum MailComposer {
       "composer": handle, "subject": window.subject, "tab": ComposerTab.background.rawValue,
       "main": false, "from": NSNull(), "to": NSNull(), "cc": NSNull(), "bcc": NSNull(),
       "recipients": NSNull(), "text": NSNull(), "quoted": NSNull(), "quote": NSNull(),
-      "quoteTruncated": false, "files": [String](),
+      "quoteTruncated": false, "files": [String](), "rebound": registry.isRebound(handle),
     ]
   }
 
@@ -446,6 +510,10 @@ nonisolated enum MailComposer {
   ///    a tab whose title another tab of the window shares, unless
   ///    `expectHead` was given (after the switch nothing else could prove the
   ///    content shown is this draft's), and an attachment that is not there;
+  ///
+  /// Before either path, a handle the registry re-bound (`rebound`, see the
+  /// registry) is refused the same way unless `expectHead` was given: the tab
+  /// it names now may be another draft, and only the text can prove it.
   ///  - the tab shown, the front and the window's body element are noted;
   ///  - Mail is brought to the front (admission first). MEASURED, LIVE RUN 4:
   ///    a pressed tab's `AXValue` flips at once, but the window's content
@@ -476,8 +544,8 @@ nonisolated enum MailComposer {
   /// the front goes back to the application noted before Mail came forward.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
-    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12, grace: TimeInterval = 2,
-    tabTimeout: TimeInterval = 2, saveTimeout: TimeInterval = 2
+    rebound: Bool = false, readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12,
+    grace: TimeInterval = 2, tabTimeout: TimeInterval = 2, saveTimeout: TimeInterval = 2
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -486,6 +554,15 @@ nonisolated enum MailComposer {
       return refusal(
         "composer", "The composer is gone: it was sent or closed, or Mail quit. \(untouched)",
         "List the composers again and edit the one that holds this draft.")
+    }
+    if rebound, request.expectHead == nil {
+      return refusal(
+        "identity",
+        "This composer's tab changed underneath it: Mail rebuilt its window's tabs since the "
+          + "composer was listed, and the handle now names the tab carrying its title, which may "
+          + "be another draft. \(untouched) No tab was switched.",
+        "List the composers again, and edit the draft by its saved draft's ref, which checks "
+          + "its text.")
     }
     guard w.tab == .background else {
       return editShown(
@@ -1470,9 +1547,10 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// window, so no earlier button is `CFEqual` to its tab any more. A dead
   /// tab is re-bound to the live tab of the SAME window element carrying its
   /// title, only when that title was unique among the window's tabs when it
-  /// was last listed, and is unique now. Otherwise it stays dead. What the
-  /// window shows is still proved before anything is pasted (`expectHead`,
-  /// the shown-tab and body checks).
+  /// was last listed, and is unique now. Otherwise it stays dead. The live tab
+  /// can still be another draft (the person closed this one and opened or
+  /// retitled another under the title), which is why the registry marks the
+  /// handle `rebound` and `edit` then wants `expectHead`.
   func rebound() -> ComposerWindow? {
     guard tabButton != nil, let listedTitle else { return nil }
     var out: CFTypeRef?

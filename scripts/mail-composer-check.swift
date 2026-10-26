@@ -87,6 +87,10 @@ final class EditFake: ComposerWindow {
   /// which is what Accessibility gives: one window element, the selected tab's
   /// content.
   var group: FakeTabGroup?
+  /// The live composer this one re-binds to once it is dead: the tab carrying
+  /// its title after Mail re-minted the buttons, which may be another draft.
+  var reboundTo: ComposerWindow?
+  func rebound() -> ComposerWindow? { isAlive ? nil : reboundTo }
   /// What a read or a paste reaches: this composer, or the tab its window shows.
   private var shown: EditFake { group?.shown ?? self }
   private var pending: (land: () -> Void, reads: Int)?
@@ -419,6 +423,16 @@ final class MintWindow {
     tabs.removeAll { $0.title == title }
     remint()
   }
+  /// The person closes the tab at `index`: the others are re-minted.
+  func close(at index: Int) {
+    tabs.remove(at: index)
+    remint()
+  }
+  /// The person edits the subject of the tab at `index`: its title changes,
+  /// and no button is re-minted.
+  func retitle(at index: Int, to title: String) {
+    tabs[index].title = title
+  }
   private func remint() {
     tabs = tabs.map { tab in
       next += 1
@@ -685,10 +699,10 @@ struct MailComposerCheck {
   /// does not hold the run for five seconds.
   static func run(
     _ fake: EditFake, _ request: Request, board: FakeBoard = FakeBoard(),
-    front: FakeFront = FakeFront(), grace: TimeInterval = 0.3
+    front: FakeFront = FakeFront(), grace: TimeInterval = 0.3, rebound: Bool = false
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
-      fake, request: request, board: board, front: front, readbackTimeout: 0.2,
+      fake, request: request, board: board, front: front, rebound: rebound, readbackTimeout: 0.2,
       filesTimeout: 0.2, grace: grace, tabTimeout: 0.6, saveTimeout: 0.4)
     return (result, board, front)
   }
@@ -2191,6 +2205,150 @@ struct MailComposerCheck {
           && AXComposerWindow.rebind(
             title: "", uniqueThen: true, among: [7], title: { _ in "" }) == nil
       )
+    }
+
+    // Fix round 4: a re-bound handle can name another draft (the person closed
+    // the tab and opened, or retitled, another under its title), so it is
+    // marked, and an edit by the handle alone refuses until a listing reads
+    // the tab as the text the handle was last seen with.
+    do {
+      let window = MintWindow()
+      for title in ["Re: lunch", "Other"] { window.add(title) }
+      let first = MailComposer.listing(window.listing())
+      let handles = first.compactMap { $0["composer"] as? String }
+      check(
+        "a handle never re-bound carries no mark",
+        first.allSatisfy { $0["rebound"] as? Bool == false }
+          && !MailComposer.isRebound(handles[0]))
+      window.add("Third")
+      let again = MailComposer.listing(window.listing())
+      check(
+        "a re-bind sets the mark, and the listing shows it",
+        MailComposer.isRebound(handles[0]) && MailComposer.isRebound(handles[1])
+          && again[0]["composer"] as? String == handles[0] && again[0]["rebound"] as? Bool == true
+          && again[1]["rebound"] as? Bool == true && again[2]["rebound"] as? Bool == false)
+      check("an unknown handle is not marked", !MailComposer.isRebound("mc-9999"))
+    }
+    do {
+      // The retitle route: "Other" is retitled "Re: lunch" (no button re-minted,
+      // so the first tab's recorded uniqueness stays true), then the first is
+      // closed. The handle re-binds to the retitled tab, and is marked.
+      let window = MintWindow()
+      for title in ["Re: lunch", "Other"] { window.add(title) }
+      let handles = MailComposer.register(window.listing())
+      window.retitle(at: 1, to: "Re: lunch")
+      window.close(at: 0)
+      check(
+        "a handle re-bound to a retitled tab after its own closed is marked",
+        (MailComposer.resolve(handles[0]) as? MintTab)?.button == window.tabs[0].button
+          && MailComposer.isRebound(handles[0]))
+    }
+    do {
+      // The edit gate, on the stand-in the registry re-bound the handle to.
+      let old = EditFake(own: "Hi Ann")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      let other = EditFake(own: "Hi Bob")
+      other.subject = "Re: lunch"
+      old.isAlive = false
+      old.reboundTo = other
+      check(
+        "resolve re-binds the handle to the stand-in and marks it",
+        MailComposer.resolve(handle) === other && MailComposer.isRebound(handle))
+      let (refused, board, front) = run(other, Request(body: "New text"), rebound: true)
+      check(
+        "an edit on a marked handle without expectHead refuses as identity, nothing pasted or saved",
+        capability(refused) == "identity" && reason(refused).contains("tab changed underneath")
+          && (refused["hint"] as? String ?? "").contains("ref")
+          && (refused["hint"] as? String ?? "").contains("List the composers again")
+          && untouched(other, board, front) && other.own == "Hi Bob")
+      let (wrong, wrongBoard, wrongFront) = run(
+        other, Request(body: "New text", expectHead: "Hi Ann"), rebound: true)
+      check(
+        "with an expectHead that is not the tab's text it refuses as identity too",
+        capability(wrong) == "identity" && untouched(other, wrongBoard, wrongFront)
+          && other.own == "Hi Bob")
+      let (ok, _, _) = run(other, Request(body: "New text", expectHead: "Hi Bob"), rebound: true)
+      check(
+        "with a matching expectHead it goes through",
+        ok["replaced"] as? Bool == true && other.own == "New text" && other.saves == 1)
+      check(
+        "a verified edit by ref does not clear the mark on its own",
+        MailComposer.isRebound(handle))
+    }
+    do {
+      // What clears the mark: a listing reading the re-bound tab as the text
+      // recorded at the handle's last sighting before the turnover.
+      let old = EditFake(own: "Hi Ann")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      let other = EditFake(own: "Hi Bob")
+      other.subject = "Re: lunch"
+      old.isAlive = false
+      old.reboundTo = other
+      let differs = MailComposer.listing([other])
+      check(
+        "a listing with a different own text keeps the mark",
+        differs[0]["composer"] as? String == handle && differs[0]["rebound"] as? Bool == true
+          && MailComposer.isRebound(handle))
+      let (refused, _, _) = run(
+        other, Request(body: "New text"), rebound: MailComposer.isRebound(handle))
+      check("and the handle still refuses", capability(refused) == "identity")
+      other.own = "Hi Ann"
+      let same = MailComposer.listing([other])
+      check(
+        "a listing whose own text equals the pre-turnover text clears the mark",
+        same[0]["composer"] as? String == handle && same[0]["rebound"] as? Bool == false
+          && !MailComposer.isRebound(handle))
+      let (ok, _, _) = run(
+        other, Request(body: "New text"), rebound: MailComposer.isRebound(handle))
+      check(
+        "and the handle edits again without expectHead",
+        ok["replaced"] as? Bool == true && other.own == "New text")
+    }
+    do {
+      // The record moves with each readable sighting, so it is the LAST text
+      // before the turnover that counts, not the first.
+      let old = EditFake(own: "Draft one")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      old.own = "Draft two"
+      _ = MailComposer.listing([old])
+      let other = EditFake(own: "Draft one")
+      other.subject = "Re: lunch"
+      old.isAlive = false
+      old.reboundTo = other
+      let stale = MailComposer.listing([other])
+      check(
+        "the first text seen does not clear the mark once a later one was recorded",
+        stale[0]["composer"] as? String == handle && stale[0]["rebound"] as? Bool == true)
+      other.own = "Draft two"
+      let latest = MailComposer.listing([other])
+      check("the last text seen before the turnover does", latest[0]["rebound"] as? Bool == false)
+    }
+    do {
+      // A handle only ever seen as a background tab has no text recorded, so
+      // once re-bound its mark never clears.
+      let (group, alpha, beta, gamma) = tabbed()
+      let listed = MailComposer.listing([alpha, beta, gamma])
+      let handle = listed[2]["composer"] as? String ?? ""
+      check(
+        "a background tab's row says it is not re-bound",
+        listed[2]["tab"] as? String == "background" && listed[2]["rebound"] as? Bool == false)
+      let other = EditFake(own: "")
+      other.subject = "Other"
+      gamma.isAlive = false
+      gamma.reboundTo = other
+      _ = group
+      let read = MailComposer.listing([other])
+      check(
+        "a handle whose text was never read stays marked whatever a listing reads",
+        read[0]["composer"] as? String == handle && read[0]["rebound"] as? Bool == true
+          && MailComposer.isRebound(handle))
+      other.own = "Anything"
+      check(
+        "even an empty-to-anything turnover",
+        MailComposer.listing([other])[0]["rebound"] as? Bool == true)
     }
 
     // Fix round 3: a file in the own text reads "name, 6 bytes" (LIVE RUN 5).
