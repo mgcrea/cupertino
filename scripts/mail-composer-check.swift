@@ -109,8 +109,14 @@ final class EditFake: ComposerWindow {
   func pressTab() throws -> Bool { group?.press(self) ?? false }
   func shownTab() -> ComposerWindow? {
     guard let group, group.valueAnswers else { return nil }
-    return group.shown
+    return group.tabs[group.flagged]
   }
+  func bringForward() throws -> Bool {
+    note("forward")
+    return group?.forward() ?? activates
+  }
+  /// The window's body: the content shown, whichever tab that is.
+  func windowBody() -> AnyObject? { group?.shown ?? self }
 
   private func note(_ event: String) {
     log.append(event)
@@ -195,6 +201,13 @@ final class EditFake: ComposerWindow {
     return activates
   }
 
+  func focus() throws -> Bool {
+    if shown !== self { return try shown.focus() }
+    note("focus")
+    onActivate?(self)
+    return activates && group?.mailFront != false
+  }
+
   func paste(_ content: PasteContent) throws -> Bool {
     if shown !== self { return try shown.paste(content) }
     note("paste")
@@ -251,11 +264,30 @@ final class EditFake: ComposerWindow {
 /// the role a press is allowed on.
 final class FakeTabGroup {
   let tabs: [EditFake]
-  var selected: Int
+  /// The tab whose button reads `AXValue` 1.
+  var flagged: Int
+  /// The tab whose content the window shows: its subject field and body.
+  var content: Int
+  /// The person picking a tab: its flag and its content move together.
+  var selected: Int {
+    get { content }
+    set {
+      flagged = newValue
+      content = newValue
+    }
+  }
   var valueAnswers = true
   var pressSelects = true
   var pressRefused = false
-  /// Reads of a tab's state a press takes to show.
+  /// MEASURED, LIVE RUN 4: a press flips the tab's `AXValue` at once, but the
+  /// window's content swaps to it only while Mail is frontmost. Pressed with
+  /// Mail in the background, it never swaps.
+  var mailFront = false
+  /// Mail comes forward when asked.
+  var comesForward = true
+  /// With Mail in front, whether the content follows the flag at all.
+  var contentSwaps = true
+  /// Reads of a tab's state the content takes to swap after a press.
   var selectLag = 0
   private var landing: (index: Int, reads: Int)?
   /// Every press, by tab index, in order.
@@ -265,32 +297,44 @@ final class FakeTabGroup {
 
   init(_ tabs: [EditFake], selected: Int) {
     self.tabs = tabs
-    self.selected = selected
+    self.flagged = selected
+    self.content = selected
     for tab in tabs { tab.group = self }
   }
 
-  var shown: EditFake { tabs[selected] }
+  var shown: EditFake { tabs[content] }
 
   func press(_ fake: EditFake) -> Bool {
     guard !pressRefused, let index = tabs.firstIndex(where: { $0 === fake }) else { return false }
     presses.append(index)
-    events.append("press \(index)")
-    if pressSelects {
-      if selectLag > 0 { landing = (index, selectLag) } else { selected = index }
-    }
+    events.append("press \(index)\(mailFront ? "" : " (Mail in the background)")")
+    guard pressSelects else { return true }
+    flagged = index
+    guard mailFront, contentSwaps else { return true }
+    if selectLag > 0 { landing = (index, selectLag) } else { content = index }
     return true
   }
 
+  func forward() -> Bool {
+    events.append("forward")
+    if comesForward { mailFront = true }
+    return comesForward
+  }
+
+  /// As the live type reads it: the one tab reading `AXValue` 1 is this one,
+  /// and the subject field (the content's) reads as its title. Two tabs under
+  /// one title cannot be told apart by that alone.
   func state(of fake: EditFake) -> ComposerTab {
     if let pending = landing {
       if pending.reads <= 1 {
-        selected = pending.index
+        content = pending.index
         landing = nil
       } else {
         landing = (pending.index, pending.reads - 1)
       }
     }
-    return valueAnswers && shown === fake ? .selected : .background
+    let shows = tabs[flagged] === fake && shown.subject == fake.subject
+    return valueAnswers && shows ? .selected : .background
   }
 }
 
@@ -337,7 +381,10 @@ final class FakeFront: Front {
   let pid: pid_t? = 4242
   private(set) var given: [pid_t?] = []
   var onGive: (() -> Void)?
-  func current() -> pid_t? { pid }
+  /// Whether Mail is in front: then the front is Mail (pid 7777), and a front
+  /// read then would hand the front back to Mail itself.
+  var mailFront: () -> Bool = { false }
+  func current() -> pid_t? { mailFront() ? 7777 : pid }
   func give(to pid: pid_t?) {
     onGive?()
     given.append(pid)
@@ -510,7 +557,7 @@ struct MailComposerCheck {
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
       fake, request: request, board: board, front: front, readbackTimeout: 0.2,
-      filesTimeout: 0.2, grace: grace, tabTimeout: 0.3)
+      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6)
     return (result, board, front)
   }
 
@@ -1608,25 +1655,72 @@ struct MailComposerCheck {
           && none.group.events.isEmpty)
     }
 
-    // Editing a background tab: select, verify, edit, save, reselect.
+    // A front that answers Mail's pid while Mail is in front, and puts Mail
+    // in the background when it is handed back.
+    func tabRun(_ group: FakeTabGroup, _ fake: EditFake, _ request: Request)
+      -> (result: [String: Any], board: FakeBoard, front: FakeFront)
+    {
+      let front = FakeFront()
+      front.mailFront = { group.mailFront }
+      front.onGive = {
+        group.events.append("front given back")
+        group.mailFront = false
+      }
+      return run(fake, request, front: front)
+    }
+    // Refused once Mail was brought forward: nothing pasted, borrowed or
+    // saved, and the front handed back to the app that had it, not to Mail.
+    func backedOut(
+      _ fakes: [EditFake], _ group: FakeTabGroup, _ board: FakeBoard, _ front: FakeFront
+    )
+      -> Bool
+    {
+      fakes.allSatisfy { $0.pasted.isEmpty && $0.saves == 0 } && board.writes.isEmpty
+        && board.snapshots == 0 && front.given == [4242] && !group.mailFront
+    }
+
+    // LIVE RUN 4: the flag flips with Mail in the background, the content does not.
+    do {
+      let (group, _, _, gamma) = tabbed()
+      _ = group.press(gamma)
+      let stuck = (0..<5).map { _ in group.state(of: gamma) }
+      check(
+        "the fake: a tab pressed with Mail in the background is flagged but never shown",
+        group.flagged == 2 && group.content == 1 && stuck.allSatisfy { $0 == .background })
+      _ = group.forward()
+      _ = group.press(gamma)
+      check(
+        "the fake: pressed with Mail in front, it is shown", group.state(of: gamma) == .selected)
+    }
+
+    // Editing a background tab: Mail forward, select, verify, edit, save,
+    // reselect, front back.
     do {
       let (group, _, beta, gamma) = tabbed()
       group.selectLag = 3
-      let front = FakeFront()
-      front.onGive = { group.events.append("front given back") }
-      let (result, board, _) = run(gamma, Request(body: "New gamma"), front: front)
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
         "a background tab is edited and saved",
         result["replaced"] as? Bool == true && result["saved"] as? Bool == true
           && gamma.own == "New gamma" && gamma.saves == 1)
       check(
-        "its tab is pressed first, before anything is read",
-        group.events.first == "press 2" && group.events.dropFirst().first == "2:read")
+        "Mail is brought forward before its tab is pressed, and nothing is read before both",
+        group.events.prefix(3) == ["2:forward", "forward", "press 2"]
+          && !group.events.contains { $0.contains("Mail in the background") }
+          && group.events.dropFirst(3).first == "2:read")
+      check(
+        "Mail is brought forward once: the paste only focuses the window",
+        group.events.filter { $0 == "forward" }.count == 1
+          && !group.events.contains { $0.hasSuffix(":activate") }
+          && group.events.contains("2:focus"))
+      check(
+        "the front read before Mail came forward is the one handed back",
+        front.given == [4242])
       // The hand-back's press lands as late as the first one did.
       for _ in 0..<3 { _ = group.state(of: beta) }
       check(
-        "the tab that was shown is selected again after the save, before the front goes back",
-        group.presses == [2, 1] && group.selected == 1
+        "the shown tab is selected again while Mail is in front, before the front goes back",
+        group.presses == [2, 1] && group.content == 1 && group.flagged == 1
           && (group.events.firstIndex(of: "press 1") ?? 0)
             > (group.events.firstIndex(of: "2:save") ?? Int.max)
           && (group.events.firstIndex(of: "front given back") ?? 0)
@@ -1639,7 +1733,8 @@ struct MailComposerCheck {
     }
     do {
       let (group, alpha, beta, _) = tabbed()
-      let (result, _, _) = run(alpha, Request(body: "New alpha", expectHead: "ALPHA text"))
+      let (result, _, _) = tabRun(
+        group, alpha, Request(body: "New alpha", expectHead: "ALPHA text"))
       check(
         "a background tab sharing its title is edited once expectHead proves it",
         result["replaced"] as? Bool == true && alpha.own == "New alpha"
@@ -1647,13 +1742,33 @@ struct MailComposerCheck {
     }
     do {
       let (group, _, beta, _) = tabbed()
-      let (result, _, _) = run(beta, Request(body: "New beta"))
+      let (result, _, _) = tabRun(group, beta, Request(body: "New beta"))
       check(
-        "the selected tab is edited with no press at all",
-        result["replaced"] as? Bool == true && beta.own == "New beta" && group.presses.isEmpty)
+        "the selected tab is edited with no press and no early bring-forward",
+        result["replaced"] as? Bool == true && beta.own == "New beta" && group.presses.isEmpty
+          && !group.events.contains("forward"))
     }
 
-    // A tab that will not select.
+    // Review Minor (a): two tabs under one title, the flag flipped and the
+    // content not swapped. The title still matches, and so does an expectHead
+    // naming what the window still shows: only the body element can tell.
+    do {
+      let (group, alpha, beta, _) = tabbed()
+      group.contentSwaps = false
+      let (result, board, front) = tabRun(
+        group, alpha, Request(body: "Into the wrong draft", expectHead: "BETA text"))
+      check(
+        "a same-titled tab whose content never swapped is refused as composer",
+        capability(result) == "composer" && beta.own == "BETA text" && alpha.own == "ALPHA text")
+      check(
+        "with nothing pasted into the draft the window still shows",
+        backedOut([alpha, beta], group, board, front)
+          && group.events.allSatisfy { !$0.hasSuffix(":read") })
+      check(
+        "and the flag put back on the shown tab", group.presses == [0, 1] && group.flagged == 1)
+    }
+
+    // A tab that will not come up.
     for (label, setUp) in [
       ("AXPress does not select it", { (g: FakeTabGroup) in g.pressSelects = false }),
       ("it never reads as selected", { (g: FakeTabGroup) in g.valueAnswers = false }),
@@ -1661,73 +1776,91 @@ struct MailComposerCheck {
     ] {
       let (group, alpha, beta, gamma) = tabbed()
       setUp(group)
-      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
         "a tab that will not come up is refused as composer (\(label))",
         capability(result) == "composer" && reason(result).contains("tab"))
       check(
-        "with nothing read, pasted, borrowed or saved (\(label))",
-        untouched(gamma, board, front) && untouched(beta, board, front)
-          && alpha.pasted.isEmpty && group.events.allSatisfy { !$0.hasSuffix(":read") })
+        "with nothing read, pasted, borrowed or saved, and the front handed back (\(label))",
+        backedOut([alpha, beta, gamma], group, board, front)
+          && group.events.allSatisfy { !$0.hasSuffix(":read") })
       check(
-        "and only its own press, no reselect (\(label))",
-        group.presses == [2] && (label == "it never reads as selected" || group.selected != 2))
+        "its flag put back only if it moved and a tab read as shown before (\(label))",
+        group.presses == (label == "it selects too late" ? [2, 1] : [2])
+          // With no tab answering AXValue there was no shown tab to go back to.
+          && group.content == (label == "it never reads as selected" ? 2 : 1))
     }
     do {
       let (group, _, beta, gamma) = tabbed()
       group.pressRefused = true
-      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
-        "a tab that cannot be pressed is refused as composer, nothing pressed or changed",
+        "a tab that cannot be pressed is refused as composer, nothing pressed, front back",
         capability(result) == "composer" && group.presses.isEmpty
-          && untouched(beta, board, front) && untouched(gamma, board, front))
+          && backedOut([beta, gamma], group, board, front))
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.comesForward = false
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "Mail that will not come forward is refused before its tab is pressed",
+        capability(result) == "composer" && group.presses.isEmpty
+          && backedOut([beta, gamma], group, board, front))
     }
 
-    // Refusals before the switch switch nothing.
+    // Refusals before the switch switch nothing and bring nothing forward.
     do {
       let (group, alpha, beta, _) = tabbed()
-      let (result, board, front) = run(alpha, Request(body: "New alpha"))
+      let (result, board, front) = tabRun(group, alpha, Request(body: "New alpha"))
       check(
         "a background tab sharing its title, with no expectHead, is refused as identity",
         capability(result) == "identity")
       check(
-        "before its tab is pressed",
-        group.presses.isEmpty && untouched(alpha, board, front) && untouched(beta, board, front))
+        "before Mail is brought forward or its tab pressed",
+        group.presses.isEmpty && !group.events.contains("forward")
+          && untouched(alpha, board, front) && untouched(beta, board, front))
     }
     do {
       let (group, alpha, beta, _) = tabbed()
-      let (result, board, front) = run(alpha, Request(body: "New alpha", expectHead: "BETA text"))
+      let (result, board, front) = tabRun(
+        group, alpha, Request(body: "New alpha", expectHead: "BETA text"))
       check(
         "an expectHead the selected tab's text fails is refused as identity",
         capability(result) == "identity" && alpha.own == "ALPHA text"
-          && untouched(alpha, board, front) && untouched(beta, board, front))
-      check("after the switch, and the shown tab is selected again", group.presses == [0, 1])
+          && backedOut([alpha, beta], group, board, front))
+      check(
+        "after the switch, and the shown tab is selected again",
+        group.presses == [0, 1] && group.content == 1)
     }
     do {
       let (group, _, _, gamma) = tabbed()
       gamma.isAlive = false
-      let (dead, _, _) = run(gamma, Request(body: "x"))
+      let (dead, _, _) = tabRun(group, gamma, Request(body: "x"))
       let missing = URL(fileURLWithPath: "/nonexistent/mail-composer-check/t.pdf")
-      let (absent, _, _) = run(tabbed().gamma, Request(files: [missing]))
+      let other = tabbed()
+      let (absent, _, _) = tabRun(other.group, other.gamma, Request(files: [missing]))
       check(
-        "a closed tab, or a missing file, is refused with no press",
+        "a closed tab, or a missing file, is refused with no press and nothing brought forward",
         capability(dead) == "composer" && capability(absent) == "files"
-          && group.presses.isEmpty)
+          && group.presses.isEmpty && other.group.presses.isEmpty
+          && !group.events.contains("forward") && !other.group.events.contains("forward"))
     }
 
     // The person switches tabs during the edit.
     do {
       let (group, alpha, _, gamma) = tabbed()
       gamma.onRead = { fake in if fake.own == "New gamma" { group.selected = 0 } }
-      let (result, _, _) = run(gamma, Request(body: "New gamma"))
+      let (result, _, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
         "a tab switch after the read-back stops the save",
         result["replaced"] as? Bool == true && result["saved"] as? Bool == false
           && gamma.saves == 0 && alpha.saves == 0
           && (result["note"] as? String ?? "").contains("tab"))
       check(
-        "and the tab they chose is left selected",
-        group.presses == [2] && group.selected == 0 && alpha.pasted.isEmpty)
+        "and the tab they chose is left selected, the front handed back",
+        group.presses == [2] && group.selected == 0 && alpha.pasted.isEmpty
+          && front.given == [4242])
     }
     do {
       // Their tab holds the same words, so no read can tell: only the tab can.
@@ -1735,7 +1868,7 @@ struct MailComposerCheck {
       alpha.own = "Same words"
       gamma.own = "Same words"
       gamma.onActivate = { _ in group.selected = 0 }
-      let (result, board, front) = run(gamma, Request(body: "New words"))
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New words"))
       check(
         "a tab switch the reads cannot see is refused before the paste",
         capability(result) == "composer" && alpha.pasted.isEmpty && gamma.pasted.isEmpty
@@ -1748,11 +1881,24 @@ struct MailComposerCheck {
       // Refused after the paste: the shown tab still comes back.
       let (group, _, _, gamma) = tabbed()
       gamma.pasteLost = true
-      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
         "a refusal after the switch still selects the shown tab again",
-        capability(result) == "confirmation" && group.presses == [2, 1] && group.selected == 1
+        capability(result) == "confirmation" && group.presses == [2, 1] && group.content == 1
           && handedBack(gamma, board, front))
+    }
+    do {
+      // Review Minor (b): a command-V Mail never answered may still land, in
+      // whatever tab is shown when it does.
+      let (group, _, beta, gamma) = tabbed()
+      gamma.hangsFor = 60
+      gamma.pasteLost = true
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma"))
+      check(
+        "after an unanswered paste the shown tab is NOT selected again",
+        capability(result) == "confirmation" && group.presses == [2] && group.content == 2
+          && beta.pasted.isEmpty)
+      check("and the board and the front are still handed back", handedBack(gamma, board, front))
     }
 
     // An untabbed window has no tab to press.

@@ -85,6 +85,20 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// The tab this composer's window shows now, for handing it back. Nil for
   /// an untabbed window, and when no single tab reads as selected.
   func shownTab() -> ComposerWindow?
+  /// Admission, then Mail to the front, touching no window: step 0's, before
+  /// a tab is pressed. MEASURED, LIVE RUN 4: a press flips the tab's `AXValue`
+  /// at once, but the window's content swaps to it only while Mail is
+  /// frontmost.
+  func bringForward() throws -> Bool
+  /// Step 9 once `bringForward` has run: raise this window and focus its
+  /// body WITHOUT activating Mail again, true only once Mail is frontmost and
+  /// this window focused, settled. A second activation would pull Mail back
+  /// over an app the person moved to in between.
+  func focus() throws -> Bool
+  /// The element the window's body is now, whichever tab it shows; nil when
+  /// it cannot be read. Opaque: compared only with `sameBody`.
+  func windowBody() -> AnyObject?
+  func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool
 }
 
 /// Where a tab stands in its window. Its raw value is the listing's `tab`.
@@ -98,6 +112,10 @@ extension ComposerWindow {
   nonisolated var sharesTabTitle: Bool { false }
   nonisolated func pressTab() throws -> Bool { false }
   nonisolated func shownTab() -> ComposerWindow? { nil }
+  nonisolated func bringForward() throws -> Bool { false }
+  nonisolated func focus() throws -> Bool { try activate() }
+  nonisolated func windowBody() -> AnyObject? { nil }
+  nonisolated func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { a === b }
   /// To and Cc together, as the listing's `recipients` has always been.
   nonisolated var recipientNames: [String] { to + cc }
   func isSame(as other: ComposerWindow) -> Bool { self === other }
@@ -402,25 +420,38 @@ nonisolated enum MailComposer {
   ///
   /// Its window shows another tab, and everything above reads and pastes
   /// through the window, so the tab is selected first, as step 0, right after
-  /// step 1 and before anything is read: pressed (which is where admission
-  /// happens), then polled for up to `tabTimeout` until it reads as the tab
-  /// shown AND the window's subject field reads as its title. Anything short of
-  /// that refuses with nothing changed. Before the press, and so with no tab
-  /// switched, a tab whose title another tab of the window shares is refused
-  /// unless `expectHead` was given, since after the switch nothing else could
-  /// prove the content shown is this draft's; and so is an attachment that is
-  /// not there.
+  /// step 1 and before anything is read. In this order:
   ///
-  /// From then on, before every selection and paste of step 10 and before
-  /// step 12, the tab must still be the one shown: a person who picks another
-  /// tab mid-edit stops it, and command-S, which saves the tab shown, is not
-  /// pressed. On every way out the tab that was shown before is selected again,
-  /// but only while this tab is still the one shown (a person who picked
-  /// another is left there), and before the front is handed back.
+  ///  - refused with nothing done, no tab switched and Mail left where it is:
+  ///    a tab whose title another tab of the window shares, unless
+  ///    `expectHead` was given (after the switch nothing else could prove the
+  ///    content shown is this draft's), and an attachment that is not there;
+  ///  - the tab shown, the front and the window's body element are noted;
+  ///  - Mail is brought to the front (admission first). MEASURED, LIVE RUN 4:
+  ///    a pressed tab's `AXValue` flips at once, but the window's content
+  ///    swaps to it only while Mail is frontmost;
+  ///  - the tab is pressed, then polled for up to `tabTimeout` until it reads
+  ///    as the tab shown (the one tab selected, the subject field reading as
+  ///    its title) AND the body is another element than before the press,
+  ///    holding for 150 ms. The flag alone flips without the content, and two
+  ///    tabs can share a title. Anything short of that refuses, nothing read
+  ///    or pasted, and the front handed back;
+  ///  - steps 2 to 13, with step 9 only focusing the window: Mail is already
+  ///    in front, and is not activated a second time.
+  ///
+  /// From step 10 on, before every selection and paste and before step 12, the
+  /// tab must still be the one shown: a person who picks another tab mid-edit
+  /// stops it, and command-S, which saves the tab shown, is not pressed. On
+  /// every way out the tab that was shown before is selected again, while Mail
+  /// is still in front (pressed with Mail behind, the content would not
+  /// follow), and only while this tab is still the one shown (a person who
+  /// picked another is left there), and never after a command-V Mail did not
+  /// answer, which may still land in whatever tab is shown when it does. Then
+  /// the front goes back to the application noted before Mail came forward.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
     readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12, grace: TimeInterval = 2,
-    tabTimeout: TimeInterval = 1
+    tabTimeout: TimeInterval = 2
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -432,8 +463,9 @@ nonisolated enum MailComposer {
     }
     guard w.tab == .background else {
       return editShown(
-        w, request: request, board: board, front: front, readbackTimeout: readbackTimeout,
-        filesTimeout: filesTimeout, grace: grace, beforeHandBack: {})
+        w, request: request, board: board, front: front, broughtForward: false,
+        readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
+        outcome: Outcome())
     }
 
     // 0. A background tab.
@@ -449,23 +481,51 @@ nonisolated enum MailComposer {
     }
     if let refused = missingFiles(request, untouched) { return refused }
     let previous = w.shownTab()
+    // Before Mail comes forward, or the front handed back would be Mail's.
+    let frontBefore = front.current()
+    let bodyBefore = w.windowBody()
+    let unswitched = "Nothing was read or pasted, and the draft is unchanged."
+    let forward: Bool
+    do {
+      forward = try w.bringForward()
+    } catch {
+      front.give(to: frontBefore)
+      return refusal(
+        "composer",
+        "Mail could not be brought to the front to select the composer's tab "
+          + "(\(describe(error))). \(unswitched)",
+        "Try again once the Mac is free, or edit the draft in Mail directly.")
+    }
+    guard forward, let bodyBefore else {
+      front.give(to: frontBefore)
+      return refusal(
+        "composer",
+        (forward
+          ? "The composer's window would not say which body it shows, so a switch to its tab "
+            + "could not be confirmed. "
+          : "Mail did not come to the front, and a tab selected while it is behind does not "
+            + "show its draft. Someone is probably using the Mac. ")
+          + unswitched,
+        "Try again once the Mac is free.")
+    }
+    var handedBack = false
+    func reselect(unanswered: Bool) {
+      guard !handedBack else { return }
+      handedBack = true
+      if !unanswered { handBackTab(previous, after: w) }
+    }
     let pressed: Bool
     do {
       pressed = try w.pressTab()
     } catch {
+      front.give(to: frontBefore)
       return refusal(
-        "composer",
-        "The composer's tab could not be selected (\(describe(error))). \(untouched)",
+        "composer", "The composer's tab could not be selected (\(describe(error))). \(unswitched)",
         "Try again once the Mac is free, or edit the draft in Mail directly.")
     }
-    var handedBack = false
-    func reselect() {
-      guard !handedBack else { return }
-      handedBack = true
-      handBackTab(previous, after: w)
-    }
-    guard pressed, awaitShown(w, timeout: tabTimeout) else {
-      reselect()
+    guard pressed, awaitShown(w, from: bodyBefore, timeout: tabTimeout) else {
+      reselect(unanswered: false)
+      front.give(to: frontBefore)
       return refusal(
         "composer",
         (pressed
@@ -473,23 +533,47 @@ nonisolated enum MailComposer {
             + "within \(seconds(tabTimeout)), so its text could not be read. "
           : "The composer is a tab its window is not showing, and Mail would not let it be "
             + "selected, so its text could not be read. ")
-          + "Nothing was read or pasted, and the draft is unchanged.",
+          + unswitched,
         "Select the draft's tab in Mail, then try again.")
     }
+    let outcome = Outcome()
     let answer = editShown(
-      w, request: request, board: board, front: front, readbackTimeout: readbackTimeout,
-      filesTimeout: filesTimeout, grace: grace, beforeHandBack: reselect)
-    reselect()
+      w, request: request, board: board, front: nil, broughtForward: true,
+      readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
+      outcome: outcome)
+    // After the pasteboard is given back, before the front: as `editShown`
+    // orders its own hand-back.
+    reselect(unanswered: outcome.unanswered)
+    front.give(to: frontBefore)
     return answer
   }
 
-  /// Poll until `w` reads as the tab its window shows.
-  private static func awaitShown(_ w: ComposerWindow, timeout: TimeInterval) -> Bool {
+  /// What `editShown` leaves for the caller to act on.
+  private final class Outcome {
+    /// The last command-V went unanswered (`Borrow.unanswered`).
+    var unanswered = false
+  }
+
+  /// Poll until `w` reads as the tab its window shows, with a body that is
+  /// not `before`, both holding for `stable`.
+  private static func awaitShown(
+    _ w: ComposerWindow, from before: AnyObject, timeout: TimeInterval,
+    stable: TimeInterval = 0.15
+  ) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
+    var since: Date?
     while true {
-      if w.tab == .selected { return true }
-      if !w.isAlive || Date() >= deadline { return false }
-      usleep(50_000)
+      let now = Date()
+      let swapped = w.windowBody().map { !w.sameBody($0, before) } ?? false
+      if w.tab == .selected && swapped {
+        let first = since ?? now
+        since = first
+        if now.timeIntervalSince(first) >= stable { return true }
+      } else {
+        since = nil
+      }
+      if !w.isAlive || now >= deadline { return false }
+      usleep(25_000)
     }
   }
 
@@ -510,11 +594,12 @@ nonisolated enum MailComposer {
       "Check the paths and try again.", ["files": names])
   }
 
-  /// Steps 1 to 13, on a window showing this composer.
+  /// Steps 1 to 13, on a window showing this composer. With no `front`, the
+  /// caller noted it before bringing Mail forward, and hands it back itself.
   private static func editShown(
-    _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
-    readbackTimeout: TimeInterval, filesTimeout: TimeInterval, grace: TimeInterval,
-    beforeHandBack: () -> Void
+    _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front?,
+    broughtForward: Bool, readbackTimeout: TimeInterval, filesTimeout: TimeInterval,
+    grace: TimeInterval, outcome: Outcome
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -683,18 +768,19 @@ nonisolated enum MailComposer {
     }
 
     // 8. And 13, on every way out from here.
-    let previous = front.current()
+    let previous = front?.current()
     let borrow = Borrow(board)
     let answer = paste(
       w, request, before: before, range: range, steps: steps, result: result, board: borrow,
-      readbackTimeout: readbackTimeout, filesTimeout: filesTimeout)
+      broughtForward: broughtForward, readbackTimeout: readbackTimeout,
+      filesTimeout: filesTimeout)
     if borrow.unanswered {
       let deadline = Date().addingTimeInterval(grace)
       while Date() < deadline, (try? w.blocks()) == nil, w.isAlive { usleep(50_000) }
     }
     borrow.giveBack()
-    beforeHandBack()
-    front.give(to: previous)
+    outcome.unanswered = borrow.unanswered
+    front?.give(to: previous)
     return answer
   }
 
@@ -729,7 +815,7 @@ nonisolated enum MailComposer {
   /// Steps 9 to 12. Borrowing and handing back are the caller's.
   private static func paste(
     _ w: ComposerWindow, _ request: EditRequest, before: Read, range: String, steps: [Step],
-    result: String?, board: Borrow, readbackTimeout: TimeInterval,
+    result: String?, board: Borrow, broughtForward: Bool, readbackTimeout: TimeInterval,
     filesTimeout: TimeInterval
   ) -> [String: Any] {
     // Whether the window may now hold something the saved draft does not.
@@ -764,8 +850,8 @@ nonisolated enum MailComposer {
     }
 
     do {
-      // 9.
-      guard try w.activate() else {
+      // 9. Once only: Mail already came forward for a tab at step 0.
+      guard try broughtForward ? w.focus() : w.activate() else {
         return refusal(
           "composer",
           "Mail did not come to the front with this composer as its window, so nothing was "
@@ -1518,15 +1604,40 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// and the viewer's search field is not where a draft goes. Both that and
   /// Mail being frontmost must then hold for a moment (`settled`).
   func activate() throws -> Bool {
-    let web = try webArea()
-    guard let window = shownWindow() else { throw NotShown() }
+    _ = try webArea()
     guard try AccessibilityDriver.activateAndWait(bundleId: Self.bundleId, scope: Self.scope)
     else { return false }
+    return try focus()
+  }
+
+  /// `activate` without the activation: Mail already came forward for a tab
+  /// at step 0. `settled` still requires Mail frontmost, so a person who moved
+  /// to another application since is not pulled back; the paste is refused.
+  func focus() throws -> Bool {
+    let web = try webArea()
+    guard let window = shownWindow() else { throw NotShown() }
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
     AXUIElementSetAttributeValue(web, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     return Self.settled(focused: isFocusedWindow, frontmost: AccessibilityDriver.frontmostBundleId)
   }
+
+  /// Admission (inside `activateAndWait`), then Mail frontmost, as the window
+  /// server says. No window is raised: the one to raise is not shown yet.
+  func bringForward() throws -> Bool {
+    try AccessibilityDriver.activateAndWait(bundleId: Self.bundleId, scope: Self.scope)
+  }
+
+  /// The web area the host window shows now, whichever tab's it is. A tab's
+  /// content is its own view, so a switch that took shows another element;
+  /// UNMEASURED, and if Mail reused one element for every tab, no switch would
+  /// ever be confirmed and every background-tab edit would refuse.
+  func windowBody() -> AnyObject? {
+    guard let host = host() else { return nil }
+    return Self.find(host, depth: 10, where: { Self.role($0) == "AXWebArea" })
+  }
+
+  func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { CFEqual(a, b) }
 
   /// Mail frontmost as the window server says, AND this window Mail's focused
   /// one, both holding for `stable`.
