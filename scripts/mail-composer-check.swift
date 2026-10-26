@@ -75,6 +75,17 @@ final class EditFake: ComposerWindow {
   var landsInQuote = false
   private(set) var quoteChecks = 0
   var onPaste: ((EditFake) -> Void)?
+  /// After each read of the body, with what it read: the person acting between reads.
+  var onRead: ((EditFake) -> Void)?
+  /// As Mail comes forward, step 9.
+  var onActivate: ((EditFake) -> Void)?
+  /// The window holding this composer as one of its tabs; nil for a window of
+  /// its own. Every read and write below then reaches the tab the window SHOWS,
+  /// which is what Accessibility gives: one window element, the selected tab's
+  /// content.
+  var group: FakeTabGroup?
+  /// What a read or a paste reaches: this composer, or the tab its window shows.
+  private var shown: EditFake { group?.shown ?? self }
   private var pending: (land: () -> Void, reads: Int)?
   private var hungUntil = Date.distantPast
   private(set) var selection: Range<Int>?
@@ -90,12 +101,29 @@ final class EditFake: ComposerWindow {
 
   struct Hung: Error {}
 
+  var tab: ComposerTab? { group?.state(of: self) }
+  var sharesTabTitle: Bool {
+    guard let group else { return false }
+    return group.tabs.filter { $0.subject == subject }.count > 1
+  }
+  func pressTab() throws -> Bool { group?.press(self) ?? false }
+  func shownTab() -> ComposerWindow? {
+    guard let group, group.valueAnswers else { return nil }
+    return group.shown
+  }
+
+  private func note(_ event: String) {
+    log.append(event)
+    group?.events.append("\(group?.tabs.firstIndex { $0 === self } ?? -1):\(event)")
+  }
+
   func blocks() throws -> [ComposerBlock] {
+    if shown !== self { return try shown.blocks() }
     if Date() < hungUntil {
-      log.append("read-hung")
+      note("read-hung")
       throw Hung()
     }
-    log.append("read")
+    note("read")
     if let waiting = pending {
       if waiting.reads <= 1 {
         pending = nil
@@ -117,11 +145,13 @@ final class EditFake: ComposerWindow {
       out.append(
         ComposerBlock(text: line, quoteLevel: unreadableLevel && i == 0 ? nil : 1, fileNames: []))
     }
+    onRead?(self)
     return out
   }
 
   func ownRangeText() throws -> String? {
-    log.append("range")
+    if shown !== self { return try shown.ownRangeText() }
+    note("range")
     return rangeText ?? own
   }
 
@@ -133,33 +163,41 @@ final class EditFake: ComposerWindow {
   }
 
   func selectOwn() throws -> String? {
-    log.append("select")
+    if shown !== self { return try shown.selectOwn() }
+    note("select")
     return selecting(0..<own.utf16.count)
   }
 
   func selectSubrange(_ range: Range<String.Index>, in text: String) throws -> String? {
-    log.append("select")
+    if shown !== self { return try shown.selectSubrange(range, in: text) }
+    note("select")
     let span = NSRange(range, in: text)
-    return selecting(span.location..<(span.location + span.length))
+    let end = min(span.location + span.length, own.utf16.count)
+    return selecting(min(span.location, end)..<end)
   }
 
   func selectOwnEnd() throws -> String? {
-    log.append("select-end")
+    if shown !== self { return try shown.selectOwnEnd() }
+    note("select-end")
     return selecting(own.utf16.count..<own.utf16.count)
   }
 
   func selectionReachesQuote() throws -> Bool? {
+    if shown !== self { return try shown.selectionReachesQuote() }
     quoteChecks += 1
     return caretScript.isEmpty ? caretInQuote : caretScript.removeFirst()
   }
 
   func activate() throws -> Bool {
-    log.append("activate")
+    if shown !== self { return try shown.activate() }
+    note("activate")
+    onActivate?(self)
     return activates
   }
 
   func paste(_ content: PasteContent) throws -> Bool {
-    log.append("paste")
+    if shown !== self { return try shown.paste(content) }
+    note("paste")
     guard pasteTakes else { return false }
     if let limit = refusesPasteAfter, pasted.count >= limit { return false }
     pasted.append(content)
@@ -168,7 +206,7 @@ final class EditFake: ComposerWindow {
     guard !pasteLost else { return true }
     let span = selection ?? 0..<0
     let land = { [self] in
-      log.append("landed")
+      note("landed")
       switch content {
       case .text(let text), .html(_, let text):
         if landsInQuote {
@@ -192,10 +230,67 @@ final class EditFake: ComposerWindow {
     return true
   }
 
+  /// command-S goes to the window, which saves the tab it shows.
   func save() throws -> SaveOutcome {
-    log.append("save")
+    if shown !== self { return try shown.save() }
+    note("save")
     saves += 1
     return saveOutcome
+  }
+}
+
+/// One window holding several composers as tabs: Mail with "Prefer tabs:
+/// Always" (LIVE RUN 3, 2026-10-26). Accessibility lists the window ONCE, and
+/// whatever is read or pasted through it reaches the tab it shows, so a read
+/// "of" a background tab answers another draft's text. What can be told apart
+/// is the tab buttons, and those can be pressed.
+///
+/// The unmeasured parts are knobs, so each can be played wrong: `valueAnswers`
+/// is whether a tab reads as selected at all (its role and `AXValue`),
+/// `pressSelects` whether `AXPress` selects it, `pressRefused` a tab that is not
+/// the role a press is allowed on.
+final class FakeTabGroup {
+  let tabs: [EditFake]
+  var selected: Int
+  var valueAnswers = true
+  var pressSelects = true
+  var pressRefused = false
+  /// Reads of a tab's state a press takes to show.
+  var selectLag = 0
+  private var landing: (index: Int, reads: Int)?
+  /// Every press, by tab index, in order.
+  private(set) var presses: [Int] = []
+  /// Presses and each tab's reads and writes, `"<index>:<event>"`, in order.
+  var events: [String] = []
+
+  init(_ tabs: [EditFake], selected: Int) {
+    self.tabs = tabs
+    self.selected = selected
+    for tab in tabs { tab.group = self }
+  }
+
+  var shown: EditFake { tabs[selected] }
+
+  func press(_ fake: EditFake) -> Bool {
+    guard !pressRefused, let index = tabs.firstIndex(where: { $0 === fake }) else { return false }
+    presses.append(index)
+    events.append("press \(index)")
+    if pressSelects {
+      if selectLag > 0 { landing = (index, selectLag) } else { selected = index }
+    }
+    return true
+  }
+
+  func state(of fake: EditFake) -> ComposerTab {
+    if let pending = landing {
+      if pending.reads <= 1 {
+        selected = pending.index
+        landing = nil
+      } else {
+        landing = (pending.index, pending.reads - 1)
+      }
+    }
+    return valueAnswers && shown === fake ? .selected : .background
   }
 }
 
@@ -241,8 +336,12 @@ final class FakeBoard: Pasteboard {
 final class FakeFront: Front {
   let pid: pid_t? = 4242
   private(set) var given: [pid_t?] = []
+  var onGive: (() -> Void)?
   func current() -> pid_t? { pid }
-  func give(to pid: pid_t?) { given.append(pid) }
+  func give(to pid: pid_t?) {
+    onGive?()
+    given.append(pid)
+  }
 }
 
 /// What the window server answers for "which application is frontmost", read
@@ -411,7 +510,7 @@ struct MailComposerCheck {
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
       fake, request: request, board: board, front: front, readbackTimeout: 0.2,
-      filesTimeout: 0.2, grace: grace)
+      filesTimeout: 0.2, grace: grace, tabTimeout: 0.3)
     return (result, board, front)
   }
 
@@ -1430,6 +1529,303 @@ struct MailComposerCheck {
     }
   }
 
+  /// Three composers as tabs of one window: two titled "Dup" (alpha, beta),
+  /// one "Other" (gamma). Beta is shown.
+  static func tabbed() -> (group: FakeTabGroup, alpha: EditFake, beta: EditFake, gamma: EditFake) {
+    let alpha = EditFake(own: "ALPHA text")
+    alpha.subject = "Dup"
+    let beta = EditFake(own: "BETA text")
+    beta.subject = "Dup"
+    beta.to = ["Ann"]
+    beta.from = "Me – me@example.com"
+    beta.isMain = true
+    let gamma = EditFake(own: "GAMMA text")
+    gamma.subject = "Other"
+    gamma.to = ["Cy"]
+    return (FakeTabGroup([alpha, beta, gamma], selected: 1), alpha, beta, gamma)
+  }
+
+  /// LIVE RUN 3 (2026-10-26): with "Prefer tabs: Always", Mail opens every
+  /// composer as a tab of one window. Accessibility lists that window once,
+  /// with the selected tab's content only, so a window-keyed handle followed
+  /// whichever tab was selected and two same-titled tabs listed as one.
+  static func tabChecks() {
+    print("\ncomposers in tabs")
+    func reason(_ r: [String: Any]) -> String { r["reason"] as? String ?? "" }
+
+    // Listing: every tab, background ones with nothing read.
+    do {
+      let (group, alpha, beta, gamma) = tabbed()
+      let alone = EditFake(own: "Alone")
+      alone.subject = "Alone"
+      let listed = MailComposer.listing([alpha, beta, gamma, alone])
+      let handles = listed.compactMap { $0["composer"] as? String }
+      check("every tab of the window is listed", listed.count == 4 && Set(handles).count == 4)
+      check(
+        "two tabs under one title get two handles",
+        handles[0] != handles[1] && listed[0]["subject"] as? String == "Dup"
+          && listed[1]["subject"] as? String == "Dup")
+      let shown = listed[1]
+      check(
+        "the selected tab reads as before, and says it is the selected tab",
+        shown["tab"] as? String == "selected" && shown["text"] as? String == "BETA text"
+          && shown["quoted"] as? Bool == true && shown["to"] as? [String] == ["Ann"]
+          && shown["from"] as? String == "Me – me@example.com" && shown["main"] as? Bool == true)
+      for (label, entry) in [("alpha", listed[0]), ("gamma", listed[2])] {
+        check(
+          "a background tab (\(label)) gives its title and nothing it cannot read",
+          entry["tab"] as? String == "background" && entry["text"] is NSNull
+            && entry["quote"] is NSNull && entry["quoted"] is NSNull
+            && entry["recipients"] is NSNull && entry["from"] is NSNull && entry["to"] is NSNull
+            && entry["cc"] is NSNull && entry["bcc"] is NSNull
+            && entry["files"] as? [String] == [] && entry["main"] as? Bool == false
+            && entry["quoteTruncated"] as? Bool == false)
+      }
+      check("gamma's title is its subject", listed[2]["subject"] as? String == "Other")
+      check("an untabbed window says tab null", listed[3]["tab"] is NSNull)
+      check(
+        "listing switched no tab and read the window once, for the selected tab",
+        group.presses.isEmpty && group.selected == 1
+          && group.events.filter { $0.hasSuffix(":read") } == ["1:read"])
+      check(
+        "listing again keeps every tab's handle",
+        MailComposer.register([gamma, alpha, beta]) == [handles[2], handles[0], handles[1]])
+      check("a tab's handle resolves to that tab", MailComposer.resolve(handles[2]) === gamma)
+      group.selected = 2
+      let again = MailComposer.listing([alpha, beta, gamma])
+      check(
+        "once another tab is selected, the handles stay with their tabs",
+        again.compactMap { $0["composer"] as? String } == Array(handles.prefix(3))
+          && again[1]["tab"] as? String == "background"
+          && again[2]["tab"] as? String == "selected"
+          && again[2]["text"] as? String == "GAMMA text")
+      let none = tabbed()
+      none.group.valueAnswers = false
+      let blind = MailComposer.listing([none.alpha, none.beta, none.gamma])
+      check(
+        "tabs none of which reads as selected all list as background, with nothing read",
+        blind.allSatisfy { $0["tab"] as? String == "background" && $0["text"] is NSNull }
+          && none.group.events.isEmpty)
+    }
+
+    // Editing a background tab: select, verify, edit, save, reselect.
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.selectLag = 3
+      let front = FakeFront()
+      front.onGive = { group.events.append("front given back") }
+      let (result, board, _) = run(gamma, Request(body: "New gamma"), front: front)
+      check(
+        "a background tab is edited and saved",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == true
+          && gamma.own == "New gamma" && gamma.saves == 1)
+      check(
+        "its tab is pressed first, before anything is read",
+        group.events.first == "press 2" && group.events.dropFirst().first == "2:read")
+      // The hand-back's press lands as late as the first one did.
+      for _ in 0..<3 { _ = group.state(of: beta) }
+      check(
+        "the tab that was shown is selected again after the save, before the front goes back",
+        group.presses == [2, 1] && group.selected == 1
+          && (group.events.firstIndex(of: "press 1") ?? 0)
+            > (group.events.firstIndex(of: "2:save") ?? Int.max)
+          && (group.events.firstIndex(of: "front given back") ?? 0)
+            > (group.events.firstIndex(of: "press 1") ?? Int.max)
+      )
+      check(
+        "the other tabs are untouched",
+        beta.own == "BETA text" && beta.pasted.isEmpty && beta.saves == 0
+          && board.untouchedOrRestored)
+    }
+    do {
+      let (group, alpha, beta, _) = tabbed()
+      let (result, _, _) = run(alpha, Request(body: "New alpha", expectHead: "ALPHA text"))
+      check(
+        "a background tab sharing its title is edited once expectHead proves it",
+        result["replaced"] as? Bool == true && alpha.own == "New alpha"
+          && beta.own == "BETA text" && group.presses == [0, 1])
+    }
+    do {
+      let (group, _, beta, _) = tabbed()
+      let (result, _, _) = run(beta, Request(body: "New beta"))
+      check(
+        "the selected tab is edited with no press at all",
+        result["replaced"] as? Bool == true && beta.own == "New beta" && group.presses.isEmpty)
+    }
+
+    // A tab that will not select.
+    for (label, setUp) in [
+      ("AXPress does not select it", { (g: FakeTabGroup) in g.pressSelects = false }),
+      ("it never reads as selected", { (g: FakeTabGroup) in g.valueAnswers = false }),
+      ("it selects too late", { (g: FakeTabGroup) in g.selectLag = 1000 }),
+    ] {
+      let (group, alpha, beta, gamma) = tabbed()
+      setUp(group)
+      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      check(
+        "a tab that will not come up is refused as composer (\(label))",
+        capability(result) == "composer" && reason(result).contains("tab"))
+      check(
+        "with nothing read, pasted, borrowed or saved (\(label))",
+        untouched(gamma, board, front) && untouched(beta, board, front)
+          && alpha.pasted.isEmpty && group.events.allSatisfy { !$0.hasSuffix(":read") })
+      check(
+        "and only its own press, no reselect (\(label))",
+        group.presses == [2] && (label == "it never reads as selected" || group.selected != 2))
+    }
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      group.pressRefused = true
+      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      check(
+        "a tab that cannot be pressed is refused as composer, nothing pressed or changed",
+        capability(result) == "composer" && group.presses.isEmpty
+          && untouched(beta, board, front) && untouched(gamma, board, front))
+    }
+
+    // Refusals before the switch switch nothing.
+    do {
+      let (group, alpha, beta, _) = tabbed()
+      let (result, board, front) = run(alpha, Request(body: "New alpha"))
+      check(
+        "a background tab sharing its title, with no expectHead, is refused as identity",
+        capability(result) == "identity")
+      check(
+        "before its tab is pressed",
+        group.presses.isEmpty && untouched(alpha, board, front) && untouched(beta, board, front))
+    }
+    do {
+      let (group, alpha, beta, _) = tabbed()
+      let (result, board, front) = run(alpha, Request(body: "New alpha", expectHead: "BETA text"))
+      check(
+        "an expectHead the selected tab's text fails is refused as identity",
+        capability(result) == "identity" && alpha.own == "ALPHA text"
+          && untouched(alpha, board, front) && untouched(beta, board, front))
+      check("after the switch, and the shown tab is selected again", group.presses == [0, 1])
+    }
+    do {
+      let (group, _, _, gamma) = tabbed()
+      gamma.isAlive = false
+      let (dead, _, _) = run(gamma, Request(body: "x"))
+      let missing = URL(fileURLWithPath: "/nonexistent/mail-composer-check/t.pdf")
+      let (absent, _, _) = run(tabbed().gamma, Request(files: [missing]))
+      check(
+        "a closed tab, or a missing file, is refused with no press",
+        capability(dead) == "composer" && capability(absent) == "files"
+          && group.presses.isEmpty)
+    }
+
+    // The person switches tabs during the edit.
+    do {
+      let (group, alpha, _, gamma) = tabbed()
+      gamma.onRead = { fake in if fake.own == "New gamma" { group.selected = 0 } }
+      let (result, _, _) = run(gamma, Request(body: "New gamma"))
+      check(
+        "a tab switch after the read-back stops the save",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == false
+          && gamma.saves == 0 && alpha.saves == 0
+          && (result["note"] as? String ?? "").contains("tab"))
+      check(
+        "and the tab they chose is left selected",
+        group.presses == [2] && group.selected == 0 && alpha.pasted.isEmpty)
+    }
+    do {
+      // Their tab holds the same words, so no read can tell: only the tab can.
+      let (group, alpha, _, gamma) = tabbed()
+      alpha.own = "Same words"
+      gamma.own = "Same words"
+      gamma.onActivate = { _ in group.selected = 0 }
+      let (result, board, front) = run(gamma, Request(body: "New words"))
+      check(
+        "a tab switch the reads cannot see is refused before the paste",
+        capability(result) == "composer" && alpha.pasted.isEmpty && gamma.pasted.isEmpty
+          && alpha.saves == 0 && board.writes.isEmpty)
+      check(
+        "with no reselect, and the front handed back",
+        group.presses == [2] && group.selected == 0 && front.given == [4242])
+    }
+    do {
+      // Refused after the paste: the shown tab still comes back.
+      let (group, _, _, gamma) = tabbed()
+      gamma.pasteLost = true
+      let (result, board, front) = run(gamma, Request(body: "New gamma"))
+      check(
+        "a refusal after the switch still selects the shown tab again",
+        capability(result) == "confirmation" && group.presses == [2, 1] && group.selected == 1
+          && handedBack(gamma, board, front))
+    }
+
+    // An untabbed window has no tab to press.
+    do {
+      let fake = EditFake(own: "Old")
+      check(
+        "an untabbed window reads as no tab",
+        fake.tab == nil && !fake.sharesTabTitle && (try? fake.pressTab()) == false
+          && fake.shownTab() == nil)
+    }
+
+    // The rules the live type keeps, on stand-in elements.
+    do {
+      // Window 1 holds tabs 10 and 11; window 2 is a window of its own.
+      let same = { (a: (window: Int, tab: Int?), b: (window: Int, tab: Int?)) in
+        AXComposerWindow.sameComposer(a, b, equal: ==)
+      }
+      check("a tab is itself", same((1, 10), (1, 10)))
+      check("two tabs of one window are two composers", !same((1, 10), (1, 11)))
+      check(
+        "a tab is never the window that holds it",
+        !same((1, 10), (1, nil)) && !same((1, nil), (1, 10)))
+      check("a tab moved to another window is still itself", same((1, 10), (3, 10)))
+      check("a window of its own is itself", same((2, nil), (2, nil)) && !same((2, nil), (4, nil)))
+
+      // A tab: (role, AXValue, title).
+      let tabs: [Int: (String?, Int?, String?)] = [
+        0: ("AXRadioButton", 0, "Dup"), 1: ("AXRadioButton", 1, "Dup"),
+        2: ("AXRadioButton", 0, "Other"), 3: ("AXButton", nil, ""), 4: ("AXRadioButton", 0, nil),
+      ]
+      func titled(_ children: [Int]) -> [Int] {
+        AXComposerWindow.titledTabs(children, title: { tabs[$0]?.2 })
+      }
+      func shows(
+        _ tab: Int, _ children: [Int], subject: String?, map: [Int: (String?, Int?, String?)]
+      )
+        -> Bool
+      {
+        AXComposerWindow.shows(
+          tab, among: children, subject: subject, equal: ==, role: { map[$0]?.0 },
+          value: { map[$0]?.1 }, title: { map[$0]?.2 })
+      }
+      check("untitled children are not tabs", titled([0, 1, 2, 3, 4]) == [0, 1, 2])
+      check(
+        "the selected tab, its title in the subject field, is shown",
+        shows(1, [0, 1, 2], subject: "Dup", map: tabs))
+      check("a tab not selected is not", !shows(2, [0, 1, 2], subject: "Dup", map: tabs))
+      check(
+        "nor a selected tab the subject field does not name",
+        !shows(1, [0, 1, 2], subject: "Something else", map: tabs)
+          && !shows(1, [0, 1, 2], subject: nil, map: tabs))
+      var odd = tabs
+      odd[1] = ("AXTab", 1, "Dup")
+      check(
+        "nor one of a role a press is not trusted on",
+        !shows(1, [0, 1, 2], subject: "Dup", map: odd))
+      odd = tabs
+      odd[0] = ("AXRadioButton", 1, "Dup")
+      check(
+        "nor any, when two read as selected",
+        !shows(1, [0, 1, 2], subject: "Dup", map: odd)
+          && !shows(0, [0, 1, 2], subject: "Dup", map: odd))
+      odd = tabs
+      odd[1] = ("AXRadioButton", nil, "Dup")
+      check("nor one whose value does not answer", !shows(1, [0, 1, 2], subject: "Dup", map: odd))
+      check(
+        "only a radio button is pressed",
+        AXComposerWindow.pressable(role: "AXRadioButton")
+          && !AXComposerWindow.pressable(role: "AXButton") && !AXComposerWindow.pressable(role: nil)
+      )
+    }
+  }
+
   static func dispatchChecks() {
     print("\ndispatch")
     let mail = AccessibilityDriver.Scope.only(["com.apple.mail"])
@@ -1556,6 +1952,7 @@ struct MailComposerCheck {
     editChecks()
     frontChecks()
     quoteChecks()
+    tabChecks()
     dispatchChecks()
 
     print("\(checks) checks, \(failures) failures")

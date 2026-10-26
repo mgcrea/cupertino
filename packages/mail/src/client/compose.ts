@@ -501,8 +501,35 @@ export const composeNatively = async (
   // vanishing as above arriving one step later. A refused keystroke left the
   // composer where it was: the key names it, and the desktop server will not
   // post into somebody else's window when Mail does not come forward.
-  const finished = await lane.finish(params.sendNow, ref);
+  //
+  // With "Prefer tabs: Always" the window holds several drafts as tabs, and
+  // the key sends or saves the one it SHOWS. So right before it, once Mail is
+  // in front, this composer must be listed and not as a background tab.
+  const finished = await lane.finish(params.sendNow, ref, async () => {
+    const now = (await lane.composers()).find((c) => c.composer === handle);
+    return now !== undefined && now.tab !== "background";
+  });
   if (finished === "gone") return vanished(known());
+  if (finished === "unready") {
+    if (await lane.composerGone(subject, 0)) return vanished(known());
+    return {
+      ok: false,
+      degraded: true,
+      subject,
+      bodyVerified,
+      verifiedChars,
+      sent: false,
+      ...(files.length > 0 ? { attachments: files.length } : {}),
+      note:
+        `The ${params.mode} for "${subject}" was ${filling ? "filled" : "opened"}` +
+        (bodyVerified ? " and its body verified" : "") +
+        `, but it was NOT ${action}: its window holds several drafts as tabs, and right before ` +
+        `the shortcut this draft's tab was not the one shown (or could not be confirmed to be), ` +
+        `so the shortcut could have reached another draft. Nothing was pressed. The draft is ` +
+        `open in Mail for review: ${params.sendNow ? "send" : "save"} it from there.` +
+        interferenceNote(await watch.check()),
+    };
+  }
   if (finished === "refused") {
     return {
       ok: false,

@@ -84,27 +84,36 @@ export type ComposerRef = { window: string; body: string; index: number };
 
 /** One open composer, as the app's `mail_composers` verb reports it. */
 export type NativeComposer = {
-  /** The handle, `mc-<n>`. */
+  /** The handle, `mc-<n>`. It names this composer, tab or window, and never moves to another. */
   composer: string;
+  /** A tab's subject is its title. */
   subject: string;
-  /** To and Cc names together. */
-  recipients: string[];
+  /**
+   * Null (or absent) for a window of its own. With "Prefer tabs: Always" Mail
+   * opens every composer as a tab of one window, and Accessibility shows only
+   * the selected tab's content: `"selected"` reads as a window does,
+   * `"background"` carries its subject and nothing else, because reading the
+   * rest would mean switching tabs and a listing never does.
+   */
+  tab?: "selected" | "background" | null;
+  /** To and Cc names together. Null for a background tab. */
+  recipients: string[] | null;
   /** The window Mail considers main: the one in front, when Mail is. */
   main?: boolean;
   /** The account picker's value, `Name – address`; null when there is none. */
   from?: string | null;
-  to?: string[];
-  cc?: string[];
+  to?: string[] | null;
+  cc?: string[] | null;
   /** Null when the Bcc field is not shown, which is not the same as empty. */
   bcc?: string[] | null;
   /** The opening of the quoted original; null when none, or none was asked for. */
   quote?: string | null;
   quoteTruncated?: boolean;
-  /** The sender's own text, blocks joined by newlines. */
-  text: string;
-  /** Null when a quote level was unreadable. */
+  /** The sender's own text, blocks joined by newlines. Null for a background tab. */
+  text: string | null;
+  /** Null when a quote level was unreadable, and for a background tab. */
   quoted: boolean | null;
-  /** Named files in the own text. */
+  /** Named files in the own text. Empty for a background tab, which is not read. */
   files: string[];
 };
 
@@ -312,14 +321,25 @@ export class MailAxLane {
    *
    * Posting a send into an unknown foreground is the one outcome worth refusing
    * outright, which is why neither of them throws.
+   *
+   * `ready`, when given, is asked once Mail is in front, right before the key,
+   * and the key is pressed only on a yes: `"unready"` means nothing was
+   * pressed. A window holding several drafts as tabs sends or saves the one it
+   * SHOWS, so the caller checks that is still its draft. A check that throws
+   * is a no.
    */
-  async finish(sendNow: boolean, ref: ComposerRef): Promise<"pressed" | "gone" | "refused"> {
+  async finish(
+    sendNow: boolean,
+    ref: ComposerRef,
+    ready?: () => Promise<boolean>,
+  ): Promise<"pressed" | "gone" | "refused" | "unready"> {
     try {
       await this.#call("raise_window", { handle: ref.window });
       await this.activate();
     } catch {
       return "gone";
     }
+    if (ready && !(await ready().catch(() => false))) return "unready";
     try {
       await this.#call(
         "key",
@@ -340,6 +360,10 @@ export class MailAxLane {
    * window still being there means it did not go — which is checked rather than
    * assumed, because nothing in this path may report success on the strength of
    * a keystroke having been delivered.
+   *
+   * A tab Mail is not showing is no window's title, so the composers listed as
+   * tabs are asked too: a draft in a background tab is still there. When they
+   * cannot be listed, the window titles decide alone, as they always did.
    */
   async composerGone(subject: string, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
@@ -348,7 +372,12 @@ export class MailAxLane {
         bundleId: MAIL_BUNDLE,
         includeTitles: true,
       })) as Windows;
-      if (!(listed.windows ?? []).some((w) => (w.title ?? "") === subject)) return true;
+      const tabs = await this.composers().catch(() => [] as NativeComposer[]);
+      if (
+        !(listed.windows ?? []).some((w) => (w.title ?? "") === subject) &&
+        !tabs.some((c) => c.tab != null && c.subject === subject)
+      )
+        return true;
       if (Date.now() >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }

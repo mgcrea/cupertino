@@ -31,7 +31,9 @@ type Call = { tool: string; args: Record<string, unknown> };
 type FakeComposer = {
   composer: string;
   subject: string;
-  text: string;
+  /** Null for a tab Mail is not showing: it cannot be read without switching. */
+  text: string | null;
+  tab?: "selected" | "background" | null;
   recipients?: string[];
   quoted?: boolean | null;
   files?: string[];
@@ -235,6 +237,88 @@ describe("reviseDraftInPlace", () => {
       "windows hold this draft's text",
     );
     expect(edits(seen)).toHaveLength(0);
+  });
+
+  /*
+   * Mail with "Prefer tabs: Always". A tab it is not showing gives its subject
+   * and a null text, so it cannot be matched by content here: the app selects
+   * it and checks `expectHead` against what the window then shows.
+   */
+  describe("composers in tabs", () => {
+    const background = (composer: string): FakeComposer => ({
+      composer,
+      subject: SUBJECT,
+      text: null,
+      tab: "background",
+      quoted: null,
+      recipients: [],
+    });
+
+    it("edits the one background tab under the subject, with the head for the app to check", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-1", subject: SUBJECT, text: "a different reply", tab: "selected" },
+          background("mc-2"),
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+      expect(edits(seen)).toHaveLength(1);
+      expect(edits(seen)[0]!.args).toMatchObject({
+        composer: "mc-2",
+        body: "BRAVO",
+        expectHead: facts().contentHead.slice(0, 120),
+      });
+    });
+
+    it("sends an empty head for a background tab, so the app checks its text is empty", async () => {
+      const { env, seen } = await hostStub({ composers: [background("mc-2")] });
+      const lane = MailAxLane.open(env)!;
+      await reviseDraftInPlace(lane, facts({ contentHead: "" }), { body: "BRAVO" });
+      lane.close();
+      expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-2", expectHead: "" });
+    });
+
+    it("refuses when the shown tab matches but a background tab under the subject could too", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two", tab: "selected" },
+          background("mc-2"),
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: false, capability: "identity" });
+      expect(String((result as { reason: string }).reason)).toContain("tab");
+      expect(edits(seen)).toHaveLength(0);
+    });
+
+    it("refuses when several background tabs carry the subject", async () => {
+      const { env, seen } = await hostStub({
+        composers: [background("mc-2"), background("mc-3")],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: false, capability: "identity" });
+      expect(edits(seen)).toHaveLength(0);
+    });
+
+    it("keeps the shown tab's own head behaviour when no background tab shares the subject", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two", tab: "selected" },
+          { ...background("mc-2"), subject: "Another draft" },
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-1" });
+    });
   });
 
   it("sends edits, not a body, when given edits", async () => {

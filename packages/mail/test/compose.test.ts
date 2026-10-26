@@ -332,6 +332,109 @@ describe("composeNatively", () => {
     lane.close();
   });
 
+  /*
+   * With "Prefer tabs: Always" a composer is a tab, and the send key goes to
+   * the window, which sends the tab it SHOWS. So it is pressed only when the
+   * composer just filled is that tab, read right before the press.
+   */
+  it("a sendNow in a tab sends only when that tab is the one shown, read right before the key", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        // Gone from the list once sent, as from the window list.
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 || n > 4 ? [] : [composer("mc-1", "Re: lunch", { tab: "selected" })],
+        }),
+        list_windows: (_a: unknown, n: number) =>
+          n === 1 || n > 3
+            ? { windows: [{ handle: "w1", index: 0, title: "Inbox" }] }
+            : { windows: [{ handle: "w1", index: 0, title: "Re: lunch" }] },
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(result).toMatchObject({ ok: true, sent: true });
+    const tools = seen.map((c) => c.tool);
+    const key = tools.lastIndexOf("key");
+    expect(tools.slice(key - 3, key + 1)).toEqual([
+      "raise_window",
+      "activate",
+      "mail_composers",
+      "key",
+    ]);
+    lane.close();
+  });
+
+  it("a sendNow does not send when another tab of its window is shown at the press", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        // 1: before opening; 2: the new composer; 3: the title count; 4: right before the key.
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? []
+              : [
+                  composer("mc-1", "Re: lunch", { tab: n < 4 ? "selected" : "background" }),
+                  composer("mc-2", "Another draft", { tab: n < 4 ? "background" : "selected" }),
+                ],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: true });
+    expect(result.note).toContain("NOT sent");
+    expect(result.note).toContain("tab");
+    expect(result.note).not.toContain("GONE");
+    expect(presses(seen, "d")).toEqual([]);
+    lane.close();
+  });
+
+  it("a forward saved by command-S in a tab is not saved while another tab is shown", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost(
+        {
+          mail_composers: (_a: unknown, n: number) => ({
+            composers:
+              n === 1 ? [] : [composer("mc-1", "Fwd: lunch", { tab: n < 4 ? "selected" : null })],
+          }),
+        },
+        "Fwd: lunch",
+      ),
+    );
+    const untabbed = await composeNatively(
+      lane,
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, sendNow: false },
+      TIMEOUTS,
+    );
+    // A window of its own (tab null) is pressed as before.
+    expect(untabbed).toMatchObject({ ok: true });
+    expect(presses(seen, "s")).toHaveLength(1);
+    lane.close();
+
+    const tabbed = await laneOver(
+      healthyHost(
+        {
+          mail_composers: (_a: unknown, n: number) => ({
+            composers:
+              n === 1
+                ? []
+                : [composer("mc-1", "Fwd: lunch", { tab: n < 4 ? "selected" : "background" })],
+          }),
+        },
+        "Fwd: lunch",
+      ),
+    );
+    const result = await composeNatively(
+      tabbed.lane,
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(result.note).toContain("NOT saved");
+    expect(presses(tabbed.seen, "s")).toEqual([]);
+    tabbed.lane.close();
+  });
+
   it("a compose window opened by hand during the poll, with another subject, is not picked", async () => {
     const { lane, seen } = await laneOver(
       healthyHost({

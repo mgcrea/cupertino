@@ -74,7 +74,7 @@ const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
 /** Some composers and a client that share one world: an edit changes what they show. */
 const world = (
   composers: number,
-  over: { finish?: "pressed" | "refused"; refuseEdit?: boolean } = {},
+  over: { finish?: "pressed" | "refused"; refuseEdit?: boolean; tabs?: boolean } = {},
 ) => {
   const scripts: string[] = [];
   const runner = runnerSeeing(scripts);
@@ -87,21 +87,42 @@ const world = (
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
     composers: async (quoteChars = 2000) => [
-      ...Array.from({ length: Math.max(composers, 0) }, (_, at) => ({
-        composer: `mc-${at}`,
-        subject: "Re: Quarterly numbers",
-        recipients: ["Ann", "Cy"],
-        main: at === 0,
-        from: "Me – me@example.com",
-        to: ["Ann"],
-        cc: ["Cy"],
-        bcc: null,
-        text: shown,
-        quoted: true,
-        quote: quoteChars > 0 ? "On Monday, Ann wrote:".slice(0, quoteChars) : null,
-        quoteTruncated: quoteChars > 0 && quoteChars < "On Monday, Ann wrote:".length,
-        files: [...files],
-      })),
+      ...Array.from({ length: Math.max(composers, 0) }, (_, at) =>
+        // With `tabs`, every composer is a tab of one window, the first one shown.
+        over.tabs && at > 0
+          ? {
+              composer: `mc-${at}`,
+              subject: "Re: Quarterly numbers",
+              tab: "background",
+              main: false,
+              from: null,
+              to: null,
+              cc: null,
+              bcc: null,
+              recipients: null,
+              text: null,
+              quoted: null,
+              quote: null,
+              quoteTruncated: false,
+              files: [],
+            }
+          : {
+              ...(over.tabs ? { tab: "selected" } : {}),
+              composer: `mc-${at}`,
+              subject: "Re: Quarterly numbers",
+              recipients: ["Ann", "Cy"],
+              main: at === 0,
+              from: "Me – me@example.com",
+              to: ["Ann"],
+              cc: ["Cy"],
+              bcc: null,
+              text: shown,
+              quoted: true,
+              quote: quoteChars > 0 ? "On Monday, Ann wrote:".slice(0, quoteChars) : null,
+              quoteTruncated: quoteChars > 0 && quoteChars < "On Monday, Ann wrote:".length,
+              files: [...files],
+            },
+      ),
       // A composer Mail was asked to open appears in the list once it has been:
       // the one handle that was not there before.
       ...(scripts.includes("OPEN_COMPOSER")
@@ -528,6 +549,31 @@ describe("listing the open drafts", () => {
       drafts: Record<string, unknown>[];
     };
     expect(none.drafts[0]).toMatchObject({ quote: null, quoteTruncated: false });
+  });
+
+  /*
+   * Mail with "Prefer tabs: Always": one window, every draft a tab of it. A
+   * tab it is not showing gives its subject and nothing it cannot read without
+   * switching, and the note says when that text can be read.
+   */
+  it("lists a tab Mail is not showing with its subject, and says why its text is null", async () => {
+    const { client } = world(2, { tabs: true });
+    const result = (await client.listOpenDrafts()) as {
+      drafts: Record<string, unknown>[];
+      note: string;
+    };
+    expect(result.drafts.map((d) => d["tab"])).toEqual(["selected", "background"]);
+    expect(result.drafts[0]).toMatchObject({ composer: "mc-0", text: "ALPHA one" });
+    expect(result.drafts[1]).toMatchObject({
+      composer: "mc-1",
+      subject: "Re: Quarterly numbers",
+      text: null,
+      recipients: null,
+      quote: null,
+    });
+    expect(result.drafts[1]).toHaveProperty("savedDrafts");
+    expect(result.note).toMatch(/`tab: "background"`/);
+    expect(result.note).toMatch(/selected/);
   });
 
   it("says plainly that none is open", async () => {

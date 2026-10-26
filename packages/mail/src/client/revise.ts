@@ -1,4 +1,4 @@
-import { squash, type MailAxLane } from "./ax.js";
+import { squash, type MailAxLane, type NativeComposer } from "./ax.js";
 
 /**
  * Rewrite a draft by editing its open composer, instead of rebuilding it.
@@ -123,12 +123,18 @@ export const reviseDraftInPlace = async (
   if (!reach.ok) return null;
 
   let handle = opts.composer;
+  // A tab Mail is not showing has no text to match here; the app selects it
+  // and checks the head against what its window then shows, even an empty one.
+  let unread = false;
   if (handle === undefined) {
     const sameSubject = (await lane.composers()).filter((c) => c.subject === facts.subject);
     // Null only when nothing is open under this subject at all.
     if (sameSubject.length === 0) return null;
-    const matches = sameSubject.filter((c) => sameDraft(facts.contentHead, c.text));
-    if (matches.length === 0) {
+    const isHidden = (c: NativeComposer) => c.tab === "background" || c.text === null;
+    const hidden = sameSubject.filter(isHidden);
+    const read = sameSubject.filter((c) => !isHidden(c));
+    const matches = read.filter((c) => sameDraft(facts.contentHead, c.text ?? ""));
+    if (matches.length === 0 && hidden.length === 0) {
       return refuse(
         "identity",
         facts,
@@ -138,7 +144,7 @@ export const reviseDraftInPlace = async (
           `was touched.`,
         "Check which windows are open in Mail, or edit the draft there directly.",
         {
-          composerText: (sameSubject[0] as { text: string }).text.slice(0, 200),
+          composerText: (read[0]?.text ?? "").slice(0, 200),
           draftText: facts.contentHead.slice(0, 200),
         },
       );
@@ -153,7 +159,24 @@ export const reviseDraftInPlace = async (
         "Close or finish all but one of those windows in Mail, then try again.",
       );
     }
-    handle = (matches[0] as { composer: string }).composer;
+    // A background tab could hold this draft as well as any window that
+    // matches, and its text cannot be read without switching to it.
+    if (matches.length + hidden.length > 1) {
+      return refuse(
+        "identity",
+        facts,
+        `${matches.length + hidden.length} composers titled "${facts.subject}" could hold this ` +
+          `draft, ${hidden.length} of them ${hidden.length === 1 ? "a tab" : "tabs"} Mail is not ` +
+          `showing, whose text cannot be read without switching to it, so nothing here can tell ` +
+          `which is it. Nothing was touched.`,
+        "Select the draft's tab in Mail, or close the other composers under this subject, then " +
+          "try again.",
+        { composers: sameSubject.map((c) => ({ composer: c.composer, tab: c.tab ?? null })) },
+      );
+    }
+    const chosen = (matches[0] ?? hidden[0]) as { composer: string };
+    handle = chosen.composer;
+    unread = matches.length === 0;
   }
 
   const files = opts.attachments ?? [];
@@ -163,7 +186,7 @@ export const reviseDraftInPlace = async (
     ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
     ...(opts.body !== undefined ? { body: opts.body } : {}),
     ...(files.length > 0 ? { attachments: files } : {}),
-    ...(head.length > 0 ? { expectHead: head } : {}),
+    ...(head.length > 0 || unread ? { expectHead: head } : {}),
   });
   if (answer.replaced !== true) return answer;
 

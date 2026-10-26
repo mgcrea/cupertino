@@ -197,7 +197,11 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "though Mail may renumber a saved draft within seconds, so re-find it by subject " +
         "rather than reusing a ref across turns. The app reads the window back before it " +
         "reports anything, and saves only what it could verify. Mail comes to the front " +
-        "briefly to paste; the clipboard is borrowed by the app and restored. " +
+        "briefly to paste; the clipboard is borrowed by the app and restored. When Mail shows " +
+        "drafts as tabs of one window, a draft in a tab it is not showing is selected for the " +
+        "edit and the tab that was shown is selected again after; by `composer` handle, such a " +
+        "tab is refused when another tab has the same title, since only a `ref` lets its text " +
+        "be checked. " +
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
         "it does: when a `find` matches zero or several places, when two windows could be the " +
         "draft, when the open window holds a different message, or when the draft's own text " +

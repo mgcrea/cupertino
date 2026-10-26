@@ -1599,6 +1599,14 @@ export class AppleMailClient {
             "autosaved under the same subject, newest first: a composer opened seconds ago may " +
             "have none yet, and the newest one can lag what the window shows. The window is " +
             "the current text." +
+            (composers.some((c) => c.tab === "background")
+              ? " Mail shows these drafts as tabs of one window. A draft with " +
+                '`tab: "background"` is a tab it is not showing: its text, quote and recipients ' +
+                "are null because reading them would mean switching tabs, which listing never " +
+                'does. They are read once it is the selected tab (`tab: "selected"`): select it ' +
+                "in Mail and list again, or edit it with apple_mail_update_draft, which selects " +
+                "its tab, checks it, and selects the one that was shown again afterwards."
+              : "") +
             (index ? "" : " `savedDrafts` is null because the search index cannot be read."),
     };
   }

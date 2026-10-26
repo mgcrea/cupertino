@@ -113,7 +113,10 @@ export const registerMessageTools = (
         "this when the user says 'review my draft', 'check this email before I send it' or " +
         "'what do you think of my reply' without naming a message: the draft in front of them " +
         "may never have been saved where a search finds it, and the window is the current text " +
-        "either way. `main: true` marks the window in front. `composer` is what " +
+        "either way. `main: true` marks the window in front. When Mail shows drafts as tabs " +
+        "of one window, each tab is listed with its own handle, and one with " +
+        '`tab: "background"` (a tab Mail is not showing) has its text, quote and recipients ' +
+        "null: listing never switches tabs. `composer` is what " +
         "apple_mail_update_draft takes to edit that window directly. Each draft carries " +
         "`savedDrafts`, the refs Mail autosaved under the same subject: read one with " +
         "apple_mail_get_message for recipient ADDRESSES, or pass it to apple_mail_update_draft " +

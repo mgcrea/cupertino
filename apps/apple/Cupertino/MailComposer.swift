@@ -60,9 +60,44 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// written there; the live type does not need it, a fake does.
   func paste(_ content: PasteContent) throws -> Bool
   func save() throws -> SaveOutcome
+
+  // ─── tabs ────────────────────────────────────────────────────────────────
+  //
+  // MEASURED, LIVE RUN 3 (2026-10-26): with "Prefer tabs when opening
+  // documents: Always", Mail opens every composer as a TAB of one window.
+  // Accessibility lists that window once, its title and content are the
+  // selected tab's only, and it has an `AXTabGroup` child whose titled
+  // children are the tabs. So a tab, not the window, is what names a composer,
+  // and a background tab's text cannot be read without switching to it.
+
+  /// Nil for a window holding one composer. For a tab, `.selected` only while
+  /// its window shows it, and `.background` otherwise, or when that cannot be
+  /// told: everything read or pasted through the window reaches the tab shown.
+  var tab: ComposerTab? { get }
+  /// Whether another tab of the same window carries this tab's title, so its
+  /// subject field could not tell the two apart after a switch. True when it
+  /// cannot be read.
+  var sharesTabTitle: Bool { get }
+  /// Press this composer's tab, admission first. False when it is not a tab a
+  /// press is allowed on, or Mail refused the press. Whether it then shows is
+  /// the caller's to wait for.
+  func pressTab() throws -> Bool
+  /// The tab this composer's window shows now, for handing it back. Nil for
+  /// an untabbed window, and when no single tab reads as selected.
+  func shownTab() -> ComposerWindow?
+}
+
+/// Where a tab stands in its window. Its raw value is the listing's `tab`.
+nonisolated enum ComposerTab: String {
+  case selected, background
 }
 
 extension ComposerWindow {
+  /// A window of its own, for a conformer that knows nothing of tabs.
+  nonisolated var tab: ComposerTab? { nil }
+  nonisolated var sharesTabTitle: Bool { false }
+  nonisolated func pressTab() throws -> Bool { false }
+  nonisolated func shownTab() -> ComposerWindow? { nil }
   /// To and Cc together, as the listing's `recipients` has always been.
   nonisolated var recipientNames: [String] { to + cc }
   func isSame(as other: ComposerWindow) -> Bool { self === other }
@@ -172,52 +207,79 @@ nonisolated enum MailComposer {
   /// `quote` is the text of the blocks from the first quoted one down, joined
   /// with newlines and cut at `quoteChars` (`quoteTruncated` says whether it
   /// was). It is null unless `quoted` is true, and when `quoteChars` is 0.
+  ///
+  /// `tab` is null for a window of its own, `"selected"` for the tab its
+  /// window shows, which reads as a window does, and `"background"` for any
+  /// other tab: its title and nothing else, every field it cannot read null,
+  /// because reading one means switching tabs and a listing never does.
   static func listing(_ windows: [ComposerWindow], quoteChars: Int = 2000) -> [[String: Any]] {
     let handles = register(windows)
     return zip(windows, handles).map { window, handle in
-      var own: [String] = []
-      var files: [String] = []
-      var quoteBlocks: [String] = []
-      var quoted: Any = NSNull()
-      if let blocks = try? window.blocks() {
-        var boundary = false
-        var unreadable = false
-        for block in blocks {
-          guard let level = block.quoteLevel else {
-            unreadable = true
-            break
-          }
-          if level > 0 {
-            boundary = true
-          }
-          if boundary {
-            quoteBlocks.append(block.text)
-            continue
-          }
-          own.append(block.text)
-          files += block.fileNames
-        }
-        if !unreadable { quoted = boundary }
-      }
-      let whole = quoteBlocks.joined(separator: "\n")
-      let cut = max(quoteChars, 0)
-      let showQuote = (quoted as? Bool) == true && cut > 0
-      return [
-        "composer": handle,
-        "subject": window.subject,
-        "main": window.isMain,
-        "from": window.from ?? NSNull(),
-        "to": window.to,
-        "cc": window.cc,
-        "bcc": window.bcc ?? NSNull(),
-        "recipients": window.recipientNames,
-        "text": own.joined(separator: "\n"),
-        "quoted": quoted,
-        "quote": showQuote ? String(whole.prefix(cut)) : NSNull(),
-        "quoteTruncated": showQuote && whole.count > cut,
-        "files": files,
-      ]
+      let tab = window.tab
+      if tab == .background { return background(window, handle) }
+      var entry = shown(window, handle, quoteChars: quoteChars)
+      entry["tab"] = tab?.rawValue ?? NSNull()
+      // Switched away from while it was read, what it answered may be the
+      // next tab's: listed as what it now is.
+      if tab == .selected, window.tab != .selected { return background(window, handle) }
+      return entry
     }
+  }
+
+  private static func background(_ window: ComposerWindow, _ handle: String) -> [String: Any] {
+    [
+      "composer": handle, "subject": window.subject, "tab": ComposerTab.background.rawValue,
+      "main": false, "from": NSNull(), "to": NSNull(), "cc": NSNull(), "bcc": NSNull(),
+      "recipients": NSNull(), "text": NSNull(), "quoted": NSNull(), "quote": NSNull(),
+      "quoteTruncated": false, "files": [String](),
+    ]
+  }
+
+  private static func shown(_ window: ComposerWindow, _ handle: String, quoteChars: Int)
+    -> [String: Any]
+  {
+    var own: [String] = []
+    var files: [String] = []
+    var quoteBlocks: [String] = []
+    var quoted: Any = NSNull()
+    if let blocks = try? window.blocks() {
+      var boundary = false
+      var unreadable = false
+      for block in blocks {
+        guard let level = block.quoteLevel else {
+          unreadable = true
+          break
+        }
+        if level > 0 {
+          boundary = true
+        }
+        if boundary {
+          quoteBlocks.append(block.text)
+          continue
+        }
+        own.append(block.text)
+        files += block.fileNames
+      }
+      if !unreadable { quoted = boundary }
+    }
+    let whole = quoteBlocks.joined(separator: "\n")
+    let cut = max(quoteChars, 0)
+    let showQuote = (quoted as? Bool) == true && cut > 0
+    return [
+      "composer": handle,
+      "subject": window.subject,
+      "main": window.isMain,
+      "from": window.from ?? NSNull(),
+      "to": window.to,
+      "cc": window.cc,
+      "bcc": window.bcc ?? NSNull(),
+      "recipients": window.recipientNames,
+      "text": own.joined(separator: "\n"),
+      "quoted": quoted,
+      "quote": showQuote ? String(whole.prefix(cut)) : NSNull(),
+      "quoteTruncated": showQuote && whole.count > cut,
+      "files": files,
+    ]
   }
 
   // ─── the edit verb ─────────────────────────────────────────────────────────
@@ -335,9 +397,124 @@ nonisolated enum MailComposer {
   /// ASCII span at the end of a block, so each is read back and must equal the
   /// text it replaces; a mismatch refuses, and never falls back to repasting
   /// the whole own text.
+  ///
+  /// ## A composer that is a background tab
+  ///
+  /// Its window shows another tab, and everything above reads and pastes
+  /// through the window, so the tab is selected first, as step 0, right after
+  /// step 1 and before anything is read: pressed (which is where admission
+  /// happens), then polled for up to `tabTimeout` until it reads as the tab
+  /// shown AND the window's subject field reads as its title. Anything short of
+  /// that refuses with nothing changed. Before the press, and so with no tab
+  /// switched, a tab whose title another tab of the window shares is refused
+  /// unless `expectHead` was given, since after the switch nothing else could
+  /// prove the content shown is this draft's; and so is an attachment that is
+  /// not there.
+  ///
+  /// From then on, before every selection and paste of step 10 and before
+  /// step 12, the tab must still be the one shown: a person who picks another
+  /// tab mid-edit stops it, and command-S, which saves the tab shown, is not
+  /// pressed. On every way out the tab that was shown before is selected again,
+  /// but only while this tab is still the one shown (a person who picked
+  /// another is left there), and before the front is handed back.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
-    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12, grace: TimeInterval = 2
+    readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12, grace: TimeInterval = 2,
+    tabTimeout: TimeInterval = 1
+  ) -> [String: Any] {
+    let untouched = "Nothing was changed."
+
+    // 1.
+    guard w.isAlive else {
+      return refusal(
+        "composer", "The composer is gone: it was sent or closed, or Mail quit. \(untouched)",
+        "List the composers again and edit the one that holds this draft.")
+    }
+    guard w.tab == .background else {
+      return editShown(
+        w, request: request, board: board, front: front, readbackTimeout: readbackTimeout,
+        filesTimeout: filesTimeout, grace: grace, beforeHandBack: {})
+    }
+
+    // 0. A background tab.
+    if request.expectHead == nil, w.sharesTabTitle {
+      return refusal(
+        "identity",
+        "This composer is a tab its window is not showing, and another tab of that window has "
+          + "the same title (or its tabs' titles could not be read), so once it is selected "
+          + "nothing could prove that what the window shows is this draft. \(untouched) No tab "
+          + "was switched.",
+        "Edit it by the saved draft's ref, which checks its text, or select its tab in Mail and "
+          + "try again.")
+    }
+    if let refused = missingFiles(request, untouched) { return refused }
+    let previous = w.shownTab()
+    let pressed: Bool
+    do {
+      pressed = try w.pressTab()
+    } catch {
+      return refusal(
+        "composer",
+        "The composer's tab could not be selected (\(describe(error))). \(untouched)",
+        "Try again once the Mac is free, or edit the draft in Mail directly.")
+    }
+    var handedBack = false
+    func reselect() {
+      guard !handedBack else { return }
+      handedBack = true
+      handBackTab(previous, after: w)
+    }
+    guard pressed, awaitShown(w, timeout: tabTimeout) else {
+      reselect()
+      return refusal(
+        "composer",
+        (pressed
+          ? "The composer's tab was pressed but did not come up as the tab its window shows "
+            + "within \(seconds(tabTimeout)), so its text could not be read. "
+          : "The composer is a tab its window is not showing, and Mail would not let it be "
+            + "selected, so its text could not be read. ")
+          + "Nothing was read or pasted, and the draft is unchanged.",
+        "Select the draft's tab in Mail, then try again.")
+    }
+    let answer = editShown(
+      w, request: request, board: board, front: front, readbackTimeout: readbackTimeout,
+      filesTimeout: filesTimeout, grace: grace, beforeHandBack: reselect)
+    reselect()
+    return answer
+  }
+
+  /// Poll until `w` reads as the tab its window shows.
+  private static func awaitShown(_ w: ComposerWindow, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+      if w.tab == .selected { return true }
+      if !w.isAlive || Date() >= deadline { return false }
+      usleep(50_000)
+    }
+  }
+
+  /// Select `previous` again, if this edit's tab is still the one shown.
+  private static func handBackTab(_ previous: ComposerWindow?, after w: ComposerWindow) {
+    guard let previous, !previous.isSame(as: w), let shown = w.shownTab(), shown.isSame(as: w)
+    else { return }
+    _ = try? previous.pressTab()
+  }
+
+  private static func missingFiles(_ request: EditRequest, _ untouched: String) -> [String: Any]? {
+    let missing = request.files.filter { !FileManager.default.isReadableFile(atPath: $0.path) }
+    guard !missing.isEmpty else { return nil }
+    let names = missing.map(\.lastPathComponent)
+    return refusal(
+      "files",
+      "\(names.joined(separator: ", ")) could not be read, so nothing was attached. \(untouched)",
+      "Check the paths and try again.", ["files": names])
+  }
+
+  /// Steps 1 to 13, on a window showing this composer.
+  private static func editShown(
+    _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
+    readbackTimeout: TimeInterval, filesTimeout: TimeInterval, grace: TimeInterval,
+    beforeHandBack: () -> Void
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -383,14 +560,7 @@ nonisolated enum MailComposer {
         "Use edits, which change only the text they find and leave files where they are.",
         ["files": before.files])
     }
-    let missing = request.files.filter { !FileManager.default.isReadableFile(atPath: $0.path) }
-    if !missing.isEmpty {
-      let names = missing.map(\.lastPathComponent)
-      return refusal(
-        "files",
-        "\(names.joined(separator: ", ")) could not be read, so nothing was attached. \(untouched)",
-        "Check the paths and try again.", ["files": names])
-    }
+    if let refused = missingFiles(request, untouched) { return refused }
 
     // 5.
     var result: String?
@@ -523,6 +693,7 @@ nonisolated enum MailComposer {
       while Date() < deadline, (try? w.blocks()) == nil, w.isAlive { usleep(50_000) }
     }
     borrow.giveBack()
+    beforeHandBack()
     front.give(to: previous)
     return answer
   }
@@ -581,6 +752,16 @@ nonisolated enum MailComposer {
     }
     // For a refusal whose own hint fits only while nothing is pasted.
     func hint() -> String? { changed ? afterPaste : nil }
+    // Before every selection and paste once Mail is in front: the window
+    // still shows this composer's tab, so nothing reaches another draft.
+    func elsewhere() -> [String: Any]? {
+      guard w.tab == .background else { return nil }
+      return refusal(
+        "composer",
+        "Mail's window moved to another of its tabs during the edit, so nothing more was "
+          + "selected or pasted. Someone is probably using the Mac. \(state())",
+        hint() ?? "Try again once the Mac is free.")
+    }
 
     do {
       // 9.
@@ -596,10 +777,12 @@ nonisolated enum MailComposer {
       var shown = before
       if !steps.isEmpty {
         for step in steps {
+          if let refused = elsewhere() { return refused }
           guard let back = try w.selectSubrange(step.range, in: range),
             sameSpan(back, step.original)
           else { return misselected(step.original, state: state(), hint: hint()) }
           if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
+          if let refused = elsewhere() { return refused }
           let content = PasteContent.text(step.replace)
           try board.write(content)
           guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
@@ -617,10 +800,12 @@ nonisolated enum MailComposer {
           verified.append("the edit of \"\(step.find)\"")
         }
       } else if let body = request.body {
+        if let refused = elsewhere() { return refused }
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
           return misselected(nil, state: state(), hint: hint())
         }
         if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
+        if let refused = elsewhere() { return refused }
         // A body equal to the own text to the letter has nothing to paste.
         if !(request.html == nil && body == before.text) {
           let content = request.html.map { PasteContent.html($0, fallback: body) } ?? .text(body)
@@ -648,10 +833,12 @@ nonisolated enum MailComposer {
       // 11.
       var added: [String] = []
       if !request.files.isEmpty {
+        if let refused = elsewhere() { return refused }
         guard let back = try w.selectOwnEnd(), back.isEmpty else {
           return misselected(nil, state: state(), hint: hint())
         }
         if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
+        if let refused = elsewhere() { return refused }
         let content = PasteContent.files(request.files)
         try board.write(content)
         guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
@@ -685,7 +872,12 @@ nonisolated enum MailComposer {
       // 12.
       var saved = false
       let note: String
-      if request.save {
+      if request.save, w.tab == .background {
+        note =
+          "The change was read back from the composer, but Mail's window then moved to another "
+          + "of its tabs, and command-S saves the tab shown, so it was not pressed and this did "
+          + "not save it. The draft's tab is open in Mail with the change in it."
+      } else if request.save {
         let outcome = (try? w.save()) ?? .refused
         switch outcome {
         case .pressed:
@@ -995,14 +1187,32 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   private static let fileRoles: Set<String> = ["AXImage", "AXButton"]
   private static let selectedRange = "AXSelectedTextMarkerRange"
 
+  /// The window it was listed in. For a tab, where to look for it first: see
+  /// `host`.
   let window: AXUIElement
+  /// A tab's button in its window's `AXTabGroup`: what names the composer
+  /// when the window holds several. Nil for a window of its own.
+  let tabButton: AXUIElement?
+  /// The tab's title when it was listed. A tab reading otherwise later is
+  /// not trusted to be the same one (see `isAlive`).
+  private let listedTitle: String?
+  /// A window of its own reads its subject here; a tab reads its title.
   private let subjectField: AXUIElement
   private let pid: pid_t
 
-  private init(window: AXUIElement, subjectField: AXUIElement, pid: pid_t) {
+  private init(window: AXUIElement, tab: AXUIElement?, subjectField: AXUIElement, pid: pid_t) {
     self.window = window
+    self.tabButton = tab
+    self.listedTitle = tab.flatMap(Self.title(of:))
     self.subjectField = subjectField
     self.pid = pid
+  }
+
+  /// A composer's text was asked for while its tab is not the one shown.
+  struct NotShown: LocalizedError {
+    var errorDescription: String? {
+      "the composer's tab is not the one its window shows, so what the window holds is another draft"
+    }
   }
 
   /// Every compose window Mail has open now. Reads only.
@@ -1021,49 +1231,208 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     } catch AccessibilityDriver.Failure.noWindows(_) {
       return []
     }
-    return windows.compactMap { window in
+    // A window holding tabs is one element for all of them, its content the
+    // selected tab's: each titled tab is a composer of its own, named by its
+    // button, never by the window.
+    return windows.flatMap { window -> [AXComposerWindow] in
       var pid: pid_t = 0
-      guard AXUIElementGetPid(window, &pid) == .success else { return nil }
-      return field(in: window, "Mail.subjectField").map {
-        AXComposerWindow(window: window, subjectField: $0, pid: pid)
+      guard AXUIElementGetPid(window, &pid) == .success,
+        let field = field(in: window, "Mail.subjectField")
+      else { return [] }
+      let tabs = tabButtons(in: window)
+      if tabs.isEmpty {
+        return [AXComposerWindow(window: window, tab: nil, subjectField: field, pid: pid)]
       }
+      return tabs.map { AXComposerWindow(window: window, tab: $0, subjectField: field, pid: pid) }
     }
   }
 
-  var subject: String { Self.attr(subjectField, kAXValueAttribute as String) as? String ?? "" }
+  /// A window's subject; a tab's title, which is its subject (LIVE RUN 3).
+  var subject: String {
+    if let tabButton { return Self.title(of: tabButton) ?? "" }
+    return Self.attr(subjectField, kAXValueAttribute as String) as? String ?? ""
+  }
 
   /// Only an element AX calls invalid is dead. A busy Mail (`cannotComplete`)
   /// still has its window, and calling that gone would let a later listing
   /// mint it a second handle.
+  ///
+  /// A window of its own that has since taken tabs is retired: its element now
+  /// stands for every tab in it, and its content follows whichever is
+  /// selected, so the handle that named it names no composer. A listing gives
+  /// each tab its own. A tab is retired once its title no longer reads as the
+  /// one it was listed with, should Mail ever hand a closed tab's button to
+  /// another (unmeasured): a subject edited since only costs a new handle.
   var isAlive: Bool {
     guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
       return false
     }
     var out: CFTypeRef?
-    return Self.alive(
-      after: AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &out))
+    guard let tabButton else {
+      guard
+        Self.alive(after: AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &out))
+      else { return false }
+      return Self.tabButtons(in: window).isEmpty
+    }
+    guard
+      Self.alive(
+        after: AXUIElementCopyAttributeValue(tabButton, kAXTitleAttribute as CFString, &out))
+    else { return false }
+    guard let now = out as? String else { return true }
+    return now == listedTitle
   }
 
   static func alive(after err: AXError) -> Bool { err != .invalidUIElement }
 
   func isSame(as other: ComposerWindow) -> Bool {
     guard let other = other as? AXComposerWindow else { return false }
-    return CFEqual(window, other.window)
+    return Self.sameComposer(
+      (window, tabButton), (other.window, other.tabButton), equal: { CFEqual($0, $1) })
   }
 
-  var to: [String] { Self.field(in: window, "Mail.toField").map(Self.names(in:)) ?? [] }
-  var cc: [String] { Self.field(in: window, "Mail.ccField").map(Self.names(in:)) ?? [] }
-  var bcc: [String]? { Self.field(in: window, "Mail.bccField").map(Self.names(in:)) }
+  // ─── tabs ──────────────────────────────────────────────────────────────────
+
+  /// Same composer: a tab by its button, wherever its window; a window of its
+  /// own by its window. Never a tab for the window holding it, which is one
+  /// element whatever tab it shows.
+  static func sameComposer<E>(
+    _ a: (window: E, tab: E?), _ b: (window: E, tab: E?), equal: (E, E) -> Bool
+  ) -> Bool {
+    switch (a.tab, b.tab) {
+    case (nil, nil): return equal(a.window, b.window)
+    case (let x?, let y?): return equal(x, y)
+    default: return false
+    }
+  }
+
+  /// A tab group's composers: its titled children. MEASURED, LIVE RUN 3: one
+  /// child has an empty title, probably the new-tab button.
+  static func titledTabs<E>(_ children: [E], title: (E) -> String?) -> [E] {
+    children.filter { !(title($0) ?? "").isEmpty }
+  }
+
+  /// The only role a tab is pressed or read as selected by. EXPECTED, not
+  /// measured: a tab of any other role is never pressed and never shown, so
+  /// it lists as a background tab and refuses to be edited.
+  static func pressable(role: String?) -> Bool { role == "AXRadioButton" }
+
+  /// The one tab reading as selected (`AXValue` 1, EXPECTED), or nil when none
+  /// or several do.
+  static func selectedTab<E>(among tabs: [E], role: (E) -> String?, value: (E) -> Int?) -> E? {
+    let selected = tabs.filter { pressable(role: role($0)) && value($0) == 1 }
+    return selected.count == 1 ? selected.first : nil
+  }
+
+  /// Whether the window shows `tab`: it is the one tab reading as selected,
+  /// and the window's subject field reads as its title. Either alone could be
+  /// wrong, and two tabs can share a title, which is why a background tab that
+  /// shares one needs `expectHead` before it is edited.
+  static func shows<E>(
+    _ tab: E, among tabs: [E], subject: String?, equal: (E, E) -> Bool,
+    role: (E) -> String?, value: (E) -> Int?, title: (E) -> String?
+  ) -> Bool {
+    guard let selected = selectedTab(among: tabs, role: role, value: value), equal(selected, tab),
+      let name = title(tab), !name.isEmpty, let subject
+    else { return false }
+    return subject == name
+  }
+
+  /// The tabs of a window: the titled children of its `AXTabGroup` child
+  /// (MEASURED, LIVE RUN 3). Empty for a window with no tab group.
+  private static func tabButtons(in window: AXUIElement) -> [AXUIElement] {
+    guard let group = children(window).first(where: { role($0) == "AXTabGroup" }) else {
+      return []
+    }
+    return titledTabs(children(group), title: title(of:))
+  }
+
+  private static func title(of el: AXUIElement) -> String? {
+    attr(el, kAXTitleAttribute as String) as? String
+  }
+
+  private static func intValue(_ el: AXUIElement) -> Int? {
+    (attr(el, kAXValueAttribute as String) as? NSNumber)?.intValue
+  }
+
+  /// The window holding this tab now: the one it was listed in while it is
+  /// still there, otherwise whichever of Mail's windows holds it, in case
+  /// AppKit gives each tab a window of its own (unmeasured). Nil when none.
+  private func host() -> AXUIElement? {
+    guard let tabButton else { return window }
+    if Self.tabButtons(in: window).contains(where: { CFEqual($0, tabButton) }) { return window }
+    guard
+      let windows = try? AccessibilityDriver.windowElements(
+        bundleId: Self.bundleId, scope: Self.scope)
+    else { return nil }
+    return windows.first { Self.tabButtons(in: $0).contains { CFEqual($0, tabButton) } }
+  }
+
+  /// The window, when what it shows is this composer: always, for a window of
+  /// its own that has not taken tabs; for a tab, only while `shows` says so.
+  /// Every read and write of the body goes through here, so none reaches
+  /// another tab's draft.
+  private func shownWindow() -> AXUIElement? {
+    guard let tabButton else { return Self.tabButtons(in: window).isEmpty ? window : nil }
+    guard let host = host() else { return nil }
+    let subject = Self.field(in: host, "Mail.subjectField").flatMap {
+      Self.attr($0, kAXValueAttribute as String) as? String
+    }
+    let shown = Self.shows(
+      tabButton, among: Self.tabButtons(in: host), subject: subject, equal: { CFEqual($0, $1) },
+      role: Self.role, value: Self.intValue, title: Self.title(of:))
+    return shown ? host : nil
+  }
+
+  var tab: ComposerTab? {
+    guard tabButton != nil else { return nil }
+    return shownWindow() == nil ? .background : .selected
+  }
+
+  var sharesTabTitle: Bool {
+    guard let tabButton else { return false }
+    guard let host = host(), let name = Self.title(of: tabButton) else { return true }
+    return Self.tabButtons(in: host).filter { Self.title(of: $0) == name }.count > 1
+  }
+
+  /// UNMEASURED: whether `AXPress` selects a tab. The caller polls `tab`
+  /// afterwards and refuses when it does not come up.
+  func pressTab() throws -> Bool {
+    guard let tabButton, Self.pressable(role: Self.role(tabButton)) else { return false }
+    try DrivingSession.admit(Self.bundleId)
+    DriveActivity.record(Self.bundleId)
+    return AXUIElementPerformAction(tabButton, kAXPressAction as CFString) == .success
+  }
+
+  func shownTab() -> ComposerWindow? {
+    guard tabButton != nil, let host = host(),
+      let selected = Self.selectedTab(
+        among: Self.tabButtons(in: host), role: Self.role, value: Self.intValue)
+    else { return nil }
+    return AXComposerWindow(window: host, tab: selected, subjectField: subjectField, pid: pid)
+  }
+
+  // ─── the fields ────────────────────────────────────────────────────────────
+
+  var to: [String] {
+    shownWindow().flatMap { Self.field(in: $0, "Mail.toField") }.map(Self.names(in:)) ?? []
+  }
+  var cc: [String] {
+    shownWindow().flatMap { Self.field(in: $0, "Mail.ccField") }.map(Self.names(in:)) ?? []
+  }
+  var bcc: [String]? {
+    shownWindow().flatMap { Self.field(in: $0, "Mail.bccField") }.map(Self.names(in:))
+  }
 
   /// `popup_from`'s value reads `Name – address`.
   var from: String? {
-    Self.field(in: window, "popup_from").flatMap {
+    shownWindow().flatMap { Self.field(in: $0, "popup_from") }.flatMap {
       Self.attr($0, kAXValueAttribute as String) as? String
     }
   }
 
   var isMain: Bool {
-    (Self.attr(window, kAXMainAttribute as String) as? NSNumber)?.boolValue == true
+    guard let shown = shownWindow() else { return false }
+    return (Self.attr(shown, kAXMainAttribute as String) as? NSNumber)?.boolValue == true
   }
 
   /// The names in one recipient field: its tokens, then whatever is still being
@@ -1150,6 +1519,7 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// Mail being frontmost must then hold for a moment (`settled`).
   func activate() throws -> Bool {
     let web = try webArea()
+    guard let window = shownWindow() else { throw NotShown() }
     guard try AccessibilityDriver.activateAndWait(bundleId: Self.bundleId, scope: Self.scope)
     else { return false }
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
@@ -1210,6 +1580,7 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   }
 
   private func webArea() throws -> AXUIElement {
+    guard let window = shownWindow() else { throw NotShown() }
     guard let web = Self.find(window, depth: 10, where: { Self.role($0) == "AXWebArea" })
     else { throw NoBody() }
     return web
@@ -1332,7 +1703,11 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     return read
   }
 
+  /// Mail's focused window is the one showing this composer: for a tab, the
+  /// window AND this tab shown in it, so a keystroke never reaches another
+  /// tab's draft.
   private func isFocusedWindow() -> Bool {
+    guard let window = shownWindow() else { return false }
     let app = AccessibilityDriver.element(for: pid)
     guard let focused = Self.attr(app, kAXFocusedWindowAttribute as String),
       CFGetTypeID(focused) == AXUIElementGetTypeID()

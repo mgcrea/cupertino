@@ -258,6 +258,33 @@ describe("finish", () => {
    * A composer that has gone cannot be raised, and command-shift-D posted into
    * an unknown foreground is the one outcome worth refusing outright.
    */
+  /*
+   * A window holding several drafts as tabs acts on the tab it shows, so the
+   * caller can name a check that must pass right before the key: once Mail is
+   * in front, after the raise. A no (or a check that throws) presses nothing.
+   */
+  it("presses nothing when the check right before the key says no", async () => {
+    const { env, seen } = await hostStub({});
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.finish(true, REF, async () => false)).resolves.toBe("unready");
+    await expect(
+      lane.finish(true, REF, async () => {
+        throw new Error("listing failed");
+      }),
+    ).resolves.toBe("unready");
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    let asked = 0;
+    await expect(
+      lane.finish(true, REF, async () => {
+        asked += 1;
+        return true;
+      }),
+    ).resolves.toBe("pressed");
+    expect(asked).toBe(1);
+    expect(seen.slice(-3).map((c) => c.tool)).toEqual(["raise_window", "activate", "key"]);
+    lane.close();
+  });
+
   it("presses nothing when the composer can no longer be raised", async () => {
     const { env, seen } = await hostStub({ raise_window: { refusal: "stale handle" } });
     const lane = MailAxLane.open(env)!;
@@ -292,6 +319,26 @@ describe("composerGone", () => {
     lane.close();
   });
 
+  /*
+   * A tab Mail is not showing is not a window title, so the window list alone
+   * would call a draft in a background tab gone. The composers list sees tabs.
+   */
+  it("is false while a tab with that subject is open, though no window carries it", async () => {
+    const { env } = await hostStub({
+      list_windows: { windows: [{ handle: "w1", index: 0, title: "Another draft" }] },
+      mail_composers: {
+        composers: [
+          { composer: "mc-1", subject: "Another draft", tab: "selected" },
+          { composer: "mc-2", subject: "Re: lunch", tab: "background", text: null },
+        ],
+      },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.composerGone("Re: lunch", 0)).resolves.toBe(false);
+    await expect(lane.composerGone("Something else", 0)).resolves.toBe(true);
+    lane.close();
+  });
+
   it("waits for the window to go rather than reading once", async () => {
     const { env } = await hostStub({
       list_windows: (_args, n) =>
@@ -312,6 +359,39 @@ describe("composers", () => {
     await lane.composers();
     await lane.composers(0);
     expect(seen.map((c) => c.args)).toEqual([{}, { quoteChars: 0 }]);
+    lane.close();
+  });
+
+  it("carries each composer's tab through, with a background tab's unread fields null", async () => {
+    const background = {
+      composer: "mc-2",
+      subject: "Re: lunch",
+      tab: "background",
+      main: false,
+      from: null,
+      to: null,
+      cc: null,
+      bcc: null,
+      recipients: null,
+      text: null,
+      quoted: null,
+      quote: null,
+      quoteTruncated: false,
+      files: [],
+    };
+    const { env } = await hostStub({
+      mail_composers: {
+        composers: [
+          { composer: "mc-1", subject: "Hello", tab: "selected", text: "hi", recipients: [] },
+          background,
+          { composer: "mc-3", subject: "Alone", tab: null, text: "", recipients: [] },
+        ],
+      },
+    });
+    const lane = MailAxLane.open(env)!;
+    const listed = await lane.composers();
+    expect(listed.map((c) => c.tab)).toEqual(["selected", "background", null]);
+    expect(listed[1]).toEqual(background);
     lane.close();
   });
 });

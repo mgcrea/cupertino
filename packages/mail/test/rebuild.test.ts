@@ -400,6 +400,24 @@ describe("rebuilding a closed reply draft", () => {
     expect(edits).toEqual([]);
   });
 
+  /*
+   * A tab Mail is not showing carries no window title, but it is listed with
+   * its subject, so the preflight sees a draft open in a background tab too.
+   */
+  it("refuses while a background tab carries the subject", async () => {
+    const { deps, timeline, edits } = world({
+      open: [
+        { subject: "Another draft", tab: "selected", text: "x" },
+        { subject: SUBJECT, tab: "background", text: null, recipients: null, quoted: null },
+      ],
+    });
+    const result = await rebuildDraft(deps, TARGET, { facts: FACTS, body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "composer" });
+    expect(String(result.reason)).toMatch(/mc-1/);
+    expect(timeline).not.toContain("OPEN_COMPOSER");
+    expect(edits).toEqual([]);
+  });
+
   it("refuses when the regenerated quote differs, and the original is not deleted", async () => {
     const { deps, timeline, edits } = world({
       newQuote: "On 22 Oct 2026, at 11:30, Ann Example <ann@example.com> wrote:\nOther numbers.",
