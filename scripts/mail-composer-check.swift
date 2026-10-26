@@ -46,6 +46,8 @@ final class EditFake: ComposerWindow {
   var ownFiles: [String]
   var quote: [String]
   var unreadableLevel = false
+  /// The body cannot be read at all: Mail still loading it, or not answering.
+  var bodyUnreadable = false
   var isAlive = true
   var rangeText: String?
   var readBack: ((String) -> String?)?
@@ -145,7 +147,7 @@ final class EditFake: ComposerWindow {
 
   func blocks() throws -> [ComposerBlock] {
     if shown !== self { return try shown.blocks() }
-    if Date() < hungUntil {
+    if bodyUnreadable || Date() < hungUntil {
       note("read-hung")
       throw Hung()
     }
@@ -696,13 +698,15 @@ struct MailComposerCheck {
   typealias Request = MailComposer.EditRequest
 
   /// One edit against a fake, with a short read-back so a refusal at step 10
-  /// does not hold the run for five seconds.
+  /// does not hold the run for five seconds. `handle` is the registry's name
+  /// for the fake, as the server passes it: the re-bound gate and the sighting
+  /// a verified edit records go by it.
   static func run(
     _ fake: EditFake, _ request: Request, board: FakeBoard = FakeBoard(),
-    front: FakeFront = FakeFront(), grace: TimeInterval = 0.3, rebound: Bool = false
+    front: FakeFront = FakeFront(), grace: TimeInterval = 0.3, handle: String? = nil
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
-      fake, request: request, board: board, front: front, rebound: rebound, readbackTimeout: 0.2,
+      fake, request: request, board: board, front: front, handle: handle, readbackTimeout: 0.2,
       filesTimeout: 0.2, grace: grace, tabTimeout: 0.6, saveTimeout: 0.4)
     return (result, board, front)
   }
@@ -2255,26 +2259,122 @@ struct MailComposerCheck {
       check(
         "resolve re-binds the handle to the stand-in and marks it",
         MailComposer.resolve(handle) === other && MailComposer.isRebound(handle))
-      let (refused, board, front) = run(other, Request(body: "New text"), rebound: true)
+      let (refused, board, front) = run(other, Request(body: "New text"), handle: handle)
       check(
         "an edit on a marked handle without expectHead refuses as identity, nothing pasted or saved",
         capability(refused) == "identity" && reason(refused).contains("tab changed underneath")
           && (refused["hint"] as? String ?? "").contains("ref")
-          && (refused["hint"] as? String ?? "").contains("List the composers again")
+          && (refused["hint"] as? String ?? "").contains("reference-only until its text is proved")
+          && (refused["hint"] as? String ?? "").contains("List the composers again after")
           && untouched(other, board, front) && other.own == "Hi Bob")
       let (wrong, wrongBoard, wrongFront) = run(
-        other, Request(body: "New text", expectHead: "Hi Ann"), rebound: true)
+        other, Request(body: "New text", expectHead: "Hi Ann"), handle: handle)
       check(
         "with an expectHead that is not the tab's text it refuses as identity too",
         capability(wrong) == "identity" && untouched(other, wrongBoard, wrongFront)
-          && other.own == "Hi Bob")
-      let (ok, _, _) = run(other, Request(body: "New text", expectHead: "Hi Bob"), rebound: true)
+          && other.own == "Hi Bob" && MailComposer.isRebound(handle))
+      let (ok, _, _) = run(other, Request(body: "New text", expectHead: "Hi Bob"), handle: handle)
       check(
         "with a matching expectHead it goes through",
         ok["replaced"] as? Bool == true && other.own == "New text" && other.saves == 1)
+      // Fix round 5: the content is proved, so the mark clears, and the
+      // read-back is the handle's sighting: what the NEXT re-binding is held to.
       check(
-        "a verified edit by ref does not clear the mark on its own",
-        MailComposer.isRebound(handle))
+        "a verified edit with a matching expectHead clears the mark",
+        !MailComposer.isRebound(handle)
+          && MailComposer.listing([other])[0]["rebound"] as? Bool == false)
+      let (again, _, _) = run(other, Request(body: "Newer text"), handle: handle)
+      check(
+        "and the handle edits again without expectHead",
+        again["replaced"] as? Bool == true && other.own == "Newer text")
+      let third = EditFake(own: "Newer text")
+      third.subject = "Re: lunch"
+      other.isAlive = false
+      other.reboundTo = third
+      check(
+        "a verified edit's read-back is recorded: a re-bound tab reading it clears the mark",
+        MailComposer.listing([third])[0]["composer"] as? String == handle
+          && !MailComposer.isRebound(handle))
+    }
+    do {
+      // Fix round 5: a verified edit by an UNMARKED handle records its read-back
+      // too, so the text the handle is held to is what the edit left, not what
+      // the last listing read.
+      let old = EditFake(own: "Hi Ann")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      let (ok, _, _) = run(old, Request(body: "New text"), handle: handle)
+      check(
+        "a verified edit by an unmarked handle goes through and leaves it unmarked",
+        ok["replaced"] as? Bool == true && !MailComposer.isRebound(handle))
+      let stale = EditFake(own: "Hi Ann")
+      stale.subject = "Re: lunch"
+      old.isAlive = false
+      old.reboundTo = stale
+      check(
+        "a re-bound tab reading the text from BEFORE the edit keeps the mark",
+        MailComposer.listing([stale])[0]["rebound"] as? Bool == true
+          && MailComposer.isRebound(handle))
+      let current = EditFake(own: "New text")
+      current.subject = "Re: lunch"
+      stale.isAlive = false
+      stale.reboundTo = current
+      check(
+        "one reading the edit's read-back clears it",
+        MailComposer.listing([current])[0]["composer"] as? String == handle
+          && !MailComposer.isRebound(handle))
+      let (again, _, _) = run(current, Request(body: "Final"), handle: handle)
+      check(
+        "and the handle edits again without expectHead",
+        again["replaced"] as? Bool == true && current.own == "Final")
+    }
+    do {
+      // Fix round 5: an unreadable body lists its text null, and null is no
+      // sighting: the text recorded before stays, and a null never clears.
+      let old = EditFake(own: "Hi Ann")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      old.bodyUnreadable = true
+      let unread = MailComposer.listing([old])
+      check(
+        "an unreadable body lists text null, not empty",
+        unread[0]["composer"] as? String == handle && unread[0]["text"] is NSNull
+          && unread[0]["quoted"] is NSNull && unread[0]["rebound"] as? Bool == false)
+      let other = EditFake(own: "Hi Ann")
+      other.subject = "Re: lunch"
+      other.bodyUnreadable = true
+      old.isAlive = false
+      old.reboundTo = other
+      let still = MailComposer.listing([other])
+      check(
+        "a re-bound tab whose body cannot be read stays marked",
+        still[0]["text"] is NSNull && still[0]["rebound"] as? Bool == true)
+      other.bodyUnreadable = false
+      check(
+        "and the null was no sighting: the text recorded before it still clears the mark",
+        MailComposer.listing([other])[0]["rebound"] as? Bool == false)
+    }
+    do {
+      // Fix round 5: "" == "" keeps the mark. Two empty drafts under one title
+      // prove nothing about each other.
+      let old = EditFake(own: "")
+      old.subject = "Re: lunch"
+      let handle = MailComposer.listing([old])[0]["composer"] as? String ?? ""
+      let other = EditFake(own: "")
+      other.subject = "Re: lunch"
+      old.isAlive = false
+      old.reboundTo = other
+      let empty = MailComposer.listing([other])
+      check(
+        "an empty text read where an empty text was recorded keeps the mark",
+        empty[0]["composer"] as? String == handle && empty[0]["text"] as? String == ""
+          && empty[0]["rebound"] as? Bool == true && MailComposer.isRebound(handle))
+      let (refused, _, _) = run(other, Request(body: "New text"), handle: handle)
+      check("and the handle still refuses", capability(refused) == "identity")
+      other.own = "Typed since"
+      check(
+        "nor does a text read where an empty one was recorded clear it",
+        MailComposer.listing([other])[0]["rebound"] as? Bool == true)
     }
     do {
       // What clears the mark: a listing reading the re-bound tab as the text
@@ -2291,8 +2391,7 @@ struct MailComposerCheck {
         "a listing with a different own text keeps the mark",
         differs[0]["composer"] as? String == handle && differs[0]["rebound"] as? Bool == true
           && MailComposer.isRebound(handle))
-      let (refused, _, _) = run(
-        other, Request(body: "New text"), rebound: MailComposer.isRebound(handle))
+      let (refused, _, _) = run(other, Request(body: "New text"), handle: handle)
       check("and the handle still refuses", capability(refused) == "identity")
       other.own = "Hi Ann"
       let same = MailComposer.listing([other])
@@ -2300,8 +2399,7 @@ struct MailComposerCheck {
         "a listing whose own text equals the pre-turnover text clears the mark",
         same[0]["composer"] as? String == handle && same[0]["rebound"] as? Bool == false
           && !MailComposer.isRebound(handle))
-      let (ok, _, _) = run(
-        other, Request(body: "New text"), rebound: MailComposer.isRebound(handle))
+      let (ok, _, _) = run(other, Request(body: "New text"), handle: handle)
       check(
         "and the handle edits again without expectHead",
         ok["replaced"] as? Bool == true && other.own == "New text")

@@ -1221,9 +1221,10 @@ nonisolated enum DesktopServer {
           MailComposer.edit(
             window, request: request, board: LivePasteboard(),
             front: LiveFront(driven: AXComposerWindow.bundleId),
-            // A handle re-bound to a tab that may be another draft (the
-            // registry's mark) is refused without `expectHead`.
-            rebound: MailComposer.isRebound(handle)))
+            // By handle: one re-bound to a tab that may be another draft (the
+            // registry's mark) is refused without `expectHead`, and a
+            // verified edit is recorded as the handle's sighting.
+            handle: handle))
 
       default:
         return failure(id, "unknown tool '\(name)'")

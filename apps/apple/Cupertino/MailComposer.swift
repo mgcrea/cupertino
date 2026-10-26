@@ -191,10 +191,14 @@ nonisolated protocol Front {
 /// tab CAN be another draft: the person closed the first and opened or
 /// retitled a second under the same title. So a re-bound handle carries a
 /// `rebound` mark, listed on its row, under which an edit refuses unless
-/// `expectHead` proves the text. The mark clears only once a listing reads
-/// the tab's own text equal to the text recorded for the handle at its last
-/// readable sighting before the turnover; with no text recorded (the tab was
-/// only ever seen in the background), it never clears.
+/// `expectHead` proves the text. The mark clears in two ways only: a listing
+/// reads the tab's own text, not empty, equal to the text recorded for the
+/// handle at its last sighting before the turnover; or an edit by the handle
+/// carried an `expectHead` the tab's text matched and read its result back,
+/// which proves the content. A sighting is a listing that read the text, or a
+/// verified edit's read-back; a body that could not be read lists `text`
+/// null and is no sighting. With no text recorded (the tab was only ever
+/// seen in the background), a listing never clears the mark.
 nonisolated enum MailComposer {
 
   /// `@unchecked Sendable` for the reason `AccessibilityDriver.HandleStore` is:
@@ -258,16 +262,35 @@ nonisolated enum MailComposer {
 
     /// A listing read the own text of the composer `handle` names. Unmarked,
     /// it is the text a later re-binding will be held to; marked, the mark
-    /// clears only when it is that text.
+    /// clears only when it is that text, and never when either is empty: two
+    /// empty drafts under one title prove nothing about each other, and an
+    /// unreadable body once listed as "" (review of round 4).
     func sighted(_ handle: String, text: String) {
       lock.lock()
       defer { lock.unlock() }
       guard let at = index(of: handle) else { return }
       if entries[at].rebound {
-        if entries[at].ownText == text { entries[at].rebound = false }
+        if !text.isEmpty, entries[at].ownText == text { entries[at].rebound = false }
       } else {
         entries[at].ownText = text
       }
+    }
+
+    /// A verified edit by `handle` read the composer's own text back as
+    /// `text`: a sighting, recorded as a listing's would be. `proved` says the
+    /// edit carried an `expectHead` the tab's text matched, which on a marked
+    /// handle proves the content and clears the mark. A marked handle's edit
+    /// never gets here unproved (`edit` refuses it), so nothing is recorded
+    /// for one.
+    func edited(_ handle: String, text: String, proved: Bool) {
+      lock.lock()
+      defer { lock.unlock() }
+      guard let at = index(of: handle) else { return }
+      if entries[at].rebound {
+        guard proved else { return }
+        entries[at].rebound = false
+      }
+      entries[at].ownText = text
     }
 
     private func index(of handle: String) -> Int? {
@@ -286,9 +309,10 @@ nonisolated enum MailComposer {
     registry.resolve(handle)
   }
 
-  /// Whether `handle` was re-bound to a tab that may be another draft, and no
-  /// listing has since read that tab as the text the handle was last seen
-  /// with. The server passes it to `edit`.
+  /// Whether `handle` was re-bound to a tab that may be another draft, and
+  /// nothing has since proved its text: no listing read it as the text the
+  /// handle was last seen with, and no edit by it checked an `expectHead`.
+  /// `edit` asks it for the handle it is given.
   static func isRebound(_ handle: String) -> Bool {
     registry.isRebound(handle)
   }
@@ -308,10 +332,13 @@ nonisolated enum MailComposer {
   /// other tab: its title and nothing else, every field it cannot read null,
   /// because reading one means switching tabs and a listing never does.
   ///
+  /// `text` is null when the body could not be read at all (Mail still
+  /// loading it, or not answering), as it is for a background tab: a row
+  /// whose text is a string is the handle's sighting, what a later re-binding
+  /// is held to, or what clears the mark; a null one is not.
+  ///
   /// `rebound` is true while the handle was re-bound to a tab that may be
   /// another draft (see the registry): an edit by that handle alone refuses.
-  /// A row whose text could be read is the handle's sighting: what a later
-  /// re-binding is held to, or what clears the mark.
   static func listing(_ windows: [ComposerWindow], quoteChars: Int = 2000) -> [[String: Any]] {
     let handles = register(windows)
     return zip(windows, handles).map { window, handle in
@@ -344,7 +371,11 @@ nonisolated enum MailComposer {
     var files: [String] = []
     var quoteBlocks: [String] = []
     var quoted: Any = NSNull()
+    // A body that could not be read lists its text as null, never as "": an
+    // empty string would read as an empty draft, and be taken as a sighting.
+    var readable = false
     if let blocks = try? window.blocks() {
+      readable = true
       var boundary = false
       var unreadable = false
       for block in blocks {
@@ -376,7 +407,7 @@ nonisolated enum MailComposer {
       "cc": window.cc,
       "bcc": window.bcc ?? NSNull(),
       "recipients": window.recipientNames,
-      "text": own.joined(separator: "\n"),
+      "text": readable ? own.joined(separator: "\n") : NSNull(),
       "quoted": quoted,
       "quote": showQuote ? String(whole.prefix(cut)) : NSNull(),
       "quoteTruncated": showQuote && whole.count > cut,
@@ -513,7 +544,9 @@ nonisolated enum MailComposer {
   ///
   /// Before either path, a handle the registry re-bound (`rebound`, see the
   /// registry) is refused the same way unless `expectHead` was given: the tab
-  /// it names now may be another draft, and only the text can prove it.
+  /// it names now may be another draft, and only the text can prove it. And
+  /// after either path, a verified edit's read-back is recorded as the
+  /// handle's sighting; one that carried an `expectHead` clears the mark.
   ///  - the tab shown, the front and the window's body element are noted;
   ///  - Mail is brought to the front (admission first). MEASURED, LIVE RUN 4:
   ///    a pressed tab's `AXValue` flips at once, but the window's content
@@ -544,7 +577,7 @@ nonisolated enum MailComposer {
   /// the front goes back to the application noted before Mail came forward.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
-    rebound: Bool = false, readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12,
+    handle: String? = nil, readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12,
     grace: TimeInterval = 2, tabTimeout: TimeInterval = 2, saveTimeout: TimeInterval = 2
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
@@ -555,20 +588,23 @@ nonisolated enum MailComposer {
         "composer", "The composer is gone: it was sent or closed, or Mail quit. \(untouched)",
         "List the composers again and edit the one that holds this draft.")
     }
-    if rebound, request.expectHead == nil {
+    if let handle, isRebound(handle), request.expectHead == nil {
       return refusal(
         "identity",
         "This composer's tab changed underneath it: Mail rebuilt its window's tabs since the "
           + "composer was listed, and the handle now names the tab carrying its title, which may "
           + "be another draft. \(untouched) No tab was switched.",
-        "List the composers again, and edit the draft by its saved draft's ref, which checks "
-          + "its text.")
+        "Edit the draft by its saved draft's ref, which checks its text: a moved handle stays "
+          + "reference-only until its text is proved. List the composers again after a verified "
+          + "edit.")
     }
     guard w.tab == .background else {
-      return editShown(
-        w, request: request, board: board, front: front, broughtForward: false,
-        readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
-        saveTimeout: saveTimeout, outcome: Outcome())
+      return sighted(
+        handle, request,
+        editShown(
+          w, request: request, board: board, front: front, broughtForward: false,
+          readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
+          saveTimeout: saveTimeout, outcome: Outcome()))
     }
 
     // 0. A background tab.
@@ -661,6 +697,17 @@ nonisolated enum MailComposer {
     // orders its own hand-back.
     reselect(outcome)
     front.give(to: frontBefore)
+    return sighted(handle, request, answer)
+  }
+
+  /// A verified edit's read-back is the handle's sighting (see the registry).
+  /// The answer is returned as it is.
+  private static func sighted(_ handle: String?, _ request: EditRequest, _ answer: [String: Any])
+    -> [String: Any]
+  {
+    if let handle, answer["replaced"] as? Bool == true, let text = answer["text"] as? String {
+      registry.edited(handle, text: text, proved: request.expectHead != nil)
+    }
     return answer
   }
 
