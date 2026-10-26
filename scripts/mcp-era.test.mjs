@@ -22,6 +22,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// `runStdioServer` exits at once on anything but darwin, so every test here
+// would time out on CI's Linux job rather than say why. `test-macos` runs them.
+const onMac = { skip: process.platform !== "darwin" && "the servers only run on macOS" };
 const NOWHERE = join(tmpdir(), "mcp-era-nonexistent");
 
 const isolatedEnv = () => {
@@ -99,21 +103,25 @@ const assertInitialized = (res) => {
   assert.ok(res.result.serverInfo.name, "names itself");
 };
 
-test("server/discover answers with the 2026-07-28 revision", async () => {
+test("server/discover answers with the 2026-07-28 revision", onMac, async () => {
   assertDiscovered((await converse([discover]))[1]);
 });
 
-test("a fresh process answers initialize as before", async () => {
+test("a fresh process answers initialize as before", onMac, async () => {
   assertInitialized((await converse([initialize]))[2]);
 });
 
-test("initialize after server/discover still answers, the probe instance is discarded", async () => {
-  const res = await converse([discover, initialize]);
-  assertDiscovered(res[1]);
-  assertInitialized(res[2]);
-});
+test(
+  "initialize after server/discover still answers, the probe instance is discarded",
+  onMac,
+  async () => {
+    const res = await converse([discover, initialize]);
+    assertDiscovered(res[1]);
+    assertInitialized(res[2]);
+  },
+);
 
-test("a server that cannot start exits non-zero and says why", async () => {
+test("a server that cannot start exits non-zero and says why", onMac, async () => {
   const child = spawn("node", [join(root, "packages", "notes", "dist", "cli.js")], {
     env: { ...isolatedEnv(), APPLE_NOTES_MAX_RESULTS: "0" },
     stdio: ["pipe", "pipe", "pipe"],
@@ -280,56 +288,64 @@ const callJson = async (s, name, args) => {
 const updatedFor = (uri) => (m) =>
   m.method === "notifications/resources/updated" && m.params?.uri === uri;
 
-test("modern: subscriptions/listen on a watch is pushed an update when matching mail arrives", async () => {
-  const fx = mailFixture();
-  const s = session(mailEnv(fx), "modern");
-  try {
-    const made = await callJson(s, "apple_mail_watch", { domains: ["acme.com"] });
-    assert.match(made.uri, /^cupertino:\/\/mail\/watch\/w_/);
-    s.write({
-      id: "listen-1",
-      method: "subscriptions/listen",
-      params: { notifications: { resourceSubscriptions: [made.uri] }, _meta: s.meta },
-    });
-    await s.next(
-      (m) => m.method === "notifications/subscriptions/acknowledged",
-      "the subscription to be acknowledged",
-    );
-    fx.arrive(102);
-    const pushed = await s.next(updatedFor(made.uri), "notifications/resources/updated");
-    const { _meta: tags } = pushed.params;
-    assert.ok(
-      tags?.["io.modelcontextprotocol/subscriptionId"] !== undefined,
-      `tagged with its subscription: ${JSON.stringify(pushed)}`,
-    );
-    const read = await s.request("resources/read", { uri: made.uri });
-    const body = JSON.parse(read.result.contents[0].text);
-    assert.equal(body.watch, made.watch);
-    assert.deepEqual(
-      body.messages.map((m) => [m.senderAddress, m.subject]),
-      [["jo@acme.com", "Quote"]],
-    );
-  } finally {
-    s.child.kill();
-    fx.close();
-  }
-});
+test(
+  "modern: subscriptions/listen on a watch is pushed an update when matching mail arrives",
+  onMac,
+  async () => {
+    const fx = mailFixture();
+    const s = session(mailEnv(fx), "modern");
+    try {
+      const made = await callJson(s, "apple_mail_watch", { domains: ["acme.com"] });
+      assert.match(made.uri, /^cupertino:\/\/mail\/watch\/w_/);
+      s.write({
+        id: "listen-1",
+        method: "subscriptions/listen",
+        params: { notifications: { resourceSubscriptions: [made.uri] }, _meta: s.meta },
+      });
+      await s.next(
+        (m) => m.method === "notifications/subscriptions/acknowledged",
+        "the subscription to be acknowledged",
+      );
+      fx.arrive(102);
+      const pushed = await s.next(updatedFor(made.uri), "notifications/resources/updated");
+      const { _meta: tags } = pushed.params;
+      assert.ok(
+        tags?.["io.modelcontextprotocol/subscriptionId"] !== undefined,
+        `tagged with its subscription: ${JSON.stringify(pushed)}`,
+      );
+      const read = await s.request("resources/read", { uri: made.uri });
+      const body = JSON.parse(read.result.contents[0].text);
+      assert.equal(body.watch, made.watch);
+      assert.deepEqual(
+        body.messages.map((m) => [m.senderAddress, m.subject]),
+        [["jo@acme.com", "Quote"]],
+      );
+    } finally {
+      s.child.kill();
+      fx.close();
+    }
+  },
+);
 
-test("legacy: resources/subscribe on a watch is sent an update when matching mail arrives", async () => {
-  const fx = mailFixture();
-  const s = session(mailEnv(fx), "legacy");
-  try {
-    const init = await s.request("initialize", initialize[2]);
-    assert.equal(init.error, undefined);
-    s.write({ method: "notifications/initialized" });
-    const made = await callJson(s, "apple_mail_watch", { from: ["jo@acme.com"] });
-    const sub = await s.request("resources/subscribe", { uri: made.uri });
-    assert.equal(sub.error, undefined, JSON.stringify(sub.error));
-    fx.arrive(102);
-    const pushed = await s.next(updatedFor(made.uri), "notifications/resources/updated");
-    assert.equal(pushed.params.uri, made.uri);
-  } finally {
-    s.child.kill();
-    fx.close();
-  }
-});
+test(
+  "legacy: resources/subscribe on a watch is sent an update when matching mail arrives",
+  onMac,
+  async () => {
+    const fx = mailFixture();
+    const s = session(mailEnv(fx), "legacy");
+    try {
+      const init = await s.request("initialize", initialize[2]);
+      assert.equal(init.error, undefined);
+      s.write({ method: "notifications/initialized" });
+      const made = await callJson(s, "apple_mail_watch", { from: ["jo@acme.com"] });
+      const sub = await s.request("resources/subscribe", { uri: made.uri });
+      assert.equal(sub.error, undefined, JSON.stringify(sub.error));
+      fx.arrive(102);
+      const pushed = await s.next(updatedFor(made.uri), "notifications/resources/updated");
+      assert.equal(pushed.params.uri, made.uri);
+    } finally {
+      s.child.kill();
+      fx.close();
+    }
+  },
+);
