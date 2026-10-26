@@ -1096,15 +1096,19 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// command-V, or Delete for an empty replacement: an empty pasteboard pastes
   /// nothing, and the selection has to go. Refused, not posted, unless this
   /// window still has the focus — `AccessibilityDriver.key` checks Mail is
-  /// frontmost, this checks it is THIS window of Mail's.
+  /// frontmost, this checks it is THIS window of Mail's. Asked again inside
+  /// `key` if its front check had to wait (`still`): a Delete into the viewer
+  /// instead of the composer would move the selected message to the Trash.
   func paste(_ content: PasteContent) throws -> Bool {
     guard isFocusedWindow() else { return false }
     if content == .text("") {
       try AccessibilityDriver.key(
-        "delete", modifiers: [], scope: Self.scope, announcing: Self.bundleId)
+        "delete", modifiers: [], scope: Self.scope, announcing: Self.bundleId,
+        still: { self.isFocusedWindow() })
     } else {
       try AccessibilityDriver.key(
-        "v", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId)
+        "v", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId,
+        still: { self.isFocusedWindow() })
     }
     return true
   }
@@ -1114,7 +1118,8 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     guard isFocusedWindow() else { return .refused }
     do {
       try AccessibilityDriver.key(
-        "s", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId)
+        "s", modifiers: ["command"], scope: Self.scope, announcing: Self.bundleId,
+        still: { self.isFocusedWindow() })
     } catch {
       return isAlive ? .refused : .gone
     }
@@ -1373,13 +1378,18 @@ nonisolated struct LiveFront: Front {
   /// eleven seconds after the run.
   static func handBack(
     to previous: String, driven: String, frontmost: () -> String?,
-    activate: (String) -> Bool, stable: TimeInterval = 0.15, timeout: TimeInterval = 1,
-    grace: TimeInterval = 0.5
+    activate: (String) -> Bool, isRegularApp: (String) -> Bool = AccessibilityDriver.isRegularApp,
+    stable: TimeInterval = 0.15, timeout: TimeInterval = 1, grace: TimeInterval = 0.5
   ) -> HandBack {
     guard previous != driven else { return .alreadyThere }
     let now = frontmost()
     if now == previous { return .alreadyThere }
-    guard now == driven || AccessibilityDriver.frontmostHolds(driven, grace: grace, read: frontmost)
+    // Another regular application in front is the person having moved: left
+    // alone at once. Only an unanswered or helper read is waited out.
+    guard
+      now == driven
+        || AccessibilityDriver.frontmostHolds(
+          driven, grace: grace, read: frontmost, isRegularApp: isRegularApp)
     else { return .leftAlone }
     _ = activate(previous)
     let landed = AccessibilityDriver.holdsSteadily(for: stable, within: timeout) {

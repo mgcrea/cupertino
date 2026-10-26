@@ -235,6 +235,10 @@ final class FakeScreen {
   private(set) var reads = 0
   private(set) var activations: [String] = []
   private var landing: (app: String, in: Int)?
+  /// Applications with a Dock icon, as `NSApplication.ActivationPolicy.regular`.
+  /// Anything else read here is a helper: WebKit's WebContent, a view service.
+  var regular: Set<String> = ["com.apple.mail", "com.microsoft.VSCode", "com.apple.Notes"]
+  func isRegular(_ app: String) -> Bool { regular.contains(app) }
 
   init(_ front: String?) { self.front = front }
 
@@ -995,34 +999,105 @@ struct MailComposerCheck {
     let mail = "com.apple.mail"
     let code = "com.microsoft.VSCode"
 
-    // The check under every keystroke, `announceSessionInput`.
-    do {
-      let screen = FakeScreen(mail)
-      check(
-        "Mail in front at the first read posts at once",
-        AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read)
-          && screen.reads == 1)
+    // The check under every keystroke, `announceSessionInput`, played through
+    // `confirmFront`. A throw is a refusal: nothing is posted.
+    struct Confirmed {
+      var posted = false
+      var text = ""
+      var logs: [String] = []
+      var elapsed: TimeInterval = 0
+    }
+    func confirm(
+      _ screen: FakeScreen, grace: TimeInterval = 0.4, still: @escaping () -> Bool = { true },
+      stopped: Bool = false
+    ) -> Confirmed {
+      var out = Confirmed()
+      let started = Date()
+      do {
+        try AccessibilityDriver.confirmFront(
+          mail, grace: grace, read: screen.read, isRegularApp: screen.isRegular, still: still,
+          stillDriving: {
+            if stopped { throw AccessibilityDriver.Failure.refused("stopped part of the way") }
+          },
+          log: { out.logs.append($0) })
+        out.posted = true
+      } catch AccessibilityDriver.Failure.refused(let text) {
+        out.text = text
+      } catch {
+        out.text = "\(error)"
+      }
+      out.elapsed = Date().timeIntervalSince(started)
+      return out
     }
     do {
       let screen = FakeScreen(mail)
-      screen.script = [nil, "com.apple.WebKit.WebContent", nil]
+      let result = confirm(screen)
       check(
-        "a read that answers wrong for a moment is waited out, not refused",
-        AccessibilityDriver.frontmostHolds(mail, grace: 0.5, read: screen.read))
+        "Mail in front at the first read posts at once, unlogged",
+        result.posted && screen.reads == 1 && result.logs.isEmpty)
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = [nil, nil]
+      let result = confirm(screen)
+      check("a read with no answer, then Mail, posts", result.posted)
+      check(
+        "and the wait is logged with the first wrong read, though it posted",
+        result.logs.count == 1 && result.logs[0].contains("first answered no answer")
+          && result.logs[0].contains("posting"))
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = ["com.apple.WebKit.WebContent", nil]
+      let result = confirm(screen)
+      check("a helper process read, then Mail, posts", result.posted)
+      check(
+        "and the log names the helper",
+        result.logs.first?.contains("com.apple.WebKit.WebContent") == true)
     }
     do {
       let screen = FakeScreen(code)
-      let started = Date()
-      let held = AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read)
-      check("the person moving to another app still refuses the keystroke", !held)
-      check("and only once the grace has run out", Date().timeIntervalSince(started) >= 0.3)
+      let result = confirm(screen)
+      check("another regular app in front refuses", !result.posted)
+      check("at once, with no wait", result.elapsed < 0.1 && screen.reads == 1)
+      check("naming it", result.text.contains(code))
+    }
+    do {
+      // The person flicks to their editor and back into Mail inside the grace.
+      let screen = FakeScreen(mail)
+      screen.script = [nil, code, code]
+      let result = confirm(screen)
+      check("a switch and return through a regular app is refused", !result.posted)
+      check(
+        "and the refusal reports the FIRST wrong read, then what came after",
+        result.text.contains("could not say") && result.text.contains(code))
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = [nil, nil]
+      let result = confirm(screen, still: { false })
+      check("the composer losing its focus during a wait is refused", !result.posted)
+      check("saying so", result.text.contains("no longer had the focus"))
+    }
+    do {
+      let screen = FakeScreen(mail)
+      screen.script = [nil, nil]
+      let result = confirm(screen, stopped: true)
+      check(
+        "Stop pressed during a wait posts nothing",
+        !result.posted && result.text.contains("stopped"))
+    }
+    do {
+      let screen = FakeScreen(nil)
+      let result = confirm(screen, grace: 0.3)
+      check("a front that never answers refuses", !result.posted)
+      check("once the grace has run out", result.elapsed >= 0.3)
+      check("and the refusal is logged", result.logs.first?.contains("refused") == true)
     }
     do {
       let screen = FakeScreen(mail)
       screen.script = (0..<60).map { $0 % 2 == 0 ? nil : mail }
-      check(
-        "a front that keeps flickering is never taken as Mail's",
-        !AccessibilityDriver.frontmostHolds(mail, grace: 0.3, read: screen.read))
+      check("a front that keeps flickering is never taken as Mail's", !confirm(screen).posted)
     }
 
     // Activation, `AXComposerWindow.activate`.
@@ -1057,7 +1132,8 @@ struct MailComposerCheck {
       let screen = FakeScreen(mail)
       screen.lag = 4
       let outcome = LiveFront.handBack(
-        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
+        isRegularApp: screen.isRegular)
       check(
         "the hand-back is waited for until it lands", outcome == .landed && screen.front == code)
       // The next edit brings Mail forward: nothing of this hand-back is left to land.
@@ -1073,22 +1149,25 @@ struct MailComposerCheck {
       let screen = FakeScreen(mail)
       screen.script = [nil, nil]
       let outcome = LiveFront.handBack(
-        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
+        isRegularApp: screen.isRegular)
       check(
         "a wrong read does not skip the hand-back", outcome == .landed && screen.front == code)
     }
     do {
       let screen = FakeScreen("com.apple.Notes")
       let outcome = LiveFront.handBack(
-        to: code, driven: mail, frontmost: screen.read, activate: screen.activate, grace: 0.2)
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
+        isRegularApp: screen.isRegular, grace: 0.2)
       check(
-        "a person who moved to another app is left there",
-        outcome == .leftAlone && screen.activations.isEmpty)
+        "a person who moved to another app is left there, at once",
+        outcome == .leftAlone && screen.activations.isEmpty && screen.reads <= 2)
     }
     do {
       let screen = FakeScreen(code)
       let outcome = LiveFront.handBack(
-        to: code, driven: mail, frontmost: screen.read, activate: screen.activate)
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
+        isRegularApp: screen.isRegular)
       check(
         "nothing is handed back to an app already in front",
         outcome == .alreadyThere && screen.activations.isEmpty)
@@ -1097,7 +1176,8 @@ struct MailComposerCheck {
       let screen = FakeScreen(mail)
       screen.lag = 10_000
       let outcome = LiveFront.handBack(
-        to: code, driven: mail, frontmost: screen.read, activate: screen.activate, timeout: 0.3)
+        to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
+        isRegularApp: screen.isRegular, timeout: 0.3)
       check("a hand-back that never lands says so", outcome == .didNotLand)
       check("and is asked for once", screen.activations == [code])
     }
