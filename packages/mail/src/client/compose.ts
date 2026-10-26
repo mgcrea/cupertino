@@ -188,6 +188,24 @@ export type NewComposer = { handle: string; text: string | null } | { ambiguous:
 /** A composer as `before` carries it: its handle and subject, and its text when listed. */
 type Seen = Pick<NativeComposer, "composer" | "subject"> & Partial<Pick<NativeComposer, "text">>;
 
+/** How much of two own texts is compared, as the app's `headLength`. */
+const HEAD_CHARS = 120;
+
+/**
+ * Whether two own texts begin the same way, judged as the app judges an
+ * `expectHead` (`sameHead`): whitespace runs squashed and the file marker
+ * dropped, one a prefix of the other, up to `HEAD_CHARS`. One difference: an
+ * empty text matches NOTHING here, not even another empty one. The question
+ * is "is this the old draft", and an empty draft is nobody's.
+ */
+export const sameHead = (a: string, b: string): boolean => {
+  const x = squash(a.replaceAll("￼", ""));
+  const y = squash(b.replaceAll("￼", ""));
+  if (x === "" || y === "") return false;
+  const n = Math.min(x.length, y.length, HEAD_CHARS);
+  return x.slice(0, n) === y.slice(0, n);
+};
+
 /**
  * Wait for a composer that was not there before, and return its handle.
  *
@@ -222,10 +240,15 @@ type Seen = Pick<NativeComposer, "composer" | "subject"> & Partial<Pick<NativeCo
  *
  * Whether the new tab is the selected one is UNMEASURED, and the person can
  * click the old tab during the poll. So the selected candidate is refused when
- * its listed own text equals the non-empty text of any same-subject composer
- * in `before`: that is the old draft, and filling it would replace what it
- * holds. An empty text never matches. The text returned is what the caller
- * sends as `expectHead`, so the fill binds to the draft judged here.
+ * its listed own text begins as the text of any same-subject composer in
+ * `before` does (`sameHead`: the person may have typed on in the old draft,
+ * or its line breaks may read differently): that is the old draft, and
+ * filling it would replace what it holds. An empty text never matches. And
+ * when any same-subject composer in `before` had no text to compare (a
+ * background tab, or a body the app could not read), or the candidate has
+ * none, nothing can tell the old draft from the new one, so it is refused as
+ * well. The text returned is what the caller sends as `expectHead`, so the
+ * fill binds to the draft judged here.
  */
 export const awaitNewComposer = async (
   lane: MailAxLane,
@@ -239,9 +262,13 @@ export const awaitNewComposer = async (
     (c): c is Seen => typeof c !== "string" && c.subject === subject,
   );
   const had = sameSubject.length;
-  const held = new Set(
-    sameSubject.map((c) => c.text).filter((t): t is string => typeof t === "string" && t !== ""),
-  );
+  const held = sameSubject.map((c) => c.text);
+  // One of them could not be compared with, so none of them can be told apart.
+  const unread = held.some((t) => typeof t !== "string");
+  const isOld = (text: string | null | undefined): boolean =>
+    typeof text !== "string" ||
+    unread ||
+    held.some((t) => typeof t === "string" && sameHead(t, text));
   const found = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -254,7 +281,7 @@ export const awaitNewComposer = async (
         const selected = candidates.filter((c) => c.tab === "selected");
         const grew = listed.filter((c) => c.subject === subject).length - had;
         const pick = selected[0];
-        const old = pick !== undefined && typeof pick.text === "string" && held.has(pick.text);
+        const old = pick === undefined || isOld(pick.text);
         if (subject !== undefined && counted && grew === 1 && selected.length === 1 && !old)
           return found(pick as NativeComposer);
         return { ambiguous: candidates.map((c) => c.composer) };
@@ -327,8 +354,13 @@ export const composeNatively = async (
   const handle = found?.handle ?? null;
   // The own text the composer was listed with, sent as `expectHead` so the fill
   // binds to the draft judged new, not to whatever its handle reaches by then.
-  // Null when it was listed as a tab Mail is not showing, which has no text.
-  const expectHead = found?.text ?? null;
+  // Only when there is one: the listing comes within a poll of the composer
+  // opening, when its body may not have rendered yet (a signature lands late),
+  // and the app matches an empty head to an empty text only, so an empty head
+  // would refuse the fill once the signature was there. With none sent, a
+  // re-bind between the listing and the edit is caught by the app's mark on
+  // the handle, which refuses an edit without a head.
+  const expectHead = found?.text ? found.text : null;
 
   if (!handle) {
     return {
@@ -493,16 +525,22 @@ export const composeNatively = async (
    * sent is the failure this path is built to refuse. So it is pressed only
    * when exactly one composer carries the subject, and the filled draft is left
    * open for review otherwise.
+   *
+   * Nor when that one composer's handle reads as re-bound: Mail rebuilt its
+   * window's tabs since the fill, and the handle may now name another draft
+   * under this title, which the key would then reach.
    */
-  let sharing: string[] | null;
+  let sharing: NativeComposer[] | null;
   try {
-    sharing = (await lane.composers()).filter((c) => c.subject === subject).map((c) => c.composer);
+    sharing = (await lane.composers()).filter((c) => c.subject === subject);
   } catch {
     sharing = null;
   }
   if (sharing !== null && sharing.length === 0) return vanished(known());
   const action = params.sendNow ? "sent" : "saved";
-  if (sharing === null || sharing.length !== 1 || sharing[0] !== handle) {
+  const only = sharing?.length === 1 ? sharing[0] : undefined;
+  const moved = only?.composer === handle && only.rebound === true;
+  if (sharing === null || only === undefined || only.composer !== handle || moved) {
     return {
       ok: false,
       degraded: true,
@@ -517,8 +555,12 @@ export const composeNatively = async (
         `, but it was NOT ${action}: ` +
         (sharing === null
           ? `Mail's composers could not be listed, so it is not known that the title picks out one.`
-          : `${sharing.length} composers in Mail carry this title, and the shortcut is aimed by ` +
-            `title, so it could reach the wrong one.`) +
+          : moved
+            ? `its handle was re-bound: Mail rebuilt its window's tabs since the draft was ` +
+              `filled, so the handle may now name another draft under this title, which the ` +
+              `shortcut could reach.`
+            : `${sharing.length} composers in Mail carry this title, and the shortcut is aimed by ` +
+              `title, so it could reach the wrong one.`) +
         ` The draft is open in Mail for review: ${params.sendNow ? "send" : "save"} it from there.` +
         interferenceNote(await watch.check()),
     };
@@ -549,10 +591,13 @@ export const composeNatively = async (
   //
   // With "Prefer tabs: Always" the window holds several drafts as tabs, and
   // the key sends or saves the one it SHOWS. So right before it, once Mail is
-  // in front, this composer must be listed and not as a background tab.
+  // in front, this composer must be listed, not as a background tab, and with
+  // its handle not re-bound since the fill (see `sharing` above).
+  let rebound = false;
   const finished = await lane.finish(params.sendNow, ref, async () => {
     const now = (await lane.composers()).find((c) => c.composer === handle);
-    return now !== undefined && now.tab !== "background";
+    rebound = now?.rebound === true;
+    return now !== undefined && now.tab !== "background" && !rebound;
   });
   if (finished === "gone") return vanished(known());
   if (finished === "unready") {
@@ -568,10 +613,16 @@ export const composeNatively = async (
       note:
         `The ${params.mode} for "${subject}" was ${filling ? "filled" : "opened"}` +
         (bodyVerified ? " and its body verified" : "") +
-        `, but it was NOT ${action}: its window holds several drafts as tabs, and right before ` +
-        `the shortcut this draft's tab was not the one shown (or could not be confirmed to be), ` +
-        `so the shortcut could have reached another draft. Nothing was pressed. The draft is ` +
-        `open in Mail for review: ${params.sendNow ? "send" : "save"} it from there.` +
+        `, but it was NOT ${action}: ` +
+        (rebound
+          ? `right before the shortcut its handle read as re-bound: Mail rebuilt its window's ` +
+            `tabs since the draft was filled, so the handle may now name another draft under ` +
+            `this title, which the shortcut could have reached.`
+          : `its window holds several drafts as tabs, and right before the shortcut this ` +
+            `draft's tab was not the one shown (or could not be confirmed to be), so the ` +
+            `shortcut could have reached another draft.`) +
+        ` Nothing was pressed. The draft is open in Mail for review: ` +
+        `${params.sendNow ? "send" : "save"} it from there.` +
         interferenceNote(await watch.check()),
     };
   }
