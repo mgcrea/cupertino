@@ -659,6 +659,15 @@ struct MailComposerCheck {
     check(
       "an unreadable FIRST level lists text null, not an empty draft",
       MailComposer.listing([blind])[0]["text"] is NSNull)
+    let caret = FakeComposer(
+      subject: "Caret",
+      body: [
+        ComposerBlock(text: "", quoteLevel: 0, fileNames: []),
+        ComposerBlock(text: "x", quoteLevel: nil, fileNames: []),
+      ])
+    check(
+      "a blank caret line then an unreadable level lists text null too",
+      MailComposer.listing([caret])[0]["text"] is NSNull)
 
     // The sender, the split recipients, the quote and the front window.
     let rich = FakeComposer(

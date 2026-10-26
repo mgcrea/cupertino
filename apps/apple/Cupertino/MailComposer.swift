@@ -381,9 +381,10 @@ nonisolated enum MailComposer {
       for block in blocks {
         guard let level = block.quoteLevel else {
           unreadable = true
-          // Nothing of the own text read before the level failed: that is no
-          // more an empty draft than an unreadable body is.
-          if own.isEmpty { readable = false }
+          // Nothing of the own text read before the level failed, or only a
+          // blank caret line: that is no more an empty draft than an
+          // unreadable body is.
+          if squash(own.joined(separator: "\n")).isEmpty { readable = false }
           break
         }
         if level > 0 {
