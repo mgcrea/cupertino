@@ -692,7 +692,7 @@ async function attachCheck(mail, subject) {
       "both files went in IN ITS COMPOSER and read back",
       result?.method === "inPlace" &&
         result?.replaced === true &&
-        result?.attachmentsAdded?.length === 2,
+        result?.attachmentsAdded === 2,
       result?.replaced === true
         ? `attachmentsAdded: ${JSON.stringify(result?.attachmentsAdded)}`
         : `method: ${result?.method} — ${result?.reason ?? "no reason given"}`,
