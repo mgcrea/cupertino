@@ -860,10 +860,10 @@ async function handlesCheck(mail, address) {
       "the right window was edited and the other left alone",
       !!edited &&
         !!other &&
-        /VERIFYGAMMA/.test(edited.text) &&
-        !/VERIFYBETA/.test(edited.text) &&
-        /VERIFYALPHA/.test(other.text) &&
-        !/VERIFYGAMMA/.test(other.text),
+        /VERIFYGAMMA/.test(edited.text ?? "") &&
+        !/VERIFYBETA/.test(edited.text ?? "") &&
+        /VERIFYALPHA/.test(other.text ?? "") &&
+        !/VERIFYGAMMA/.test(other.text ?? ""),
       `edited: ${JSON.stringify(edited?.text)}, other: ${JSON.stringify(other?.text)}`,
     );
   } finally {
