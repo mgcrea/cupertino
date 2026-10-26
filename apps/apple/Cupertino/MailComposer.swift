@@ -46,6 +46,11 @@ nonisolated protocol ComposerWindow: AnyObject {
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String?
   /// A collapsed selection at the end of the own text, where files go.
   func selectOwnEnd() throws -> String?
+  /// Whether either end of the selection just set sits inside the quoted
+  /// original: the element its marker resolves to, or any ancestor of it up to
+  /// the body, has a quote level above 0. Nil when that could not be told,
+  /// which the edit treats as yes.
+  func selectionReachesQuote() throws -> Bool?
   /// Bring Mail and this window to the front, ready to take a paste. Once per
   /// edit: a second activation would pull Mail back over an app the person
   /// moved to in between.
@@ -487,15 +492,18 @@ nonisolated enum MailComposer {
           guard let back = try w.selectSubrange(step.range, in: range),
             sameSpan(back, step.original)
           else { return misselected(step.original, changed: false) }
+          if let refused = try outsideQuote(w, changed: false) { return refused }
         }
       } else if request.body != nil {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
           return misselected(nil, changed: false)
         }
+        if let refused = try outsideQuote(w, changed: false) { return refused }
       } else {
         guard let back = try w.selectOwnEnd(), back.isEmpty else {
           return misselected(nil, changed: false)
         }
+        if let refused = try outsideQuote(w, changed: false) { return refused }
       }
     } catch {
       return refusal(
@@ -556,11 +564,12 @@ nonisolated enum MailComposer {
     var changed = false
     func state() -> String {
       changed
-        ? "This did not save it: the draft keeps whatever Mail last saved, and the window holds "
-          + "changes this could not verify."
+        ? "The window holds changes this could not verify. \(autosaved)"
         : "Nothing was pasted and the draft is unchanged."
     }
-    let look = "Look at the composer in Mail: fix it there, or close it without saving."
+    func look() -> String {
+      changed ? afterPaste : "Look at the composer in Mail: fix it there, or close it."
+    }
 
     do {
       // 9.
@@ -579,14 +588,16 @@ nonisolated enum MailComposer {
           guard let back = try w.selectSubrange(step.range, in: range),
             sameSpan(back, step.original)
           else { return misselected(step.original, changed: changed) }
+          if let refused = try outsideQuote(w, changed: changed) { return refused }
           let content = PasteContent.text(step.replace)
           try board.write(content)
           guard try w.paste(content) else { return unfocused(state()) }
           changed = true
           let awaited = awaitRead(
-            w, timeout: readbackTimeout, until: { same($0.text, step.expected) })
+            w, timeout: readbackTimeout, quote: before, until: { same($0.text, step.expected) })
+          if case .quoteChanged = awaited { return quoteLost() }
           guard case .read(let read) = awaited else {
-            return unconfirmed(awaited, board, readbackTimeout, state(), look)
+            return unconfirmed(awaited, board, readbackTimeout, state(), look())
           }
           guard quoteIntact(before, read) else { return quoteLost() }
           shown = read
@@ -595,6 +606,7 @@ nonisolated enum MailComposer {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
           return misselected(nil, changed: changed)
         }
+        if let refused = try outsideQuote(w, changed: changed) { return refused }
         // A body equal to the own text to the letter has nothing to paste.
         if !(request.html == nil && body == before.text) {
           let content = request.html.map { PasteContent.html($0, fallback: body) } ?? .text(body)
@@ -604,9 +616,11 @@ nonisolated enum MailComposer {
         }
       }
       if let result {
-        let awaited = awaitRead(w, timeout: readbackTimeout, until: { same($0.text, result) })
+        let awaited = awaitRead(
+          w, timeout: readbackTimeout, quote: before, until: { same($0.text, result) })
+        if case .quoteChanged = awaited { return quoteLost() }
         guard case .read(let read) = awaited else {
-          return unconfirmed(awaited, board, readbackTimeout, state(), look)
+          return unconfirmed(awaited, board, readbackTimeout, state(), look())
         }
         guard quoteIntact(before, read) else { return quoteLost() }
         shown = read
@@ -618,6 +632,7 @@ nonisolated enum MailComposer {
         guard let back = try w.selectOwnEnd(), back.isEmpty else {
           return misselected(nil, changed: changed)
         }
+        if let refused = try outsideQuote(w, changed: changed) { return refused }
         let content = PasteContent.files(request.files)
         try board.write(content)
         guard try w.paste(content) else { return unfocused(state()) }
@@ -626,11 +641,12 @@ nonisolated enum MailComposer {
         let text = shown.text
         let held = shown.files
         let awaited = awaitRead(
-          w, timeout: filesTimeout,
+          w, timeout: filesTimeout, quote: before,
           until: {
             same($0.text, text) && arrived(names, before: held, now: $0.files)
               && quoteIntact(before, $0)
           })
+        if case .quoteChanged = awaited { return quoteLost() }
         guard case .read(let read) = awaited else {
           if case .timedOut(answered: false) = awaited { board.unanswered = true }
           let why =
@@ -640,7 +656,7 @@ nonisolated enum MailComposer {
               + "with that text and the quote unchanged"
           return refusal(
             "confirmation", "\(names.joined(separator: ", ")) were pasted, but \(why). \(state())",
-            look)
+            look())
         }
         shown = read
         added = names
@@ -675,7 +691,7 @@ nonisolated enum MailComposer {
         "filesAdded": added, "saved": saved, "note": note,
       ]
     } catch {
-      return refusal("composer", "The edit stopped: \(describe(error)). \(state())", look)
+      return refusal("composer", "The edit stopped: \(describe(error)). \(state())", look())
     }
   }
 
@@ -735,25 +751,34 @@ nonisolated enum MailComposer {
     case read(Read)
     case timedOut(answered: Bool)
     case gone
+    /// The quote read differently from before the paste: the paste went into it.
+    case quoteChanged
 
     static func == (a: Awaited, b: Awaited) -> Bool {
       switch (a, b) {
-      case (.gone, .gone): return true
+      case (.gone, .gone), (.quoteChanged, .quoteChanged): return true
       case (.timedOut(let x), .timedOut(let y)): return x == y
       default: return false
       }
     }
   }
 
+  /// Poll until `done`. A read whose quote TEXT differs from `quote`'s, whitespace
+  /// folded, ends the poll at once: text that went into the quoted original is
+  /// never waited on or saved. LIVE RUN 2's forward only ever read "own text
+  /// still empty" until the deadline, while the note sat in the quote.
   private static func awaitRead(
-    _ w: ComposerWindow, timeout: TimeInterval, until done: (Read) -> Bool
+    _ w: ComposerWindow, timeout: TimeInterval, quote: Read, until done: (Read) -> Bool
   ) -> Awaited {
     let deadline = Date().addingTimeInterval(timeout)
     var answered = false
     while true {
       if let blocks = try? w.blocks() {
         answered = true
-        if let read = Read(blocks), done(read) { return .read(read) }
+        if let read = Read(blocks) {
+          if !quoteIntact(quote, read) { return .quoteChanged }
+          if done(read) { return .read(read) }
+        }
       }
       if !w.isAlive { return .gone }
       if Date() >= deadline { return .timedOut(answered: answered) }
@@ -818,20 +843,49 @@ nonisolated enum MailComposer {
     return a.prefix(n) == b.prefix(n)
   }
 
+  /// Said by every refusal issued once a paste has reached Mail. Mail autosaves
+  /// an open composer on its own: LIVE RUN 2's unverified forward reached
+  /// Drafts with `X-Apple-Auto-Saved: 1` although this never pressed command-S.
+  static let autosaved =
+    "This did not save it, but Mail autosaves an open composer on its own, so the unverified "
+    + "text may already be in Drafts."
+  static let afterPaste =
+    "Close the composer in Mail WITHOUT saving, then check Drafts and delete any copy holding "
+    + "text you did not mean."
+
   private static func misselected(_ text: String?, changed: Bool) -> [String: Any] {
     let what = text.map { "the text \"\($0)\"" } ?? "the draft's own text"
     let state =
       changed
-      ? "Earlier edits are in the window, verified, but this did not save it: the draft keeps "
-        + "whatever Mail last saved."
+      ? "Earlier edits are in the window, verified, and the rest is not. \(autosaved)"
       : "Nothing was pasted and the draft is unchanged."
     return refusal(
       "selection",
       "The selection over \(what) did not read back as that text, so a paste could reach "
         + "further than it should. \(state)",
+      changed ? afterPaste : "Edit the draft in Mail directly, or replace the whole body.")
+  }
+
+  /// The gate after every selection: neither end of it inside the quote.
+  /// A selection Mail would not place cannot be shown to be outside it, and is
+  /// refused the same way.
+  private static func outsideQuote(_ w: ComposerWindow, changed: Bool) throws -> [String: Any]? {
+    let reaches = try w.selectionReachesQuote()
+    if reaches == false { return nil }
+    let why =
+      reaches == true
+      ? "The caret would land inside the quoted original, which a draft's own text never does."
+      : "Mail would not say where the selection sits relative to the quoted original, so a "
+        + "paste there could land inside it."
+    let state =
       changed
-        ? "Look at the composer in Mail: fix it there, or close it without saving."
-        : "Edit the draft in Mail directly, or replace the whole body.")
+      ? "Earlier edits are in the window, verified, and the rest was not pasted. \(autosaved)"
+      : "Nothing was pasted and the draft is unchanged."
+    return refusal(
+      "selection", "\(why) \(state)",
+      changed
+        ? afterPaste
+        : "Write the draft's own text in Mail directly, above the quoted original.")
   }
 
   private static func unfocused(_ state: String) -> [String: Any] {
@@ -865,10 +919,10 @@ nonisolated enum MailComposer {
   private static func quoteLost() -> [String: Any] {
     refusal(
       "confirmation",
-      "The paste went in, but the quoted original below it is gone or changed, so it reached "
-        + "further than the draft's own text. This did not save it: the draft keeps whatever Mail "
-        + "last saved.",
-      "Close the composer in Mail WITHOUT saving, or undo inside it with command-Z.")
+      "The paste went in, but the quoted original is gone or reads differently, so it reached "
+        + "further than the draft's own text. \(autosaved)",
+      "Undo inside the composer with command-Z, or close it in Mail WITHOUT saving, then check "
+        + "Drafts and delete any copy holding text you did not mean.")
   }
 
   private static func seconds(_ t: TimeInterval) -> String {
@@ -1134,8 +1188,16 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
 
   /// The own blocks' range: the first's start to the last's end, joined with the
   /// public marker calls (Mail offers no `AXStartTextMarkerForTextMarkerRange`).
-  /// With no own block, a collapsed range at the start of the first block, or
-  /// of the web area when it has none.
+  ///
+  /// With no own block, a collapsed range at the start of the DOCUMENT: the web
+  /// area's index 0, or the start of its own marker range. Not the first
+  /// block's start. MEASURED, LIVE RUN 2 (2026-10-26): a forward's own area is
+  /// a bare `<br id="lineBreakAtBeginningOfMessage">` ahead of
+  /// `<div class="AppleOriginalContents">`, which AX does not expose as a block,
+  /// so the first block IS the quote (level 1, "Begin forwarded message:"), and
+  /// a caret at its start pasted the note inside the quoted original. Where the
+  /// document start resolves is then proved by `selectionReachesQuote` before
+  /// anything is pasted.
   private func ownRange(_ web: AXUIElement) -> AXTextMarkerRange? {
     let blocks = Self.children(web)
     let own = blocks.prefix {
@@ -1148,12 +1210,59 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
       return AXTextMarkerRangeCreate(
         kCFAllocatorDefault, Self.start(of: head), AXTextMarkerRangeCopyEndMarker(tail))
     }
-    guard
-      let anchor = Self.markerRange(
-        Self.param(web, "AXTextMarkerRangeForUIElement", blocks.first ?? web))
-    else { return nil }
-    let start = Self.start(of: anchor)
+    let start =
+      Self.marker(Self.param(web, "AXTextMarkerForIndex", NSNumber(value: 0)))
+      ?? Self.markerRange(Self.param(web, "AXTextMarkerRangeForUIElement", web)).map {
+        Self.start(of: $0)
+      }
+    guard let start else { return nil }
     return AXTextMarkerRangeCreate(kCFAllocatorDefault, start, start)
+  }
+
+  /// Both ends of the web area's selection, each resolved to its element with
+  /// `AXUIElementForTextMarker` and walked up to the web area: any element on
+  /// the way with `AXBlockQuoteLevel` above 0 is inside the quote. Nil when an
+  /// end does not resolve, or the walk never reaches the web area.
+  ///
+  /// For a selection that covers text, its end is taken one character back
+  /// (`AXPreviousTextMarkerForTextMarker`, when Mail answers it): the end
+  /// marker sits on the boundary after the last selected character, which can
+  /// resolve to the element that follows, a reply's first quoted block. A
+  /// collapsed caret is resolved where it is, which is where a paste inserts.
+  func selectionReachesQuote() throws -> Bool? {
+    let web = try webArea()
+    guard let selected = Self.markerRange(Self.attr(web, Self.selectedRange)) else { return nil }
+    let start = AXTextMarkerRangeCopyStartMarker(selected)
+    var last = AXTextMarkerRangeCopyEndMarker(selected)
+    if (Self.string(web, for: selected) ?? "").isEmpty == false,
+      let previous = Self.marker(Self.param(web, "AXPreviousTextMarkerForTextMarker", last))
+    {
+      last = previous
+    }
+    for end in [start, last] {
+      guard let raw = Self.param(web, "AXUIElementForTextMarker", end),
+        CFGetTypeID(raw) == AXUIElementGetTypeID()
+      else { return nil }
+      var element = raw as! AXUIElement
+      var reached = false
+      for _ in 0..<64 {
+        if CFEqual(element, web) {
+          reached = true
+          break
+        }
+        if let level = (Self.attr(element, "AXBlockQuoteLevel") as? NSNumber)?.intValue,
+          level > 0
+        {
+          return true
+        }
+        guard let parent = Self.attr(element, kAXParentAttribute as String),
+          CFGetTypeID(parent) == AXUIElementGetTypeID()
+        else { break }
+        element = parent as! AXUIElement
+      }
+      guard reached else { return nil }
+    }
+    return false
   }
 
   /// Set the selection and read it back, waiting up to half a second for it to

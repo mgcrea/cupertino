@@ -459,10 +459,10 @@ async function composeCheck() {
             `    rewrite and attach are claiming.\n` +
             `  Open it, read it, then delete both. Nothing here will.\n`
         : `\n  Left in Mail: an EMPTY composer window "${result?.subject ?? "Fwd: …"}".\n` +
-            `  No draft was saved — the compose path stops before the save when it\n` +
-            `  cannot verify the body, and it does not close the window either,\n` +
-            `  because closing an unsaved composer raises a sheet whose buttons are\n` +
-            `  localised. Close it in Mail by hand.\n`,
+            `  The compose path stops before command-S when it cannot verify the\n` +
+            `  body, but Mail autosaves an open composer on its own (run 2 found\n` +
+            `  one in Drafts with X-Apple-Auto-Saved: 1). Close the window in Mail\n` +
+            `  WITHOUT saving, then check Drafts for a copy and delete it.\n`,
     );
   } finally {
     mail.close();

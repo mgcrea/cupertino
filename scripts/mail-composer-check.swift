@@ -22,6 +22,7 @@ final class FakeComposer: ComposerWindow {
   func selectOwn() throws -> String? { nil }
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String? { nil }
   func selectOwnEnd() throws -> String? { nil }
+  func selectionReachesQuote() throws -> Bool? { false }
   func activate() throws -> Bool { false }
   func paste(_ content: PasteContent) throws -> Bool { false }
   func save() throws -> SaveOutcome { .refused }
@@ -61,6 +62,14 @@ final class EditFake: ComposerWindow {
   var pasteLost = false
   /// The window closes as the paste is posted.
   var diesOnPaste = false
+  /// What the quote guard finds at each selection: true is a caret Mail resolved
+  /// inside the quoted original (LIVE RUN 2's forward), nil one it would not
+  /// resolve at all.
+  var caretInQuote: Bool? = false
+  /// A text paste lands at the start of the first quoted block instead of over
+  /// the selection: what LIVE RUN 2's forward did, guard or no guard.
+  var landsInQuote = false
+  private(set) var quoteChecks = 0
   var onPaste: ((EditFake) -> Void)?
   private var pending: (land: () -> Void, reads: Int)?
   private var hungUntil = Date.distantPast
@@ -135,6 +144,11 @@ final class EditFake: ComposerWindow {
     return selecting(own.utf16.count..<own.utf16.count)
   }
 
+  func selectionReachesQuote() throws -> Bool? {
+    quoteChecks += 1
+    return caretInQuote
+  }
+
   func activate() throws -> Bool {
     log.append("activate")
     return activates
@@ -152,6 +166,10 @@ final class EditFake: ComposerWindow {
       log.append("landed")
       switch content {
       case .text(let text), .html(_, let text):
+        if landsInQuote {
+          if quote.isEmpty { quote = [text] } else { quote[0] = text + quote[0] }
+          break
+        }
         var utf16 = Array(own.utf16)
         utf16.replaceSubrange(span, with: Array(text.utf16))
         own = String(decoding: utf16, as: UTF16.self)
@@ -1196,6 +1214,129 @@ struct MailComposerCheck {
     }
   }
 
+  /// LIVE RUN 2 (2026-10-26): a forward's own area is a bare `<br>` Mail does not
+  /// expose as a block, so its first block is the quote, and a caret placed at
+  /// that block's start pasted the note INSIDE the quoted original. Mail then
+  /// autosaved it. These pin the guard, the quote-text poll and the wording.
+  static func quoteChecks() {
+    print("\nthe quote a draft forwards or replies to")
+    let forwarded = [
+      "Begin forwarded message:", "From: Ann", "Subject: Project status and ETAs",
+    ]
+
+    // A forward: no own block at all, the first block is level 1.
+    do {
+      let fake = EditFake(own: "", quote: forwarded)
+      fake.caretInQuote = true
+      let (result, board, front) = run(fake, Request(body: "A note above the forward."))
+      check(
+        "a caret Mail places inside a forward's quote is refused as selection",
+        capability(result) == "selection")
+      check("with nothing pasted, borrowed or saved", untouched(fake, board, front))
+      check(
+        "saying the caret would land in the quote",
+        (result["reason"] as? String ?? "").contains("inside the quoted original"))
+    }
+    do {
+      let fake = EditFake(own: "", quote: forwarded)
+      fake.caretInQuote = nil
+      let (result, board, front) = run(fake, Request(body: "A note above the forward."))
+      check(
+        "a caret Mail will not place is refused the same way",
+        capability(result) == "selection" && untouched(fake, board, front))
+    }
+    do {
+      let fake = EditFake(own: "", quote: forwarded)
+      let (result, _, _) = run(fake, Request(body: "A note above the forward."))
+      check(
+        "a forward whose caret resolves outside the quote is pasted and saved",
+        result["replaced"] as? Bool == true && fake.saves == 1
+          && fake.own == "A note above the forward." && fake.quote == forwarded)
+      check("its selection was checked before and at the paste", fake.quoteChecks == 2)
+    }
+    // A reply with text of its own still works, and is checked too.
+    do {
+      let fake = EditFake(own: "Thanks, see below.")
+      let (result, _, _) = run(fake, Request(body: "Thanks, all good."))
+      check(
+        "a reply with its own text is pasted and saved as before",
+        result["replaced"] as? Bool == true && fake.saves == 1 && fake.quoteChecks == 2)
+    }
+    do {
+      let fake = EditFake(own: "Meet Monday.")
+      let (result, _, _) = run(
+        fake, Request(edits: [MailComposerText.Edit(find: "Monday", replace: "Tuesday")]))
+      check(
+        "an edit's selection is checked against the quote too",
+        result["replaced"] as? Bool == true && fake.quoteChecks == 2)
+    }
+    do {
+      let fake = EditFake(own: "Here")
+      let file = tempFile("q.pdf")
+      fake.caretInQuote = nil
+      let (result, board, front) = run(fake, Request(files: [file]))
+      check(
+        "the caret files go to is checked too",
+        capability(result) == "selection" && untouched(fake, board, front))
+    }
+
+    // The paste went into the quote anyway: the poll sees the quote text change.
+    do {
+      let fake = EditFake(own: "", quote: forwarded)
+      fake.landsInQuote = true
+      let started = Date()
+      let (result, board, front) = run(fake, Request(body: "A note above the forward."))
+      let reason = result["reason"] as? String ?? ""
+      check(
+        "text pasted into the quote is refused as confirmation",
+        capability(result) == "confirmation")
+      check("and never saved", fake.saves == 0 && !fake.log.contains("save"))
+      check("as soon as the quote reads differently", Date().timeIntervalSince(started) < 0.15)
+      check("board and front handed back", handedBack(fake, board, front))
+      check(
+        "saying Mail may have autosaved it, and to check Drafts",
+        reason.contains("autosaves") && reason.lowercased().contains("this did not save it")
+          && (result["hint"] as? String ?? "").contains("WITHOUT saving")
+          && (result["hint"] as? String ?? "").contains("Drafts"))
+    }
+    do {
+      // A reply whose first quote block gains the pasted text.
+      let fake = EditFake(own: "Old")
+      fake.landsInQuote = true
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "a reply's quote gaining the text is refused too",
+        capability(result) == "confirmation" && fake.saves == 0)
+    }
+
+    // Every refusal once a paste reached Mail says Mail may have autosaved.
+    do {
+      let fake = EditFake(own: "Old")
+      fake.onPaste = { $0.own += " and what they typed" }
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "an unconfirmed paste says Mail may have autosaved it",
+        (result["reason"] as? String ?? "").contains("autosaves")
+          && (result["hint"] as? String ?? "").contains("Drafts"))
+    }
+    do {
+      let fake = EditFake(own: "Old")
+      fake.pasteLost = true
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "so does a paste that never read back",
+        (result["reason"] as? String ?? "").contains("autosaves"))
+    }
+    do {
+      let fake = EditFake(own: "Old")
+      fake.activates = false
+      let (result, _, _) = run(fake, Request(body: "New"))
+      check(
+        "a refusal before any paste does not mention autosave",
+        !(result["reason"] as? String ?? "").contains("autosave"))
+    }
+  }
+
   static func dispatchChecks() {
     print("\ndispatch")
     let mail = AccessibilityDriver.Scope.only(["com.apple.mail"])
@@ -1321,6 +1462,7 @@ struct MailComposerCheck {
     registryChecks()
     editChecks()
     frontChecks()
+    quoteChecks()
     dispatchChecks()
 
     print("\(checks) checks, \(failures) failures")
