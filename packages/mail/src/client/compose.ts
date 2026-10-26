@@ -179,19 +179,24 @@ export type ComposeParams = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * What `awaitNewComposer` found: the one composer that appeared, several that
+ * What `awaitNewComposer` found: the one composer that appeared, with the own
+ * text it was listed with (null for a tab Mail is not showing), several that
  * could each be it (never picked between), or nothing in time (null).
  */
-export type NewComposer = { handle: string } | { ambiguous: string[] };
+export type NewComposer = { handle: string; text: string | null } | { ambiguous: string[] };
+
+/** A composer as `before` carries it: its handle and subject, and its text when listed. */
+type Seen = Pick<NativeComposer, "composer" | "subject"> & Partial<Pick<NativeComposer, "text">>;
 
 /**
  * Wait for a composer that was not there before, and return its handle.
  *
  * `before` is what `composers()` listed BEFORE Mail was asked to open
  * anything. That is what makes a leftover under the same subject harmless: a
- * handle is stable for its composer's life (a tab's, while no other tab of its
- * window shares its title; see below), so the one that APPEARS is the one this
- * call opened, whatever it is titled.
+ * handle names its composer for its life (a tab's handle survives Mail
+ * re-minting the tab buttons only while no other tab of its window shares its
+ * title, and comes back marked `rebound`; see below), so the one that APPEARS
+ * is the one this call opened, whatever it is titled.
  *
  * A person can open a window by hand during the poll, and an empty composer
  * gives nothing to tell theirs from ours. So the candidates are every fresh
@@ -214,29 +219,44 @@ export type NewComposer = { handle: string } | { ambiguous: string[] };
  * opens as the selected tab. That needs `before` as composers, with their
  * subjects; given as bare handles, the count is unknown and it stays
  * ambiguous.
+ *
+ * Whether the new tab is the selected one is UNMEASURED, and the person can
+ * click the old tab during the poll. So the selected candidate is refused when
+ * its listed own text equals the non-empty text of any same-subject composer
+ * in `before`: that is the old draft, and filling it would replace what it
+ * holds. An empty text never matches. The text returned is what the caller
+ * sends as `expectHead`, so the fill binds to the draft judged here.
  */
 export const awaitNewComposer = async (
   lane: MailAxLane,
-  before: readonly (string | Pick<NativeComposer, "composer" | "subject">)[],
+  before: readonly (string | Seen)[],
   timeoutMs: number,
   subject?: string,
 ): Promise<NewComposer | null> => {
   const known = new Set(before.map((c) => (typeof c === "string" ? c : c.composer)));
   const counted = before.every((c) => typeof c !== "string");
-  const had = before.filter((c) => typeof c !== "string" && c.subject === subject).length;
+  const sameSubject = before.filter(
+    (c): c is Seen => typeof c !== "string" && c.subject === subject,
+  );
+  const had = sameSubject.length;
+  const held = new Set(
+    sameSubject.map((c) => c.text).filter((t): t is string => typeof t === "string" && t !== ""),
+  );
+  const found = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
       const listed = await lane.composers();
       const fresh = listed.filter((c) => !known.has(c.composer));
       const candidates = subject === undefined ? fresh : fresh.filter((c) => c.subject === subject);
-      if (candidates.length === 1)
-        return { handle: (candidates[0] as { composer: string }).composer };
+      if (candidates.length === 1) return found(candidates[0] as NativeComposer);
       if (candidates.length > 1) {
         const selected = candidates.filter((c) => c.tab === "selected");
         const grew = listed.filter((c) => c.subject === subject).length - had;
-        if (subject !== undefined && counted && grew === 1 && selected.length === 1)
-          return { handle: (selected[0] as { composer: string }).composer };
+        const pick = selected[0];
+        const old = pick !== undefined && typeof pick.text === "string" && held.has(pick.text);
+        if (subject !== undefined && counted && grew === 1 && selected.length === 1 && !old)
+          return found(pick as NativeComposer);
         return { ambiguous: candidates.map((c) => c.composer) };
       }
     } catch {
@@ -305,6 +325,10 @@ export const composeNatively = async (
     };
   }
   const handle = found?.handle ?? null;
+  // The own text the composer was listed with, sent as `expectHead` so the fill
+  // binds to the draft judged new, not to whatever its handle reaches by then.
+  // Null when it was listed as a tab Mail is not showing, which has no text.
+  const expectHead = found?.text ?? null;
 
   if (!handle) {
     return {
@@ -368,6 +392,7 @@ export const composeNatively = async (
         composer: handle,
         ...(body !== "" ? { body } : {}),
         ...(files.length > 0 ? { attachments: files } : {}),
+        ...(expectHead !== null ? { expectHead } : {}),
         // The verb has no send. A send is pressed below, once it is known which
         // composer the shortcut would reach.
         save: !params.sendNow,

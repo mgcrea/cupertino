@@ -181,7 +181,30 @@ describe("awaitNewComposer", () => {
             : [composer("mc-1", "Re: lunch"), composer("mc-4", "Re: lunch")],
       }),
     });
-    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toEqual({ handle: "mc-4" });
+    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toEqual({
+      handle: "mc-4",
+      text: "",
+    });
+    lane.close();
+  });
+
+  it("returns the text it was listed with, null for a tab Mail is not showing", async () => {
+    const { lane } = await laneOver({
+      mail_composers: (_a: unknown, n: number) => ({
+        composers:
+          n === 1
+            ? [composer("mc-4", "Re: lunch", { text: "-- \nOlivier" })]
+            : [composer("mc-5", "Re: lunch", { tab: "background", text: null })],
+      }),
+    });
+    await expect(awaitNewComposer(lane, [], 30)).resolves.toEqual({
+      handle: "mc-4",
+      text: "-- \nOlivier",
+    });
+    await expect(awaitNewComposer(lane, ["mc-4"], 30)).resolves.toEqual({
+      handle: "mc-5",
+      text: null,
+    });
     lane.close();
   });
 
@@ -201,7 +224,10 @@ describe("awaitNewComposer", () => {
         composers: [composer("mc-7", "Mine"), composer("mc-8", "Re: lunch")],
       },
     });
-    await expect(awaitNewComposer(lane, [], 30, "Re: lunch")).resolves.toEqual({ handle: "mc-8" });
+    await expect(awaitNewComposer(lane, [], 30, "Re: lunch")).resolves.toEqual({
+      handle: "mc-8",
+      text: "",
+    });
     lane.close();
   });
 
@@ -212,8 +238,12 @@ describe("awaitNewComposer", () => {
    * opens as the SELECTED tab, and only one composer more carries the subject.
    */
   describe("when opening a tab re-mints the handles of the tabs beside it", () => {
-    const tab = (handle: string, subject: string, which: "selected" | "background") =>
-      composer(handle, subject, { tab: which, ...(which === "background" ? { text: null } : {}) });
+    const tab = (
+      handle: string,
+      subject: string,
+      which: "selected" | "background",
+      text: string | null = which === "background" ? null : "",
+    ) => composer(handle, subject, { tab: which, text });
     const before = [tab("mc-1", "Re: lunch", "selected")];
 
     it("takes the one selected tab when the subject's count grew by exactly one", async () => {
@@ -224,6 +254,61 @@ describe("awaitNewComposer", () => {
       });
       await expect(awaitNewComposer(lane, before, 30, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        text: "",
+      });
+      lane.close();
+    });
+
+    /*
+     * Whether the new tab opens selected is unmeasured, and the person can
+     * click the old one during the poll. The old draft's text gives it away.
+     */
+    it("refuses when the selected candidate holds the text an older composer had", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "selected", "an older reply"),
+          ],
+        },
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-2", "mc-3"],
+      });
+      lane.close();
+    });
+
+    it("takes a selected candidate whose text is not any older composer's", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "selected", "-- \nOlivier"),
+          ],
+        },
+      });
+      const older = [
+        tab("mc-1", "Re: lunch", "selected", "an older reply"),
+        tab("mc-9", "Other", "background"),
+      ];
+      await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+        text: "-- \nOlivier",
+      });
+      lane.close();
+    });
+
+    it("takes a selected candidate with empty text, which never matches", async () => {
+      const { lane } = await laneOver({
+        mail_composers: {
+          composers: [tab("mc-2", "Re: lunch", "background"), tab("mc-3", "Re: lunch", "selected")],
+        },
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "")];
+      await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+        text: "",
       });
       lane.close();
     });
@@ -286,7 +371,7 @@ describe("awaitNewComposer", () => {
         TIMEOUTS,
       );
       expect(result).toMatchObject({ ok: true, bodyVerified: true });
-      expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-3", save: true });
+      expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-3", save: true, expectHead: "" });
       lane.close();
     });
   });
@@ -317,6 +402,56 @@ describe("composeNatively", () => {
     expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-1", body: "PASTED", save: false });
     expect(presses(seen, "d")).toHaveLength(1);
     lane.close();
+  });
+
+  /*
+   * The fill binds to the draft the composer was judged to be: the text it
+   * was listed with goes along as `expectHead`, and the app checks it against
+   * what the window shows before pasting.
+   */
+  it("sends the text the new composer was listed with as expectHead", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 ? [] : [composer("mc-1", "Re: lunch", { text: "-- \nOlivier" })],
+        }),
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
+    expect(edits(seen)).toHaveLength(1);
+    expect(edits(seen)[0]?.args).toEqual({
+      composer: "mc-1",
+      body: "PASTED",
+      expectHead: "-- \nOlivier",
+      save: true,
+    });
+    lane.close();
+  });
+
+  it("sends an empty expectHead for an empty composer, and none for an unread tab", async () => {
+    const empty = await laneOver(healthyHost());
+    await composeNatively(empty.lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(edits(empty.seen)[0]?.args).toMatchObject({ composer: "mc-1", expectHead: "" });
+    empty.lane.close();
+
+    const unread = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1 ? [] : [composer("mc-1", "Re: lunch", { tab: "background", text: null })],
+        }),
+      }),
+    );
+    await composeNatively(unread.lane, runnerReturning("Re: lunch"), PARAMS, TIMEOUTS);
+    expect(edits(unread.seen)).toHaveLength(1);
+    expect(edits(unread.seen)[0]?.args).not.toHaveProperty("expectHead");
+    unread.lane.close();
   });
 
   /*
@@ -805,7 +940,12 @@ describe("composeNatively", () => {
       TIMEOUTS,
     );
     expect(result).toMatchObject({ ok: true, bodyVerified: null, attachments: 1 });
-    expect(edits(seen)[0]?.args).toEqual({ composer: "mc-1", attachments: ["/a.pdf"], save: true });
+    expect(edits(seen)[0]?.args).toEqual({
+      composer: "mc-1",
+      attachments: ["/a.pdf"],
+      expectHead: "",
+      save: true,
+    });
     lane.close();
   });
 
