@@ -74,7 +74,13 @@ const runnerSeeing = (scripts: string[]): OsascriptRunner => ({
 /** Some composers and a client that share one world: an edit changes what they show. */
 const world = (
   composers: number,
-  over: { finish?: "pressed" | "refused"; refuseEdit?: boolean; tabs?: boolean } = {},
+  over: {
+    finish?: "pressed" | "refused";
+    refuseEdit?: boolean;
+    tabs?: boolean;
+    /** Composers (by index) whose handle Mail's tab rebuild re-bound: listed `rebound: true`. */
+    rebound?: number[];
+  } = {},
 ) => {
   const scripts: string[] = [];
   const runner = runnerSeeing(scripts);
@@ -105,9 +111,11 @@ const world = (
               quote: null,
               quoteTruncated: false,
               files: [],
+              rebound: over.rebound?.includes(at) ?? false,
             }
           : {
               ...(over.tabs ? { tab: "selected" } : {}),
+              rebound: over.rebound?.includes(at) ?? false,
               composer: `mc-${at}`,
               subject: "Re: Quarterly numbers",
               recipients: ["Ann", "Cy"],
@@ -422,6 +430,45 @@ describe("choosing the composer to edit", () => {
     const { client } = world(1, { refuseEdit: true });
     const result = await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
+  });
+
+  /*
+   * Mail re-mints every tab button when a tab opens or closes, and a handle
+   * re-bound to the tab carrying its title may name another draft. By handle
+   * there is no text to check it against, so it is refused before the app is
+   * asked; by ref the draft's text goes along, and the app checks it.
+   */
+  it("refuses a re-bound handle, saying to edit by ref or list again", async () => {
+    const { client, scripts, edited } = world(2, { rebound: [1] });
+    const result = await client.updateDraft({ composer: "mc-1" }, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, method: "inPlace", capability: "identity" });
+    expect(String((result as { reason: string }).reason)).toMatch(/mc-1.*rebuilt.*another draft/s);
+    expect(String((result as { hint: string }).hint)).toMatch(/ref/);
+    expect(String((result as { hint: string }).hint)).toMatch(/list the open drafts again/);
+    expect(edited).toEqual([]);
+    expect(scripts).toEqual([]);
+  });
+
+  it("still edits the composer beside a re-bound one by its own handle", async () => {
+    const { client, edited } = world(2, { rebound: [1] });
+    const result = await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: true, method: "inPlace" });
+    expect(edited).toEqual([{ composer: "mc-0", body: "BRAVO", save: true }]);
+  });
+
+  it("refuses the one open composer the same way when it is re-bound", async () => {
+    const { client, edited } = world(1, { rebound: [0] });
+    const result = await client.updateDraft({}, { body: "BRAVO" });
+    expect(result).toMatchObject({ replaced: false, capability: "identity" });
+    expect(edited).toEqual([]);
+  });
+
+  it("edits a re-bound composer by ref, with the draft's text as expectHead", async () => {
+    const { client, edited } = world(1, { rebound: [0] });
+    const edits = [{ find: "ALPHA", replace: "BRAVO" }];
+    const result = await client.updateDraft({ ref: REF }, { edits });
+    expect(result).toMatchObject({ replaced: true, method: "inPlace" });
+    expect(edited).toEqual([{ composer: "mc-0", edits, expectHead: "ALPHA one" }]);
   });
 
   it("refuses a ref and a handle together, before anything is read", async () => {

@@ -201,7 +201,8 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "drafts as tabs of one window, a draft in a tab it is not showing is selected for the " +
         "edit and the tab that was shown is selected again after; by `composer` handle, such a " +
         "tab is refused when another tab has the same title, since only a `ref` lets its text " +
-        "be checked. " +
+        "be checked; so is a handle listed with `rebound: true`, whose tab Mail rebuilt since " +
+        "it was listed and which may now be another draft. " +
         "It REFUSES rather than doing damage, and returns `replaced: false` with a reason when " +
         "it does: when a `find` matches zero or several places, when two windows could be the " +
         "draft, when the open window holds a different message, or when the draft's own text " +

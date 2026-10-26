@@ -84,8 +84,24 @@ export type ComposerRef = { window: string; body: string; index: number };
 
 /** One open composer, as the app's `mail_composers` verb reports it. */
 export type NativeComposer = {
-  /** The handle, `mc-<n>`. It names this composer, tab or window, and never moves to another. */
+  /**
+   * The handle, `mc-<n>`. It names this composer, tab or window, for as long
+   * as it lives, and its number is never reused. One thing moves it: Mail
+   * re-mints every tab button when a tab opens or closes, and a tab's handle
+   * is then re-bound to the live tab of its window carrying its title, when
+   * that title was unique both before and after. That tab may be another
+   * draft, which `rebound` says.
+   */
   composer: string;
+  /**
+   * True while the handle was re-bound to a tab that may be another draft
+   * (the person closed the first and opened, or retitled, another under its
+   * title). An edit by the handle alone is refused; one by ref, which sends
+   * the draft's text as `expectHead`, goes through when the text matches. It
+   * clears once a listing reads the tab's own text as what the handle was
+   * last listed with. Absent from an app that predates it.
+   */
+  rebound?: boolean;
   /** A tab's subject is its title. */
   subject: string;
   /**

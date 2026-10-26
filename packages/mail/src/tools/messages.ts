@@ -117,7 +117,9 @@ export const registerMessageTools = (
         "of one window, each tab is listed with its own handle, and one with " +
         '`tab: "background"` (a tab Mail is not showing) has its text, quote and recipients ' +
         "null: listing never switches tabs. `composer` is what " +
-        "apple_mail_update_draft takes to edit that window directly. Each draft carries " +
+        "apple_mail_update_draft takes to edit that window directly; one listed with " +
+        "`rebound: true` had its tab rebuilt by Mail since the handle was given and may be " +
+        "another draft, so edit it by a `savedDrafts` ref, or list again. Each draft carries " +
         "`savedDrafts`, the refs Mail autosaved under the same subject: read one with " +
         "apple_mail_get_message for recipient ADDRESSES, or pass it to apple_mail_update_draft " +
         "to rewrite or edit the body or add files in place. " +

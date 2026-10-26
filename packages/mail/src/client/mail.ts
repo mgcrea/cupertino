@@ -1523,6 +1523,27 @@ export class AppleMailClient {
       }
       chosen = (open[0] as { composer: string }).composer;
     }
+    // A handle Mail's tab rebuild re-bound may name another draft, and with no
+    // saved draft to compare it with there is nothing to send as `expectHead`.
+    // The app would refuse it the same way; refusing here spares the round
+    // trip and says what to do instead.
+    const named = open.find((c) => c.composer === chosen);
+    if (named?.rebound === true) {
+      return {
+        replaced: false,
+        degraded: true,
+        method: "inPlace",
+        capability: "identity",
+        reason:
+          `The composer ${chosen} ("${named.subject}") is a tab whose window Mail rebuilt since ` +
+          "it was listed, so its handle was re-bound to the tab carrying its title, which may " +
+          "be another draft. Nothing was changed.",
+        hint:
+          "Edit the draft by its saved draft's ref (apple_mail_list_open_drafts gives them under " +
+          "`savedDrafts`), which checks its text first, or list the open drafts again and use " +
+          "the handle once it is listed with `rebound: false`.",
+      };
+    }
     const answer = await lane.editComposer({
       composer: chosen,
       ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
@@ -1606,6 +1627,12 @@ export class AppleMailClient {
                 'does. They are read once it is the selected tab (`tab: "selected"`): select it ' +
                 "in Mail and list again, or edit it with apple_mail_update_draft, which selects " +
                 "its tab, checks it, and selects the one that was shown again afterwards."
+              : "") +
+            (composers.some((c) => c.rebound === true)
+              ? " A draft with `rebound: true` is a tab whose window Mail rebuilt since its " +
+                "handle was given, so the handle may now name another draft under the same " +
+                "title: edit it by a ref from `savedDrafts`, which checks its text, or list " +
+                "again once it shows the text it had."
               : "") +
             (index ? "" : " `savedDrafts` is null because the search index cannot be read."),
     };
