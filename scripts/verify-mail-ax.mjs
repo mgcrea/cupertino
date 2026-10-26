@@ -67,6 +67,17 @@
  *   4. (Manual, printed at the end.) A rebuild refuses when the quote was edited
  *      by hand. It needs a person, so it is not automated.
  *
+ * ## Composers in tabs (2026-10-26, task 11)
+ *
+ * With "Prefer tabs when opening documents: Always", Mail opens every composer
+ * as a TAB of one window, and only the selected tab can be read. Case 2 then
+ * finds its two composers as tabs and checks what tabs add: the background one
+ * is listed with no text; by handle it refuses (its title is shared) with no
+ * tab switched; by ref it is selected, checked, edited, saved, and the tab
+ * that was shown is selected again. Saved drafts are looked for in every
+ * account's Drafts, and a prompt to close a composer that is a tab says
+ * "(tab)": closing a window closes its SELECTED tab, so select that one first.
+ *
  * Every draft these make goes to the user's own address and none is sent. Cases
  * 2 and 3 are CLEANED UP, even on failure: their saved drafts are deleted, and
  * the script can only ask for their windows to be closed, not close them (the
@@ -122,10 +133,36 @@ const until = async (fn, tries = 10, ms = 1000) => {
   return null;
 };
 
-/** Saved drafts with exactly this subject, newest first. */
+/**
+ * Saved drafts with exactly this subject, newest first, in EVERY account's
+ * Drafts. LIVE RUN 3 looked in the first account's only, and called a new
+ * message unsaved that Mail had saved in another (the Magenta account): a new
+ * message is saved under the account it is sent from.
+ */
 const draftsBySubject = async (mail, subject) => {
-  const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
-  return (listed?.messages ?? []).filter((m) => m.subject === subject);
+  let accounts = [];
+  try {
+    accounts = ((await mail.call("apple_mail_list_accounts")) ?? []).filter(
+      (a) => a?.enabled !== false,
+    );
+  } catch {
+    // Listed below without an account: the first one's, as this used to.
+  }
+  const found = [];
+  for (const account of accounts.length > 0 ? accounts : [null]) {
+    try {
+      const listed = await mail.call("apple_mail_list_messages", {
+        ...(account ? { account: account.id } : {}),
+        mailbox: "Drafts",
+        limit: 50,
+      });
+      found.push(...(listed?.messages ?? []).filter((m) => m.subject === subject));
+    } catch {
+      // An account with no Drafts mailbox has nothing to find.
+    }
+  }
+  const when = (m) => Date.parse(m.dateReceived ?? m.dateSent ?? "") || 0;
+  return found.sort((a, b) => when(b) - when(a));
 };
 
 /** The compose windows open now, or null when Mail could not be asked. */
@@ -139,7 +176,22 @@ const openComposers = async (mail, quoteChars = 0) => {
  * The script cannot close it: the app's driver is not lent to a terminal.
  */
 const waitForClose = async (mail, subject, seconds = 120) => {
-  console.log(`  ...  close the Mail window "${subject}" (command-W); waiting up to ${seconds}s`);
+  // With "Prefer tabs: Always" the composer is a TAB, and closing the window's
+  // selected tab could close another draft: the line says "(tab)", so whoever
+  // closes it selects that tab first.
+  const open = ((await openComposers(mail)) ?? []).filter((c) => c.subject === subject);
+  const tabs = open.filter((c) => c.tab != null).length;
+  const kind =
+    tabs > 0
+      ? open.length > 1
+        ? ` (${open.length} tabs)`
+        : " (tab)"
+      : open.length > 1
+        ? ` (${open.length} windows)`
+        : "";
+  console.log(
+    `  ...  close the Mail window "${subject}"${kind} (command-W); waiting up to ${seconds}s`,
+  );
   const gone = await until(
     async () => {
       const composers = await openComposers(mail);
@@ -503,14 +555,13 @@ async function newMessageCheck(mail, address) {
   );
   if (result?.ok !== true) return;
 
-  let draft = null;
-  for (let attempt = 0; attempt < 10 && !draft; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
-    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
-    draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
-  }
+  const draft = await until(async () => (await draftsBySubject(mail, subject))[0] ?? null);
   if (!draft?.ref) {
-    check("the new message was saved to Drafts", false, `no draft "${subject}" after 10s`);
+    check(
+      "the new message was saved to Drafts",
+      false,
+      `no draft "${subject}" in any account's Drafts after 10s`,
+    );
     return;
   }
   const source = await mail.call("apple_mail_get_message_source", { ref: draft.ref });
@@ -552,12 +603,7 @@ async function reviseCheck(mail, subject) {
    * holding fewer messages than the limit, which is nearly every Drafts mailbox.
    * A short poll remains because the save is a keystroke, not a transaction.
    */
-  let draft = null;
-  for (let attempt = 0; attempt < 10 && !draft; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
-    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
-    draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
-  }
+  const draft = await until(async () => (await draftsBySubject(mail, subject))[0] ?? null);
   if (!draft?.ref) {
     check(
       "the draft could be addressed, to rewrite it",
@@ -626,8 +672,7 @@ async function attachCheck(mail, subject) {
     ),
   );
   try {
-    const listed = await mail.call("apple_mail_list_messages", { mailbox: "Drafts", limit: 50 });
-    const draft = (listed?.messages ?? []).find((m) => m.subject === subject) ?? null;
+    const draft = (await draftsBySubject(mail, subject))[0] ?? null;
     if (!draft?.ref) {
       check("the draft could be addressed, to attach to it", false, `no draft "${subject}"`);
       return;
@@ -755,10 +800,19 @@ async function handlesCheck(mail, address) {
     check(
       "list_open_drafts gives each of the two windows its own handle",
       same.length === 2 && handles.size === 2,
-      `${same.length} windows, handles: ${[...handles].join(", ")}`,
+      `${same.length} windows, handles: ${[...handles].join(", ")}` +
+        (same.some((c) => c.tab != null)
+          ? ` (tabs: ${same.map((c) => c.tab ?? "none").join(", ")})`
+          : ""),
     );
-    const beta = same.find((c) => /VERIFYBETA/.test(c.text));
-    const alpha = same.find((c) => /VERIFYALPHA/.test(c.text));
+    // Mail with "Prefer tabs: Always" opens both as tabs of one window, and the
+    // one it is not showing cannot be read: checked differently, below.
+    if (same.some((c) => c.tab != null)) {
+      await tabbedHandlesCheck(mail, subject, same);
+      return;
+    }
+    const beta = same.find((c) => /VERIFYBETA/.test(c.text ?? ""));
+    const alpha = same.find((c) => /VERIFYALPHA/.test(c.text ?? ""));
     if (!beta || !alpha) {
       check("each window could be told apart by what it holds", false, "texts did not match");
       return;
@@ -821,6 +875,144 @@ async function handlesCheck(mail, address) {
       await deleteDrafts(mail, subject);
     }
   }
+}
+
+/**
+ * Case 2 when the two composers are TABS of one window (LIVE RUN 3: Mail with
+ * "Prefer tabs: Always"). The tab shown reads as a window does; the other is
+ * listed with its subject and no text. By handle, the shown one is edited as
+ * before, and the background one, whose title the other shares, is refused
+ * with no tab switched. By ref, the background one IS edited: its saved text
+ * is known, so the app selects its tab, checks that text against what the
+ * window then shows, edits, saves, and selects the shown tab again.
+ */
+async function tabbedHandlesCheck(mail, subject, same) {
+  const shown = same.find((c) => c.tab === "selected");
+  const hidden = same.find((c) => c.tab === "background");
+  const word = (c) => /VERIFY(ALPHA|BETA)/.exec(c?.text ?? "")?.[0] ?? null;
+  const shownWord = word(shown);
+  check(
+    "the tab shown reads its text, the other is listed by subject with no text",
+    !!shown && !!hidden && shownWord !== null && hidden.text === null && hidden.quote === null,
+    `shown: ${shown?.composer} ${JSON.stringify(shown?.text)}, ` +
+      `background: ${hidden?.composer} ${JSON.stringify(hidden?.text)}`,
+  );
+  if (!shown || !hidden || shownWord === null) return;
+  const hiddenWord = shownWord === "VERIFYALPHA" ? "VERIFYBETA" : "VERIFYALPHA";
+  const tabsNow = async () =>
+    ((await openComposers(mail)) ?? []).filter((c) => c.subject === subject);
+  const stillShown = async () =>
+    (await tabsNow()).find((c) => c.composer === shown.composer)?.tab === "selected";
+
+  // No target, several open: refused, nothing changed.
+  let untargeted = null;
+  try {
+    untargeted = await mail.call("apple_mail_update_draft", {
+      edits: [{ find: shownWord, replace: "VERIFYWRONG" }],
+      confirm: true,
+    });
+  } catch (error) {
+    untargeted = { replaced: false, reason: error.message };
+  }
+  check(
+    "an edit that names no draft refuses while several are open",
+    untargeted?.replaced === false,
+    untargeted?.replaced === false
+      ? (untargeted.reason ?? "").slice(0, 120)
+      : "IT EDITED SOMETHING",
+  );
+
+  // The background tab by handle: its title is shared, nothing could prove it.
+  let byHandle = null;
+  try {
+    byHandle = await mail.call("apple_mail_update_draft", {
+      composer: hidden.composer,
+      edits: [{ find: hiddenWord, replace: "VERIFYWRONG" }],
+      confirm: true,
+    });
+  } catch (error) {
+    byHandle = { replaced: false, reason: error.message };
+  }
+  check(
+    "a background tab sharing its title, by handle, refuses as identity and switches nothing",
+    byHandle?.replaced === false && byHandle?.capability === "identity" && (await stillShown()),
+    byHandle?.replaced === false
+      ? `${byHandle.capability}: ${(byHandle.reason ?? "").slice(0, 120)}`
+      : "IT EDITED SOMETHING",
+  );
+
+  // The shown tab by handle, as an untabbed window is.
+  let result = null;
+  try {
+    result = await mail.call("apple_mail_update_draft", {
+      composer: shown.composer,
+      edits: [{ find: shownWord, replace: "VERIFYGAMMA" }],
+      confirm: true,
+    });
+  } catch (error) {
+    result = { replaced: false, reason: error.message };
+  }
+  check(
+    "the shown tab, by handle, is edited in place",
+    result?.method === "inPlace" && result?.replaced === true && result?.saved === true,
+    result?.replaced === true ? "" : `${result?.method} — ${result?.reason ?? "no reason given"}`,
+  );
+
+  // The background tab by ref: selected, checked against its saved text, edited, handed back.
+  const sources = async () => {
+    const out = [];
+    for (const draft of await draftsBySubject(mail, subject)) {
+      try {
+        const raw = (await mail.call("apple_mail_get_message_source", { ref: draft.ref }))?.source;
+        out.push({ ref: draft.ref, raw: String(raw ?? "") });
+      } catch {
+        // Renumbered under us: the next poll finds it again.
+      }
+    }
+    return out;
+  };
+  const saved = await until(async () => (await sources()).find((d) => d.raw.includes(hiddenWord)));
+  if (!saved) {
+    check("the background tab's saved draft was found", false, `no draft holding ${hiddenWord}`);
+    return;
+  }
+  let byRef = null;
+  try {
+    byRef = await mail.call("apple_mail_update_draft", {
+      ref: saved.ref,
+      edits: [{ find: hiddenWord, replace: "VERIFYDELTA" }],
+      confirm: true,
+    });
+  } catch (error) {
+    byRef = { replaced: false, reason: error.message };
+  }
+  check(
+    "a background tab, by ref, is selected, checked, edited and saved in place",
+    byRef?.method === "inPlace" && byRef?.replaced === true && byRef?.saved === true,
+    byRef?.replaced === true
+      ? `quoteKept: ${byRef.quoteKept}`
+      : `${byRef?.method} — ${byRef?.capability}: ${byRef?.reason ?? "no reason given"}`,
+  );
+  const after = await tabsNow();
+  check(
+    "and the tab that was shown before is shown again",
+    after.find((c) => c.composer === shown.composer)?.tab === "selected" &&
+      after.find((c) => c.composer === hidden.composer)?.tab === "background",
+    after.map((c) => `${c.composer}: ${c.tab}`).join(", "),
+  );
+  const settled = await until(async () => {
+    const all = await sources();
+    const ok =
+      all.some((d) => d.raw.includes("VERIFYDELTA")) &&
+      all.some((d) => d.raw.includes("VERIFYGAMMA")) &&
+      !all.some((d) => /VERIFY(ALPHA|BETA|WRONG)/.test(d.raw));
+    return ok ? all : null;
+  });
+  check(
+    "each saved draft holds its own edit, and nothing else changed",
+    settled !== null,
+    settled === null ? "the saved sources did not settle to DELTA and GAMMA within 10s" : "",
+  );
 }
 
 /**
