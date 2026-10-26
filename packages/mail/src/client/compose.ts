@@ -272,6 +272,9 @@ export const awaitNewComposer = async (
     held.some((t) => typeof t === "string" && sameHead(t, text));
   const found = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
   const deadline = Date.now() + timeoutMs;
+  // The candidates rule B was waiting on: past the deadline they are still
+  // several windows, refused as such rather than as none.
+  let waitedOn: string[] | undefined;
   for (;;) {
     try {
       const listed = await lane.composers();
@@ -290,11 +293,12 @@ export const awaitNewComposer = async (
         const waiting = ruleB && !unread && typeof pick?.text !== "string";
         if (!waiting || Date.now() >= deadline)
           return { ambiguous: candidates.map((c) => c.composer) };
+        waitedOn = candidates.map((c) => c.composer);
       }
     } catch {
       // Retried below; the deadline decides.
     }
-    if (Date.now() >= deadline) return null;
+    if (Date.now() >= deadline) return waitedOn ? { ambiguous: waitedOn } : null;
     await sleep(COMPOSER_POLL_MS);
   }
 };

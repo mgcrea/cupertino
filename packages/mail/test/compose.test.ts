@@ -487,6 +487,39 @@ describe("awaitNewComposer", () => {
       lane.close();
     });
 
+    it("refuses a loading candidate once its text reads as an older composer's", async () => {
+      const { lane } = await laneOver({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "selected", n === 1 ? null : "an older reply, typed on"),
+          ],
+        }),
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-2", "mc-3"],
+      });
+      lane.close();
+    });
+
+    it("refuses a loading candidate at once when an older composer had no text", async () => {
+      const { lane, seen } = await laneOver({
+        mail_composers: {
+          composers: [
+            tab("mc-2", "Re: lunch", "background"),
+            tab("mc-3", "Re: lunch", "selected", null),
+          ],
+        },
+      });
+      const older = [tab("mc-1", "Re: lunch", "background")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-2", "mc-3"],
+      });
+      expect(seen.filter((s) => s.tool.endsWith("composers"))).toHaveLength(1);
+      lane.close();
+    });
+
     it("refuses at the deadline when the selected candidate's own text never reads", async () => {
       const { lane } = await laneOver({
         mail_composers: {
