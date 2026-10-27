@@ -233,6 +233,9 @@ export type NetRun = (command: Omit<Command, "id" | "expiresAt">) => Promise<Com
 /** What `get` returns inline at most, however much the caller asks for. */
 export const INLINE_CAP_CHARS = 20_000;
 
+/** How many body chunks `networkGet` keeps queued for the page at once. */
+const PIPELINE_DEPTH = 4;
+
 export type RecordState = {
   recording: boolean;
   page: string;
@@ -374,6 +377,17 @@ export type GetInput = {
   overwrite?: boolean | undefined;
 };
 
+/** A chunk asked for ahead of being needed, and where it starts. */
+type Ahead = { position: number; length: number; slice: Promise<Slice> };
+
+/**
+ * Let go of queued chunks nobody will read. Each still settles, and its
+ * timeout must not surface as an unhandled rejection.
+ */
+const abandon = (dropped: Ahead[]): void => {
+  for (const a of dropped) a.slice.catch(() => undefined);
+};
+
 /**
  * Fetch a body from the page, in as many commands as it takes.
  *
@@ -427,16 +441,10 @@ export async function networkGet(
   const cutShort = (slice: Slice): boolean =>
     (input.part ?? "response") === "response" && slice.entry.bodyTruncated === true;
 
-  const pulled: string[] = [];
-  let first: Slice | undefined;
-  let position = from;
-  let index = 0;
   let planned = 1;
-  for (;;) {
-    const length = Math.min(chunk, limit - (position - from));
-    let slice: Slice;
+  const pull = async (position: number, length: number, index: number): Promise<Slice> => {
     try {
-      slice = unwrap<Slice>(
+      return unwrap<Slice>(
         await run({
           action: "netGet",
           url: input.url,
@@ -469,31 +477,66 @@ export async function networkGet(
               `List again and retry.`,
       );
     }
-    first ??= slice;
-    if (index === 0 && whole && cutShort(slice)) {
-      // The page keeps only the first `maxBodyBytes` of a larger body. Parsing
-      // that as JSON fails confusingly, and saving it writes a corrupt file
-      // that looks whole (a PDF missing its tail still opens as a PDF), so the
-      // refusal comes before the rest is pulled, parsed or written.
-      throw new PreconditionError(
-        `The recorded body of ${input.id} was cut short at the recording's maxBodyBytes, so ` +
-          `jsonPath, decode and saveAs would work from an incomplete body. Record again with a ` +
-          `larger maxBodyBytes (up to 50 MiB), repeat the request, and get it again.`,
-      );
+  };
+
+  const head = await pull(from, Math.min(chunk, limit), 0);
+  if (whole && cutShort(head)) {
+    // The page keeps only the first `maxBodyBytes` of a larger body. Parsing
+    // that as JSON fails confusingly, and saving it writes a corrupt file
+    // that looks whole (a PDF missing its tail still opens as a PDF), so the
+    // refusal comes before the rest is pulled, parsed or written.
+    throw new PreconditionError(
+      `The recorded body of ${input.id} was cut short at the recording's maxBodyBytes, so ` +
+        `jsonPath, decode and saveAs would work from an incomplete body. Record again with a ` +
+        `larger maxBodyBytes (up to 50 MiB), repeat the request, and get it again.`,
+    );
+  }
+  const end = whole ? head.totalChars : Math.min(head.totalChars, from + limit);
+  planned = Math.max(1, Math.ceil((end - from) / chunk));
+
+  // The rest is QUEUED rather than asked for one at a time. The page answers
+  // one command per poll and polls again at once after doing work, but a next
+  // chunk written only after this side had read the last answer arrived after
+  // that immediate poll had found nothing, and waited out the page's
+  // one-second interval: about 1.1 s a chunk, measured. With the next few
+  // already waiting, the page drains them back to back. Bounded, because each
+  // answer sits in the container as a file until it is collected.
+  let ahead: Ahead[] = [];
+
+  const pulled: string[] = [head.slice];
+  let position = from + head.slice.length;
+  let index = 1;
+  // An empty slice from a page that says it is not done would loop forever;
+  // treat it as the end rather than trust it.
+  let more = !head.done && head.slice.length > 0 && position - from < limit;
+  try {
+    while (more) {
+      const tail = ahead.at(-1);
+      let next = tail ? tail.position + tail.length : position;
+      while (ahead.length < PIPELINE_DEPTH && next < end) {
+        const length = Math.min(chunk, end - next);
+        ahead.push({ position: next, length, slice: pull(next, length, index + ahead.length) });
+        next += length;
+      }
+      const current = ahead.shift();
+      if (!current) break;
+      const slice = await current.slice;
+      pulled.push(slice.slice);
+      position += slice.slice.length;
+      index += 1;
+      more = !slice.done && slice.slice.length > 0 && position - from < limit;
+      if (more && slice.slice.length !== current.length) {
+        // The page ended this slice early rather than split an emoji, so
+        // every request queued behind it starts one unit late. Drop them and
+        // queue again from where the body really is.
+        abandon(ahead);
+        ahead = [];
+      }
     }
-    if (index === 0) {
-      const end = whole ? slice.totalChars : Math.min(slice.totalChars, from + limit);
-      planned = Math.max(1, Math.ceil((end - from) / chunk));
-    }
-    pulled.push(slice.slice);
-    position += slice.slice.length;
-    index += 1;
-    // An empty slice from a page that says it is not done would loop forever;
-    // treat it as the end rather than trust it.
-    if (slice.done || slice.slice.length === 0 || position - from >= limit) break;
+  } finally {
+    abandon(ahead);
   }
 
-  const head = first as Slice;
   const body = pulled.join("");
   const base = {
     entry: head.entry,

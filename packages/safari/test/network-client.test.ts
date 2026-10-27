@@ -112,6 +112,9 @@ const fakeExtension = (
   const seen: Record<string, unknown>[] = [];
   const served: Record<string, number> = {};
   let answered = 0;
+  // The most commands found waiting at once: 1 for a client that writes the
+  // next only after reading the last answer, more for one that queues ahead.
+  let maxQueued = 0;
   const timer = setInterval(() => {
     let files: string[] = [];
     try {
@@ -119,6 +122,7 @@ const fakeExtension = (
     } catch {
       return;
     }
+    maxQueued = Math.max(maxQueued, files.length);
     for (const name of files) {
       const file = join(dirs.commands, name);
       const command = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -184,7 +188,11 @@ const fakeExtension = (
   }, 10);
   const stop = () => clearInterval(timer);
   timers.push(stop);
-  return { seen, netGets: () => seen.filter((c) => c.action === "netGet") };
+  return {
+    seen,
+    netGets: () => seen.filter((c) => c.action === "netGet"),
+    maxQueued: () => maxQueued,
+  };
 };
 
 describe("config", () => {
@@ -235,10 +243,32 @@ describe("networkGet paging", () => {
       saveAs: "body.txt",
     });
     expect(ext.netGets()).toHaveLength(3);
-    expect(ext.netGets().map((c) => c.offset)).toEqual([0, 262_144, 524_288]);
+    expect(
+      ext
+        .netGets()
+        .map((c) => Number(c.offset))
+        .toSorted((a, b) => a - b),
+    ).toEqual([0, 262_144, 524_288]);
     expect(ext.netGets().every((c) => c.page === "3f9a2c1d")).toBe(true);
     expect(readFileSync(join(t.downloads, "body.txt"), "utf8")).toBe(body);
     expect(out.saved?.bytes).toBe(600_000);
+  });
+
+  it("queues the chunks after the first, so the page can answer them back to back", async () => {
+    const t = setup({ APPLE_SAFARI_NETWORK_CHUNK_CHARS: "16384" });
+    const body = "q".repeat(16_384 * 10);
+    const ext = fakeExtension(t, { [ID]: { body } });
+    await t.client.networkGet({ url: PAGE_URL, id: ID, saveAs: "queued.bin" });
+    expect(readFileSync(join(t.downloads, "queued.bin"), "utf8")).toBe(body);
+    expect(ext.maxQueued()).toBeGreaterThan(1);
+    expect(ext.maxQueued()).toBeLessThanOrEqual(4);
+    // Every chunk asked for once: nothing past the end, nothing twice.
+    // Sorted, because queued commands are claimed in file order, as the
+    // native handler claims them, and not in the order they were written.
+    const offsets = ext.netGets().map((c) => Number(c.offset));
+    expect(offsets.toSorted((a, b) => a - b)).toEqual(
+      Array.from({ length: 10 }, (_, i) => i * 16_384),
+    );
   });
 
   it("pulls only the first chunk for an inline page and reports the next offset", async () => {
@@ -581,7 +611,9 @@ describe("headers, truncation and surrogate pairs", () => {
       .catch((e) => e);
     expect(error).toBeInstanceOf(PreconditionError);
     expect(String(error.message)).toMatch(/evicted|changed/);
-    expect(ext.netGets()).toHaveLength(2);
+    // All three chunks may be asked for, since the rest are queued together
+    // behind the first; none is asked for twice.
+    expect(ext.netGets().length).toBeLessThanOrEqual(3);
     expect(existsSync(join(t.downloads, "big.bin"))).toBe(false);
   });
 
@@ -610,6 +642,22 @@ describe("headers, truncation and surrogate pairs", () => {
     const ext = fakeExtension(t, { [ID]: { body } });
     await t.client.networkGet({ url: PAGE_URL, id: ID, saveAs: "emoji.txt" });
     expect(readFileSync(join(t.downloads, "emoji.txt"), "utf8")).toBe(body);
-    expect(ext.netGets().map((c) => c.offset)).toEqual([0, 16_383, 32_767]);
+    expect(
+      ext
+        .netGets()
+        .map((c) => Number(c.offset))
+        .toSorted((a, b) => a - b),
+    ).toEqual([0, 16_383, 32_767]);
+  });
+
+  it("queues again from the real position when a later chunk ends early on an emoji", async () => {
+    const t = setup({ APPLE_SAFARI_NETWORK_CHUNK_CHARS: "16384" });
+    // The second chunk, not the first, ends on the emoji's high half, so the
+    // chunks already queued behind it all start one unit late.
+    const body = "a".repeat(2 * 16_384 - 1) + "😀" + "b".repeat(50_000);
+    const ext = fakeExtension(t, { [ID]: { body } });
+    await t.client.networkGet({ url: PAGE_URL, id: ID, saveAs: "late-emoji.txt" });
+    expect(readFileSync(join(t.downloads, "late-emoji.txt"), "utf8")).toBe(body);
+    expect(ext.netGets().map((c) => Number(c.offset))).toContain(2 * 16_384 - 1);
   });
 });

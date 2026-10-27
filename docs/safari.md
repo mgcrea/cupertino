@@ -1052,6 +1052,16 @@ a shell instead cannot reach the extension's container at all (macOS app-data pr
 with `EPERM`). So the default is kept: it is measured to work, and at about a second per chunk a
 10 MiB body is a few dozen round trips, which is slow but not broken.
 
+**Why a chunk cost a second, when the spec expected one round trip.** The page does poll again at
+once after running a command, but the server wrote the next chunk's command only after it had
+collected the last answer, which it checks for every 150 ms. By then that immediate poll had come
+back empty, and the page was waiting out its one-second interval. So each chunk paid the interval,
+not the channel. `networkGet` now keeps up to four chunk commands queued behind the first, which
+the page drains back to back; when a slice comes back one unit short (the page will not split an
+emoji), the queued ones start one unit late, so they are dropped and queued again from where the
+body really is. The new per-chunk cost is **unmeasured**: it needs a notarized build and the same
+1.3 MB body.
+
 **An XHR is reset between `load` and `loadend` on a real Angular app.** On the PDF site (Angular 18
 `HttpClient` with zone.js) every XHR was first recorded as `status: 0, "Network error"` while the page
 rendered all its data. Each request's trace read `["readystatechange 4/200","load 4/200","loadend
