@@ -141,6 +141,12 @@ const until = async (fn, tries = 10, ms = 1000) => {
   return null;
 };
 
+/** When a listed message arrived, for sorting; 0 when it does not say. */
+const receivedAt = (m) => Date.parse(m.dateReceived ?? m.dateSent ?? "") || 0;
+
+/** The marker word a check wrote into a composer's text, or null. */
+const markerWord = (c) => /VERIFY(ALPHA|BETA)/.exec(c?.text ?? "")?.[0] ?? null;
+
 /**
  * Saved drafts with exactly this subject, newest first, in EVERY account's
  * Drafts. LIVE RUN 3 looked in the first account's only, and called a new
@@ -169,8 +175,7 @@ const draftsBySubject = async (mail, subject) => {
       // An account with no Drafts mailbox has nothing to find.
     }
   }
-  const when = (m) => Date.parse(m.dateReceived ?? m.dateSent ?? "") || 0;
-  return found.sort((a, b) => when(b) - when(a));
+  return found.toSorted((a, b) => receivedAt(b) - receivedAt(a));
 };
 
 /** The compose windows open now, or null when Mail could not be asked. */
@@ -903,8 +908,7 @@ async function handlesCheck(mail, address) {
 async function tabbedHandlesCheck(mail, subject, same) {
   const shown = same.find((c) => c.tab === "selected");
   const hidden = same.find((c) => c.tab === "background");
-  const word = (c) => /VERIFY(ALPHA|BETA)/.exec(c?.text ?? "")?.[0] ?? null;
-  const shownWord = word(shown);
+  const shownWord = markerWord(shown);
   check(
     "the tab shown reads its text, the other is listed by subject with no text",
     !!shown && !!hidden && shownWord !== null && hidden.text === null && hidden.quote === null,

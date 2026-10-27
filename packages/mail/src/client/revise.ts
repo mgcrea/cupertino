@@ -105,6 +105,9 @@ const sameDraft = (stored: string, shown: string): boolean => {
   return a.slice(0, chars) === b.slice(0, chars);
 };
 
+/** A composer whose text the listing could not read: a background tab, or a body not loaded. */
+const isHidden = (c: NativeComposer): boolean => c.tab === "background" || c.text === null;
+
 /**
  * Edit a draft in its open composer, or add files to it, or both.
  *
@@ -134,7 +137,6 @@ export const reviseDraftInPlace = async (
     const sameSubject = (await lane.composers()).filter((c) => c.subject === facts.subject);
     // Null only when nothing is open under this subject at all.
     if (sameSubject.length === 0) return null;
-    const isHidden = (c: NativeComposer) => c.tab === "background" || c.text === null;
     const hidden = sameSubject.filter(isHidden);
     const read = sameSubject.filter((c) => !isHidden(c));
     const matches = read.filter((c) => sameDraft(facts.contentHead, c.text ?? ""));
