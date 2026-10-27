@@ -187,11 +187,80 @@ struct ShellCheck {
       !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
   }
 
+  /// The run record, in a scratch directory of its own. The app's own `shell-runs` is never
+  /// touched.
+  static func recordChecks() throws {
+    print("\nShellRecord: one chained line per request")
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-record-check-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    // A fixed instant, so the month a line lands in does not depend on the day the check runs.
+    let t0 = ISO8601DateFormatter().date(from: "2026-10-27T12:00:00Z")!
+    let script = String(repeating: "a", count: 5000) + "SECRET"
+    var e = ShellRecord.Entry(
+      at: t0, client: "c", connection: UUID(), purpose: "p", interpreter: "zsh", cwd: "/",
+      scriptBytes: script.utf8.count, scriptSHA256: AuditChain.digest(script),
+      decision: .declined, exitCode: nil, signal: nil, timedOut: false, durationMs: nil)
+    ShellRecord.append(e, in: dir, now: t0)
+    e.decision = .approved
+    e.exitCode = 0
+    ShellRecord.append(e, in: dir, now: t0)
+    ShellRecord.flushForCheck()
+    let text = try FileManager.default.contentsOfDirectory(
+      at: dir, includingPropertiesForKeys: nil
+    ).map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+    check(
+      "a refusal is a line too",
+      ShellRecord.recent(in: dir).map(\.decision) == [.approved, .declined])
+    check(
+      "hash covers the part past 4 KB",
+      ShellRecord.recent(in: dir)[0].scriptSHA256 == AuditChain.digest(script))
+    check("no script text on file", !text.contains("SECRET"))
+    check("chain verifies", ShellRecord.verify(in: dir).isIntact)
+    let old = Calendar(identifier: .gregorian).date(byAdding: .day, value: -200, to: t0)!
+    e.at = old
+    ShellRecord.append(e, in: dir, now: old)
+    e.at = t0
+    ShellRecord.append(e, in: dir, now: t0)
+    ShellRecord.flushForCheck()
+    check(
+      "a segment older than 90 days is dropped",
+      try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 1)
+    check("the chain still verifies after the drop", ShellRecord.verify(in: dir).isIntact)
+    check("an entry reads back whole", ShellRecord.recent(1, in: dir) == [e])
+
+    let next = Calendar(identifier: .gregorian).date(byAdding: .day, value: 10, to: t0)!
+    ShellRecord.append(e, in: dir, now: next)
+    ShellRecord.flushForCheck()
+    check(
+      "a new month opens from the last one's head",
+      try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 2
+        && ShellRecord.verify(in: dir).isIntact)
+
+    // A crash mid-write leaves a last line with no line break.
+    let newest = try FileManager.default.contentsOfDirectory(
+      at: dir, includingPropertiesForKeys: nil
+    )
+    .max { $0.lastPathComponent < $1.lastPathComponent }!
+    let torn = try FileHandle(forWritingTo: newest)
+    try torn.seekToEnd()
+    try torn.write(contentsOf: Data("{\"v\":1,\"seq\":".utf8))
+    try torn.close()
+    e.decision = .busy
+    ShellRecord.append(e, in: dir, now: next)
+    let failures = ShellRecord.verify(in: dir).failures
+    check(
+      "a torn line is named, and the next line still links past it",
+      failures.count == 1 && { if case .unreadable = failures[0] { true } else { false } }())
+    check("and reads back", ShellRecord.recent(1, in: dir).map(\.decision) == [.busy])
+  }
+
   static func main() throws {
     // As the app does in `ServerHost.start`. A spawned script must not inherit it.
     _ = signal(SIGPIPE, SIG_IGN)
 
     sealChecks()
+    try recordChecks()
 
     print("\nShellRunner: the command line and the environment")
     check(

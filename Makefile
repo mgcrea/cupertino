@@ -393,16 +393,20 @@ sound-check: ## Assert the in-process sound server speaks MCP and its gates are 
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
 	@apps/apple/.build/sound-check
 
-shell-check: ## Assert the shell surface's runner: argv, environment, output cap, group kill
+shell-check: ## Assert the shell surface's runner, seal and run record, with no app
 	@# Spawns real processes, unlike the checks above: what it pins is how a
 	@# script starts and stops, and above all that a timeout or a cancel takes
 	@# the whole process group with it. Interpreters the machine lacks are
 	@# skipped and say so. Needs no app, no socket and no grant.
+	@# The run record writes only to a scratch folder, never the app's shell-runs.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/shell-check \
 		apps/apple/Cupertino/ShellRunner.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/LogStore.swift \
 		apps/apple/Cupertino/KeyStore.swift \
 		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
