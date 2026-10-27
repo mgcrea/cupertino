@@ -51,6 +51,143 @@ enum DemoSeed {
   static let version = "0.0.0"
 }
 
+/// A stand-in for the Screen server, compiled in place of `ScreenServer.swift`.
+///
+/// The loop under test is `ServerHost.serveInProcess`, which every in-process
+/// surface shares, and checking it needs a call that is still running when the
+/// next frame arrives. No real surface has one that is safe to run here, and
+/// giving `InProcessServers.handle` a test branch would put a hook in the app
+/// for the sake of a check. So `make host-check` leaves the real Screen server
+/// out and this answers under its name instead: the handshake, the enablement
+/// check, the dispatch in `InProcessServers` and the loop are the shipped ones,
+/// and only the work at the bottom is a stub. `screen-check` and
+/// `dispatch-check` cover the real server.
+///
+/// `test/slow` registers a canceller the way a long call does, and waits for
+/// it for up to three seconds. The connection it registers under comes from
+/// the thread that handles the call, which is also what `test/where` reports:
+/// `DrivingSession` finds its connection the same way.
+enum ScreenServer {
+  /// Signalled once `test/slow` has registered its canceller.
+  nonisolated(unsafe) static var registered = DispatchSemaphore(value: 0)
+  /// Signalled by the canceller.
+  nonisolated(unsafe) static var cancelled = DispatchSemaphore(value: 0)
+
+  static func handle(
+    _ line: String, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool,
+    targetEnabled: @escaping (Surface) -> Bool
+  ) -> String? {
+    guard let data = line.data(using: .utf8),
+      let msg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let method = msg["method"] as? String
+    else { return nil }
+    guard let id = msg["id"] else { return nil }
+    let connection = Thread.current.threadDictionary[DrivingSession.connectionKey] as? UUID
+    switch method {
+    case "ping":
+      return InProcessRPC.result(id, [String: Any]())
+    case "test/where":
+      return InProcessRPC.result(id, ["connectionKey": connection != nil])
+    case "test/slow":
+      guard let connection, let key = InProcessCalls.requestId(id) else {
+        return InProcessRPC.error(id, code: -32603, message: "no connection on this thread")
+      }
+      let gone = DispatchSemaphore(value: 0)
+      let observed = cancelled
+      let token = InProcessCalls.register(connection: connection, requestId: key) {
+        gone.signal()
+        observed.signal()
+      }
+      defer { token.done() }
+      registered.signal()
+      let wasCancelled = gone.wait(timeout: .now() + 3) == .success
+      return InProcessRPC.result(id, ["cancelled": wasCancelled])
+    default:
+      return InProcessRPC.error(id, code: -32601, message: "unknown method '\(method)'")
+    }
+  }
+}
+
+/// One in-process connection past its handshake, as an MCP client holds it.
+///
+/// A `self` handshake, because this process is the host's own and that is the
+/// one admission the licence gate does not stand in front of: the check machine
+/// is unlicensed, and the loop is what is under test, not the gate.
+final class Client {
+  enum Read: Equatable {
+    case line(String)
+    case closed
+    case timedOut
+  }
+
+  private(set) var fd: Int32
+
+  init?(server: String) {
+    fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0, let address = unixAddress(BridgeProtocol.socketPath) else { return nil }
+    guard address.withSockaddr({ connect(fd, $0, $1) }) == 0 else {
+      close(fd)
+      return nil
+    }
+    send(BridgeProtocol.selfHandshake(server: server), newline: false)
+    guard next(within: 2) == .line(BridgeProtocol.ok) else {
+      close(fd)
+      return nil
+    }
+  }
+
+  deinit { hangUp() }
+
+  func send(_ text: String, newline: Bool = true) {
+    let bytes = Array((newline ? text + "\n" : text).utf8)
+    _ = bytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
+  }
+
+  /// The next line, or why there is none within `seconds`.
+  func next(within seconds: Double) -> Read {
+    let deadline = Date().addingTimeInterval(seconds)
+    var out = [UInt8]()
+    while true {
+      let left = deadline.timeIntervalSinceNow
+      guard left > 0 else { return .timedOut }
+      var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+      let ready = poll(&poller, 1, Int32(left * 1000))
+      if ready < 0, errno == EINTR { continue }
+      guard ready > 0 else { return .timedOut }
+      var byte: UInt8 = 0
+      let n = read(fd, &byte, 1)
+      if n <= 0 { return .closed }
+      if byte == UInt8(ascii: "\n") { return .line(String(decoding: out, as: UTF8.self)) }
+      out.append(byte)
+    }
+  }
+
+  /// The `result` of the next reply, if it is one for `id`.
+  func result(for id: Int, within seconds: Double) -> [String: Any]? {
+    guard case .line(let text) = next(within: seconds),
+      let msg = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+      msg["id"] as? Int == id
+    else { return nil }
+    return msg["result"] as? [String: Any]
+  }
+
+  func hangUp() {
+    guard fd >= 0 else { return }
+    close(fd)
+    fd = -1
+  }
+}
+
+/// A request line.
+func request(_ id: Int, _ method: String) -> String {
+  #"{"jsonrpc":"2.0","id":\#(id),"method":"\#(method)"}"#
+}
+
+/// What Claude Code sends when somebody presses Esc.
+func cancelled(_ id: Int) -> String {
+  #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":\#(id),"reason":"Esc"}}"#
+}
+
 @main
 struct HostCheck {
   static var failures = 0
@@ -150,6 +287,89 @@ struct HostCheck {
     check(
       "a real surface reaches the licence gate and is refused with a reason",
       mail?.hasPrefix("err ") == true && mail?.contains("licence") == true)
+
+    // ─── an in-process session ──────────────────────────────────────────────
+    //
+    // The loop every Swift surface shares. It used to read a line, handle it
+    // and only then read the next, so a `notifications/cancelled` sent while a
+    // call ran, and a client hanging up, went unseen until the call ended. The
+    // stand-in `ScreenServer` above is what answers.
+    //
+    // In the registration domain, so nothing is written to a preferences file.
+    guard let screen = Surface.named("screen") else {
+      print("  FAIL there is no screen surface to serve")
+      exit(1)
+    }
+    UserDefaults.standard.register(defaults: [SurfaceSettings.enabledKey(screen): true])
+
+    if let client = Client(server: "screen") {
+      client.send(cancelled(99))
+      client.send(request(1, "ping"))
+      check(
+        "cancel for an unknown id is ignored",
+        client.result(for: 1, within: 2) != nil)
+    } else {
+      check("cancel for an unknown id is ignored (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      ScreenServer.registered = DispatchSemaphore(value: 0)
+      ScreenServer.cancelled = DispatchSemaphore(value: 0)
+      client.send(request(7, "test/slow"))
+      let started = ScreenServer.registered.wait(timeout: .now() + 2) == .success
+      client.send(cancelled(7))
+      let reached = started && ScreenServer.cancelled.wait(timeout: .now() + 1) == .success
+      let reply = client.result(for: 7, within: 5)
+      check(
+        "cancel mid-call reaches the registered canceller",
+        reached && reply?["cancelled"] as? Bool == true)
+    } else {
+      check("cancel mid-call reaches the registered canceller (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      ScreenServer.registered = DispatchSemaphore(value: 0)
+      ScreenServer.cancelled = DispatchSemaphore(value: 0)
+      client.send(request(8, "test/slow"))
+      let started = ScreenServer.registered.wait(timeout: .now() + 2) == .success
+      client.hangUp()
+      check(
+        "EOF mid-call cancels every in-flight call",
+        started && ScreenServer.cancelled.wait(timeout: .now() + 1) == .success)
+    } else {
+      check("EOF mid-call cancels every in-flight call (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      client.send(request(1, "ping") + "\n" + request(2, "ping"))
+      let first = client.result(for: 1, within: 2)
+      let second = client.result(for: 2, within: 2)
+      check("requests still answered in order", first != nil && second != nil)
+    } else {
+      check("requests still answered in order (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      client.send(request(3, "test/where"))
+      check(
+        "driving connection key is set on the handling thread",
+        client.result(for: 3, within: 2)?["connectionKey"] as? Bool == true)
+    } else {
+      check("driving connection key is set on the handling thread (could not connect)", false)
+    }
+
+    // Switching a surface off ends its sessions at their next request, which
+    // the loop cannot do by returning any more: the thread that returns is the
+    // one handling calls, and the one reading the socket has to stop as well
+    // or the connection stays open with nobody answering it.
+    if let client = Client(server: "screen") {
+      UserDefaults.standard.register(defaults: [SurfaceSettings.enabledKey(screen): false])
+      client.send(request(4, "ping"))
+      check("a switched-off surface closes the connection", client.next(within: 2) == .closed)
+      UserDefaults.standard.register(defaults: [SurfaceSettings.enabledKey(screen): true])
+    } else {
+      check("a switched-off surface closes the connection (could not connect)", false)
+    }
 
     // ─── the eviction watchdog ──────────────────────────────────────────────
     //

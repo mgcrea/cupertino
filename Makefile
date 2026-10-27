@@ -426,6 +426,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 	@swiftc -O -o apps/apple/.build/dispatch-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessServers.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/ScreenServer.swift \
 		apps/apple/Cupertino/ScreenCapture.swift \
 		apps/apple/Cupertino/SoundServer.swift \
@@ -504,6 +505,11 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# lookup reads HostCheckHome.url instead: the real one ignores $$HOME, so
 	@# the shipped file would bind the installed Cupertino's socket and lock.
 	@# The check refuses to start if the path it got is not the scratch one.
+	@#
+	@# ScreenServer.swift and ScreenCapture.swift are left out on purpose: the
+	@# check defines a stand-in ScreenServer with a call slow enough to cancel,
+	@# so the shared in-process loop can be driven without a hook in the app.
+	@# screen-check and dispatch-check compile the real one.
 	@mkdir -p apps/apple/.build
 	@sed 's/FileManager\.default\.homeDirectoryForCurrentUser/HostCheckHome.url/' \
 		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
@@ -524,8 +530,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessServers.swift \
-		apps/apple/Cupertino/ScreenServer.swift \
-		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/SoundServer.swift \
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \

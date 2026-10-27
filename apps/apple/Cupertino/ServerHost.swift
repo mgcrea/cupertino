@@ -856,11 +856,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // a switch on another surface would not be a bound at all.
     let lentScope = lentTo?.bundleID.map { AccessibilityDriver.Scope.only([$0]) }
     let session = UUID()
-    // Which connection a driving verb arrived on, for `DrivingSession`. This
-    // loop runs on the connection's own thread for its whole life, so a
-    // thread-local carries the id to the driver without changing a signature
-    // between here and there.
-    Thread.current.threadDictionary[DrivingSession.connectionKey] = session
     let pid = ProcessInfo.processInfo.processIdentifier
     // Filed against the BORROWER, not the surface being served. A lend is work
     // done for Mail; showing it in Activity as a Desktop session would put a
@@ -881,7 +876,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // left running after its client went had nobody left to stop it — and if
       // the gate went off too, no tool left to stop it with.
       if surface.id == "sound" { SoundCapture.connectionClosed(session) }
-      Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey)
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
       hostLog(authority.id, .info, "server stopped")
     }
@@ -906,63 +900,126 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // agent as a dozen, filed under a surface the agent never called.
     let observer = lentTo == nil ? RequestObserver(surface: surface, session: session) : nil
 
-    while let line = InProcessRPC.nextLine(client) {
-      if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+    // Two threads, so a frame that arrives while a call runs is read at once.
+    //
+    // This one only reads. It used to handle each request before reading the
+    // next, and a call can now last minutes (a shell command, a window waiting
+    // for somebody), so a client's `notifications/cancelled` (Esc in Claude
+    // Code) and its hanging up both went unseen until the call ended. Those two
+    // are acted on here, through `InProcessCalls`, the moment they arrive.
+    //
+    // The worker handles every line in arrival order, exactly as this loop used
+    // to, and is the only thread that writes to the client. Ordering is
+    // unchanged because nothing but a cancel is acted on early: a second
+    // request read mid-call waits in `pending` for the first, as it waited in
+    // the socket before, and the client serialises per connection anyway.
+    let pending = PendingLines()
+    let finished = DispatchSemaphore(value: 0)
+    onDedicatedThread("cupertino.session.worker") {
+      defer { finished.signal() }
+      // Which connection a driving verb arrived on, for `DrivingSession`. Set on
+      // the thread that HANDLES calls, because that is where the driver reads
+      // it, and a thread-local carries the id without changing a signature
+      // between here and there.
+      Thread.current.threadDictionary[DrivingSession.connectionKey] = session
+      defer { Thread.current.threadDictionary.removeObject(forKey: DrivingSession.connectionKey) }
 
-      // Switching a surface off has to take effect without restarting every
-      // editor. A node server is stopped with SIGTERM by `stopSessions`; this
-      // one has no pid of its own to signal — the app's own pid is in that map
-      // for display only, and signalling it would kill Cupertino — so the check
-      // lives here, on the request, which is the same guarantee by a different
-      // route.
-      guard SurfaceSettings.isEnabled(authority) else {
-        hostLog(authority.id, .info, "switched off — closing session")
-        return
+      // Ending the session from here is two steps where it used to be a return.
+      // `pending` stops taking lines, and the socket is shut down so the reader,
+      // blocked in `read`, sees end of stream and runs the same teardown a
+      // hang-up does. Without the shutdown the reader would sit there for the
+      // life of the editor with nobody answering. `serve` has not closed the
+      // descriptor yet: it waits for the reader, which waits for this thread.
+      func endSession() {
+        pending.close()
+        shutdown(client, SHUT_RDWR)
       }
 
-      // After the enablement check, so a request refused by closing is not
-      // recorded as a call that was made.
-      observer?.saw(Data("\(line)\n".utf8))
+      while let line = pending.next() {
+        // Switching a surface off has to take effect without restarting every
+        // editor. A node server is stopped with SIGTERM by `stopSessions`; this
+        // one has no pid of its own to signal — the app's own pid is in that map
+        // for display only, and signalling it would kill Cupertino — so the check
+        // lives here, on the request, which is the same guarantee by a different
+        // route.
+        guard SurfaceSettings.isEnabled(authority) else {
+          hostLog(authority.id, .info, "switched off — closing session")
+          endSession()
+          return
+        }
 
-      // Read per request, so flipping a toggle takes effect without restarting
-      // the editor — the same guarantee `stopSessions` gives a node server by
-      // signalling it.
-      //
-      // WHICH server, and what each one has to be told, is `InProcessServers`'
-      // single copy of that fact. It used to be spelled here and a second time
-      // in `SurfaceCatalog`, and the second copy handed every swift-hosted
-      // surface to `ScreenServer`.
-      //
-      // Inside a pool of its own. This thread lives as long as the connection,
-      // and Foundation's JSON and bridging leave autoreleased objects behind on
-      // every request, so without one they pile up until the client hangs up —
-      // hours, for an editor session. Measured on a port of the Contacts server:
-      // 96 MB after a thousand requests without the pool, 24 MB with it.
-      let reply = autoreleasepool {
-        InProcessServers.handle(
-          line, surface: surface,
-          allowWrites: SurfaceSettings.allowWrites(authority),
-          gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
-          surfaceEnabled: SurfaceSettings.isEnabled,
-          lentScope: lentScope, connection: session)
-      }
-      switch reply {
-      case .message(let response):
-        let frame = Data("\(response)\n".utf8)
-        observer?.answered(frame)
-        _ = writeAll(client, frame)
-      case .noReply:
-        continue
-      case .noServer:
-        // Unreachable: `runtime` comes from the closed table and every
-        // swift-hosted surface has a case in `InProcessServers`. Logged rather than silent, because that
-        // table and the dispatch are two places one fact lives, and a new
-        // swift surface that forgets a case would otherwise hang rather than
-        // say why.
-        hostLog(surface.id, .error, "no in-process server for this surface")
-        return
+        // After the enablement check, so a request refused by closing is not
+        // recorded as a call that was made.
+        observer?.saw(Data("\(line)\n".utf8))
+
+        // Read per request, so flipping a toggle takes effect without restarting
+        // the editor — the same guarantee `stopSessions` gives a node server by
+        // signalling it.
+        //
+        // WHICH server, and what each one has to be told, is `InProcessServers`'
+        // single copy of that fact. It used to be spelled here and a second time
+        // in `SurfaceCatalog`, and the second copy handed every swift-hosted
+        // surface to `ScreenServer`.
+        //
+        // Inside a pool of its own. This thread lives as long as the connection,
+        // and Foundation's JSON and bridging leave autoreleased objects behind on
+        // every request, so without one they pile up until the client hangs up —
+        // hours, for an editor session. Measured on a port of the Contacts server:
+        // 96 MB after a thousand requests without the pool, 24 MB with it.
+        let reply = autoreleasepool {
+          InProcessServers.handle(
+            line, surface: surface,
+            allowWrites: SurfaceSettings.allowWrites(authority),
+            gateOn: { SurfaceSettings.isGateOn(authority, id: $0) },
+            surfaceEnabled: SurfaceSettings.isEnabled,
+            lentScope: lentScope, connection: session)
+        }
+        switch reply {
+        case .message(let response):
+          let frame = Data("\(response)\n".utf8)
+          observer?.answered(frame)
+          _ = writeAll(client, frame)
+        case .noReply:
+          continue
+        case .noServer:
+          // Unreachable: `runtime` comes from the closed table and every
+          // swift-hosted surface has a case in `InProcessServers`. Logged rather than silent, because that
+          // table and the dispatch are two places one fact lives, and a new
+          // swift surface that forgets a case would otherwise hang rather than
+          // say why.
+          hostLog(surface.id, .error, "no in-process server for this surface")
+          endSession()
+          return
+        }
       }
     }
+
+    while let line = InProcessRPC.nextLine(client) {
+      if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+      // Acted on before it is queued, which is the point: the call it names is
+      // running on the worker right now. Then queued like any other line, so
+      // the observer still records it and the surface still sees it.
+      //
+      // In a pool for the reason the worker's handling is: this thread lives as
+      // long as the connection, and the parse leaves autoreleased objects.
+      autoreleasepool {
+        if let id = InProcessCalls.cancelledRequestId(in: line) {
+          InProcessCalls.cancel(connection: session, requestId: id)
+        }
+      }
+      pending.push(line)
+    }
+
+    // End of stream: the client hung up, its socket was shut down (a trial that
+    // ended, or the worker ending the session), or a read failed. Every call
+    // still running is called off first, so the worker is not left finishing a
+    // command nobody will read. Lines already queued are still handled, as they
+    // would have been when this was one loop, and the worker is joined before
+    // the `defer` above, so a driving session or a recording is never torn down
+    // under a call still using it.
+    InProcessCalls.cancelAll(connection: session)
+    pending.close()
+    finished.wait()
   }
 
   private func run(
@@ -1292,6 +1349,40 @@ nonisolated func onDedicatedThread(_ name: String, _ body: @escaping @Sendable (
   // this function is that there may be a great many of these at once.
   thread.stackSize = 512 * 1024
   thread.start()
+}
+
+/// The lines an in-process connection has read and not yet handled, in order.
+///
+/// `serveInProcess`' reader pushes and its worker takes. `close` means no more
+/// lines are coming: the worker still drains what is queued, and `next` then
+/// returns nil. A push after `close` is dropped.
+nonisolated private final class PendingLines: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var lines: [String] = []
+  private var closed = false
+
+  func push(_ line: String) {
+    condition.lock()
+    defer { condition.unlock() }
+    guard !closed else { return }
+    lines.append(line)
+    condition.signal()
+  }
+
+  func close() {
+    condition.lock()
+    defer { condition.unlock() }
+    closed = true
+    condition.broadcast()
+  }
+
+  /// The next line, waiting for one. nil once closed and drained.
+  func next() -> String? {
+    condition.lock()
+    defer { condition.unlock() }
+    while lines.isEmpty && !closed { condition.wait() }
+    return lines.isEmpty ? nil : lines.removeFirst()
+  }
 }
 
 /// Mark `fd` FD_CLOEXEC, so spawned servers do not inherit it.
