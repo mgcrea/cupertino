@@ -393,6 +393,17 @@ sound-check: ## Assert the in-process sound server speaks MCP and its gates are 
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
 	@apps/apple/.build/sound-check
 
+shell-check: ## Assert the shell surface's runner: argv, environment, output cap, group kill
+	@# Spawns real processes, unlike the checks above: what it pins is how a
+	@# script starts and stops, and above all that a timeout or a cancel takes
+	@# the whole process group with it. Interpreters the machine lacks are
+	@# skipped and say so. Needs no app, no socket and no grant.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/shell-check \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
+	@apps/apple/.build/shell-check
+
 dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 	@# The gate neither screen-check nor sound-check can be: both drive one
 	@# server directly, and this bug lives in the code that CHOOSES the server.
@@ -1331,7 +1342,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check desktop-check mail-composer-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check shell-check desktop-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \

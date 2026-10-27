@@ -18,6 +18,13 @@ import Foundation
 /// Liveness is asked of the `Process`, never of a bare pid, for the reason
 /// `endAfterGrace` gives: a reaped child's number is the next process's.
 ///
+/// Shell's runs are the exception, and have `terminateGroups`. Each is a process
+/// group (`ShellRunner`), so `terminateAll`, which signals one pid per
+/// `Process`, would stop the leader and leave whatever it backgrounded running
+/// with every grant this app holds. A group is asked by its id: the id cannot be
+/// handed to another process while the group has a member, and `ShellRunner`
+/// reaps its leader only after it has SIGKILLed the group.
+///
 /// Its own file, Foundation only, so `scripts/unit-check.swift` compiles it.
 nonisolated enum ChildTermination {
   /// SIGTERM to all of them, wait up to `grace` for them to go, SIGKILL the
@@ -31,6 +38,30 @@ nonisolated enum ChildTermination {
     let stubborn = running.filter(\.isRunning)
     for process in stubborn { kill(process.processIdentifier, SIGKILL) }
     waitUntilGone(stubborn, deadline: Date().addingTimeInterval(1))
+  }
+
+  /// `terminateAll` for process groups: SIGTERM to each group, wait up to
+  /// `grace` while any member is left, SIGKILL the groups that still have one,
+  /// and wait briefly for those too.
+  static func terminateGroups(_ pgids: [pid_t], grace: TimeInterval) {
+    // Never 0 or 1: `kill(0, _)` is this app's own group and `kill(-1, _)` is
+    // every process the user owns.
+    let groups = pgids.filter { $0 > 1 }
+    let running = groups.filter(groupExists)
+    guard !running.isEmpty else { return }
+    for pgid in running { kill(-pgid, SIGTERM) }
+    waitUntilGroupsGone(running, deadline: Date().addingTimeInterval(grace))
+    let stubborn = running.filter(groupExists)
+    for pgid in stubborn { kill(-pgid, SIGKILL) }
+    waitUntilGroupsGone(stubborn, deadline: Date().addingTimeInterval(1))
+  }
+
+  private static func groupExists(_ pgid: pid_t) -> Bool { kill(-pgid, 0) == 0 }
+
+  private static func waitUntilGroupsGone(_ pgids: [pid_t], deadline: Date) {
+    while pgids.contains(where: groupExists), Date() < deadline {
+      Thread.sleep(forTimeInterval: 0.05)
+    }
   }
 
   private static func waitUntilGone(_ processes: [Process], deadline: Date) {

@@ -211,6 +211,12 @@ jobs:
       # exactly what a runner is.
       - name: Sound server 🔍
         run: make sound-check
+      # The shell surface's runner. It spawns real processes, which a runner
+      # can: the gate is that a timeout or a cancel takes the script's whole
+      # process group with it, and that output is capped. Interpreters the
+      # image lacks are skipped and say so.
+      - name: Shell runner 🔍
+        run: make shell-check
       # The third in-process surface, and the one with the most to be careful
       # about, because it can click. It is CI-safe by construction and the check
       # says so at length: every tools/call in it is either a refusal path that
