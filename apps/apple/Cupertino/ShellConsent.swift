@@ -13,11 +13,11 @@ import SwiftUI
 /// - **Don't run** is the default button, and Return and Escape both mean it. Somebody typing
 ///   when the window arrives declines it rather than approving it.
 /// - The two run buttons are `HandPressedButton`s. They have no key equivalent, never take
-///   keyboard focus, stay disabled for `armDelay` after the window shows (so a click already on
-///   its way lands on nothing), and act only on a hardware click: an Accessibility press, a
-///   `performClick` or a posted event does nothing. A program running with Cupertino's
-///   Accessibility grant could otherwise approve the window without a click at all. The cost is
-///   that VoiceOver can read them but not press them.
+///   keyboard focus, and stay disabled for `armDelay` after the window shows, so a click already
+///   on its way lands on nothing. They act only during a hardware click tracked on the button
+///   itself; their cell refuses both Accessibility press entry points and `performClick`. A
+///   program running with Cupertino's Accessibility grant could otherwise approve the window
+///   without a click at all. The cost is that VoiceOver can read them but not press them.
 /// - The window is a `ShellPanel`, which drops every click and keystroke that did not come
 ///   from hardware.
 /// - No answer within `ShellPolicy.askTimeout` is a no, timed from when the window shows.
@@ -211,7 +211,9 @@ final class ShellConsent: ShellConsenting {
     panel.hasShadow = true
     panel.hidesOnDeactivate = false
     panel.isReleasedWhenClosed = false
-    panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+    panel.collectionBehavior = [
+      .canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle,
+    ]
     // Out of `apple_screen_capture`, as the driving card is.
     panel.sharingType = .none
     return panel
@@ -285,25 +287,37 @@ private final class ShellButton: NSButton {
 /// A button only a person's click can press: the run buttons, and the confirming buttons of the
 /// sheets that lower the bar.
 ///
-/// A program has three ways to press a button without a person, and each is closed:
+/// What a program could otherwise use to press it, and what stops each:
 ///
-/// - **Posting a click or a key.** `ShellPanel` drops it before AppKit sees it.
-/// - **An Accessibility press**, from any process with the grant, including a script Cupertino
-///   started. AppKit exposes an `NSButton`'s CELL as its accessibility element and ignores the
-///   button itself, so the refusal is on `Cell`; an override on the button alone was measured
-///   to do nothing.
-/// - **Anything that ends in the action**: `performClick`, Space on a focused button, an
-///   `NSButtonCell` pressed some other way. The action itself goes ahead only when the event
-///   being handled is a left mouse-up in this button's own window that passes
-///   `ShellInput.isHardware`. Anything else is ignored and logged.
+/// - **A posted click or key.** `ShellPanel` drops input that fails `ShellInput.isHardware`
+///   before AppKit sees it.
+/// - **An Accessibility press**, from any process with the grant, a script Cupertino started
+///   included. AppKit hands the button's CELL to Accessibility, and a cell answers a press
+///   through two entry points: `accessibilityPerformPress` and the older
+///   `accessibilityPerformAction(.press)`, which goes straight to `performClick`. `Cell`
+///   refuses both, performs no other Accessibility action, and ignores `performClick`. The
+///   button refuses the same two entry points itself, in case AppKit ever reaches it directly.
+/// - **Anything else that ends in the action** (`sendAction`, a cell pressed some way not
+///   listed here). The action acts only during a click tracked on this button: `mouseDown`
+///   with a hardware left mouse-down in this button's own window sets a flag for the length of
+///   AppKit's tracking loop, which is when the cell sends the action. The action also needs the
+///   event being handled to be a hardware left mouse-up in that window. `NSApp.currentEvent`
+///   alone is not enough: an Accessibility request is not an event, so after the person clicks
+///   anywhere in the panel, the last mouse-up stays current until the next event arrives.
+///   Anything else is ignored and logged.
 ///
-/// It also never takes keyboard focus, has no key equivalent, and `arm(after:)` keeps it
-/// disabled for a moment after its window shows, so a click already on its way lands on
-/// nothing. The cost: VoiceOver can read it but not press it.
+/// It also never takes keyboard focus, so Space never reaches it, has no key equivalent, and
+/// `arm(after:)` keeps it disabled for a moment after its window shows, so a click already on
+/// its way lands on nothing. The cost: VoiceOver can read it but not press it.
 final class HandPressedButton: NSButton {
-  /// The cell AppKit hands to Accessibility in the button's place, refusing its press.
-  final class Cell: NSButtonCell {
+  /// The cell AppKit hands to Accessibility in the button's place. It refuses both
+  /// Accessibility press entry points, performs no other Accessibility action, and ignores
+  /// `performClick`; mouse tracking is left alone, so a real click still works. Not final only so
+  /// `make shell-window-check` can count what reaches `performClick`.
+  class Cell: NSButtonCell {
     override func accessibilityPerformPress() -> Bool { false }
+    nonisolated override func accessibilityPerformAction(_ action: NSAccessibility.Action) {}
+    override func performClick(_ sender: Any?) {}
   }
 
   override class var cellClass: AnyClass? {
@@ -312,6 +326,14 @@ final class HandPressedButton: NSButton {
   }
 
   var onPress: (() -> Void)?
+
+  /// True only while `mouseDown` runs AppKit's tracking loop for a hardware click on this
+  /// button.
+  private var trackingHandClick = false
+
+  /// Presses that reached the action and were turned away there. For `make
+  /// shell-window-check`, which tells the cell's refusal from the action's by it.
+  private(set) static var refusedAtAction = 0
 
   static func make(_ title: String, onPress: @escaping () -> Void) -> HandPressedButton {
     let button = HandPressedButton(title: title, target: nil, action: nil)
@@ -336,21 +358,36 @@ final class HandPressedButton: NSButton {
     }
   }
 
-  /// Whether `event` is a person's click in `window`: a left mouse-up delivered there, from
-  /// hardware.
-  static func isPersonClick(_ event: NSEvent?, in window: NSWindow?) -> Bool {
-    guard let event, let window, event.type == .leftMouseUp, event.window === window else {
+  /// Whether `event` is a hardware event of `type` delivered to `window`.
+  static func isHand(_ event: NSEvent?, _ type: NSEvent.EventType, in window: NSWindow?) -> Bool {
+    guard let event, let window, event.type == type, event.window === window else {
       return false
     }
     return ShellPanel.fromHardware(event)
   }
 
-  /// Presses that reached the action and were turned away there. For `make
-  /// shell-window-check`, which tells the cell's refusal from the action's by it.
-  private(set) static var refusedAtAction = 0
+  /// Whether `event` is the mouse-up of a person's click in `window`.
+  static func isPersonClick(_ event: NSEvent?, in window: NSWindow?) -> Bool {
+    isHand(event, .leftMouseUp, in: window)
+  }
 
-  @objc private func pressed() {
-    guard Self.isPersonClick(NSApp.currentEvent, in: window) else {
+  override func mouseDown(with event: NSEvent) {
+    guard Self.isHand(event, .leftMouseDown, in: window) else {
+      hostLog("shell", .info, "ignored a mouse-down on '\(title)' that was not from hardware")
+      return
+    }
+    trackingHandClick = true
+    defer { trackingHandClick = false }
+    // The cell's tracking loop runs in here, and sends the action before it returns.
+    super.mouseDown(with: event)
+  }
+
+  @objc private func pressed() { act(on: NSApp.currentEvent) }
+
+  /// The action's own test, with the event it is judged against passed in, so the check can
+  /// hand it one that looks like hardware.
+  func act(on event: NSEvent?) {
+    guard trackingHandClick, Self.isPersonClick(event, in: window) else {
       Self.refusedAtAction += 1
       hostLog("shell", .info, "ignored a press of '\(title)' that was not a click by hand")
       return
@@ -359,6 +396,7 @@ final class HandPressedButton: NSButton {
   }
 
   override func accessibilityPerformPress() -> Bool { false }
+  nonisolated override func accessibilityPerformAction(_ action: NSAccessibility.Action) {}
 }
 
 /// The confirmation window for one request, in the spec's order: who is asking, what the agent
@@ -399,7 +437,8 @@ private struct PromptWindow {
     views.append(Self.label("The agent says:", width: content, size: 11, bold: true))
     views.append(Self.label("\u{201C}\(prompt.purpose)\u{201D}", width: content))
 
-    views.append(Self.label(Self.caption("Script", prompt.script), width: content, size: 11, bold: true))
+    views.append(
+      Self.label(Self.caption("Script", prompt.script), width: content, size: 11, bold: true))
     views.append(Self.textView(prompt.script, width: content, maxHeight: scriptMax))
     if let stdin = prompt.stdin {
       views.append(
@@ -484,7 +523,8 @@ private struct PromptWindow {
 
   /// "Script, 3 lines, 120 bytes": a long script says so before anyone scrolls.
   static func caption(_ name: String, _ text: String) -> String {
-    let lines = text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+    let lines =
+      text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
     return "\(name), \(lines) \(lines == 1 ? "line" : "lines"), \(text.utf8.count) bytes"
   }
 

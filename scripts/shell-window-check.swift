@@ -1,16 +1,19 @@
 import AppKit
 
-/// Asserts that nothing but a person's click can press the Shell window's run buttons, and that
-/// a window with no screen to go on is answered rather than left waiting.
+/// Asserts that nothing a program can reach without a click presses the Shell window's run
+/// buttons, and that a window with no screen to go on is answered rather than left waiting.
 ///
 /// Apart from `shell-check` because it needs AppKit, which that check must not. It posts no
-/// event, shows no window and launches nothing: every button lives in a view that is never put
-/// on screen, and every press is made by calling the method a program would reach, the way an
-/// Accessibility client or `performClick` reaches it.
+/// event, shows no window and launches nothing: the buttons sit in windows never ordered on
+/// screen, and every press is made by calling what an Accessibility client, `performClick` or
+/// `sendAction` reaches. The "hardware-looking" events are built in memory and never posted.
 ///
-/// The reason it exists: an override of `accessibilityPerformPress` on the button did nothing,
-/// because AppKit hands the button's CELL to Accessibility and ignores the button. A check that
-/// presses what Accessibility actually sees is the only way to know the refusal holds.
+/// Each layer is checked on its own as well as together: the cell's refusal on a plain button
+/// with no gate behind it, and the action's gate behind a plain cell that refuses nothing.
+///
+/// What it cannot check, because that needs a real click: that a person's click still passes,
+/// that is, that AppKit sends the action from inside `mouseDown`'s tracking loop with the
+/// mouse-up current. Driving the tracking loop needs events in the queue, which means posting.
 ///
 /// Run with `make shell-window-check`.
 @main
@@ -34,9 +37,20 @@ struct ShellWindowCheck {
     return children + children.flatMap { accessible(under: $0) }
   }
 
-  /// Press each element as an Accessibility client would.
-  @MainActor static func pressAll(_ elements: [Any]) {
+  /// Press each element through the current Accessibility entry point.
+  @MainActor static func pressNew(_ elements: [Any]) {
     for element in elements { _ = (element as AnyObject).accessibilityPerformPress?() }
+  }
+
+  /// Press each element through the older one, which a button cell answers by `performClick`
+  /// without going through `accessibilityPerformPress`. Called by selector, as the
+  /// Accessibility bridge calls it, so the deprecation does not reach the build output.
+  @MainActor static func pressLegacy(_ elements: [Any]) {
+    let selector = NSSelectorFromString("accessibilityPerformAction:")
+    for element in elements {
+      guard let object = element as? NSObject, object.responds(to: selector) else { continue }
+      _ = object.perform(selector, with: NSAccessibility.Action.press.rawValue as NSString)
+    }
   }
 
   @MainActor static func main() {
@@ -51,65 +65,174 @@ struct ShellWindowCheck {
   }
 
   @MainActor static func buttonChecks() {
-    print("HandPressedButton: only a person's click presses it")
-
-    // The control: a plain button, pressed the same way, fires. Without it the checks below
-    // could pass because the method of pressing reached nothing.
+    print("Control: a plain button")
     let plainTarget = Target()
     let plain = NSButton(title: "Plain", target: plainTarget, action: #selector(Target.fire))
     let plainView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
     plainView.addSubview(plain)
     let plainElements = accessible(under: plainView)
-    pressAll(plainElements)
-    check(
-      "control: an Accessibility press of a plain button's elements fires it",
-      plainTarget.fired == 1)
+    pressNew(plainElements)
+    check("accessibilityPerformPress on its elements presses it", plainTarget.fired == 1)
+    pressLegacy(plainElements)
+    check("accessibilityPerformAction(.press) on its elements presses it", plainTarget.fired == 2)
 
+    print("\nHandPressedButton, both layers")
     var fired = 0
-    let window = ShellPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled],
-      backing: .buffered, defer: true)
+    let window = panel()
     let button = HandPressedButton.make("Run once") { fired += 1 }
     window.contentView?.addSubview(button)
     check("its cell is the refusing one", button.cell is HandPressedButton.Cell)
     check("it has no key equivalent", button.keyEquivalent.isEmpty)
     check("it never takes keyboard focus", button.refusesFirstResponder)
-
-    let elements = accessible(under: window.contentView!)
-    check("Accessibility sees an element for it", !elements.isEmpty)
-    pressAll(elements)
-    check("an Accessibility press of every element under it does nothing", fired == 0)
-    _ = button.accessibilityPerformPress()
-    _ = button.cell?.accessibilityPerformPress()
-    check("nor of the button or its cell directly", fired == 0)
+    let elements = accessible(under: window.contentView!) + [button, button.cell!]
+    check("Accessibility sees an element under it", elements.count > 2)
+    var refused = HandPressedButton.refusedAtAction
+    pressNew(elements)
+    check("accessibilityPerformPress on every element, button and cell does nothing", fired == 0)
+    pressLegacy(elements)
     check(
-      "the cell refuses those itself: none reached the action's own test",
-      HandPressedButton.refusedAtAction == 0)
-
+      "accessibilityPerformAction(.press) on every element, button and cell does nothing",
+      fired == 0)
+    check(
+      "none of those reached the action: the cell and the button refused them",
+      HandPressedButton.refusedAtAction == refused)
     check("there is no event being handled", NSApp.currentEvent == nil)
     button.performClick(nil)
-    check("performClick with no event does nothing", fired == 0)
+    check("performClick does nothing", fired == 0)
+    check(
+      "and never reached the action: the cell ignores performClick",
+      HandPressedButton.refusedAtAction == refused)
     _ = button.sendAction(button.action, to: button.target)
     check("sending its action does nothing", fired == 0)
     check(
-      "those two were turned away by the action's own test",
-      HandPressedButton.refusedAtAction == 2)
+      "it reached the action, which turned it away",
+      HandPressedButton.refusedAtAction == refused + 1)
 
-    // Built, never posted: a mouse-up this process made carries its own pid.
+    print("\nThe cell alone, on a plain button with no gate behind it")
+    let bareTarget = Target()
+    let bare = NSButton(title: "Run once", target: nil, action: nil)
+    let refusing = HandPressedButton.Cell(textCell: "Run once")
+    refusing.target = bareTarget
+    refusing.action = #selector(Target.fire)
+    bare.cell = refusing
+    let bareView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+    bareView.addSubview(bare)
+    let bareElements = accessible(under: bareView) + [refusing]
+    pressNew(bareElements)
+    check("accessibilityPerformPress does nothing", bareTarget.fired == 0)
+    pressLegacy(bareElements)
+    check("accessibilityPerformAction(.press) does nothing", bareTarget.fired == 0)
+    bare.performClick(nil)
+    check("performClick does nothing", bareTarget.fired == 0)
+    // Each refusal on its own: the two Accessibility entry points stop before `performClick`,
+    // which is ignored as well.
+    let counting = CountingCell(textCell: "Run once")
+    counting.target = bareTarget
+    counting.action = #selector(Target.fire)
+    // On a button, as a cell with no control behind it answers no press at all.
+    let countingButton = NSButton(title: "Run once", target: nil, action: nil)
+    countingButton.cell = counting
+    bareView.addSubview(countingButton)
+    _ = counting.accessibilityPerformPress()
+    pressLegacy([counting])
+    check(
+      "neither Accessibility entry point gets as far as performClick",
+      counting.clicks == 0 && bareTarget.fired == 0)
+    countingButton.performClick(nil)
+    check(
+      "control: performClick on that button does reach the cell's performClick",
+      counting.clicks == 1 && bareTarget.fired == 0)
+
+    print("\nThe gate alone, behind a plain cell that refuses nothing")
+    var gateFired = 0
+    let gateWindow = panel()
+    let gated = HandPressedButton.make("Run once") { gateFired += 1 }
+    let plainCell = NSButtonCell(textCell: "Run once")
+    plainCell.target = gated
+    plainCell.action = gated.action
+    gated.cell = plainCell
+    gateWindow.contentView?.addSubview(gated)
+    let gatedElements = accessible(under: gateWindow.contentView!) + [plainCell]
+    refused = HandPressedButton.refusedAtAction
+    pressNew(gatedElements)
+    let afterNew = HandPressedButton.refusedAtAction
+    check("accessibilityPerformPress does nothing", gateFired == 0)
+    check("it reached the action, which turned it away", afterNew > refused)
+    pressLegacy(gatedElements)
+    check("accessibilityPerformAction(.press) does nothing", gateFired == 0)
+    check(
+      "it reached the action, which turned it away",
+      HandPressedButton.refusedAtAction > afterNew)
+    gated.performClick(nil)
+    check("performClick does nothing", gateFired == 0)
+
+    print("\nA stale event: a hardware-looking mouse-up current, no click tracked")
+    // `NSApp.currentEvent` cannot be set without posting, so this hands the action's test the
+    // event directly, as `pressed()` hands it the current one. It proves that a mouse-up that
+    // passes the hardware test is not enough without a tracked mouse-down on the button; it does
+    // not prove which event AppKit has current when a real Accessibility request arrives.
+    let up = handLike(.leftMouseUp, in: window)
+    check(
+      "the built mouse-up passes the hardware test, so the next line tests the flag",
+      HandPressedButton.isPersonClick(up, in: window))
+    refused = HandPressedButton.refusedAtAction
+    button.act(on: up)
+    check("with no tracked click, the action does nothing", fired == 0)
+    check("and says it turned it away", HandPressedButton.refusedAtAction == refused + 1)
+    // A mouse-down that is not hardware starts no tracking; were it to, `super.mouseDown` would
+    // wait in AppKit's tracking loop for a mouse-up that never comes, and this check would hang.
+    let madeDown = NSEvent.mouseEvent(
+      with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+      pressure: 0)
+    if let madeDown { button.mouseDown(with: madeDown) }
+    button.act(on: up)
+    check("a program's mouse-down does not start a tracked click", fired == 0)
+
+    print("\nWhat counts as a person's click")
     let made = NSEvent.mouseEvent(
       with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 0,
       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
       pressure: 0)
     check(
-      "a mouse-up a program builds is not a person's click",
+      "a mouse-up a program builds is not: it carries the program's pid",
       !HandPressedButton.isPersonClick(made, in: window))
-    check("no event is not a person's click", !HandPressedButton.isPersonClick(nil, in: window))
-    check("nor is any event with no window", !HandPressedButton.isPersonClick(made, in: nil))
+    check("no event is not", !HandPressedButton.isPersonClick(nil, in: window))
+    check(
+      "a hardware-looking mouse-up in another window is not",
+      !HandPressedButton.isPersonClick(up, in: gateWindow))
+    check(
+      "a hardware-looking mouse-down is not a mouse-up",
+      !HandPressedButton.isPersonClick(handLike(.leftMouseDown, in: window), in: window))
 
+    print("\nArming")
     button.arm(after: 0.05)
     check("arming disables it at once", !button.isEnabled)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
     check("and leaves it disabled when its window is not on screen", !button.isEnabled)
+  }
+
+  /// A panel with a window number, never ordered on screen.
+  @MainActor static func panel() -> ShellPanel {
+    ShellPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled],
+      backing: .buffered, defer: false)
+  }
+
+  /// A mouse event in `window` carrying the source fields hardware is expected to carry. Built
+  /// in memory and never posted.
+  @MainActor static func handLike(_ type: NSEvent.EventType, in window: NSWindow) -> NSEvent? {
+    guard
+      let made = NSEvent.mouseEvent(
+        with: type, location: .zero, modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+        pressure: 0),
+      let cg = made.cgEvent
+    else { return nil }
+    cg.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    cg.setIntegerValueField(
+      .eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
+    return NSEvent(cgEvent: cg)
   }
 
   @MainActor static func noScreenChecks() {
@@ -131,6 +254,15 @@ struct ShellWindowCheck {
     check("every request is answered", answers.all.count == 3)
     check("each as cancelled", answers.all.allSatisfy { $0 == .cancelled })
     check("and nothing is left in the queue", consent.queue.waiting == 0)
+  }
+}
+
+/// The refusing cell, counting what reaches `performClick`.
+final class CountingCell: HandPressedButton.Cell {
+  var clicks = 0
+  override func performClick(_ sender: Any?) {
+    clicks += 1
+    super.performClick(sender)
   }
 }
 
