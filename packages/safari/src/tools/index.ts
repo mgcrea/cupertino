@@ -13,21 +13,22 @@ import { registerWriteTools } from "./writes.js";
 
 export type ToolContext = {
   /**
-   * Gates the five tools that change something outside this process, across two
+   * Gates the six tools that change something outside this process, across two
    * lanes that have nothing in common but this flag.
    *
    * `open_url` and `add_reading_list_item` are Apple Events, so with writes off
    * this server sends an Apple Event for exactly one thing — reading live tabs —
    * and changes nothing anywhere.
    *
-   * `click`, `fill` and `scroll` act INSIDE a page and send no Apple Event at
+   * `click`, `fill`, `submit` and `scroll` act INSIDE a page and send no Apple Event at
    * all. They reach the page through the Safari extension, which Safari
    * consents to one website at a time, so their real gate is a per-site grant
    * the user can see and revoke; this flag is the second lock rather than the
    * only one.
    *
-   * `page_elements` is NOT gated: it changes nothing, and asking what is on a
-   * page is the class of act this surface already performs when it reads one.
+   * `page_elements` and `wait_for` are NOT gated: they change nothing, and
+   * asking what is on a page is the class of act this surface already performs
+   * when it reads one.
    * What IS withheld from it is a field's contents — always for a credential,
    * and for a one-time code unless `allowCodes` says otherwise.
    */

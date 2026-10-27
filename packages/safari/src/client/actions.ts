@@ -56,6 +56,8 @@ export type Command = {
     | "click"
     | "fill"
     | "scroll"
+    | "submit"
+    | "find"
     | "codes"
     | "read"
     | "netRecord"
@@ -75,7 +77,15 @@ export type Command = {
    */
   page?: string | undefined;
   elementId?: string | undefined;
+  /** `fill`: what to type. `find`: what to look for in the page's text. */
   text?: string | undefined;
+  /**
+   * `elements` only: keep what matches, applied in the page before its cap.
+   * `query` is matched against labels and link addresses, never a value.
+   */
+  query?: string | undefined;
+  kind?: string | undefined;
+  inViewOnly?: boolean | undefined;
   direction?: "up" | "down" | undefined;
   limit?: number | undefined;
   /** `read` only: which rendering of the page to return. */

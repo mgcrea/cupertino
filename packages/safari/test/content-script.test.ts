@@ -917,3 +917,157 @@ describe("page tokens", () => {
     expect(clicks).toEqual([]);
   });
 });
+
+const labels = (out: { data: Record<string, never> }) =>
+  (out.data.elements as unknown as { label: string }[]).map((e) => e.label);
+
+const form = (opts: { valid?: boolean; invalid?: unknown[] } = {}) => {
+  const submitted: string[] = [];
+  const f = {
+    action: "https://shop.example/pay",
+    method: "post",
+    checkValidity: () => opts.valid !== false,
+    elements: opts.invalid ?? [],
+    requestSubmit: () => void submitted.push("submit"),
+  };
+  return { f, submitted };
+};
+
+/**
+ * The three additions that keep a long form cheap to work with: filters on
+ * the enumeration, a cheap "is this text on the page yet" for wait_for, and
+ * a submit that goes through the form rather than a synthetic Enter key,
+ * which a page sees as untrusted and ignores.
+ */
+describe("filters, find and submit", () => {
+  type Run = (c: unknown) => { ok: boolean; data: Record<string, never>; error?: string };
+
+  const page = (opts: { elements?: unknown[]; text?: string; href?: string }) => {
+    const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
+    const context = createContext({
+      crypto: webcrypto,
+      window,
+      location: { href: opts.href ?? "https://shop.example/checkout" },
+      document: {
+        title: "Checkout",
+        querySelectorAll: () => opts.elements ?? [],
+        getElementById: () => null,
+        body: {
+          cloneNode: () => ({ innerText: opts.text ?? "", querySelectorAll: () => [] }),
+        },
+      },
+      getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
+    });
+    runInContext(SOURCE, context);
+    return window.cupertinoRunCommand as Run;
+  };
+
+  const button = (name: string, extra: Record<string, unknown> = {}) =>
+    el("button", {}, { innerText: name, ...extra });
+  const offscreen = {
+    getBoundingClientRect: () => ({
+      width: 100,
+      height: 20,
+      top: 2000,
+      left: 0,
+      bottom: 2020,
+      right: 100,
+    }),
+  };
+
+  it("filters by label before the cap, so a match past the first few is still found", () => {
+    const run = page({ elements: [button("Cancel"), button("Back"), button("Save draft")] });
+    const out = run({ action: "elements", limit: 1, query: "SAVE" });
+    expect(out.ok, out.error).toBe(true);
+    expect(labels(out)).toEqual(["Save draft"]);
+    expect(out.data.filtered).toBe(true);
+  });
+
+  it("filters by kind", () => {
+    const run = page({ elements: [button("Pay"), el("input", { "aria-label": "Email" })] });
+    expect(labels(run({ action: "elements", limit: 10, kind: "textfield" }))).toEqual(["Email"]);
+  });
+
+  it("keeps only what is on screen when asked", () => {
+    const run = page({ elements: [button("Top"), button("Footer link", offscreen)] });
+    expect(labels(run({ action: "elements", limit: 10, inViewOnly: true }))).toEqual(["Top"]);
+  });
+
+  it("does not claim to have filtered an unfiltered list", () => {
+    const run = page({ elements: [button("Pay")] });
+    expect(run({ action: "elements", limit: 10 }).data.filtered).toBeUndefined();
+  });
+
+  it("finds text on the page, whatever its case, and returns the passage", () => {
+    const run = page({ text: "Thanks!\n\nYour order is CONFIRMED. Number 4411." });
+    const out = run({ action: "find", text: "order is confirmed" });
+    expect(out.ok, out.error).toBe(true);
+    expect(out.data).toMatchObject({ found: true, url: "https://shop.example/checkout" });
+    expect(String(out.data.excerpt)).toContain("Your order is CONFIRMED");
+  });
+
+  it("says plainly when the text is not there", () => {
+    const run = page({ text: "Processing your payment..." });
+    expect(run({ action: "find", text: "confirmed" }).data).toMatchObject({ found: false });
+  });
+
+  it("submits the form a field belongs to, the way pressing Enter would", () => {
+    const { f, submitted } = form();
+    const field = el("input", { "aria-label": "Card name" }, { form: f });
+    const run = page({ elements: [field] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id, url: "https://shop.example/checkout" });
+    expect(out.ok, out.error).toBe(true);
+    expect(submitted).toEqual(["submit"]);
+    expect(out.data).toMatchObject({
+      submitted: id,
+      action: "https://shop.example/pay",
+      method: "post",
+    });
+  });
+
+  it("refuses an element outside any form, and points at click", () => {
+    const run = page({ elements: [button("Next", { form: null, closest: () => null })] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("click");
+  });
+
+  it("does not submit a form that fails its own validation, and names the fields", () => {
+    const email = el(
+      "input",
+      { "aria-label": "Email" },
+      { validity: { valid: false }, validationMessage: "Please fill out this field." },
+    );
+    const { f, submitted } = form({ valid: false, invalid: [email] });
+    const field = el("input", { "aria-label": "Name" }, { form: f });
+    const run = page({ elements: [field] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id });
+    expect(out.ok).toBe(false);
+    expect(submitted).toEqual([]);
+    expect(out.error).toContain("Email");
+    expect(out.error).toContain("Please fill out this field.");
+  });
+
+  it("refuses to submit when the page has moved to another URL", () => {
+    const { f, submitted } = form();
+    const run = page({
+      elements: [el("input", {}, { form: f })],
+      href: "https://shop.example/done",
+    });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id, url: "https://shop.example/checkout" });
+    expect(out.ok).toBe(false);
+    expect(submitted).toEqual([]);
+  });
+});

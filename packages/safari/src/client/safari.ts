@@ -187,6 +187,15 @@ export type AddReadingListItemResult = {
  * so a zero — which the tests pass — reads as "do not wait" instead of as a
  * timer that fires immediately.
  */
+/**
+ * The pause between two `wait_for` checks. Half the page's own one-second
+ * poll on a visible tab, so a check is usually waiting when the page asks.
+ */
+const WAIT_INTERVAL_MS = 500;
+
+/** A tab whose content script predates the command it was sent. */
+class UnknownActionError extends Error {}
+
 const delay = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 
@@ -631,7 +640,7 @@ export class AppleSafariClient {
    */
   async pageAction(
     input: {
-      action: "elements" | "click" | "fill" | "scroll" | "codes" | "read";
+      action: "elements" | "click" | "fill" | "scroll" | "submit" | "find" | "codes" | "read";
       url?: string | undefined;
       elementId?: string | undefined;
       text?: string | undefined;
@@ -640,6 +649,9 @@ export class AppleSafariClient {
       format?: "text" | "html" | undefined;
       maxChars?: number | undefined;
       maxValueChars?: number | undefined;
+      query?: string | undefined;
+      kind?: string | undefined;
+      inViewOnly?: boolean | undefined;
     },
     // A caller with a fallback waits less than one without: `read_page` has
     // the capture to return, a click has nothing.
@@ -675,6 +687,137 @@ export class AppleSafariClient {
     } catch (error) {
       throw this.#explainSilence(error, input.url);
     }
+  }
+
+  /**
+   * Check a page until some text appears on it (or, with `gone`, leaves it).
+   *
+   * The loop is HERE, not in the page. The page runs one command per poll and
+   * synchronously, so a wait inside it would hold up every other command for
+   * that tab; instead the page answers a cheap `find` (does the text occur,
+   * and a short passage around it) and this asks again until the deadline.
+   * Each check may wait out the whole remaining deadline for the page to pick
+   * it up, so a background tab that polls every ten seconds still gets a turn.
+   *
+   * With no `url` the frontmost tab is looked up again for EVERY check, which
+   * is what makes "click, then wait for the confirmation" work: the
+   * confirmation is usually on the page the click navigated to, whose URL the
+   * caller does not know yet.
+   *
+   * A tab whose content script predates `find` answers "Unknown action"; it is
+   * then asked for a live `read` instead and searched here, which moves the
+   * whole text per check but works on any build that can read live.
+   *
+   * Not meeting the condition is an answer, not an error: `met: false`.
+   */
+  async waitFor(input: {
+    url?: string | undefined;
+    text: string;
+    gone: boolean;
+    timeoutMs: number;
+  }): Promise<{
+    met: boolean;
+    url: string | null;
+    tab?: "frontmost";
+    excerpt?: string;
+    checks: number;
+    waitedMs: number;
+    lastMiss?: string;
+  }> {
+    const startedAt = Date.now();
+    const deadline = startedAt + input.timeoutMs;
+    const tab = input.url === undefined ? { tab: "frontmost" as const } : {};
+    let checks = 0;
+    let url: string | null = null;
+    let lastMiss: string | undefined;
+    let viaRead = false;
+
+    while (Date.now() < deadline) {
+      url = input.url ?? (await this.frontmostTabUrl());
+      let seen: { present: boolean; excerpt?: string | undefined };
+      try {
+        seen = viaRead
+          ? await this.#findByRead(url, input.text, deadline)
+          : await this.#find(url, input.text, deadline);
+      } catch (error) {
+        if (error instanceof UnknownActionError) {
+          viaRead = true;
+          continue;
+        }
+        if (!(error instanceof PageCommandTimeoutError)) throw error;
+        // Nobody answered within what was left. Mid-navigation that is the
+        // page being replaced, so it is noted and the deadline decides.
+        lastMiss = error.message;
+        continue;
+      }
+      checks += 1;
+      if (seen.present !== input.gone) {
+        return {
+          met: true,
+          url,
+          ...tab,
+          ...(seen.excerpt !== undefined ? { excerpt: seen.excerpt } : {}),
+          checks,
+          waitedMs: Date.now() - startedAt,
+        };
+      }
+      await delay(Math.min(WAIT_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+    }
+    return {
+      met: false,
+      url,
+      ...tab,
+      checks,
+      waitedMs: Date.now() - startedAt,
+      ...(lastMiss !== undefined ? { lastMiss } : {}),
+    };
+  }
+
+  /** One `find` check. A page that refuses it says so in an error. */
+  async #find(
+    url: string,
+    text: string,
+    deadline: number,
+  ): Promise<{ present: boolean; excerpt?: string | undefined }> {
+    const result = await this.pageAction(
+      { action: "find", url, text },
+      { timeoutMs: Math.max(1, deadline - Date.now()) },
+    );
+    if (!result.ok) {
+      if (/Unknown action/.test(result.error ?? "")) throw new UnknownActionError();
+      // The page refused the check itself, which asking again will not change.
+      throw new PreconditionError(result.error ?? "The page could not be checked.");
+    }
+    const data = result.data as { found?: unknown; excerpt?: unknown };
+    return {
+      present: data.found === true,
+      excerpt: typeof data.excerpt === "string" ? data.excerpt : undefined,
+    };
+  }
+
+  /** The same check for a tab from before `find`: a live read, searched here. */
+  async #findByRead(
+    url: string,
+    text: string,
+    deadline: number,
+  ): Promise<{ present: boolean; excerpt?: string | undefined }> {
+    const result = await this.pageAction(
+      { action: "read", url, format: "text", maxChars: 1_048_576 },
+      { timeoutMs: Math.max(1, deadline - Date.now()) },
+    );
+    const content = (result.data as { content?: unknown } | undefined)?.content;
+    if (!result.ok || typeof content !== "string") {
+      throw new PreconditionError(result.error ?? "The page could not be read to check it.");
+    }
+    const at = content.toLowerCase().indexOf(text.toLowerCase());
+    if (at === -1) return { present: false };
+    return {
+      present: true,
+      excerpt: content
+        .slice(Math.max(0, at - 80), at + text.length + 80)
+        .replace(/\s+/g, " ")
+        .trim(),
+    };
   }
 
   /**

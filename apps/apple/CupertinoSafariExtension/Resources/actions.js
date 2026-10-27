@@ -339,28 +339,50 @@
    * them; a bounded list with a `truncated` flag is more useful than a complete
    * one nobody reads.
    */
-  function enumerate(limit, includeCodes, maxValueChars) {
+  function enumerate(limit, includeCodes, maxValueChars, filter = {}) {
     handles.clear();
     const found = [];
     const all = document.querySelectorAll(SELECTOR);
+    // Applied HERE, before the cap, rather than by the caller afterwards: on a
+    // form of 183 fields the one wanted is rarely in the first sixty, and a
+    // filter run over a capped list cannot find what the cap dropped. Matched
+    // on the label and a link's address, never on a value, so a filter cannot
+    // be used to probe what a withheld field holds.
+    const query = typeof filter.query === "string" ? filter.query.toLowerCase() : "";
+    const wantKind = typeof filter.kind === "string" ? filter.kind : "";
+    const inViewOnly = filter.inViewOnly === true;
+    const filtered = Boolean(query || wantKind || inViewOnly);
     for (const el of all) {
       if (!visible(el)) continue;
+      const k = kind(el);
+      if (wantKind && k !== wantKind) continue;
+      const text = label(el);
+      const href = el.tagName.toLowerCase() === "a" ? el.href || null : null;
+      if (
+        query &&
+        !text.toLowerCase().includes(query) &&
+        !(href && href.toLowerCase().includes(query))
+      ) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      // Whether it is on screen RIGHT NOW, which is different from existing.
+      // A caller choosing between two plausible matches should prefer the one
+      // the user can see.
+      const inView =
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || 0) &&
+        rect.right <= (window.innerWidth || 0);
+      if (inViewOnly && !inView) continue;
       const id = PAGE + "-e" + nextId++;
       handles.set(id, el);
-      const rect = el.getBoundingClientRect();
       found.push({
         id,
-        kind: kind(el),
-        label: label(el),
-        // Whether it is on screen RIGHT NOW, which is different from existing.
-        // A caller choosing between two plausible matches should prefer the one
-        // the user can see.
-        inView:
-          rect.top >= 0 &&
-          rect.left >= 0 &&
-          rect.bottom <= (window.innerHeight || 0) &&
-          rect.right <= (window.innerWidth || 0),
-        href: el.tagName.toLowerCase() === "a" ? el.href || null : null,
+        kind: k,
+        label: text,
+        inView,
+        href,
         ...describeValue(el, includeCodes, maxValueChars),
         // Only when true, so the ordinary element carries no extra key.
         ...(isDisabled(el) ? { disabled: true } : {}),
@@ -373,6 +395,9 @@
       page: PAGE,
       elements: found,
       truncated: found.length >= limit && all.length > found.length,
+      // Said by the page, so the server can tell a filtered list from one an
+      // older content script returned whole, ignoring a filter it never knew.
+      ...(filtered ? { filtered: true } : {}),
     };
   }
 
@@ -432,6 +457,60 @@
     el.scrollIntoView({ block: "center", behavior: "instant" });
     el.click();
     return { clicked: id, label: label(el), kind: kind(el) };
+  }
+
+  /**
+   * Submit the form an element belongs to, as pressing Enter in it would.
+   *
+   * Not a synthetic Enter key: a content script's KeyboardEvent arrives with
+   * `isTrusted: false`, and the browser runs no default action for it, so the
+   * form would not submit and nothing would say so. `requestSubmit()` is the
+   * DOM's own verb for "submit as a person would": it runs the form's
+   * validation and fires `submit`, which is where a React or Vue form does its
+   * work. `form.submit()` would skip both, and post whatever the DOM holds
+   * behind the framework's back.
+   *
+   * A form that fails its own validation is NOT submitted, and the answer
+   * names the fields and the browser's own message for each, which is what a
+   * person would have been shown.
+   */
+  function submit(id) {
+    const el = resolve(id);
+    const form = el.form || (typeof el.closest === "function" ? el.closest("form") : null);
+    if (!form) {
+      throw new Error(
+        'Element "' +
+          id +
+          '" is not inside a form, so there is nothing to submit. If the page sends it with a ' +
+          "button, use apple_safari_click on that button.",
+      );
+    }
+    if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+      const invalid = [];
+      for (const field of form.elements || []) {
+        if (field.validity && field.validity.valid === false) {
+          invalid.push(label(field) + ": " + (field.validationMessage || "invalid"));
+        }
+      }
+      throw new Error(
+        "The form was not submitted: it fails its own validation" +
+          (invalid.length ? " (" + invalid.join("; ") + ")" : "") +
+          ". Fill those fields and submit again.",
+      );
+    }
+    if (typeof form.requestSubmit !== "function") {
+      throw new Error(
+        "This page's form cannot be submitted the way a person would (no requestSubmit). Use " +
+          "apple_safari_click on its submit button.",
+      );
+    }
+    el.scrollIntoView?.({ block: "center", behavior: "instant" });
+    form.requestSubmit();
+    return {
+      submitted: id,
+      action: form.action || null,
+      method: String(form.method || "get").toLowerCase(),
+    };
   }
 
   /**
@@ -743,6 +822,37 @@
   }
 
   /**
+   * Whether some text is on the page now, for `wait_for`.
+   *
+   * The same text `read` returns, so a wait and a read cannot disagree about
+   * what the page says, but only a short passage around the first match
+   * crosses the boundary: the server asks this about once a second while it
+   * waits, and the whole page each time would be hundreds of kilobytes.
+   * Case-insensitive, because a caller waiting for "Order confirmed" means
+   * the words, not the CSS that may have upper-cased them.
+   */
+  function find(text) {
+    const wanted = String(text ?? "");
+    if (!wanted) throw new Error("Nothing to look for: text is empty.");
+    const body = readableText();
+    const at = body.toLowerCase().indexOf(wanted.toLowerCase());
+    return {
+      url: location.href,
+      title: document.title || "",
+      found: at !== -1,
+      ...(at === -1
+        ? {}
+        : {
+            excerpt: body
+              .slice(Math.max(0, at - 80), at + wanted.length + 80)
+              .replace(/\s+/g, " ")
+              .trim(),
+          }),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Run one command and describe what happened.
    *
    * Never throws into the caller: a command that fails comes back as
@@ -788,7 +898,7 @@
       // the click is the wrong place to find out what — a single-page app that
       // has moved on since the enumeration lands here too, and says so.
       if (
-        (command.action === "click" || command.action === "fill") &&
+        (command.action === "click" || command.action === "fill" || command.action === "submit") &&
         typeof command.url === "string" &&
         command.url !== location.href
       ) {
@@ -810,6 +920,7 @@
               Math.min(command.limit || 60, 200),
               command.includeCodes === true,
               Math.min(Math.max(1, command.maxValueChars || DEFAULT_VALUE_CHARS), MAX_VALUE_CHARS),
+              { query: command.query, kind: command.kind, inViewOnly: command.inViewOnly },
             ),
           };
         case "read":
@@ -820,6 +931,10 @@
           return { ok: true, data: fill(command.elementId, command.text ?? "") };
         case "scroll":
           return { ok: true, data: scroll(command.direction) };
+        case "submit":
+          return { ok: true, data: submit(command.elementId) };
+        case "find":
+          return { ok: true, data: find(command.text) };
         case "codes":
           return { ok: true, data: findCodes(Math.min(command.limit || 10, 40)) };
         // Answered by `network.js`, which owns the buffer. It loads from its own

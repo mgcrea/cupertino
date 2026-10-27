@@ -23,6 +23,19 @@ summary.
   only. The arguments are the watch filter, a sender is required, and an event carries envelope
   metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet,
   Claude Code included.
+- **Safari can submit a form and wait for a page.** `apple_safari_submit` submits the form an
+  element belongs to, as pressing Enter would, after the form's own validation, and names the
+  fields that fail it. `apple_safari_wait_for` waits until some text appears on a page, or leaves
+  it. `apple_safari_page_elements` takes `query`, `kind` and `inViewOnly`, applied before its cap.
+  `read_page`, `page_elements`, `find_codes` and `wait_for` read the frontmost tab when no `url` is
+  given.
+
+### Changed
+
+- **Safari matches more open tabs to history.** A tab whose history row only exists with a query
+  added (`/plus5` beside `/plus5?variant=…`) now matches, as `historyMatch: "query-added"`.
+- **Safari pulls large network bodies faster** by queueing the next chunks instead of waiting a
+  second between each, and `read_page` no longer parses every stored capture to find one.
 
 ## [1.32.0] - 2026-10-27
 

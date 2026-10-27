@@ -40,6 +40,7 @@ which the user can see and revoke per site.
 | `apple_safari_list_reading_list` | saved items, and which are unread                     |
 | `apple_safari_read_page`         | a captured page as text or HTML                       |
 | `apple_safari_page_elements`     | what is clickable or typeable on a live page          |
+| `apple_safari_wait_for`          | wait until some text appears on a page, or leaves it  |
 | `apple_safari_diagnostics`       | which lanes work, and why one does not                |
 
 **Opt-in read** — `APPLE_SAFARI_ALLOW_CODES`
@@ -65,6 +66,7 @@ which the user can see and revoke per site.
 | `apple_safari_click`                 | click an element on a live page         |
 | `apple_safari_fill`                  | type into one                           |
 | `apple_safari_scroll`                | scroll a page                           |
+| `apple_safari_submit`                | submit the form an element belongs to   |
 
 ## Configuration
 

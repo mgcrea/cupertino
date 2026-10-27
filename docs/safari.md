@@ -190,8 +190,8 @@ their browser can be scripted.
 ## Built
 
 `packages/safari` shipped this surface as six read tools with no write tool, and now ships
-**seventeen**: the reads, plus two Apple Events writes and three extension-lane actions, all behind
-`allowWrites`, `find_codes` behind `allowCodes`, and the three network tools behind `allowNetwork`.
+**nineteen**: the reads (with `wait_for` among them), plus two Apple Events writes and four
+extension-lane actions, all behind `allowWrites`, `find_codes` behind `allowCodes`, and the three network tools behind `allowNetwork`.
 Each arrival is recorded further down, under [Writes, built](#writes-built),
 [Acting on a page, built](#acting-on-a-page-built) and [Network capture](#network-capture). Three
 decisions came out of building the read half that this document did not anticipate.
@@ -720,8 +720,8 @@ duplicate nothing can remove.
 
 ## Acting on a page, built
 
-**Shipped:** `apple_safari_page_elements`, `apple_safari_click`, `apple_safari_fill` and
-`apple_safari_scroll`. This is the capability `do JavaScript` would have bought, taken through the
+**Shipped:** `apple_safari_page_elements`, `apple_safari_click`, `apple_safari_fill`,
+`apple_safari_scroll`, `apple_safari_submit` and `apple_safari_wait_for`. This is the capability `do JavaScript` would have bought, taken through the
 extension instead, and it is the first lane in the bundle that needs **no TCC grant of any kind**.
 
 ### The channel, and the two candidates it beat
@@ -799,6 +799,39 @@ caller to look at the page rather than try again.
 The command also carries an `expiresAt` tied to the same deadline the server gives up on, and the
 server deletes the command file when it times out. Either alone would prevent a click landing minutes
 after the caller was told it had not.
+
+### Submit, wait and filter: three verbs a long form needed
+
+Added 2026-10-27, unit-tested in the page (`content-script.test.ts`) and against the fake extension
+(`actions.test.ts`), and **not yet run in a real Safari**: like everything on this lane, that needs a
+notarized build.
+
+**`submit` is not "press Enter".** A content script's `KeyboardEvent` arrives with
+`isTrusted: false`, and the browser runs no default action for it, so a synthetic Enter submits
+nothing and says nothing. `submit` calls `form.requestSubmit()` on the element's form instead, which
+is the DOM's own "submit as a person would": it runs the form's validation and fires `submit`, where
+a React form does its work (`form.submit()` would skip both). A form that fails validation is not
+submitted, and the error names each field with the browser's own message. It is gated like `click`,
+checks the URL like `click`, and lights its own notice in the app.
+
+**`wait_for` loops on the server, not in the page.** The page runs one command per poll,
+synchronously, so a wait inside it would hold up that tab's other commands. The page answers a cheap
+`find` (whether the text is there, and a short passage around it) and the server asks again until
+the deadline. With no `url` the frontmost tab is resolved again on every check, so "click, then wait
+for the confirmation" follows the navigation. A tab whose content script predates `find` gets a live
+`read` searched on the server instead, so the tool works against an extension that does not have
+the new command.
+
+**Filters on `page_elements` run before the cap.** On the 183-field Shopify form the field wanted is
+rarely among the first sixty, and a filter applied after a capped enumeration cannot find what the
+cap dropped. `query` matches a label or a link's address and never a value, so it cannot be used to
+probe a withheld field. An older content script ignores the filters, and the server then filters its
+capped list itself and says the list may be short.
+
+**`url` is optional on the reading tools.** `read_page`, `page_elements`, `find_codes` and
+`wait_for` default to the frontmost tab, found with the live-tabs script, and answer with
+`tab: "frontmost"` and the URL they used. The acting tools keep their required `url`: the element id
+is what picks their page, and the URL is the check that it has not moved.
 
 ### Elements are addressed by ID, never by selector
 

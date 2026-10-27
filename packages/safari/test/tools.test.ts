@@ -156,7 +156,7 @@ const tab = (index: number, url: string) => ({
 });
 
 describe("tool registration", () => {
-  it("registers eight ungated tools", async () => {
+  it("registers nine ungated tools", async () => {
     expect(await toolNames(await connect())).toEqual([
       "apple_safari_diagnostics",
       "apple_safari_get_page",
@@ -168,6 +168,8 @@ describe("tool registration", () => {
       "apple_safari_page_elements",
       "apple_safari_read_page",
       "apple_safari_search_history",
+      // Ungated for the same reason: it reads the page until some text appears.
+      "apple_safari_wait_for",
     ]);
   });
 
@@ -180,18 +182,19 @@ describe("tool registration", () => {
    * it still does the same job in the other direction: the read set must be
    * untouched, and only the named verbs may appear.
    */
-  it("adds five write tools with writes enabled, and nothing else", async () => {
+  it("adds six write tools with writes enabled, and nothing else", async () => {
     const off = await toolNames(await connect());
     const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_WRITES: "true" }));
     expect(on.filter((n) => !off.includes(n))).toEqual([
       // Two Apple Events that move the browser between pages…
       "apple_safari_add_reading_list_item",
-      // …and three that act inside one, through the extension, sending no
+      // …and four that act inside one, through the extension, sending no
       // Apple Event at all.
       "apple_safari_click",
       "apple_safari_fill",
       "apple_safari_open_url",
       "apple_safari_scroll",
+      "apple_safari_submit",
     ]);
     expect(off.filter((n) => !on.includes(n))).toEqual([]);
   });
@@ -206,6 +209,7 @@ describe("tool registration", () => {
     expect(names).not.toContain("apple_safari_add_reading_list_item");
     expect(names).not.toContain("apple_safari_click");
     expect(names).not.toContain("apple_safari_fill");
+    expect(names).not.toContain("apple_safari_submit");
   });
 
   /**
