@@ -1094,6 +1094,24 @@ struct MailComposerCheck {
       check("the front is still handed back", front.given == [4242])
     }
 
+    // Final review M1: an empty replacement is posted as Delete over the
+    // verified selection (`AXComposerWindow.paste`), not as a paste.
+    do {
+      let fake = EditFake(own: "Keep this, drop this part, keep the rest")
+      let (result, board, front) = run(
+        fake, Request(edits: [MailComposerText.Edit(find: " drop this part,", replace: "")]))
+      check(
+        "an edit with an empty replace deletes the matched text, read back as the result",
+        result["replaced"] as? Bool == true
+          && result["text"] as? String == "Keep this, keep the rest"
+          && fake.own == "Keep this, keep the rest")
+      check(
+        "as an empty text over the selection, the quote kept, saved, board and front back",
+        fake.pasted == [.text("")] && board.writes == [.text("")]
+          && fake.quote == ["On Monday, Ann wrote:", "Hi"] && result["quoteKept"] as? Bool == true
+          && fake.saves == 1 && board.untouchedOrRestored && front.given == [4242])
+    }
+
     insertChecks()
     fixRoundChecks()
 
