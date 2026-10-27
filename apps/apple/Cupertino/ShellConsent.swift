@@ -12,11 +12,12 @@ import SwiftUI
 ///
 /// - **Don't run** is the default button, and Return and Escape both mean it. Somebody typing
 ///   when the window arrives declines it rather than approving it.
-/// - The two run buttons have no key equivalent, never take keyboard focus (so Space cannot
-///   press them either), stay disabled for `armDelay` after the window shows (so a click
-///   already on its way lands on nothing), and refuse an Accessibility press: a program running
-///   with Cupertino's Accessibility grant could otherwise press them without a click at all.
-///   The cost is that VoiceOver can read them but not press them.
+/// - The two run buttons are `HandPressedButton`s. They have no key equivalent, never take
+///   keyboard focus, stay disabled for `armDelay` after the window shows (so a click already on
+///   its way lands on nothing), and act only on a hardware click: an Accessibility press, a
+///   `performClick` or a posted event does nothing. A program running with Cupertino's
+///   Accessibility grant could otherwise approve the window without a click at all. The cost is
+///   that VoiceOver can read them but not press them.
 /// - The window is a `ShellPanel`, which drops every click and keystroke that did not come
 ///   from hardware.
 /// - No answer within `ShellPolicy.askTimeout` is a no, timed from when the window shows.
@@ -47,6 +48,14 @@ final class ShellConsent: ShellConsenting {
   static let armDelay: TimeInterval = 1
 
   nonisolated let queue: ShellPromptQueue
+
+  /// The screen the window goes on: the one with the pointer, else the main one. Settable so
+  /// `make shell-window-check` can have none.
+  static var screenForPrompt: () -> NSScreen? = {
+    let mouse = NSEvent.mouseLocation
+    return NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+      ?? NSScreen.main
+  }
 
   private init() {
     queue = ShellPromptQueue(
@@ -90,7 +99,6 @@ final class ShellConsent: ShellConsenting {
   private struct Showing {
     let id: Int
     let panel: ShellPanel
-    let runButtons: [ShellButton]
   }
 
   private var showing: Showing?
@@ -105,16 +113,19 @@ final class ShellConsent: ShellConsenting {
       self.showing = nil
     }
     guard let front else { return }
-    let mouse = NSEvent.mouseLocation
-    guard
-      let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
-        ?? NSScreen.main
-    else { return }
     let id = front.id
+    guard let screen = Self.screenForPrompt() else {
+      // Unseen, it could never be answered or time out, and every request behind it would
+      // wait for good. Answering it moves the queue on, as `drawCard` fails safe too.
+      hostLog("shell", .error, "no screen to show the Shell window on; the request was cancelled")
+      queue.answer(id, .cancelled)
+      return
+    }
     let window = PromptWindow(front.prompt, screen: screen) { [weak self] answer in
       self?.choose(id, answer)
     }
-    showing = Showing(id: id, panel: window.panel, runButtons: window.runButtons)
+    showing = Showing(id: id, panel: window.panel)
+    for button in window.runButtons { button.arm(after: Self.armDelay) }
     let visible = screen.visibleFrame
     let size = window.panel.frame.size
     window.panel.setFrameOrigin(
@@ -123,12 +134,6 @@ final class ShellConsent: ShellConsenting {
         y: (visible.midY - size.height / 2).rounded()))
     window.panel.makeKeyAndOrderFront(nil)
     queue.shown(id)
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.armDelay) { [weak self] in
-      MainActor.assumeIsolated {
-        guard let showing = self?.showing, showing.id == id else { return }
-        for button in showing.runButtons { button.isEnabled = true }
-      }
-    }
   }
 
   private func choose(_ id: Int, _ answer: ShellPromptAnswer) {
@@ -260,11 +265,10 @@ final class ShellPanel: NSPanel {
   }
 }
 
-/// A button with its action as a closure, which can refuse an Accessibility press.
+/// A button with its action as a closure, for the safe answer: any press counts, Return,
+/// VoiceOver and a program's included, because all it can do is decline.
 private final class ShellButton: NSButton {
   var onPress: (() -> Void)?
-  /// False for the run buttons: a press must be a click.
-  var allowsAccessibilityPress = true
 
   static func make(_ title: String, onPress: @escaping () -> Void) -> ShellButton {
     let button = ShellButton(title: title, target: nil, action: nil)
@@ -276,10 +280,85 @@ private final class ShellButton: NSButton {
   }
 
   @objc private func pressed() { onPress?() }
+}
 
-  override func accessibilityPerformPress() -> Bool {
-    allowsAccessibilityPress ? super.accessibilityPerformPress() : false
+/// A button only a person's click can press: the run buttons, and the confirming buttons of the
+/// sheets that lower the bar.
+///
+/// A program has three ways to press a button without a person, and each is closed:
+///
+/// - **Posting a click or a key.** `ShellPanel` drops it before AppKit sees it.
+/// - **An Accessibility press**, from any process with the grant, including a script Cupertino
+///   started. AppKit exposes an `NSButton`'s CELL as its accessibility element and ignores the
+///   button itself, so the refusal is on `Cell`; an override on the button alone was measured
+///   to do nothing.
+/// - **Anything that ends in the action**: `performClick`, Space on a focused button, an
+///   `NSButtonCell` pressed some other way. The action itself goes ahead only when the event
+///   being handled is a left mouse-up in this button's own window that passes
+///   `ShellInput.isHardware`. Anything else is ignored and logged.
+///
+/// It also never takes keyboard focus, has no key equivalent, and `arm(after:)` keeps it
+/// disabled for a moment after its window shows, so a click already on its way lands on
+/// nothing. The cost: VoiceOver can read it but not press it.
+final class HandPressedButton: NSButton {
+  /// The cell AppKit hands to Accessibility in the button's place, refusing its press.
+  final class Cell: NSButtonCell {
+    override func accessibilityPerformPress() -> Bool { false }
   }
+
+  override class var cellClass: AnyClass? {
+    get { Cell.self }
+    set {}
+  }
+
+  var onPress: (() -> Void)?
+
+  static func make(_ title: String, onPress: @escaping () -> Void) -> HandPressedButton {
+    let button = HandPressedButton(title: title, target: nil, action: nil)
+    button.target = button
+    button.action = #selector(pressed)
+    button.onPress = onPress
+    button.bezelStyle = .push
+    button.keyEquivalent = ""
+    button.refusesFirstResponder = true
+    return button
+  }
+
+  /// Disabled now, enabled after `delay` if its window is still on screen. Call it before the
+  /// window is ordered front.
+  func arm(after delay: TimeInterval) {
+    isEnabled = false
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+      MainActor.assumeIsolated {
+        guard let self, self.window?.isVisible == true else { return }
+        self.isEnabled = true
+      }
+    }
+  }
+
+  /// Whether `event` is a person's click in `window`: a left mouse-up delivered there, from
+  /// hardware.
+  static func isPersonClick(_ event: NSEvent?, in window: NSWindow?) -> Bool {
+    guard let event, let window, event.type == .leftMouseUp, event.window === window else {
+      return false
+    }
+    return ShellPanel.fromHardware(event)
+  }
+
+  /// Presses that reached the action and were turned away there. For `make
+  /// shell-window-check`, which tells the cell's refusal from the action's by it.
+  private(set) static var refusedAtAction = 0
+
+  @objc private func pressed() {
+    guard Self.isPersonClick(NSApp.currentEvent, in: window) else {
+      Self.refusedAtAction += 1
+      hostLog("shell", .info, "ignored a press of '\(title)' that was not a click by hand")
+      return
+    }
+    onPress?()
+  }
+
+  override func accessibilityPerformPress() -> Bool { false }
 }
 
 /// The confirmation window for one request, in the spec's order: who is asking, what the agent
@@ -287,7 +366,7 @@ private final class ShellButton: NSButton {
 @MainActor
 private struct PromptWindow {
   let panel: ShellPanel
-  let runButtons: [ShellButton]
+  let runButtons: [HandPressedButton]
 
   static let width: CGFloat = 600
   static let inset: CGFloat = 20
@@ -347,15 +426,12 @@ private struct PromptWindow {
 
     let dontRun = ShellButton.make("Don't run") { answer(.dontRun) }
     dontRun.keyEquivalent = "\r"
-    let runOnce = ShellButton.make("Run once") { answer(.runOnce) }
+    let runOnce = HandPressedButton.make("Run once") { answer(.runOnce) }
     var runs = [runOnce]
     if prompt.offerSession {
-      runs.insert(ShellButton.make("Run, and stop asking this session") { answer(.runForSession) }, at: 0)
-    }
-    for button in runs {
-      button.isEnabled = false
-      button.refusesFirstResponder = true
-      button.allowsAccessibilityPress = false
+      runs.insert(
+        HandPressedButton.make("Run, and stop asking this session") { answer(.runForSession) },
+        at: 0)
     }
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)

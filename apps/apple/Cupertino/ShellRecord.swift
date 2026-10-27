@@ -91,13 +91,10 @@ nonisolated enum ShellRecord {
     queue.async { write(entry, in: dir, now: now) }
   }
 
-  /// Wait for every queued line to land. For `make shell-check`, which reads the directory
-  /// straight after an append; the app never needs it, since `recent` and `verify` read on the
-  /// writer's own queue.
-  static func flushForCheck() { queue.sync {} }
-
-  /// Wait for every queued line to land, for the app quitting: `append` returns before its line
-  /// is written, and a refusal recorded just before quit would otherwise go with the process.
+  /// Wait for every queued line to land. `append` returns before its line is written, so the
+  /// app calls this as it quits, or a refusal recorded just before would go with the process;
+  /// `make shell-check` calls it to read the directory straight after an append. Reads need
+  /// none: `recent` and `verify` run on the writer's own queue.
   static func drain() { queue.sync {} }
 
   /// On `queue`.

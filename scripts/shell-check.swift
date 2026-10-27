@@ -270,7 +270,7 @@ struct ShellCheck {
     e.decision = .approved
     e.exitCode = 0
     ShellRecord.append(e, in: dir, now: t0)
-    ShellRecord.flushForCheck()
+    ShellRecord.drain()
     let text = try FileManager.default.contentsOfDirectory(
       at: dir, includingPropertiesForKeys: nil
     ).map { try String(contentsOf: $0, encoding: .utf8) }.joined()
@@ -295,7 +295,7 @@ struct ShellCheck {
     ShellRecord.append(e, in: dir, now: old)
     e.at = t0
     ShellRecord.append(e, in: dir, now: t0)
-    ShellRecord.flushForCheck()
+    ShellRecord.drain()
     check(
       "a segment older than 90 days is dropped",
       try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 1)
@@ -314,7 +314,7 @@ struct ShellCheck {
 
     let next = Calendar(identifier: .gregorian).date(byAdding: .day, value: 10, to: t0)!
     ShellRecord.append(e, in: dir, now: next)
-    ShellRecord.flushForCheck()
+    ShellRecord.drain()
     check(
       "a new month opens from the last one's head",
       try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 2
@@ -345,7 +345,7 @@ struct ShellCheck {
     defer { try? FileManager.default.removeItem(at: cut) }
     e.decision = .declined
     ShellRecord.append(e, in: cut, now: t0)
-    ShellRecord.flushForCheck()
+    ShellRecord.drain()
     let month = try FileManager.default.contentsOfDirectory(
       at: cut, includingPropertiesForKeys: nil
     )[0]
@@ -1253,7 +1253,7 @@ extension ShellCheck {
     // `conn` turned a command down at the start; closing it lifts the cooldown.
     ShellServer.connectionClosed(conn)
     let recorded = shellRun("echo \(secret)", on: conn)
-    ShellRecord.flushForCheck()
+    ShellRecord.drain()
     let entries = ShellRecord.recent(1000, in: recordDir)
     check("every request is on the record", entries.count == requestsMade.count)
     check(
@@ -1537,5 +1537,17 @@ extension ShellCheck {
     }
     check("a shown window cancelled answers cancelled", f.wait() == .cancelled)
     check("and the queue is empty", queue.front == nil && queue.waiting == 0)
+
+    // With no screen, the window answers a request it could not show, and the queue moves on.
+    let g = Asked(queue, prompt(UUID(), "g"))
+    check("g in front", eventually { queue.front?.prompt.requestId == "g" })
+    let h = Asked(queue, prompt(UUID(), "h"))
+    check("h behind it", eventually { queue.waiting == 2 })
+    if let frontG = queue.front { queue.answer(frontG.id, .cancelled) }
+    check("a front answered before it showed is answered", g.wait() == .cancelled)
+    check("and the next comes to the front", eventually { queue.front?.prompt.requestId == "h" })
+    if let frontH = queue.front { queue.answer(frontH.id, .cancelled) }
+    check("which can be answered the same way", h.wait() == .cancelled)
+    check("leaving nothing waiting", queue.front == nil && queue.waiting == 0)
   }
 }

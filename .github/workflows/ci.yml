@@ -217,6 +217,10 @@ jobs:
       # image lacks are skipped and say so.
       - name: Shell runner 🔍
         run: make shell-check
+      # The Shell window's run buttons, pressed every way a program can reach them
+      # without a click. AppKit, but nothing is shown or posted.
+      - name: Shell window 🔍
+        run: make shell-window-check
       # The third in-process surface, and the one with the most to be careful
       # about, because it can click. It is CI-safe by construction and the check
       # says so at length: every tools/call in it is either a refusal path that

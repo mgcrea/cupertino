@@ -395,6 +395,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // quit goes with the process.
     let calls = Date().addingTimeInterval(1)
     while ShellServer.openCalls > 0, Date() < calls { Thread.sleep(forTimeInterval: 0.02) }
+    // Again: a call that passed its last cancel check just before `stopAll` can spawn after the
+    // snapshot above, and its own kill comes after a grace longer than that wait.
+    ChildTermination.terminateGroups(ShellRunner.live.map(\.pid), grace: 3)
     ShellRecord.drain()
   }
 

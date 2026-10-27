@@ -422,6 +422,35 @@ shell-check: ## Assert the shell surface's runner, seal, run record and server, 
 		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
 	@apps/apple/.build/shell-check
 
+shell-window-check: ## Assert only a person's click presses the Shell window's run buttons
+	@# AppKit, so apart from shell-check, which must stay free of it. Posts no
+	@# event, shows no window, launches nothing: the buttons sit in views never
+	@# put on screen, and each press calls what an Accessibility client or
+	@# performClick reaches. It also has the window find no screen, and asserts
+	@# the queue answers rather than wedges.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/shell-window-check \
+		apps/apple/Cupertino/ShellConsent.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/ShellPromptQueue.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift \
+		apps/apple/Cupertino/ChildTermination.swift scripts/shell-window-check.swift
+	@apps/apple/.build/shell-window-check
+
 dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 	@# The gate neither screen-check nor sound-check can be: both drive one
 	@# server directly, and this bug lives in the code that CHOOSES the server.
@@ -1402,7 +1431,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check shell-check desktop-check mail-composer-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check shell-check shell-window-check desktop-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
