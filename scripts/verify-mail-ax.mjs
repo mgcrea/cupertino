@@ -14,6 +14,7 @@
  *
  *   node scripts/verify-mail-ax.mjs
  *   node scripts/verify-mail-ax.mjs --compose
+ *   node scripts/verify-mail-ax.mjs --compose --close-timeout=15   # a script closes the windows
  *
  * ## `--compose` runs the check; it used to print one
  *
@@ -108,6 +109,11 @@ import { join } from "node:path";
 
 const DEBUG = process.argv.includes("--debug");
 const COMPOSE = process.argv.includes("--compose");
+// How long each "close the Mail window" step waits: two minutes suit a person;
+// a script closing them answers in seconds, and a closer that failed should
+// not stall the run. `--close-timeout=15`.
+const CLOSE_SECONDS =
+  Number(process.argv.find((a) => a.startsWith("--close-timeout="))?.split("=")[1]) || 120;
 const BUNDLE = DEBUG ? "io.mgcrea.cupertino.debug" : "io.mgcrea.cupertino";
 const SOCKET = join(homedir(), "Library/Application Support", BUNDLE, "cupertino.sock");
 
@@ -175,7 +181,7 @@ const openComposers = async (mail, quoteChars = 0) => {
  * Wait for a person (or the controller) to close the window titled `subject`.
  * The script cannot close it: the app's driver is not lent to a terminal.
  */
-const waitForClose = async (mail, subject, seconds = 120) => {
+const waitForClose = async (mail, subject, seconds = CLOSE_SECONDS) => {
   // With "Prefer tabs: Always" the composer is a TAB, and closing the window's
   // selected tab could close another draft: the line says "(tab)", so whoever
   // closes it selects that tab first.
