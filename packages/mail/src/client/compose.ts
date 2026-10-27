@@ -181,7 +181,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * What `awaitNewComposer` found: the one composer that appeared, with the own
  * text it was listed with (null for a tab Mail is not showing), several that
- * could each be it (never picked between), or nothing in time (null).
+ * could each be it (never picked between), one that could be the older draft
+ * under its subject (`ambiguous` with one handle), or nothing in time (null).
  */
 export type NewComposer = { handle: string; text: string | null } | { ambiguous: string[] };
 
@@ -205,6 +206,9 @@ export const sameHead = (a: string, b: string): boolean => {
   const n = Math.min(x.length, y.length, HEAD_CHARS);
   return x.slice(0, n) === y.slice(0, n);
 };
+
+/** A composer taken as the new one, with the own text it was listed with. */
+const taken = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
 
 /**
  * Wait for a composer that was not there before, and return its handle.
@@ -250,6 +254,16 @@ export const sameHead = (a: string, b: string): boolean => {
  * yet is a body still loading: it is polled on, and refused only if it still
  * reads none at `timeoutMs`. The text returned is what the caller sends as `expectHead`, so the
  * fill binds to the draft judged here.
+ *
+ * A LONE candidate is judged the same way whenever a composer under the
+ * subject was in `before`. Two same-titled tabs both come back fresh once a
+ * tab opens, and if the new one closes during the poll (the person, or Mail),
+ * the re-mint runs again and the OLD draft is the one fresh candidate left:
+ * taken unjudged, its text would be replaced by the new body and saved. So it
+ * is refused (`ambiguous` with its one handle) when its text reads as an
+ * older composer's, or any of those had none; polled on while it has no text
+ * yet; and refused if it still has none at `timeoutMs`. With no composer
+ * under the subject before, nothing can be confused, and it is taken at once.
  */
 export const awaitNewComposer = async (
   lane: MailAxLane,
@@ -270,7 +284,6 @@ export const awaitNewComposer = async (
     typeof text !== "string" ||
     unread ||
     held.some((t) => typeof t === "string" && sameHead(t, text));
-  const found = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
   const deadline = Date.now() + timeoutMs;
   // The candidates rule B was waiting on: past the deadline they are still
   // several windows, refused as such rather than as none.
@@ -280,14 +293,24 @@ export const awaitNewComposer = async (
       const listed = await lane.composers();
       const fresh = listed.filter((c) => !known.has(c.composer));
       const candidates = subject === undefined ? fresh : fresh.filter((c) => c.subject === subject);
-      if (candidates.length === 1) return found(candidates[0] as NativeComposer);
+      const only = candidates.length === 1 ? (candidates[0] as NativeComposer) : undefined;
+      // With no composer under the subject before, nothing can be confused.
+      if (only && had === 0) return taken(only);
+      // With one, the lone candidate may be it, re-minted once the new tab
+      // closed: judged as rule B judges, and polled on while it reads no text.
+      if (only && !isOld(only.text)) return taken(only);
+      if (only) {
+        const loading = !unread && typeof only.text !== "string";
+        if (!loading || Date.now() >= deadline) return { ambiguous: [only.composer] };
+        waitedOn = [only.composer];
+      }
       if (candidates.length > 1) {
         const selected = candidates.filter((c) => c.tab === "selected");
         const grew = listed.filter((c) => c.subject === subject).length - had;
         const pick = selected[0];
         const old = pick === undefined || isOld(pick.text);
         const ruleB = subject !== undefined && counted && grew === 1 && selected.length === 1;
-        if (ruleB && !old) return found(pick as NativeComposer);
+        if (ruleB && !old) return taken(pick as NativeComposer);
         // A just-opened tab's body may not read yet: when its missing text is
         // the only thing in the way, poll on, and refuse only at the deadline.
         const waiting = ruleB && !unread && typeof pick?.text !== "string";
@@ -353,10 +376,15 @@ export const composeNatively = async (
       sent: false,
       note:
         `Mail was asked to open a ${params.mode} window for "${subject}", and ` +
-        `${found.ambiguous.length} new composers titled that appeared (${found.ambiguous.join(", ")}), ` +
-        `so this path cannot tell which one it opened. Nothing was filled, pressed or sent, and ` +
-        `all of them are left open in Mail. Close the extra one, finish the other by hand, ` +
-        `then retry.` +
+        (found.ambiguous.length === 1
+          ? `the one new composer under that title (${found.ambiguous[0]}) could not be told ` +
+            `from the draft already open under it: its text reads as that draft's, or could ` +
+            `not be read. Nothing was filled, pressed or sent, and every window is left open ` +
+            `in Mail. Close the extra one, finish the other by hand, then retry.`
+          : `${found.ambiguous.length} new composers titled that appeared ` +
+            `(${found.ambiguous.join(", ")}), so this path cannot tell which one it opened. ` +
+            `Nothing was filled, pressed or sent, and all of them are left open in Mail. Close ` +
+            `the extra one, finish the other by hand, then retry.`) +
         interferenceNote(await watch.check()),
     };
   }

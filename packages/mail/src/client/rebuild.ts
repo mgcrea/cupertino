@@ -610,9 +610,12 @@ export const rebuildDraft = async (
                 "that title was readable in time. Nothing was filled. The original draft was not " +
                 "changed."
             : `Mail was asked to open a ${kind} for "${opened.subject}", and ` +
-                `${found.ambiguous.length} new windows under that title appeared ` +
-                `(${found.ambiguous.join(", ")}), so which one is it cannot be told. Nothing was ` +
-                "filled. The original draft was not changed.",
+                (found.ambiguous.length === 1
+                  ? `the one new window under that title (${found.ambiguous[0]}) could not be ` +
+                    "told from the composer already open under it. "
+                  : `${found.ambiguous.length} new windows under that title appeared ` +
+                    `(${found.ambiguous.join(", ")}), so which one is it cannot be told. `) +
+                "Nothing was filled. The original draft was not changed.",
           `Look for an empty ${kind} window in Mail and close it without saving.`,
         );
       }

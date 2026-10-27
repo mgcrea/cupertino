@@ -487,6 +487,77 @@ describe("awaitNewComposer", () => {
       lane.close();
     });
 
+    /*
+     * Final review I1: the new tab N closed during the poll, Mail re-minted
+     * the tabs again, and the OLD draft O came back as the one fresh
+     * candidate. Taken unjudged, its text would be replaced and saved.
+     */
+    it("refuses a lone fresh candidate whose text is an older same-subject composer's", async () => {
+      const { lane } = await laneOver({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [tab("mc-2", "Re: lunch", "background"), tab("mc-3", "Re: lunch", "selected", null)]
+              : [tab("mc-5", "Re: lunch", "selected", "an older reply")],
+        }),
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-5"],
+      });
+      lane.close();
+    });
+
+    it("polls on while a lone candidate's body is still loading, then takes it", async () => {
+      const { lane } = await laneOver({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: [tab("mc-3", "Re: lunch", "selected", n < 3 ? null : "-- \nOlivier")],
+        }),
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+        text: "-- \nOlivier",
+      });
+      lane.close();
+    });
+
+    it("refuses a lone candidate whose text never reads, at the deadline", async () => {
+      const { lane, seen } = await laneOver({
+        mail_composers: { composers: [tab("mc-3", "Re: lunch", "background")] },
+      });
+      const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, older, 300, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-3"],
+      });
+      expect(seen.filter((s) => s.tool.endsWith("composers")).length).toBeGreaterThan(1);
+      lane.close();
+    });
+
+    it("refuses a lone candidate at once when an older composer had no text", async () => {
+      const { lane, seen } = await laneOver({
+        mail_composers: { composers: [tab("mc-3", "Re: lunch", "selected", "-- \nOlivier")] },
+      });
+      const older = [tab("mc-1", "Re: lunch", "background")];
+      await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
+        ambiguous: ["mc-3"],
+      });
+      expect(seen.filter((s) => s.tool.endsWith("composers"))).toHaveLength(1);
+      lane.close();
+    });
+
+    it("takes a lone candidate at once when no composer had the subject before", async () => {
+      const { lane } = await laneOver({
+        mail_composers: { composers: [tab("mc-3", "Re: lunch", "selected", "an older reply")] },
+      });
+      const unrelated = [tab("mc-1", "Re: dinner", "selected", "an older reply")];
+      await expect(awaitNewComposer(lane, unrelated, 1000, "Re: lunch")).resolves.toEqual({
+        handle: "mc-3",
+        text: "an older reply",
+      });
+      lane.close();
+    });
+
     it("refuses a loading candidate once its text reads as an older composer's", async () => {
       const { lane } = await laneOver({
         mail_composers: (_a: unknown, n: number) => ({
@@ -967,6 +1038,35 @@ describe("composeNatively", () => {
     expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null });
     expect(result.note).toContain("mc-1, mc-2");
     expect(result.note).toContain("left open");
+    expect(edits(seen)).toEqual([]);
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    lane.close();
+  });
+
+  it("fills nothing when the one new composer left reads as the older draft", async () => {
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [composer("mc-1", "Re: lunch", { tab: "selected", text: "an older reply" })]
+              : n === 2
+                ? [
+                    composer("mc-2", "Re: lunch", { tab: "background", text: null }),
+                    composer("mc-3", "Re: lunch", { tab: "selected", text: null }),
+                  ]
+                : [composer("mc-4", "Re: lunch", { tab: "selected", text: "an older reply" })],
+        }),
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      { ...TIMEOUTS, composerTimeoutMs: 1000 },
+    );
+    expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null });
+    expect(result.note).toContain("(mc-4) could not be told from the draft already open");
     expect(edits(seen)).toEqual([]);
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);
     lane.close();
