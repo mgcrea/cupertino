@@ -445,6 +445,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
