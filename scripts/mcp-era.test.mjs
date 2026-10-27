@@ -13,13 +13,15 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { mailFixture as sharedMailFixture } from "./lib/mail-fixture.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -146,72 +148,14 @@ test("a server that cannot start exits non-zero and says why", onMac, async () =
 // the era's own method, and a row inserted into the index underneath it.
 //
 // Nothing real is touched. The index is a temp file built from the captured
-// DDL, as packages/mail's tests build theirs. `osascript` is a stub that answers
-// the one script a watch sends (the account listing) with a canned account, so
-// the mailbox map loads whether or not Mail is running here; the watch names no
-// `mailboxes`, so it never asks Mail to resolve one. `HOME` and the mail root
-// point nowhere, as above. Arrival is detected by the server's own file trigger.
+// DDL by lib/mail-fixture.mjs, as packages/mail's tests build theirs. `osascript`
+// is a stub that answers the one script a watch sends (the account listing)
+// with a canned account, so the mailbox map loads whether or not Mail is running
+// here; the watch names no `mailboxes`, so it never asks Mail to resolve one.
+// `HOME` and the mail root point nowhere, as above. Arrival is detected by the
+// server's own file trigger.
 
-const UUID = "98AC2C3D-408C-47E4-8FE4-6E64D1F58E99";
-const ACCOUNT = {
-  id: UUID,
-  name: "iCloud",
-  enabled: true,
-  accountType: "iCloud",
-  emailAddresses: ["me@icloud.com"],
-  fullName: "Me",
-  directory: null,
-  messageCaching: null,
-  mailboxes: ["INBOX"],
-};
-
-/** A temp dir holding a seeded `Envelope Index` and a stub `osascript`. */
-const mailFixture = () => {
-  const dir = mkdtempSync(join(tmpdir(), "mcp-era-watch-"));
-  const index = join(dir, "Envelope Index");
-  const db = new DatabaseSync(index);
-  db.exec(
-    readFileSync(join(root, "packages", "mail", "test", "fixtures", "envelope-index.sql"), "utf8"),
-  );
-  db.exec(`
-    INSERT INTO mailboxes (ROWID, url, total_count, unread_count) VALUES (1, 'imap://${UUID}/INBOX', 0, 0);
-    INSERT INTO subjects (ROWID, subject) VALUES (1, 'Quote');
-    INSERT INTO addresses (ROWID, address, comment) VALUES (1, 'jo@acme.com', 'Jo');
-  `);
-  const arrive = (rowid) =>
-    db.exec(`
-      INSERT INTO messages
-        (ROWID, message_id, global_message_id, sender, subject_prefix, subject, date_sent, date_received,
-         mailbox, flags, read, flagged, deleted, size, conversation_id)
-      VALUES (${rowid}, 0, ${rowid + 7000}, 1, NULL, 1, 1790000000, 1790000005, 1, 0, 0, 0, 0, 100, 900);
-    `);
-  arrive(101);
-  // Reads the script on stdin like osascript, and answers the account listing
-  // with the canned account; any other script gets an empty list. The shebang
-  // names this node by path: the runner does not pass the caller's PATH on.
-  const osascript = join(dir, "osascript");
-  writeFileSync(
-    osascript,
-    `#!${process.execPath}
-let script = "";
-process.stdin.on("data", (c) => (script += c));
-process.stdin.on("end", () => {
-  const data = script.includes("a.emailAddresses()") ? ${JSON.stringify([ACCOUNT])} : [];
-  process.stdout.write(JSON.stringify({ ok: true, data }));
-});
-`,
-  );
-  chmodSync(osascript, 0o755);
-  return {
-    index,
-    osascript,
-    arrive,
-    close: () => {
-      db.close();
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
-};
+const mailFixture = () => sharedMailFixture("mcp-era-watch-");
 
 const mailEnv = (fx) => {
   const env = {};
@@ -232,8 +176,8 @@ const mailEnv = (fx) => {
  * response to its id, `next` with the first message a predicate accepts, seen
  * already or still to come.
  */
-const session = (env, era) => {
-  const child = spawn("node", [join(root, "packages", "mail", "dist", "cli.js")], {
+const session = (env, era, surface = "mail") => {
+  const child = spawn("node", [join(root, "packages", surface, "dist", "cli.js")], {
     env,
     stdio: ["pipe", "pipe", "ignore"],
   });
@@ -349,3 +293,175 @@ test(
     }
   },
 );
+
+// ── MCP Events (draft SEP-3415), end to end ──────────────────────────────────
+//
+// Mail's built `dist/cli.js` with `APPLE_MAIL_ALLOW_EVENTS` on, over the same
+// fixture index and stub osascript as the watches above. The extension is served
+// on the modern era only; a legacy instance and a gate-off instance answer
+// `events/*` with -32601.
+
+const eventsEnv = (fx) => ({ ...mailEnv(fx), APPLE_MAIL_ALLOW_EVENTS: "1" });
+const acmeDomain = { name: "mail.received", arguments: { domains: ["acme.com"] } };
+
+/** Whether `m` is an event pushed on the stream opened with request id `id`. */
+const eventOn = (id) => (m) => {
+  if (m.method !== "notifications/events/event") return false;
+  // Destructured: the repo's lint rejects `._meta` member access.
+  const { _meta: tags } = m.params ?? {};
+  return tags?.["io.modelcontextprotocol/subscriptionId"] === id;
+};
+
+test("modern: events/poll delivers matching mail", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "modern");
+  try {
+    const boot = await s.request("events/poll", { ...acmeDomain, cursor: null });
+    assert.equal(boot.error, undefined, JSON.stringify(boot.error));
+    assert.deepEqual(boot.result.events, []);
+    assert.match(boot.result.cursor, /^v1\.\d+-\d+\.101$/);
+    fx.arrive(102);
+    const res = await s.request("events/poll", { ...acmeDomain, cursor: boot.result.cursor });
+    assert.equal(res.error, undefined, JSON.stringify(res.error));
+    assert.equal(res.result.events.length, 1);
+    const [event] = res.result.events;
+    assert.equal(event.name, "mail.received");
+    assert.equal(event.eventId, "7102");
+    assert.equal(event.data.senderAddress, "jo@acme.com");
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("modern: events/stream pushes matching mail", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "modern");
+  try {
+    s.write({
+      id: "stream-1",
+      method: "events/stream",
+      params: { ...acmeDomain, _meta: s.meta },
+    });
+    await s.next((m) => m.method === "notifications/events/active", "events/stream to be active");
+    fx.arrive(103);
+    const pushed = await s.next(
+      (m) => m.method === "notifications/events/event",
+      "notifications/events/event",
+    );
+    assert.equal(pushed.params.name, "mail.received");
+    assert.equal(pushed.params.data.senderAddress, "jo@acme.com");
+    s.write({ method: "notifications/cancelled", params: { requestId: "stream-1" } });
+    // Mail keeps arriving after the cancel, and none of it is pushed on that
+    // stream: 2 s covers the trigger's 500 ms debounce several times over.
+    const onStream = eventOn("stream-1");
+    const before = s.seen.filter(onStream).length;
+    fx.arrive(104);
+    await new Promise((ok) => setTimeout(ok, 2000));
+    assert.equal(s.seen.filter(onStream).length, before, "an event was pushed after the cancel");
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("legacy: events/list is method not found", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "legacy");
+  try {
+    const init = await s.request("initialize", initialize[2]);
+    assert.equal(init.error, undefined);
+    s.write({ method: "notifications/initialized" });
+    const res = await s.request("events/list", {});
+    assert.equal(res.error?.code, -32601);
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("gate off: events/list is method not found on modern", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(mailEnv(fx), "modern");
+  try {
+    const res = await s.request("events/list", {});
+    assert.equal(res.error?.code, -32601);
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+// Messages' built `dist/cli.js` with `APPLE_MESSAGES_ALLOW_EVENTS` on, over a
+// temp chat.db built from the captured DDL (triggers dropped, as the package's
+// tests do). The address book, `HOME` and osascript point nowhere.
+
+const messagesFixture = () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-era-messages-"));
+  const store = join(dir, "chat.db");
+  const db = new DatabaseSync(store);
+  db.exec(
+    readFileSync(
+      join(root, "packages", "messages", "test", "fixtures", "chat-db.sql"),
+      "utf8",
+    ).replaceAll(/^CREATE TRIGGER[\s\S]*?END;$/gm, ""),
+  );
+  db.exec(`
+    INSERT INTO handle (ROWID, id, service) VALUES (1, '+33612345678', 'iMessage');
+    INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style, service_name)
+      VALUES (1, 'iMessage;-;+33612345678', '+33612345678', NULL, 45, 'iMessage');
+  `);
+  const arrive = (rowid) => {
+    const date = 800_000_000_000_000_000;
+    db.exec(`
+      INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me, associated_message_type)
+        VALUES (${rowid}, 'guid-${rowid}', 'hello', 1, 'iMessage', ${date}, 0, 0);
+      INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (1, ${rowid}, ${date});
+    `);
+  };
+  return {
+    store,
+    arrive,
+    close: () => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+};
+
+const messagesEnv = (fx) => {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith("APPLE_") && !k.startsWith("CUPERTINO_")) env[k] = v;
+  }
+  env.HOME = join(NOWHERE, "home");
+  env.APPLE_MESSAGES_ALLOW_WRITES = "0";
+  env.APPLE_MESSAGES_RESOLVE_CONTACTS = "0";
+  env.APPLE_MESSAGES_ALLOW_EVENTS = "1";
+  env.APPLE_MESSAGES_STORE = fx.store;
+  env.APPLE_MESSAGES_OSASCRIPT_PATH = join(NOWHERE, "osascript");
+  return env;
+};
+
+test("modern: Messages events/poll delivers a matching message", onMac, async () => {
+  const fx = messagesFixture();
+  const s = session(messagesEnv(fx), "modern", "messages");
+  try {
+    const args = { name: "messages.received", arguments: { from: ["+33612345678"] } };
+    const boot = await s.request("events/poll", { ...args, cursor: null });
+    assert.equal(boot.error, undefined, JSON.stringify(boot.error));
+    assert.deepEqual(boot.result.events, []);
+    assert.match(boot.result.cursor, /^v1\.\d+-\d+\.0$/);
+    fx.arrive(1);
+    const res = await s.request("events/poll", { ...args, cursor: boot.result.cursor });
+    assert.equal(res.error, undefined, JSON.stringify(res.error));
+    assert.equal(res.result.events.length, 1);
+    const [event] = res.result.events;
+    assert.equal(event.name, "messages.received");
+    assert.equal(event.eventId, "guid-1");
+    assert.equal(event.data.handle, "+33612345678");
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});

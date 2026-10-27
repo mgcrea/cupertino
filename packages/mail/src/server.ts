@@ -1,5 +1,6 @@
 import {
   createWatches,
+  registerEvents,
   registerSurfaceResources,
   withLazyTools,
   type Era,
@@ -13,6 +14,7 @@ import type { Config } from "./config.js";
 import { MAIL_GUIDE } from "./guide.js";
 import { registerPrompts } from "./prompts.js";
 import { buildDiagnostics } from "./tools/diagnostics.js";
+import { mailEventAdapter } from "./tools/events.js";
 import { registerTools } from "./tools/index.js";
 import { MailWatchService } from "./tools/watch.js";
 
@@ -35,6 +37,8 @@ export type CreatedServer = {
   client: AppleMailClient;
   /** Present only with `allowWatches` on. */
   watches?: MailWatchService | undefined;
+  /** Present only with `allowEvents` on. Its own service, never the watches'. */
+  events?: MailWatchService | undefined;
 };
 
 /**
@@ -58,6 +62,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
    * opens until a `watch` call (see MailWatchService), so a server built for a
    * discarded `server/discover` probe leaves nothing behind.
    */
+  const closers: (() => void)[] = [];
   let watches: MailWatchService | undefined;
   if (config.allowWatches) {
     watches = new MailWatchService({
@@ -75,6 +80,38 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       startTrigger: service.startTrigger,
     });
     service.bind(registry);
+    closers.push(() => {
+      registry.close();
+      service.close();
+    });
+  }
+
+  /*
+   * Events read through a service of their own, never `bind`ed to a registry, so
+   * a watch and a stream keep separate handles on the index and each is closed
+   * with the connection. Nothing opens until the first events call.
+   */
+  let events: MailWatchService | undefined;
+  if (config.allowEvents) {
+    events = new MailWatchService({
+      client,
+      config,
+      mode: "events",
+      ...(opts.logger ? { logger: opts.logger } : {}),
+      ...(opts.isMailRunning ? { isMailRunning: opts.isMailRunning } : {}),
+    });
+    const service = events;
+    const served = registerEvents(server, {
+      era: opts.era ?? "legacy",
+      adapters: [mailEventAdapter(service)],
+    });
+    closers.push(() => {
+      served.close();
+      service.close();
+    });
+  }
+
+  if (closers.length > 0) {
     // `Protocol._onclose` calls `onclose` when the channel closes; nothing in
     // serveStdio assigns it for us. The registry's trigger is `unref`ed and its
     // watchers non-persistent, so a closing process needs no help; this stops a
@@ -82,8 +119,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     // after the connection ends.
     // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK's close hook, not a DOM event.
     server.server.onclose = () => {
-      registry.close();
-      service.close();
+      for (const close of closers) close();
     };
   }
 
@@ -129,5 +165,5 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     });
   }
 
-  return { server, client, watches };
+  return { server, client, watches, events };
 };

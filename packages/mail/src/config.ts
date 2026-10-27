@@ -96,6 +96,14 @@ const ConfigSchema = BaseConfigSchema.extend({
    * watch tool is registered and the server does not declare `resources.subscribe`.
    */
   allowWatches: z.boolean().default(false),
+  /**
+   * Serves the draft MCP Events extension (`mail.received`) to clients on the 2026
+   * protocol. Off by default, and independent of `allowWatches`, `allowWrites` and
+   * `exposePrompts`. Like a watch it only reads the Envelope Index, and is gated for
+   * the same reason: it runs unasked, and its sender filter decides whose mail may
+   * reach a session. Off, no `events/*` method exists and nothing is declared.
+   */
+  allowEvents: z.boolean().default(false),
   mailboxCacheTtlMs: z.number().int().min(0).max(3_600_000).default(60_000),
 }).strict();
 
@@ -124,6 +132,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     attachmentDir: trimmed(env.APPLE_MAIL_ATTACHMENT_DIR),
     allowFileSend: parseBool(env.APPLE_MAIL_ALLOW_FILE_SEND),
     allowWatches: parseBool(env.APPLE_MAIL_ALLOW_WATCHES),
+    allowEvents: parseBool(env.APPLE_MAIL_ALLOW_EVENTS),
     mailboxCacheTtlMs: parseIntOpt(env.APPLE_MAIL_MAILBOX_CACHE_TTL_MS),
   };
 

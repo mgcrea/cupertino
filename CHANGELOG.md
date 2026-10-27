@@ -12,6 +12,18 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Experimental: Mail and Messages serve the draft MCP Events extension.** `events/list`,
+  `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll
+  with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind
+  `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol
+  only. The arguments are the watch filter, a sender is required, and an event carries envelope
+  metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet,
+  Claude Code included.
+
 ## [1.32.0] - 2026-10-27
 
 **Mail drafts can be edited after their window closes.** A closed reply is rebuilt as a reply,

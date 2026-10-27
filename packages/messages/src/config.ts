@@ -113,6 +113,14 @@ const ConfigSchema = BaseConfigSchema.extend({
    * registered and the server does not declare `resources.subscribe`.
    */
   allowWatches: z.boolean().default(false),
+  /**
+   * Serves the draft MCP Events extension (`messages.received`) to clients on the 2026
+   * protocol. Off by default, and independent of `allowWatches`, `allowWrites` and
+   * `exposePrompts`. Like a watch it only reads chat.db, and is gated for the same
+   * reason: it runs unasked, and its handle filter decides whose messages may reach a
+   * session. Off, no `events/*` method exists and nothing is declared.
+   */
+  allowEvents: z.boolean().default(false),
 }).strict();
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -131,6 +139,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowCodes: parseBool(env.APPLE_MESSAGES_ALLOW_CODES),
     allowFileSend: parseBool(env.APPLE_MESSAGES_ALLOW_FILE_SEND),
     allowWatches: parseBool(env.APPLE_MESSAGES_ALLOW_WATCHES),
+    allowEvents: parseBool(env.APPLE_MESSAGES_ALLOW_EVENTS),
     osascriptPath: trimmed(env.APPLE_MESSAGES_OSASCRIPT_PATH),
     osascriptTimeoutMs: parseIntOpt(env.APPLE_MESSAGES_OSASCRIPT_TIMEOUT_MS),
     maxResults: parseIntOpt(env.APPLE_MESSAGES_MAX_RESULTS),

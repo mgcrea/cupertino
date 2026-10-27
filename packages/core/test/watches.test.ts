@@ -77,7 +77,32 @@ describe("normalizeFilter", () => {
     const domains = Array.from({ length: 21 }, (_, i) => `d${i}.com`);
     expect(() => normalizeFilter({ from, domains })).toThrow(PreconditionError);
   });
+
+  it("names what it refuses for: a watch by default, a subscription for events", () => {
+    const from = Array.from({ length: 51 }, (_, i) => `a${i}@x.com`);
+    const scope = Array.from({ length: 51 }, (_, i) => `${i}`);
+    const cases = [{}, { from }, { from: ["a@x.com"], scope }];
+    expect(cases.map((input) => refusal(() => normalizeFilter(input)))).toEqual([
+      "A watch needs a sender: give at least one entry in `from` or `domains`.",
+      "A watch takes at most 50 entries across `from` and `domains`.",
+      "A watch takes at most 50 scope keys.",
+    ]);
+    expect(cases.map((input) => refusal(() => normalizeFilter(input, "subscription")))).toEqual([
+      "A subscription needs a sender: give at least one entry in `from` or `domains`.",
+      "A subscription takes at most 50 entries across `from` and `domains`.",
+      "A subscription takes at most 50 scope keys.",
+    ]);
+  });
 });
+
+const refusal = (fn: () => unknown): string => {
+  try {
+    fn();
+  } catch (err) {
+    return (err as Error).message;
+  }
+  throw new Error("expected a refusal");
+};
 
 describe("matchesSender", () => {
   const filter = normalizeFilter({ domains: ["acme.com"] });

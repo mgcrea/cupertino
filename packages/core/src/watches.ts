@@ -48,32 +48,43 @@ const clean = (values: readonly string[] | undefined, strip?: RegExp): string[] 
 ];
 
 /**
+ * What a filter belongs to, in a refusal: a `watch`, or an Events `subscription`.
+ * The client reading the message knows only its own word for it.
+ */
+export type FilterNoun = "watch" | "subscription";
+
+/**
  * Trim, lowercase and de-duplicate a filter, or refuse one that names nobody.
  *
  * Domains lose a leading `@` because people write both `acme.com` and
- * `@acme.com`, and they mean the same thing.
+ * `@acme.com`, and they mean the same thing. `noun` names the filter's owner
+ * in a refusal; a watch's messages are the default.
  */
-export const normalizeFilter = (input: {
-  from?: string[];
-  domains?: string[];
-  scope?: string[];
-}): WatchFilter => {
+export const normalizeFilter = (
+  input: {
+    from?: string[];
+    domains?: string[];
+    scope?: string[];
+  },
+  noun: FilterNoun = "watch",
+): WatchFilter => {
+  const owner = `A ${noun}`;
   const from = clean(input.from);
   const domains = clean(input.domains, /^@+/);
   if (from.length === 0 && domains.length === 0) {
     throw new PreconditionError(
-      "A watch needs a sender: give at least one entry in `from` or `domains`.",
+      `${owner} needs a sender: give at least one entry in \`from\` or \`domains\`.`,
     );
   }
   if (from.length + domains.length > MAX_FILTER_ENTRIES) {
     throw new PreconditionError(
-      `A watch takes at most ${MAX_FILTER_ENTRIES} entries across \`from\` and \`domains\`.`,
+      `${owner} takes at most ${MAX_FILTER_ENTRIES} entries across \`from\` and \`domains\`.`,
     );
   }
   // Keys are opaque, so they are trimmed and de-duplicated but never case-folded.
   const scope = [...new Set((input.scope ?? []).map((k) => k.trim()).filter((k) => k !== ""))];
   if (scope.length > MAX_SCOPE_KEYS) {
-    throw new PreconditionError(`A watch takes at most ${MAX_SCOPE_KEYS} scope keys.`);
+    throw new PreconditionError(`${owner} takes at most ${MAX_SCOPE_KEYS} scope keys.`);
   }
   return scope.length > 0 ? { from, domains, scope } : { from, domains };
 };

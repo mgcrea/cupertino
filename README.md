@@ -232,6 +232,8 @@ merely refused.
 
 `watch` and `unwatch` are registered too, behind their own `APPLE_MAIL_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands back a resource the agent reads and the host can subscribe to, and returns envelope metadata only.
 
+An experimental `mail.received` event type of the draft MCP Events extension ([SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415)) is served too, behind `APPLE_MAIL_ALLOW_EVENTS` (off by default, 2026-07-28 protocol only): `events/list`, `events/poll` and `events/stream`, with the same sender filter and envelope-only payload as a watch. No client consumes the extension yet; see the [field report](docs/superpowers/reports/2026-10-27-mcp-events-field-report.md).
+
 ### Notes
 
 | Always available                                          | Write-gated                                                              |
@@ -286,6 +288,8 @@ gate — reading a one-time code is a read, and it is separated because it is th
 over a credential.
 
 `watch` and `unwatch` are registered too, behind `APPLE_MESSAGES_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands back a resource the agent reads and the host can subscribe to, and returns message ids without text.
+
+An experimental `messages.received` event type of the draft MCP Events extension ([SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415)) is served too, behind `APPLE_MESSAGES_ALLOW_EVENTS` (off by default, 2026-07-28 protocol only), with the same sender filter and the same payload as a watch. No client consumes the extension yet; see the [field report](docs/superpowers/reports/2026-10-27-mcp-events-field-report.md).
 
 **One write tool, because the dictionary has one usable command.** `sdef` lists `send`, `login` and
 `logout`; the other two would sign the user out of iMessage on every device they own. There is no

@@ -330,6 +330,52 @@ describe("apple_mail_watch while Mail is closed", () => {
   });
 });
 
+describe("apple_mail_watch refusals", () => {
+  // Events share these refusals and say "subscription"; a watch's stay word for word.
+  const refuse = async (
+    args: Record<string, unknown>,
+    env: NodeJS.ProcessEnv = ON,
+    extra: Extra = {},
+  ) => {
+    const { client } = await connect(env, { isMailRunning: running, ...extra });
+    const res = await client.callTool({ name: "apple_mail_watch", arguments: args });
+    expect(res.isError).toBe(true);
+    return (json(res) as { error: string }).error;
+  };
+
+  it("keeps the watch wording", async () => {
+    expect(await refuse({})).toContain(
+      "A watch needs a sender: give at least one entry in `from` or `domains`.",
+    );
+    expect(await refuse({ domains: ["example.com"], mailboxes: ["Junk"] })).toContain(
+      '"Junk" is never watched: Sent, Drafts, Junk and Trash are excluded, so a watch on it ' +
+        "could never fire.",
+    );
+    expect(
+      await refuse({ domains: ["example.com"], mailboxes: ["Archive"] }, ON, {
+        isMailRunning: closed,
+        osascript: runner(() => false),
+      }),
+    ).toContain(
+      "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
+        "mailboxes an account has. Open Mail and try again, or watch without `mailboxes`.",
+    );
+    expect(
+      await refuse({ domains: ["example.com"] }, { ...ON, APPLE_MAIL_INDEX_MODE: "immutable" }),
+    ).toContain(
+      "The Envelope Index only opened in immutable mode, which cannot see Mail's WAL, so the " +
+        "newest mail is exactly what a watch would miss. Grant Full Disk Access so the index " +
+        "opens read-only (or leave APPLE_MAIL_INDEX_MODE on auto), then try again.",
+    );
+    expect(
+      await refuse(
+        { domains: ["example.com"] },
+        { ...ON, APPLE_MAIL_ENVELOPE_INDEX: join(dir, "missing", "Envelope Index") },
+      ),
+    ).toContain("The Envelope Index cannot be read, so there is nothing to watch: ");
+  });
+});
+
 describe("apple_mail_unwatch", () => {
   it("removes a watch once, then reports false", async () => {
     const { client } = await connect(ON, { isMailRunning: running });

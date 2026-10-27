@@ -57,6 +57,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ APPLE_MAIL_ALLOW_WATCHES: "1" }).allowWatches).toBe(true);
   });
 
+  it("keeps events off unless asked", () => {
+    expect(loadConfig({}).allowEvents).toBe(false);
+    expect(loadConfig({ APPLE_MAIL_ALLOW_EVENTS: "1" }).allowEvents).toBe(true);
+  });
+
   it("ignores a non-numeric override rather than producing NaN", () => {
     expect(loadConfig({ APPLE_MAIL_MAX_RESULTS: "lots" }).maxResults).toBe(200);
   });

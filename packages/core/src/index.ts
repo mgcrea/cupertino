@@ -117,10 +117,28 @@ export {
   type ToolResult,
 } from "./tools.js";
 export { createWatches, type WatchesOptions } from "./watch-resources.js";
+export { registerEvents, type EventsOptions } from "./event-handlers.js";
+export {
+  decodeCursor,
+  encodeCursor,
+  EVENTS_ERRORS,
+  EVENTS_EXTENSION_ID,
+  isoMs,
+  occurrenceTimestamp,
+  parseSenderArgs,
+  resolveStart,
+  scanEvents,
+  type EventDescriptor,
+  type EventOccurrence,
+  type EventTypeAdapter,
+  type ScanResult,
+  type SenderArgs,
+} from "./events.js";
 export {
   fileIdentity,
   fileTrigger,
   matchesSender,
+  type FilterNoun,
   normalizeFilter,
   sameFile,
   watchUri,

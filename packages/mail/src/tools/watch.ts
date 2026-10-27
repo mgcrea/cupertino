@@ -7,6 +7,7 @@ import {
   sameFile,
   type ArrivalSource,
   type FileIdentity,
+  type FilterNoun,
   type Watch,
   type WatchRegistry,
 } from "@mgcrea/mcp-apple-core";
@@ -89,11 +90,42 @@ import { wrap } from "./util.js";
  * each row with its own mailbox rowid and its Gmail label rowids, and core's
  * matching needs a shared key, so two watches on one connection can follow
  * different mailboxes.
+ *
+ * ## Serving events instead
+ *
+ * The Events extension reads through a service of its own, built with
+ * `mode: "events"` and never bound to a registry. It differs in three ways,
+ * because an events scan runs from core's poll and stream handlers rather than
+ * from `onTrigger`, and there is no registry `mark` to say whether rows wait:
+ *
+ * - The source always holds back at a row in a mailbox the lookup has never
+ *   seen, for a poll as for a stream, so such a row is neither delivered nor
+ *   passed over. Core's tick runs its scan after `onTrigger` would have cleared
+ *   the hold, so the hold has to be the source's own.
+ * - `ensure`, which core runs before every poll and every tick, refreshes the
+ *   lookup when the last scan held back (whatever the TTL: the held row is
+ *   judged by the next poll or tick, with a fresh lookup) or when the index's
+ *   head has moved past the last head it saw and the TTL has passed. An idle
+ *   subscription then costs no Apple Event however long it lives, and a poll
+ *   every ten seconds costs no more than a watch. Until a lookup has loaded at
+ *   all, it asks on every `ensure`, as a watch's setup would, since nothing can
+ *   be judged without one; and the head it saw only counts once a refresh it
+ *   needed has worked.
+ * - A row is held back once. After the refresh it caused, the rows of that
+ *   mailbox up to the held one are judged whether or not the index now lists
+ *   the mailbox (a row can name a mailbox with no `mailboxes` row at all), and
+ *   excluded if they still do not resolve, as a watch tick's second pass does;
+ *   otherwise such a row would stop every scan, and cost a refresh on every
+ *   poll, for good. A later row of the mailbox is held again while the lookup
+ *   does not know it, so mail that lands once the mailbox is real is refreshed
+ *   for and delivered. A reopened index starts the record afresh, since its
+ *   rowids do.
+ * - The trigger calls core's `onChange` directly: core's tick runs `ensure`.
  */
 
-const IMMUTABLE_REASON =
+const immutableReason = (noun: FilterNoun): string =>
   "The Envelope Index only opened in immutable mode, which cannot see Mail's WAL, so the " +
-  "newest mail is exactly what a watch would miss. Grant Full Disk Access so the index " +
+  `newest mail is exactly what a ${noun} would miss. Grant Full Disk Access so the index ` +
   "opens read-only (or leave APPLE_MAIL_INDEX_MODE on auto), then try again.";
 
 /**
@@ -110,6 +142,13 @@ export type MailWatchServiceOptions = {
   /** Injected by tests; the default asks `pgrep`. */
   isMailRunning?: (() => Promise<boolean>) | undefined;
   now?: (() => number) | undefined;
+  /**
+   * Who reads through the service: watches (the default), or the Events
+   * extension (see "Serving events instead"). A refusal names what the client
+   * asked for, a watch or a subscription, so an events client never reads about
+   * watches.
+   */
+  mode?: "watch" | "events" | undefined;
 };
 
 export class MailWatchService {
@@ -118,6 +157,8 @@ export class MailWatchService {
   readonly #logger: Logger | undefined;
   readonly #isMailRunning: () => Promise<boolean>;
   readonly #now: () => number;
+  readonly #events: boolean;
+  readonly #noun: FilterNoun;
 
   #registry: WatchRegistry<MailArrival> | undefined;
   /** The watch's own handle on the index, never the client's. */
@@ -131,6 +172,13 @@ export class MailWatchService {
   #init: Promise<void> | undefined;
   #refreshing: Promise<void> | undefined;
   #refreshedAt = 0;
+  /** Events only: the index's head at the last `ensure`, so a refresh waits for new rows. */
+  #seenHead = 0;
+  /**
+   * Events only: mailbox rowid to the last of its rows a scan held back at and
+   * a refresh was asked for. Those rows are not held again; later ones are.
+   */
+  readonly #heldThrough = new Map<number, number>();
   /** Whether the last refresh failed, so a failure that persists is logged once. */
   #refreshFailing = false;
   #tickFailing = false;
@@ -159,6 +207,8 @@ export class MailWatchService {
     this.#logger = opts.logger;
     this.#isMailRunning = opts.isMailRunning ?? (() => defaultIsMailRunning());
     this.#now = opts.now ?? Date.now;
+    this.#events = opts.mode === "events";
+    this.#noun = this.#events ? "subscription" : "watch";
   }
 
   /** How many watches this connection holds. */
@@ -188,6 +238,9 @@ export class MailWatchService {
    * idle poll, and a refresh that fails is tolerated exactly as `onTrigger`
    * tolerates it: the watch is still usable on the last lookup, so a later
    * `watch` call must not fail for want of one.
+   *
+   * In events mode the refresh follows the events rule instead (see "Serving
+   * events instead"), since core runs this before every poll and every tick.
    */
   ensure(): Promise<void> {
     this.#init ??= this.#setUp().catch((err: unknown) => {
@@ -196,8 +249,36 @@ export class MailWatchService {
     });
     return this.#init.then(async () => {
       this.#reopenIfReplaced();
-      if (this.#stale()) await this.#refreshSoftly();
+      if (this.#events) await this.#catchUp();
+      else if (this.#stale()) await this.#refreshSoftly();
     });
+  }
+
+  /**
+   * Events' refresh: now for a scan that held back, and on every call until a
+   * lookup has loaded; else only once rows have arrived since the last call
+   * and the TTL has passed. The head counts as seen only when no refresh was
+   * needed or the refresh worked. Never throws.
+   */
+  async #catchUp(): Promise<void> {
+    const inner = this.#ready();
+    const head = inner.head();
+    const held = inner.takeHeld();
+    if (held !== null) {
+      // Held once: whatever the refresh says, the next scan judges the row, and
+      // excludes it if it still does not resolve, as a watch tick's second
+      // pass does. A later row of the mailbox can still be held.
+      this.#heldThrough.set(
+        held.mailbox,
+        Math.max(held.rowid, this.#heldThrough.get(held.mailbox) ?? 0),
+      );
+      if (await this.#refreshSoftly()) this.#seenHead = head;
+      else this.#rebuild();
+    } else if (!this.#loaded || (head > this.#seenHead && this.#stale())) {
+      if (await this.#refreshSoftly()) this.#seenHead = head;
+    } else {
+      this.#seenHead = head;
+    }
   }
 
   async #setUp(): Promise<void> {
@@ -206,13 +287,13 @@ export class MailWatchService {
     const shared = await this.#client.index();
     if (!shared) {
       throw new PreconditionError(
-        `The Envelope Index cannot be read, so there is nothing to watch: ${
-          this.#client.indexError ?? "reason unknown"
-        }`,
+        `The Envelope Index cannot be read, so there is nothing to ${
+          this.#noun === "watch" ? "watch" : "read events from"
+        }: ${this.#client.indexError ?? "reason unknown"}`,
       );
     }
     // `immutable` is WAL-blind, and the WAL is where the newest mail is.
-    if (shared.mode === "immutable") throw new PreconditionError(IMMUTABLE_REASON);
+    if (shared.mode === "immutable") throw new PreconditionError(immutableReason(this.#noun));
 
     const located = await this.#client.locate();
     if (!located.envelopeIndexPath) {
@@ -231,6 +312,7 @@ export class MailWatchService {
       this.#refreshFailing = true;
     }
     this.#dir = dirname(located.envelopeIndexPath);
+    this.#seenHead = this.#ready().head();
   }
 
   /** Open (or reopen) the watch's own handle, and only then let go of the old one. */
@@ -241,12 +323,14 @@ export class MailWatchService {
     const index = new EnvelopeIndex(openIndex(path, this.#client.config.indexMode, this.#logger));
     if (index.mode === "immutable") {
       index.close();
-      throw new PreconditionError(IMMUTABLE_REASON);
+      throw new PreconditionError(immutableReason(this.#noun));
     }
     const old = this.#index;
     this.#index = index;
     this.#path = path;
     this.#identity = identity;
+    // A new file's rowids start again, so what was held in the old one says nothing.
+    this.#heldThrough.clear();
     this.#rebuild();
     old?.close();
   }
@@ -304,7 +388,14 @@ export class MailWatchService {
       ownAddresses: accounts.flatMap((a) => a.emailAddresses),
       lookup,
       knownMailboxes: known,
+      // A snapshot, not the live map: a source keeps holding while the refresh a
+      // hold asked for is in flight, so a concurrent poll or tick scanning it
+      // cannot judge the held rows with the old lookup. The rebuild after that
+      // refresh, or after it fails, takes the updated record.
+      heldThrough: new Map(this.#heldThrough),
     });
+    // Events scan outside `onTrigger`, so their source holds back on its own.
+    this.#inner.holdNewMailboxes = this.#events;
   }
 
   #stale(): boolean {
@@ -354,7 +445,7 @@ export class MailWatchService {
     } finally {
       inner.holdNewMailboxes = false;
     }
-    if (!inner.takeHeld()) return;
+    if (inner.takeHeld() === null) return;
     // Refreshed or not, tick again with nothing held: a mailbox still unknown
     // after asking is excluded, as it would have been before.
     await this.#refreshSoftly();
@@ -378,16 +469,24 @@ export class MailWatchService {
     );
   }
 
-  /** What `createWatches` is given as `startTrigger`. Reads the directory now, not at construction. */
+  /**
+   * What `createWatches` is given as `startTrigger`. Reads the directory now, not
+   * at construction. In events mode `onChange` is core's, whose tick runs
+   * `ensure` itself, so it is called as it is.
+   */
   startTrigger = (onChange: () => void): { stop(): void } => {
     if (!this.#dir) throw new Error("A watch trigger was started before the index was located.");
     return fileTrigger({
       dir: this.#dir,
       names: ["Envelope Index", "Envelope Index-wal"],
       ...(this.#logger ? { logger: this.#logger } : {}),
-    })(() => {
-      void this.runTrigger(onChange);
-    });
+    })(
+      this.#events
+        ? onChange
+        : () => {
+            void this.runTrigger(onChange);
+          },
+    );
   };
 
   /** Close the watch's own handle. Called when the connection ends. */
@@ -403,6 +502,63 @@ export class MailWatchService {
     return this.#registry?.remove(id) ?? false;
   }
 
+  /** The file identity of the index the watch reads now, or null when it is unknown or unreadable. */
+  identity(): FileIdentity | null {
+    return this.#identity;
+  }
+
+  /**
+   * Resolve mailbox names to scope keys (Envelope Index rowids, as strings).
+   * Empty for no names. Refuses with a `PreconditionError` for a name that can
+   * never fire, for names when Mail is not running, for a name that matches no
+   * mailbox, and for more mailboxes than a watch can follow. `running` is for a
+   * caller that has already asked. A refusal says "subscription" in events mode.
+   */
+  async resolveMailboxScope(mailboxes: string[], running?: boolean): Promise<string[]> {
+    const noun = this.#noun;
+    if (mailboxes.length === 0) {
+      await this.ensure();
+      return [];
+    }
+    if (!(running ?? (await this.#isMailRunning()))) throw this.#mailboxesNeedMail();
+    for (const name of mailboxes) {
+      // The source excludes these for every watch, so a watch on one would never fire.
+      if (isUnwatchedMailbox(`imap://x/${name}`)) {
+        throw new PreconditionError(
+          `"${name}" is never ${noun === "watch" ? "watched" : "followed"}: Sent, Drafts, Junk ` +
+            `and Trash are excluded, so a ${noun} on it could never fire.`,
+        );
+      }
+    }
+    await this.ensure();
+    const rowids = await this.#client.mailboxRowidsFor(mailboxes);
+    if (rowids.length > MAX_WATCHED_MAILBOXES) {
+      throw new PreconditionError(
+        `Those names cover ${rowids.length} mailboxes across the accounts, more than a ${noun} can ` +
+          `follow (${MAX_WATCHED_MAILBOXES}). Name fewer mailboxes.`,
+      );
+    }
+    return rowids.map(String);
+  }
+
+  /**
+   * The refusal `resolveMailboxScope` makes for mailbox names while Mail is not
+   * running, made on its own: for a caller that has to tell it (the server's
+   * state) from the client's own mistakes, and then passes `running: true` on.
+   */
+  async requireRunningFor(mailboxes: string[]): Promise<void> {
+    if (mailboxes.length > 0 && !(await this.#isMailRunning())) throw this.#mailboxesNeedMail();
+  }
+
+  #mailboxesNeedMail(): PreconditionError {
+    return new PreconditionError(
+      "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
+        `mailboxes an account has. Open Mail and try again, or ${
+          this.#noun === "watch" ? "watch" : "subscribe"
+        } without \`mailboxes\`.`,
+    );
+  }
+
   /** Resolve `mailboxes` to scope keys and register the watch. */
   async add(
     filter: ReturnType<typeof normalizeFilter>,
@@ -411,31 +567,7 @@ export class MailWatchService {
     const registry = this.#registry;
     if (!registry) throw new Error("Mail watches are not bound to a registry.");
     const running = await this.#isMailRunning();
-    if (!running && mailboxes && mailboxes.length > 0) {
-      throw new PreconditionError(
-        "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
-          "mailboxes an account has. Open Mail and try again, or watch without `mailboxes`.",
-      );
-    }
-    for (const name of mailboxes ?? []) {
-      // The source excludes these for every watch, so a watch on one would never fire.
-      if (isUnwatchedMailbox(`imap://x/${name}`)) {
-        throw new PreconditionError(
-          `"${name}" is never watched: Sent, Drafts, Junk and Trash are excluded, so a watch ` +
-            "on it could never fire.",
-        );
-      }
-    }
-    await this.ensure();
-    const rowids =
-      mailboxes && mailboxes.length > 0 ? await this.#client.mailboxRowidsFor(mailboxes) : [];
-    if (rowids.length > MAX_WATCHED_MAILBOXES) {
-      throw new PreconditionError(
-        `Those names cover ${rowids.length} mailboxes across the accounts, more than a watch can ` +
-          `follow (${MAX_WATCHED_MAILBOXES}). Name fewer mailboxes.`,
-      );
-    }
-    const scope = rowids.map(String);
+    const scope = await this.resolveMailboxScope(mailboxes ?? [], running);
     const watch = registry.add(normalizeFilter({ ...filter, scope }));
     return { watch, running };
   }
