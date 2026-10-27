@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { pageOfRequest } from "../src/client/actions.js";
 import { PageCommandTimeoutError, PreconditionError } from "../src/client/errors.js";
+import { networkGet } from "../src/client/network.js";
 import { AppleSafariClient } from "../src/client/safari.js";
 import { loadConfig } from "../src/config.js";
 
@@ -659,5 +660,50 @@ describe("headers, truncation and surrogate pairs", () => {
     await t.client.networkGet({ url: PAGE_URL, id: ID, saveAs: "late-emoji.txt" });
     expect(readFileSync(join(t.downloads, "late-emoji.txt"), "utf8")).toBe(body);
     expect(ext.netGets().map((c) => Number(c.offset))).toContain(2 * 16_384 - 1);
+  });
+});
+
+/**
+ * The queued chunks are answered in whatever order the handler claims them,
+ * which is file order and so random. A later chunk the page refuses can
+ * therefore fail before the one being awaited, and that rejection must not go
+ * unhandled: on Node it would take the whole server down.
+ */
+describe("a queued chunk that fails out of order", () => {
+  it("rejects the pull, and leaves no rejection unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => void unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const total = 4 * 1000;
+      const run = async (command: Record<string, unknown>) => {
+        const offset = Number(command.offset);
+        const slice = {
+          entry: { id: ID, bodyTruncated: false, url: "https://example.test/api" },
+          encoding: "text",
+          totalChars: total,
+          offset,
+          slice: "x".repeat(Number(command.length)),
+          done: offset + Number(command.length) >= total,
+        };
+        if (offset === 0) return { id: "c", completedAt: "", ok: true, data: slice };
+        // The second chunk is slow; the third fails at once, before it.
+        if (offset === 1000) await new Promise((r) => setTimeout(r, 50));
+        if (offset === 2000)
+          return { id: "c", completedAt: "", ok: false, error: "dropped from the buffer" };
+        return { id: "c", completedAt: "", ok: true, data: slice };
+      };
+      await expect(
+        networkGet(
+          run as never,
+          { allowWrites: true, downloadDir: tmpdir(), chunkChars: 1000 },
+          { url: PAGE_URL, id: ID, jsonPath: "a" },
+        ),
+      ).rejects.toThrow("dropped from the buffer");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

@@ -196,6 +196,9 @@ const WAIT_INTERVAL_MS = 500;
 /** A tab whose content script predates the command it was sent. */
 class UnknownActionError extends Error {}
 
+/** The frontmost tab has no URL at this moment, as while it loads. */
+class NoFrontPageError extends PreconditionError {}
+
 const delay = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 
@@ -388,7 +391,14 @@ export class AppleSafariClient {
           // throws it away: `/search?q=w&utm_source=x` is closer to a tab on
           // `/search?q=w` than the bare `/search` is. Asked only for a tab the
           // faithful rungs missed, one indexed query each.
-          const extended = store.extending(extensionRanges(url));
+          // Guarded, because this query runs per tab outside the try above, and
+          // a busy store must leave a tab unenriched rather than fail the list.
+          let extended: HistoryRow | null = null;
+          try {
+            extended = store.extending(extensionRanges(url));
+          } catch {
+            extended = null;
+          }
           if (extended) return render(extended, "query-added");
           for (const variant of ladder) {
             if (variant.kind !== "query-stripped") continue;
@@ -599,14 +609,21 @@ export class AppleSafariClient {
           "launched to check.",
       );
     }
+    // Checked before `frontmost` is read, because the live-tabs script still
+    // marks a tab frontmost when it could not read window order: it falls
+    // back to list order, which is a guess, and a guess is not a page to act
+    // on.
+    if (result.windowOrderUnknown) {
+      throw new PreconditionError(
+        "No url was given, and Safari did not report its window order, so no tab can be " +
+          "called frontmost. Pass the page's url; apple_safari_list_tabs lists them.",
+      );
+    }
     const front = result.tabs.find((t) => t.frontmost);
     if (!front?.url) {
-      throw new PreconditionError(
-        result.windowOrderUnknown
-          ? "No url was given, and Safari did not report its window order, so no tab can be " +
-              "called frontmost. Pass the page's url; apple_safari_list_tabs lists them."
-          : "No url was given, and Safari has no frontmost tab showing a page. Pass the page's " +
-              "url; apple_safari_list_tabs lists them.",
+      throw new NoFrontPageError(
+        "No url was given, and the frontmost tab is showing no page right now (it may be " +
+          "loading). Pass the page's url; apple_safari_list_tabs lists them.",
       );
     }
     return front.url;
@@ -733,15 +750,22 @@ export class AppleSafariClient {
     let viaRead = false;
 
     while (Date.now() < deadline) {
-      url = input.url ?? (await this.frontmostTabUrl());
       let seen: { present: boolean; excerpt?: string | undefined };
       try {
+        url = input.url ?? (await this.frontmostTabUrl());
         seen = viaRead
           ? await this.#findByRead(url, input.text, deadline)
           : await this.#find(url, input.text, deadline);
       } catch (error) {
         if (error instanceof UnknownActionError) {
           viaRead = true;
+          continue;
+        }
+        if (error instanceof NoFrontPageError) {
+          // The tab in front has no URL for a moment, as a tab does while it
+          // loads the page a click sent it to: a miss, not the end.
+          lastMiss = error.message;
+          await delay(Math.min(WAIT_INTERVAL_MS, Math.max(0, deadline - Date.now())));
           continue;
         }
         if (!(error instanceof PageCommandTimeoutError)) throw error;
@@ -809,12 +833,15 @@ export class AppleSafariClient {
     if (!result.ok || typeof content !== "string") {
       throw new PreconditionError(result.error ?? "The page could not be read to check it.");
     }
-    const at = content.toLowerCase().indexOf(text.toLowerCase());
-    if (at === -1) return { present: false };
+    // A case-insensitive pattern on the text as it is, as the page's `find`
+    // does: an index into a lower-cased copy can point elsewhere in the
+    // original once lower-casing has changed its length.
+    const match = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").exec(content);
+    if (!match) return { present: false };
     return {
       present: true,
       excerpt: content
-        .slice(Math.max(0, at - 80), at + text.length + 80)
+        .slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)
         .replace(/\s+/g, " ")
         .trim(),
     };

@@ -961,11 +961,9 @@ describe("the frontmost tab, when no url is given", () => {
     const c = await connect(
       dirs.pages,
       { APPLE_SAFARI_ALLOW_CODES: "true" },
-      tabsScript({
-        ...SAFARI,
-        windowOrderUnknown: true,
-        tabs: SAFARI.tabs.map((t) => ({ ...t, frontmost: false })),
-      }).runner,
+      // As the real script reports it: with no window order it still marks
+      // the first window's selected tab frontmost, guessing from list order.
+      tabsScript({ ...SAFARI, windowOrderUnknown: true }).runner,
     );
     const r = await call(c, "apple_safari_find_codes", {});
     expect(r.isError).toBe(true);
@@ -1143,6 +1141,39 @@ describe("apple_safari_wait_for", () => {
     });
     expect(r.json()).toMatchObject({ met: true });
     expect(ext.seen.map((cmd) => cmd.action)).toEqual(["find", "read"]);
+  });
+
+  it("looks the frontmost tab up again on every check, so a navigation is followed", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (cmd) =>
+      found(String(cmd.url), cmd.url === "https://shop.example/thanks"),
+    );
+    running = ext;
+    const fronts = ["https://shop.example/pay", null, "https://shop.example/thanks"];
+    let lookups = 0;
+    const runner: OsascriptRunner = {
+      run: async <T>(): Promise<T> => {
+        const url = fronts[Math.min(lookups++, fronts.length - 1)];
+        return {
+          running: true,
+          windows: 1,
+          appFrontmost: true,
+          windowOrderUnknown: false,
+          // A tab mid-navigation can answer no URL at all: a miss, not a failure.
+          tabs: [
+            { window: 1, windowIndex: 1, index: 1, url, title: "t", active: true, frontmost: true },
+          ],
+        } as T;
+      },
+    };
+    const c = await connect(dirs.pages, {}, runner);
+    const r = await call(c, "apple_safari_wait_for", { text: "confirmed", timeoutSeconds: 5 });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json()).toMatchObject({ met: true, url: "https://shop.example/thanks" });
+    expect(ext.seen.map((cmd) => cmd.url)).toEqual([
+      "https://shop.example/pay",
+      "https://shop.example/thanks",
+    ]);
   });
 
   it("follows the frontmost tab when no url is given, so a navigation is seen", async () => {

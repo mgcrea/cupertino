@@ -352,6 +352,11 @@
     const wantKind = typeof filter.kind === "string" ? filter.kind : "";
     const inViewOnly = filter.inViewOnly === true;
     const filtered = Boolean(query || wantKind || inViewOnly);
+    // Whether anything that qualifies was left out by the cap. Found by
+    // carrying on to the NEXT qualifying element, rather than by comparing
+    // against every node the selector matched, which counted invisible and
+    // filtered-out nodes as "more" and called a one-match filter truncated.
+    let truncated = false;
     for (const el of all) {
       if (!visible(el)) continue;
       const k = kind(el);
@@ -375,6 +380,10 @@
         rect.bottom <= (window.innerHeight || 0) &&
         rect.right <= (window.innerWidth || 0);
       if (inViewOnly && !inView) continue;
+      if (found.length >= limit) {
+        truncated = true;
+        break;
+      }
       const id = PAGE + "-e" + nextId++;
       handles.set(id, el);
       found.push({
@@ -387,14 +396,13 @@
         // Only when true, so the ordinary element carries no extra key.
         ...(isDisabled(el) ? { disabled: true } : {}),
       });
-      if (found.length >= limit) break;
     }
     return {
       // Said once as well as in every id, so the answer names which page load
       // it came from without the caller having to parse one.
       page: PAGE,
       elements: found,
-      truncated: found.length >= limit && all.length > found.length,
+      truncated,
       // Said by the page, so the server can tell a filtered list from one an
       // older content script returned whole, ignoring a filter it never knew.
       ...(filtered ? { filtered: true } : {}),
@@ -460,19 +468,57 @@
   }
 
   /**
+   * A form's own property or method, past a field that shadows it.
+   *
+   * A form's named fields are properties of the form, ahead of its own: with
+   * `<input name="action">`, as WordPress, phpBB and MediaWiki forms have,
+   * `form.action` IS that input. So the form's own getter is called from the
+   * prototype, and where there is no prototype to ask, the attribute is read.
+   */
+  function formOwn(form, name) {
+    const proto = typeof HTMLFormElement === "function" ? HTMLFormElement.prototype : null;
+    const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, name) : undefined;
+    if (descriptor?.get) return descriptor.get.call(form);
+    if (descriptor && typeof descriptor.value === "function") {
+      return descriptor.value.bind(form);
+    }
+    const own = form[name];
+    if (typeof own === "function") return own.bind(form);
+    if (typeof own !== "string" && typeof form.getAttribute === "function") {
+      const attr = form.getAttribute(name);
+      if (attr !== null) return attr;
+    }
+    return own;
+  }
+
+  function isSubmitButton(el) {
+    const tag = String(el.tagName || "").toLowerCase();
+    const type = (el.getAttribute?.("type") || "").toLowerCase();
+    if (tag === "button") return type === "" || type === "submit";
+    return tag === "input" && (type === "submit" || type === "image");
+  }
+
+  /**
    * Submit the form an element belongs to, as pressing Enter in it would.
    *
    * Not a synthetic Enter key: a content script's KeyboardEvent arrives with
    * `isTrusted: false`, and the browser runs no default action for it, so the
-   * form would not submit and nothing would say so. `requestSubmit()` is the
-   * DOM's own verb for "submit as a person would": it runs the form's
-   * validation and fires `submit`, which is where a React or Vue form does its
-   * work. `form.submit()` would skip both, and post whatever the DOM holds
-   * behind the framework's back.
+   * form would not submit and nothing would say so. What Enter actually does
+   * is CLICK the form's default button, its first submit button, and so this
+   * does: a page that does its work in that button's click handler (prevent
+   * the default, send with fetch) gets that, rather than a native submission
+   * that would put the fields in the URL. The button's `name=value`,
+   * `formaction` and `formmethod` come along as they would. With no default
+   * button, `requestSubmit()` is the DOM's own "submit as a person would": it
+   * fires `submit`, where a React or Vue form does its work. `form.submit()`
+   * would skip that and post what the DOM holds behind the framework's back.
+   * And a disabled default button means Enter does nothing, so this does
+   * nothing too and says why.
    *
    * A form that fails its own validation is NOT submitted, and the answer
    * names the fields and the browser's own message for each, which is what a
-   * person would have been shown.
+   * person would have been shown, unless the form or the button says
+   * `novalidate`, in which case the browser would not have checked either.
    */
   function submit(id) {
     const el = resolve(id);
@@ -485,9 +531,21 @@
           "button, use apple_safari_click on that button.",
       );
     }
-    if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+    const fields = Array.from(formOwn(form, "elements") || []);
+    const submitter = isSubmitButton(el) ? el : fields.find(isSubmitButton) || null;
+    if (submitter && isDisabled(submitter)) {
+      throw new Error(
+        "The form's submit button (\"" +
+          label(submitter) +
+          '") is disabled, so pressing Enter would do nothing here, and nothing was done. ' +
+          "Pages usually enable it once the form is complete.",
+      );
+    }
+    const novalidate = formOwn(form, "noValidate") === true || submitter?.formNoValidate === true;
+    const checkValidity = formOwn(form, "checkValidity");
+    if (!novalidate && typeof checkValidity === "function" && !checkValidity()) {
       const invalid = [];
-      for (const field of form.elements || []) {
+      for (const field of fields) {
         if (field.validity && field.validity.valid === false) {
           invalid.push(label(field) + ": " + (field.validationMessage || "invalid"));
         }
@@ -498,18 +556,24 @@
           ". Fill those fields and submit again.",
       );
     }
-    if (typeof form.requestSubmit !== "function") {
+    const requestSubmit = formOwn(form, "requestSubmit");
+    if (!submitter && typeof requestSubmit !== "function") {
       throw new Error(
         "This page's form cannot be submitted the way a person would (no requestSubmit). Use " +
           "apple_safari_click on its submit button.",
       );
     }
     el.scrollIntoView?.({ block: "center", behavior: "instant" });
-    form.requestSubmit();
+    if (submitter) submitter.click();
+    else requestSubmit();
+    const action = formOwn(form, "action");
+    const method = formOwn(form, "method");
     return {
       submitted: id,
-      action: form.action || null,
-      method: String(form.method || "get").toLowerCase(),
+      via: submitter ? "button" : "form",
+      ...(submitter ? { button: label(submitter) } : {}),
+      action: typeof action === "string" && action ? action : null,
+      method: (typeof method === "string" && method ? method : "get").toLowerCase(),
     };
   }
 
@@ -835,16 +899,21 @@
     const wanted = String(text ?? "");
     if (!wanted) throw new Error("Nothing to look for: text is empty.");
     const body = readableText();
-    const at = body.toLowerCase().indexOf(wanted.toLowerCase());
+    // Matched on the text as it is, with a case-insensitive pattern, rather
+    // than on a lower-cased copy: lower-casing can change a string's length
+    // ("İ" becomes two units), and an index from the copy would then cut the
+    // excerpt from the wrong place in the original.
+    const pattern = new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const match = pattern.exec(body);
     return {
       url: location.href,
       title: document.title || "",
-      found: at !== -1,
-      ...(at === -1
+      found: match !== null,
+      ...(match === null
         ? {}
         : {
             excerpt: body
-              .slice(Math.max(0, at - 80), at + wanted.length + 80)
+              .slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)
               .replace(/\s+/g, " ")
               .trim(),
           }),

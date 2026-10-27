@@ -1057,6 +1057,86 @@ describe("filters, find and submit", () => {
     expect(out.error).toContain("Please fill out this field.");
   });
 
+  it("reports the form's address even when a field is named action", () => {
+    const { f } = form();
+    // A hidden <input name="action"> shadows form.action with the element.
+    const shadowed = {
+      ...f,
+      action: el("input", { name: "action" }),
+      method: el("input", { name: "method" }),
+      getAttribute: (n: string) => ({ action: "/pay", method: "post" })[n] ?? null,
+    };
+    const run = page({ elements: [el("input", {}, { form: shadowed })] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id });
+    expect(out.ok, out.error).toBe(true);
+    expect(out.data).toMatchObject({ action: "/pay", method: "post" });
+  });
+
+  it("clicks the form's default button, as Enter does, when it has one", () => {
+    const { f, submitted } = form();
+    const clicks: string[] = [];
+    const pay = el(
+      "button",
+      { type: "submit" },
+      { innerText: "Pay now", click: () => void clicks.push("Pay now") },
+    );
+    const withButton = { ...f, elements: [el("input", {}), pay] };
+    const run = page({ elements: [el("input", { "aria-label": "Card" }, { form: withButton })] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id });
+    expect(out.ok, out.error).toBe(true);
+    expect(clicks).toEqual(["Pay now"]);
+    expect(submitted).toEqual([]);
+    expect(out.data).toMatchObject({ via: "button", button: "Pay now" });
+  });
+
+  it("does nothing, and says so, when the default button is disabled", () => {
+    const { f, submitted } = form();
+    const clicks: string[] = [];
+    const pay = el(
+      "button",
+      { type: "submit", disabled: "" },
+      { innerText: "Pay", disabled: true, click: () => void clicks.push("Pay") },
+    );
+    const run = page({ elements: [el("input", {}, { form: { ...f, elements: [pay] } })] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    const out = run({ action: "submit", elementId: id });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("disabled");
+    expect(clicks).toEqual([]);
+    expect(submitted).toEqual([]);
+  });
+
+  it("submits a novalidate form without its own validation, as the browser would", () => {
+    const { f, submitted } = form({ valid: false });
+    const run = page({ elements: [el("input", {}, { form: { ...f, noValidate: true } })] });
+    const id = (
+      run({ action: "elements", limit: 10 }).data.elements as unknown as { id: string }[]
+    )[0]!.id;
+    expect(run({ action: "submit", elementId: id }).ok).toBe(true);
+    expect(submitted).toEqual(["submit"]);
+  });
+
+  it("keeps the match inside the excerpt when lower-casing changes the text's length", () => {
+    const run = page({ text: "İ".repeat(200) + " Order confirmed." });
+    const out = run({ action: "find", text: "order confirmed" });
+    expect(String(out.data.excerpt)).toContain("Order confirmed");
+  });
+
+  it("does not call a filtered list truncated when nothing else matched", () => {
+    const run = page({ elements: [button("Cancel"), button("Save"), button("Back")] });
+    const out = run({ action: "elements", limit: 1, query: "save" });
+    expect(labels(out)).toEqual(["Save"]);
+    expect(out.data.truncated).toBe(false);
+  });
+
   it("refuses to submit when the page has moved to another URL", () => {
     const { f, submitted } = form();
     const run = page({

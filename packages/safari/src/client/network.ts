@@ -381,14 +381,6 @@ export type GetInput = {
 type Ahead = { position: number; length: number; slice: Promise<Slice> };
 
 /**
- * Let go of queued chunks nobody will read. Each still settles, and its
- * timeout must not surface as an unhandled rejection.
- */
-const abandon = (dropped: Ahead[]): void => {
-  for (const a of dropped) a.slice.catch(() => undefined);
-};
-
-/**
  * Fetch a body from the page, in as many commands as it takes.
  *
  * ## Why chunks at all
@@ -509,32 +501,33 @@ export async function networkGet(
   // An empty slice from a page that says it is not done would loop forever;
   // treat it as the end rather than trust it.
   let more = !head.done && head.slice.length > 0 && position - from < limit;
-  try {
-    while (more) {
-      const tail = ahead.at(-1);
-      let next = tail ? tail.position + tail.length : position;
-      while (ahead.length < PIPELINE_DEPTH && next < end) {
-        const length = Math.min(chunk, end - next);
-        ahead.push({ position: next, length, slice: pull(next, length, index + ahead.length) });
-        next += length;
-      }
-      const current = ahead.shift();
-      if (!current) break;
-      const slice = await current.slice;
-      pulled.push(slice.slice);
-      position += slice.slice.length;
-      index += 1;
-      more = !slice.done && slice.slice.length > 0 && position - from < limit;
-      if (more && slice.slice.length !== current.length) {
-        // The page ended this slice early rather than split an emoji, so
-        // every request queued behind it starts one unit late. Drop them and
-        // queue again from where the body really is.
-        abandon(ahead);
-        ahead = [];
-      }
+  while (more) {
+    const tail = ahead.at(-1);
+    let next = tail ? tail.position + tail.length : position;
+    while (ahead.length < PIPELINE_DEPTH && next < end) {
+      const length = Math.min(chunk, end - next);
+      const pending = pull(next, length, index + ahead.length);
+      // Handled from the moment it exists. The page answers queued chunks in
+      // file order, which is random, so a later one can fail before the one
+      // being awaited, and a rejection nobody is listening to yet would take
+      // the server down. Awaiting it later still sees the failure.
+      pending.catch(() => undefined);
+      ahead.push({ position: next, length, slice: pending });
+      next += length;
     }
-  } finally {
-    abandon(ahead);
+    const current = ahead.shift();
+    if (!current) break;
+    const slice = await current.slice;
+    pulled.push(slice.slice);
+    position += slice.slice.length;
+    index += 1;
+    more = !slice.done && slice.slice.length > 0 && position - from < limit;
+    if (more && slice.slice.length !== current.length) {
+      // The page ended this slice early rather than split an emoji, so
+      // every request queued behind it starts one unit late. Drop them and
+      // queue again from where the body really is.
+      ahead = [];
+    }
   }
 
   const body = pulled.join("");

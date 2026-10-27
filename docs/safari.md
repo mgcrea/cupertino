@@ -808,11 +808,16 @@ notarized build.
 
 **`submit` is not "press Enter".** A content script's `KeyboardEvent` arrives with
 `isTrusted: false`, and the browser runs no default action for it, so a synthetic Enter submits
-nothing and says nothing. `submit` calls `form.requestSubmit()` on the element's form instead, which
-is the DOM's own "submit as a person would": it runs the form's validation and fires `submit`, where
-a React form does its work (`form.submit()` would skip both). A form that fails validation is not
-submitted, and the error names each field with the browser's own message. It is gated like `click`,
-checks the URL like `click`, and lights its own notice in the app.
+nothing and says nothing. `submit` does what Enter does instead: it clicks the form's default
+button (its first submit button), so a page that sends the form from that button's click handler
+does so, and the button's `name=value`, `formaction` and `formmethod` come along. A disabled default
+button means Enter would do nothing, so `submit` refuses. With no default button it calls
+`requestSubmit()`, which fires `submit`, where a React form does its work (`form.submit()` would
+skip it). A form that fails validation is not submitted, and the error names each field with the
+browser's own message, unless the form or button says `novalidate`. The form's `action` and
+`method` are read through `HTMLFormElement`'s own getters, because `<input name="action">` makes
+`form.action` that input. It is gated like `click`, checks the URL like `click`, and lights its own
+notice in the app.
 
 **`wait_for` loops on the server, not in the page.** The page runs one command per poll,
 synchronously, so a wait inside it would hold up that tab's other commands. The page answers a cheap
