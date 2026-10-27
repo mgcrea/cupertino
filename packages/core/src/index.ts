@@ -117,6 +117,7 @@ export {
   type ToolResult,
 } from "./tools.js";
 export { createWatches, type WatchesOptions } from "./watch-resources.js";
+export { registerEvents, type EventsOptions } from "./event-handlers.js";
 export {
   decodeCursor,
   encodeCursor,
