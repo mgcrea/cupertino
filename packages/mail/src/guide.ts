@@ -63,10 +63,11 @@ messages. Prefer the index; results are labelled with their source.
 
 - **A sender is required.** Give \`from\` (exact addresses) or \`domains\` (the
   domain and its subdomains). There is no watch on all mail.
-- **The host subscribes, not you.** \`apple_mail_watch\` returns a handle and a
-  \`uri\`. Subscribing to that uri is something the host does; there is no tool
-  for it, so do not promise the user a push. A host that never subscribes still
-  has a working watch: read the uri whenever you want to know what came in.
+- **Check the watch yourself.** \`apple_mail_watch\` returns a handle and a
+  \`uri\`. Only the host can subscribe to that uri, there is no tool for it, and
+  many hosts never do: Claude Code does not, in either protocol (checked on
+  2.1.311). So do not promise the user a push. The watch still works: read the
+  uri whenever you want to know what came in.
 - **\`after\` is yours to keep.** A read returns what arrived since the watch
   began, or since the \`after\` you pass, oldest first. The \`cursor\` it returns
   is the last row scanned; pass it back as \`after\` next time. The server does

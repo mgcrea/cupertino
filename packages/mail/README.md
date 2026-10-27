@@ -206,22 +206,22 @@ and a tripwire that refuses to run any script containing a `${`.
 
 ## Configure
 
-| Variable                           | Default       | Notes                                                                           |
-| ---------------------------------- | ------------- | ------------------------------------------------------------------------------- |
-| `APPLE_MAIL_ALLOW_WRITES`          | `0`           | Register the mutating tools.                                                    |
-| `APPLE_MAIL_ACCOUNTS`              | all           | Comma-separated account names or UUIDs.                                         |
-| `APPLE_MAIL_DEBUG`                 | off           | Verbose logging to stderr.                                                      |
-| `APPLE_MAIL_INDEX_MODE`            | `auto`        | `auto` \| `ro` \| `immutable` \| `off`. `off` disables the index lane entirely. |
-| `APPLE_MAIL_ROOT`                  | auto          | Override Mail's data root. Normally discovered from Mail itself.                |
-| `APPLE_MAIL_ENVELOPE_INDEX`        | auto          | Explicit index path, for tests and forensic copies.                             |
-| `APPLE_MAIL_OSASCRIPT_TIMEOUT_MS`  | `30000`       | Sized for the first-run permission prompt, which blocks.                        |
-| `APPLE_MAIL_DEGRADED_MAX_MESSAGES` | `50`          | Cap for the Apple Events listing lane.                                          |
-| `APPLE_MAIL_MAX_RESULTS`           | `200`         | Ceiling for search results.                                                     |
-| `APPLE_MAIL_BODY_MAX_BYTES`        | `262144`      | Body truncation, to protect the context window.                                 |
-| `APPLE_MAIL_ATTACHMENT_DIR`        | `~/Downloads` | The only directory attachments may be saved into.                               |
-| `APPLE_MAIL_ALLOW_FILE_SEND`       | off           | Let a compose tool attach local files and send in the same call.                |
-| `APPLE_MAIL_ALLOW_WATCHES`         | off           | Register `watch` and `unwatch`: a resource hosts can subscribe to.              |
-| `APPLE_MAIL_MAILBOX_CACHE_TTL_MS`  | `60000`       | How long the account/mailbox map is cached.                                     |
+| Variable                           | Default       | Notes                                                                              |
+| ---------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
+| `APPLE_MAIL_ALLOW_WRITES`          | `0`           | Register the mutating tools.                                                       |
+| `APPLE_MAIL_ACCOUNTS`              | all           | Comma-separated account names or UUIDs.                                            |
+| `APPLE_MAIL_DEBUG`                 | off           | Verbose logging to stderr.                                                         |
+| `APPLE_MAIL_INDEX_MODE`            | `auto`        | `auto` \| `ro` \| `immutable` \| `off`. `off` disables the index lane entirely.    |
+| `APPLE_MAIL_ROOT`                  | auto          | Override Mail's data root. Normally discovered from Mail itself.                   |
+| `APPLE_MAIL_ENVELOPE_INDEX`        | auto          | Explicit index path, for tests and forensic copies.                                |
+| `APPLE_MAIL_OSASCRIPT_TIMEOUT_MS`  | `30000`       | Sized for the first-run permission prompt, which blocks.                           |
+| `APPLE_MAIL_DEGRADED_MAX_MESSAGES` | `50`          | Cap for the Apple Events listing lane.                                             |
+| `APPLE_MAIL_MAX_RESULTS`           | `200`         | Ceiling for search results.                                                        |
+| `APPLE_MAIL_BODY_MAX_BYTES`        | `262144`      | Body truncation, to protect the context window.                                    |
+| `APPLE_MAIL_ATTACHMENT_DIR`        | `~/Downloads` | The only directory attachments may be saved into.                                  |
+| `APPLE_MAIL_ALLOW_FILE_SEND`       | off           | Let a compose tool attach local files and send in the same call.                   |
+| `APPLE_MAIL_ALLOW_WATCHES`         | off           | Register `watch` and `unwatch`: a resource agents read and hosts can subscribe to. |
+| `APPLE_MAIL_MAILBOX_CACHE_TTL_MS`  | `60000`       | How long the account/mailbox map is cached.                                        |
 
 ## Notes
 

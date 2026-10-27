@@ -158,9 +158,12 @@ silent cap reported as an absence. See [mail-body.md](mail-body.md).
 register a resource watch behind `allowWatches` (off by default), and push
 `notifications/resources/updated` to a host that subscribed, in both protocol eras. See
 [prompts-and-resources.md](prompts-and-resources.md#watches). Whether Claude Code acts on that
-notification is **not yet measured**. Two public reports say it ignores or drops it, and neither
-closed with a stated fix; this project has not run the check, so the README says nothing about
-"push" next to Claude Code. The channel half stays open until it has. What follows is the
+notification is moot: **it never subscribes**. Measured on 2026-10-27 with Claude Code 2.1.311
+against the built Mail server and a logging proxy: on a 2026-era connection it opens
+`subscriptions/listen` for the list-changed notifications only, on a 2025-era one it never sends
+`resources/subscribe`, and the model has no tool to ask for either. A Claude Code agent can still
+read the watch, and does, but nothing wakes the session when mail lands, so the README says
+nothing about "push" next to Claude Code. That is what keeps the channel half open. What follows is the
 channel as first recorded, a gap and not a plan. Anthropic's iMessage plugin declares
 `claude/channel` and `claude/channel/permission` and pushes `notifications/claude/channel`, which
 is the host protocol that lets a phone drive a Claude Code session — including relaying tool

@@ -146,8 +146,10 @@ by name.
 
 **The model does not subscribe.** `subscriptions/listen` is a message the host sends, not a tool.
 A host that never subscribes still has a working watch, since a read is "what came in since I last
-asked", but nothing is pushed. Whether a given host acts on the push is the host's business; see
-[alternatives.md](alternatives.md).
+asked", but nothing is pushed. Claude Code is such a host: on 2.1.311 it opens
+`subscriptions/listen` for the list-changed notifications only and never asks for
+`resourceSubscriptions`, and on a 2025-era connection it never sends `resources/subscribe`. Its
+agents read the watch instead, which works. See [alternatives.md](alternatives.md).
 
 In the app, a `subscriptions/listen` is logged as a subscription rather than a call that never
 returns, and the Activity log shows it as `subscribed …`. Each pushed

@@ -201,14 +201,23 @@ Notifications already flow through the stdio pumps untouched. Two things need do
 
 ## Measure first
 
-Items 1 to 3 and the three questions after them are **pending the live run**. Item 4 was read from
-the package and verified over an in-memory transport.
+Items 2 and 3 and the three questions after them are **pending the live run**. Item 1 was measured
+headless on 2026-10-27, and item 4 was read from the package and verified over an in-memory
+transport.
 
-1. **Does Claude Code do anything with an update?** _Pending the live run._ A minimal server, one
-   resource, one update a minute, in both eras. The two public reports found (anthropics/claude-code
-   #7252, #47823) say it ignores or drops `notifications/resources/updated`, and both are closed
-   without a stated fix. The answer doesn't block this spec: watches are useful to any SDK client
-   and to `MCPChatClient`. But it decides whether the README may say "push" next to Claude Code.
+1. **Does Claude Code do anything with an update?** **It never asks for one.** Measured on
+   2026-10-27 with Claude Code 2.1.311 in `claude -p`, against the built Mail server behind a
+   logging stdio proxy, with a fixture index the proxy added matching rows to after the watch was
+   made. On a 2026-era connection it sends `server/discover`, then one `subscriptions/listen`
+   asking for `toolsListChanged`, `promptsListChanged` and `resourcesListChanged` only, and never a
+   second one with `resourceSubscriptions`, even after the watch tool returned its URI. Forced onto
+   the 2025 era (the proxy answered `server/discover` with -32601), it sends `initialize` at
+   2025-11-25 and never `resources/subscribe`. The model has no tool to ask for either. The server
+   pushed nothing in both runs, which is correct. Reading the watch does work: `ReadMcpResourceTool`
+   on the unlisted URI returned both arrivals with the right `cursor`. So the README does not say
+   "push" next to Claude Code, the tool descriptions and guides tell the agent to read the watch
+   itself, and waking a Claude Code session is the `claude/channel` follow-up below. The public
+   reports (anthropics/claude-code #7252, #47823) were about a later step this never reaches.
 2. **Does the trigger fire for `Envelope Index-wal` under the grant the server actually runs
    with**, and how long from Mail showing a message to the event? _Pending the live run._ The
    trigger is a file watch on the `-wal` plus a watch on the directory. A directory watch alone was
@@ -246,7 +255,7 @@ Three more questions, each still pending the live run, so the session has one ch
 
 ## Non-goals (v1)
 
-- **`claude/channel`.** If Measure first item 1 says Claude Code drops updates, a channel adapter on
+- **`claude/channel`.** Measure first item 1 found Claude Code never subscribes, so a channel adapter on
   this same watcher is the follow-up that actually wakes a session. It needs its own access-control
   and permission-relay design, so it is a separate spec.
 - **Running a command, a Shortcut or a webhook on arrival** with no session open. That needs a

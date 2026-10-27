@@ -266,9 +266,9 @@ export const registerWatchTools = (server: McpServer, service: MessagesWatchServ
         "Watch for new messages from chosen handles. Give `from` (email addresses, or phone " +
         "numbers in international form such as +33612345678) and/or `domains` (email handles only; matches the " +
         "domain and its subdomains); a sender is required, there is no watch on all messages. " +
-        "Returns a handle and its `uri`. The HOST subscribes to the uri to be told when to read " +
-        "it, not you; reading it lists what arrived since the watch began (or since `after`), " +
-        "metadata only, so fetch the text with apple_messages_get_message and the `id`. The " +
+        "Returns a handle and its `uri`. Read the uri to see what arrived since the watch began " +
+        "(or since `after`): a host that subscribes is told when to read it, but many never do, so " +
+        "check it yourself rather than promising the user a notification. Metadata only, so fetch the text with apple_messages_get_message and the `id`. The " +
         "watch lasts as long as this connection. Your own messages and tapbacks never match. " +
         "Needs Full Disk Access; Messages does not have to be running.",
       inputSchema: z.object({

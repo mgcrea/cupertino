@@ -230,7 +230,7 @@ merely refused.
 | `get_message` `get_message_source` `list_attachments` `list_open_drafts` | `send_message` `reply_to_message` `forward_message` `update_draft`         |
 | `list_accounts` `list_mailboxes` `diagnostics`                           | `save_attachment` `create_mailbox`                                         |
 
-`watch` and `unwatch` are registered too, behind their own `APPLE_MAIL_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands the host a resource to subscribe to, and returns envelope metadata only.
+`watch` and `unwatch` are registered too, behind their own `APPLE_MAIL_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands back a resource the agent reads and the host can subscribe to, and returns envelope metadata only.
 
 ### Notes
 
@@ -285,7 +285,7 @@ instead. See [docs/contacts.md](docs/contacts.md).
 gate — reading a one-time code is a read, and it is separated because it is the one read that hands
 over a credential.
 
-`watch` and `unwatch` are registered too, behind `APPLE_MESSAGES_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands the host a resource to subscribe to, and returns message ids without text.
+`watch` and `unwatch` are registered too, behind `APPLE_MESSAGES_ALLOW_WATCHES` (off by default): a watch needs a sender filter, hands back a resource the agent reads and the host can subscribe to, and returns message ids without text.
 
 **One write tool, because the dictionary has one usable command.** `sdef` lists `send`, `login` and
 `logout`; the other two would sign the user out of iMessage on every device they own. There is no

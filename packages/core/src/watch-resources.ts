@@ -181,8 +181,8 @@ export const createWatches = <R extends ArrivalRow>(
       title: `${displayName}: a watch on incoming messages`,
       description:
         `What has arrived for one watch since it was created, or since \`after\`. Get the URI ` +
-        "from the watch tool; subscribe to it to be told when to read again. Envelope metadata " +
-        "only, oldest first. `cursor` is the last row scanned: pass it back as `after` to resume.",
+        "from the watch tool and read it to check, or subscribe to be told when to read again. " +
+        "Envelope metadata only, oldest first. `cursor` is the last row scanned: pass it back as `after` to resume.",
       mimeType: "application/json",
     },
     async (uri, variables) => {

@@ -448,9 +448,10 @@ export const registerWatchTools = (server: McpServer, service: MailWatchService)
       description:
         "Watch for new mail from chosen senders. Give `from` (exact addresses) and/or `domains` " +
         "(matches the domain and its subdomains); a sender is required, there is no watch on all " +
-        "mail. Returns a handle and its `uri`. The HOST subscribes to the uri to be told when to " +
-        "read it, not you; reading it lists what arrived since the watch began (or since `after`), " +
-        "envelope only, so fetch a body with apple_mail_get_message. The watch lasts as long as " +
+        "mail. Returns a handle and its `uri`. Read the uri to see what arrived since the watch began " +
+        "(or since `after`): a host that subscribes is told when to read it, but many never do, so " +
+        "check it yourself rather than promising the user a notification. Envelope only, so fetch " +
+        "a body with apple_mail_get_message. The watch lasts as long as " +
         "this connection. Sent, Drafts, Junk and Trash and your own addresses never match. " +
         "Needs Full Disk Access, and Mail has to be running for mail to arrive.",
       inputSchema: z.object({

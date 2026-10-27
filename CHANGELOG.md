@@ -26,7 +26,8 @@ summary.
   and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and
   `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything.
   A watch carries envelope metadata only, never a body or message text. It works with both the 2025
-  and the 2026-07-28 protocol, and lives as long as the connection that made it. The Activity log
+  and the 2026-07-28 protocol, and lives as long as the connection that made it. Claude Code does not
+  subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log
   shows each subscription, and the Activity log and the audit file record each push, so what
   Cupertino sent into a session reads the same as what it was asked.
 
