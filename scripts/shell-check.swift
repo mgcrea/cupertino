@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Asserts what the Shell surface does with a script once it has been allowed to run.
@@ -280,6 +281,14 @@ struct ShellCheck {
       "hash covers the part past 4 KB",
       ShellRecord.recent(in: dir)[0].scriptSHA256 == AuditChain.digest(script))
     check("no script text on file", !text.contains("SECRET"))
+    let drained = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-record-drain-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: drained) }
+    ShellRecord.append(e, in: drained, now: t0)
+    ShellRecord.drain()
+    check(
+      "drain lands a queued line before it returns, for quit",
+      ((try? FileManager.default.contentsOfDirectory(atPath: drained.path)) ?? []).count == 1)
     check("chain verifies", ShellRecord.verify(in: dir).isIntact)
     let old = Calendar(identifier: .gregorian).date(byAdding: .day, value: -200, to: t0)!
     e.at = old
@@ -363,6 +372,8 @@ struct ShellCheck {
     sealChecks()
     keychainChecks()
     try recordChecks()
+    inputChecks()
+    promptQueueChecks()
 
     print("\nShellRunner: the command line and the environment")
     check(
@@ -1368,4 +1379,163 @@ final class AnswerBox: @unchecked Sendable {
   private var value: ToolAnswer?
   func set(_ answer: ToolAnswer) { lock.withLock { value = answer } }
   func get() -> ToolAnswer? { lock.withLock { value } }
+}
+
+// MARK: - The window's input and queue
+
+extension ShellCheck {
+  /// What `ShellPanel` lets through. Nothing here is posted: each event is only built and read,
+  /// so no check moves the pointer or types on the Mac it runs on.
+  static func inputChecks() {
+    print("\nShellInput: only hardware input reaches the window")
+    func key(_ state: CGEventSourceStateID?) -> CGEvent? {
+      CGEvent(
+        keyboardEventSource: state.flatMap { CGEventSource(stateID: $0) }, virtualKey: 36,
+        keyDown: true)
+    }
+    check(
+      "a keystroke from a combined-session source is not hardware",
+      key(.combinedSessionState).map(ShellInput.isHardware) == false)
+    check(
+      "a keystroke from a private source is not hardware",
+      key(.privateState).map(ShellInput.isHardware) == false)
+    check(
+      "a keystroke a process builds with a HID-state source is not hardware: it carries its pid",
+      key(.hidSystemState).map(ShellInput.isHardware) == false)
+    check("a keystroke with no source is not hardware", key(nil).map(ShellInput.isHardware) == false)
+    let click = CGEvent(
+      mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: .leftMouseDown,
+      mouseCursorPosition: .zero, mouseButton: .left)
+    check("a click a process builds is not hardware", click.map(ShellInput.isHardware) == false)
+    // The fields the rule reads, set as hardware's are expected to be.
+    let forged = key(.hidSystemState)
+    forged?.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    check("pid 0 and the HID state is hardware", forged.map(ShellInput.isHardware) == true)
+    let pidOnly = key(.combinedSessionState)
+    pidOnly?.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    check(
+      "pid 0 from another state is not hardware", pidOnly.map(ShellInput.isHardware) == false)
+  }
+
+  static func prompt(_ connection: UUID = UUID(), _ requestId: String) -> ShellPrompt {
+    ShellPrompt(
+      client: "c", purpose: "p", script: "echo", stdin: nil, interpreter: .zsh, cwd: "/",
+      timeoutSeconds: 60, offerSession: false, connection: connection, requestId: requestId)
+  }
+
+  /// `ask` on a thread of its own, with what it answered and when.
+  final class Asked: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer: ShellPromptAnswer?
+    private var at: Date?
+    let done = DispatchSemaphore(value: 0)
+    init(_ queue: ShellPromptQueue, _ prompt: ShellPrompt) {
+      Thread.detachNewThread {
+        let answer = queue.ask(prompt)
+        self.lock.withLock {
+          self.answer = answer
+          self.at = Date()
+        }
+        self.done.signal()
+      }
+    }
+    var result: ShellPromptAnswer? { lock.withLock { answer } }
+    var answeredAt: Date? { lock.withLock { at } }
+    func wait(_ seconds: TimeInterval = 5) -> ShellPromptAnswer? {
+      _ = done.wait(timeout: .now() + seconds)
+      return result
+    }
+  }
+
+  static func promptQueueChecks() {
+    print("\nShellPromptQueue: one window at a time, timed from when it shows")
+    let changes = Tally()
+    let timeout: TimeInterval = 0.4
+    let queue = ShellPromptQueue(timeout: timeout, changed: { _ = changes.next() })
+
+    // A cancel that beats its ask.
+    let c1 = UUID()
+    queue.cancel(connection: c1, requestId: "i1")
+    let early = Date()
+    check("an ask whose cancel came first answers cancelled", queue.ask(prompt(c1, "i1")) == .cancelled)
+    check("at once, with no window", Date().timeIntervalSince(early) < 0.1 && queue.front == nil)
+    check("its tombstone is used up", queue.tombstones(c1) == 0)
+    for n in 0..<40 { queue.cancel(connection: c1, requestId: "x\(n)") }
+    check(
+      "tombstones are capped per connection",
+      queue.tombstones(c1) == ShellPromptQueue.tombstonesPerConnection)
+
+    // A cancel for one connection does not reach another's request with the same id.
+    let c2 = UUID()
+    queue.cancel(connection: c1, requestId: "i7")
+    let other = Asked(queue, prompt(c2, "i7"))
+    check("another connection's ask with the same id is shown", eventually { queue.front != nil })
+    if let front = queue.front { queue.answer(front.id, .runOnce) }
+    check("and answered by the window", other.wait() == .runOnce)
+
+    // A tombstone does not outlive the race it is for.
+    let brief = ShellPromptQueue(timeout: timeout, tombstoneLife: 0.1)
+    let c3 = UUID()
+    brief.cancel(connection: c3, requestId: "i1")
+    Thread.sleep(forTimeInterval: 0.25)
+    let late = Asked(brief, prompt(c3, "i1"))
+    check("a stale tombstone cancels nothing", eventually { brief.front != nil })
+    if let front = brief.front { brief.answer(front.id, .dontRun) }
+    check("so the window answers it", late.wait() == .dontRun)
+
+    // Arrival order, and the timer.
+    let before = changes.count
+    let a = Asked(queue, prompt(UUID(), "a"))
+    check("the first ask is in front", eventually { queue.front?.prompt.requestId == "a" })
+    let b = Asked(queue, prompt(UUID(), "b"))
+    check("the second waits behind it", eventually { queue.waiting == 2 })
+    check("the front is still the first", queue.front?.prompt.requestId == "a")
+    check("the front changing is announced", changes.count > before)
+    Thread.sleep(forTimeInterval: timeout * 2)
+    check("no timer runs before the window shows", a.result == nil && b.result == nil)
+    guard let shownA = queue.front else { return check("a front to show", false) }
+    let aShown = Date()
+    queue.shown(shownA.id)
+    queue.shown(shownA.id)
+    check("unanswered, the shown window answers noAnswer", a.wait() == .noAnswer)
+    check(
+      "after the timeout from when it showed",
+      (a.answeredAt?.timeIntervalSince(aShown) ?? 0) >= timeout * 0.95)
+    check("the second comes to the front", eventually { queue.front?.prompt.requestId == "b" })
+    Thread.sleep(forTimeInterval: timeout * 0.5)
+    check("and has not timed out: it was waiting, not shown", b.result == nil)
+    guard let shownB = queue.front else { return check("b in front", false) }
+    let bShown = Date()
+    queue.shown(shownB.id)
+    check("it gets a full timeout of its own", b.wait() == .noAnswer)
+    check(
+      "measured from its own showing",
+      (b.answeredAt?.timeIntervalSince(bShown) ?? 0) >= timeout * 0.95)
+    check("nothing left", queue.front == nil && queue.waiting == 0)
+
+    // Answers, and cancels of the front and of a queued ask.
+    let d = Asked(queue, prompt(UUID(), "d"))
+    check("d in front", eventually { queue.front?.prompt.requestId == "d" })
+    let e2 = UUID()
+    let e = Asked(queue, prompt(e2, "e"))
+    let f = Asked(queue, prompt(UUID(), "f"))
+    check("three waiting", eventually { queue.waiting == 3 })
+    queue.answer(999_999, .runOnce)
+    check("an answer for no window is ignored", queue.waiting == 3)
+    queue.cancel(connection: e2, requestId: "e")
+    check("a queued ask cancelled answers cancelled", e.wait() == .cancelled)
+    check("and leaves the front alone", queue.front?.prompt.requestId == "d")
+    check("no tombstone for a cancel that found its ask", queue.tombstones(e2) == 0)
+    guard let frontD = queue.front else { return check("d in front", false) }
+    queue.shown(frontD.id)
+    queue.answer(frontD.id, .runForSession)
+    check("the window's answer is the ask's", d.wait() == .runForSession)
+    check("f comes to the front", eventually { queue.front?.prompt.requestId == "f" })
+    if let frontF = queue.front {
+      queue.shown(frontF.id)
+      queue.cancel(connection: frontF.prompt.connection, requestId: "f")
+    }
+    check("a shown window cancelled answers cancelled", f.wait() == .cancelled)
+    check("and the queue is empty", queue.front == nil && queue.waiting == 0)
+  }
 }

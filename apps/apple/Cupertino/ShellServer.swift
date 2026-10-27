@@ -159,6 +159,10 @@ nonisolated enum ShellServer {
   /// Runs in flight now, app-wide.
   static var inFlight: Int { state.lock.withLock { state.inFlight } }
 
+  /// Calls that are asking or running and have not yet recorded how they ended. For quit,
+  /// which waits for them before draining `ShellRecord`.
+  static var openCalls: Int { state.lock.withLock { state.calls.count } }
+
   // MARK: - Copy
 
   static let declinedCopy =

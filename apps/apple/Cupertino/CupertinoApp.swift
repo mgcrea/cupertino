@@ -47,6 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // answered from a cold cache. See `AccessibilityDriver.watchLayout`.
     AccessibilityDriver.watchLayout()
 
+    // Before the socket, so the first Shell request already meets the real window. Until this
+    // runs, `ShellServer` answers every request as cancelled and runs nothing.
+    ShellServer.consent = ShellConsent.shared
+    ShellServer.clientName = { Sessions.clientName($0) ?? ShellConsent.unnamedClient }
+    ShellServer.fullDiskAccess = { Permissions.diskAccess() == .granted }
+    watchShellSwitch()
+
     do {
       try ServerHost.shared.start()
     } catch {
@@ -99,6 +106,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   static let licencePromptShown = "licencePromptShown"
+
+  private var shellSwitch: NSObjectProtocol?
+  private var shellWasOn = false
+
+  /// Switching Shell off closes every window still waiting and stops every run in flight.
+  ///
+  /// The value is read back through `ShellSeal` on each change, never taken from the raw
+  /// preference: a `defaults write` can set the bool, and only the seal says Shell is on.
+  /// `stopAll` is idempotent, so the Shell pane's own switch calling it as well costs nothing.
+  private func watchShellSwitch() {
+    shellWasOn = ShellSeal.isEnabled(.standard)
+    shellSwitch = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        let on = ShellSeal.isEnabled(.standard)
+        if self.shellWasOn, !on { ShellServer.stopAll() }
+        self.shellWasOn = on
+      }
+    }
+  }
 
   /// Open the licence pane once, and only when there is nothing to run with.
   ///
@@ -566,6 +595,7 @@ struct StatusMenu: View {
       // to take their hands off the keyboard, and it stops being true a few
       // seconds after they read it.
       DrivingNotice()
+      ShellRunsNotice()
 
       // First otherwise, and in the popover rather than behind a tab. This is
       // the one state where nothing works at all, and whoever is reading it has
@@ -1131,6 +1161,27 @@ struct DrivingNotice: View {
         }
       }
       Divider()
+    }
+  }
+}
+
+/// "Stop running commands", while any Shell command is running.
+///
+/// `ShellRunner.live` is not observable, so it is read once a second while the popover is open,
+/// which is the only time anyone can see this.
+struct ShellRunsNotice: View {
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { _ in
+      if !ShellRunner.live.isEmpty {
+        VStack(alignment: .leading, spacing: 6) {
+          Label("Running a command with Cupertino's access", systemImage: "terminal")
+            .foregroundStyle(.orange)
+            .font(.callout.weight(.medium))
+          Button("Stop running commands") { ShellServer.stopAll() }
+            .controlSize(.small)
+        }
+        Divider()
+      }
     }
   }
 }

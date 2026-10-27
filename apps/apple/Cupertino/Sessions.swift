@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// The server processes that are running right now, one per accepted connection.
 ///
@@ -55,6 +56,27 @@ final class Sessions {
 
   func closed(id: UUID) {
     live.removeAll { $0.id == id }
+    Self.clientNames.withLock { _ = $0.removeValue(forKey: id) }
+  }
+
+  /// The `clientInfo.name` each live connection gave, readable from any thread.
+  ///
+  /// `live` is main-actor state, and `ShellServer` asks for the name on a connection's worker
+  /// for every request, where a hop to the main thread would wait on whatever that thread is
+  /// doing. So the name is also kept here, behind a lock of its own, written as the handshake
+  /// is seen (`noteClient`) and dropped in `closed`.
+  nonisolated private static let clientNames = OSAllocatedUnfairLock<[UUID: String]>(
+    initialState: [:])
+
+  /// Called by `RequestObserver` on the connection's own thread when it sees `initialize`,
+  /// before that request is handled, so the name is there for the first call after it.
+  nonisolated static func noteClient(id: UUID, _ client: String) {
+    clientNames.withLock { $0[id] = client }
+  }
+
+  /// The client's own name for a live connection, or nil when it gave none.
+  nonisolated static func clientName(_ id: UUID) -> String? {
+    clientNames.withLock { $0[id] }
   }
 
   func named(id: UUID, _ client: String) {

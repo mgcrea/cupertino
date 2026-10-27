@@ -383,7 +383,19 @@ nonisolated final class ServerHost: @unchecked Sendable {
     for process in processes {
       hostLog("cupertino", .info, "stopping server (pid \(process.processIdentifier))")
     }
+    // Shell's windows and runs first, so each call ends now and records how it ended while the
+    // servers below are given their grace.
+    ShellServer.stopAll()
     ChildTermination.terminateAll(processes, grace: 3)
+    // A run's group, backgrounded children and all: one left behind keeps every grant this app
+    // holds with nothing supervising it.
+    ChildTermination.terminateGroups(ShellRunner.live.map(\.pid), grace: 3)
+    // Each Shell call writes its line on the way out, and the line is written on a queue of its
+    // own. Wait briefly for the calls, then for the queue, or a refusal recorded just before
+    // quit goes with the process.
+    let calls = Date().addingTimeInterval(1)
+    while ShellServer.openCalls > 0, Date() < calls { Thread.sleep(forTimeInterval: 0.02) }
+    ShellRecord.drain()
   }
 
   // MARK: - Noticing eviction

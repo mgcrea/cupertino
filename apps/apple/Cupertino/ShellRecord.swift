@@ -96,6 +96,10 @@ nonisolated enum ShellRecord {
   /// writer's own queue.
   static func flushForCheck() { queue.sync {} }
 
+  /// Wait for every queued line to land, for the app quitting: `append` returns before its line
+  /// is written, and a refusal recorded just before quit would otherwise go with the process.
+  static func drain() { queue.sync {} }
+
   /// On `queue`.
   private static func write(_ entry: Entry, in dir: URL, now: Date) {
     if let reason = ensure(dir) {

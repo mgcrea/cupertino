@@ -404,6 +404,8 @@ shell-check: ## Assert the shell surface's runner, seal, run record and server, 
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/shell-check \
 		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/ShellPromptQueue.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/Surfaces.swift \

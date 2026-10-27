@@ -257,6 +257,7 @@ nonisolated final class RequestObserver: @unchecked Sendable {
       let name = info["name"] as? String
     {
       let id = session
+      Sessions.noteClient(id: id, name)
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.named(id: id, name) }
     }
 
