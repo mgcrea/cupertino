@@ -99,10 +99,6 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// it cannot be read. Opaque: compared only with `sameBody`.
   func windowBody() -> AnyObject?
   func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool
-  /// Whether the window, while it shows this composer, reads as edited since
-  /// its last save (`AXEdited`). Nil when it does not answer, or another tab
-  /// is shown. What tells a command-S landed, before any tab is switched.
-  func edited() -> Bool?
   /// A live composer standing for this one once its tab's element has died:
   /// nil unless that holds (see `AXComposerWindow.rebind`). The registry
   /// keeps the handle on it, number and all, and marks it `rebound`: the tab
@@ -126,7 +122,6 @@ extension ComposerWindow {
   nonisolated func focus() throws -> Bool { try activate() }
   nonisolated func windowBody() -> AnyObject? { nil }
   nonisolated func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { a === b }
-  nonisolated func edited() -> Bool? { nil }
   nonisolated func rebound() -> ComposerWindow? { nil }
   /// To and Cc together, as the listing's `recipients` has always been.
   nonisolated var recipientNames: [String] { to + cc }
@@ -566,23 +561,24 @@ nonisolated enum MailComposer {
   ///
   /// From step 10 on, before every selection and paste and before step 12, the
   /// tab must still be the one shown: a person who picks another tab mid-edit
-  /// stops it, and command-S, which saves the tab shown, is not pressed. On
-  /// every way out the tab that was shown before is selected again, while Mail
-  /// is still in front (pressed with Mail behind, the content would not
-  /// follow), and only while this tab is still the one shown (a person who
-  /// picked another is left there), and never after a command-V Mail did not
-  /// answer, which may still land in whatever tab is shown when it does. Once
-  /// command-S was pressed, only when its landing was seen: the window read as
-  /// edited (`AXEdited`) right before it and as not edited after it, within
-  /// `saveTimeout`, this tab shown throughout. command-S goes by HID and the
-  /// reselect's press by Mach message, so the press could be handled first and
-  /// the save land in the other draft. Unseen, this tab is left shown, the note
-  /// says so, and a save that read as still edited is not reported saved. Then
-  /// the front goes back to the application noted before Mail came forward.
+  /// stops it, and command-S, which saves the tab shown, is not pressed.
+  ///
+  /// Once command-S was tried, this draft's tab is LEFT SHOWN, and the note
+  /// says so. command-S goes by HID and a tab's press by Mach message, so a
+  /// press right after it could be handled first and the save land in the
+  /// draft shown before; and Mail's compose window has no `AXEdited` (MEASURED,
+  /// LIVE RUN 6), so nothing can tell when the save has landed. On every other
+  /// way out (refused before command-S, or saving not asked) the tab that was
+  /// shown before is selected again, while Mail is still in front (pressed with
+  /// Mail behind, the content would not follow), and only while this tab is
+  /// still the one shown (a person who picked another is left there), and
+  /// never after a command-V Mail did not answer, which may still land in
+  /// whatever tab is shown when it does. Then the front goes back to the
+  /// application noted before Mail came forward.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
     handle: String? = nil, readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12,
-    grace: TimeInterval = 2, tabTimeout: TimeInterval = 2, saveTimeout: TimeInterval = 2
+    grace: TimeInterval = 2, tabTimeout: TimeInterval = 2
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -608,7 +604,7 @@ nonisolated enum MailComposer {
         editShown(
           w, request: request, board: board, front: front, broughtForward: false,
           readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
-          saveTimeout: saveTimeout, outcome: Outcome()))
+          outcome: Outcome()))
     }
 
     // 0. A background tab.
@@ -662,12 +658,12 @@ nonisolated enum MailComposer {
         "Try again once the Mac is free.")
     }
     var handedBack = false
-    // Not after a command-V Mail did not answer, nor after a command-S that
-    // was not seen landing: either could still land in the tab shown then.
+    // Not after a command-V Mail did not answer, nor after a command-S: either
+    // could still land in the tab shown then, and nothing says when it has.
     func reselect(_ report: Outcome) {
       guard !handedBack else { return }
       handedBack = true
-      guard !report.unanswered, !report.savePosted || report.saveConfirmed else { return }
+      guard !report.unanswered, !report.savePosted else { return }
       handBackTab(previous, after: w)
     }
     let pressed: Bool
@@ -696,7 +692,7 @@ nonisolated enum MailComposer {
     let answer = editShown(
       w, request: request, board: board, front: nil, broughtForward: true,
       readbackTimeout: readbackTimeout, filesTimeout: filesTimeout, grace: grace,
-      saveTimeout: saveTimeout, outcome: outcome)
+      outcome: outcome)
     // After the pasteboard is given back, before the front: as `editShown`
     // orders its own hand-back.
     reselect(outcome)
@@ -724,20 +720,6 @@ nonisolated enum MailComposer {
     var unanswered = false
     /// command-S was tried, whatever it answered.
     var savePosted = false
-    /// The window was seen edited before it, and not edited after it, with
-    /// this composer's tab shown throughout.
-    var saveConfirmed = false
-  }
-
-  /// Poll until the window reads as not edited, while it still shows `w`.
-  private static func awaitClean(_ w: ComposerWindow, timeout: TimeInterval) -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while true {
-      guard w.tab == .selected else { return false }
-      if w.edited() == false { return true }
-      if Date() >= deadline { return false }
-      usleep(50_000)
-    }
   }
 
   /// Poll until `w` reads as the tab its window shows, with a body that is
@@ -785,7 +767,7 @@ nonisolated enum MailComposer {
   private static func editShown(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front?,
     broughtForward: Bool, readbackTimeout: TimeInterval, filesTimeout: TimeInterval,
-    grace: TimeInterval, saveTimeout: TimeInterval, outcome: Outcome
+    grace: TimeInterval, outcome: Outcome
   ) -> [String: Any] {
     let untouched = "Nothing was changed."
 
@@ -959,7 +941,7 @@ nonisolated enum MailComposer {
     let answer = paste(
       w, request, before: before, range: range, steps: steps, result: result, board: borrow,
       broughtForward: broughtForward, readbackTimeout: readbackTimeout,
-      filesTimeout: filesTimeout, saveTimeout: saveTimeout, report: outcome)
+      filesTimeout: filesTimeout, report: outcome)
     if borrow.unanswered {
       let deadline = Date().addingTimeInterval(grace)
       while Date() < deadline, (try? w.blocks()) == nil, w.isAlive { usleep(50_000) }
@@ -1002,7 +984,7 @@ nonisolated enum MailComposer {
   private static func paste(
     _ w: ComposerWindow, _ request: EditRequest, before: Read, range: String, steps: [Step],
     result: String?, board: Borrow, broughtForward: Bool, readbackTimeout: TimeInterval,
-    filesTimeout: TimeInterval, saveTimeout: TimeInterval, report: Outcome
+    filesTimeout: TimeInterval, report: Outcome
   ) -> [String: Any] {
     // Whether the window may now hold something the saved draft does not.
     var changed = false
@@ -1150,34 +1132,21 @@ nonisolated enum MailComposer {
           + "of its tabs, and command-S saves the tab shown, so it was not pressed and this did "
           + "not save it. The draft's tab is open in Mail with the change in it."
       } else if request.save {
-        // A tab Mail came forward for: whether the save is seen to land
-        // decides whether the tab shown before may be selected again (`edit`).
-        let dirty = broughtForward ? w.edited() : nil
+        // A tab Mail came forward for is left shown from here (`edit`).
         let outcome = (try? w.save()) ?? .refused
         if broughtForward { report.savePosted = true }
+        let leftShown =
+          broughtForward
+          ? " This draft's tab is left shown in Mail's window, in place of the tab shown before: "
+            + "say so to the person." : ""
         switch outcome {
-        case .pressed where broughtForward && dirty == true:
-          if awaitClean(w, timeout: saveTimeout) {
-            report.saveConfirmed = true
-            saved = true
-            note =
-              "The change was read back from the composer and saved. The window is still open in "
-              + "Mail."
-          } else {
-            note =
-              "The change was read back from the composer and command-S was pressed, but Mail's "
-              + "window did not read as saved within \(seconds(saveTimeout)) with this draft's tab "
-              + "shown, so this does not report it saved, and it left this draft's tab shown: "
-              + "selecting the tab shown before could have let a late command-S save that draft "
-              + "instead. Look at the draft in Mail and save it there."
-          }
         case .pressed where broughtForward:
           saved = true
           note =
             "The change was read back from the composer and command-S was pressed. Mail's window "
             + "does not say when a save has landed, so this left this draft's tab shown rather "
             + "than selecting the tab shown before, which a late command-S could have saved "
-            + "instead. The window is still open in Mail."
+            + "instead. The window is still open in Mail. Say so to the person."
         case .pressed:
           saved = true
           note =
@@ -1191,7 +1160,7 @@ nonisolated enum MailComposer {
         case .refused:
           note =
             "The change was read back from the composer, but Mail would not take command-S, so "
-            + "this did not save it. The window is open with the change in it."
+            + "this did not save it. The window is open with the change in it." + leftShown
         }
       } else {
         note = "The change was read back from the composer and, as asked, not saved."
@@ -1909,16 +1878,6 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
       description[cut.upperBound...].first?.isNumber == true
     else { return description }
     return String(description[..<cut.lowerBound])
-  }
-
-  /// `AXEdited` on the window showing this composer: AppKit's "is it dirty?"
-  /// for a window (`NSAccessibilityEditedAttribute`), set from the document's
-  /// edited state. UNMEASURED on Mail's compose window: if it never answers,
-  /// or never reads true after a paste, no save is ever confirmed and no tab
-  /// is selected again after one.
-  func edited() -> Bool? {
-    guard let window = shownWindow() else { return nil }
-    return (Self.attr(window, kAXEditedAttribute as String) as? NSNumber)?.boolValue
   }
 
   /// Mail frontmost as the window server says, AND this window Mail's focused

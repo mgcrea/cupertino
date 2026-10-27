@@ -74,8 +74,10 @@
  * as a TAB of one window, and only the selected tab can be read. Case 2 then
  * finds its two composers as tabs and checks what tabs add: the background one
  * is listed with no text; by handle it refuses (its title is shared) with no
- * tab switched; by ref it is selected, checked, edited, saved, and the tab
- * that was shown is selected again. Saved drafts are looked for in every
+ * tab switched; by ref it is selected, checked, edited and saved, and then
+ * LEFT SHOWN, with the note saying so: Mail does not say when a save has
+ * landed, so switching back could save the other draft (decision (a) of the
+ * final review, 2026-10-27). Saved drafts are looked for in every
  * account's Drafts, and a prompt to close a composer that is a tab says
  * "(tab)": closing a window closes its SELECTED tab, so select that one first.
  *
@@ -970,7 +972,7 @@ async function tabbedHandlesCheck(mail, subject, same) {
     result?.replaced === true ? "" : `${result?.method} — ${result?.reason ?? "no reason given"}`,
   );
 
-  // The background tab by ref: selected, checked against its saved text, edited, handed back.
+  // The background tab by ref: selected, checked against its saved text, edited, left shown.
   const sources = async () => {
     const out = [];
     for (const draft of await draftsBySubject(mail, subject)) {
@@ -1009,10 +1011,15 @@ async function tabbedHandlesCheck(mail, subject, same) {
   );
   const after = await tabsNow();
   check(
-    "and the tab that was shown before is shown again",
-    after.find((c) => c.composer === shown.composer)?.tab === "selected" &&
-      after.find((c) => c.composer === hidden.composer)?.tab === "background",
+    "and the edited tab is left shown, the one shown before still open behind it",
+    after.find((c) => c.composer === hidden.composer)?.tab === "selected" &&
+      after.find((c) => c.composer === shown.composer)?.tab === "background",
     after.map((c) => `${c.composer}: ${c.tab}`).join(", "),
+  );
+  check(
+    "and its note says the tab is left shown",
+    typeof byRef?.note === "string" && byRef.note.includes("left this draft's tab shown"),
+    String(byRef?.note ?? "no note").slice(0, 160),
   );
   const settled = await until(async () => {
     const all = await sources();

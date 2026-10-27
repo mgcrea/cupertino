@@ -199,7 +199,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "reports anything, and saves only what it could verify. Mail comes to the front " +
         "briefly to paste; the clipboard is borrowed by the app and restored. When Mail shows " +
         "drafts as tabs of one window, a draft in a tab it is not showing is selected for the " +
-        "edit and the tab that was shown is selected again after; by `composer` handle, such a " +
+        "edit, and once saved that tab is LEFT SHOWN in place of the one that was (Mail does " +
+        "not say when a save has landed, and switching back early could save the other " +
+        "draft): tell the person which draft Mail now shows. By `composer` handle, such a " +
         "tab is refused when another tab has the same title, since only a `ref` lets its text " +
         "be checked; so is a handle listed with `rebound: true`, whose tab Mail rebuilt since " +
         "it was listed and which may now be another draft: it stays reference-only until a " +

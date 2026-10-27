@@ -100,8 +100,6 @@ final class EditFake: ComposerWindow {
   private(set) var selection: Range<Int>?
   private(set) var log: [String] = []
   private(set) var pasted: [PasteContent] = []
-  /// Changed and not saved since: the window's `AXEdited`.
-  var dirty = false
   fileprivate(set) var saves = 0
 
   init(own: String, files: [String] = [], quote: [String] = ["On Monday, Ann wrote:", "Hi"]) {
@@ -130,14 +128,6 @@ final class EditFake: ComposerWindow {
   func windowBody() -> AnyObject? {
     guard let group else { return self }
     return group.body()
-  }
-  /// The window's `AXEdited` while it shows this composer: nil otherwise, or
-  /// when it does not answer.
-  func edited() -> Bool? {
-    guard let group else { return nil }
-    group.tick()
-    guard group.editedAnswers, group.state(of: self) == .selected else { return nil }
-    return group.shown.dirty
   }
 
   private func note(_ event: String) {
@@ -251,7 +241,6 @@ final class EditFake: ComposerWindow {
         var utf16 = Array(own.utf16)
         utf16.replaceSubrange(span, with: Array(text.utf16))
         own = String(decoding: utf16, as: UTF16.self)
-        dirty = true
         selection = (span.lowerBound + text.utf16.count)..<(span.lowerBound + text.utf16.count)
       case .files(let urls):
         if !ignoresFiles { ownFiles += urls.map { fileLabel($0.lastPathComponent) } }
@@ -276,7 +265,6 @@ final class EditFake: ComposerWindow {
       group.postSave()
     } else {
       saves += 1
-      dirty = false
     }
     return saveOutcome
   }
@@ -323,8 +311,6 @@ final class FakeTabGroup {
   /// Reads a command-S takes to land, in whatever tab is shown by then.
   var saveLag = 0
   private var saving: Int?
-  /// Whether the window answers `AXEdited`.
-  var editedAnswers = true
   /// The window's body element, per tab: replaced when activation rebuilds it.
   private var bodies: [Int: NSObject] = [:]
   var bodyReadable = true
@@ -392,7 +378,6 @@ final class FakeTabGroup {
       if left <= 1 {
         saving = nil
         shown.saves += 1
-        shown.dirty = false
         events.append("saved \(content)")
       } else {
         saving = left - 1
@@ -725,7 +710,7 @@ struct MailComposerCheck {
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
       fake, request: request, board: board, front: front, handle: handle, readbackTimeout: 0.2,
-      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6, saveTimeout: 0.4)
+      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6)
     return (result, board, front)
   }
 
@@ -1862,7 +1847,7 @@ struct MailComposerCheck {
     }
 
     // Editing a background tab: Mail forward, select, verify, edit, save,
-    // reselect, front back.
+    // front back, and this draft's tab left shown (decision (a), final review).
     do {
       let (group, _, beta, gamma) = tabbed()
       group.selectLag = 3
@@ -1884,16 +1869,17 @@ struct MailComposerCheck {
       check(
         "the front read before Mail came forward is the one handed back",
         front.given == [4242])
-      // The hand-back's press lands as late as the first one did.
       for _ in 0..<3 { _ = group.state(of: beta) }
       check(
-        "the shown tab is selected again while Mail is in front, before the front goes back",
-        group.presses == [2, 1] && group.content == 1 && group.flagged == 1
-          && (group.events.firstIndex(of: "press 1") ?? 0)
-            > (group.events.firstIndex(of: "2:save") ?? Int.max)
+        "after the save this draft's tab is left shown: nothing is pressed after command-S",
+        group.presses == [2] && group.content == 2 && group.flagged == 2
           && (group.events.firstIndex(of: "front given back") ?? 0)
-            > (group.events.firstIndex(of: "press 1") ?? Int.max)
+            > (group.events.firstIndex(of: "2:save") ?? Int.max)
       )
+      check(
+        "and the note says the tab is left shown, for the person to be told",
+        (result["note"] as? String ?? "").contains("left this draft's tab shown")
+          && (result["note"] as? String ?? "").contains("Say so to the person"))
       check(
         "the other tabs are untouched",
         beta.own == "BETA text" && beta.pasted.isEmpty && beta.saves == 0
@@ -1906,7 +1892,7 @@ struct MailComposerCheck {
       check(
         "a background tab sharing its title is edited once expectHead proves it",
         result["replaced"] as? Bool == true && alpha.own == "New alpha"
-          && beta.own == "BETA text" && group.presses == [0, 1])
+          && beta.own == "BETA text" && group.presses == [0])
     }
     do {
       let (group, _, beta, _) = tabbed()
@@ -2069,10 +2055,11 @@ struct MailComposerCheck {
       check("and the board and the front are still handed back", handedBack(gamma, board, front))
     }
 
-    // Fix round 2, IMPORTANT: command-S goes by HID and the reselect's AX press
-    // by Mach message, so the press can be handled first, and command-S then
-    // saves the PREVIOUS tab's draft. The save is the point; the reselect waits
-    // for the window's AXEdited to clear, or does not happen.
+    // Fix round 2, IMPORTANT: command-S goes by HID and a tab's AX press by
+    // Mach message, so a press right after it can be handled first, and
+    // command-S then saves the PREVIOUS tab's draft. Mail's compose window has
+    // no AXEdited (LIVE RUN 6), so nothing can tell when the save landed: once
+    // command-S was tried, no tab is pressed (decision (a), final review).
     func index(_ event: String, _ group: FakeTabGroup) -> Int {
       group.events.firstIndex(of: event) ?? Int.max
     }
@@ -2083,43 +2070,32 @@ struct MailComposerCheck {
       let (result, _, front) = tabRun(group, gamma, Request(body: "New gamma"))
       for _ in 0..<5 { group.tick() }
       check(
-        "a late command-S is waited for: it saves this draft before the shown tab comes back",
+        "a late command-S lands in this draft, whose tab is left shown: no press after it",
         result["saved"] as? Bool == true && gamma.saves == 1 && beta.saves == 0
-          && group.presses == [2, 1] && index("saved 2", group) < index("press 1", group))
-      check("and the front is handed back after", front.given == [4242])
-    }
-    do {
-      let (group, _, beta, gamma) = tabbed()
-      group.saveLag = 3
-      group.editedAnswers = false
-      let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
-      for _ in 0..<5 { group.tick() }
+          && group.presses == [2] && group.content == 2 && index("saved 2", group) < Int.max)
       check(
-        "with no readable edited state, this draft's tab is left shown after command-S",
-        group.presses == [2] && group.content == 2 && gamma.saves == 1 && beta.saves == 0)
-      check(
-        "and the note says so",
-        result["saved"] as? Bool == true && note(result).contains("left this draft's tab shown"))
+        "and the front is handed back, the note saying the tab is left shown",
+        front.given == [4242] && note(result).contains("left this draft's tab shown"))
     }
     do {
       let (group, _, beta, gamma) = tabbed()
       group.saveLag = 100_000
       let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
-        "a save that never shows is not reported saved, and no tab is switched",
-        result["replaced"] as? Bool == true && result["saved"] as? Bool == false
+        "a command-S still in flight never has a tab pressed after it to misroute it",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == true
           && group.presses == [2] && beta.saves == 0
           && note(result).contains("left this draft's tab shown"))
     }
     do {
-      // Already clean when command-S goes: nothing could show the save landing.
       let (group, _, beta, gamma) = tabbed()
-      gamma.onPaste = { $0.dirty = false }
-      let (result, _, _) = tabRun(group, gamma, Request(body: "New gamma"))
+      gamma.saveOutcome = .refused
+      let (result, _, front) = tabRun(group, gamma, Request(body: "New gamma"))
       check(
-        "a window not dirty before command-S proves nothing: no reselect",
-        group.presses == [2] && beta.saves == 0
-          && note(result).contains("left this draft's tab shown"))
+        "a command-S Mail refused leaves this draft's tab shown, and the note says so",
+        result["replaced"] as? Bool == true && result["saved"] as? Bool == false
+          && group.presses == [2] && group.content == 2 && beta.saves == 0
+          && note(result).contains("tab is left shown") && front.given == [4242])
     }
     do {
       // An untabbed window and the selected tab save as before, with no wait.

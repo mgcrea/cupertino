@@ -1627,7 +1627,8 @@ export class AppleMailClient {
                 "are null because reading them would mean switching tabs, which listing never " +
                 'does. They are read once it is the selected tab (`tab: "selected"`): select it ' +
                 "in Mail and list again, or edit it with apple_mail_update_draft, which selects " +
-                "its tab, checks it, and selects the one that was shown again afterwards."
+                "its tab and checks it, and once the edit is saved leaves that tab shown in " +
+                "place of the one that was: tell the person which draft Mail now shows."
               : "") +
             (composers.some((c) => c.rebound === true)
               ? " A draft with `rebound: true` is a tab whose window Mail rebuilt since its " +
