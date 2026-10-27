@@ -98,6 +98,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
   if (config.allowEvents) {
     events = new MessagesWatchService({
       client,
+      mode: "events",
       ...(opts.logger ? { logger: opts.logger } : {}),
     });
     const service = events;

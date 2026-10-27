@@ -7,6 +7,7 @@ import {
   sameFile,
   type ArrivalSource,
   type FileIdentity,
+  type FilterNoun,
   type Watch,
   type WatchRegistry,
 } from "@mgcrea/mcp-apple-core";
@@ -91,9 +92,9 @@ import { wrap } from "./util.js";
  * different mailboxes.
  */
 
-const IMMUTABLE_REASON =
+const immutableReason = (noun: FilterNoun): string =>
   "The Envelope Index only opened in immutable mode, which cannot see Mail's WAL, so the " +
-  "newest mail is exactly what a watch would miss. Grant Full Disk Access so the index " +
+  `newest mail is exactly what a ${noun} would miss. Grant Full Disk Access so the index ` +
   "opens read-only (or leave APPLE_MAIL_INDEX_MODE on auto), then try again.";
 
 /**
@@ -110,6 +111,12 @@ export type MailWatchServiceOptions = {
   /** Injected by tests; the default asks `pgrep`. */
   isMailRunning?: (() => Promise<boolean>) | undefined;
   now?: (() => number) | undefined;
+  /**
+   * Who reads through the service: watches (the default), or the Events
+   * extension. A refusal names what the client asked for, a watch or a
+   * subscription, so an events client never reads about watches.
+   */
+  mode?: "watch" | "events" | undefined;
 };
 
 export class MailWatchService {
@@ -118,6 +125,7 @@ export class MailWatchService {
   readonly #logger: Logger | undefined;
   readonly #isMailRunning: () => Promise<boolean>;
   readonly #now: () => number;
+  readonly #noun: FilterNoun;
 
   #registry: WatchRegistry<MailArrival> | undefined;
   /** The watch's own handle on the index, never the client's. */
@@ -159,6 +167,7 @@ export class MailWatchService {
     this.#logger = opts.logger;
     this.#isMailRunning = opts.isMailRunning ?? (() => defaultIsMailRunning());
     this.#now = opts.now ?? Date.now;
+    this.#noun = opts.mode === "events" ? "subscription" : "watch";
   }
 
   /** How many watches this connection holds. */
@@ -206,13 +215,13 @@ export class MailWatchService {
     const shared = await this.#client.index();
     if (!shared) {
       throw new PreconditionError(
-        `The Envelope Index cannot be read, so there is nothing to watch: ${
-          this.#client.indexError ?? "reason unknown"
-        }`,
+        `The Envelope Index cannot be read, so there is nothing to ${
+          this.#noun === "watch" ? "watch" : "read events from"
+        }: ${this.#client.indexError ?? "reason unknown"}`,
       );
     }
     // `immutable` is WAL-blind, and the WAL is where the newest mail is.
-    if (shared.mode === "immutable") throw new PreconditionError(IMMUTABLE_REASON);
+    if (shared.mode === "immutable") throw new PreconditionError(immutableReason(this.#noun));
 
     const located = await this.#client.locate();
     if (!located.envelopeIndexPath) {
@@ -241,7 +250,7 @@ export class MailWatchService {
     const index = new EnvelopeIndex(openIndex(path, this.#client.config.indexMode, this.#logger));
     if (index.mode === "immutable") {
       index.close();
-      throw new PreconditionError(IMMUTABLE_REASON);
+      throw new PreconditionError(immutableReason(this.#noun));
     }
     const old = this.#index;
     this.#index = index;
@@ -413,9 +422,10 @@ export class MailWatchService {
    * Empty for no names. Refuses with a `PreconditionError` for a name that can
    * never fire, for names when Mail is not running, for a name that matches no
    * mailbox, and for more mailboxes than a watch can follow. `running` is for a
-   * caller that has already asked.
+   * caller that has already asked. A refusal says "subscription" in events mode.
    */
   async resolveMailboxScope(mailboxes: string[], running?: boolean): Promise<string[]> {
+    const noun = this.#noun;
     if (mailboxes.length === 0) {
       await this.ensure();
       return [];
@@ -423,15 +433,17 @@ export class MailWatchService {
     if (!(running ?? (await this.#isMailRunning()))) {
       throw new PreconditionError(
         "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
-          "mailboxes an account has. Open Mail and try again, or watch without `mailboxes`.",
+          `mailboxes an account has. Open Mail and try again, or ${
+            noun === "watch" ? "watch" : "subscribe"
+          } without \`mailboxes\`.`,
       );
     }
     for (const name of mailboxes) {
       // The source excludes these for every watch, so a watch on one would never fire.
       if (isUnwatchedMailbox(`imap://x/${name}`)) {
         throw new PreconditionError(
-          `"${name}" is never watched: Sent, Drafts, Junk and Trash are excluded, so a watch ` +
-            "on it could never fire.",
+          `"${name}" is never ${noun === "watch" ? "watched" : "followed"}: Sent, Drafts, Junk ` +
+            `and Trash are excluded, so a ${noun} on it could never fire.`,
         );
       }
     }
@@ -439,7 +451,7 @@ export class MailWatchService {
     const rowids = await this.#client.mailboxRowidsFor(mailboxes);
     if (rowids.length > MAX_WATCHED_MAILBOXES) {
       throw new PreconditionError(
-        `Those names cover ${rowids.length} mailboxes across the accounts, more than a watch can ` +
+        `Those names cover ${rowids.length} mailboxes across the accounts, more than a ${noun} can ` +
           `follow (${MAX_WATCHED_MAILBOXES}). Name fewer mailboxes.`,
       );
     }

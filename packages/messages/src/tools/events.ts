@@ -80,7 +80,7 @@ export const messagesEventAdapter = (
     // The caller's own mistakes first, without touching the store: an empty
     // filter is InvalidParams whatever state chat.db is in.
     try {
-      normalizeFilter(typed);
+      normalizeFilter(typed, "subscription");
     } catch (err) {
       if (err instanceof PreconditionError) throw invalidParams(err.message);
       throw err;
@@ -90,10 +90,13 @@ export const messagesEventAdapter = (
     try {
       // `unresolved` handles are kept: a poll result has nowhere to report them.
       const resolved = service.resolveFrom(from ?? []).from;
-      return normalizeFilter({
-        ...(resolved.length > 0 ? { from: resolved } : {}),
-        ...(domains ? { domains } : {}),
-      });
+      return normalizeFilter(
+        {
+          ...(resolved.length > 0 ? { from: resolved } : {}),
+          ...(domains ? { domains } : {}),
+        },
+        "subscription",
+      );
     } catch (err) {
       if (err instanceof PreconditionError) throw invalidParams(err.message);
       throw err;

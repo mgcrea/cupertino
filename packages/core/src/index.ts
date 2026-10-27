@@ -134,6 +134,7 @@ export {
   fileIdentity,
   fileTrigger,
   matchesSender,
+  type FilterNoun,
   normalizeFilter,
   sameFile,
   watchUri,

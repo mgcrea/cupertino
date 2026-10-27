@@ -168,7 +168,84 @@ describe("mailEventAdapter", () => {
     ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("Nowhere") });
     await expect(
       adapter.parseArguments({ domains: ["acme.com"], mailboxes: ["Sent Messages"] }),
-    ).rejects.toMatchObject({ code: -32602, message: expect.stringMatching(/never watched/) });
+    ).rejects.toMatchObject({ code: -32602, message: expect.stringMatching(/never followed/) });
+  });
+
+  it("parseArguments speaks of a subscription, never a watch", async () => {
+    const { adapter } = adapterFor(running);
+    const refusal = (args: unknown) =>
+      adapter.parseArguments(args).then(
+        () => "",
+        (e: unknown) => (e as Error).message,
+      );
+    expect(await refusal({})).toBe(
+      "A subscription needs a sender: give at least one entry in `from` or `domains`.",
+    );
+    const junk = await refusal({ domains: ["acme.com"], mailboxes: ["Junk"] });
+    expect(junk).toBe(
+      '"Junk" is never followed: Sent, Drafts, Junk and Trash are excluded, so a subscription ' +
+        "on it could never fire.",
+    );
+
+    const closedMail = adapterFor(
+      closed,
+      runner(() => false),
+    ).adapter;
+    const notRunning = await closedMail
+      .parseArguments({
+        domains: ["acme.com"],
+        mailboxes: ["INBOX"],
+      })
+      .then(
+        () => "",
+        (e: unknown) => (e as Error).message,
+      );
+    expect(notRunning).toContain("Open Mail and try again, or subscribe without `mailboxes`.");
+    expect(notRunning).not.toMatch(/watch/i);
+  });
+
+  it("refuses more mailboxes than a subscription can follow, in its own words", async () => {
+    const d = mkdtempSync(join(tmpdir(), "mcp-apple-mail-events-many-"));
+    try {
+      const path = join(d, "Envelope Index");
+      const uuids = Array.from(
+        { length: 51 },
+        (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      );
+      const db = new DatabaseSync(path);
+      db.exec(DDL);
+      for (const [i, id] of uuids.entries()) {
+        db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
+                 VALUES (${i + 1}, 'imap://${id}/INBOX', 0, 0)`);
+      }
+      db.close();
+      const accounts = uuids.map((id, i) => ({ ...ACCOUNTS[0], id, name: `Account ${i}` }));
+      const many: OsascriptRunner = {
+        run: vi.fn(async (script: string) =>
+          script.includes("a.emailAddresses()") ? accounts : [],
+        ) as OsascriptRunner["run"],
+      };
+      const created = createServer({
+        config: loadConfig({ ...ON, APPLE_MAIL_ENVELOPE_INDEX: path }),
+        osascript: many,
+        era: "modern",
+        isMailRunning: running,
+      });
+      const err = await mailEventAdapter(created.events!)
+        .parseArguments({ domains: ["acme.com"], mailboxes: ["INBOX"] })
+        .then(
+          () => null,
+          (e: unknown) => e as { code: number; message: string },
+        );
+      expect(err?.code).toBe(-32602);
+      expect(err?.message).toBe(
+        "Those names cover 51 mailboxes across the accounts, more than a subscription can " +
+          "follow (50). Name fewer mailboxes.",
+      );
+      created.events!.close();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 
   it("occurrence maps a row", () => {
@@ -286,6 +363,27 @@ describe("events over a connection", () => {
     await expect(
       poll(client, { name: "mail.received", arguments: {}, cursor: null }),
     ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it("a store that cannot be read is refused in events terms", async () => {
+    const missing = join(dir, "missing", "Envelope Index");
+    const unreadable = await connect({ ...ON, APPLE_MAIL_ENVELOPE_INDEX: missing }, running);
+    const one = await poll(unreadable.client, { ...acme, cursor: null }).then(
+      () => "",
+      (e: unknown) => (e as Error).message,
+    );
+    expect(one).toContain(
+      "The Envelope Index cannot be read, so there is nothing to read events from: ",
+    );
+    expect(one).not.toMatch(/watch/i);
+
+    const immutable = await connect({ ...ON, APPLE_MAIL_INDEX_MODE: "immutable" }, running);
+    const two = await poll(immutable.client, { ...acme, cursor: null }).then(
+      () => "",
+      (e: unknown) => (e as Error).message,
+    );
+    expect(two).toContain("the newest mail is exactly what a subscription would miss.");
+    expect(two).not.toMatch(/watch/i);
   });
 
   it("serves nothing with the gate off", async () => {

@@ -7,6 +7,7 @@ import {
   sameFile,
   type ArrivalSource,
   type FileIdentity,
+  type FilterNoun,
   type Logger,
   type Watch,
   type WatchRegistry,
@@ -58,14 +59,20 @@ import { wrap } from "./util.js";
  * is resolved against the store's handles first (see `resolveFrom`).
  */
 
-const WAL_REASON =
+const walReason = (noun: FilterNoun): string =>
   "The Messages store was opened in immutable mode, which cannot see its WAL, so the newest " +
-  "messages are exactly what a watch would miss. APPLE_MESSAGES_INDEX_MODE=immutable asks for " +
+  `messages are exactly what a ${noun} would miss. APPLE_MESSAGES_INDEX_MODE=immutable asks for ` +
   "that: set it to auto or ro, or unset it, then try again.";
 
 export type MessagesWatchServiceOptions = {
   client: AppleMessagesClient;
   logger?: Logger | undefined;
+  /**
+   * Who reads through the service: watches (the default), or the Events
+   * extension. Only the wording of a refusal depends on it, so an events client
+   * reads "subscription" where a watch's would read "watch".
+   */
+  mode?: "watch" | "events" | undefined;
 };
 
 /** How a handle compares: emails case-folded, phone numbers without their punctuation. */
@@ -77,6 +84,7 @@ const handleKey = (value: string): string => {
 export class MessagesWatchService {
   readonly #client: AppleMessagesClient;
   readonly #logger: Logger | undefined;
+  readonly #noun: FilterNoun;
 
   #registry: WatchRegistry<MessageArrival> | undefined;
   #inner: MessagesArrivalSource | undefined;
@@ -97,6 +105,7 @@ export class MessagesWatchService {
   constructor(opts: MessagesWatchServiceOptions) {
     this.#client = opts.client;
     this.#logger = opts.logger;
+    this.#noun = opts.mode === "events" ? "subscription" : "watch";
   }
 
   /** How many watches this connection holds. */
@@ -144,7 +153,7 @@ export class MessagesWatchService {
     // Throws the store's own reason when it is off or unreadable.
     const { store, path } = this.#client.watchStore();
     // `immutable` is WAL-blind, and the WAL is where the newest message is.
-    if (store.mode !== "ro") throw new PreconditionError(WAL_REASON);
+    if (store.mode !== "ro") throw new PreconditionError(walReason(this.#noun));
     this.#open(path);
     this.#dir = dirname(path);
   }

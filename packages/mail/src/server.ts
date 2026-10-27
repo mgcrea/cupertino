@@ -96,6 +96,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     events = new MailWatchService({
       client,
       config,
+      mode: "events",
       ...(opts.logger ? { logger: opts.logger } : {}),
       ...(opts.isMailRunning ? { isMailRunning: opts.isMailRunning } : {}),
     });

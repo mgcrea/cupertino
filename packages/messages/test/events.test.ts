@@ -182,6 +182,23 @@ describe("messagesEventAdapter", () => {
     ).rejects.toMatchObject({ code: -32603 });
   });
 
+  it("parseArguments speaks of a subscription, never a watch", async () => {
+    const { adapter } = adapterFor(makeStore());
+    await expect(adapter.parseArguments({})).rejects.toThrow(
+      "A subscription needs a sender: give at least one entry in `from` or `domains`.",
+    );
+    const fx = makeStore();
+    const immutable = build(fx, { ...ON, APPLE_MESSAGES_INDEX_MODE: "immutable" });
+    const err = await messagesEventAdapter(immutable.events!)
+      .parseArguments({ from: ["+33612345678"] })
+      .then(
+        () => "",
+        (e: unknown) => (e as Error).message,
+      );
+    expect(err).toContain("the newest messages are exactly what a subscription would miss.");
+    expect(err).not.toMatch(/watch/i);
+  });
+
   it("occurrence maps a row", () => {
     const { adapter } = adapterFor(makeStore());
     const occ = adapter.occurrence(row());

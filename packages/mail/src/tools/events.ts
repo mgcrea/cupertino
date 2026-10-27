@@ -83,7 +83,7 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
     // The caller's own mistakes first, without touching the index: an empty
     // filter is InvalidParams whatever state the index is in.
     try {
-      normalizeFilter(sender);
+      normalizeFilter(sender, "subscription");
     } catch (err) {
       if (err instanceof PreconditionError) throw invalidParams(err.message);
       throw err;
@@ -92,7 +92,7 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
     await service.ensure();
     try {
       const scope = await service.resolveMailboxScope(mailboxes ?? []);
-      return normalizeFilter({ ...sender, scope });
+      return normalizeFilter({ ...sender, scope }, "subscription");
     } catch (err) {
       if (err instanceof PreconditionError) throw invalidParams(err.message);
       throw err;
