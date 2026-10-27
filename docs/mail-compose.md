@@ -6,12 +6,19 @@ release. Read on macOS 26.6, and checked against a live Mail with four accounts 
 contradict the dictionary. One claim in an earlier version of this file was itself wrong --
 see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so).
 
-**Implemented, in two lanes.** `apple_mail_update_draft` first tries to edit the draft **in its own
-composer window** (`packages/mail/src/client/revise.ts`), which keeps threading, attachments and the
-quoted original because nothing is recreated. Only when no composer is open does it fall back to
-recreating the draft (`packages/mail/src/client/jxa/write.ts`), which is where the familiar refusals
-live. The heading below — "why a draft cannot be edited" — is still true of Apple Events and is no
-longer true of the tool.
+**Implemented, in two lanes.** `apple_mail_update_draft` first edits the draft **in its own composer
+window** (`packages/mail/src/client/revise.ts`, through the app's `mail_composer_edit` verb), which
+keeps threading, attachments and the quoted original because nothing is recreated. When no composer
+is open, a closed reply is **rebuilt** as a reply to its original (`packages/mail/src/client/rebuild.ts`,
+see [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)); the recreate route through
+`jxa/write.ts` remains only for a server not hosted by Cupertino. The heading below — "why a draft
+cannot be edited" — is still true of Apple Events and is no longer true of the tool.
+
+**Read the dated sections as history.** Everything from here to
+[The composer moved into the app](#the-composer-moved-into-the-app) was written while the Node
+server drove the composer one keystroke at a time, and four of its passages describe code the branch
+of 2026-10-26 deleted; each is marked **Superseded** where it stands. The current behaviour is in
+that section and the ones after it.
 
 **Checked live** — `node scripts/verify-mail-ax.mjs --compose` forwards a real message to your own
 address through the hosted mail server, asserts the body arrived in the composer, and then rewrites
@@ -270,7 +277,10 @@ REPLACE the sender's words with the files, and the files would then read back pe
 the text before and after is what stops that from being saved. "Once more than before" stops a file
 of the same name already in the draft from being taken as proof.
 
-**No window, no files.** Recreating a draft writes a new body, so with files and no body there is
+**No window, no files.** **Superseded 2026-10-26:** a closed reply, files only included, is now
+rebuilt from its own HTML and files (see [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)),
+and the paragraph that follows describes the recreate route only a server not hosted by Cupertino
+still takes. Recreating a draft writes a new body, so with files and no body there is
 nothing to recreate it from, and the tool refuses rather than rebuilding the old text from its
 plain rendering. With a body, on a draft that recreation accepts (not a reply, no files of its
 own), `UPDATE_DRAFT` attaches them to the replacement through `attachFiles`, before the save, so a
@@ -345,7 +355,11 @@ a reply or forward either. `update_draft`'s recreate route is split the same way
 `STAGE_REPLACEMENT` opens the replacement with no body, the client fills and saves its window, and
 `COMMIT_REPLACEMENT` confirms it in Drafts before deleting the original. Both halves share
 `UPDATE_DRAFT`'s preflight and its confirm-then-delete tail, so the refusals and the order are the
-same on both routes.
+same on both routes. **Superseded 2026-10-26:** `STAGE_REPLACEMENT` is deleted. A closed draft is
+rebuilt by `rebuild.ts`, which opens the reply through `OPEN_COMPOSER` and has the app's verb fill
+it, and `COMMIT_REPLACEMENT` now confirms the new draft by its `Date`, `In-Reply-To` and text head,
+exactly one candidate, before it deletes the original (see
+[Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)).
 
 **When it does not — or for a new message with no subject, whose window has no stable title — the
 old assigning path remains, and a failed undo is loud.** `SEND_MESSAGE` returns `quoted: true`,
@@ -573,7 +587,10 @@ anything that reaches past the sender's own words stops, having changed nothing.
 The window is also matched to the draft by CONTENT, not only by subject: two replies in one thread
 carry the same title, and rewriting the wrong one destroys what somebody wrote. Two composers under
 one title are refused outright, for the same reason `compose.ts` refuses them — handles are minted
-per call, so there is nothing to tell them apart by.
+per call, so there is nothing to tell them apart by. **Superseded 2026-10-26:** the app's registry
+keeps a handle per window or tab for its life, so two composers under one title are told apart and
+each can be edited (see [The two verbs](#the-two-verbs) and
+[Composers in tabs](#composers-in-tabs)).
 
 ### What it still cannot do
 
@@ -680,6 +697,20 @@ Two windows under one subject are no longer refused. `update_draft` takes a `com
 `ref` (matched to its window by content), or neither: with exactly one compose window open it edits
 that one, and with none or several it refuses and lists them.
 
+**A compose keeps the signature (2026-10-27).** A new composer's own text is the account's
+signature, and a `body` replaces the own text, so `send_message`, `reply_to_message` and
+`forward_message` used to paste over the signature, and refused outright when it held an image
+(nothing that removes a file is allowed). The System Events path never did either: it pasted at
+Mail's caret, above the signature. So compose asks the verb to INSERT (`insert: true`): the
+selection collapses at the start of the own text (the document start when there is none, as for an
+empty draft), is proved outside the quote and read back empty, and the body is pasted there, with a
+newline after it only when the own text's first line holds text. The read-back must be the body, a
+newline, then the own text as it was, whitespace folded; the answer returns that prior text as
+`kept`, and `composeNatively` verifies `body` followed by it. Nothing is removed, so neither files
+refusal applies. `update_draft` with a `body`, the in-place rewrites and the rebuild still replace.
+UNMEASURED LIVE: how Mail's blocks read back after an insert above a text signature and above an
+image signature.
+
 ### Route B: a closed draft is rebuilt as a reply
 
 A draft whose window is closed has no composer and cannot get one back (see the table). So it is
@@ -730,8 +761,12 @@ every compose window as a TAB of one window. Nothing in Mail's own settings show
   The edit brings Mail forward before pressing in any case.
 - **The compose window does not answer `AXEdited`**: it is not among its attribute names, and
   `AXDocument` is nil too. So nothing confirms a ⌘S landed, and after editing a background tab the
-  edit leaves that tab shown instead of reselecting the person's. Whether to find another save
-  signal is open.
+  edit leaves that tab shown instead of reselecting the person's: a press right after ⌘S could be
+  handled first (⌘S goes by HID, a press by Mach message) and the save land in the other draft.
+  Decided 2026-10-27 (final review, decision (a)): the code that waited on `AXEdited` is deleted,
+  the edit's note says the tab is left shown and to tell the person, and so do the descriptions of
+  `update_draft` and `list_open_drafts`. A refusal before ⌘S still selects the person's tab again.
+  A reselect by keystroke (⌃⇧Tab posted after ⌘S, on the same HID queue) is a possible follow-up.
 - The window's `AXCloseButton` closed only the selected tab in the 2026-10-26 cleanups. In runs 11
   and 12, though, a tab nobody asked to close was gone afterwards. Unexplained; the product never
   closes windows.

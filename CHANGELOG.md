@@ -23,8 +23,10 @@ apart, and the editing itself happens inside Cupertino with fewer interruptions.
 - **A draft whose window was closed can still be edited.** `apple_mail_update_draft` used to refuse
   once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the
   thread and keeps its files and formatting, and the old draft is deleted only after the new one is
-  confirmed in Drafts. It still refuses, changing nothing, for a forward, for an original Mail can't
-  find, and when the quote Mail writes is not the one the draft had.
+  confirmed in Drafts. It still refuses, leaving the draft as it was, for a forward and for an
+  original Mail can't find. When the quote Mail writes into the new reply is not the one the draft
+  had, the draft is left as it was too, but that new reply window stays open, unfilled and unsaved,
+  for you to close without saving.
 - **Edits can be find and replace.** `update_draft` takes `edits`, pairs of text to find and what
   replaces it, applied to what you wrote and never to the quoted message. Each `find` must match
   exactly once, and only the matched words change, so the rest of the draft, its formatting and its
@@ -32,6 +34,13 @@ apart, and the editing itself happens inside Cupertino with fewer interruptions.
 - **A draft can be named by its window, or not at all.** `update_draft` takes a `composer` handle
   from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose
   window that is open. With none or several open it refuses and lists them.
+- **Drafts open as tabs of one window are handled.** With macOS set to prefer tabs, Mail opens every
+  compose window as a tab, and only the tab it shows can be read. `apple_mail_list_open_drafts` now
+  lists each tab with its own handle, a hidden one by subject only. `update_draft` selects a hidden
+  tab, checks it is the draft, edits and saves it, and then leaves that tab shown, because Mail does
+  not say when a save has landed and switching back early could save the other draft. A handle can
+  come back marked `rebound` after Mail rebuilds its tab bar; it then edits only by `ref`, which
+  checks the text, until that text is proved.
 - **The Mail pane says when drafts need Accessibility.** Writing into a compose window requires it,
   and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes
   are on and the grant is missing.
