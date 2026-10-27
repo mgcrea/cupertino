@@ -493,6 +493,21 @@ in releases — and buy nothing, since a revocation cannot take effect before th
 next update, not instantly. That asymmetry is the price of the no-network claim, it is small, and the
 [EULA](../apps/apple/EULA) says so in §4(a) rather than leaving it to be discovered.
 
+**Handling a refund request**, as done on 2026-10-25 for the first one:
+
+1. Find the payment. List the live account's Checkout Sessions filtered by `customer_details[email]`,
+   expanding `line_items` and `payment_intent`. Check that the line item is Cupertino's price:
+   Bastion sells from the same Stripe account, and on 2026-09-11 a Bastion sale was fulfilled with a
+   Cupertino key (`ba64e04`), so the buyer's email alone does not say which product they paid for.
+2. Refund the session's PaymentIntent in full, with `reason: requested_by_customer` and the licence
+   id in the refund's metadata. Through the Stripe MCP, a refund is a write that first answers with
+   an approval link for the dashboard; the call goes through only when it is retried with the
+   approval token.
+3. The webhook revokes within seconds. Check the `licenses` row in the `cupertino-licenses` D1
+   database (its id is in `apps/api/wrangler.jsonc`): `revoked_reason` should read `refunded`.
+4. Run `make revocations` and commit the `Revocations.swift` diff. The key stops working at the next
+   release, and not before.
+
 ## Positioning
 
 Every MCP connector shipping today is cloud OAuth — Gmail, Drive, Notion. This one is the opposite,
