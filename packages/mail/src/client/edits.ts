@@ -196,6 +196,16 @@ const encodeText = (text: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll(" ", "&nbsp;");
 
+/**
+ * A replacement's text as HTML: encoded, and each line break it carries a
+ * `<br>`. HTML shows a bare newline as a space, so a two-line `replace` would
+ * land as one line, and the folded read-back could not tell. Only the
+ * replacement's own breaks: a newline already in the run's source is
+ * whitespace the page renders as a space, and is kept as it was.
+ */
+const encodeReplacement = (text: string): string =>
+  encodeText(text).replaceAll(/\r\n|\r|\n/g, "<br>");
+
 const COMMENT = /<!--[\s\S]*?(?:-->|$)/y;
 const RAW_BLOCK = /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/iy;
 const TAG = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/y;
@@ -297,18 +307,19 @@ export const applyHtmlEdits = (edits: Edit[], html: string): HtmlMatched => {
     });
   }
 
-  // Right to left within each run; runs are independent of each other.
+  // Each edited run re-encoded from its own text, left to right, with the
+  // replacements between; matches never overlap (`applyEdits` refuses that).
   const edited = new Map<number, string>();
-  for (const p of placed.toSorted((a, b) => b.start - a.start)) {
-    const token = tokens[p.token] as Extract<Token, { kind: "text" }>;
-    const current = edited.get(p.token) ?? token.text;
-    edited.set(p.token, current.slice(0, p.start) + p.replace + current.slice(p.end));
+  for (const at of new Set(placed.map((p) => p.token))) {
+    const text = (tokens[at] as Extract<Token, { kind: "text" }>).text;
+    let encoded = "";
+    let cursor = 0;
+    for (const p of placed.filter((q) => q.token === at).toSorted((a, b) => a.start - b.start)) {
+      encoded += encodeText(text.slice(cursor, p.start)) + encodeReplacement(p.replace);
+      cursor = p.end;
+    }
+    edited.set(at, encoded + encodeText(text.slice(cursor)));
   }
-  const out = tokens
-    .map((token, at) => {
-      const text = edited.get(at);
-      return text === undefined ? token.raw : encodeText(text);
-    })
-    .join("");
+  const out = tokens.map((token, at) => edited.get(at) ?? token.raw).join("");
   return { kind: "ok", html: out, text: htmlText(out) };
 };

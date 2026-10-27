@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyEdits, sameQuote } from "../src/client/edits.js";
+import { applyEdits, applyHtmlEdits, htmlText, sameQuote } from "../src/client/edits.js";
 
 /**
  * The TypeScript twin of the app's `MailComposerText`.
@@ -127,5 +127,43 @@ describe("sameQuote", () => {
 
   it("different quotes are not the same", () => {
     expect(sameQuote("On 22 Oct, X wrote:\nHi", "On 23 Oct, X wrote: Hi")).toBe(false);
+  });
+});
+
+/*
+ * Final review M2: a closed formatted draft is edited in its HTML, and HTML
+ * shows a bare newline as a space, so a two-line replacement used to land as
+ * one line while the folded read-back still matched.
+ */
+describe("applyHtmlEdits", () => {
+  it("turns a line break in a replacement into <br>, which reads back as a line break", () => {
+    const edited = applyHtmlEdits(
+      [{ find: "see you", replace: "see you\nOlivier" }],
+      "<div>Thanks, see you</div>",
+    );
+    expect(edited).toMatchObject({
+      kind: "ok",
+      html: "<div>Thanks, see you<br>Olivier</div>",
+    });
+    expect(edited.kind === "ok" && htmlText(edited.html)).toBe("\nThanks, see you\nOlivier\n");
+  });
+
+  it("keeps a newline already in the run's source as it was, and encodes the rest", () => {
+    const edited = applyHtmlEdits(
+      [{ find: "two", replace: "2 < 3\r\nfour" }],
+      "<p>one\ntwo &amp; three</p>",
+    );
+    expect(edited).toMatchObject({ kind: "ok", html: "<p>one\n2 &lt; 3<br>four &amp; three</p>" });
+  });
+
+  it("applies several edits in one run, each in its place", () => {
+    const edited = applyHtmlEdits(
+      [
+        { find: "alpha", replace: "A\nA" },
+        { find: "gamma", replace: "G" },
+      ],
+      "<div>alpha beta gamma</div>",
+    );
+    expect(edited).toMatchObject({ kind: "ok", html: "<div>A<br>A beta G</div>" });
   });
 });
