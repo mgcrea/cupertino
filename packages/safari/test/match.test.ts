@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { urlVariants } from "../src/client/match.js";
+import { extensionRanges, urlVariants } from "../src/client/match.js";
 
 /**
  * The join between Safari's two lanes is a URL, and this is the ladder that
@@ -96,5 +96,46 @@ describe("the variant ladder", () => {
     // The whole set of ladders for every open tab goes into one SQL `IN`, so a
     // combinatorial expansion here would be paid per tab.
     expect(ladder.length).toBeLessThanOrEqual(6);
+  });
+});
+
+/**
+ * The other direction. The ladder only takes things OFF the tab's URL, and the
+ * measured misses are the reverse: the tab holds `/plus5` and history holds
+ * only `/plus5?variant=…`. These ranges let the store find a row that ADDS to
+ * the tab's URL, and the character after the prefix is what bounds them.
+ */
+describe("extension ranges", () => {
+  it("covers a query or a fragment added to a URL that has neither", () => {
+    expect(extensionRanges("https://eu.qidi3d.com/products/plus5")).toEqual([
+      ["https://eu.qidi3d.com/products/plus5?", "https://eu.qidi3d.com/products/plus5@"],
+      ["https://eu.qidi3d.com/products/plus5#", "https://eu.qidi3d.com/products/plus5$"],
+    ]);
+  });
+
+  it("covers parameters added to a query the tab already has", () => {
+    expect(extensionRanges("https://example.com/search?q=w")).toEqual([
+      ["https://example.com/search?q=w&", "https://example.com/search?q=w'"],
+      ["https://example.com/search?q=w#", "https://example.com/search?q=w$"],
+    ]);
+  });
+
+  it("starts from the tab's URL without its fragment", () => {
+    expect(extensionRanges("https://example.com/a#top")[0]).toEqual([
+      "https://example.com/a?",
+      "https://example.com/a@",
+    ]);
+  });
+
+  it("never reaches a longer path, which is a different page", () => {
+    const pro = "https://eu.qidi3d.com/products/plus5-pro";
+    for (const [lo, hi] of extensionRanges("https://eu.qidi3d.com/products/plus5")) {
+      expect(pro >= lo && pro < hi).toBe(false);
+    }
+  });
+
+  it("offers nothing for a URL that is not http(s)", () => {
+    expect(extensionRanges("about:blank")).toEqual([]);
+    expect(extensionRanges("not a url")).toEqual([]);
   });
 });

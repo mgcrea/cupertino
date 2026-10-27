@@ -339,40 +339,73 @@
    * them; a bounded list with a `truncated` flag is more useful than a complete
    * one nobody reads.
    */
-  function enumerate(limit, includeCodes, maxValueChars) {
+  function enumerate(limit, includeCodes, maxValueChars, filter = {}) {
     handles.clear();
     const found = [];
     const all = document.querySelectorAll(SELECTOR);
+    // Applied HERE, before the cap, rather than by the caller afterwards: on a
+    // form of 183 fields the one wanted is rarely in the first sixty, and a
+    // filter run over a capped list cannot find what the cap dropped. Matched
+    // on the label and a link's address, never on a value, so a filter cannot
+    // be used to probe what a withheld field holds.
+    const query = typeof filter.query === "string" ? filter.query.toLowerCase() : "";
+    const wantKind = typeof filter.kind === "string" ? filter.kind : "";
+    const inViewOnly = filter.inViewOnly === true;
+    const filtered = Boolean(query || wantKind || inViewOnly);
+    // Whether anything that qualifies was left out by the cap. Found by
+    // carrying on to the NEXT qualifying element, rather than by comparing
+    // against every node the selector matched, which counted invisible and
+    // filtered-out nodes as "more" and called a one-match filter truncated.
+    let truncated = false;
     for (const el of all) {
       if (!visible(el)) continue;
+      const k = kind(el);
+      if (wantKind && k !== wantKind) continue;
+      const text = label(el);
+      const href = el.tagName.toLowerCase() === "a" ? el.href || null : null;
+      if (
+        query &&
+        !text.toLowerCase().includes(query) &&
+        !(href && href.toLowerCase().includes(query))
+      ) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      // Whether it is on screen RIGHT NOW, which is different from existing.
+      // A caller choosing between two plausible matches should prefer the one
+      // the user can see.
+      const inView =
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || 0) &&
+        rect.right <= (window.innerWidth || 0);
+      if (inViewOnly && !inView) continue;
+      if (found.length >= limit) {
+        truncated = true;
+        break;
+      }
       const id = PAGE + "-e" + nextId++;
       handles.set(id, el);
-      const rect = el.getBoundingClientRect();
       found.push({
         id,
-        kind: kind(el),
-        label: label(el),
-        // Whether it is on screen RIGHT NOW, which is different from existing.
-        // A caller choosing between two plausible matches should prefer the one
-        // the user can see.
-        inView:
-          rect.top >= 0 &&
-          rect.left >= 0 &&
-          rect.bottom <= (window.innerHeight || 0) &&
-          rect.right <= (window.innerWidth || 0),
-        href: el.tagName.toLowerCase() === "a" ? el.href || null : null,
+        kind: k,
+        label: text,
+        inView,
+        href,
         ...describeValue(el, includeCodes, maxValueChars),
         // Only when true, so the ordinary element carries no extra key.
         ...(isDisabled(el) ? { disabled: true } : {}),
       });
-      if (found.length >= limit) break;
     }
     return {
       // Said once as well as in every id, so the answer names which page load
       // it came from without the caller having to parse one.
       page: PAGE,
       elements: found,
-      truncated: found.length >= limit && all.length > found.length,
+      truncated,
+      // Said by the page, so the server can tell a filtered list from one an
+      // older content script returned whole, ignoring a filter it never knew.
+      ...(filtered ? { filtered: true } : {}),
     };
   }
 
@@ -432,6 +465,116 @@
     el.scrollIntoView({ block: "center", behavior: "instant" });
     el.click();
     return { clicked: id, label: label(el), kind: kind(el) };
+  }
+
+  /**
+   * A form's own property or method, past a field that shadows it.
+   *
+   * A form's named fields are properties of the form, ahead of its own: with
+   * `<input name="action">`, as WordPress, phpBB and MediaWiki forms have,
+   * `form.action` IS that input. So the form's own getter is called from the
+   * prototype, and where there is no prototype to ask, the attribute is read.
+   */
+  function formOwn(form, name) {
+    const proto = typeof HTMLFormElement === "function" ? HTMLFormElement.prototype : null;
+    const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, name) : undefined;
+    if (descriptor?.get) return descriptor.get.call(form);
+    if (descriptor && typeof descriptor.value === "function") {
+      return descriptor.value.bind(form);
+    }
+    const own = form[name];
+    if (typeof own === "function") return own.bind(form);
+    if (typeof own !== "string" && typeof form.getAttribute === "function") {
+      const attr = form.getAttribute(name);
+      if (attr !== null) return attr;
+    }
+    return own;
+  }
+
+  function isSubmitButton(el) {
+    const tag = String(el.tagName || "").toLowerCase();
+    const type = (el.getAttribute?.("type") || "").toLowerCase();
+    if (tag === "button") return type === "" || type === "submit";
+    return tag === "input" && (type === "submit" || type === "image");
+  }
+
+  /**
+   * Submit the form an element belongs to, as pressing Enter in it would.
+   *
+   * Not a synthetic Enter key: a content script's KeyboardEvent arrives with
+   * `isTrusted: false`, and the browser runs no default action for it, so the
+   * form would not submit and nothing would say so. What Enter actually does
+   * is CLICK the form's default button, its first submit button, and so this
+   * does: a page that does its work in that button's click handler (prevent
+   * the default, send with fetch) gets that, rather than a native submission
+   * that would put the fields in the URL. The button's `name=value`,
+   * `formaction` and `formmethod` come along as they would. With no default
+   * button, `requestSubmit()` is the DOM's own "submit as a person would": it
+   * fires `submit`, where a React or Vue form does its work. `form.submit()`
+   * would skip that and post what the DOM holds behind the framework's back.
+   * And a disabled default button means Enter does nothing, so this does
+   * nothing too and says why.
+   *
+   * A form that fails its own validation is NOT submitted, and the answer
+   * names the fields and the browser's own message for each, which is what a
+   * person would have been shown, unless the form or the button says
+   * `novalidate`, in which case the browser would not have checked either.
+   */
+  function submit(id) {
+    const el = resolve(id);
+    const form = el.form || (typeof el.closest === "function" ? el.closest("form") : null);
+    if (!form) {
+      throw new Error(
+        'Element "' +
+          id +
+          '" is not inside a form, so there is nothing to submit. If the page sends it with a ' +
+          "button, use apple_safari_click on that button.",
+      );
+    }
+    const fields = Array.from(formOwn(form, "elements") || []);
+    const submitter = isSubmitButton(el) ? el : fields.find(isSubmitButton) || null;
+    if (submitter && isDisabled(submitter)) {
+      throw new Error(
+        "The form's submit button (\"" +
+          label(submitter) +
+          '") is disabled, so pressing Enter would do nothing here, and nothing was done. ' +
+          "Pages usually enable it once the form is complete.",
+      );
+    }
+    const novalidate = formOwn(form, "noValidate") === true || submitter?.formNoValidate === true;
+    const checkValidity = formOwn(form, "checkValidity");
+    if (!novalidate && typeof checkValidity === "function" && !checkValidity()) {
+      const invalid = [];
+      for (const field of fields) {
+        if (field.validity && field.validity.valid === false) {
+          invalid.push(label(field) + ": " + (field.validationMessage || "invalid"));
+        }
+      }
+      throw new Error(
+        "The form was not submitted: it fails its own validation" +
+          (invalid.length ? " (" + invalid.join("; ") + ")" : "") +
+          ". Fill those fields and submit again.",
+      );
+    }
+    const requestSubmit = formOwn(form, "requestSubmit");
+    if (!submitter && typeof requestSubmit !== "function") {
+      throw new Error(
+        "This page's form cannot be submitted the way a person would (no requestSubmit). Use " +
+          "apple_safari_click on its submit button.",
+      );
+    }
+    el.scrollIntoView?.({ block: "center", behavior: "instant" });
+    if (submitter) submitter.click();
+    else requestSubmit();
+    const action = formOwn(form, "action");
+    const method = formOwn(form, "method");
+    return {
+      submitted: id,
+      via: submitter ? "button" : "form",
+      ...(submitter ? { button: label(submitter) } : {}),
+      action: typeof action === "string" && action ? action : null,
+      method: (typeof method === "string" && method ? method : "get").toLowerCase(),
+    };
   }
 
   /**
@@ -743,6 +886,42 @@
   }
 
   /**
+   * Whether some text is on the page now, for `wait_for`.
+   *
+   * The same text `read` returns, so a wait and a read cannot disagree about
+   * what the page says, but only a short passage around the first match
+   * crosses the boundary: the server asks this about once a second while it
+   * waits, and the whole page each time would be hundreds of kilobytes.
+   * Case-insensitive, because a caller waiting for "Order confirmed" means
+   * the words, not the CSS that may have upper-cased them.
+   */
+  function find(text) {
+    const wanted = String(text ?? "");
+    if (!wanted) throw new Error("Nothing to look for: text is empty.");
+    const body = readableText();
+    // Matched on the text as it is, with a case-insensitive pattern, rather
+    // than on a lower-cased copy: lower-casing can change a string's length
+    // ("İ" becomes two units), and an index from the copy would then cut the
+    // excerpt from the wrong place in the original.
+    const pattern = new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const match = pattern.exec(body);
+    return {
+      url: location.href,
+      title: document.title || "",
+      found: match !== null,
+      ...(match === null
+        ? {}
+        : {
+            excerpt: body
+              .slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)
+              .replace(/\s+/g, " ")
+              .trim(),
+          }),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Run one command and describe what happened.
    *
    * Never throws into the caller: a command that fails comes back as
@@ -788,7 +967,7 @@
       // the click is the wrong place to find out what — a single-page app that
       // has moved on since the enumeration lands here too, and says so.
       if (
-        (command.action === "click" || command.action === "fill") &&
+        (command.action === "click" || command.action === "fill" || command.action === "submit") &&
         typeof command.url === "string" &&
         command.url !== location.href
       ) {
@@ -810,6 +989,7 @@
               Math.min(command.limit || 60, 200),
               command.includeCodes === true,
               Math.min(Math.max(1, command.maxValueChars || DEFAULT_VALUE_CHARS), MAX_VALUE_CHARS),
+              { query: command.query, kind: command.kind, inViewOnly: command.inViewOnly },
             ),
           };
         case "read":
@@ -820,6 +1000,10 @@
           return { ok: true, data: fill(command.elementId, command.text ?? "") };
         case "scroll":
           return { ok: true, data: scroll(command.direction) };
+        case "submit":
+          return { ok: true, data: submit(command.elementId) };
+        case "find":
+          return { ok: true, data: find(command.text) };
         case "codes":
           return { ok: true, data: findCodes(Math.min(command.limit || 10, 40)) };
         // Answered by `network.js`, which owns the buffer. It loads from its own

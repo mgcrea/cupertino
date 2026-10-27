@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
-import { compact, fail, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, pageUrlArg, resolvePageUrl, wrapResult } from "./util.js";
 
 /**
  * Acting inside a page, through the Safari extension.
@@ -45,6 +45,17 @@ const elementIdArg = z
       "reload: never construct one, never reuse one across a page change, and re-enumerate " +
       "after any click that loaded something.",
   );
+
+/** What `kind` can be on an enumerated element; `actions.js` decides it. */
+const ELEMENT_KINDS = [
+  "link",
+  "button",
+  "textfield",
+  "checkbox",
+  "radio",
+  "select",
+  "control",
+] as const;
 
 export const urlArg = z
   .string()
@@ -89,7 +100,7 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
           "is filled, which is usually the thing you actually needed to know.",
       ),
       inputSchema: z.object({
-        url: urlArg,
+        url: pageUrlArg,
         limit: z
           .number()
           .int()
@@ -108,22 +119,69 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
               "recognise a field; raise it to read a long textarea whole. A value cut by this " +
               "cap carries `valueTruncated: true` and its full `valueLength`.",
           ),
+        query: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Keep elements whose label or link address contains this text, any case. Applied " +
+              "in the page before `limit`, so it finds a field the cap would otherwise drop. " +
+              "Never matched against a field's value.",
+          ),
+        kind: z
+          .enum(ELEMENT_KINDS)
+          .optional()
+          .describe("Keep one kind of element, as `kind` reports it."),
+        inViewOnly: z
+          .boolean()
+          .optional()
+          .describe("Keep only what the user can currently see (`inView: true`)."),
       }),
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ url, limit, maxValueChars }) =>
+    async ({ url: given, limit, maxValueChars, query, kind, inViewOnly }) =>
       wrapResult(async () => {
+        const { url, tab } = await resolvePageUrl(client, given);
         const result = await client.pageAction({
           action: "elements",
           url,
           limit,
           maxValueChars,
+          query,
+          kind,
+          inViewOnly,
         });
         if (!result.ok) return fail(result.error ?? "The page could not enumerate its elements.");
+        const data = result.data as Record<string, unknown>;
+        // A content script from before filters returns the whole list and
+        // ignores them. Filtering that here is still right, but only over
+        // what survived its cap, so the answer says the list may be short.
+        const unfiltered =
+          (query !== undefined || kind !== undefined || inViewOnly === true) &&
+          data.filtered !== true &&
+          Array.isArray(data.elements);
+        const elements = unfiltered
+          ? (data.elements as Record<string, unknown>[]).filter(
+              (e) =>
+                (kind === undefined || e.kind === kind) &&
+                (inViewOnly !== true || e.inView === true) &&
+                (query === undefined ||
+                  [e.label, e.href].some(
+                    (t) => typeof t === "string" && t.toLowerCase().includes(query.toLowerCase()),
+                  )),
+            )
+          : data.elements;
         return ok(
           compact({
             url,
-            ...(result.data as Record<string, unknown>),
+            tab,
+            ...data,
+            elements,
+            filterNote: unfiltered
+              ? "This tab runs an extension build from before filters, so the filter was " +
+                "applied here, after the page's cap: a match past the cap is missing. " +
+                "reload the tab to filter in the page."
+              : undefined,
             idNote:
               "These ids are valid for this page load only — the tab that answered, until it " +
               "navigates, reloads or re-renders. Re-enumerate after anything that changes the page.",
@@ -131,7 +189,66 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
         );
       }),
   );
+
+  server.registerTool(
+    "apple_safari_wait_for",
+    {
+      description: describeReach(
+        "Wait until some text appears on an open page — or, with `gone: true`, until it leaves " +
+          "— and say whether it did. Use it after apple_safari_open_url (which asks for a page " +
+          "and does not wait for it), after a click or submit that loads something, or to wait " +
+          'out a "Loading…" or "Processing…" message. The text is matched against the page\'s ' +
+          "readable text, as apple_safari_read_page returns it, in any case. Leave `url` out to " +
+          "follow the tab in front: it is looked up again for every check, so a page the click " +
+          "navigated to is the one checked. Not finding the text by the deadline is an answer, " +
+          "not an error: `met` is false.",
+      ),
+      inputSchema: z.object({
+        url: pageUrlArg,
+        text: z.string().min(1).describe("The text to wait for, as it reads on the page."),
+        gone: z
+          .boolean()
+          .optional()
+          .describe("Wait for the text to DISAPPEAR instead, such as a loading message."),
+        timeoutSeconds: z
+          .number()
+          .min(1)
+          .max(MAX_WAIT_SECONDS)
+          .optional()
+          .describe(
+            `How long to keep checking. Defaults to ${DEFAULT_WAIT_SECONDS}, at most ` +
+              `${MAX_WAIT_SECONDS}.`,
+          ),
+      }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ url, text, gone, timeoutSeconds }) =>
+      wrapResult(async () => {
+        const result = await client.waitFor({
+          url,
+          text,
+          gone: gone === true,
+          timeoutMs: (timeoutSeconds ?? DEFAULT_WAIT_SECONDS) * 1000,
+        });
+        return ok(
+          compact({
+            ...result,
+            note: result.met
+              ? undefined
+              : `"${text}" ${gone === true ? "was still on" : "did not appear on"} the page ` +
+                `within ${timeoutSeconds ?? DEFAULT_WAIT_SECONDS}s (${result.checks} check(s)).` +
+                (result.checks === 0
+                  ? " No check was answered at all, so this says nothing about the page: see " +
+                    "`lastMiss`."
+                  : ""),
+          }),
+        );
+      }),
+  );
 };
+
+const DEFAULT_WAIT_SECONDS = 10;
+const MAX_WAIT_SECONDS = 60;
 
 export const registerActionTools = (server: McpServer, client: AppleSafariClient): void => {
   server.registerTool(
@@ -161,6 +278,39 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
             staleNote:
               "If this click navigated or re-rendered the page, every element id from before it " +
               "is now dead. Enumerate again rather than reusing one.",
+          }),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "apple_safari_submit",
+    {
+      description: describeReach(
+        "Submit the form an element belongs to, as pressing Enter in one of its fields would, " +
+          "by an id from apple_safari_page_elements — any field of the form will do. The " +
+          "page's own validation runs first: a form that fails it is NOT submitted, and the " +
+          "error names each failing field and the message the browser would have shown. A " +
+          "keystroke cannot do this from here (the page ignores a synthetic Enter), which is " +
+          "why this is its own verb. IRREVERSIBLE and NOT idempotent, like a click: it can " +
+          "send a message or place an order. If it times out it MAY still have happened — do " +
+          "not retry; look at the page. An element outside any form is refused; click its " +
+          "button instead.",
+      ),
+      inputSchema: z.object({ url: urlArg, elementId: elementIdArg }),
+      annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ url, elementId }) =>
+      wrapResult(async () => {
+        const result = await client.pageAction({ action: "submit", url, elementId });
+        if (!result.ok) return fail(result.error ?? "The form was not submitted.");
+        return ok(
+          compact({
+            ...(result.data as Record<string, unknown>),
+            url,
+            staleNote:
+              "A submit usually loads a new page, and every element id from before it is then " +
+              "dead. apple_safari_wait_for can wait for the result to appear.",
           }),
         );
       }),

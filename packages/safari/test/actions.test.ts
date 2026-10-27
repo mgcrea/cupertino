@@ -37,7 +37,11 @@ const fakeOsascript: OsascriptRunner = {
   run: async <T>(): Promise<T> => ({ entries: [], folders: 0, depthTruncated: false }) as T,
 };
 
-const connect = async (pages: string, env: NodeJS.ProcessEnv = {}) => {
+const connect = async (
+  pages: string,
+  env: NodeJS.ProcessEnv = {},
+  osascript: OsascriptRunner = fakeOsascript,
+) => {
   const config: Config = loadConfig({
     APPLE_SAFARI_INDEX_MODE: "off",
     APPLE_SAFARI_PAGES: pages,
@@ -46,7 +50,7 @@ const connect = async (pages: string, env: NodeJS.ProcessEnv = {}) => {
     APPLE_SAFARI_ACTION_TIMEOUT_MS: "1200",
     ...env,
   });
-  const { server } = createServer({ config, home: "/nonexistent-home", osascript: fakeOsascript });
+  const { server } = createServer({ config, home: "/nonexistent-home", osascript });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -810,5 +814,399 @@ describe("page_elements value cap", () => {
     const c = await connect(dirs.pages);
     await call(c, "apple_safari_page_elements", { url: "https://x.example/", maxValueChars: 5000 });
     expect(ext.seen[0]).toMatchObject({ action: "elements", maxValueChars: 5000 });
+  });
+});
+
+/** A script runner that answers every script with `payload` and records what ran. */
+const tabsScript = (payload: Record<string, unknown>) => {
+  const calls: string[] = [];
+  const runner: OsascriptRunner = {
+    run: async <T>(script: string): Promise<T> => {
+      calls.push(script);
+      return payload as T;
+    },
+  };
+  return { runner, calls };
+};
+
+/**
+ * "What is on my screen" used to cost a list_tabs call first, because every
+ * page tool wanted an exact URL. The tools that only READ now default to the
+ * frontmost tab, and say which URL they used; the ones that act still name
+ * their page through the element id.
+ */
+describe("the frontmost tab, when no url is given", () => {
+  const FRONT = "https://front.example/page";
+  const SAFARI = {
+    running: true,
+    windows: 1,
+    appFrontmost: true,
+    windowOrderUnknown: false,
+    tabs: [
+      {
+        window: 1,
+        windowIndex: 1,
+        index: 1,
+        url: "https://behind.example/",
+        title: "B",
+        active: false,
+        frontmost: false,
+      },
+      {
+        window: 1,
+        windowIndex: 1,
+        index: 2,
+        url: FRONT,
+        title: "F",
+        active: true,
+        frontmost: true,
+      },
+    ],
+  };
+
+  it("reads the frontmost tab live, and says which URL it read", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (c) => ({
+      ok: true,
+      data: {
+        url: c.url,
+        title: "F",
+        format: "text",
+        content: "hello",
+        totalChars: 5,
+        truncated: false,
+        readAt: new Date().toISOString(),
+      },
+    }));
+    running = ext;
+    const { runner } = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, {}, runner);
+    const r = await call(c, "apple_safari_read_page", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+    expect((r.json() as { url: string; tab: string }).url).toBe(FRONT);
+    expect((r.json() as { url: string; tab: string }).tab).toBe("frontmost");
+  });
+
+  it("enumerates the frontmost tab's elements", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { page: "3f9a2c1d", elements: [] } }));
+    running = ext;
+    const c = await connect(dirs.pages, {}, tabsScript(SAFARI).runner);
+    const r = await call(c, "apple_safari_page_elements", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+    expect((r.json() as { url: string }).url).toBe(FRONT);
+  });
+
+  it("scans the frontmost tab for codes", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { excerpts: [] } }));
+    running = ext;
+    const c = await connect(
+      dirs.pages,
+      { APPLE_SAFARI_ALLOW_CODES: "true" },
+      tabsScript(SAFARI).runner,
+    );
+    const r = await call(c, "apple_safari_find_codes", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+  });
+
+  it("sends no Apple Event when a url is given", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { page: "3f9a2c1d", elements: [] } }));
+    running = ext;
+    const script = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, {}, script.runner);
+    await call(c, "apple_safari_page_elements", { url: "https://named.example/" });
+    expect(script.calls).toHaveLength(0);
+    expect(ext.seen[0]?.url).toBe("https://named.example/");
+  });
+
+  it("asks for a url, writing no command, when live tabs are off", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: {} }));
+    running = ext;
+    const script = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, { APPLE_SAFARI_LIVE_TABS: "false" }, script.runner);
+    const r = await call(c, "apple_safari_page_elements", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("APPLE_SAFARI_LIVE_TABS");
+    expect(r.text).toContain("url");
+    expect(script.calls).toHaveLength(0);
+    expect(ext.seen).toHaveLength(0);
+  });
+
+  it("says Safari is not running rather than guessing a page", async () => {
+    const dirs = paths();
+    const c = await connect(
+      dirs.pages,
+      {},
+      tabsScript({
+        running: false,
+        windows: 0,
+        appFrontmost: null,
+        windowOrderUnknown: false,
+        tabs: [],
+      }).runner,
+    );
+    const r = await call(c, "apple_safari_read_page", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not running");
+  });
+
+  it("refuses when no tab can be called frontmost", async () => {
+    const dirs = paths();
+    const c = await connect(
+      dirs.pages,
+      { APPLE_SAFARI_ALLOW_CODES: "true" },
+      // As the real script reports it: with no window order it still marks
+      // the first window's selected tab frontmost, guessing from list order.
+      tabsScript({ ...SAFARI, windowOrderUnknown: true }).runner,
+    );
+    const r = await call(c, "apple_safari_find_codes", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("frontmost");
+  });
+});
+
+describe("page_elements filters", () => {
+  it("passes the filters to the page", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({
+      ok: true,
+      data: { page: "3f9a2c1d", elements: [], truncated: false, filtered: true },
+    }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    await call(c, "apple_safari_page_elements", {
+      url: "https://x.example/",
+      query: "save",
+      kind: "button",
+      inViewOnly: true,
+    });
+    expect(ext.seen[0]).toMatchObject({ query: "save", kind: "button", inViewOnly: true });
+  });
+
+  it("filters an older page's whole list itself, and says it may be incomplete", async () => {
+    const dirs = paths();
+    running = fakeExtension(dirs, () => ({
+      ok: true,
+      data: {
+        page: "3f9a2c1d",
+        elements: [
+          { id: "3f9a2c1d-e1", kind: "button", label: "Cancel", inView: true },
+          { id: "3f9a2c1d-e2", kind: "button", label: "Save", inView: false },
+          { id: "3f9a2c1d-e3", kind: "textfield", label: "Save as", inView: true },
+        ],
+        truncated: true,
+      },
+    }));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", {
+      url: "https://x.example/",
+      query: "save",
+      kind: "button",
+    });
+    const body = r.json() as { elements: { id: string }[]; filterNote?: string };
+    expect(body.elements.map((e) => e.id)).toEqual(["3f9a2c1d-e2"]);
+    expect(body.filterNote).toContain("reload");
+  });
+});
+
+describe("apple_safari_submit", () => {
+  it("sends the page a submit naming the element and its page load", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (cmd) => ({
+      ok: true,
+      data: { submitted: cmd.elementId, action: "https://shop.example/pay", method: "post" },
+    }));
+    running = ext;
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_submit", {
+      url: "https://shop.example/checkout",
+      elementId: "3f9a2c1d-e4",
+    });
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]).toMatchObject({
+      action: "submit",
+      elementId: "3f9a2c1d-e4",
+      page: "3f9a2c1d",
+      url: "https://shop.example/checkout",
+    });
+    expect(r.json()).toMatchObject({ submitted: "3f9a2c1d-e4", method: "post" });
+  });
+
+  it("reports the page's refusal, such as a form that fails validation", async () => {
+    const dirs = paths();
+    running = fakeExtension(dirs, () => ({
+      ok: false,
+      error: "The form was not submitted: it fails its own validation (Email: required).",
+    }));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_submit", {
+      url: "https://shop.example/checkout",
+      elementId: "3f9a2c1d-e4",
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("Email: required");
+  });
+});
+
+/** What the page answers to a `find`. */
+const found = (url: string, yes: boolean) => ({
+  ok: true,
+  data: {
+    url,
+    title: "t",
+    found: yes,
+    ...(yes ? { excerpt: "Your order is confirmed" } : {}),
+    checkedAt: new Date().toISOString(),
+  },
+});
+
+describe("apple_safari_wait_for", () => {
+  it("checks until the text appears, and returns the passage", async () => {
+    const dirs = paths();
+    let n = 0;
+    const ext = fakeExtension(dirs, (cmd) => found(String(cmd.url), ++n >= 3));
+    running = ext;
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/done",
+      text: "order is confirmed",
+    });
+    expect(r.isError).toBe(false);
+    expect(r.json()).toMatchObject({
+      met: true,
+      url: "https://shop.example/done",
+      excerpt: "Your order is confirmed",
+      checks: 3,
+    });
+    expect(ext.seen.every((cmd) => cmd.action === "find")).toBe(true);
+  });
+
+  it("waits for text to go away when asked", async () => {
+    const dirs = paths();
+    let n = 0;
+    running = fakeExtension(dirs, (cmd) => found(String(cmd.url), ++n < 2));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/pay",
+      text: "Processing",
+      gone: true,
+    });
+    expect(r.json()).toMatchObject({ met: true, checks: 2 });
+  });
+
+  it("gives up at the deadline without calling it an error", async () => {
+    const dirs = paths();
+    running = fakeExtension(dirs, (cmd) => found(String(cmd.url), false));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/pay",
+      text: "confirmed",
+      timeoutSeconds: 1,
+    });
+    expect(r.isError).toBe(false);
+    const body = r.json() as { met: boolean; note: string };
+    expect(body.met).toBe(false);
+    expect(body.note).toContain("confirmed");
+  });
+
+  it("searches a live read instead when the tab predates find", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (cmd) =>
+      cmd.action === "find"
+        ? { ok: false, error: 'Unknown action "find".' }
+        : {
+            ok: true,
+            data: {
+              url: cmd.url,
+              title: "t",
+              format: "text",
+              content: "Thanks. Your ORDER IS CONFIRMED.",
+              totalChars: 32,
+              truncated: false,
+              readAt: new Date().toISOString(),
+            },
+          },
+    );
+    running = ext;
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/done",
+      text: "order is confirmed",
+    });
+    expect(r.json()).toMatchObject({ met: true });
+    expect(ext.seen.map((cmd) => cmd.action)).toEqual(["find", "read"]);
+  });
+
+  it("looks the frontmost tab up again on every check, so a navigation is followed", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (cmd) =>
+      found(String(cmd.url), cmd.url === "https://shop.example/thanks"),
+    );
+    running = ext;
+    const fronts = ["https://shop.example/pay", null, "https://shop.example/thanks"];
+    let lookups = 0;
+    const runner: OsascriptRunner = {
+      run: async <T>(): Promise<T> => {
+        const url = fronts[Math.min(lookups++, fronts.length - 1)];
+        return {
+          running: true,
+          windows: 1,
+          appFrontmost: true,
+          windowOrderUnknown: false,
+          // A tab mid-navigation can answer no URL at all: a miss, not a failure.
+          tabs: [
+            { window: 1, windowIndex: 1, index: 1, url, title: "t", active: true, frontmost: true },
+          ],
+        } as T;
+      },
+    };
+    const c = await connect(dirs.pages, {}, runner);
+    const r = await call(c, "apple_safari_wait_for", { text: "confirmed", timeoutSeconds: 5 });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.json()).toMatchObject({ met: true, url: "https://shop.example/thanks" });
+    expect(ext.seen.map((cmd) => cmd.url)).toEqual([
+      "https://shop.example/pay",
+      "https://shop.example/thanks",
+    ]);
+  });
+
+  it("follows the frontmost tab when no url is given, so a navigation is seen", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (cmd) => found(String(cmd.url), true));
+    running = ext;
+    const c = await connect(
+      dirs.pages,
+      {},
+      tabsScript({
+        running: true,
+        windows: 1,
+        appFrontmost: true,
+        windowOrderUnknown: false,
+        tabs: [
+          {
+            window: 1,
+            windowIndex: 1,
+            index: 1,
+            url: "https://shop.example/thanks",
+            title: "Thanks",
+            active: true,
+            frontmost: true,
+          },
+        ],
+      }).runner,
+    );
+    const r = await call(c, "apple_safari_wait_for", { text: "confirmed" });
+    expect(r.json()).toMatchObject({
+      met: true,
+      url: "https://shop.example/thanks",
+      tab: "frontmost",
+    });
+    expect(ext.seen[0]?.url).toBe("https://shop.example/thanks");
   });
 });

@@ -353,6 +353,49 @@ describe("get", () => {
   });
 });
 
+/** What `extensionRanges` gives for a URL with no query. */
+const ranges = (base: string): [string, string][] => [
+  [`${base}?`, `${base}@`],
+  [`${base}#`, `${base}$`],
+];
+
+/**
+ * The row that EXTENDS a URL: the tab is on `/a` and history only has `/a?x=1`.
+ * It is a range scan on the unique url index, so the bound is the range.
+ */
+describe("extending", () => {
+  const withRows = (urls: [string, number][]): SafariStore => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(FIXTURE);
+    const item = db.prepare(
+      `INSERT INTO history_items
+         (url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+       VALUES (?, ?, X'', 0, 0)`,
+    );
+    for (const [url, count] of urls) item.run(url, count);
+    return new SafariStore({ db, caps: introspect(db, NOW), path: ":memory:", mode: "ro" });
+  };
+
+  it("finds a row that adds a query, and prefers the most visited", () => {
+    const store = withRows([
+      ["https://shop.example/plus5?variant=1", 2],
+      ["https://shop.example/plus5?variant=2", 7],
+    ]);
+    expect(store.extending(ranges("https://shop.example/plus5"))?.url).toBe(
+      "https://shop.example/plus5?variant=2",
+    );
+  });
+
+  it("does not reach a longer path", () => {
+    const store = withRows([["https://shop.example/plus5-pro", 9]]);
+    expect(store.extending(ranges("https://shop.example/plus5"))).toBeNull();
+  });
+
+  it("returns null for no ranges", () => {
+    expect(build().extending([])).toBeNull();
+  });
+});
+
 /**
  * The batched lookup behind the tab join.
  *

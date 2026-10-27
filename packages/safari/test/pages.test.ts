@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,13 @@ const store = (entries: Record<string, unknown>[] | null): string => {
   const pages = join(root, "pages");
   if (entries !== null) {
     mkdirSync(pages, { recursive: true });
-    entries.forEach((e, i) => writeFileSync(join(pages, `${i}.json`), JSON.stringify(e)));
+    // Named as the extension names them: by the SHA-256 of the URL, so one
+    // file per URL and a revisit overwrites it.
+    entries.forEach((e, i) => {
+      const name =
+        typeof e.url === "string" ? createHash("sha256").update(e.url).digest("hex") : String(i);
+      writeFileSync(join(pages, `${name}.json`), JSON.stringify(e));
+    });
   }
   return pages;
 };
@@ -84,11 +91,13 @@ describe("reading a captured page", () => {
   });
 
   /** Two tabs on one URL collapse to one entry; the freshest must win. */
-  it("returns the newest capture of a URL", async () => {
-    const old = capture({ text: "stale", capturedAt: "2020-01-01T00:00:00.000Z" });
-    const fresh = capture({ text: "current" });
-    const r = await read(store([old, fresh]), { url: "https://example.com/" });
-    expect((r.json() as { content: string }).content).toBe("current");
+  it("reads the capture filed under the URL's digest, as the extension files it", async () => {
+    const pages = store([capture({ text: "filed", capturedAt: hoursAgo(0.1) })]);
+    // A newer file holding the same URL under another name is not something
+    // the extension writes; the lookup goes to the one file it would.
+    writeFileSync(join(pages, "decoy.json"), JSON.stringify(capture({ text: "decoy" })));
+    const r = await read(pages, { url: "https://example.com/" });
+    expect((r.json() as { content: string }).content).toBe("filed");
   });
 });
 

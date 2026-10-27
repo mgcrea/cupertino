@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -141,6 +142,30 @@ export const readPages = (directory: string): CapturedPage[] => {
   // Sorted on the extension's own timestamp rather than mtime: mtime moves for
   // reasons that have nothing to do with when the page was read.
   return pages.toSorted((a, b) => (a.capturedAt < b.capturedAt ? 1 : -1));
+};
+
+/**
+ * The capture of one URL, or null when there is none.
+ *
+ * Opens the one file the extension would have written it to, rather than
+ * parsing the whole store to find it: the handler names each entry by the
+ * SHA-256 of its URL (`filename(for:)` in SafariWebExtensionHandler.swift), so
+ * the URL is the address. A full store is twenty entries of up to 1.25 MB
+ * each, about 55 ms to parse, and a read that fell back to the capture paid
+ * that up to four times.
+ *
+ * The entry's own `url` is checked too, so a file that is not what its name
+ * says is a miss rather than another page's content.
+ */
+export const readPage = (directory: string, url: string): CapturedPage | null => {
+  const name = `${createHash("sha256").update(url, "utf8").digest("hex")}.json`;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(directory, name), "utf8"));
+    return isPage(parsed) && parsed.url === url ? parsed : null;
+  } catch {
+    // Absent, torn or not ours: no capture of this URL.
+    return null;
+  }
 };
 
 export const pagesStatus = (directory: string, now: number = Date.now()): PagesStatus => {

@@ -31,6 +31,7 @@ nonisolated enum VisibleTools {
     case clickingPage
     case fillingPage
     case scrollingPage
+    case submittingPage
     case openingPlace
   }
 
@@ -59,6 +60,7 @@ nonisolated enum VisibleTools {
     "apple_safari_click": .clickingPage,
     "apple_safari_fill": .fillingPage,
     "apple_safari_scroll": .scrollingPage,
+    "apple_safari_submit": .submittingPage,
     "apple_maps_add_favorite": .openingPlace,
   ]
 

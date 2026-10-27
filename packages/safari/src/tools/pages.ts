@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
-import { compact, fail, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, pageUrlArg, resolvePageUrl, wrapResult } from "./util.js";
 
 /**
  * What `read_page` returns when the caller names no `maxChars`.
@@ -76,13 +76,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
         "Not to be confused with apple_safari_get_page, which returns a HISTORY row — visit " +
         "counts and dates — and no page content at all.",
       inputSchema: z.object({
-        url: z
-          .string()
-          .min(1)
-          .describe(
-            "The exact URL of the page, as apple_safari_list_tabs reports it. Matching is " +
-              "exact; there is no search.",
-          ),
+        url: pageUrlArg,
         format: z
           .enum(["text", "html"])
           .optional()
@@ -105,8 +99,9 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
       }),
       annotations: { readOnlyHint: true, idempotentHint: false },
     },
-    async ({ url, format, maxChars }) =>
+    async ({ url: given, format, maxChars }) =>
       wrapResult(async () => {
+        const { url, tab } = await resolvePageUrl(client, given);
         const status = client.pagesStatus();
         // Defaulted rather than optional. Left unbounded this returned the
         // whole capture — up to the extension's own caps of 256 KiB of text or
@@ -121,7 +116,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
           status.exists && client.config.liveReadTimeoutMs > 0
             ? await readLive(client, url, format ?? "text", cap)
             : null;
-        if (live?.page) return ok(live.page);
+        if (live?.page) return ok(compact({ ...live.page, tab }));
         const liveRead = live?.miss;
 
         const hit = client.page(url);
@@ -171,6 +166,7 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
         return ok(
           compact({
             url: page.url,
+            tab,
             title: page.title || undefined,
             source: "capture",
             liveRead,

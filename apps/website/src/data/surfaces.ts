@@ -426,6 +426,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_safari_list_bookmarks",
       "apple_safari_list_reading_list",
       "apple_safari_page_elements",
+      "apple_safari_wait_for",
       "apple_safari_diagnostics",
     ],
     // Two verbs that move a browser between pages, and nothing that acts
@@ -444,6 +445,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_safari_click",
       "apple_safari_fill",
       "apple_safari_scroll",
+      "apple_safari_submit",
     ],
     // A read, and still not in `read`. The extension can see a 2FA code a page
     // is showing, so that goes behind its own flag rather than arriving with

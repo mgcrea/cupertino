@@ -418,6 +418,30 @@ export class SafariStore {
     return found;
   }
 
+  /**
+   * The most visited row whose URL falls in any of these ranges, or null.
+   *
+   * The ranges come from `extensionRanges`: history rows that add a query or
+   * a fragment to a tab's URL. Several usually answer (one per variant, one
+   * per campaign link), and the most visited stands for them, the most
+   * recently visited breaking a tie. Plain string comparisons on a column
+   * that is `TEXT NOT NULL UNIQUE`, so each range is an index range scan.
+   */
+  extending(ranges: [string, string][]): HistoryRow | null {
+    if (ranges.length === 0) return null;
+    const visits = this.hasVisitLeg;
+    const sql =
+      `SELECT ${this.#selectList()} FROM "${ITEMS_TABLE}" i ` +
+      (visits
+        ? `LEFT JOIN "${VISITS_TABLE}" v ON v."${this.caps.itemFk}" = i."${this.caps.itemPk}" `
+        : "") +
+      `WHERE ${ranges.map(() => `(i."url" >= ? AND i."url" < ?)`).join(" OR ")} ` +
+      `GROUP BY i."${this.caps.itemPk}" ` +
+      `ORDER BY visitCount DESC, lastVisitedRaw DESC LIMIT 1`;
+    const r = this.db.prepare(sql).get(...ranges.flat()) as Record<string, unknown> | undefined;
+    return r ? this.#toRow(r) : null;
+  }
+
   close(): void {
     try {
       this.db.close();

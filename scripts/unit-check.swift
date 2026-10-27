@@ -771,6 +771,13 @@ struct UnitCheck {
       "a scroll is a scroll",
       VisibleTools.notice(forTool: "apple_safari_scroll") == .showing(.scrollingPage))
     check(
+      "a form submit is a submit",
+      VisibleTools.notice(forTool: "apple_safari_submit") == .showing(.submittingPage))
+    // Waiting reads the page and changes nothing, like page_elements.
+    check(
+      "wait_for shows no notice",
+      VisibleTools.notice(forTool: "apple_safari_wait_for") == nil)
+    check(
       "a Maps favourite opens a place",
       VisibleTools.notice(forTool: "apple_maps_add_favorite") == .showing(.openingPlace))
 

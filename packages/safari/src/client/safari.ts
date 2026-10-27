@@ -20,7 +20,7 @@ import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
 import { ADD_READING_LIST_ITEM, OPEN_URL } from "./jxa/writes.js";
 import { locateStore, type LocateResult } from "./locate.js";
-import { urlVariants, type MatchKind } from "./match.js";
+import { extensionRanges, urlVariants, type MatchKind } from "./match.js";
 import {
   networkGet,
   networkList,
@@ -36,6 +36,7 @@ import {
   defaultPagesDirectory,
   isQuiet,
   pagesStatus,
+  readPage,
   readPages,
   type CapturedPage,
   type PagesStatus,
@@ -186,6 +187,18 @@ export type AddReadingListItemResult = {
  * so a zero — which the tests pass — reads as "do not wait" instead of as a
  * timer that fires immediately.
  */
+/**
+ * The pause between two `wait_for` checks. Half the page's own one-second
+ * poll on a visible tab, so a check is usually waiting when the page asks.
+ */
+const WAIT_INTERVAL_MS = 500;
+
+/** A tab whose content script predates the command it was sent. */
+class UnknownActionError extends Error {}
+
+/** The frontmost tab has no URL at this moment, as while it loads. */
+class NoFrontPageError extends PreconditionError {}
+
 const delay = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 
@@ -361,12 +374,36 @@ export class AppleSafariClient {
         const store = this.store();
         const candidates = [...ladders.values()].flatMap((ladder) => ladder.map((v) => v.url));
         const rows = store.getMany(candidates);
+        const render = (row: HistoryRow, kind: MatchKind) => ({
+          page: this.#render(row, store.caps.epoch),
+          kind,
+        });
         resolve = (url) => {
-          for (const variant of ladders.get(url) ?? []) {
+          const ladder = ladders.get(url) ?? [];
+          for (const variant of ladder) {
+            if (variant.kind === "query-stripped") break;
             const hit = rows.get(variant.url);
             // First hit wins, and the ladder is ordered most-faithful-first, so
             // an exact match is never lost to a looser one that also resolved.
-            if (hit) return { page: this.#render(hit, store.caps.epoch), kind: variant.kind };
+            if (hit) return render(hit, variant.kind);
+          }
+          // Below every rung that keeps the tab's query, above the one that
+          // throws it away: `/search?q=w&utm_source=x` is closer to a tab on
+          // `/search?q=w` than the bare `/search` is. Asked only for a tab the
+          // faithful rungs missed, one indexed query each.
+          // Guarded, because this query runs per tab outside the try above, and
+          // a busy store must leave a tab unenriched rather than fail the list.
+          let extended: HistoryRow | null = null;
+          try {
+            extended = store.extending(extensionRanges(url));
+          } catch {
+            extended = null;
+          }
+          if (extended) return render(extended, "query-added");
+          for (const variant of ladder) {
+            if (variant.kind !== "query-stripped") continue;
+            const hit = rows.get(variant.url);
+            if (hit) return render(hit, variant.kind);
           }
           return null;
         };
@@ -553,6 +590,45 @@ export class AppleSafariClient {
    * to describe, and a caller that ignored a boolean would report a page as
    * opened that never was.
    */
+  /**
+   * The URL of the tab the user is looking at, for a page tool called without
+   * one.
+   *
+   * The live-tabs script again, unenriched: the frontmost tab needs the
+   * window's front-to-back position as well as its selected tab, which that
+   * script already reads, and a second script would be a second idea of
+   * "frontmost". Each refusal names the url argument, because passing one is
+   * always the way round it.
+   */
+  async frontmostTabUrl(): Promise<string> {
+    this.#assertAppleEventsAllowed("No url was given, and finding the frontmost tab");
+    const result = await this.tabs({ enrich: false });
+    if (!result.running) {
+      throw new PreconditionError(
+        "No url was given, and Safari is not running, so no tab is in front. It was not " +
+          "launched to check.",
+      );
+    }
+    // Checked before `frontmost` is read, because the live-tabs script still
+    // marks a tab frontmost when it could not read window order: it falls
+    // back to list order, which is a guess, and a guess is not a page to act
+    // on.
+    if (result.windowOrderUnknown) {
+      throw new PreconditionError(
+        "No url was given, and Safari did not report its window order, so no tab can be " +
+          "called frontmost. Pass the page's url; apple_safari_list_tabs lists them.",
+      );
+    }
+    const front = result.tabs.find((t) => t.frontmost);
+    if (!front?.url) {
+      throw new NoFrontPageError(
+        "No url was given, and the frontmost tab is showing no page right now (it may be " +
+          "loading). Pass the page's url; apple_safari_list_tabs lists them.",
+      );
+    }
+    return front.url;
+  }
+
   #assertAppleEventsAllowed(what: string): void {
     if (!this.#config.liveTabs) {
       throw new PreconditionError(
@@ -581,7 +657,7 @@ export class AppleSafariClient {
    */
   async pageAction(
     input: {
-      action: "elements" | "click" | "fill" | "scroll" | "codes" | "read";
+      action: "elements" | "click" | "fill" | "scroll" | "submit" | "find" | "codes" | "read";
       url?: string | undefined;
       elementId?: string | undefined;
       text?: string | undefined;
@@ -590,6 +666,9 @@ export class AppleSafariClient {
       format?: "text" | "html" | undefined;
       maxChars?: number | undefined;
       maxValueChars?: number | undefined;
+      query?: string | undefined;
+      kind?: string | undefined;
+      inViewOnly?: boolean | undefined;
     },
     // A caller with a fallback waits less than one without: `read_page` has
     // the capture to return, a click has nothing.
@@ -625,6 +704,147 @@ export class AppleSafariClient {
     } catch (error) {
       throw this.#explainSilence(error, input.url);
     }
+  }
+
+  /**
+   * Check a page until some text appears on it (or, with `gone`, leaves it).
+   *
+   * The loop is HERE, not in the page. The page runs one command per poll and
+   * synchronously, so a wait inside it would hold up every other command for
+   * that tab; instead the page answers a cheap `find` (does the text occur,
+   * and a short passage around it) and this asks again until the deadline.
+   * Each check may wait out the whole remaining deadline for the page to pick
+   * it up, so a background tab that polls every ten seconds still gets a turn.
+   *
+   * With no `url` the frontmost tab is looked up again for EVERY check, which
+   * is what makes "click, then wait for the confirmation" work: the
+   * confirmation is usually on the page the click navigated to, whose URL the
+   * caller does not know yet.
+   *
+   * A tab whose content script predates `find` answers "Unknown action"; it is
+   * then asked for a live `read` instead and searched here, which moves the
+   * whole text per check but works on any build that can read live.
+   *
+   * Not meeting the condition is an answer, not an error: `met: false`.
+   */
+  async waitFor(input: {
+    url?: string | undefined;
+    text: string;
+    gone: boolean;
+    timeoutMs: number;
+  }): Promise<{
+    met: boolean;
+    url: string | null;
+    tab?: "frontmost";
+    excerpt?: string;
+    checks: number;
+    waitedMs: number;
+    lastMiss?: string;
+  }> {
+    const startedAt = Date.now();
+    const deadline = startedAt + input.timeoutMs;
+    const tab = input.url === undefined ? { tab: "frontmost" as const } : {};
+    let checks = 0;
+    let url: string | null = null;
+    let lastMiss: string | undefined;
+    let viaRead = false;
+
+    while (Date.now() < deadline) {
+      let seen: { present: boolean; excerpt?: string | undefined };
+      try {
+        url = input.url ?? (await this.frontmostTabUrl());
+        seen = viaRead
+          ? await this.#findByRead(url, input.text, deadline)
+          : await this.#find(url, input.text, deadline);
+      } catch (error) {
+        if (error instanceof UnknownActionError) {
+          viaRead = true;
+          continue;
+        }
+        if (error instanceof NoFrontPageError) {
+          // The tab in front has no URL for a moment, as a tab does while it
+          // loads the page a click sent it to: a miss, not the end.
+          lastMiss = error.message;
+          await delay(Math.min(WAIT_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+          continue;
+        }
+        if (!(error instanceof PageCommandTimeoutError)) throw error;
+        // Nobody answered within what was left. Mid-navigation that is the
+        // page being replaced, so it is noted and the deadline decides.
+        lastMiss = error.message;
+        continue;
+      }
+      checks += 1;
+      if (seen.present !== input.gone) {
+        return {
+          met: true,
+          url,
+          ...tab,
+          ...(seen.excerpt !== undefined ? { excerpt: seen.excerpt } : {}),
+          checks,
+          waitedMs: Date.now() - startedAt,
+        };
+      }
+      await delay(Math.min(WAIT_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+    }
+    return {
+      met: false,
+      url,
+      ...tab,
+      checks,
+      waitedMs: Date.now() - startedAt,
+      ...(lastMiss !== undefined ? { lastMiss } : {}),
+    };
+  }
+
+  /** One `find` check. A page that refuses it says so in an error. */
+  async #find(
+    url: string,
+    text: string,
+    deadline: number,
+  ): Promise<{ present: boolean; excerpt?: string | undefined }> {
+    const result = await this.pageAction(
+      { action: "find", url, text },
+      { timeoutMs: Math.max(1, deadline - Date.now()) },
+    );
+    if (!result.ok) {
+      if (/Unknown action/.test(result.error ?? "")) throw new UnknownActionError();
+      // The page refused the check itself, which asking again will not change.
+      throw new PreconditionError(result.error ?? "The page could not be checked.");
+    }
+    const data = result.data as { found?: unknown; excerpt?: unknown };
+    return {
+      present: data.found === true,
+      excerpt: typeof data.excerpt === "string" ? data.excerpt : undefined,
+    };
+  }
+
+  /** The same check for a tab from before `find`: a live read, searched here. */
+  async #findByRead(
+    url: string,
+    text: string,
+    deadline: number,
+  ): Promise<{ present: boolean; excerpt?: string | undefined }> {
+    const result = await this.pageAction(
+      { action: "read", url, format: "text", maxChars: 1_048_576 },
+      { timeoutMs: Math.max(1, deadline - Date.now()) },
+    );
+    const content = (result.data as { content?: unknown } | undefined)?.content;
+    if (!result.ok || typeof content !== "string") {
+      throw new PreconditionError(result.error ?? "The page could not be read to check it.");
+    }
+    // A case-insensitive pattern on the text as it is, as the page's `find`
+    // does: an index into a lower-cased copy can point elsewhere in the
+    // original once lower-casing has changed its length.
+    const match = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").exec(content);
+    if (!match) return { present: false };
+    return {
+      present: true,
+      excerpt: content
+        .slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)
+        .replace(/\s+/g, " ")
+        .trim(),
+    };
   }
 
   /**
@@ -753,7 +973,7 @@ export class AppleSafariClient {
    * entry by construction, because the extension keys its files by URL digest.
    */
   page(url: string): { page: CapturedPage; ageSeconds: number } | null {
-    const hit = readPages(this.pagesDirectory).find((p) => p.url === url);
+    const hit = readPage(this.pagesDirectory, url);
     return hit ? { page: hit, ageSeconds: ageSeconds(hit) } : null;
   }
 

@@ -40,7 +40,7 @@ off cannot see that they exist.
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches       |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 17 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 19 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
