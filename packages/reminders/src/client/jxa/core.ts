@@ -107,20 +107,32 @@ function zip(keys, columns, count) {
  */
 function listTree(container, accountId, depth, out) {
   if (depth > 8) return out;
-  var subs = [];
-  try { subs = container.lists(); } catch (e) { return out; }
-  for (var i = 0; i < subs.length; i++) {
-    var l = subs[i];
-    var id = prop(function () { return String(l.id()); }, null);
+  // Bulk reads, one event per property for the whole level rather than one
+  // per list: measured, an event costs ~0.2-1 s on Reminders however little
+  // it asks for, and the per-list walk was 17-29 s for twelve lists.
+  var c = container.lists;
+  var ids = prop(function () { return c.id(); }, null);
+  if (!ids) return out;
+  var names = prop(function () { return c.name(); }, []);
+  var colors = prop(function () { return c.color(); }, []);
+  var emblems = prop(function () { return c.emblem(); }, []);
+  // Which of these lists hold lists of their own, in one chained fetch, so
+  // only a group is walked into. Not documented to work: when it does not
+  // answer, every list is walked into, as before.
+  var nested = prop(function () { return c.lists.id(); }, null);
+  if (nested && nested.length !== ids.length) nested = null;
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i] === null || ids[i] === undefined ? null : String(ids[i]);
     out.push({
       id: id,
-      name: prop(function () { return String(l.name()); }, null),
+      name: names[i] === null || names[i] === undefined ? null : String(names[i]),
       accountId: accountId,
       depth: depth,
-      color: prop(function () { return String(l.color()); }, null),
-      emblem: prop(function () { return String(l.emblem()); }, null)
+      color: String(colors[i]),
+      emblem: String(emblems[i])
     });
-    listTree(l, accountId, depth + 1, out);
+    var hasChildren = nested ? (nested[i] || []).length > 0 : true;
+    if (hasChildren && id !== null) listTree(c.byId(id), accountId, depth + 1, out);
   }
   return out;
 }

@@ -184,15 +184,13 @@ const fakeRunner = (overrides: Record<string, unknown> = {}): OsascriptRunner =>
   run: vi.fn(async (script: string, params?: unknown) => {
     if (script.includes("defaultAccountId: defaultAccountId"))
       return overrides.accounts ?? ACCOUNTS;
-    if (script.includes("l.incompleteCount = counts.incomplete")) return overrides.lists ?? LISTS;
+    if (script.includes("out[o].incompleteCount")) return overrides.lists ?? LISTS;
     if (script.includes("membershipVia")) return overrides.bulk ?? BULK;
-    if (script.includes("containerClass: containerClass")) {
+    if (script.includes("all.remindMeDate")) {
       const ids = (params as { ids: string[] }).ids;
       return ids.map((wanted) => {
         const row = REMINDERS.find((r) => r.id === wanted);
-        return row
-          ? { ...row, found: true, containerClass: row.parentId ? "reminder" : "list" }
-          : { id: wanted, found: false };
+        return row ? { ...row, found: true } : { id: wanted, found: false };
       });
     }
     // Dispatch on a marker UNIQUE to each script. `applyFields(r, p)` appears in

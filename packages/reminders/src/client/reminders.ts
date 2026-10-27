@@ -34,7 +34,8 @@ export type ReminderAccount = {
   name: string | null;
   isDefault: boolean;
   listCount: number;
-  reminderCount: number;
+  /** Null when Reminders cannot say, which on macOS 27 is always: see LIST_ACCOUNTS. */
+  reminderCount: number | null;
 };
 
 export type ReminderList = {
@@ -315,9 +316,25 @@ export class AppleRemindersClient {
     return data.accounts.filter((a) => this.#allowedAccount(a.name));
   }
 
+  /**
+   * Every list, with counts from the store when it is open — one query that
+   * agreed with Apple Events on every list measured — and from Reminders
+   * otherwise, in one chained event. A list the store does not hold reports
+   * null counts: unknown, not zero.
+   */
   async lists(): Promise<ReminderList[]> {
-    const all = await withBusyRetry(() => this.runner.run<ReminderList[]>(LIST_LISTS));
-    return all.filter((l) => this.#allowedAccount(l.accountName) && this.#allowedList(l.name));
+    const counts = this.index()?.listCounts() ?? null;
+    const all = await withBusyRetry(() =>
+      this.runner.run<ReminderList[]>(LIST_LISTS, { withCounts: counts === null }),
+    );
+    const allowed = all.filter(
+      (l) => this.#allowedAccount(l.accountName) && this.#allowedList(l.name),
+    );
+    if (!counts) return allowed;
+    return allowed.map((l) => {
+      const c = l.id ? counts.get(l.id.toUpperCase()) : undefined;
+      return { ...l, reminderCount: c?.total ?? null, incompleteCount: c?.incomplete ?? null };
+    });
   }
 
   /**
@@ -668,10 +685,7 @@ export class AppleRemindersClient {
   async getReminder(ref: string): Promise<ReminderDetail> {
     const { id, uuid } = decodeRef(ref);
     const rows = await withBusyRetry(() =>
-      this.runner.run<(RawReminder & { found: boolean; containerClass: string | null })[]>(
-        GET_REMINDERS,
-        { ids: [id] },
-      ),
+      this.runner.run<(RawReminder & { found: boolean })[]>(GET_REMINDERS, { ids: [id] }),
     );
     const row = rows[0];
     if (!row?.found) throw new ReminderNotFoundError(ref);
@@ -698,9 +712,11 @@ export class AppleRemindersClient {
 
     return {
       ...summary,
-      // ZALLDAY beats the local-midnight guess whenever it is available.
+      // ZALLDAY beats the local-midnight guess whenever it is available, and
+      // the reminder's own properties name no list, which the store does.
       ...(indexed
         ? {
+            list: summary.list ?? indexed.listName,
             dueAllDay: indexed.allDay,
             dueAllDaySource: "index" as const,
             due: renderDue(indexed.due, indexed.allDay, utcDay(indexed.due)),
