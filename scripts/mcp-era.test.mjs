@@ -13,13 +13,15 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { mailFixture as sharedMailFixture } from "./lib/mail-fixture.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -146,72 +148,14 @@ test("a server that cannot start exits non-zero and says why", onMac, async () =
 // the era's own method, and a row inserted into the index underneath it.
 //
 // Nothing real is touched. The index is a temp file built from the captured
-// DDL, as packages/mail's tests build theirs. `osascript` is a stub that answers
-// the one script a watch sends (the account listing) with a canned account, so
-// the mailbox map loads whether or not Mail is running here; the watch names no
-// `mailboxes`, so it never asks Mail to resolve one. `HOME` and the mail root
-// point nowhere, as above. Arrival is detected by the server's own file trigger.
+// DDL by lib/mail-fixture.mjs, as packages/mail's tests build theirs. `osascript`
+// is a stub that answers the one script a watch sends (the account listing)
+// with a canned account, so the mailbox map loads whether or not Mail is running
+// here; the watch names no `mailboxes`, so it never asks Mail to resolve one.
+// `HOME` and the mail root point nowhere, as above. Arrival is detected by the
+// server's own file trigger.
 
-const UUID = "98AC2C3D-408C-47E4-8FE4-6E64D1F58E99";
-const ACCOUNT = {
-  id: UUID,
-  name: "iCloud",
-  enabled: true,
-  accountType: "iCloud",
-  emailAddresses: ["me@icloud.com"],
-  fullName: "Me",
-  directory: null,
-  messageCaching: null,
-  mailboxes: ["INBOX"],
-};
-
-/** A temp dir holding a seeded `Envelope Index` and a stub `osascript`. */
-const mailFixture = () => {
-  const dir = mkdtempSync(join(tmpdir(), "mcp-era-watch-"));
-  const index = join(dir, "Envelope Index");
-  const db = new DatabaseSync(index);
-  db.exec(
-    readFileSync(join(root, "packages", "mail", "test", "fixtures", "envelope-index.sql"), "utf8"),
-  );
-  db.exec(`
-    INSERT INTO mailboxes (ROWID, url, total_count, unread_count) VALUES (1, 'imap://${UUID}/INBOX', 0, 0);
-    INSERT INTO subjects (ROWID, subject) VALUES (1, 'Quote');
-    INSERT INTO addresses (ROWID, address, comment) VALUES (1, 'jo@acme.com', 'Jo');
-  `);
-  const arrive = (rowid) =>
-    db.exec(`
-      INSERT INTO messages
-        (ROWID, message_id, global_message_id, sender, subject_prefix, subject, date_sent, date_received,
-         mailbox, flags, read, flagged, deleted, size, conversation_id)
-      VALUES (${rowid}, 0, ${rowid + 7000}, 1, NULL, 1, 1790000000, 1790000005, 1, 0, 0, 0, 0, 100, 900);
-    `);
-  arrive(101);
-  // Reads the script on stdin like osascript, and answers the account listing
-  // with the canned account; any other script gets an empty list. The shebang
-  // names this node by path: the runner does not pass the caller's PATH on.
-  const osascript = join(dir, "osascript");
-  writeFileSync(
-    osascript,
-    `#!${process.execPath}
-let script = "";
-process.stdin.on("data", (c) => (script += c));
-process.stdin.on("end", () => {
-  const data = script.includes("a.emailAddresses()") ? ${JSON.stringify([ACCOUNT])} : [];
-  process.stdout.write(JSON.stringify({ ok: true, data }));
-});
-`,
-  );
-  chmodSync(osascript, 0o755);
-  return {
-    index,
-    osascript,
-    arrive,
-    close: () => {
-      db.close();
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
-};
+const mailFixture = () => sharedMailFixture("mcp-era-watch-");
 
 const mailEnv = (fx) => {
   const env = {};
