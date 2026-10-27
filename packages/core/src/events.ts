@@ -42,7 +42,11 @@ export type EventDescriptor = {
   payloadSchema: Record<string, unknown>;
 };
 
-/** One event as a client receives it. `cursor` is set on poll results and left off pushed frames. */
+/**
+ * One event as a client receives it. `cursor` is set on a pushed
+ * `notifications/events/event` frame; a poll result's events leave it off, since
+ * the result carries one cursor for the batch.
+ */
 export type EventOccurrence = {
   eventId: string;
   name: string;

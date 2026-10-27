@@ -3,8 +3,11 @@ import {
   McpServer,
   ProtocolError as SdkProtocolError,
   ProtocolErrorCode,
+  type JSONRPCMessage,
+  type Transport,
 } from "@modelcontextprotocol/server";
-import { describe, expect, it } from "vitest";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import type { Era } from "../src/cli.js";
@@ -367,5 +370,405 @@ describe("registerEvents: registration", () => {
         adapters: [adapterOf(store, []), adapterOf(store, [])],
       }),
     ).toThrow(/test\.received/);
+  });
+});
+
+// --------------------------------------------------------------- stream ---
+
+const SUB = "io.modelcontextprotocol/subscriptionId";
+
+type Frame = {
+  method: string;
+  params: Record<string, unknown> & { _meta?: Record<string, unknown> };
+};
+
+/** Let queued I/O and every microtask behind it run, a few turns of the loop over. */
+const settle = async (rounds = 5): Promise<void> => {
+  for (let i = 0; i < rounds; i++) await new Promise<void>((done) => setImmediate(done));
+};
+
+/**
+ * `events/stream` is served over `serveStdio` with an in-memory transport, not
+ * through `createMcpHandler` as the poll tests are. A stream belongs to a
+ * connection: its cap of 10, its shared trigger and its cancel by
+ * `notifications/cancelled` exist only when one server instance is pinned for
+ * the connection, which is what `serveStdio` does. `createMcpHandler` builds a
+ * fresh instance per HTTP request, so ten streams there would never meet, and
+ * its cancel is an aborted request rather than a notification. The transport
+ * here is the stdio wire without the bytes: the test writes JSON-RPC messages
+ * in and reads back what the server sent.
+ */
+const streamSetup = (
+  overrides: Partial<EventTypeAdapter<Row>> = {},
+  extra: Partial<EventsOptions> = {},
+) => {
+  const store = fakeSource();
+  const calls: string[] = [];
+  const sent: JSONRPCMessage[] = [];
+  const triggers = {
+    started: 0,
+    stopped: 0,
+    onChange: undefined as (() => void) | undefined,
+  };
+  const closers: { close(): void }[] = [];
+  const transport: Transport = {
+    start: async () => {},
+    send: async (message) => {
+      sent.push(message);
+    },
+    close: async () => {
+      transport.onclose?.();
+    },
+  };
+  const adapter = adapterOf(store, calls, {
+    startTrigger: (onChange) => {
+      triggers.started += 1;
+      triggers.onChange = onChange;
+      return {
+        stop: () => {
+          triggers.stopped += 1;
+        },
+      };
+    },
+    ...overrides,
+  });
+  const handle = serveStdio(
+    ({ era }) => {
+      const server = new McpServer({ name: "test", version: "0.0.0" });
+      closers.push(registerEvents(server, { era, adapters: [adapter], ...extra }));
+      return server;
+    },
+    { transport },
+  );
+  const write = (msg: Record<string, unknown>) =>
+    transport.onmessage?.({ jsonrpc: "2.0", ...msg } as JSONRPCMessage);
+  const open = (reqId: string | number, params: Record<string, unknown> = acme) =>
+    write({ id: reqId, method: "events/stream", params: { ...params, _meta: ENVELOPE } });
+  const cancel = (reqId: string | number) =>
+    write({
+      method: "notifications/cancelled",
+      params: { requestId: reqId, reason: "test done", _meta: ENVELOPE },
+    });
+  const framesFor = (reqId: string | number): Frame[] =>
+    sent
+      .filter((m) => "method" in m && !("id" in m))
+      .map((m) => m as unknown as Frame)
+      .filter((m) => {
+        // Destructured: the repo's lint rejects `._meta` member access.
+        const { _meta: tags } = m.params;
+        return m.method.startsWith("notifications/events/") && tags?.[SUB] === reqId;
+      });
+  const responseFor = (reqId: string | number) =>
+    sent.find((m) => "id" in m && m.id === reqId && ("result" in m || "error" in m)) as
+      | { result?: Record<string, unknown>; error?: { code: number; data?: unknown } }
+      | undefined;
+  /** Waits, on real turns of the event loop, until `pred` holds. */
+  const until = async (pred: () => boolean, what: string) => {
+    for (let i = 0; i < 200; i++) {
+      if (pred()) return;
+      await settle(1);
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const opened = async (reqId: string | number, params?: Record<string, unknown>) => {
+    open(reqId, params);
+    await until(
+      () => framesFor(reqId).some((f) => f.method === "notifications/events/active"),
+      `active on ${String(reqId)}`,
+    );
+  };
+  const fire = async () => {
+    triggers.onChange?.();
+    await settle();
+  };
+  const shutdown = async () => {
+    for (const c of closers) c.close();
+    await handle.close();
+  };
+  return {
+    store,
+    calls,
+    sent,
+    triggers,
+    open,
+    opened,
+    cancel,
+    framesFor,
+    responseFor,
+    until,
+    fire,
+    closers,
+    shutdown,
+  };
+};
+
+const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+
+describe("events/stream", () => {
+  let teardown: (() => Promise<void>) | undefined;
+  const stream = (...args: Parameters<typeof streamSetup>) => {
+    const s = streamSetup(...args);
+    teardown = s.shutdown;
+    return s;
+  };
+  afterEach(async () => {
+    vi.useRealTimers();
+    await teardown?.();
+    teardown = undefined;
+  });
+
+  it("stream sends active first", async () => {
+    const { store, opened, framesFor, responseFor, calls } = stream();
+    store.arrive(7);
+    await opened(1);
+    const [first] = framesFor(1);
+    expect(first).toEqual({
+      jsonrpc: "2.0",
+      method: "notifications/events/active",
+      params: { cursor: encodeCursor(id, 7), truncated: false, _meta: { [SUB]: 1 } },
+    });
+    expect(responseFor(1)).toBeUndefined();
+    expect(calls[0]).toBe("ensure");
+  });
+
+  it("stream delivers on trigger", async () => {
+    const { store, opened, framesFor, fire } = stream();
+    store.arrive(7);
+    await opened(1);
+    store.arrive(8);
+    store.arrive(9, "eve@elsewhere.org");
+    await fire();
+    const events = framesFor(1).filter((f) => f.method === "notifications/events/event");
+    expect(events).toHaveLength(1);
+    expect(events[0]?.params).toEqual({
+      eventId: "g8",
+      name: "test.received",
+      timestamp: new Date(BASE + 8000).toISOString(),
+      data: { sender: "jo@acme.com" },
+      cursor: encodeCursor(id, 8),
+      _meta: { [SUB]: 1 },
+    });
+  });
+
+  it("stream delivers the backlog after a resumed cursor, after active", async () => {
+    const { store, opened, framesFor } = stream();
+    for (let i = 1; i <= 3; i++) store.arrive(i);
+    await opened("s", { ...acme, cursor: encodeCursor(id, 1) });
+    await settle();
+    const frames = framesFor("s");
+    expect(frames.map((f) => f.method)).toEqual([
+      "notifications/events/active",
+      "notifications/events/event",
+      "notifications/events/event",
+    ]);
+    expect(frames[0]?.params).toMatchObject({ cursor: encodeCursor(id, 1), truncated: false });
+    expect(frames.slice(1).map((f) => f.params.eventId)).toEqual(["g2", "g3"]);
+  });
+
+  it("stream applies maxAgeMs to a resumed cursor and says truncated on active", async () => {
+    const { store, opened, framesFor } = stream({}, { now: () => BASE + 4500 });
+    for (let i = 1; i <= 4; i++) store.arrive(i);
+    await opened(1, { ...acme, cursor: encodeCursor(id, 0), maxAgeMs: 2000 });
+    await settle();
+    const frames = framesFor(1);
+    expect(frames[0]?.params).toMatchObject({ truncated: true });
+    expect(frames.slice(1).map((f) => f.params.eventId)).toEqual(["g3", "g4"]);
+  });
+
+  it("stream heartbeats with the scanned cursor", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { store, opened, framesFor, fire } = stream();
+    store.arrive(7);
+    await opened(1);
+    store.arrive(8, "eve@elsewhere.org");
+    await fire();
+    vi.advanceTimersByTime(25_000);
+    await settle();
+    const beats = framesFor(1).filter((f) => f.method === "notifications/events/heartbeat");
+    expect(beats).toHaveLength(1);
+    expect(beats[0]?.params).toEqual({ cursor: encodeCursor(id, 8), _meta: { [SUB]: 1 } });
+  });
+
+  it("stream rebuild resets with truncated", async () => {
+    let identity = id;
+    const { store, opened, framesFor, fire, responseFor } = stream({ identity: () => identity });
+    store.arrive(7);
+    await opened(1);
+    identity = { dev: 1, ino: 3 };
+    store.arrive(8);
+    await fire();
+    const frames = framesFor(1);
+    expect(frames.map((f) => f.method)).toEqual([
+      "notifications/events/active",
+      "notifications/events/active",
+    ]);
+    expect(frames[1]?.params).toMatchObject({
+      cursor: encodeCursor({ dev: 1, ino: 3 }, 8),
+      truncated: true,
+    });
+    // Still open: the next arrival is delivered under the new store's cursor.
+    store.arrive(9);
+    await fire();
+    const last = framesFor(1).at(-1);
+    expect(last?.method).toBe("notifications/events/event");
+    expect(last?.params.cursor).toBe(encodeCursor({ dev: 1, ino: 3 }, 9));
+    expect(responseFor(1)).toBeUndefined();
+  });
+
+  it("stream read failure is a recoverable error", async () => {
+    const { store, opened, framesFor, fire } = stream();
+    store.arrive(7);
+    await opened(1);
+    store.arrive(8);
+    store.fail(new Error("database is locked"));
+    await fire();
+    const errors = framesFor(1).filter((f) => f.method === "notifications/events/error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.params).toMatchObject({
+      error: {
+        code: -32603,
+        message: expect.stringContaining("Could not read test.received events: database is locked"),
+      },
+      _meta: { [SUB]: 1 },
+    });
+    store.fail(null);
+    await fire();
+    const events = framesFor(1).filter((f) => f.method === "notifications/events/event");
+    expect(events.map((f) => f.params.eventId)).toEqual(["g8"]);
+  });
+
+  it("cancel stops delivery", async () => {
+    const { store, opened, framesFor, fire, cancel, responseFor } = stream();
+    await opened(1);
+    const before = framesFor(1).length;
+    cancel(1);
+    await settle();
+    store.arrive(1);
+    await fire();
+    expect(framesFor(1)).toHaveLength(before);
+    // The SDK writes no response for a cancelled request.
+    expect(responseFor(1)).toBeUndefined();
+  });
+
+  it("cancel matches a string id and leaves other streams alone", async () => {
+    const { store, opened, framesFor, fire, cancel } = stream();
+    await opened("a");
+    await opened(2);
+    cancel("a");
+    await settle();
+    store.arrive(1);
+    await fire();
+    expect(framesFor("a").map((f) => f.method)).toEqual(["notifications/events/active"]);
+    expect(framesFor(2).at(-1)?.method).toBe("notifications/events/event");
+  });
+
+  it("cancel mid-scan writes nothing after", async () => {
+    let cancelInScan: (() => void) | undefined;
+    const rows = fakeSource();
+    const s = stream({
+      source: {
+        head: rows.source.head,
+        since: (after, limit) => {
+          cancelInScan?.();
+          return rows.source.since(after, limit);
+        },
+      },
+    });
+    rows.arrive(7);
+    await s.opened(1);
+    cancelInScan = () => {
+      cancelInScan = undefined;
+      s.cancel(1);
+    };
+    rows.arrive(8);
+    await s.fire();
+    expect(s.framesFor(1).map((f) => f.method)).toEqual(["notifications/events/active"]);
+  });
+
+  it("eleventh stream is refused", async () => {
+    const { opened, open, until, responseFor, framesFor, cancel } = stream();
+    for (const i of ids(10)) await opened(i);
+    open(11);
+    await until(() => responseFor(11) !== undefined, "a reply to the 11th");
+    expect(responseFor(11)?.error).toMatchObject({
+      code: -32025,
+      data: { limit: "streams", max: 10 },
+    });
+    expect(framesFor(11)).toEqual([]);
+    // A cancelled stream frees its slot.
+    cancel(3);
+    await settle();
+    await opened(12);
+  });
+
+  it("eleven opened at once: exactly one is refused", async () => {
+    const { open, until, responseFor, framesFor } = stream();
+    for (const i of ids(11)) open(i);
+    await until(
+      () => ids(11).every((i) => responseFor(i) !== undefined || framesFor(i).length > 0),
+      "every stream to open or be refused",
+    );
+    const refused = ids(11).filter((i) => responseFor(i)?.error?.code === -32025);
+    expect(refused).toHaveLength(1);
+  });
+
+  it("poll-only descriptor refuses stream", async () => {
+    const pollOnly = adapterOf(fakeSource(), []).descriptor;
+    const { open, until, responseFor } = stream({
+      descriptor: { ...pollOnly, delivery: ["poll"] },
+    });
+    open(1);
+    await until(() => responseFor(1) !== undefined, "a reply");
+    expect(responseFor(1)?.error).toMatchObject({
+      code: -32026,
+      data: { feature: "deliveryMode", value: "push" },
+    });
+  });
+
+  it("stream refuses an unknown name, bad arguments and a malformed cursor before opening", async () => {
+    const { open, until, responseFor, framesFor, triggers } = stream();
+    open(1, { name: "nope.received", arguments: {} });
+    open(2, { name: "test.received", arguments: {} });
+    open(3, { ...acme, cursor: "garbage" });
+    await until(() => [1, 2, 3].every((i) => responseFor(i) !== undefined), "three replies");
+    expect(responseFor(1)?.error).toMatchObject({ code: -32023, data: { kind: "event" } });
+    expect(responseFor(2)?.error?.code).toBe(-32602);
+    expect(responseFor(3)?.error?.code).toBe(-32602);
+    expect([1, 2, 3].flatMap((i) => framesFor(i))).toEqual([]);
+    expect(triggers.started).toBe(0);
+  });
+
+  it("one trigger per adapter: started with the first stream, stopped with the last", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { opened, cancel, triggers } = stream();
+    await opened(1);
+    await opened(2);
+    expect(triggers.started).toBe(1);
+    cancel(1);
+    await settle();
+    expect(triggers.stopped).toBe(0);
+    cancel(2);
+    await settle();
+    expect(triggers.stopped).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await opened(3);
+    expect(triggers.started).toBe(2);
+  });
+
+  it("close() ends every stream, its heartbeat and the trigger", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { opened, closers, triggers, store, fire, framesFor } = stream();
+    await opened(1);
+    await opened("two");
+    expect(vi.getTimerCount()).toBe(2);
+    for (const c of closers) c.close();
+    expect(triggers.stopped).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    const before = framesFor(1).length + framesFor("two").length;
+    store.arrive(1);
+    await fire();
+    vi.advanceTimersByTime(60_000);
+    await settle();
+    expect(framesFor(1).length + framesFor("two").length).toBe(before);
   });
 });
