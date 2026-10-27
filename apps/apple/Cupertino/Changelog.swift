@@ -408,6 +408,35 @@ nonisolated enum Changelog {
             body: [
               "`apple_mail_watch` and `apple_messages_watch` take a sender filter, `from` or `domains`, and hand back a resource the host can subscribe to; when a matching message lands, the server pushes `notifications/resources/updated`, and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything. A watch carries envelope metadata only, never a body or message text. It works with both the 2025 and the 2026-07-28 protocol, and lives as long as the connection that made it. Claude Code does not subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log shows each subscription, and the Activity log and the audit file record each push, so what Cupertino sent into a session reads the same as what it was asked.",
             ]),
+          Entry(
+            ordinal: 2,
+            headline: "Experimental: Mail and Messages serve the draft MCP Events extension.",
+            body: [
+              "`events/list`, `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol only. The arguments are the watch filter, a sender is required, and an event carries envelope metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet, Claude Code included; the field report is in docs/superpowers/reports.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "Mail's everyday reads no longer wait on Mail.",
+            body: [
+              "With Full Disk Access, `list_messages`, `count_messages`, `list_mailboxes` with counts, `get_message` and `list_attachments` answer from Mail's search index and the message files, and send Mail no Apple Event at all. On a 210,000-message store, listing twenty messages took 8.4 s and now takes milliseconds; `list_mailboxes` took 1.2 s, `count_messages` 0.77 s and `get_message` 0.45 s, nearly all of it Apple Events for columns the index already holds. `list_messages` is no longer capped at 50 when the index answers, and its `source` says which lane did. `count_messages` reports `unread.index` alone when the index answers, and Mail's cached badge figure only when it cannot; counts from `list_mailboxes` now agree with it, Gmail labels included, and are null for a mailbox the index does not hold rather than zero. Without Full Disk Access, or for a mailbox the index has no row for, each still asks Mail.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A sender's display name is quoted the way Mail writes it.",
+            body: [
+              "Results built from the index, `search_messages` and `get_thread` included, gave `Doe, Jane <jane@example.com>`, which reads as two recipients. They now give `\"Doe, Jane\" <jane@example.com>`, matching Mail's own `sender` — which differed on 18 of 20 messages of an Exchange account.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "The account list stops costing a second a minute.",
+            body: [
+              "It was cached for 60 s, so the first call after every pause waited about a second for Mail to list its accounts again. An expired list is now served at once and refreshed behind the call, and an account name it does not know is read afresh before it is refused.",
+            ]),
         ]),
     ])
 

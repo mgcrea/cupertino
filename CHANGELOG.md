@@ -30,6 +30,13 @@ summary.
   subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log
   shows each subscription, and the Activity log and the audit file record each push, so what
   Cupertino sent into a session reads the same as what it was asked.
+- **Experimental: Mail and Messages serve the draft MCP Events extension.** `events/list`,
+  `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll
+  with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind
+  `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol
+  only. The arguments are the watch filter, a sender is required, and an event carries envelope
+  metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet,
+  Claude Code included; the field report is in docs/superpowers/reports.
 
 ### Changed
 

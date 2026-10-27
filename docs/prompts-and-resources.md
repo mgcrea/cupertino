@@ -158,6 +158,50 @@ so "what did Cupertino push into this session" has the
 same answer as "what did it call". The design is in
 [the incoming-watches spec](superpowers/specs/2026-10-25-incoming-watches-design.md).
 
+## Events (experimental)
+
+Mail and Messages can also serve the draft MCP Events extension, [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415), as a second way to
+say "something arrived". It is experimental: the SEP is a draft, the wire shape may still change,
+and no client consumes it yet. No official SDK implements it, Claude Code 2.1.311 does not, and
+ChatGPT supports only the webhook delivery, which needs a remote server. It exists behind
+`APPLE_MAIL_ALLOW_EVENTS` / `APPLE_MESSAGES_ALLOW_EVENTS` (off by default) and on the 2026-07-28
+protocol only. With the gate off, or on a 2025-era connection, nothing is declared and every
+`events/*` method answers `-32601`, so the servers behave as they did before.
+
+**How it relates to watches.** A watch is a resource: a tool call mints a URI, a read returns what
+came in, and the only push is `notifications/resources/updated`, which carries a URI and nothing
+else. Events are the extension's typed events with cursors: `events/list` names the event types
+(`mail.received`, `messages.received`), `events/poll` returns occurrences after a cursor, and
+`events/stream` pushes them over stdio. Watches are unchanged and can be on at the same time; they
+keep their own service and store handle, and closing the connection closes both.
+
+**Filter.** The arguments of `events/poll` and `events/stream` are the watch filter: `from`,
+`domains`, and for Mail `mailboxes`. A sender is required, so an empty filter is `-32602`
+whoever asks. The same exclusions as a watch apply: Mail skips Sent, Drafts, Junk and Trash by
+default and mail from the account's own addresses, Messages skips your own messages, tapbacks and
+group events.
+
+**Payload.** Envelope only, as for watches: Mail's `ref`, `mailbox`, `senderAddress`,
+`senderName`, `subject` and `dateReceived`; Messages' `id`, `chat`, `handle` and `date`. The
+`eventId` is Mail's `global_message_id` or the Messages `guid`, and the timestamp is the received
+date. No bodies and no message text.
+
+**Poll.** `events/poll` takes a `cursor`, `maxEvents` and `maxAgeMs`. The cursor is opaque to the
+client (`v1.<dev>-<ino>.<rowid>`); `null` or absent means now. It returns at most 50 events,
+scans at most 1,000 rows per call, and says `nextPollMs: 10000`. A cursor minted by another store,
+whether the other surface or an index since rebuilt, is answered with `truncated: true` and a fresh
+head cursor, not an error; only a malformed cursor is `-32602`.
+
+**Stream.** `events/stream` pushes `notifications/events/*` frames over stdio, with a heartbeat
+every 25 s and at most 10 streams per connection (the eleventh is `-32025`, `data.limit:
+"streams"`). If the index is rebuilt while a stream is open, the stream stays open and sends a fresh
+`notifications/events/active` with `truncated: true` and a new cursor. A cancelled stream writes no
+further frame. Delivery is `["poll","push"]`; a webhook request is `-32026`.
+
+**Where it stands.** What a client that implements the extension would see, and what could not be
+tested for lack of one, is in [the field report](superpowers/reports/2026-10-27-mcp-events-field-report.md).
+The design is in [the MCP Events spec](superpowers/specs/2026-10-27-mcp-events-design.md).
+
 ## Prompts: the ordering constraints
 
 The tools hold the constraints that are about **one call** — that a body search wants a narrowing

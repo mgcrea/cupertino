@@ -126,18 +126,19 @@ records exactly what that leaves open; the safe way to measure it is a message t
 
 ## Configuration
 
-| Variable                            | Default |                                         |
-| ----------------------------------- | ------- | --------------------------------------- |
-| `APPLE_MESSAGES_RESOLVE_CONTACTS`   | on      | Look names up in Contacts.              |
-| `APPLE_MESSAGES_INDEX_MODE`         | `auto`  | `auto` \| `ro` \| `immutable` \| `off`. |
-| `APPLE_MESSAGES_STORE`              | auto    | Explicit store path.                    |
-| `APPLE_MESSAGES_DEFAULT_RANGE_DAYS` | `30`    | Window when only a start is given.      |
-| `APPLE_MESSAGES_MAX_RESULTS`        | `50`    | Default page size.                      |
-| `APPLE_MESSAGES_ALLOW_WRITES`       | off     | Register `send_message` at all.         |
-| `APPLE_MESSAGES_ALLOW_CODES`        | off     | Register `find_codes` at all.           |
-| `APPLE_MESSAGES_ALLOW_WATCHES`      | off     | Register `watch` and `unwatch`.         |
-| `APPLE_MESSAGES_ALLOW_FILE_SEND`    | off     | Add `filePath` to `send_message`.       |
-| `APPLE_MESSAGES_SEND_RECONCILE_MS`  | `5000`  | How long to wait for the sent row.      |
+| Variable                            | Default |                                                                                                 |
+| ----------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `APPLE_MESSAGES_RESOLVE_CONTACTS`   | on      | Look names up in Contacts.                                                                      |
+| `APPLE_MESSAGES_INDEX_MODE`         | `auto`  | `auto` \| `ro` \| `immutable` \| `off`.                                                         |
+| `APPLE_MESSAGES_STORE`              | auto    | Explicit store path.                                                                            |
+| `APPLE_MESSAGES_DEFAULT_RANGE_DAYS` | `30`    | Window when only a start is given.                                                              |
+| `APPLE_MESSAGES_MAX_RESULTS`        | `50`    | Default page size.                                                                              |
+| `APPLE_MESSAGES_ALLOW_WRITES`       | off     | Register `send_message` at all.                                                                 |
+| `APPLE_MESSAGES_ALLOW_CODES`        | off     | Register `find_codes` at all.                                                                   |
+| `APPLE_MESSAGES_ALLOW_WATCHES`      | off     | Register `watch` and `unwatch`.                                                                 |
+| `APPLE_MESSAGES_ALLOW_EVENTS`       | off     | Serve the experimental `messages.received` event (draft MCP Events extension, 2026-07-28 only). |
+| `APPLE_MESSAGES_ALLOW_FILE_SEND`    | off     | Add `filePath` to `send_message`.                                                               |
+| `APPLE_MESSAGES_SEND_RECONCILE_MS`  | `5000`  | How long to wait for the sent row.                                                              |
 
 `APPLE_MESSAGES_ALLOW_CODES` gates `find_codes`, which extracts one-time 2FA codes from recently
 received messages. It is a **read**, and it is deliberately not folded into `ALLOW_WRITES`: reaching
