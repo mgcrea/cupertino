@@ -23,8 +23,9 @@ surfaces — a Mail ref means nothing to Notes or Calendar.
 - **Any filter at all** — sender, subject, date bound, unread, attachments —
   is \`apple_mail_search_messages\`. It reads Mail's own index, so it stays fast
   across a six-figure archive.
-- **\`apple_mail_list_messages\`** is a capped listing of one mailbox in date
-  order. It is the fallback when the index is unreadable, not the default.
+- **\`apple_mail_list_messages\`** is the newest messages of one mailbox, with
+  no filter. It reads the index too when it can; without it, it is capped and
+  slow, so it is the fallback for filtered questions, never the way to answer one.
 - **Body text** is the \`body\` argument of the search tool, and it is the one
   expensive path here: macOS has no body index, so it opens the message files
   of whatever the other filters leave. Always combine it with a narrowing

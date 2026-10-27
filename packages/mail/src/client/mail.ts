@@ -123,6 +123,23 @@ type MessageFileLookup =
   | { found: false; lookup?: Extract<EmlxLookup, { found: false }>; explain: string };
 
 /** The FDA sentence, kept verbatim for the case where FDA really is the problem. */
+/**
+ * A display name, quoted when it holds a comma, and only then.
+ *
+ * The index keeps the name bare, and an Exchange "Last, First" unquoted reads
+ * as two recipients: that is the case this exists for. Mail's own `sender`
+ * cannot be matched exactly by any rule on the name, because it echoes the
+ * From header as the sending client wrote it — measured, a name with a period
+ * came back quoted from one sender and bare from others, which RFC 5322's
+ * obsolete phrase syntax allows. A comma is where the two forms stop meaning
+ * the same thing, and every one of the 361 comma names measured was quoted.
+ */
+const displayName = (name: string): string =>
+  name.includes(",") ? `"${name.replaceAll(/["\\]/g, "\\$&")}"` : name;
+
+/** One mailbox of one account, as a single map key. */
+const mailboxKey = (accountUuid: string, name: string): string => `${accountUuid}\u0000${name}`;
+
 const FDA_HINT =
   "The message file could not be read. Grant Full Disk Access to the app running this server " +
   "and restart it.";
@@ -316,22 +333,169 @@ export class AppleMailClient {
     };
   }
 
-  async listMailboxes(opts: {
-    accountUuids?: string[];
-    withCounts: boolean;
-  }): Promise<
-    { accountUuid: string; accountName: string; name: string; unread?: number; total?: number }[]
+  /**
+   * Mailbox names, and counts when asked for.
+   *
+   * Names come from the account list, which already carries every mailbox name
+   * Mail scripts (LIST_ACCOUNTS reads the same `a.mailboxes()` LIST_MAILBOXES
+   * did), so listing them sends no Apple Event of its own. Counts come from the
+   * index in one pass when it is live — the same count `count_messages` gives,
+   * Gmail labels included — and from Mail otherwise, which measured 1.2 s for
+   * every mailbox on a live machine.
+   */
+  async listMailboxes(opts: { accountUuids?: string[]; withCounts: boolean }): Promise<
+    {
+      accountUuid: string;
+      accountName: string;
+      name: string;
+      unread?: number | null;
+      total?: number | null;
+      countsSource?: "index";
+    }[]
   > {
     const accounts = await this.accounts();
     const allowed = opts.accountUuids?.length
-      ? accounts.filter((a) => opts.accountUuids?.includes(a.id)).map((a) => a.id)
-      : accounts.map((a) => a.id);
+      ? accounts.filter((a) => opts.accountUuids?.includes(a.id))
+      : accounts;
     // LIST_MAILBOXES reads an empty list as "every account", which is the
     // opposite of what an allowlist admitting none of them means.
     if (!allowed.length) return [];
-    return withBusyRetry(() =>
-      this.runner.run(LIST_MAILBOXES, { accountUuids: allowed, withCounts: opts.withCounts }),
+
+    const names = allowed.flatMap((a) =>
+      a.mailboxes.map((name) => ({ accountUuid: a.id, accountName: a.name, name })),
     );
+    if (!opts.withCounts) return names;
+
+    const index = await this.index();
+    if (!index) {
+      return withBusyRetry(() =>
+        this.runner.run(LIST_MAILBOXES, {
+          accountUuids: allowed.map((a) => a.id),
+          withCounts: true,
+        }),
+      );
+    }
+
+    const lookup = await this.mailboxLookup();
+    const groups = names.map((m) => ({
+      key: mailboxKey(m.accountUuid, m.name),
+      rowids: this.#indexRowids(lookup, m.accountUuid, m.name),
+    }));
+    const counts = index.countGroups(groups);
+    return names.map((m, i) => {
+      // No index row at all is "not known", not zero. A mailbox the index does
+      // hold but which has no messages is a real zero, and countGroups reports
+      // nothing for it because nothing matched.
+      const held = (groups[i]?.rowids.length ?? 0) > 0;
+      const c = counts.get(mailboxKey(m.accountUuid, m.name));
+      return {
+        ...m,
+        total: held ? (c?.total ?? 0) : null,
+        unread: held ? (c?.unread ?? 0) : null,
+        countsSource: "index" as const,
+      };
+    });
+  }
+
+  /**
+   * Index rowids for one account's mailbox name, matched exactly as
+   * `#targetMailboxRowids` matches them, so a count reached either way agrees.
+   */
+  #indexRowids(
+    lookup: Map<number, { accountUuid: string; mailbox: string; url: string }>,
+    accountUuid: string,
+    name: string,
+  ): number[] {
+    const wanted = name.toLowerCase();
+    const rowids: number[] = [];
+    for (const [rowid, entry] of lookup) {
+      if (entry.accountUuid === accountUuid && entry.mailbox.toLowerCase() === wanted) {
+        rowids.push(rowid);
+      }
+    }
+    return rowids;
+  }
+
+  /**
+   * Why the index cannot answer for one mailbox, or its rowids when it can.
+   * Either way the caller still has Apple Events to fall back on.
+   */
+  async #indexScope(
+    account: MailAccount,
+    name: string,
+  ): Promise<{ index: EnvelopeIndex; rowids: number[] } | { reason: string }> {
+    const index = await this.index();
+    if (!index)
+      return { reason: `The search index is unavailable: ${this.#indexError ?? "unknown"}` };
+    const rowids = this.#indexRowids(await this.mailboxLookup(), account.id, name);
+    if (rowids.length === 0) {
+      return { reason: `Mail's search index holds no mailbox "${name}" for "${account.name}".` };
+    }
+    return { index, rowids };
+  }
+
+  /**
+   * The newest messages in one mailbox: from the index when it holds the
+   * mailbox, which takes milliseconds and is held only to `limit`; over Apple
+   * Events otherwise, which measured 8.4 s for twenty and is capped.
+   */
+  async listMessages(
+    account: MailAccount,
+    mailbox: string,
+    limit: number,
+  ): Promise<
+    { mailbox: string; total: number; messages: MessageSummary[] } & (
+      | { source: "index" }
+      | { source: "applescript"; fallbackReason: string }
+    )
+  > {
+    const name = this.mailboxes.resolveMailboxName(account, mailbox);
+    const scope = await this.#indexScope(account, name);
+    if ("reason" in scope) {
+      const recent = await this.listRecent(account, name, limit);
+      return { ...recent, source: "applescript", fallbackReason: scope.reason };
+    }
+    const lookup = await this.mailboxLookup();
+    const messages = scope.index
+      .search({ mailboxRowids: scope.rowids, limit, offset: 0 })
+      .map((r) => this.#rowToSummary(r, lookup))
+      .filter((m): m is MessageSummary => m !== null);
+    const { total } = scope.index.count({ mailboxRowids: scope.rowids });
+    return { mailbox: name, total, messages, source: "index" };
+  }
+
+  /**
+   * Total and unread for one mailbox. The index answers alone when it holds
+   * the mailbox; Mail's own figure is asked for only when it cannot, since
+   * that figure is the cached badge value and the Apple Event cost 0.77 s.
+   */
+  async countMessages(
+    account: MailAccount,
+    mailbox: string,
+  ): Promise<
+    | { mailbox: string; total: number; unread: { index: number }; source: "index" }
+    | {
+        mailbox: string;
+        total: number | null;
+        unread: { applescript: number | null; index: null };
+        source: "applescript";
+        fallbackReason: string;
+      }
+  > {
+    const name = this.mailboxes.resolveMailboxName(account, mailbox);
+    const scope = await this.#indexScope(account, name);
+    if ("reason" in scope) {
+      const counts = await this.countMailbox(account, name);
+      return {
+        mailbox: counts.mailbox,
+        total: counts.total,
+        unread: { applescript: counts.unread, index: null },
+        source: "applescript",
+        fallbackReason: scope.reason,
+      };
+    }
+    const { total, unread } = scope.index.count({ mailboxRowids: scope.rowids });
+    return { mailbox: name, total, unread: { index: unread }, source: "index" };
   }
 
   async countMailbox(account: MailAccount, mailbox: string) {
@@ -705,27 +869,23 @@ export class AppleMailClient {
       .filter((m): m is MessageSummary => m !== null);
   }
 
-  async countViaIndex(opts: {
-    account?: string | undefined;
-    mailbox?: string | undefined;
-  }): Promise<{ total: number; unread: number } | null> {
-    const index = await this.index();
-    if (!index) return null;
-    const mailboxRowids = await this.#targetMailboxRowids(opts);
-    return index.count(mailboxRowids ? { mailboxRowids } : {});
-  }
-
   #rowToSummary(
     row: MessageRow,
     lookup: Map<number, { accountUuid: string; mailbox: string; url: string }>,
   ): MessageSummary | null {
     const entry = [...lookup.values()].find((e) => e.url === row.mailboxUrl);
     if (!entry) return null;
+    return {
+      ...this.#summaryFields(row),
+      ref: encodeRef({ accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid }),
+    };
+  }
+
+  #summaryFields(row: MessageRow): Omit<MessageSummary, "ref"> {
     const sender = row.senderName
-      ? `${row.senderName} <${row.senderAddress ?? ""}>`
+      ? `${displayName(row.senderName)} <${row.senderAddress ?? ""}>`
       : (row.senderAddress ?? null);
     return {
-      ref: encodeRef({ accountUuid: entry.accountUuid, mailbox: entry.mailbox, id: row.rowid }),
       subject: row.subject,
       sender,
       dateReceived: row.dateReceived,
@@ -757,16 +917,15 @@ export class AppleMailClient {
     fallbackReason?: string;
   }> {
     const decoded = decodeRef(ref);
-    const located = await this.#lookupMessageFile(decoded);
+    const file = await this.readMessageFile(ref, opts);
 
-    if (located.found) {
-      const parsed = readEmlx(located.path, {
-        maxBodyBytes: opts.maxBodyBytes ?? this.config.bodyMaxBytes,
-        partial: located.partial,
-        rowid: decoded.id,
-      });
-      const [summary] = await this.getMessages(decoded, [decoded.id]);
-      if (summary) return { message: summary, parsed, source: "emlx" };
+    if (file.parsed) {
+      // The envelope fields come from the index when it holds the row: the
+      // Apple Event this replaces cost ~430 ms on a live Mail, one event per
+      // property, for columns the index already has.
+      const summary =
+        (await this.#indexSummary(decoded)) ?? (await this.getMessages(decoded, [decoded.id]))[0];
+      if (summary) return { message: summary, parsed: file.parsed, source: "emlx" };
     }
 
     const [summary] = await this.getMessages(decoded, [decoded.id], { withContent: true });
@@ -775,10 +934,39 @@ export class AppleMailClient {
       message: summary,
       parsed: null,
       source: "applescript",
-      fallbackReason: located.found
+      fallbackReason: file.parsed
         ? "The message file was read, but Mail did not return a summary for it."
-        : located.explain,
+        : file.fallbackReason,
     };
+  }
+
+  /**
+   * The message file alone, parsed, with no Apple Event.
+   *
+   * For a caller that needs only what the file holds — the attachment manifest
+   * — and for whom Mail's scripting interface has no fallback worth waiting
+   * for. `fallbackReason` says why there is no file, from an actual lookup.
+   */
+  async readMessageFile(
+    ref: string,
+    opts: { maxBodyBytes?: number } = {},
+  ): Promise<{ parsed: ParsedMessage; source: "emlx" } | { parsed: null; fallbackReason: string }> {
+    const decoded = decodeRef(ref);
+    const located = await this.#lookupMessageFile(decoded);
+    if (!located.found) return { parsed: null, fallbackReason: located.explain };
+    const parsed = readEmlx(located.path, {
+      maxBodyBytes: opts.maxBodyBytes ?? this.config.bodyMaxBytes,
+      partial: located.partial,
+      rowid: decoded.id,
+    });
+    return { parsed, source: "emlx" };
+  }
+
+  /** A ref's envelope fields from the index, keeping the ref the caller passed. */
+  async #indexSummary(ref: MessageRef): Promise<MessageSummary | null> {
+    const row = (await this.index())?.byRowid(ref.id);
+    if (!row) return null;
+    return { ...this.#summaryFields(row), ref: encodeRef(ref) };
   }
 
   async getMessageSource(

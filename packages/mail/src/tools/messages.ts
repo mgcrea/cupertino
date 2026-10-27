@@ -179,19 +179,18 @@ export const registerMessageTools = (
     },
     async ({ ref }) =>
       wrap(async () => {
-        const { parsed, source, fallbackReason } = await client.getMessageBody(ref, {
-          maxBodyBytes: 1024,
-        });
-        if (!parsed) {
+        const file = await client.readMessageFile(ref, { maxBodyBytes: 1024 });
+        if (!file.parsed) {
           return {
             degraded: true,
             capability: "message-file",
             reason:
               "The message file was not read, and Mail's scripting interface does not expose a " +
-              `MIME attachment manifest. ${fallbackReason ?? ""}`.trimEnd(),
+              `MIME attachment manifest. ${file.fallbackReason}`.trimEnd(),
             hint: "See the `messageFile` section of apple_mail_diagnostics, which probes this lane.",
           };
         }
+        const { parsed, source } = file;
         return { ref, source, count: parsed.attachments.length, attachments: parsed.attachments };
       }),
   );

@@ -7,12 +7,15 @@ import { accountArg, wrap } from "./util.js";
 /**
  * Account and mailbox listing.
  *
- * Both are AppleScript-primary rather than index-primary, which is the reverse
- * of what "SQLite is the fast lane" suggests. Two reasons: it is genuinely fast
- * here (0.6s for every account and mailbox on this machine, because the cost is
- * O(mailboxes) not O(messages)), and the Envelope Index stores no account
- * display names at all — only UUIDs inside `mailboxes.url` — so an index-first
- * implementation has to invent names from URL fragments and gets them wrong.
+ * Names are AppleScript-primary rather than index-primary, which is the reverse
+ * of what "SQLite is the fast lane" suggests: the Envelope Index stores no
+ * account display names at all — only UUIDs inside `mailboxes.url` — so an
+ * index-first implementation has to invent names from URL fragments and gets
+ * them wrong. They are read once, with the account list, and cached.
+ *
+ * Counts are the other way round. Mail's per-mailbox counts measured 1.2 s for
+ * every mailbox and are its cached badge values; the index counts the messages
+ * themselves in one pass, so it answers whenever it is live.
  */
 export const registerAccountTools = (server: McpServer, client: AppleMailClient): void => {
   server.registerTool(
@@ -43,17 +46,19 @@ export const registerAccountTools = (server: McpServer, client: AppleMailClient)
     "apple_mail_list_mailboxes",
     {
       description:
-        "List mailboxes, optionally with message counts. Counts cost one round-trip per mailbox " +
-        "(~0.3s each), so `withCounts` is off by default — turn it on for one account, not for all " +
-        "of them. Note that `unread` here is Mail's cached badge value and can be wrong; " +
-        "apple_mail_count_messages reports both sources.",
+        "List mailboxes, optionally with message counts. With Full Disk Access the counts come " +
+        "from Mail's search index in one pass, agree with apple_mail_count_messages, and are null " +
+        'for a mailbox the index does not hold (`countsSource: "index"`). Without it they cost ' +
+        "one round-trip per mailbox (~0.3s each) and `unread` is Mail's cached badge value, which " +
+        "can be wrong — so then turn `withCounts` on for one account, not for all of them.",
       inputSchema: z.object({
         account: accountArg,
         withCounts: z
           .boolean()
           .optional()
           .describe(
-            "Include total and unread per mailbox. Costs ~0.3s per mailbox. Default false.",
+            "Include total and unread per mailbox. Cheap with the search index; ~0.3s per " +
+              "mailbox without it. Default false.",
           ),
       }),
       annotations: { readOnlyHint: true },

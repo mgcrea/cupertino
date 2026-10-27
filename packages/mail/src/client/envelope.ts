@@ -454,6 +454,93 @@ export class EnvelopeIndex {
     return { total: row.total, unread: row.unread ?? 0 };
   }
 
+  /**
+   * `count` for many mailbox groups at once.
+   *
+   * Each group is what `count` would be handed for one mailbox name — every
+   * index rowid that name resolves to — and gets exactly the answer `count`
+   * gives it. Called once per mailbox, `count` scans `messages` each time,
+   * because nothing in Mail's schema indexes it on `mailbox` first.
+   *
+   * A group of one rowid, nearly every group, comes from a single GROUP BY over
+   * each mailbox's own messages plus its labels. That cannot count a message
+   * twice: `labels` is keyed on (message, mailbox), and a label naming the
+   * message's own mailbox is skipped. A group of several rowids can — one
+   * message living in one and labelled into another — so each of those goes
+   * through `count`, which matches per message.
+   *
+   * The single pass measured 68 ms on 189k messages and 204k labels. Deduping
+   * every group with a UNION instead returned the same counts in 1,060 ms,
+   * almost all of it sorting the union.
+   */
+  countGroups(
+    groups: { key: string; rowids: number[] }[],
+  ): Map<string, { total: number; unread: number }> {
+    const out = new Map<string, { total: number; unread: number }>();
+    const single = groups.filter((g) => g.rowids.length === 1);
+    if (single.length > 0) {
+      const byLabel = this.caps.has.labels
+        ? " UNION ALL SELECT l.mailbox_id, COUNT(*), SUM(CASE WHEN m.read = 0 THEN 1 ELSE 0 END) " +
+          "FROM labels l JOIN messages m ON m.ROWID = l.message_id " +
+          "WHERE m.deleted = 0 AND l.mailbox_id != m.mailbox GROUP BY l.mailbox_id"
+        : "";
+      const rows = this.#db
+        .prepare(
+          `SELECT box, SUM(total) AS total, SUM(unread) AS unread FROM (` +
+            `SELECT m.mailbox AS box, COUNT(*) AS total, ` +
+            `SUM(CASE WHEN m.read = 0 THEN 1 ELSE 0 END) AS unread ` +
+            `FROM messages m WHERE m.deleted = 0 GROUP BY m.mailbox${byLabel}) GROUP BY box`,
+        )
+        .all() as { box: number; total: number; unread: number | null }[];
+      const perBox = new Map(rows.map((r) => [Number(r.box), r]));
+      for (const g of single) {
+        const r = perBox.get(g.rowids[0] as number);
+        if (r) out.set(g.key, { total: r.total, unread: r.unread ?? 0 });
+      }
+    }
+    for (const g of groups) {
+      if (g.rowids.length < 2) continue;
+      const c = this.count({ mailboxRowids: g.rowids });
+      if (c.total > 0) out.set(g.key, c);
+    }
+    return out;
+  }
+
+  /**
+   * One message by rowid, in the shape `search` returns, or null.
+   *
+   * Deleted rows are included on purpose. This answers "what are this
+   * message's envelope fields", for a ref the caller already holds, and the
+   * Apple Events read it replaces did not refuse a message on that flag either.
+   */
+  byRowid(rowid: number): MessageRow | null {
+    const r = this.#db
+      .prepare(
+        `SELECT m.ROWID AS rowid, mb.url AS mailboxUrl, ${this.#subjectExpr} AS subject, ` +
+          `a.address AS senderAddress, a.comment AS senderName, ` +
+          `m.date_received AS dateReceived, ${this.caps.has.dateSent ? "m.date_sent" : "NULL"} AS dateSent, ` +
+          `m.read AS read, ${this.caps.has.flagged ? "m.flagged" : "0"} AS flagged, m.size AS size, ` +
+          `${this.caps.has.conversationId ? "m.conversation_id" : "NULL"} AS conversationId ` +
+          `${EnvelopeIndex.#FROM} WHERE m.ROWID = ?`,
+      )
+      .get(rowid) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      rowid: Number(r.rowid),
+      mailboxUrl: String(r.mailboxUrl),
+      subject: (r.subject as string) || null,
+      senderAddress: (r.senderAddress as string) ?? null,
+      senderName: (r.senderName as string) || null,
+      dateReceived: this.#toIso(r.dateReceived as number | null),
+      dateSent: this.#toIso(r.dateSent as number | null),
+      read: Boolean(r.read),
+      flagged: Boolean(r.flagged),
+      size: (r.size as number) ?? null,
+      conversationId: (r.conversationId as number) ?? null,
+      hasAttachment: false,
+    };
+  }
+
   /** Every message in one conversation, oldest first. */
   thread(conversationId: number, limit: number): MessageRow[] {
     if (!this.caps.has.conversationId) return [];

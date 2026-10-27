@@ -20,14 +20,14 @@ apple_mail_get_thread         { "ref": "<a ref from the search>" }
 
 ## What to check
 
-| Check                                 | Expected                                                                        |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| `diagnostics.lanes.index`             | `live`, with `indexMode: "ro"`                                                  |
-| `diagnostics.lanes.schemaFingerprint` | `77aa2cd3a55b` on macOS 26.6 / Mail V10                                         |
-| `search_messages` latency             | sub-second, versus 74 s for the Apple Events equivalent                         |
-| `count_messages` on a **Gmail** INBOX | `unread.index` non-zero — 0 here means the labels join regressed                |
-| `count_messages` unread               | `unread.index` and `unread.applescript` will often disagree; the index is right |
-| a `ref` from search                   | passes straight into `set_message_flags` with no re-lookup                      |
+| Check                                 | Expected                                                              |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| `diagnostics.lanes.index`             | `live`, with `indexMode: "ro"`                                        |
+| `diagnostics.lanes.schemaFingerprint` | `77aa2cd3a55b` on macOS 26.6 / Mail V10                               |
+| `search_messages` latency             | sub-second, versus 74 s for the Apple Events equivalent               |
+| `count_messages` on a **Gmail** INBOX | `unread.index` non-zero — 0 here means the labels join regressed      |
+| `count_messages` / `list_messages`    | `source: "index"` — `applescript` means the index lane did not answer |
+| a `ref` from search                   | passes straight into `set_message_flags` with no re-lookup            |
 
 The Gmail row is the one worth actually doing. It is the check that fails loudly if the labels
 predicate ever breaks, and on this machine the naive query returned 0 against 51,128 real messages.

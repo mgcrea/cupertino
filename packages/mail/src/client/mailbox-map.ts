@@ -39,6 +39,8 @@ export class MailboxMap {
   readonly #now: () => number;
 
   #cache: { at: number; accounts: MailAccount[] } | null = null;
+  /** The one read in flight, so concurrent callers share it rather than queue several. */
+  #inflight: Promise<MailAccount[]> | null = null;
 
   constructor(opts: MailboxMapOptions) {
     this.#runner = opts.runner;
@@ -55,22 +57,52 @@ export class MailboxMap {
     );
   }
 
+  /**
+   * The account list. An expired one is served at once and refreshed behind
+   * the call: LIST_ACCOUNTS measured ~1 s, and with a plain TTL that second
+   * came back on the first call after every minute-long pause. Only a list
+   * nobody has yet, an invalidated one or a forced read is waited for.
+   */
   async accounts(force = false): Promise<MailAccount[]> {
     const cached = this.#cache;
-    if (!force && cached && this.#now() - cached.at < this.#ttlMs) return cached.accounts;
-
-    const raw = await this.#runner.run<MailAccount[]>(LIST_ACCOUNTS);
-    const accounts = raw.filter((a) => this.#admits(a));
-    this.#cache = { at: this.#now(), accounts };
-    return accounts;
+    if (force || !cached) return this.#read();
+    if (this.#now() - cached.at >= this.#ttlMs) {
+      // A failed refresh keeps the list it would have replaced, and the next
+      // call to find it expired tries again.
+      this.#read().catch(() => undefined);
+    }
+    return cached.accounts;
   }
 
-  /** Resolve an account by UUID or display name. Case-insensitive on the name. */
+  #read(): Promise<MailAccount[]> {
+    this.#inflight ??= this.#runner
+      .run<MailAccount[]>(LIST_ACCOUNTS)
+      .then((raw) => {
+        const accounts = raw.filter((a) => this.#admits(a));
+        this.#cache = { at: this.#now(), accounts };
+        return accounts;
+      })
+      .finally(() => {
+        this.#inflight = null;
+      });
+    return this.#inflight;
+  }
+
+  /**
+   * Resolve an account by UUID or display name. Case-insensitive on the name.
+   * A name the cached list lacks earns one fresh read before it is refused,
+   * since that list can be stale by design.
+   */
   async resolveAccount(needle: string): Promise<MailAccount> {
-    const accounts = await this.accounts();
-    const found =
+    const find = (accounts: MailAccount[]) =>
       accounts.find((a) => a.id === needle) ??
       accounts.find((a) => a.name.toLowerCase() === needle.toLowerCase());
+    let accounts = await this.accounts();
+    let found = find(accounts);
+    if (!found) {
+      accounts = await this.accounts(true);
+      found = find(accounts);
+    }
     if (!found) {
       throw new PreconditionError(
         `No account "${needle}". Known accounts: ${accounts.map((a) => a.name).join(", ") || "(none visible)"}.` +
