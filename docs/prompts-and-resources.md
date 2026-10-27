@@ -187,7 +187,7 @@ group events.
 date. No bodies and no message text.
 
 **Poll.** `events/poll` takes a `cursor`, `maxEvents` and `maxAgeMs`. The cursor is opaque to the
-client (`v1.<dev>-<ino>.<rowid>`); `null` or absent means now. It returns at most 50 events,
+client; `null` or absent means now. It returns at most 50 events,
 scans at most 1,000 rows per call, and says `nextPollMs: 10000`. A cursor minted by another store,
 whether the other surface or an index since rebuilt, is answered with `truncated: true` and a fresh
 head cursor, not an error; only a malformed cursor is `-32602`.
@@ -196,7 +196,7 @@ head cursor, not an error; only a malformed cursor is `-32602`.
 every 25 s and at most 10 streams per connection (the eleventh is `-32025`, `data.limit:
 "streams"`). If the index is rebuilt while a stream is open, the stream stays open and sends a fresh
 `notifications/events/active` with `truncated: true` and a new cursor. A cancelled stream writes no
-further frame. Delivery is `["poll","push"]`; a webhook request is `-32026`.
+further frame. Delivery is `["poll","push"]`; webhook delivery (`events/subscribe`) is not offered and answers `-32601`.
 
 **Where it stands.** What a client that implements the extension would see, and what could not be
 tested for lack of one, is in [the field report](superpowers/reports/2026-10-27-mcp-events-field-report.md).

@@ -113,7 +113,7 @@ Poll is stateless. Each `events/poll` scans `source.since(rowid, scanLimit)` and
   - its source and trigger, from the existing watch services and their own store handles.
 - **Errors:** the SEP's provisional codes (`-32023` to `-32027`), named as its Error Handling table names them:
   - `NotFound` for an unknown event name;
-  - `Unsupported` for webhook or an undeclared mode;
+  - `Unsupported` for a stream on an event type without push (`events/subscribe` is not registered and answers `-32601`);
   - `InvalidParams` for bad arguments.
 
 ### Spike first

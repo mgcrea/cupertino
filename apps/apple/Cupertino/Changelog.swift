@@ -412,7 +412,7 @@ nonisolated enum Changelog {
             ordinal: 2,
             headline: "Experimental: Mail and Messages serve the draft MCP Events extension.",
             body: [
-              "`events/list`, `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol only. The arguments are the watch filter, a sender is required, and an event carries envelope metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet, Claude Code included; the field report is in docs/superpowers/reports.",
+              "`events/list`, `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol only. The arguments are the watch filter, a sender is required, and an event carries envelope metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet, Claude Code included; the field report is docs/superpowers/reports/2026-10-27-mcp-events-field-report.md.",
             ]),
         ]),
       Section(

@@ -36,7 +36,7 @@ summary.
   `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol
   only. The arguments are the watch filter, a sender is required, and an event carries envelope
   metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet,
-  Claude Code included; the field report is in docs/superpowers/reports.
+  Claude Code included; the field report is docs/superpowers/reports/2026-10-27-mcp-events-field-report.md.
 
 ### Changed
 
