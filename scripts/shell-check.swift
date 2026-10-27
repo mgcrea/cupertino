@@ -316,6 +316,33 @@ struct ShellCheck {
       "a torn line is named, and the next line still links past it",
       failures.count == 1 && { if case .unreadable = failures[0] { true } else { false } }())
     check("and reads back", ShellRecord.recent(1, in: dir).map(\.decision) == [.busy])
+
+    // Torn inside a multi-byte character: `purpose` and `cwd` are free text, written raw, so
+    // the file can end on the first byte of an "é". The month must not stop being UTF-8 and
+    // vanish from `recent` and `verify` with it.
+    let cut = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-record-check-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: cut) }
+    e.decision = .declined
+    ShellRecord.append(e, in: cut, now: t0)
+    ShellRecord.flushForCheck()
+    let month = try FileManager.default.contentsOfDirectory(
+      at: cut, includingPropertiesForKeys: nil
+    )[0]
+    let fragment = try FileHandle(forWritingTo: month)
+    try fragment.seekToEnd()
+    try fragment.write(contentsOf: Data("{\"v\":1,\"seq\":2,\"text\":\"r".utf8) + [0xC3])
+    try fragment.close()
+    e.decision = .approved
+    ShellRecord.append(e, in: cut, now: t0)
+    let cutVerdict = ShellRecord.verify(in: cut)
+    check(
+      "a line torn mid-character is named, and the month still verifies around it",
+      cutVerdict.records == 2 && cutVerdict.failures.count == 1
+        && { if case .unreadable = cutVerdict.failures[0] { true } else { false } }())
+    check(
+      "and the month still reads back",
+      ShellRecord.recent(in: cut).map(\.decision) == [.approved, .declined])
   }
 
   static func main() throws {

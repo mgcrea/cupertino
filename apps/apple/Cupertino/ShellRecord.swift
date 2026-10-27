@@ -145,11 +145,10 @@ nonisolated enum ShellRecord {
     if current > 0, let known = tails[target.path], known.size == current {
       return (known, false)
     }
-    if current > 0, let text = try? String(contentsOf: target, encoding: .utf8) {
-      let torn = !text.hasSuffix("\n")
-      if let last = lastRecord(in: text) { return (last, torn) }
+    if current > 0, let contents = read(target) {
+      if let last = lastRecord(in: contents.lines) { return (last, contents.torn) }
       // Nothing readable in it: carry on from the month before, as an empty file would.
-      return (previousTail(before: target, in: dir), torn)
+      return (previousTail(before: target, in: dir), contents.torn)
     }
     return (previousTail(before: target, in: dir), false)
   }
@@ -157,9 +156,7 @@ nonisolated enum ShellRecord {
   private static func previousTail(before target: URL, in dir: URL) -> Tail {
     let earlier = segments(in: dir).filter { $0.url.lastPathComponent < target.lastPathComponent }
     for segment in earlier.reversed() {
-      if let text = try? String(contentsOf: segment.url, encoding: .utf8),
-        let last = lastRecord(in: text)
-      {
+      if let contents = read(segment.url), let last = lastRecord(in: contents.lines) {
         return last
       }
     }
@@ -167,8 +164,8 @@ nonisolated enum ShellRecord {
   }
 
   /// The last line that parses as a record, with its `seq` and `hash`.
-  private static func lastRecord(in text: String) -> Tail? {
-    for line in text.split(separator: "\n").reversed() {
+  private static func lastRecord(in lines: [String]) -> Tail? {
+    for line in lines.reversed() {
       guard
         let row = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
         let seq = row["seq"] as? Int, let hash = row["hash"] as? String
@@ -293,6 +290,20 @@ nonisolated enum ShellRecord {
     }
   }
 
+  /// A segment's lines, each decoded on its own, and whether the file stops short of a line
+  /// break.
+  ///
+  /// Bytes, not `String(contentsOf:encoding:)`: that refuses the whole file over one bad byte,
+  /// and a write cut short inside a multi-byte character (`purpose` and `cwd` are free text,
+  /// written raw) leaves exactly that. Decoded line by line, the bad bytes become U+FFFD in
+  /// the one line they are in, which then fails to parse and `verify` names it. Nil only when
+  /// the file cannot be read at all.
+  private static func read(_ url: URL) -> (lines: [String], torn: Bool)? {
+    guard let data = try? Data(contentsOf: url) else { return nil }
+    let lines = data.split(separator: 0x0A).map { String(decoding: $0, as: UTF8.self) }
+    return (lines, !data.isEmpty && data.last != 0x0A)
+  }
+
   private static func size(of url: URL) -> Int {
     (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
   }
@@ -306,8 +317,8 @@ nonisolated enum ShellRecord {
     return queue.sync {
       var out: [Entry] = []
       for segment in segments(in: dir).reversed() {
-        guard let text = try? String(contentsOf: segment.url, encoding: .utf8) else { continue }
-        for line in text.split(separator: "\n").reversed() {
+        guard let contents = read(segment.url) else { continue }
+        for line in contents.lines.reversed() {
           guard let found = entry(from: line) else { continue }
           out.append(found)
           if out.count == limit { return out }
@@ -317,7 +328,7 @@ nonisolated enum ShellRecord {
     }
   }
 
-  private static func entry(from line: Substring) -> Entry? {
+  private static func entry(from line: String) -> Entry? {
     guard
       let row = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
       row["surface"] as? String == surface,
@@ -339,9 +350,10 @@ nonisolated enum ShellRecord {
     queue.sync {
       AuditChain.verify(
         segments: segments(in: dir).map { segment in
-          let text = (try? String(contentsOf: segment.url, encoding: .utf8)) ?? ""
-          return AuditChain.Segment(
-            number: segment.month.ordinal, lines: text.split(separator: "\n").map(String.init))
+          // A month that cannot be read at all is one unreadable line, never an empty month:
+          // read as nothing, the newest month would vanish and the chain still say intact.
+          let lines = read(segment.url)?.lines ?? ["\u{FFFD}"]
+          return AuditChain.Segment(number: segment.month.ordinal, lines: lines)
         })
     }
   }
