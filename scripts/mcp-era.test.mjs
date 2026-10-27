@@ -232,8 +232,8 @@ const mailEnv = (fx) => {
  * response to its id, `next` with the first message a predicate accepts, seen
  * already or still to come.
  */
-const session = (env, era) => {
-  const child = spawn("node", [join(root, "packages", "mail", "dist", "cli.js")], {
+const session = (env, era, surface = "mail") => {
+  const child = spawn("node", [join(root, "packages", surface, "dist", "cli.js")], {
     env,
     stdio: ["pipe", "pipe", "ignore"],
   });
@@ -427,6 +427,80 @@ test("gate off: events/list is method not found on modern", onMac, async () => {
   try {
     const res = await s.request("events/list", {});
     assert.equal(res.error?.code, -32601);
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+// Messages' built `dist/cli.js` with `APPLE_MESSAGES_ALLOW_EVENTS` on, over a
+// temp chat.db built from the captured DDL (triggers dropped, as the package's
+// tests do). The address book, `HOME` and osascript point nowhere.
+
+const messagesFixture = () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-era-messages-"));
+  const store = join(dir, "chat.db");
+  const db = new DatabaseSync(store);
+  db.exec(
+    readFileSync(
+      join(root, "packages", "messages", "test", "fixtures", "chat-db.sql"),
+      "utf8",
+    ).replaceAll(/^CREATE TRIGGER[\s\S]*?END;$/gm, ""),
+  );
+  db.exec(`
+    INSERT INTO handle (ROWID, id, service) VALUES (1, '+33612345678', 'iMessage');
+    INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style, service_name)
+      VALUES (1, 'iMessage;-;+33612345678', '+33612345678', NULL, 45, 'iMessage');
+  `);
+  const arrive = (rowid) => {
+    const date = 800_000_000_000_000_000;
+    db.exec(`
+      INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me, associated_message_type)
+        VALUES (${rowid}, 'guid-${rowid}', 'hello', 1, 'iMessage', ${date}, 0, 0);
+      INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (1, ${rowid}, ${date});
+    `);
+  };
+  return {
+    store,
+    arrive,
+    close: () => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+};
+
+const messagesEnv = (fx) => {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith("APPLE_") && !k.startsWith("CUPERTINO_")) env[k] = v;
+  }
+  env.HOME = join(NOWHERE, "home");
+  env.APPLE_MESSAGES_ALLOW_WRITES = "0";
+  env.APPLE_MESSAGES_RESOLVE_CONTACTS = "0";
+  env.APPLE_MESSAGES_ALLOW_EVENTS = "1";
+  env.APPLE_MESSAGES_STORE = fx.store;
+  env.APPLE_MESSAGES_OSASCRIPT_PATH = join(NOWHERE, "osascript");
+  return env;
+};
+
+test("modern: Messages events/poll delivers a matching message", onMac, async () => {
+  const fx = messagesFixture();
+  const s = session(messagesEnv(fx), "modern", "messages");
+  try {
+    const args = { name: "messages.received", arguments: { from: ["+33612345678"] } };
+    const boot = await s.request("events/poll", { ...args, cursor: null });
+    assert.equal(boot.error, undefined, JSON.stringify(boot.error));
+    assert.deepEqual(boot.result.events, []);
+    assert.match(boot.result.cursor, /^v1\.\d+-\d+\.0$/);
+    fx.arrive(1);
+    const res = await s.request("events/poll", { ...args, cursor: boot.result.cursor });
+    assert.equal(res.error, undefined, JSON.stringify(res.error));
+    assert.equal(res.result.events.length, 1);
+    const [event] = res.result.events;
+    assert.equal(event.name, "messages.received");
+    assert.equal(event.eventId, "guid-1");
+    assert.equal(event.data.handle, "+33612345678");
   } finally {
     s.child.kill();
     fx.close();

@@ -155,7 +155,8 @@ describe("messagesEventAdapter", () => {
       contacts: null,
       era: "modern",
     });
-    const adapter = messagesEventAdapter(created.events!);
+    if (!created.events) throw new Error("the events service was not built");
+    const adapter = messagesEventAdapter(created.events);
     const err = await adapter.parseArguments({ from: ["a@b.c"] }).then(
       () => null,
       (e: unknown) => e,
@@ -163,6 +164,17 @@ describe("messagesEventAdapter", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as { code?: number }).code).not.toBe(-32602);
     await expect(adapter.parseArguments({})).rejects.toMatchObject({ code: -32602 });
+
+    // Over a connection, core maps that failure to -32603.
+    const fx = { path: "/nonexistent/chat.db", db: undefined as never };
+    const { client } = await connect(fx);
+    await expect(
+      poll(client, {
+        name: "messages.received",
+        arguments: { from: ["a@b.c"] },
+        cursor: null,
+      }),
+    ).rejects.toMatchObject({ code: -32603 });
   });
 
   it("occurrence maps a row", () => {
