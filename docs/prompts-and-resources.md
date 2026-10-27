@@ -184,13 +184,17 @@ group events.
 **Payload.** Envelope only, as for watches: Mail's `ref`, `mailbox`, `senderAddress`,
 `senderName`, `subject` and `dateReceived`; Messages' `id`, `chat`, `handle` and `date`. The
 `eventId` is Mail's `global_message_id` or the Messages `guid`, and the timestamp is the received
-date. No bodies and no message text.
+date, or the time the row was scanned when it has none. No bodies and no message text.
 
 **Poll.** `events/poll` takes a `cursor`, `maxEvents` and `maxAgeMs`. The cursor is opaque to the
 client; `null` or absent means now. It returns at most 50 events,
 scans at most 1,000 rows per call, and says `nextPollMs: 10000`. A cursor minted by another store,
 whether the other surface or an index since rebuilt, is answered with `truncated: true` and a fresh
-head cursor, not an error; only a malformed cursor is `-32602`.
+head cursor, not an error; only a malformed cursor is `-32602`. An event name the server does not
+offer is `-32023`. A store that cannot be read (no Full Disk Access, a missing or immutable-only
+index) is `-32603`, as is naming `mailboxes` while Mail is not running: neither is the client's
+mistake. Mail in a mailbox created since Mail was last asked for its mailboxes waits for the next
+poll or trigger, which asks again and delivers it.
 
 **Stream.** `events/stream` pushes `notifications/events/*` frames over stdio, with a heartbeat
 every 25 s and at most 10 streams per connection (the eleventh is `-32025`, `data.limit:

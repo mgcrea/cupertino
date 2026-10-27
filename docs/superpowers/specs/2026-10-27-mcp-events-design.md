@@ -33,6 +33,7 @@ So this is experimental work with three purposes:
   - `events/list`;
   - `events/poll`;
   - `events/stream`, with the notifications that go with it: `notifications/events/active`, `/event`, `/heartbeat`, `/error` and `/terminated`, and cancellation by `notifications/cancelled`.
+  - `/terminated` is never sent: the server never ends a stream while the connection lives, so a stream ends only on the client's cancel or with the connection.
 - **Arguments,** reusing the watch filter:
   - Mail: `from`, `domains`, `mailboxes`;
   - Messages: `from`, `domains`.
@@ -47,7 +48,7 @@ So this is experimental work with three purposes:
 
 - **Occurrence fields:**
   - `eventId` is the store's stable id: Mail's `global_message_id`, the Messages `guid`.
-  - `timestamp` is the received date.
+  - `timestamp` is the received date, or for a row with none the time it was scanned, on the server's clock; the payload's own date stays null.
 - **Exclusions:** the same as watches. Own addresses, Sent, Drafts, Junk and Trash, own messages, tapbacks and group events never produce an event.
 - **Gates:** `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, both off by default.
   - On: the modern instance declares `capabilities.extensions["io.modelcontextprotocol/events"]: {}`.
@@ -93,7 +94,7 @@ Poll is stateless. Each `events/poll` scans `source.since(rowid, scanLimit)` and
 `events/stream` stays pending until the client cancels it.
 
 - **First message:** `notifications/events/active`, with `cursor` and `truncated`.
-- **Delivery:** events go out as the existing file trigger fires. That is the same trigger and the same scan as a watch tick, but per stream and from the stream's own cursor.
+- **Delivery:** events go out as the existing file trigger fires. That is the same trigger and the same source as a watch tick, but per stream and from the stream's own cursor. On Mail, the events source always holds back at a row in a mailbox the lookup has never seen, for a poll as for a stream, and the lookup is refreshed before the next poll or tick, which then judges the row; otherwise the lookup is refreshed only once the index's head has moved and its TTL has passed.
 - **Heartbeat:** at least every 30 s (builder picks 25 s), carrying the scanned cursor.
 - **Store problems:**
   - A store that cannot be read sends `notifications/events/error`, and the stream stays open.
