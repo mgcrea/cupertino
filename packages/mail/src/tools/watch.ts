@@ -90,6 +90,26 @@ import { wrap } from "./util.js";
  * each row with its own mailbox rowid and its Gmail label rowids, and core's
  * matching needs a shared key, so two watches on one connection can follow
  * different mailboxes.
+ *
+ * ## Serving events instead
+ *
+ * The Events extension reads through a service of its own, built with
+ * `mode: "events"` and never bound to a registry. It differs in three ways,
+ * because an events scan runs from core's poll and stream handlers rather than
+ * from `onTrigger`, and there is no registry `mark` to say whether rows wait:
+ *
+ * - The source always holds back at a row in a mailbox the lookup has never
+ *   seen, for a poll as for a stream, so such a row is neither delivered nor
+ *   passed over. Core's tick runs its scan after `onTrigger` would have cleared
+ *   the hold, so the hold has to be the source's own.
+ * - `ensure`, which core runs before every poll and every tick, refreshes the
+ *   lookup when the last scan held back (whatever the TTL: the held row is
+ *   judged by the next poll or tick, with a fresh lookup) or when the index's
+ *   head has moved past the last head it saw and the TTL has passed. An idle
+ *   subscription then costs no Apple Event however long it lives, and a poll
+ *   every ten seconds costs no more than a watch. A hold that a failed refresh
+ *   cannot resolve is judged with the accounts in hand, as a watch tick does.
+ * - The trigger calls core's `onChange` directly: core's tick runs `ensure`.
  */
 
 const immutableReason = (noun: FilterNoun): string =>
@@ -113,8 +133,9 @@ export type MailWatchServiceOptions = {
   now?: (() => number) | undefined;
   /**
    * Who reads through the service: watches (the default), or the Events
-   * extension. A refusal names what the client asked for, a watch or a
-   * subscription, so an events client never reads about watches.
+   * extension (see "Serving events instead"). A refusal names what the client
+   * asked for, a watch or a subscription, so an events client never reads about
+   * watches.
    */
   mode?: "watch" | "events" | undefined;
 };
@@ -125,6 +146,7 @@ export class MailWatchService {
   readonly #logger: Logger | undefined;
   readonly #isMailRunning: () => Promise<boolean>;
   readonly #now: () => number;
+  readonly #events: boolean;
   readonly #noun: FilterNoun;
 
   #registry: WatchRegistry<MailArrival> | undefined;
@@ -139,6 +161,8 @@ export class MailWatchService {
   #init: Promise<void> | undefined;
   #refreshing: Promise<void> | undefined;
   #refreshedAt = 0;
+  /** Events only: the index's head at the last `ensure`, so a refresh waits for new rows. */
+  #seenHead = 0;
   /** Whether the last refresh failed, so a failure that persists is logged once. */
   #refreshFailing = false;
   #tickFailing = false;
@@ -167,7 +191,8 @@ export class MailWatchService {
     this.#logger = opts.logger;
     this.#isMailRunning = opts.isMailRunning ?? (() => defaultIsMailRunning());
     this.#now = opts.now ?? Date.now;
-    this.#noun = opts.mode === "events" ? "subscription" : "watch";
+    this.#events = opts.mode === "events";
+    this.#noun = this.#events ? "subscription" : "watch";
   }
 
   /** How many watches this connection holds. */
@@ -197,6 +222,9 @@ export class MailWatchService {
    * idle poll, and a refresh that fails is tolerated exactly as `onTrigger`
    * tolerates it: the watch is still usable on the last lookup, so a later
    * `watch` call must not fail for want of one.
+   *
+   * In events mode the refresh follows the events rule instead (see "Serving
+   * events instead"), since core runs this before every poll and every tick.
    */
   ensure(): Promise<void> {
     this.#init ??= this.#setUp().catch((err: unknown) => {
@@ -205,8 +233,28 @@ export class MailWatchService {
     });
     return this.#init.then(async () => {
       this.#reopenIfReplaced();
-      if (this.#stale()) await this.#refreshSoftly();
+      if (this.#events) await this.#catchUp();
+      else if (this.#stale()) await this.#refreshSoftly();
     });
+  }
+
+  /**
+   * Events' refresh: now for a scan that held back, else only once rows have
+   * arrived since the last call and the TTL has passed. Never throws.
+   */
+  async #catchUp(): Promise<void> {
+    const inner = this.#ready();
+    const head = inner.head();
+    const arrived = head > this.#seenHead;
+    this.#seenHead = head;
+    if (inner.takeHeld()) {
+      // Refreshed or not, the held row is judged next time: a rebuild from the
+      // accounts in hand knows the mailbox, and excludes it if it still does
+      // not resolve, as a watch tick does.
+      if (!(await this.#refreshSoftly())) this.#rebuild();
+    } else if (arrived && this.#stale()) {
+      await this.#refreshSoftly();
+    }
   }
 
   async #setUp(): Promise<void> {
@@ -240,6 +288,7 @@ export class MailWatchService {
       this.#refreshFailing = true;
     }
     this.#dir = dirname(located.envelopeIndexPath);
+    this.#seenHead = this.#ready().head();
   }
 
   /** Open (or reopen) the watch's own handle, and only then let go of the old one. */
@@ -314,6 +363,8 @@ export class MailWatchService {
       lookup,
       knownMailboxes: known,
     });
+    // Events scan outside `onTrigger`, so their source holds back on its own.
+    this.#inner.holdNewMailboxes = this.#events;
   }
 
   #stale(): boolean {
@@ -387,16 +438,24 @@ export class MailWatchService {
     );
   }
 
-  /** What `createWatches` is given as `startTrigger`. Reads the directory now, not at construction. */
+  /**
+   * What `createWatches` is given as `startTrigger`. Reads the directory now, not
+   * at construction. In events mode `onChange` is core's, whose tick runs
+   * `ensure` itself, so it is called as it is.
+   */
   startTrigger = (onChange: () => void): { stop(): void } => {
     if (!this.#dir) throw new Error("A watch trigger was started before the index was located.");
     return fileTrigger({
       dir: this.#dir,
       names: ["Envelope Index", "Envelope Index-wal"],
       ...(this.#logger ? { logger: this.#logger } : {}),
-    })(() => {
-      void this.runTrigger(onChange);
-    });
+    })(
+      this.#events
+        ? onChange
+        : () => {
+            void this.runTrigger(onChange);
+          },
+    );
   };
 
   /** Close the watch's own handle. Called when the connection ends. */
