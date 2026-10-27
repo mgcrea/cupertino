@@ -344,6 +344,15 @@ test("modern: events/stream pushes matching mail", onMac, async () => {
     assert.equal(pushed.params.name, "mail.received");
     assert.equal(pushed.params.data.senderAddress, "jo@acme.com");
     s.write({ method: "notifications/cancelled", params: { requestId: "stream-1" } });
+    // Mail keeps arriving after the cancel, and none of it is pushed on that
+    // stream: 2 s covers the trigger's 500 ms debounce several times over.
+    const onStream = (m) =>
+      m.method === "notifications/events/event" &&
+      m.params?._meta?.["io.modelcontextprotocol/subscriptionId"] === "stream-1";
+    const before = s.seen.filter(onStream).length;
+    fx.arrive(104);
+    await new Promise((ok) => setTimeout(ok, 2000));
+    assert.equal(s.seen.filter(onStream).length, before, "an event was pushed after the cancel");
   } finally {
     s.child.kill();
     fx.close();
