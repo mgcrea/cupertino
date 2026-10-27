@@ -118,6 +118,18 @@ export {
 } from "./tools.js";
 export { createWatches, type WatchesOptions } from "./watch-resources.js";
 export {
+  decodeCursor,
+  encodeCursor,
+  EVENTS_ERRORS,
+  EVENTS_EXTENSION_ID,
+  resolveStart,
+  scanEvents,
+  type EventDescriptor,
+  type EventOccurrence,
+  type EventTypeAdapter,
+  type ScanResult,
+} from "./events.js";
+export {
   fileIdentity,
   fileTrigger,
   matchesSender,
