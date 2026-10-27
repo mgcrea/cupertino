@@ -401,6 +401,10 @@ shell-check: ## Assert the shell surface's runner: argv, environment, output cap
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/shell-check \
 		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/KeyStore.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
 	@apps/apple/.build/shell-check
 
@@ -538,6 +542,9 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/Permissions.swift \
 		apps/apple/Cupertino/ServerLocator.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/KeyStore.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
 	@apps/apple/.build/host-check

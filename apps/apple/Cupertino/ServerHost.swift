@@ -1459,7 +1459,12 @@ nonisolated enum SurfaceSettings {
   /// `UserDefaults.register(defaults:)` was the other candidate and is worse:
   /// it has to run before any read, and this is read from `serve`, which can
   /// answer a handshake very early in launch.
+  ///
+  /// Shell is the exception to all of the above. Its key turns "has a shell"
+  /// into "has Full Disk Access", so it counts only with the seal `ShellSeal`
+  /// checks, and no launch argument reaches it.
   static func isEnabled(_ surface: Surface) -> Bool {
+    if surface.id == "shell" { return ShellSeal.isEnabled(.standard) }
     let key = enabledKey(surface)
     guard UserDefaults.standard.object(forKey: key) != nil else { return surface.defaultEnabled }
     return UserDefaults.standard.bool(forKey: key)

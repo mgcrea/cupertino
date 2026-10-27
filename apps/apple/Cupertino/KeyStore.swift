@@ -22,7 +22,10 @@ import Security
 /// `make audit` greps undefined Mach-O symbols and does not inspect linked
 /// frameworks, so it will not notice Security.framework arriving. That is why
 /// this file says so instead.
-enum KeyStore {
+///
+/// `nonisolated` because it holds no state and `ShellSeal` reads it off the main
+/// actor, from whichever thread is answering a request.
+nonisolated enum KeyStore {
   /// Keyed by bundle identifier, so a Debug build never reads or writes the
   /// real app's key — the same separation `BridgeProtocol.appIdentifier`
   /// already makes for the socket and the Full Disk Access grant.

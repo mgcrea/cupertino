@@ -92,11 +92,108 @@ struct ShellCheck {
     return pid
   }
 
+  /// The two settings that lower the bar, against a scratch suite and a key held in memory. The
+  /// real Keychain and the app's own defaults domain are never touched.
+  static func sealChecks() {
+    print("ShellSeal: settings another program cannot forge")
+    let suite = "shell-check"
+    let store = UserDefaults(suiteName: suite)!
+    store.removePersistentDomain(forName: suite)
+    defer { store.removePersistentDomain(forName: suite) }
+    ShellSeal.domain = suite
+    ShellSeal.source = MemoryKey()
+    let enabled = "surfaceEnabled.shell"
+
+    check(
+      "fresh: off and ask", !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+    store.set(true, forKey: enabled)
+    store.set("none", forKey: ShellPolicy.key)
+    check(
+      "forged plain values: still off and ask",
+      !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+    ShellSeal.setEnabled(true, store)
+    ShellSeal.setBefore(.none, store)
+    check(
+      "sealed: on and none",
+      ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .none)
+
+    // The seal is bound to its own preference: one setting's seal is no use to the other.
+    let enabledSeal = store.string(forKey: ShellSeal.enabledSealKey)
+    let beforeSeal = store.string(forKey: ShellSeal.beforeSealKey)
+    store.set(enabledSeal, forKey: ShellSeal.beforeSealKey)
+    check(
+      "a seal moved to the other setting does not validate",
+      ShellSeal.effectiveBefore(store) == .ask)
+    store.set(beforeSeal, forKey: ShellSeal.beforeSealKey)
+    check("put back, it does", ShellSeal.effectiveBefore(store) == .none)
+
+    // A launch argument lands in NSArgumentDomain, which is in every store's search list.
+    // Restored by setting it back: `removeVolatileDomain` leaves it in the search list.
+    let arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+    store.removeObject(forKey: enabled)
+    store.removeObject(forKey: ShellSeal.enabledSealKey)
+    UserDefaults.standard.setVolatileDomain(
+      [enabled: true, ShellSeal.enabledSealKey: enabledSeal ?? ""],
+      forName: UserDefaults.argumentDomain)
+    check(
+      "the argument domain is seen by object(forKey:)",
+      store.object(forKey: ShellSeal.enabledSealKey) as? String == enabledSeal)
+    check("but a sealed value there does not count", !ShellSeal.isEnabled(store))
+    UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+
+    ShellSeal.setEnabled(true, store)
+    let copied = store.string(forKey: ShellSeal.enabledSealKey)
+    ShellSeal.setEnabled(false, store)
+    check(
+      "turning off removes the value and its seal",
+      store.object(forKey: enabled) == nil && store.object(forKey: ShellSeal.enabledSealKey) == nil)
+    check("and leaves \"Don't ask\" standing", ShellSeal.effectiveBefore(store) == .none)
+    store.set(true, forKey: enabled)
+    store.set(copied, forKey: ShellSeal.enabledSealKey)
+    check("a seal copied before turn-off does not validate after", !ShellSeal.isEnabled(store))
+
+    ShellSeal.setEnabled(true, store)
+    let copiedNone = store.string(forKey: ShellSeal.beforeSealKey)
+    ShellSeal.setBefore(.session, store)
+    check("session needs no seal", ShellSeal.effectiveBefore(store) == .session)
+    check(
+      "lowering \"Don't ask\" removes its seal",
+      store.object(forKey: ShellSeal.beforeSealKey) == nil)
+    check("and leaves Shell on", ShellSeal.isEnabled(store))
+    store.set("none", forKey: ShellPolicy.key)
+    store.set(copiedNone, forKey: ShellSeal.beforeSealKey)
+    check(
+      "a \"Don't ask\" seal copied before lowering does not validate after",
+      ShellSeal.effectiveBefore(store) == .ask)
+    ShellSeal.setBefore(.ask, store)
+    check("ask needs no seal", ShellSeal.effectiveBefore(store) == .ask)
+    store.set("bogus", forKey: ShellPolicy.key)
+    check("an unknown value reads as ask", ShellSeal.effectiveBefore(store) == .ask)
+
+    store.set("garbage", forKey: ShellSeal.enabledSealKey)
+    check("bad seal reads off", !ShellSeal.isEnabled(store))
+    ShellSeal.setEnabled(true, store)
+    store.set(String(repeating: "0", count: 64), forKey: ShellSeal.enabledSealKey)
+    check("a well-formed wrong seal reads off", !ShellSeal.isEnabled(store))
+    ShellSeal.setEnabled(true, store)
+    store.set("YES", forKey: enabled)
+    check("a value that is not a bool reads off", !ShellSeal.isEnabled(store))
+
+    ShellSeal.setEnabled(true, store)
+    ShellSeal.setBefore(.none, store)
+    (ShellSeal.source as! MemoryKey).drop()
+    check(
+      "no key reads off and ask",
+      !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+  }
+
   static func main() throws {
     // As the app does in `ServerHost.start`. A spawned script must not inherit it.
     _ = signal(SIGPIPE, SIG_IGN)
 
-    print("ShellRunner: the command line and the environment")
+    sealChecks()
+
+    print("\nShellRunner: the command line and the environment")
     check(
       "argv zsh",
       ShellRunner.argv(
@@ -301,4 +398,25 @@ struct ShellCheck {
       exit(1)
     }
   }
+}
+
+/// A seal key held in memory, so no check ever reads or writes the real Keychain.
+final class MemoryKey: ShellSeal.KeySource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Data?
+
+  func key() -> Data? { lock.withLock { stored } }
+
+  func rotate() -> Data? {
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+      return nil
+    }
+    let fresh = Data(bytes)
+    lock.withLock { stored = fresh }
+    return fresh
+  }
+
+  /// As if the Keychain item were deleted.
+  func drop() { lock.withLock { stored = nil } }
 }
