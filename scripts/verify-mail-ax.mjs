@@ -492,7 +492,11 @@ async function composeCheck() {
       await reviseCheck(mail, result.subject);
       await editsCheck(mail, result.subject);
       await handlesCheck(mail, address);
-      await rebuildCheck(mail, address, result.subject);
+      await rebuildCheck(
+        mail,
+        (diagnostics?.accounts ?? []).flatMap((a) => a.emailAddresses ?? []),
+        result.subject,
+      );
       console.log(
         "\n  MANUAL (needs a person, not run): a rebuild refuses when the quote was edited\n" +
           "  by hand. Reply to any message to yourself, type a word INSIDE the quoted\n" +
@@ -1030,39 +1034,46 @@ async function tabbedHandlesCheck(mail, subject, same) {
  * themselves, close that window, and rebuild the draft by ref. The saved source
  * must keep `In-Reply-To`, and exactly one draft may remain under the subject.
  */
-async function rebuildCheck(mail, address, forwardSubject) {
+async function rebuildCheck(mail, addresses, forwardSubject) {
   // The forward's window is closed first: the rebuild is for a window that is gone.
   if (!(await waitForClose(mail, forwardSubject))) {
     check("the forward's window was closed", false, "still open after two minutes");
     return;
   }
 
-  // A message the user sent to themselves alone, so the reply is addressed to them alone.
-  const self = address.toLowerCase();
-  const found = await mail.call("apple_mail_search_messages", { sender: address, limit: 20 });
+  // A message the user sent to themselves alone, so the reply is addressed to
+  // them alone. Any account's address will do: the order Mail lists accounts
+  // in changes, and not every account holds such a message.
   let target = null;
-  for (const candidate of found?.messages ?? []) {
-    if (!candidate.ref || /\/Drafts#/.test(candidate.ref)) continue;
-    let message;
-    try {
-      message = await mail.call("apple_mail_get_message", { ref: candidate.ref });
-    } catch {
-      continue;
+  let self = "";
+  for (const address of addresses) {
+    const me = address.toLowerCase();
+    const found = await mail.call("apple_mail_search_messages", { sender: address, limit: 20 });
+    for (const candidate of found?.messages ?? []) {
+      if (!candidate.ref || /\/Drafts#/.test(candidate.ref)) continue;
+      let message;
+      try {
+        message = await mail.call("apple_mail_get_message", { ref: candidate.ref });
+      } catch {
+        continue;
+      }
+      const to = addressesIn(message?.headers?.to);
+      const cc = addressesIn(message?.headers?.cc);
+      if (
+        to.length > 0 &&
+        cc.length === 0 &&
+        [...to, ...addressesIn(message?.sender)].every((a) => a === me)
+      ) {
+        target = { ...candidate, subject: message.subject ?? candidate.subject };
+        self = me;
+        break;
+      }
     }
-    const to = addressesIn(message?.headers?.to);
-    const cc = addressesIn(message?.headers?.cc);
-    if (
-      to.length > 0 &&
-      cc.length === 0 &&
-      [...to, ...addressesIn(message?.sender)].every((a) => a === self)
-    ) {
-      target = { ...candidate, subject: message.subject ?? candidate.subject };
-      break;
-    }
+    if (target) break;
   }
   if (!target) {
     console.log(
-      `  skip the rebuild case: no message from ${address} to ${address} alone was found.\n` +
+      `  skip the rebuild case: no message from any account's address to itself alone was found.\n` +
         "       Send yourself one (any subject) and run again.",
     );
     return;
