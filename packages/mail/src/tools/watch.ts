@@ -388,7 +388,11 @@ export class MailWatchService {
       ownAddresses: accounts.flatMap((a) => a.emailAddresses),
       lookup,
       knownMailboxes: known,
-      heldThrough: this.#heldThrough,
+      // A snapshot, not the live map: a source keeps holding while the refresh a
+      // hold asked for is in flight, so a concurrent poll or tick scanning it
+      // cannot judge the held rows with the old lookup. The rebuild after that
+      // refresh, or after it fails, takes the updated record.
+      heldThrough: new Map(this.#heldThrough),
     });
     // Events scan outside `onTrigger`, so their source holds back on its own.
     this.#inner.holdNewMailboxes = this.#events;

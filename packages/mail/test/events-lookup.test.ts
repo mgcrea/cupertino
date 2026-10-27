@@ -41,13 +41,17 @@ const ACCOUNTS = [
   },
 ];
 
-/** Counts the account listing; `open: false` makes it fail, as Mail does while launching. */
+/**
+ * Counts the account listing; `open: false` makes it fail, as Mail does while
+ * launching, and `gate` holds the answer back until it settles.
+ */
 const countingRunner = () => {
-  const state = { listAccounts: 0, open: true };
+  const state = { listAccounts: 0, open: true, gate: undefined as Promise<void> | undefined };
   const run: OsascriptRunner = {
     run: vi.fn(async (script: string) => {
       if (!script.includes("a.emailAddresses()")) return [];
       state.listAccounts += 1;
+      await state.gate;
       if (!state.open) throw new Error("Mail got an error: not ready");
       return ACCOUNTS;
     }) as OsascriptRunner["run"],
@@ -369,6 +373,44 @@ describe("events: a mailbox held once is held again for later mail", () => {
     addReceipts(live);
     const delivered = await poll(held.cursor);
     expect(delivered.events.map((e) => e.eventId)).toEqual(["7005"]);
+  });
+});
+
+describe("events: a hold while its refresh is in flight", () => {
+  it("another cursor polling meanwhile does not pass the held row, and gets it after", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fx = copyIndex();
+    addMessage(fx.db, 10, 1);
+    const { server, runner } = eventsServer(fx.path, 60_000);
+    const { poll } = await connect(server);
+    const boot = await poll(null);
+
+    // A holds at row 20, in a mailbox with no row yet.
+    addMessage(fx.db, 20, 2);
+    const a1 = await poll(boot.cursor);
+    expect(a1.cursor).toBe(boot.cursor);
+    addReceipts(fx.db);
+
+    // A's next poll refreshes for the hold, and Mail is slow to answer.
+    let release: (() => void) | undefined;
+    runner.gate = new Promise((ok) => {
+      release = ok;
+    });
+    const asked = runner.listAccounts;
+    const a2 = poll(a1.cursor);
+    await until(() => runner.listAccounts > asked, "the refresh to start");
+
+    // B polls from its own cursor while that refresh is in flight.
+    const b1 = await poll(boot.cursor);
+    expect(b1.events).toEqual([]);
+    expect(b1.cursor).toBe(boot.cursor);
+
+    runner.gate = undefined;
+    release?.();
+    expect((await a2).events.map((e) => e.eventId)).toEqual(["7020"]);
+    const b2 = await poll(b1.cursor);
+    expect(b2.events.map((e) => e.eventId)).toEqual(["7020"]);
+    expect(b2.events.map((e) => (e.data as { mailbox: string }).mailbox)).toEqual(["Receipts"]);
   });
 });
 
