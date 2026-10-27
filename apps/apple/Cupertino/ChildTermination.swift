@@ -23,7 +23,9 @@ import Foundation
 /// `Process`, would stop the leader and leave whatever it backgrounded running
 /// with every grant this app holds. A group is asked by its id: the id cannot be
 /// handed to another process while the group has a member, and `ShellRunner`
-/// reaps its leader only after it has SIGKILLed the group.
+/// reaps its leader only when the run is over. The unreaped leader does not keep
+/// `kill(-pgid, 0)` succeeding (XNU skips zombies there), so a group that exits
+/// on SIGTERM ends the wait at once.
 ///
 /// Its own file, Foundation only, so `scripts/unit-check.swift` compiles it.
 nonisolated enum ChildTermination {

@@ -44,8 +44,43 @@ struct ShellCheck {
   }
 
   /// A file of this run's own, so two checks running at once do not read each other's pids.
-  static func pidFile(_ name: String) -> String {
-    NSTemporaryDirectory() + "shell-check-\(getpid())-\(name).pid"
+  static func pidFile(_ name: String) -> String { scratch("\(name).pid") }
+
+  static func scratch(_ name: String) -> String {
+    NSTemporaryDirectory() + "shell-check-\(getpid())-\(name)"
+  }
+
+  /// A run whose backgrounded member traps SIGTERM to clean up for half a second, returned
+  /// once that trap is set. The leader runs `leader` after it, and dies of SIGTERM at once.
+  static func startCleaner(_ name: String, leader: String, timeout: TimeInterval = 60) throws
+    -> ShellRunner.Running
+  {
+    let cleaned = scratch("\(name)-cleaned")
+    let ready = scratch("\(name)-ready")
+    let script =
+      "(trap 'sleep 0.5; echo cleaned > \(cleaned); exit 0' TERM; echo > \(ready); "
+      + "while :; do sleep 0.1; done) & "
+      + "while [[ ! -e \(ready) ]]; do sleep 0.02; done; \(leader)"
+    let run = try ShellRunner.start(
+      .init(
+        script: script, interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
+        timeout: timeout))
+    let seen = Date().addingTimeInterval(5)
+    while !FileManager.default.fileExists(atPath: ready), Date() < seen {
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+    return run
+  }
+
+  /// Whether the member of `startCleaner(name, …)` ran its TERM trap to the end. Its files are
+  /// removed. The leader polls the ready file, so it stays until here.
+  static func cleanedUp(_ name: String) -> Bool {
+    let cleaned = scratch("\(name)-cleaned")
+    defer {
+      try? FileManager.default.removeItem(atPath: cleaned)
+      try? FileManager.default.removeItem(atPath: scratch("\(name)-ready"))
+    }
+    return (try? String(contentsOfFile: cleaned, encoding: .utf8)) == "cleaned\n"
   }
 
   /// The pid the script wrote, or 0 while it has not finished writing it. The file is removed
@@ -131,25 +166,72 @@ struct ShellCheck {
 
     print("\nShellRunner: stopping")
     let slowFile = pidFile("slow")
+    let slowStart = Date()
     let slow = try run("sleep 100 & echo $! > \(slowFile); wait", timeout: 1)
+    let slowTook = Date().timeIntervalSince(slowStart)
     let orphan = try readPid(slowFile)
     check("timeout reported", slow.timedOut && slow.exitCode == nil && slow.signal != nil)
     check("timeout killed the backgrounded grandchild", orphan > 0 && kill(orphan, 0) != 0)
+    // Everything died of the SIGTERM, so nothing waited out the grace. This also pins that the
+    // unreaped leader does not keep the group looking alive.
+    check("an obliging group ends without the grace", slowTook < 1.8)
     let leftFile = pidFile("left")
+    let leftStart = Date()
     let left = try run("sleep 100 & echo $! > \(leftFile); echo started")
+    let leftTook = Date().timeIntervalSince(leftStart)
     let stray = try readPid(leftFile)
     check(
       "a leader that exits takes its stragglers with it",
       left.stdout == "started\n" && stray > 0 && kill(stray, 0) != 0)
+    check("and does not wait out the grace for them", leftTook < 1)
     let r = try ShellRunner.start(
       .init(
         script: "sleep 30", interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
         timeout: 60))
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { r.cancel() }
+    Thread.sleep(forTimeInterval: 0.3)
+    let cancelStart = Date()
+    r.cancel()
     let c = r.wait()
     check("cancel stops it and says so", c.cancelled && !c.timedOut && c.durationMs < 5_000)
+    check("a cancel of an obliging run is prompt", Date().timeIntervalSince(cancelStart) < 1)
     check("wait is idempotent", r.wait() == c)
     check("nothing left live", ShellRunner.live.isEmpty)
+
+    print("\nShellRunner: the grace is the group's, not the leader's")
+    // The leader dies of SIGTERM at once; a member trapping it to clean up must still get its
+    // half second rather than a SIGKILL a moment later. And no stop waits the whole grace when
+    // the group empties sooner.
+    do {
+      let cancelled = try startCleaner("cancel", leader: "wait")
+      let start = Date()
+      cancelled.cancel()
+      let outcome = cancelled.wait()
+      let took = Date().timeIntervalSince(start)
+      check(
+        "a cancel lets a member's TERM trap finish",
+        outcome.cancelled && cleanedUp("cancel"))
+      check("and ends when the group is empty, not after the grace", took >= 0.4 && took < 1.8)
+
+      let timed = try startCleaner("timeout", leader: "wait", timeout: 0.5)
+      let timedOutcome = timed.wait()
+      check(
+        "a timeout lets a member's TERM trap finish",
+        timedOutcome.timedOut && cleanedUp("timeout"))
+
+      let exited = try startCleaner("exited", leader: "echo started")
+      let exitedOutcome = exited.wait()
+      check(
+        "a straggler of a leader that exited gets the grace too",
+        exitedOutcome.exitCode == 0 && cleanedUp("exited"))
+
+      let quit = try startCleaner("quit", leader: "wait")
+      let quitStart = Date()
+      ChildTermination.terminateGroups([quit.pid], grace: 3)
+      let quitTook = Date().timeIntervalSince(quitStart)
+      _ = quit.wait()
+      check("terminateGroups lets a member's TERM trap finish", cleanedUp("quit"))
+      check("and returns when the group is empty", quitTook >= 0.4 && quitTook < 2)
+    }
 
     print("\nChildTermination: a process group that will not stop")
     // What quit and an update relaunch call for runs still going. `terminateAll` signals single

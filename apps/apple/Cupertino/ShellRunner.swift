@@ -9,8 +9,15 @@ import Foundation
 /// the responsible process, which is this app. Stopping only the process we started would leave
 /// those running with nothing supervising them. So the script starts as the leader of a new
 /// process group (`POSIX_SPAWN_SETPGROUP` with group 0, which `Process` cannot ask for), and
-/// every stop is a signal to the whole group: SIGTERM then SIGKILL after `killGrace` at a timeout
-/// or a cancel, and SIGKILL to the stragglers when the leader exits on its own.
+/// every stop is a signal to the whole group: SIGTERM, then SIGKILL once the group is empty or
+/// `killGrace` has passed, whichever is first. That is the same at a timeout, at a cancel, and
+/// for the stragglers when the leader exits on its own, so a member that traps SIGTERM to clean
+/// up gets the grace even when the leader dies at once.
+///
+/// "Empty" is `kill(-pgid, 0)` failing. The leader is only noticed, not reaped, until the run
+/// is over, so the group id stays ours, and XNU skips zombies there: a group whose only member
+/// is the unreaped leader answers EPERM (measured 2026-10-27 on macOS 27), so an obliging group
+/// ends at once rather than after the whole grace. `make shell-check` pins both halves.
 ///
 /// ## Why everything starts through `/bin/zsh -l -c`
 ///
@@ -160,6 +167,7 @@ nonisolated enum ShellRunner {
     private let state = NSCondition()
     // Guarded by `state`.
     private var leaderExited = false
+    private var leaderExitedAt: UInt64 = 0
     private var cancelRequested = false
     private var stopReading = false
     private var openStreams = 2
@@ -212,6 +220,7 @@ nonisolated enum ShellRunner {
       while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) != 0, errno == EINTR {}
       state.lock()
       leaderExited = true
+      leaderExitedAt = DispatchTime.now().uptimeNanoseconds
       state.broadcast()
       state.unlock()
     }
@@ -275,6 +284,9 @@ nonisolated enum ShellRunner {
       close(fd)
     }
 
+    /// Whether a live process is left in the group. The unreaped leader does not count.
+    private var groupHasMembers: Bool { kill(-pid, 0) == 0 }
+
     private func supervise(timeout: TimeInterval, scriptFile: URL?, started: UInt64) {
       state.lock()
       let deadline = Date().addingTimeInterval(timeout)
@@ -283,28 +295,21 @@ nonisolated enum ShellRunner {
       }
       let stopped = !leaderExited
       let cancelled = stopped && cancelRequested
-      if stopped {
-        state.unlock()
-        kill(-pid, SIGTERM)
-        state.lock()
-        let grace = Date().addingTimeInterval(ShellRunner.killGrace)
-        while !leaderExited {
-          if !state.wait(until: grace) { break }
-        }
-      }
       state.unlock()
 
-      // The stragglers when the leader exited on its own, and everything when it would not.
-      kill(-pid, SIGKILL)
+      // The whole group, at a timeout or a cancel, and the stragglers when the leader exited
+      // on its own. The grace is the group's, not the leader's.
+      if groupHasMembers {
+        kill(-pid, SIGTERM)
+        let grace = Date().addingTimeInterval(ShellRunner.killGrace)
+        while groupHasMembers, Date() < grace { Thread.sleep(forTimeInterval: 0.02) }
+        kill(-pid, SIGKILL)
+      }
+
       state.lock()
       while !leaderExited { state.wait() }
-      state.unlock()
-      var status: Int32 = 0
-      var reaped: pid_t
-      repeat { reaped = waitpid(pid, &status, 0) } while reaped < 0 && errno == EINTR
-      let durationMs = Int((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)
-
-      state.lock()
+      let durationMs = Int((leaderExitedAt - started) / 1_000_000)
+      // A process that left the group can hold a pipe open: wait for end of file, not forever.
       let drained = Date().addingTimeInterval(ShellRunner.killGrace)
       while openStreams > 0 {
         if !state.wait(until: drained) { break }
@@ -315,6 +320,14 @@ nonisolated enum ShellRunner {
       let err = captured[2] ?? ([], false)
       state.unlock()
 
+      // Reaped only now, beside leaving `live`: until then the group id cannot be handed to
+      // another process, so a teardown signalling `live` cannot reach a stranger.
+      var status: Int32 = 0
+      var reaped: pid_t
+      repeat { reaped = waitpid(pid, &status, 0) } while reaped < 0 && errno == EINTR
+      ShellRunner.registry.withLock { runs in runs.removeAll { $0 === self } }
+      if let scriptFile { try? FileManager.default.removeItem(at: scriptFile) }
+
       let ended: (exitCode: Int32?, signal: String?) =
         reaped == pid ? ShellRunner.decode(status) : (nil, nil)
       let outcome = Outcome(
@@ -322,8 +335,6 @@ nonisolated enum ShellRunner {
         cancelled: cancelled, durationMs: durationMs,
         stdout: String(decoding: out.bytes, as: UTF8.self), stdoutTruncated: out.truncated,
         stderr: String(decoding: err.bytes, as: UTF8.self), stderrTruncated: err.truncated)
-      if let scriptFile { try? FileManager.default.removeItem(at: scriptFile) }
-      ShellRunner.registry.withLock { runs in runs.removeAll { $0 === self } }
 
       state.lock()
       result = outcome
