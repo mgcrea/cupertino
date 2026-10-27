@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -293,6 +293,82 @@ describe("events: a row the lookup can never learn", () => {
     expect(cursor).toMatch(/\.21$/);
     // One refresh for the hold, not one per poll.
     expect(runner.listAccounts).toBe(before + 1);
+  });
+});
+
+describe("events: a mailbox held once is held again for later mail", () => {
+  it("a later row in that mailbox, once it is a real one, is held, refreshed for and delivered", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fx = copyIndex();
+    addMessage(fx.db, 10, 1);
+    const { server, runner } = eventsServer(fx.path, 60_000);
+    const { poll } = await connect(server);
+    const boot = await poll(null);
+    const before = runner.listAccounts;
+
+    // Mail writes a row in mailbox 2 before the mailbox's own row.
+    addMessage(fx.db, 20, 2);
+    const held = await poll(boot.cursor);
+    expect(held.events).toEqual([]);
+    expect(held.cursor).toBe(boot.cursor);
+    const judged = await poll(held.cursor);
+    expect(judged.events).toEqual([]);
+    expect(judged.cursor).toMatch(/\.20$/);
+    expect(runner.listAccounts).toBe(before + 1);
+
+    // Then the mailbox appears, and new mail lands in it, inside the TTL.
+    addReceipts(fx.db);
+    addMessage(fx.db, 22, 2);
+    const heldAgain = await poll(judged.cursor);
+    expect(heldAgain.events).toEqual([]);
+    expect(heldAgain.cursor).toBe(judged.cursor);
+    const delivered = await poll(heldAgain.cursor);
+    expect(delivered.events.map((e) => e.eventId)).toEqual(["7022"]);
+    expect(delivered.events.map((e) => (e.data as { mailbox: string }).mailbox)).toEqual([
+      "Receipts",
+    ]);
+    expect(runner.listAccounts).toBe(before + 2);
+  });
+
+  it("a replaced index forgets which mailboxes were held, since its rowids start again", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fx = copyIndex();
+    addMessage(fx.db, 10, 1);
+    const { server } = eventsServer(fx.path, 60_000);
+    const { poll } = await connect(server);
+    const boot = await poll(null);
+    addMessage(fx.db, 20, 2);
+    await poll(boot.cursor);
+    expect((await poll(boot.cursor)).cursor).toMatch(/\.20$/);
+
+    // Mail rebuilds the index: a new file, renumbered, renamed over the old one.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = new DatabaseSync(next);
+    rebuilt.exec(DDL);
+    rebuilt.exec(`
+      INSERT INTO mailboxes (ROWID, url, total_count, unread_count) VALUES
+        (1, 'imap://${UUID}/INBOX', 0, 0);
+      INSERT INTO subjects (ROWID, subject) VALUES (1, 'Hello');
+      INSERT INTO addresses (ROWID, address, comment) VALUES (1, 'sam@example.com', 'Sam');
+    `);
+    addMessage(rebuilt, 1, 1);
+    rebuilt.close();
+    renameSync(next, fx.path);
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    const fresh = await poll(boot.cursor);
+    expect(fresh.truncated).toBe(true);
+    expect(fresh.cursor).toMatch(/\.1$/);
+
+    // Row 5 is in mailbox 2 of the new index, which has no row yet. The old
+    // index's record for its mailbox 2 (through row 20) must not pass it.
+    addMessage(live, 5, 2);
+    const held = await poll(fresh.cursor);
+    expect(held.events).toEqual([]);
+    expect(held.cursor).toBe(fresh.cursor);
+    addReceipts(live);
+    const delivered = await poll(held.cursor);
+    expect(delivered.events.map((e) => e.eventId)).toEqual(["7005"]);
   });
 });
 

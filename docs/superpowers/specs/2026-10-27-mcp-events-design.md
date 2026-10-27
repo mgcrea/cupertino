@@ -94,7 +94,7 @@ Poll is stateless. Each `events/poll` scans `source.since(rowid, scanLimit)` and
 `events/stream` stays pending until the client cancels it.
 
 - **First message:** `notifications/events/active`, with `cursor` and `truncated`.
-- **Delivery:** events go out as the existing file trigger fires. That is the same trigger and the same source as a watch tick, but per stream and from the stream's own cursor. On Mail, the events source always holds back at a row in a mailbox the lookup has never seen, for a poll as for a stream, and the lookup is refreshed before the next poll or tick, which then judges the row (a mailbox is held back once, so a row whose mailbox the index does not list is then excluded); until the lookup has loaded every poll or tick asks again, and once it has, the lookup is refreshed otherwise only once the index's head has moved and its TTL has passed.
+- **Delivery:** events go out as the existing file trigger fires. That is the same trigger and the same source as a watch tick, but per stream and from the stream's own cursor. On Mail, the events source always holds back at a row in a mailbox the lookup has never seen, for a poll as for a stream, and the lookup is refreshed before the next poll or tick, which then judges the row (a row is held back once, so a row whose mailbox the index does not list is then excluded, while later mail in that mailbox is held again); until the lookup has loaded every poll or tick asks again, and once it has, the lookup is refreshed otherwise only once the index's head has moved and its TTL has passed.
 - **Heartbeat:** at least every 30 s (builder picks 25 s), carrying the scanned cursor.
 - **Store problems:**
   - A store that cannot be read sends `notifications/events/error`, and the stream stays open.

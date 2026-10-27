@@ -81,15 +81,25 @@ export type MailArrivalSourceOptions = {
    * mailbox outside it was created since, and is what `holdNewMailboxes` holds.
    */
   knownMailboxes?: ReadonlySet<number> | undefined;
+  /**
+   * Mailbox rowid to the last row of it a refresh was already asked for. A row
+   * of such a mailbox at or below that rowid is not held again, however unknown
+   * its mailbox still is; a later one is.
+   */
+  heldThrough?: ReadonlyMap<number, number> | undefined;
 };
+
+/** Where a scan held back: the mailbox, and its last row in the batch scanned. */
+export type HeldBack = { mailbox: number; rowid: number };
 
 export class MailArrivalSource implements ArrivalSource<MailArrival> {
   readonly #index: EnvelopeIndex;
   readonly #own: Set<string>;
   readonly #lookup: MailboxLookup;
   readonly #known: ReadonlySet<number> | undefined;
-  /** The mailbox the last scan held back at, until `takeHeld()`. */
-  #held: number | null = null;
+  readonly #heldThrough: ReadonlyMap<number, number> | undefined;
+  /** Where the last scan held back, until `takeHeld()`. */
+  #held: HeldBack | null = null;
 
   /**
    * While set, `since` stops before the first row whose mailbox is not among
@@ -105,10 +115,11 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
     this.#own = new Set([...opts.ownAddresses].map((a) => a.trim().toLowerCase()));
     this.#lookup = opts.lookup;
     this.#known = opts.knownMailboxes;
+    this.#heldThrough = opts.heldThrough;
   }
 
-  /** The mailbox a scan held back at since the last call, or null; and clear it. */
-  takeHeld(): number | null {
+  /** Where a scan held back since the last call, or null; and clear it. */
+  takeHeld(): HeldBack | null {
     const held = this.#held;
     this.#held = null;
     return held;
@@ -122,9 +133,18 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
     let scanned = this.#index.arrivalsAfter(after, limit);
     const known = this.#known;
     if (this.holdNewMailboxes && known) {
-      const at = scanned.findIndex((r) => !known.has(r.mailboxRowid));
-      if (at >= 0) {
-        this.#held = scanned[at]?.mailboxRowid ?? null;
+      const through = this.#heldThrough;
+      const at = scanned.findIndex(
+        (r) => !known.has(r.mailboxRowid) && r.rowid > (through?.get(r.mailboxRowid) ?? -Infinity),
+      );
+      const first = scanned[at];
+      if (first) {
+        // Every row of that mailbox in this batch waits on the same refresh.
+        const mailbox = first.mailboxRowid;
+        const rowid = Math.max(
+          ...scanned.filter((r) => r.mailboxRowid === mailbox).map((r) => r.rowid),
+        );
+        this.#held = { mailbox, rowid };
         scanned = scanned.slice(0, at);
       }
     }

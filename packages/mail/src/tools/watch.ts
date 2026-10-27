@@ -111,11 +111,15 @@ import { wrap } from "./util.js";
  *   all, it asks on every `ensure`, as a watch's setup would, since nothing can
  *   be judged without one; and the head it saw only counts once a refresh it
  *   needed has worked.
- * - A mailbox is held back once. After the refresh it caused, the mailbox is
- *   known whether or not the index now lists it (a row can name a mailbox with
- *   no `mailboxes` row at all), so its rows are judged, and excluded if they
- *   still do not resolve, as a watch tick's second pass does. Otherwise such a
- *   row would stop every scan, and cost a refresh on every poll, for good.
+ * - A row is held back once. After the refresh it caused, the rows of that
+ *   mailbox up to the held one are judged whether or not the index now lists
+ *   the mailbox (a row can name a mailbox with no `mailboxes` row at all), and
+ *   excluded if they still do not resolve, as a watch tick's second pass does;
+ *   otherwise such a row would stop every scan, and cost a refresh on every
+ *   poll, for good. A later row of the mailbox is held again while the lookup
+ *   does not know it, so mail that lands once the mailbox is real is refreshed
+ *   for and delivered. A reopened index starts the record afresh, since its
+ *   rowids do.
  * - The trigger calls core's `onChange` directly: core's tick runs `ensure`.
  */
 
@@ -170,8 +174,11 @@ export class MailWatchService {
   #refreshedAt = 0;
   /** Events only: the index's head at the last `ensure`, so a refresh waits for new rows. */
   #seenHead = 0;
-  /** Events only: mailboxes a scan held back at and a refresh was asked for, held no more. */
-  readonly #askedFor = new Set<number>();
+  /**
+   * Events only: mailbox rowid to the last of its rows a scan held back at and
+   * a refresh was asked for. Those rows are not held again; later ones are.
+   */
+  readonly #heldThrough = new Map<number, number>();
   /** Whether the last refresh failed, so a failure that persists is logged once. */
   #refreshFailing = false;
   #tickFailing = false;
@@ -258,10 +265,13 @@ export class MailWatchService {
     const head = inner.head();
     const held = inner.takeHeld();
     if (held !== null) {
-      // Held once: whatever the refresh says, the mailbox is known from here on,
-      // so the row is judged next time, and excluded if it still does not
-      // resolve, as a watch tick's second pass does.
-      this.#askedFor.add(held);
+      // Held once: whatever the refresh says, the next scan judges the row, and
+      // excludes it if it still does not resolve, as a watch tick's second
+      // pass does. A later row of the mailbox can still be held.
+      this.#heldThrough.set(
+        held.mailbox,
+        Math.max(held.rowid, this.#heldThrough.get(held.mailbox) ?? 0),
+      );
       if (await this.#refreshSoftly()) this.#seenHead = head;
       else this.#rebuild();
     } else if (!this.#loaded || (head > this.#seenHead && this.#stale())) {
@@ -319,6 +329,8 @@ export class MailWatchService {
     this.#index = index;
     this.#path = path;
     this.#identity = identity;
+    // A new file's rowids start again, so what was held in the old one says nothing.
+    this.#heldThrough.clear();
     this.#rebuild();
     old?.close();
   }
@@ -364,7 +376,6 @@ export class MailWatchService {
     const accounts = this.#accounts ?? [];
     const map = new Map<number, { accountUuid: string; mailbox: string }>();
     const known = new Set<number>();
-    for (const id of this.#askedFor) known.add(id);
     for (const row of index.mailboxes()) {
       known.add(row.rowid);
       const resolved = this.#client.mailboxes.resolveIndexUrlIn(accounts, row.url);
@@ -377,6 +388,7 @@ export class MailWatchService {
       ownAddresses: accounts.flatMap((a) => a.emailAddresses),
       lookup,
       knownMailboxes: known,
+      heldThrough: this.#heldThrough,
     });
     // Events scan outside `onTrigger`, so their source holds back on its own.
     this.#inner.holdNewMailboxes = this.#events;
