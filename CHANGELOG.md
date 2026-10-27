@@ -31,6 +31,28 @@ summary.
   shows each subscription, and the Activity log and the audit file record each push, so what
   Cupertino sent into a session reads the same as what it was asked.
 
+### Changed
+
+- **Mail's everyday reads no longer wait on Mail.** With Full Disk Access, `list_messages`,
+  `count_messages`, `list_mailboxes` with counts, `get_message` and `list_attachments` answer from
+  Mail's search index and the message files, and send Mail no Apple Event at all. On a
+  210,000-message store, listing twenty messages took 8.4 s and now takes milliseconds;
+  `list_mailboxes` took 1.2 s, `count_messages` 0.77 s and `get_message` 0.45 s, nearly all of it
+  Apple Events for columns the index already holds. `list_messages` is no longer capped at 50 when
+  the index answers, and its `source` says which lane did. `count_messages` reports `unread.index`
+  alone when the index answers, and Mail's cached badge figure only when it cannot; counts from
+  `list_mailboxes` now agree with it, Gmail labels included, and are null for a mailbox the index
+  does not hold rather than zero. Without Full Disk Access, or for a mailbox the index has no row
+  for, each still asks Mail.
+- **A sender's display name is quoted the way Mail writes it.** Results built from the index,
+  `search_messages` and `get_thread` included, gave `Doe, Jane <jane@example.com>`, which reads as
+  two recipients. They now give `"Doe, Jane" <jane@example.com>`, matching Mail's own `sender` —
+  which differed on 18 of 20 messages of an Exchange account.
+- **The account list stops costing a second a minute.** It was cached for 60 s, so the first call
+  after every pause waited about a second for Mail to list its accounts again. An expired list is
+  now served at once and refreshed behind the call, and an account name it does not know is read
+  afresh before it is refused.
+
 ## [1.31.0] - 2026-10-25
 
 **Simulator folds iPhone Duo.** Simulator can fold and unfold the Duo and drive either screen,

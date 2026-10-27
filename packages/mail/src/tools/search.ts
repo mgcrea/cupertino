@@ -134,10 +134,10 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
     {
       description:
         "List the newest messages in one mailbox, most recent first. Returns a `ref` per message " +
-        "that the read and action tools take. Without the search index this runs over Apple Events " +
-        "and is capped (default 50) because each additional message costs about 40ms per field — " +
-        "ask for 20 unless you have a reason not to. For anything involving a filter, use " +
-        "apple_mail_search_messages.",
+        "that the read and action tools take. Reads Mail's search index when Full Disk Access " +
+        "allows, which is fast at any limit. Without it this runs over Apple Events and is capped " +
+        "(default 50) because each additional message costs about 40ms per field — `source` says " +
+        "which lane answered. For anything involving a filter, use apple_mail_search_messages.",
       inputSchema: z.object({
         account: accountArg,
         mailbox: mailboxArg,
@@ -153,24 +153,23 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
           return { messages: [], note: "No accounts are visible to this server." };
         }
         const box = mailbox ?? (resolved.mailboxes.includes("INBOX") ? "INBOX" : "Inbox");
-        const result = await client.listRecent(
+        const result = await client.listMessages(
           resolved,
           box,
           resolveLimit(limit, client.config.maxResults),
         );
-        const lanes = await client.lanes();
         return {
           account: resolved.name,
           mailbox: result.mailbox,
           total: result.total,
           returned: result.messages.length,
-          source: "applescript",
-          ...(lanes.index === "live"
+          source: result.source,
+          ...(result.source === "index"
             ? {}
             : {
                 note:
                   `Listing came from Apple Events and is capped at ${client.config.degradedMaxMessages}. ` +
-                  `The search index is ${lanes.index}: ${lanes.indexReason ?? "unavailable"}`,
+                  result.fallbackReason,
               }),
           messages: result.messages,
         };
@@ -181,10 +180,10 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
     "apple_mail_count_messages",
     {
       description:
-        "Count messages in a mailbox. Cheap in both lanes, so this works with no extra permissions. " +
-        "The `unread` figure is reported per source: Mail's own cached count is fast but can be " +
-        "flatly wrong (observed reporting 0 for a mailbox holding 1618 unread messages), so treat " +
-        "the index figure as authoritative when it is present.",
+        "Count messages in a mailbox. Works with no extra permissions. `unread` is keyed by its " +
+        "source: `index` when Mail's search index answers, which is authoritative; `applescript` " +
+        "only when it cannot, and that figure is Mail's cached badge value, which can be flatly " +
+        "wrong (observed reporting 0 for a mailbox holding 1618 unread messages).",
       inputSchema: z.object({
         account: accountArg,
         mailbox: mailboxArg,
@@ -197,18 +196,20 @@ export const registerSearchTools = (server: McpServer, client: AppleMailClient):
         const resolved = account ? await client.mailboxes.resolveAccount(account) : accounts[0];
         if (!resolved) return { note: "No accounts are visible to this server." };
         const box = mailbox ?? (resolved.mailboxes.includes("INBOX") ? "INBOX" : "Inbox");
-        const counts = await client.countMailbox(resolved, box);
-        const viaIndex = await client.countViaIndex({ account: resolved.name, mailbox: box });
+        const counts = await client.countMessages(resolved, box);
         return {
           account: resolved.name,
           mailbox: counts.mailbox,
-          total: viaIndex?.total ?? counts.total,
-          unread: { applescript: counts.unread, index: viaIndex?.unread ?? null },
-          note: viaIndex
-            ? "Prefer unread.index: unread.applescript is Mail's cached badge value and is " +
-              "sometimes flatly wrong (observed as 0 for a mailbox with 1618 unread)."
-            : "unread.applescript is Mail's cached badge value and may be stale or zero. " +
-              "Grant Full Disk Access for the authoritative count.",
+          total: counts.total,
+          unread: counts.unread,
+          source: counts.source,
+          ...(counts.source === "index"
+            ? {}
+            : {
+                note:
+                  "unread.applescript is Mail's cached badge value and may be stale or zero. " +
+                  counts.fallbackReason,
+              }),
         };
       }),
   );
