@@ -14,7 +14,9 @@ export const LIST_ACCOUNTS = script(`
       name: prop(function () { return String(a.name()); }, null),
       isDefault: id !== null && id === defaultAccountId,
       listCount: prop(function () { return a.lists().length; }, 0),
-      reminderCount: prop(function () { return a.reminders().length; }, 0)
+      // Answers "Can't get object." on a live Reminders (macOS 27), so this is
+      // null there: unknown, never a 0 nobody counted.
+      reminderCount: prop(function () { return a.reminders().length; }, null)
     });
   }
   return ok({ accounts: out, defaultAccountId: defaultAccountId, defaultListId: defaultListId });
@@ -34,22 +36,39 @@ export const LIST_LISTS = script(`
     var accountName = prop(function () { return String(a.name()); }, null);
     var lists = listTree(a, accountId, 1, []);
     for (var j = 0; j < lists.length; j++) {
-      var l = lists[j];
-      l.accountName = accountName;
-      l.isDefault = l.id !== null && l.id === defaultListId;
-      // Counted per list, which is one Apple Event each — a handful, not one
-      // per reminder. Split so a caller can see a list's live workload without
-      // paging through years of finished items.
-      var counts = prop(function () {
-        var done = R.lists.byId(l.id).reminders.completed();
-        var total = done.length, open = 0;
-        for (var k = 0; k < done.length; k++) if (!done[k]) open++;
-        return { total: total, incomplete: open };
-      }, { total: null, incomplete: null });
-      l.reminderCount = counts.total;
-      l.incompleteCount = counts.incomplete;
-      out.push(l);
+      lists[j].accountName = accountName;
+      lists[j].isDefault = lists[j].id !== null && lists[j].id === defaultListId;
+      out.push(lists[j]);
     }
+  }
+
+  // Counts, unless the caller has them from the store. Every list's completed
+  // flags in one chained event (2.2 s measured, matching the store on 12 of 12
+  // lists), keyed by the flat R.lists ids; one event per list only when the
+  // chained form does not answer.
+  var counts = {};
+  if (p.withCounts) {
+    var flatIds = prop(function () { return R.lists.id(); }, []);
+    var flags = prop(function () { return R.lists.reminders.completed(); }, null);
+    if (!flags || flags.length !== flatIds.length) {
+      flags = [];
+      for (var f = 0; f < flatIds.length; f++) {
+        var fid = flatIds[f];
+        flags.push(prop(function () { return R.lists.byId(fid).reminders.completed(); }, null));
+      }
+    }
+    for (var k = 0; k < flatIds.length; k++) {
+      var done = flags[k];
+      if (!done) continue;
+      var open = 0;
+      for (var d = 0; d < done.length; d++) if (!done[d]) open++;
+      counts[String(flatIds[k])] = { total: done.length, incomplete: open };
+    }
+  }
+  for (var o = 0; o < out.length; o++) {
+    var c = out[o].id === null ? undefined : counts[out[o].id];
+    out[o].reminderCount = c ? c.total : null;
+    out[o].incompleteCount = c ? c.incomplete : null;
   }
   return ok(out);
 `);
@@ -166,35 +185,37 @@ export const GET_REMINDERS = script(`
   var out = [];
   for (var i = 0; i < p.ids.length; i++) {
     var id = String(p.ids[i]);
-    var r = null;
-    try { r = R.reminders.byId(id); } catch (e) { r = null; }
-    if (!r) { out.push({ id: id, found: false }); continue; }
-    // container() throws on a reminder on macOS 26.6 (60/60 attempts), so this
-    // is expected to be null. Kept because it costs nothing when it fails and
-    // would start working silently if Apple ever fixes it.
-    var container = prop(function () { return r.container(); }, null);
-    var containerClass = container === null ? null : prop(function () { return String(container.class()); }, null);
-    var dueRaw = prop(function () { return r.dueDate(); }, null);
-    var allDayRaw = prop(function () { return r.alldayDueDate(); }, null);
+    // One event for every field. Each event on a reminder re-resolves byId
+    // across the application, ~1 s apiece measured on macOS 27, so reading
+    // the properties one at a time ran past the 30 s timeout on every call.
+    var all;
+    try {
+      all = R.reminders.byId(id).properties();
+    } catch (e) {
+      if (String(e && e.message ? e.message : e).indexOf("Can't get") !== -1) {
+        out.push({ id: id, found: false });
+        continue;
+      }
+      throw e;
+    }
+    var dueRaw = all.dueDate || null;
+    var allDayRaw = all.alldayDueDate || null;
     out.push({
       id: id,
       found: true,
-      name: prop(function () { return String(r.name()); }, null),
-      body: prop(function () { var b = r.body(); return b === null ? null : String(b); }, null),
-      completed: prop(function () { return r.completed(); }, null),
-      completionDate: iso(prop(function () { return r.completionDate(); }, null)),
+      name: all.name === null || all.name === undefined ? null : String(all.name),
+      body: all.body === null || all.body === undefined ? null : String(all.body),
+      completed: all.completed === undefined ? null : all.completed,
+      completionDate: iso(all.completionDate),
       dueDate: iso(dueRaw),
       alldayDueDate: iso(allDayRaw),
       allDayGuess: isMidnight(allDayRaw || dueRaw),
       dueDay: dayOf(allDayRaw || dueRaw),
-      remindMeDate: iso(prop(function () { return r.remindMeDate(); }, null)),
-      priority: prop(function () { return r.priority(); }, 0),
-      flagged: prop(function () { return r.flagged(); }, false),
-      created: iso(prop(function () { return r.creationDate(); }, null)),
-      modified: iso(prop(function () { return r.modificationDate(); }, null)),
-      containerClass: containerClass,
-      containerId: container === null ? null : prop(function () { return String(container.id()); }, null),
-      containerName: container === null ? null : prop(function () { return String(container.name()); }, null)
+      remindMeDate: iso(all.remindMeDate),
+      priority: all.priority === undefined || all.priority === null ? 0 : all.priority,
+      flagged: all.flagged === undefined || all.flagged === null ? false : all.flagged,
+      created: iso(all.creationDate),
+      modified: iso(all.modificationDate)
     });
   }
   return ok(out);

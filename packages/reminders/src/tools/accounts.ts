@@ -9,8 +9,9 @@ export const registerAccountTools = (server: McpServer, client: AppleRemindersCl
     "apple_reminders_list_accounts",
     {
       description:
-        "List the Reminders accounts, with how many lists and reminders each holds. Start here " +
-        "to discover account names for the other tools.",
+        "List the Reminders accounts, with how many lists each holds. Start here to discover " +
+        "account names for the other tools. `reminderCount` is null when Reminders will not count " +
+        "an account's reminders, which is usual: per-list counts are in apple_reminders_list_lists.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
@@ -23,7 +24,8 @@ export const registerAccountTools = (server: McpServer, client: AppleRemindersCl
       description:
         "List every Reminders list, across accounts. Lists nest inside other lists (Reminders " +
         "calls those groups), so each entry carries its depth. Each also reports its total and " +
-        "incomplete counts, which is the cheapest way to see where the live work is.",
+        "incomplete counts, which is the cheapest way to see where the live work is. Counts are " +
+        "null for a list they could not be read for, which is not the same as empty.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },

@@ -102,6 +102,20 @@ Projected at scale, with no index: 1,000 reminders ≈ 5 s, 10,000 ≈ 50 s. The
 was one Apple Event per list until it was replaced by the chained `R.lists.reminders.id()` fetch,
 which does it in one; the per-list form survives as a fallback and the script reports which ran.
 
+**Every event on one reminder costs about a second.** Measured on macOS 27 (2026-10-27, 323
+reminders): `R.reminders.byId(id).name()` took 1,050 ms and `remindMeDate()` 1,022 ms, because
+each event resolves the id across the whole application again. `properties()` returns every field
+— `name`, `body`, `completed`, `completionDate`, `dueDate`, `alldayDueDate`, `remindMeDate`,
+`priority`, `flagged`, `creationDate`, `modificationDate`, `container`, `id` — in one event of
+1,057–1,241 ms. `get_reminder` read sixteen properties one at a time and timed out at 30 s on every
+call; it now reads `properties()`.
+
+**Counting lists.** Same day: the store's `GROUP BY ZLIST` took 1 ms and agreed with Apple Events
+on all 12 lists; the chained `R.lists.reminders.completed()` took 2,165 ms for all of them, against
+~200 ms per list one at a time. `list_lists` takes counts from the store when it is open and from
+the chained fetch otherwise, and reads the list tree in bulk per level. `account.reminders()`
+answers "Can't get object.", so an account's reminder count is reported as null.
+
 ## The store
 
     ~/Library/Group Containers/group.com.apple.reminders/Container_v1/Stores/Data-<UUID>.sqlite
