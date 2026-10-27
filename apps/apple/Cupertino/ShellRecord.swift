@@ -6,7 +6,8 @@ import Foundation
 /// The audit file is off by default, the Activity window keeps no result in its default mode,
 /// and each argument there is cut at 4 KB, so a script hiding its payload past 4 KB of harmless
 /// text would be logged without it. This record is the one that cannot be switched off. It holds
-/// the script's length and a SHA-256 over its full text, never the text or the output.
+/// the script's length and a SHA-256 over its full text, the same for `stdin`, and never the text
+/// of either or the output.
 ///
 /// Every request is a line, a refusal as much as a run: declined, no answer, cooldown and busy
 /// say as much about what an agent tried as a run does.
@@ -44,6 +45,11 @@ nonisolated enum ShellRecord {
     var cwd: String
     var scriptBytes: Int
     var scriptSHA256: String
+    /// Length and SHA-256 of `stdin`, nil when none was given. It can carry the real payload
+    /// (`sh -s`), the same hiding place the script's hash closes, and its text is never kept
+    /// either.
+    var stdinBytes: Int?
+    var stdinSHA256: String?
     var decision: Decision
     var exitCode: Int32?
     var signal: String?
@@ -206,6 +212,8 @@ nonisolated enum ShellRecord {
     var cwd: String
     var scriptBytes: Int
     var scriptSHA256: String
+    var stdinBytes: Int?
+    var stdinSHA256: String?
     var exitCode: Int32?
     var signal: String?
     var timedOut: Bool
@@ -216,7 +224,8 @@ nonisolated enum ShellRecord {
     let fields = Arguments(
       client: entry.client, connection: entry.connection, purpose: entry.purpose,
       interpreter: entry.interpreter, cwd: entry.cwd, scriptBytes: entry.scriptBytes,
-      scriptSHA256: entry.scriptSHA256, exitCode: entry.exitCode, signal: entry.signal,
+      scriptSHA256: entry.scriptSHA256, stdinBytes: entry.stdinBytes,
+      stdinSHA256: entry.stdinSHA256, exitCode: entry.exitCode, signal: entry.signal,
       timedOut: entry.timedOut, durationMs: entry.durationMs)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -340,7 +349,8 @@ nonisolated enum ShellRecord {
     return Entry(
       at: at, client: fields.client, connection: fields.connection, purpose: fields.purpose,
       interpreter: fields.interpreter, cwd: fields.cwd, scriptBytes: fields.scriptBytes,
-      scriptSHA256: fields.scriptSHA256, decision: decision, exitCode: fields.exitCode,
+      scriptSHA256: fields.scriptSHA256, stdinBytes: fields.stdinBytes,
+      stdinSHA256: fields.stdinSHA256, decision: decision, exitCode: fields.exitCode,
       signal: fields.signal, timedOut: fields.timedOut, durationMs: fields.durationMs)
   }
 

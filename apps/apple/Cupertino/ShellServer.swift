@@ -112,6 +112,9 @@ nonisolated enum ShellServer {
   nonisolated(unsafe) static var defaults: UserDefaults = .standard
 
   static let maxScriptBytes = 512 * 1024
+  /// With the script at its limit, still well inside the host's 1 MiB line, which drops a
+  /// longer one with no answer at all.
+  static let maxStdinBytes = 256 * 1024
   static let maxPurposeChars = 500
   static let defaultTimeoutSeconds = 60
   static let timeoutRange = 1...600
@@ -287,7 +290,8 @@ nonisolated enum ShellServer {
             "stdin": [
               "type": "string",
               "description":
-                "Written to the script's standard input, then closed. None by default.",
+                "Written to the script's standard input, then closed. At most 256 KB. None by "
+                + "default.",
             ],
             "timeoutSeconds": [
               "type": "integer",
@@ -341,6 +345,7 @@ nonisolated enum ShellServer {
     var purpose = ""
     var interpreter = ShellRunner.Interpreter.zsh.rawValue
     var cwd = "~"
+    var stdin: String?
   }
 
   /// A request that passed every argument check.
@@ -368,17 +373,23 @@ nonisolated enum ShellServer {
         ShellRecord.Entry(
           at: at, client: client, connection: who, purpose: asked.purpose,
           interpreter: asked.interpreter, cwd: asked.cwd, scriptBytes: asked.script.utf8.count,
-          scriptSHA256: AuditChain.digest(asked.script), decision: decision,
+          scriptSHA256: AuditChain.digest(asked.script), stdinBytes: asked.stdin?.utf8.count,
+          stdinSHA256: asked.stdin.map(AuditChain.digest), decision: decision,
           exitCode: outcome?.exitCode, signal: outcome?.signal,
           timedOut: outcome?.timedOut ?? false,
           durationMs: outcome?.durationMs))
     }
 
+    /// Record a request that did not run to the end, and answer it.
+    func refuse(_ decision: ShellRecord.Decision, _ message: String) -> String {
+      record(decision)
+      return refusal(id, decision, message)
+    }
+
     let request: Valid
     switch validate(args) {
     case .failure(let refusal):
-      record(.invalid)
-      return InProcessRPC.failure(id, refusal.message)
+      return refuse(.invalid, refusal.message)
     case .success(let valid):
       request = valid
       // As it will run: the folder with `~` expanded, the interpreter by its name.
@@ -413,14 +424,11 @@ nonisolated enum ShellServer {
     let offerSession: Bool
     switch decision {
     case nil:
-      record(.cancelled)
-      return InProcessRPC.failure(id, cancelledCopy)
+      return refuse(.cancelled, cancelledCopy)
     case .declined(let retryIn):
-      record(.cooldown)
-      return InProcessRPC.failure(id, cooldownCopy(retryIn))
+      return refuse(.cooldown, cooldownCopy(retryIn))
     case .busy:
-      record(.busy)
-      return InProcessRPC.failure(id, busyCopy)
+      return refuse(.busy, busyCopy)
     case .run:
       // Its slot is already taken; `execute` gives it back.
       offerSession = false
@@ -450,13 +458,11 @@ nonisolated enum ShellServer {
 
     // The window.
     guard call.beginAsking() else {
-      record(.cancelled)
-      return InProcessRPC.failure(id, cancelledCopy)
+      return refuse(.cancelled, cancelledCopy)
     }
     let answer = call.consent.ask(prompt)
     if call.endAsking() || answer == .cancelled {
-      record(.cancelled)
-      return InProcessRPC.failure(id, cancelledCopy)
+      return refuse(.cancelled, cancelledCopy)
     }
 
     switch answer {
@@ -467,8 +473,8 @@ nonisolated enum ShellServer {
             Date().addingTimeInterval(ShellPolicy.declineCooldown)
         }
       }
-      record(answer == .dontRun ? .declined : .noAnswer)
-      return InProcessRPC.failure(id, answer == .dontRun ? declinedCopy : noAnswerCopy)
+      return answer == .dontRun
+        ? refuse(.declined, declinedCopy) : refuse(.noAnswer, noAnswerCopy)
 
     case .runOnce, .runForSession:
       // The session answer counts only when the window offered it: under "Ask every time" a
@@ -491,11 +497,9 @@ nonisolated enum ShellServer {
       case .taken:
         break
       case .switchedOff:
-        record(.cancelled)
-        return InProcessRPC.failure(id, cancelledCopy)
+        return refuse(.cancelled, cancelledCopy)
       case .full:
-        record(.busy)
-        return InProcessRPC.failure(id, busyCopy)
+        return refuse(.busy, busyCopy)
       }
       return execute(
         request, prompt: prompt, call: call, id: id, notice: false,
@@ -503,8 +507,7 @@ nonisolated enum ShellServer {
 
     case .cancelled:
       // Answered above; kept so a new answer has to be placed here.
-      record(.cancelled)
-      return InProcessRPC.failure(id, cancelledCopy)
+      return refuse(.cancelled, cancelledCopy)
     }
   }
 
@@ -524,7 +527,7 @@ nonisolated enum ShellServer {
     defer { card?.ended() }
     guard !call.isCancelled else {
       record(.cancelled, nil)
-      return InProcessRPC.failure(id, cancelledCopy)
+      return refusal(id, .cancelled, cancelledCopy)
     }
     let running: ShellRunner.Running
     do {
@@ -534,23 +537,18 @@ nonisolated enum ShellServer {
           cwd: URL(fileURLWithPath: request.cwd, isDirectory: true), stdin: request.stdin,
           timeout: TimeInterval(request.timeoutSeconds)))
     } catch {
+      // Recorded under the decision that was made, with no exit: approved, and never started.
       record(decision, nil)
-      return InProcessRPC.failure(id, "The command could not be started (\(error)). Nothing ran.")
+      return refusal(id, decision, "The command could not be started (\(error)). Nothing ran.")
     }
     if call.attach(running) { running.cancel() }
     let outcome = running.wait()
     record(outcome.cancelled ? .cancelled : decision, outcome)
-    guard !outcome.cancelled else { return InProcessRPC.failure(id, cancelledCopy) }
-    let recorded: String =
-      switch decision {
-      case .notAsked: "notAsked"
-      case .approvedForSession: "approvedForSession"
-      default: "approved"
-      }
-    return InProcessRPC.ok(
+    guard !outcome.cancelled else { return refusal(id, .cancelled, cancelledCopy) }
+    return answer(
       id,
       [
-        "decision": recorded,
+        "decision": decision.rawValue,
         "exitCode": outcome.exitCode.map { Int($0) as Any } ?? NSNull(),
         "signal": outcome.signal.map { $0 as Any } ?? NSNull(),
         "timedOut": outcome.timedOut,
@@ -559,6 +557,32 @@ nonisolated enum ShellServer {
         "stdoutTruncated": outcome.stdoutTruncated,
         "stderr": outcome.stderr,
         "stderrTruncated": outcome.stderrTruncated,
+      ])
+  }
+
+  /// A run's result: the fields as JSON text, which is what every surface answers with, and
+  /// the same object as `structuredContent`, which is what `CallCapture` keeps the structure of
+  /// when the content switch is off.
+  private static func answer(_ id: Any?, _ value: [String: Any]) -> String {
+    InProcessRPC.result(
+      id,
+      [
+        "content": [["type": "text", "text": InProcessRPC.jsonText(value)]],
+        "structuredContent": value,
+      ])
+  }
+
+  /// A request that did not run to the end: the sentence for the agent, and the decision beside
+  /// it, so the log tells a decline from a cooldown without reading the copy.
+  private static func refusal(_ id: Any?, _ decision: ShellRecord.Decision, _ message: String)
+    -> String
+  {
+    InProcessRPC.result(
+      id,
+      [
+        "content": [["type": "text", "text": message]],
+        "isError": true,
+        "structuredContent": ["decision": decision.rawValue],
       ])
   }
 
@@ -580,6 +604,7 @@ nonisolated enum ShellServer {
       asked.interpreter = String(interpreter.prefix(64))
     }
     if let cwd = args["cwd"] as? String { asked.cwd = String(cwd.prefix(1024)) }
+    if let stdin = args["stdin"] as? String { asked.stdin = stdin }
     return asked
   }
 
@@ -598,6 +623,11 @@ nonisolated enum ShellServer {
       return refuse("'script' is required, as a string holding the program to run.")
     }
     guard !script.isEmpty else { return refuse("'script' is empty.") }
+    // For zsh the script is a C string in argv, which ends at the first NUL: the window and
+    // the record would hold the whole text while only the part before it ran.
+    guard !script.utf8.contains(0) else {
+      return refuse("'script' contains a NUL character, and only the text before it would run.")
+    }
     let bytes = script.utf8.count
     guard bytes <= maxScriptBytes else {
       return refuse(
@@ -645,6 +675,14 @@ nonisolated enum ShellServer {
     var stdin: String?
     if let raw = optional(args, "stdin") {
       guard let text = raw as? String else { return refuse("'stdin' must be a string.") }
+      let bytes = text.utf8.count
+      guard bytes <= maxStdinBytes else {
+        return refuse(
+          "'stdin' is \(bytes) bytes, and the limit is \(maxStdinBytes) (256 KB). Have the "
+            + "script read it from a file instead.")
+      }
+      // Refused like the script's, so the window never shows text the script does not get.
+      guard !text.utf8.contains(0) else { return refuse("'stdin' contains a NUL character.") }
       stdin = text
     }
 
@@ -728,8 +766,8 @@ nonisolated enum ShellServer {
   private static let guide = """
     # Shell
 
-    Runs one script at a time as a child of Cupertino, so it holds every grant Cupertino
-    holds, Full Disk Access included when Cupertino has it.
+    Runs a script as a child of Cupertino, so it holds every grant Cupertino holds, Full
+    Disk Access included when Cupertino has it. Each run is decided on its own.
 
     ## How a run is decided
 

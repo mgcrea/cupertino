@@ -55,7 +55,10 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// otherwise grow it for the life of the connection — and the cap is the
   /// oldest-out kind rather than a refusal, since losing the correlation for a
   /// stale request is better than losing it for a live one.
-  private let waiting = OSAllocatedUnfairLock<[(key: String, row: UUID)]>(initialState: [])
+  ///
+  /// The tool name rides along, so `CallCapture.result` can apply the one per-tool rule it has.
+  private let waiting = OSAllocatedUnfairLock<[(key: String, row: UUID, tool: String?)]>(
+    initialState: [])
   private static let waitingLimit = 256
 
   /// Visible calls still running, and whether a renewal is already scheduled.
@@ -157,15 +160,16 @@ nonisolated final class RequestObserver: @unchecked Sendable {
     visible.withLock { $0.flight.answered(key) }
     guard mode >= .argumentsAndResults else { return }
 
-    let row = waiting.withLock { table -> UUID? in
+    let waited = waiting.withLock { table -> (row: UUID, tool: String?)? in
       guard let index = table.firstIndex(where: { $0.key == key }) else { return nil }
-      return table.remove(at: index).row
+      let entry = table.remove(at: index)
+      return (entry.row, entry.tool)
     }
-    guard let row else { return }
+    guard let waited else { return }
 
     hostCallResult(
-      row,
-      CallCapture.result(object, mode: mode, content: content),
+      waited.row,
+      CallCapture.result(object, mode: mode, content: content, tool: waited.tool),
       failed: CallCapture.isFailure(object))
   }
 
@@ -240,7 +244,7 @@ nonisolated final class RequestObserver: @unchecked Sendable {
       // remembering one would be a row waiting for a reply that cannot come.
       if mode >= .argumentsAndResults, let key = CallCapture.idKey(object["id"]) {
         waiting.withLock { table in
-          table.append((key: key, row: row))
+          table.append((key: key, row: row, tool: method == "tools/call" ? identifier : nil))
           if table.count > Self.waitingLimit { table.removeFirst(table.count - Self.waitingLimit) }
         }
       }

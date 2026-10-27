@@ -263,6 +263,7 @@ struct ShellCheck {
     var e = ShellRecord.Entry(
       at: t0, client: "c", connection: UUID(), purpose: "p", interpreter: "zsh", cwd: "/",
       scriptBytes: script.utf8.count, scriptSHA256: AuditChain.digest(script),
+      stdinBytes: 3, stdinSHA256: AuditChain.digest("abc"),
       decision: .declined, exitCode: nil, signal: nil, timedOut: false, durationMs: nil)
     ShellRecord.append(e, in: dir, now: t0)
     e.decision = .approved
@@ -291,6 +292,16 @@ struct ShellCheck {
       try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 1)
     check("the chain still verifies after the drop", ShellRecord.verify(in: dir).isIntact)
     check("an entry reads back whole", ShellRecord.recent(1, in: dir) == [e])
+    check(
+      "stdin's length and hash read back",
+      ShellRecord.recent(1, in: dir).first.map {
+        $0.stdinBytes == 3 && $0.stdinSHA256 == AuditChain.digest("abc")
+      } == true)
+    var noStdin = e
+    noStdin.stdinBytes = nil
+    noStdin.stdinSHA256 = nil
+    ShellRecord.append(noStdin, in: dir, now: t0)
+    check("no stdin reads back as none", ShellRecord.recent(1, in: dir) == [noStdin])
 
     let next = Calendar(identifier: .gregorian).date(byAdding: .day, value: 10, to: t0)!
     ShellRecord.append(e, in: dir, now: next)
@@ -755,6 +766,12 @@ extension ShellCheck {
     return ToolAnswer(isError: isError, text: text, structured: structured, reply: reply)
   }
 
+  /// The `decision` a result names in `structuredContent`, refusals included.
+  static func decision(_ answer: ToolAnswer) -> String? {
+    ((answer.reply["result"] as? [String: Any])?["structuredContent"] as? [String: Any])?[
+      "decision"] as? String
+  }
+
   /// A run on a connection of its own, so no approval or cooldown carries in.
   static func callFresh(_ args: [String: Any]) -> ToolAnswer {
     call("apple_shell_run", args, on: UUID())
@@ -841,6 +858,7 @@ extension ShellCheck {
     check(
       "so nothing runs in a build that cannot ask",
       standIn.isError && standIn.text == cancelledCopy && !exists())
+    check("a refusal names its decision beside the sentence", decision(standIn) == "cancelled")
     ShellSeal.setBefore(.none, store)
     let standInNone = shellRun(touch, on: UUID())
     check(
@@ -903,6 +921,10 @@ extension ShellCheck {
         "decision", "exitCode", "signal", "timedOut", "durationMs", "stdout", "stdoutTruncated",
         "stderr", "stderrTruncated",
       ] && ok.structured["exitCode"] as? Int == 0 && ok.structured["signal"] is NSNull)
+    check(
+      "structuredContent carries the same fields as the text",
+      ((ok.reply["result"] as? [String: Any])?["structuredContent"] as? [String: Any])
+        .map { NSDictionary(dictionary: $0).isEqual(to: ok.structured) } == true)
     let shown = fake.prompts.last
     check(
       "the window is handed the whole request",
@@ -913,9 +935,11 @@ extension ShellCheck {
     fake.next = .dontRun
     let declined = call("apple_shell_run", ["script": touch, "purpose": "p"])
     check("declined is an error and runs nothing", declined.isError && !exists())
-    check("declined, verbatim", declined.text == declinedCopy)
+    check("declined, verbatim", declined.text == declinedCopy && decision(declined) == "declined")
     let cooled = call("apple_shell_run", ["script": "true", "purpose": "p"])
-    check("cooldown refuses without asking", cooled.isError && fake.asks == 2)
+    check(
+      "cooldown refuses without asking",
+      cooled.isError && fake.asks == 2 && decision(cooled) == "cooldown")
     check(
       "cooldown, verbatim, with the wait in whole seconds",
       cooldownWait(cooled.text).map { (1...30).contains($0) } == true)
@@ -925,7 +949,8 @@ extension ShellCheck {
     let unanswered = shellRun(touch, on: quiet)
     check(
       "no answer is an error, verbatim, and runs nothing",
-      unanswered.isError && unanswered.text == noAnswerCopy && !exists())
+      unanswered.isError && unanswered.text == noAnswerCopy && !exists()
+        && decision(unanswered) == "noAnswer")
     let asksAfterQuiet = fake.asks
     check(
       "no answer cools the connection down too",
@@ -937,6 +962,10 @@ extension ShellCheck {
       "tilde cwd expanded",
       callFresh(["script": "pwd", "purpose": "p", "cwd": "~"]).structured["stdout"] as? String
         == NSHomeDirectory() + "\n")
+    check(
+      "a cwd under ~/ expanded",
+      callFresh(["script": "pwd", "purpose": "p", "cwd": "~/Library"]).structured["stdout"]
+        as? String == NSHomeDirectory() + "/Library\n")
     check(
       "an absolute cwd is honoured",
       callFresh(["script": "pwd -P", "purpose": "p", "cwd": "/private/tmp"]).structured["stdout"]
@@ -969,7 +998,8 @@ extension ShellCheck {
     check(
       "a cwd that is a file refused",
       callFresh(["script": "pwd", "purpose": "p", "cwd": "/etc/hosts"]).isError)
-    check("missing purpose refused", callFresh(["script": "true"]).isError)
+    let noPurpose = callFresh(["script": "true"])
+    check("missing purpose refused", noPurpose.isError && decision(noPurpose) == "invalid")
     check("blank purpose refused", callFresh(["script": "true", "purpose": "  \n"]).isError)
     check("missing script refused", callFresh(["purpose": "p"]).isError)
     check("empty script refused", callFresh(["script": "", "purpose": "p"]).isError)
@@ -999,9 +1029,29 @@ extension ShellCheck {
     check(
       "stdin that is not a string refused",
       callFresh(["script": "cat", "purpose": "p", "stdin": 5]).isError)
-    // One more for the size check above, which ran a valid script to prove the connection.
     check(
-      "no refused request opened a window", fake.asks == asksBeforeInvalid + 2)
+      "stdin over 256 KB refused",
+      callFresh([
+        "script": "cat", "purpose": "p", "stdin": String(repeating: "s", count: 256 * 1024 + 1),
+      ])
+      .isError)
+    check(
+      "stdin of exactly 256 KB is not refused for its size",
+      !callFresh([
+        "script": "wc -c", "purpose": "p", "stdin": String(repeating: "s", count: 256 * 1024),
+      ])
+      .isError)
+    // For zsh the script is a C string in argv, which ends at the first NUL: the window and the
+    // record would hold the whole text while only the part before it ran.
+    check(
+      "a NUL in the script refused",
+      callFresh(["script": "echo shown\u{0}; \(touch)", "purpose": "p"]).isError && !exists())
+    check(
+      "a NUL in stdin refused",
+      callFresh(["script": "cat", "purpose": "p", "stdin": "a\u{0}b"]).isError)
+    // Three more: the size checks above each ran one valid request.
+    check(
+      "no refused request opened a window", fake.asks == asksBeforeInvalid + 3)
 
     print("\nShellServer: once per session")
     ShellSeal.setBefore(.session, store)
@@ -1069,7 +1119,8 @@ extension ShellCheck {
     let busy = shellRun(on: UUID())
     check(
       "a fifth is refused, verbatim, without asking",
-      busy.isError && busy.text == busyCopy && fake.asks == asksBeforeBusy)
+      busy.isError && busy.text == busyCopy && fake.asks == asksBeforeBusy
+        && decision(busy) == "busy")
     check(
       "diagnostics count the runs in flight",
       call("apple_shell_diagnostics", [:]).structured["inFlight"] as? Int == 4)
@@ -1154,11 +1205,14 @@ extension ShellCheck {
       "a cancel mid-run stops it",
       longRunning && long.done.wait(timeout: .now() + 5) == .success
         && long.answer()?.text == cancelledCopy && Date().timeIntervalSince(cancelStart) < 3)
-    InProcessCalls.forget(connection: approved)
+    // Asked before `forget`, which would make the answer nil whatever was left.
+    let approvedHeld = InProcessCalls.held(connection: approved)
+    let heldHeld = InProcessCalls.held(connection: held)
     check(
       "nothing is left registered",
-      InProcessCalls.held(connection: approved)?.running ?? 0 == 0
-        && InProcessCalls.held(connection: held)?.running ?? 0 == 0)
+      approvedHeld?.running == 0 && heldHeld?.running == 0)
+    InProcessCalls.forget(connection: approved)
+    InProcessCalls.forget(connection: held)
 
     print("\nShellServer: diagnostics")
     let diagnostics = call("apple_shell_diagnostics", [:]).structured
@@ -1210,6 +1264,11 @@ extension ShellCheck {
       at: recordDir, includingPropertiesForKeys: nil
     ).map { try String(contentsOf: $0, encoding: .utf8) }.joined()
     check("no script text or output on file", !onFile.contains(secret))
+    let fed = entries.first { $0.decision == .approved && $0.stdinBytes == 3 }
+    check(
+      "a run given stdin records its length and hash, not its text",
+      fed?.stdinSHA256 == AuditChain.digest("abc") && line?.stdinBytes == nil
+        && line?.stdinSHA256 == nil)
     check("the chain verifies", ShellRecord.verify(in: recordDir).isIntact)
 
     // The activity log needs nothing of its own: `serveInProcess` hands every in-process frame to
@@ -1230,13 +1289,74 @@ extension ShellCheck {
         && CallCapture.arguments(
           params: request?["params"] as? [String: Any], mode: .off, content: false) == nil
     )
+    func parsed(_ text: String?) -> [String: Any]? {
+      text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+    }
+    func structure(_ text: String?) -> [String: Any] {
+      parsed(text)?["structuredContent"] as? [String: Any] ?? [:]
+    }
+    let tool = "apple_shell_run"
+    let live = CallCapture.result(
+      recorded.reply, mode: .argumentsAndResults, content: false, tool: tool)
+    let kept = structure(live)
     check(
-      "stdout is in the result, kept only under the content switch",
-      CallCapture.result(recorded.reply, mode: .argumentsAndResults, content: false)
-        == CallCapture.redacted
-        && CallCapture.result(recorded.reply, mode: .argumentsAndResults, content: true)?
-          .contains(secret) == true
-    )
+      "without the content switch, a Shell result keeps the decision, exit and timing",
+      kept["decision"] as? String == "approved" && kept["exitCode"] as? Int == 0
+        && kept["signal"] is NSNull && kept["timedOut"] as? Bool == false
+        && kept["durationMs"] as? Int != nil)
+    check(
+      "and redacts stdout and stderr, and the text",
+      kept["stdout"] as? String == CallCapture.redacted
+        && kept["stderr"] as? String == CallCapture.redacted
+        && live?.contains(secret) == false)
+    check(
+      "a refusal keeps its decision there too",
+      structure(
+        CallCapture.result(busy.reply, mode: .argumentsAndResults, content: false, tool: tool))[
+          "decision"] as? String == "busy")
+    let withContent = CallCapture.result(
+      recorded.reply, mode: .argumentsAndResults, content: true, tool: tool)
+    check(
+      "with the content switch, stdout is kept",
+      structure(withContent)["stdout"] as? String == "\(secret)\n")
+    check(
+      "results are still kept only when results are recorded",
+      CallCapture.result(recorded.reply, mode: .arguments, content: true, tool: tool) == nil)
+    // On the way to disk the audit file redacts again, by its own switch. A row the window kept
+    // whole must not take stdout to the file through `structuredContent`.
+    let disk = CallCapture.reredactResult(withContent, tool: tool, content: false)
+    check(
+      "on disk without content: the decision stays and stdout goes",
+      structure(disk)["decision"] as? String == "approved"
+        && structure(disk)["exitCode"] as? Int == 0 && disk?.contains(secret) == false)
+    check(
+      "on disk with content: the row as it was",
+      CallCapture.reredactResult(withContent, tool: tool, content: true) == withContent)
+    // Every other tool records exactly what it did before, in both modes and on disk.
+    let other: [String: Any] = [
+      "jsonrpc": "2.0", "id": 4,
+      "result": [
+        "content": [["type": "text", "text": "a window list"]],
+        "structuredContent": ["decision": "x", "stdout": "y"],
+      ],
+    ]
+    for name in ["apple_screen_list_targets", "apple_mail_get_message", nil] as [String?] {
+      let label = name ?? "no tool"
+      check(
+        "\(label): without content, the whole result is redacted, as before",
+        CallCapture.result(other, mode: .argumentsAndResults, content: false, tool: name)
+          == CallCapture.redacted)
+      let whole = CallCapture.result(other, mode: .argumentsAndResults, content: true, tool: name)
+      check(
+        "\(label): with content, the whole result is kept, as before",
+        whole == CallCapture.result(other, mode: .argumentsAndResults, content: true)
+          && whole?.contains("a window list") == true)
+      check(
+        "\(label): on disk, the same as reredact",
+        CallCapture.reredactResult(whole, tool: name, content: false)
+          == CallCapture.reredact(whole, content: false)
+          && CallCapture.reredactResult(whole, tool: name, content: true) == whole)
+    }
 
     check("nothing left live after the server checks", ShellRunner.live.isEmpty)
   }
