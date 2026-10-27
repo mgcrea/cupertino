@@ -1011,15 +1011,21 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     // End of stream: the client hung up, its socket was shut down (a trial that
-    // ended, or the worker ending the session), or a read failed. Every call
-    // still running is called off first, so the worker is not left finishing a
-    // command nobody will read. Lines already queued are still handled, as they
-    // would have been when this was one loop, and the worker is joined before
-    // the `defer` above, so a driving session or a recording is never torn down
-    // under a call still using it.
+    // ended, or the worker ending the session), or a read failed. Every call is
+    // called off first, so the worker is not left finishing a command nobody
+    // will read. That includes the ones that have not registered yet: a request
+    // still queued, or one the worker has dequeued and not reached `register`
+    // with, meets a closed connection when it does and is cancelled there.
+    // Lines already queued are still handled, as they would have been when this
+    // was one loop, so a surface that registers nothing behaves as it did.
+    //
+    // The worker is joined before the `defer` above, so a driving session or a
+    // recording is never torn down under a call still using it, and only then
+    // is the connection forgotten: nothing on it can register after that.
     InProcessCalls.cancelAll(connection: session)
     pending.close()
     finished.wait()
+    InProcessCalls.forget(connection: session)
   }
 
   private func run(

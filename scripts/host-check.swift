@@ -64,7 +64,9 @@ enum DemoSeed {
 /// `dispatch-check` cover the real server.
 ///
 /// `test/slow` registers a canceller the way a long call does, and waits for
-/// it for up to three seconds. The connection it registers under comes from
+/// it for up to three seconds. `test/late` does the same after a 300 ms pause
+/// before registering, which is the window in which a hang-up or a cancel can
+/// beat the call to `register`. The connection it registers under comes from
 /// the thread that handles the call, which is also what `test/where` reports:
 /// `DrivingSession` finds its connection the same way.
 enum ScreenServer {
@@ -72,6 +74,10 @@ enum ScreenServer {
   nonisolated(unsafe) static var registered = DispatchSemaphore(value: 0)
   /// Signalled by the canceller.
   nonisolated(unsafe) static var cancelled = DispatchSemaphore(value: 0)
+  /// Signalled when `test/late` is about to pause, before it registers.
+  nonisolated(unsafe) static var pausing = DispatchSemaphore(value: 0)
+  /// The connection the last call arrived on.
+  nonisolated(unsafe) static var connection: UUID?
 
   static func handle(
     _ line: String, surface: Surface, captureAllowed: Bool, anyAppAllowed: Bool,
@@ -83,12 +89,17 @@ enum ScreenServer {
     else { return nil }
     guard let id = msg["id"] else { return nil }
     let connection = Thread.current.threadDictionary[DrivingSession.connectionKey] as? UUID
+    Self.connection = connection
     switch method {
     case "ping":
       return InProcessRPC.result(id, [String: Any]())
     case "test/where":
       return InProcessRPC.result(id, ["connectionKey": connection != nil])
-    case "test/slow":
+    case "test/slow", "test/late":
+      if method == "test/late" {
+        pausing.signal()
+        Thread.sleep(forTimeInterval: 0.3)
+      }
       guard let connection, let key = InProcessCalls.requestId(id) else {
         return InProcessRPC.error(id, code: -32603, message: "no connection on this thread")
       }
@@ -186,6 +197,30 @@ func request(_ id: Int, _ method: String) -> String {
 /// What Claude Code sends when somebody presses Esc.
 func cancelled(_ id: Int) -> String {
   #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":\#(id),"reason":"Esc"}}"#
+}
+
+/// The same cancel with its slash escaped, which JSON allows.
+func escapedCancelled(_ id: Int) -> String {
+  #"{"jsonrpc":"2.0","method":"notifications\/cancelled","params":{"requestId":\#(id)}}"#
+}
+
+/// The same cancel with its method spelled in `\u` escapes, which JSON allows too.
+func unicodeCancelled(_ id: Int) -> String {
+  #"{"jsonrpc":"2.0","method":"notifications\u002fcancell\u0065d","params":{"requestId":\#(id)}}"#
+}
+
+/// Wait for `count` signals on `semaphore`, all within `seconds`.
+func signals(_ semaphore: DispatchSemaphore, _ count: Int, within seconds: Double) -> Bool {
+  let deadline = DispatchTime.now() + seconds
+  return (0..<count).allSatisfy { _ in semaphore.wait(timeout: deadline) == .success }
+}
+
+/// Fresh semaphores for the stand-in, so one case's signals never satisfy another's.
+func resetStandIn() {
+  ScreenServer.registered = DispatchSemaphore(value: 0)
+  ScreenServer.cancelled = DispatchSemaphore(value: 0)
+  ScreenServer.pausing = DispatchSemaphore(value: 0)
+  ScreenServer.connection = nil
 }
 
 @main
@@ -357,6 +392,108 @@ struct HostCheck {
     } else {
       check("driving connection key is set on the handling thread (could not connect)", false)
     }
+
+    // A stop that arrives before the call has registered. The reader can see
+    // a hang-up or a cancel while the worker is still on its way to
+    // `register`, or while the request is queued behind another; either has to
+    // be remembered, or the call it was for runs anyway.
+    if let client = Client(server: "screen") {
+      resetStandIn()
+      client.send(request(9, "test/late"))
+      let paused = ScreenServer.pausing.wait(timeout: .now() + 2) == .success
+      client.hangUp()
+      check(
+        "EOF before the call registers still cancels it",
+        paused && ScreenServer.cancelled.wait(timeout: .now() + 1) == .success)
+    } else {
+      check("EOF before the call registers still cancels it (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      resetStandIn()
+      client.send(request(10, "test/late"))
+      let paused = ScreenServer.pausing.wait(timeout: .now() + 2) == .success
+      client.send(cancelled(10))
+      let reached = paused && ScreenServer.cancelled.wait(timeout: .now() + 1) == .success
+      check(
+        "a cancel sent before its id registers fires on register",
+        reached && client.result(for: 10, within: 2)?["cancelled"] as? Bool == true)
+    } else {
+      check("a cancel sent before its id registers fires on register (could not connect)", false)
+    }
+
+    if let client = Client(server: "screen") {
+      resetStandIn()
+      client.send(request(11, "test/slow"))
+      client.send(request(12, "test/slow"))
+      let started = ScreenServer.registered.wait(timeout: .now() + 2) == .success
+      client.send(cancelled(12))
+      client.send(cancelled(11))
+      let both = started && signals(ScreenServer.cancelled, 2, within: 1)
+      let first = client.result(for: 11, within: 2)?["cancelled"] as? Bool
+      let second = client.result(for: 12, within: 2)?["cancelled"] as? Bool
+      check(
+        "a cancel for a queued request fires when it starts",
+        both && first == true && second == true)
+    } else {
+      check("a cancel for a queued request fires when it starts (could not connect)", false)
+    }
+
+    for (label, frame) in [
+      ("an escaped slash", escapedCancelled), ("unicode escapes", unicodeCancelled),
+    ] {
+      if let client = Client(server: "screen") {
+        resetStandIn()
+        client.send(request(13, "test/slow"))
+        let started = ScreenServer.registered.wait(timeout: .now() + 2) == .success
+        client.send(frame(13))
+        check(
+          "a cancel spelled with \(label) still cancels",
+          started && ScreenServer.cancelled.wait(timeout: .now() + 1) == .success)
+      } else {
+        check("a cancel spelled with \(label) still cancels (could not connect)", false)
+      }
+    }
+
+    // `forget` is what keeps the registry from holding every connection that
+    // ever cancelled anything. A tombstone (a cancel for an id never sent) and
+    // the hang-up's closed mark are both held while the session lives, and
+    // must both be gone once it has torn down.
+    if let client = Client(server: "screen") {
+      resetStandIn()
+      client.send(request(14, "test/where"))
+      _ = client.result(for: 14, within: 2)
+      let connection = ScreenServer.connection
+      client.send(cancelled(77))
+      // Answered after the reader has handled the cancel before it.
+      client.send(request(15, "ping"))
+      _ = client.result(for: 15, within: 2)
+      let heldWhileOpen = connection.flatMap { InProcessCalls.held(connection: $0) }
+      client.hangUp()
+      var gone = false
+      let deadline = Date().addingTimeInterval(2)
+      while let connection, Date() < deadline {
+        if InProcessCalls.held(connection: connection) == nil {
+          gone = true
+          break
+        }
+        Thread.sleep(forTimeInterval: 0.02)
+      }
+      check(
+        "forget leaves nothing behind once the session ends",
+        heldWhileOpen?.tombstones == 1 && gone)
+    } else {
+      check("forget leaves nothing behind once the session ends (could not connect)", false)
+    }
+
+    // The registry on its own: a client cannot grow the tombstones without limit.
+    let flood = UUID()
+    for id in 0..<1000 { InProcessCalls.cancel(connection: flood, requestId: "i\(id)") }
+    let kept = InProcessCalls.held(connection: flood)?.tombstones ?? 0
+    InProcessCalls.forget(connection: flood)
+    check(
+      "tombstones are capped at \(InProcessCalls.tombstoneLimit) per connection",
+      kept == InProcessCalls.tombstoneLimit && InProcessCalls.held(connection: flood) == nil)
 
     // Switching a surface off ends its sessions at their next request, which
     // the loop cannot do by returning any more: the thread that returns is the
