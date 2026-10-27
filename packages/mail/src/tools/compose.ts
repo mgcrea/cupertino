@@ -67,7 +67,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
       description:
         "Compose a new message. By DEFAULT this does not send: it opens a draft in Mail for the " +
         "user to review, which is almost always what you want. Only pass sendNow: true (with " +
-        "confirm: true) when the user has explicitly asked for the mail to go out now.",
+        "confirm: true) when the user has explicitly asked for the mail to go out now. The " +
+        "body goes in above the account's signature, which Mail adds and which is kept, image " +
+        "and all.",
       inputSchema: {
         account: z
           .string()
@@ -108,7 +110,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
     {
       description:
         "Reply to a message. By default it opens a draft in Mail with the original quoted beneath " +
-        "your text, for the user to review. Pass replyToAll to include every original recipient. " +
+        "your text, for the user to review. Your text goes in above the account's signature, " +
+        "which Mail adds and which is kept, image and all. Pass replyToAll to include every " +
+        "original recipient. " +
         "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
         "Success means the body was read back out of the composer window and matched, and only " +
         "then may it be described to the user as ready. A failure is NOT automatically an empty " +
@@ -149,8 +153,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "Forward a message to new recipients. By default it opens a draft in Mail for review. " +
         "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
         "When a note is given, success means it was read back out of the composer window and " +
-        "matched. Filling the composer brings Mail to the front for a moment to paste; the " +
-        "clipboard is borrowed by the app and restored.",
+        "matched. The note goes in above the account's signature, which Mail adds and which is " +
+        "kept, image and all. Filling the composer brings Mail to the front for a moment to " +
+        "paste; the clipboard is borrowed by the app and restored.",
       inputSchema: {
         ref: messageRefArg,
         to: z.array(z.string().email()).min(1).describe("Who to forward to."),

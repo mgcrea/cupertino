@@ -47,6 +47,10 @@ nonisolated protocol ComposerWindow: AnyObject {
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String?
   /// A collapsed selection at the end of the own text, where files go.
   func selectOwnEnd() throws -> String?
+  /// A collapsed selection at the START of the own text, where an inserted
+  /// body goes: the first own block's start, or with no own block the start
+  /// of the document, as `selectOwn` collapses for empty own text.
+  func selectOwnStart() throws -> String?
   /// Whether either end of the selection just set sits inside the quoted
   /// original: the element its marker resolves to, or any ancestor of it up to
   /// the body, has a quote level above 0. Nil when that could not be told,
@@ -418,6 +422,9 @@ nonisolated enum MailComposer {
 
   struct EditRequest {
     var body: String?
+    /// `body` goes in ABOVE the own text instead of over it: a new composer,
+    /// whose own text is the account's signature (see `edit`).
+    var insert = false
     /// Pasted as HTML with `body` as its plain-text fallback, and verified as `body`.
     var html: String?
     var edits: [MailComposerText.Edit]?
@@ -433,6 +440,7 @@ nonisolated enum MailComposer {
   /// nothing about the draft. One of `body`, `edits` or `attachments` is
   /// required, `body` and `edits` exclude each other, and `html` rides on a
   /// `body`, which is its plain-text fallback and what the window must read back.
+  /// `insert` rides on a plain `body`, with no `html`.
   struct ArgumentError: LocalizedError {
     let errorDescription: String?
     init(_ message: String) { errorDescription = message }
@@ -471,6 +479,13 @@ nonisolated enum MailComposer {
     }
     guard request.body != nil || request.edits != nil || !request.files.isEmpty else {
       throw ArgumentError("Pass 'body', 'edits' or 'attachments'.")
+    }
+    if let insert = args["insert"] {
+      guard let insert = insert as? Bool else { throw ArgumentError("'insert' is a boolean.") }
+      guard !insert || (request.body != nil && request.html == nil) else {
+        throw ArgumentError("'insert' needs a plain 'body', with no 'html'.")
+      }
+      request.insert = insert
     }
     if let save = args["save"] {
       guard let save = save as? Bool else { throw ArgumentError("'save' is a boolean.") }
@@ -523,6 +538,22 @@ nonisolated enum MailComposer {
   ///     the restore waits up to `grace` for Mail to answer a read: a hung Mail
   ///     handles the keystroke when it wakes, and with the person's clipboard
   ///     back on the board it would paste THAT into a window Mail autosaves.
+  ///
+  /// ## A body inserted above the own text (`insert`)
+  ///
+  /// For a NEW composer, whose own text is the account's signature, if it has
+  /// one, which the body must not replace (the base pasted at Mail's caret,
+  /// above the signature, and the signature survived). Steps 4 and 6 refuse
+  /// nothing on files or images, since nothing is removed. Step 5's new own
+  /// text is `body`, a newline, then the own text as it was, compared folded
+  /// like every read-back. Step 7 and the paste collapse the selection at the
+  /// START of the own text (`selectOwnStart`), proved outside the quote, read
+  /// back empty. What is pasted is `body`, and a newline after it when the own
+  /// text's first line holds text, so the body does not run into it; a blank
+  /// first line, Mail's caret line above a signature, takes the body as it is.
+  /// The answer carries `kept`, the own text the body went in above. Every
+  /// other gate is the same: the quote re-read, the pasteboard borrowed and
+  /// given back, the front checks, the save.
   ///
   /// `edits` are pasted one at a time, highest offset first, so an edit never
   /// shifts one still to come. Sub-range selection was measured only for an
@@ -804,8 +835,8 @@ nonisolated enum MailComposer {
         "List the composers again and pick the one whose text is this draft's.")
     }
 
-    // 4.
-    if request.body != nil, !before.files.isEmpty {
+    // 4. An inserted body removes nothing.
+    if request.body != nil, !request.insert, !before.files.isEmpty {
       return refusal(
         "files",
         "The draft's own text holds \(before.files.joined(separator: ", ")), which a new body "
@@ -837,6 +868,17 @@ nonisolated enum MailComposer {
           "edits", "Two edits change overlapping text. \(untouched)",
           "Merge them into one edit, or make them touch separate text.")
       }
+    } else if let body = request.body, request.insert {
+      // Nothing but whitespace would read back as the own text it went above.
+      guard !squash(body).isEmpty else {
+        return refusal(
+          "confirmation",
+          "The body to insert is only whitespace (line breaks or spaces), which reading the "
+            + "window back cannot tell from the draft as it is, so there would be no way to know "
+            + "the paste landed. \(untouched)",
+          "Give the body some words.")
+      }
+      result = body + "\n" + before.text
     } else if let body = request.body {
       // Equal to the letter, there is nothing to paste. Equal only once
       // whitespace is folded, the read-back reads "done" before the paste and
@@ -873,7 +915,7 @@ nonisolated enum MailComposer {
     // and `squash` drops the character, so an image the blocks could not name
     // would vanish under a body with a read-back that still passes.
     let marks = range.unicodeScalars.filter { $0 == "\u{FFFC}" }.count
-    if request.body != nil, marks > before.files.count {
+    if request.body != nil, !request.insert, marks > before.files.count {
       let unnamed = marks - before.files.count
       let named = Array(repeating: "an inline image", count: unnamed)
       return refusal(
@@ -918,6 +960,11 @@ nonisolated enum MailComposer {
           else { return misselected(step.original, state: untouched) }
           if let refused = try outsideQuote(w, state: untouched) { return refused }
         }
+      } else if request.body != nil, request.insert {
+        guard let back = try w.selectOwnStart(), back.isEmpty else {
+          return misselected(nil, state: untouched)
+        }
+        if let refused = try outsideQuote(w, state: untouched) { return refused }
       } else if request.body != nil {
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
           return misselected(nil, state: untouched)
@@ -1053,6 +1100,18 @@ nonisolated enum MailComposer {
           unverified = false
           verified.append("the edit of \"\(step.find)\"")
         }
+      } else if let body = request.body, request.insert {
+        if let refused = elsewhere() { return refused }
+        guard let back = try w.selectOwnStart(), back.isEmpty else {
+          return misselected(nil, state: state(), hint: hint())
+        }
+        if let refused = try outsideQuote(w, state: state(), hint: hint()) { return refused }
+        if let refused = elsewhere() { return refused }
+        let content = PasteContent.text(insertion(body, above: before))
+        try board.write(content)
+        guard try w.paste(content) else { return unfocused(state(), hint: hint()) }
+        changed = true
+        unverified = true
       } else if let body = request.body {
         if let refused = elsewhere() { return refused }
         guard let back = try w.selectOwn(), sameSpan(back, range) else {
@@ -1165,16 +1224,26 @@ nonisolated enum MailComposer {
       } else {
         note = "The change was read back from the composer and, as asked, not saved."
       }
-      return [
+      var answer: [String: Any] = [
         "replaced": true, "method": "inPlace", "text": shown.text, "quoteKept": shown.quoted,
         "filesAdded": added, "saved": saved, "note": note,
       ]
+      if request.insert { answer["kept"] = before.text }
+      return answer
     } catch {
       return refusal("composer", "The edit stopped: \(describe(error)). \(state())", look())
     }
   }
 
   // ─── the edit's parts ──────────────────────────────────────────────────────
+
+  /// What an inserted body is pasted as: the body, and a newline after it when
+  /// the own text's first line holds text, which the body would otherwise run
+  /// into. A blank first line, or no own text, takes the body as it is.
+  static func insertion(_ body: String, above before: Read) -> String {
+    guard let first = before.own.first, !squash(first.text).isEmpty else { return body }
+    return body + "\n"
+  }
 
   /// A body split at the quote: own blocks are the level-0 ones before the
   /// first quoted block. Nil when any level is unreadable.
@@ -1820,6 +1889,16 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     guard let range = ownRange(web) else { return nil }
     let end = AXTextMarkerRangeCopyEndMarker(range)
     return try select(AXTextMarkerRangeCreate(kCFAllocatorDefault, end, end), in: web)
+  }
+
+  /// UNMEASURED LIVE: a collapsed selection at the start of the own range is
+  /// where Mail's caret sits in a fresh composer, above the signature. Read
+  /// back, and proved outside the quote, by the caller.
+  func selectOwnStart() throws -> String? {
+    let web = try webArea()
+    guard let range = ownRange(web) else { return nil }
+    let start = Self.start(of: range)
+    return try select(AXTextMarkerRangeCreate(kCFAllocatorDefault, start, start), in: web)
   }
 
   /// MEASURED (spike): a paste only lands with Mail active, and right after

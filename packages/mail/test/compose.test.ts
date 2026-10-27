@@ -37,15 +37,22 @@ const composer = (handle: string, subject: string, over: Record<string, unknown>
   ...over,
 });
 
-/** What the verb answers when it filled the composer. */
-const filled = (args: { body?: string; attachments?: string[]; save?: boolean }) => ({
+/**
+ * What the verb answers when it filled the composer. An inserted body reads
+ * back above the own text it went in above, `kept`: none, unless given.
+ */
+const filled = (
+  args: { body?: string; attachments?: string[]; save?: boolean; insert?: boolean },
+  kept = "",
+) => ({
   replaced: true,
   method: "inPlace",
-  text: args.body ?? "",
+  text: args.insert === true && kept !== "" ? `${args.body ?? ""}\n${kept}` : (args.body ?? ""),
   quoteKept: true,
   filesAdded: args.attachments?.length ?? 0,
   saved: args.save === true,
   note: "",
+  ...(args.insert === true ? { kept } : {}),
 });
 
 /**
@@ -681,9 +688,71 @@ describe("composeNatively", () => {
     expect(edits(seen)[0]?.args).toEqual({
       composer: "mc-1",
       body: "PASTED",
+      insert: true,
       expectHead: "-- \nOlivier",
       save: true,
     });
+    lane.close();
+  });
+
+  /*
+   * Final review I2: a new composer opens with the account's signature as its
+   * own text, and the System Events path pasted at Mail's caret, above it. The
+   * verb inserts the body there rather than over it, and the read-back is the
+   * body followed by what it went in above.
+   */
+  it("fills a new composer above its signature, and verifies the body followed by it", async () => {
+    const signature = "-- \nOlivier";
+    const { lane, seen } = await laneOver(
+      healthyHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 ? [] : [composer("mc-1", "Re: lunch", { text: signature })],
+        }),
+        mail_composer_edit: (args: Record<string, unknown>) => filled(args, signature),
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
+    expect(edits(seen)[0]?.args).toMatchObject({ body: "PASTED", insert: true });
+    lane.close();
+  });
+
+  it("does not call a fill verified when the signature it went above is gone", async () => {
+    const { lane } = await laneOver(
+      healthyHost({
+        mail_composer_edit: {
+          ...filled({ body: "PASTED", save: true }),
+          kept: "-- \nOlivier",
+        },
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, bodyVerified: false });
+    expect(result.note).toContain("MUST NOT be described to the user as ready");
+    lane.close();
+  });
+
+  it("verifies the body alone from an app that replaced it, saying nothing was kept", async () => {
+    const { lane } = await laneOver(
+      healthyHost({ mail_composer_edit: { ...filled({ body: "PASTED", save: true }) } }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
     lane.close();
   });
 

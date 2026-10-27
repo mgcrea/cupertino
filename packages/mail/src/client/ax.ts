@@ -142,6 +142,13 @@ export type NativeComposer = {
 export type EditComposerArgs = {
   composer: string;
   body?: string;
+  /**
+   * Put `body` in ABOVE the own text instead of over it: for a new composer,
+   * whose own text is the account's signature. The answer then carries
+   * `kept`, the own text it went in above. An app that predates it ignores
+   * it and replaces, which the caller's read-back still catches.
+   */
+  insert?: boolean;
   html?: string;
   edits?: { find: string; replace: string }[];
   attachments?: string[];

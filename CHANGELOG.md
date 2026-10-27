@@ -47,6 +47,11 @@ apart, and the editing itself happens inside Cupertino with fewer interruptions.
 
 ### Changed
 
+- **A new message, reply or forward keeps your signature.** The text you give goes in above the
+  signature Mail adds, as it always did, and the signature stays below it, an image in it
+  included; the check that the text landed reads back your text followed by the signature.
+  Changing a draft that already exists with `update_draft` and a `body` still replaces everything
+  you wrote in it, signature included.
 - **Editing a draft is faster and interrupts less.** The text is selected without moving the caret
   line by line and without a copy for every step, so Mail comes to the front once, to paste, and your
   clipboard and the app you were in are put back afterwards.

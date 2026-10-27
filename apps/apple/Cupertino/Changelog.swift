@@ -444,12 +444,18 @@ nonisolated enum Changelog {
         entries: [
           Entry(
             ordinal: 6,
+            headline: "A new message, reply or forward keeps your signature.",
+            body: [
+              "The text you give goes in above the signature Mail adds, as it always did, and the signature stays below it, an image in it included; the check that the text landed reads back your text followed by the signature. Changing a draft that already exists with `update_draft` and a `body` still replaces everything you wrote in it, signature included.",
+            ]),
+          Entry(
+            ordinal: 7,
             headline: "Editing a draft is faster and interrupts less.",
             body: [
               "The text is selected without moving the caret line by line and without a copy for every step, so Mail comes to the front once, to paste, and your clipboard and the app you were in are put back afterwards.",
             ]),
           Entry(
-            ordinal: 7,
+            ordinal: 8,
             headline: "`apple_mail_list_open_drafts` returns a handle for each window.",
             body: [
               "It also reports From, To, Cc and Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without searching for it first.",

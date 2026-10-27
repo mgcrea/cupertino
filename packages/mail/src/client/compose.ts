@@ -189,6 +189,9 @@ export type NewComposer = { handle: string; text: string | null } | { ambiguous:
 /** A composer as `before` carries it: its handle and subject, and its text when listed. */
 type Seen = Pick<NativeComposer, "composer" | "subject"> & Partial<Pick<NativeComposer, "text">>;
 
+/** An own text as the app compares a read-back: whitespace squashed, file marks dropped. */
+const folded = (text: string): string => squash(text.replaceAll("\uFFFC", ""));
+
 /** How much of two own texts is compared, as the app's `headLength`. */
 const HEAD_CHARS = 120;
 
@@ -200,8 +203,8 @@ const HEAD_CHARS = 120;
  * is "is this the old draft", and an empty draft is nobody's.
  */
 export const sameHead = (a: string, b: string): boolean => {
-  const x = squash(a.replaceAll("￼", ""));
-  const y = squash(b.replaceAll("￼", ""));
+  const x = folded(a);
+  const y = folded(b);
   if (x === "" || y === "") return false;
   const n = Math.min(x.length, y.length, HEAD_CHARS);
   return x.slice(0, n) === y.slice(0, n);
@@ -459,7 +462,9 @@ export const composeNatively = async (
     try {
       edit = await lane.editComposer({
         composer: handle,
-        ...(body !== "" ? { body } : {}),
+        // Above the account's signature, which a new composer opens with, as
+        // the System Events path's paste at Mail's caret always kept it.
+        ...(body !== "" ? { body, insert: true } : {}),
         ...(files.length > 0 ? { attachments: files } : {}),
         ...(expectHead !== null ? { expectHead } : {}),
         // The verb has no send. A send is pressed below, once it is known which
@@ -504,7 +509,11 @@ export const composeNatively = async (
 
     const text = typeof edit["text"] === "string" ? edit["text"] : "";
     if (body !== "") {
-      bodyVerified = squash(text) === squash(body);
+      // The body, then the own text it went in above (the signature), as
+      // the app read that before the paste; just the body from an app that
+      // replaced it instead.
+      const kept = typeof edit["kept"] === "string" ? edit["kept"] : "";
+      bodyVerified = folded(text) === folded(`${body}\n${kept}`);
       verifiedChars = text.length;
       if (!bodyVerified) {
         return {

@@ -22,6 +22,7 @@ final class FakeComposer: ComposerWindow {
   func selectOwn() throws -> String? { nil }
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String? { nil }
   func selectOwnEnd() throws -> String? { nil }
+  func selectOwnStart() throws -> String? { nil }
   func selectionReachesQuote() throws -> Bool? { false }
   func activate() throws -> Bool { false }
   func paste(_ content: PasteContent) throws -> Bool { false }
@@ -198,6 +199,12 @@ final class EditFake: ComposerWindow {
     if shown !== self { return try shown.selectOwnEnd() }
     note("select-end")
     return selecting(own.utf16.count..<own.utf16.count)
+  }
+
+  func selectOwnStart() throws -> String? {
+    if shown !== self { return try shown.selectOwnStart() }
+    note("select-start")
+    return selecting(0..<0)
   }
 
   func selectionReachesQuote() throws -> Bool? {
@@ -465,6 +472,7 @@ final class MintTab: ComposerWindow {
   func selectOwn() throws -> String? { nil }
   func selectSubrange(_ range: Range<String.Index>, in own: String) throws -> String? { nil }
   func selectOwnEnd() throws -> String? { nil }
+  func selectOwnStart() throws -> String? { nil }
   func selectionReachesQuote() throws -> Bool? { nil }
   func activate() throws -> Bool { false }
   func paste(_ content: PasteContent) throws -> Bool { false }
@@ -1086,11 +1094,140 @@ struct MailComposerCheck {
       check("the front is still handed back", front.given == [4242])
     }
 
+    insertChecks()
     fixRoundChecks()
 
     check("a busy AX read is not a dead window", AXComposerWindow.alive(after: .cannotComplete))
     check("an invalid element is", !AXComposerWindow.alive(after: .invalidUIElement))
     check("a successful read is alive", AXComposerWindow.alive(after: .success))
+  }
+
+  /// Final review I2: compose fills a NEW composer by inserting the body above
+  /// its own text, the account's signature, instead of over it.
+  static func insertChecks() {
+    print("\nedit: a body inserted above the signature")
+
+    // A text signature below Mail's blank caret line.
+    do {
+      let fake = EditFake(own: "\n-- \nOlivier", quote: [])
+      let (result, board, front) = run(fake, Request(body: "Hello Ann", insert: true))
+      check(
+        "an inserted body goes above a text signature, which is kept",
+        result["replaced"] as? Bool == true && fake.own == "Hello Ann\n-- \nOlivier")
+      check(
+        "pasted as the body alone at a collapsed selection at the start",
+        board.writes == [.text("Hello Ann")] && fake.log.contains("select-start")
+          && !fake.log.contains("select"))
+      check(
+        "read back as the body, then the own text it went above, and kept says what that was",
+        result["text"] as? String == "Hello Ann\n-- \nOlivier"
+          && result["kept"] as? String == "\n-- \nOlivier")
+      check(
+        "saved, the board and the front handed back",
+        result["saved"] as? Bool == true && fake.saves == 1 && board.untouchedOrRestored
+          && front.given == [4242])
+    }
+    // A signature on the caret's own line: the body ends its own paragraph.
+    do {
+      let fake = EditFake(own: "-- \nOlivier", quote: [])
+      let (result, board, _) = run(fake, Request(body: "Hello Ann", insert: true))
+      check(
+        "above a first line holding text, the body is pasted with a newline after it",
+        result["replaced"] as? Bool == true && board.writes == [.text("Hello Ann\n")]
+          && fake.own == "Hello Ann\n-- \nOlivier")
+    }
+    // An image signature: named, then unnamed. A replacing body refuses both.
+    do {
+      let fake = EditFake(own: "\nOlivier", files: ["logo.png"])
+      fake.rangeText = "\nOlivier\u{FFFC}"
+      let (result, _, _) = run(fake, Request(body: "Hello Ann", insert: true))
+      check(
+        "an image signature is kept below an inserted body, with no files refusal",
+        result["replaced"] as? Bool == true && fake.own == "Hello Ann\nOlivier"
+          && fake.ownFiles == ["logo.png"] && fake.saves == 1)
+      let blank = EditFake(own: "\nOlivier")
+      blank.rangeText = "\nOlivier\u{FFFC}"
+      let (unnamed, _, _) = run(blank, Request(body: "Hello Ann", insert: true))
+      check(
+        "and an unnamed inline image too, which a replacing body refuses",
+        unnamed["replaced"] as? Bool == true && blank.own == "Hello Ann\nOlivier")
+      let replacing = EditFake(own: "\nOlivier", files: ["logo.png"])
+      let (refused, _, _) = run(replacing, Request(body: "Hello Ann"))
+      check(
+        "while the same body replacing the own text is still refused as files",
+        capability(refused) == "files" && replacing.own == "\nOlivier")
+    }
+    // An empty composer: a forward, or a new message with no signature.
+    do {
+      let fake = EditFake(own: "")
+      let (result, board, _) = run(fake, Request(body: "See below", insert: true))
+      check(
+        "into an empty composer the body is the whole own text, the quote kept",
+        result["replaced"] as? Bool == true && fake.own == "See below"
+          && board.writes == [.text("See below")] && result["kept"] as? String == ""
+          && fake.quote == ["On Monday, Ann wrote:", "Hi"])
+    }
+    // The guards before anything is pasted still hold.
+    do {
+      let fake = EditFake(own: "\n-- \nOlivier")
+      fake.caretInQuote = true
+      let (result, board, front) = run(fake, Request(body: "Hello", insert: true))
+      check(
+        "a caret Mail resolves inside the quote still refuses as selection, nothing pasted",
+        capability(result) == "selection" && untouched(fake, board, front)
+          && fake.own == "\n-- \nOlivier")
+      let unknown = EditFake(own: "\n-- \nOlivier")
+      unknown.caretInQuote = nil
+      let (unsure, unsureBoard, unsureFront) = run(unknown, Request(body: "Hello", insert: true))
+      check(
+        "and so does one it will not place",
+        capability(unsure) == "selection" && untouched(unknown, unsureBoard, unsureFront))
+      let wide = EditFake(own: "\n-- \nOlivier")
+      wide.readBack = { _ in "-- " }
+      let (misread, misBoard, misFront) = run(wide, Request(body: "Hello", insert: true))
+      check(
+        "a start selection that does not read back empty refuses as selection",
+        capability(misread) == "selection" && untouched(wide, misBoard, misFront))
+      let blankBody = EditFake(own: "\n-- \nOlivier")
+      let (spaces, spaceBoard, spaceFront) = run(blankBody, Request(body: " \n ", insert: true))
+      check(
+        "a body of whitespace only cannot be told apart once inserted: refused",
+        capability(spaces) == "confirmation" && untouched(blankBody, spaceBoard, spaceFront))
+      let stale = EditFake(own: "\n-- \nOlivier")
+      let (head, headBoard, headFront) = run(
+        stale, Request(body: "Hello", insert: true, expectHead: "Another draft"))
+      check(
+        "an expectHead mismatch still refuses as identity",
+        capability(head) == "identity" && untouched(stale, headBoard, headFront))
+    }
+    // After the paste: the quote, and the read-back.
+    do {
+      let fake = EditFake(own: "\n-- \nOlivier")
+      fake.onPaste = { $0.quote[1] = "Hi, changed" }
+      let (result, board, front) = run(fake, Request(body: "Hello", insert: true))
+      check(
+        "an insert that changes the quote is refused, not saved, board and front back",
+        capability(result) == "confirmation" && handedBack(fake, board, front))
+      let over = EditFake(own: "\n-- \nOlivier")
+      over.onPaste = { $0.own = "Hello" }
+      let (lost, lostBoard, lostFront) = run(over, Request(body: "Hello", insert: true))
+      check(
+        "an insert that took the signature with it does not read back, and is not saved",
+        capability(lost) == "confirmation" && handedBack(over, lostBoard, lostFront))
+    }
+    // In a background tab: the same gates, the tab then left shown.
+    do {
+      let (group, _, beta, gamma) = tabbed()
+      gamma.own = "\n-- \nOlivier"
+      let front = FakeFront()
+      front.mailFront = { group.mailFront }
+      front.onGive = { group.mailFront = false }
+      let (result, _, _) = run(gamma, Request(body: "Hello", insert: true), front: front)
+      check(
+        "an insert into a background tab lands in that tab, above its signature",
+        result["replaced"] as? Bool == true && gamma.own == "Hello\n-- \nOlivier"
+          && beta.own == "BETA text" && group.presses == [2])
+    }
   }
 
   /// Review round 1: a read-back a paste could not have changed, an unnamed
@@ -2622,6 +2759,23 @@ struct MailComposerCheck {
       "apple_desktop_mail_composer_edit", args: ["composer": "mc-1", "html": "<b>x</b>"],
       writes: true, scope: mail)
     check("html without its body is an argument error", htmlError && html.contains("'html'"))
+    for (label, args) in [
+      (
+        "insert without a body",
+        ["composer": "mc-1", "insert": true, "edits": [["find": "a", "replace": "b"]]]
+          as [String: Any]
+      ),
+      ("insert with html", ["composer": "mc-1", "insert": true, "body": "a", "html": "<b>a</b>"]),
+      ("insert that is not a boolean", ["composer": "mc-1", "insert": "yes", "body": "a"]),
+    ] {
+      let (text, isError) = call(
+        "apple_desktop_mail_composer_edit", args: args, writes: true, scope: mail)
+      check("\(label) is an argument error", isError && text.contains("'insert'"))
+    }
+    check(
+      "insert rides on a plain body",
+      (try? MailComposer.request(from: ["body": "a", "insert": true]))?.insert == true
+        && (try? MailComposer.request(from: ["body": "a"]))?.insert == false)
     let (gone, goneError) = call(
       "apple_desktop_mail_composer_edit", args: ["composer": "mc-999999", "body": "x"],
       writes: true, scope: mail)
