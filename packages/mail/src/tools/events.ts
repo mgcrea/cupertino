@@ -1,8 +1,11 @@
-import { normalizeFilter, type EventTypeAdapter, type WatchFilter } from "@mgcrea/mcp-apple-core";
-import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import {
+  isoMs,
+  occurrenceTimestamp,
+  parseSenderArgs,
+  type EventTypeAdapter,
+} from "@mgcrea/mcp-apple-core";
 import { z } from "zod";
 
-import { PreconditionError } from "../client/errors.js";
 import type { MailArrival } from "../client/watch.js";
 import type { MailWatchService } from "./watch.js";
 
@@ -20,9 +23,6 @@ const Args = z.object({
   domains: z.array(z.string().min(1)).optional(),
   mailboxes: z.array(z.string().min(1)).max(20).optional(),
 });
-
-const invalidParams = (message: string): ProtocolError =>
-  new ProtocolError(ProtocolErrorCode.InvalidParams, message);
 
 export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<MailArrival> => ({
   descriptor: {
@@ -71,37 +71,19 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
     },
   },
 
-  async parseArguments(args: unknown): Promise<WatchFilter> {
-    const parsed = Args.safeParse(args ?? {});
-    if (!parsed.success) {
-      throw invalidParams(
-        `Invalid arguments for mail.received: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
-      );
-    }
-    const { from, domains, mailboxes } = parsed.data;
-    const sender = { ...(from ? { from } : {}), ...(domains ? { domains } : {}) };
-    // The caller's own mistakes first, without touching the index: an empty
-    // filter is InvalidParams whatever state the index is in.
-    try {
-      normalizeFilter(sender, "subscription");
-    } catch (err) {
-      if (err instanceof PreconditionError) throw invalidParams(err.message);
-      throw err;
-    }
-    // Opening the index is not the client's mistake, so it stays outside the wrap.
-    await service.ensure();
-    try {
-      const scope = await service.resolveMailboxScope(mailboxes ?? []);
-      return normalizeFilter({ ...sender, scope }, "subscription");
-    } catch (err) {
-      if (err instanceof PreconditionError) throw invalidParams(err.message);
-      throw err;
-    }
-  },
+  parseArguments: (args) =>
+    parseSenderArgs("mail.received", Args, args, {
+      open: () => service.ensure(),
+      resolve: async ({ from, domains, mailboxes }) => ({
+        ...(from ? { from } : {}),
+        ...(domains ? { domains } : {}),
+        scope: await service.resolveMailboxScope(mailboxes ?? []),
+      }),
+    }),
 
   occurrence: (row) => ({
     eventId: row.key,
-    timestamp: row.dateReceived ?? "",
+    timestamp: occurrenceTimestamp(row.dateReceived),
     data: {
       ref: row.ref,
       mailbox: row.mailbox,
@@ -112,11 +94,7 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
     },
   }),
 
-  timestampMs: (row) => {
-    if (row.dateReceived === null) return null;
-    const ms = Date.parse(row.dateReceived);
-    return Number.isNaN(ms) ? null : ms;
-  },
+  timestampMs: (row) => isoMs(row.dateReceived),
 
   source: service.source,
   ensure: () => service.ensure(),

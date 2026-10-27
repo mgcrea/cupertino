@@ -123,12 +123,16 @@ export {
   encodeCursor,
   EVENTS_ERRORS,
   EVENTS_EXTENSION_ID,
+  isoMs,
+  occurrenceTimestamp,
+  parseSenderArgs,
   resolveStart,
   scanEvents,
   type EventDescriptor,
   type EventOccurrence,
   type EventTypeAdapter,
   type ScanResult,
+  type SenderArgs,
 } from "./events.js";
 export {
   fileIdentity,

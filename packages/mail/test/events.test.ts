@@ -259,6 +259,17 @@ describe("mailEventAdapter", () => {
     expect(occ.data).toMatchObject({ ref: "ref-1", mailbox: "INBOX", subject: "Quote" });
   });
 
+  it("occurrence stamps an undated row with the scan time, never an empty string", () => {
+    const { adapter } = adapterFor(running);
+    const before = Date.now();
+    const occ = adapter.occurrence(row({ dateReceived: null }));
+    const at = Date.parse(occ.timestamp);
+    expect(occ.timestamp).toBe(new Date(at).toISOString());
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
+    expect(occ.data.dateReceived).toBeNull();
+  });
+
   it("timestampMs is the received date, or null", () => {
     const { adapter } = adapterFor(running);
     expect(adapter.timestampMs(row())).toBe(Date.parse("2026-10-27T10:00:00.000Z"));

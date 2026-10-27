@@ -343,6 +343,17 @@ describe("events/poll: maxAgeMs", () => {
     expect(res.truncated).toBe(true);
   });
 
+  it("keeps an undated row however small maxAgeMs is", async () => {
+    const { call, store } = setup(
+      { timestampMs: (row) => (row.cursor === 2 ? null : row.at) },
+      { now: () => NOW },
+    );
+    for (let i = 1; i <= 4; i++) store.arrive(i);
+    const res = await call("events/poll", { ...acme, cursor: encodeCursor(id, 0), maxAgeMs: 0 });
+    expect((res.events as { eventId: string }[]).map((e) => e.eventId)).toEqual(["g2"]);
+    expect(res.truncated).toBe(true);
+  });
+
   it("with a null cursor, ignores maxAgeMs", async () => {
     const { call, store } = setup({}, { now: () => NOW });
     for (let i = 1; i <= 4; i++) store.arrive(i);

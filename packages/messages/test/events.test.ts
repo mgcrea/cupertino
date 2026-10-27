@@ -206,7 +206,14 @@ describe("messagesEventAdapter", () => {
     expect(occ.timestamp).toBe("2026-08-01T12:00:00.000Z");
     expect(Object.keys(occ.data).toSorted()).toEqual(["chat", "date", "handle", "id"]);
     expect(occ.data).toMatchObject({ id: "msg-ref", chat: "chat-ref", handle: "+33612345678" });
-    expect(adapter.occurrence(row({ date: null })).timestamp).toBe("");
+    // An undated row is stamped with the scan time on the server's clock, never "".
+    const before = Date.now();
+    const undated = adapter.occurrence(row({ date: null }));
+    const at = Date.parse(undated.timestamp);
+    expect(undated.timestamp).toBe(new Date(at).toISOString());
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
+    expect(undated.data.date).toBeNull();
   });
 
   it("timestampMs is the message date, or null", () => {

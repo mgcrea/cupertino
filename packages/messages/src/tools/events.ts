@@ -1,8 +1,11 @@
-import { normalizeFilter, type EventTypeAdapter, type WatchFilter } from "@mgcrea/mcp-apple-core";
-import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import {
+  isoMs,
+  occurrenceTimestamp,
+  parseSenderArgs,
+  type EventTypeAdapter,
+} from "@mgcrea/mcp-apple-core";
 import { z } from "zod";
 
-import { PreconditionError } from "../client/errors.js";
 import type { MessageArrival } from "../client/watch.js";
 import type { MessagesWatchService } from "./watch.js";
 
@@ -19,9 +22,6 @@ const Args = z.object({
   from: z.array(z.string().min(1)).optional(),
   domains: z.array(z.string().min(1)).optional(),
 });
-
-const invalidParams = (message: string): ProtocolError =>
-  new ProtocolError(ProtocolErrorCode.InvalidParams, message);
 
 export const messagesEventAdapter = (
   service: MessagesWatchService,
@@ -68,52 +68,26 @@ export const messagesEventAdapter = (
     },
   },
 
-  async parseArguments(args: unknown): Promise<WatchFilter> {
-    const parsed = Args.safeParse(args ?? {});
-    if (!parsed.success) {
-      throw invalidParams(
-        `Invalid arguments for messages.received: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
-      );
-    }
-    const { from, domains } = parsed.data;
-    const typed = { ...(from ? { from } : {}), ...(domains ? { domains } : {}) };
-    // The caller's own mistakes first, without touching the store: an empty
-    // filter is InvalidParams whatever state chat.db is in.
-    try {
-      normalizeFilter(typed, "subscription");
-    } catch (err) {
-      if (err instanceof PreconditionError) throw invalidParams(err.message);
-      throw err;
-    }
-    // Opening the store is not the client's mistake, so it stays outside the wrap.
-    await service.ensure();
-    try {
-      // `unresolved` handles are kept: a poll result has nowhere to report them.
-      const resolved = service.resolveFrom(from ?? []).from;
-      return normalizeFilter(
-        {
+  parseArguments: (args) =>
+    parseSenderArgs("messages.received", Args, args, {
+      open: () => service.ensure(),
+      resolve: async ({ from, domains }) => {
+        // `unresolved` handles are kept: a poll result has nowhere to report them.
+        const resolved = service.resolveFrom(from ?? []).from;
+        return {
           ...(resolved.length > 0 ? { from: resolved } : {}),
           ...(domains ? { domains } : {}),
-        },
-        "subscription",
-      );
-    } catch (err) {
-      if (err instanceof PreconditionError) throw invalidParams(err.message);
-      throw err;
-    }
-  },
+        };
+      },
+    }),
 
   occurrence: (row) => ({
     eventId: row.key,
-    timestamp: row.date ?? "",
+    timestamp: occurrenceTimestamp(row.date),
     data: { id: row.id, chat: row.chat, handle: row.handle, date: row.date },
   }),
 
-  timestampMs: (row) => {
-    if (row.date === null) return null;
-    const ms = Date.parse(row.date);
-    return Number.isNaN(ms) ? null : ms;
-  },
+  timestampMs: (row) => isoMs(row.date),
 
   source: service.source,
   ensure: () => service.refresh(),

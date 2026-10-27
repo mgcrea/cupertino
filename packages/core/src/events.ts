@@ -1,8 +1,11 @@
 import { ProtocolError as SdkProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { z } from "zod";
 
+import { PreconditionError } from "./errors.js";
 import {
   inScope,
   matchesSender,
+  normalizeFilter,
   sameFile,
   type ArrivalRow,
   type ArrivalSource,
@@ -78,6 +81,77 @@ export type EventTypeAdapter<R extends ArrivalRow> = {
 
 const invalidParams = (message: string): SdkProtocolError =>
   new SdkProtocolError(ProtocolErrorCode.InvalidParams, message);
+
+/** The sender filter every event type's arguments carry; the rest is the surface's. */
+export type SenderArgs = { from?: string[] | undefined; domains?: string[] | undefined };
+
+/** Runs `fn`, turning a `PreconditionError` (a refusal of what the client sent) into InvalidParams. */
+const clientsMistake = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof PreconditionError) throw invalidParams(err.message);
+    throw err;
+  }
+};
+
+/**
+ * `parseArguments` for an event type whose arguments are a sender filter, in the
+ * order that keeps each failure's code honest:
+ *
+ * 1. The arguments against `schema`, and an empty sender: the client's own
+ *    mistakes, checked without touching the store, so an empty filter is
+ *    InvalidParams whatever state the store is in.
+ * 2. `open`, which opens the store. What fails there is not the client's
+ *    mistake, so it passes through untouched and `events/*` answers -32603.
+ * 3. `resolve`, which turns what was typed into the store's terms (handles,
+ *    mailbox rowids). A refusal there (an unknown mailbox, too many) is the
+ *    client's again, as is the filter it returns failing `normalizeFilter`.
+ */
+export const parseSenderArgs = async <A extends SenderArgs>(
+  name: string,
+  schema: z.ZodType<A>,
+  args: unknown,
+  steps: {
+    open(args: A): Promise<void>;
+    resolve(args: A): Promise<Parameters<typeof normalizeFilter>[0]>;
+  },
+): Promise<WatchFilter> => {
+  const parsed = schema.safeParse(args ?? {});
+  if (!parsed.success) {
+    throw invalidParams(
+      `Invalid arguments for ${name}: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+    );
+  }
+  const typed = parsed.data;
+  await clientsMistake(() =>
+    normalizeFilter(
+      {
+        ...(typed.from ? { from: typed.from } : {}),
+        ...(typed.domains ? { domains: typed.domains } : {}),
+      },
+      "subscription",
+    ),
+  );
+  await steps.open(typed);
+  return clientsMistake(async () => normalizeFilter(await steps.resolve(typed), "subscription"));
+};
+
+/** An ISO date as epoch ms, for `timestampMs`: null when there is none or it does not parse. */
+export const isoMs = (iso: string | null): number | null => {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+/**
+ * An occurrence's `timestamp`: the row's own date, or for a row with none the
+ * time it was scanned, on the server's clock. The SEP makes `timestamp` a
+ * required ISO 8601 instant, so an empty string is never sent; the payload keeps
+ * its own date null, which is how a client can tell the two apart.
+ */
+export const occurrenceTimestamp = (iso: string | null, now: () => number = Date.now): string =>
+  iso ?? new Date(now()).toISOString();
 
 /**
  * `v1.<dev>-<ino>.<rowid>`.
