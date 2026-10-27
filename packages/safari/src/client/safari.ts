@@ -36,6 +36,7 @@ import {
   defaultPagesDirectory,
   isQuiet,
   pagesStatus,
+  readPage,
   readPages,
   type CapturedPage,
   type PagesStatus,
@@ -753,7 +754,7 @@ export class AppleSafariClient {
    * entry by construction, because the extension keys its files by URL digest.
    */
   page(url: string): { page: CapturedPage; ageSeconds: number } | null {
-    const hit = readPages(this.pagesDirectory).find((p) => p.url === url);
+    const hit = readPage(this.pagesDirectory, url);
     return hit ? { page: hit, ageSeconds: ageSeconds(hit) } : null;
   }
 
