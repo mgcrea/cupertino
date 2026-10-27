@@ -304,6 +304,14 @@ test(
 const eventsEnv = (fx) => ({ ...mailEnv(fx), APPLE_MAIL_ALLOW_EVENTS: "1" });
 const acmeDomain = { name: "mail.received", arguments: { domains: ["acme.com"] } };
 
+/** Whether `m` is an event pushed on the stream opened with request id `id`. */
+const eventOn = (id) => (m) => {
+  if (m.method !== "notifications/events/event") return false;
+  // Destructured: the repo's lint rejects `._meta` member access.
+  const { _meta: tags } = m.params ?? {};
+  return tags?.["io.modelcontextprotocol/subscriptionId"] === id;
+};
+
 test("modern: events/poll delivers matching mail", onMac, async () => {
   const fx = mailFixture();
   const s = session(eventsEnv(fx), "modern");
@@ -346,9 +354,7 @@ test("modern: events/stream pushes matching mail", onMac, async () => {
     s.write({ method: "notifications/cancelled", params: { requestId: "stream-1" } });
     // Mail keeps arriving after the cancel, and none of it is pushed on that
     // stream: 2 s covers the trigger's 500 ms debounce several times over.
-    const onStream = (m) =>
-      m.method === "notifications/events/event" &&
-      m.params?._meta?.["io.modelcontextprotocol/subscriptionId"] === "stream-1";
+    const onStream = eventOn("stream-1");
     const before = s.seen.filter(onStream).length;
     fx.arrive(104);
     await new Promise((ok) => setTimeout(ok, 2000));
