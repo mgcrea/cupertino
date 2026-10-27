@@ -14,6 +14,12 @@ summary.
 
 ## [Unreleased]
 
+**Mail reads without waiting on Mail, and drafts can be edited after their window is closed.**
+Everyday Mail reads answer from its index, Mail and Messages can tell a session when something
+arrives, and the npm servers also speak the 2026-07-28 protocol. `apple_mail_update_draft` rebuilds
+a closed reply as a reply, changes only the words you name, and tells two windows with one subject
+apart, with the editing done inside Cupertino.
+
 ### Added
 
 - **The npm servers also speak the 2026-07-28 MCP protocol.** Mail, Notes, Reminders, Calendar,
@@ -30,6 +36,30 @@ summary.
   subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log
   shows each subscription, and the Activity log and the audit file record each push, so what
   Cupertino sent into a session reads the same as what it was asked.
+- **A draft whose window was closed can still be edited.** `apple_mail_update_draft` used to refuse
+  once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the
+  thread and keeps its files and formatting, and the old draft is deleted only after the new one is
+  confirmed in Drafts. It still refuses, leaving the draft as it was, for a forward and for an
+  original Mail can't find. When the quote Mail writes into the new reply is not the one the draft
+  had, the draft is left as it was too, but that new reply window stays open, unfilled and unsaved,
+  for you to close without saving.
+- **Edits can be find and replace.** `update_draft` takes `edits`, pairs of text to find and what
+  replaces it, applied to what you wrote and never to the quoted message. Each `find` must match
+  exactly once, and only the matched words change, so the rest of the draft, its formatting and its
+  files are left alone.
+- **A draft can be named by its window, or not at all.** `update_draft` takes a `composer` handle
+  from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose
+  window that is open. With none or several open it refuses and lists them.
+- **Drafts open as tabs of one window are handled.** With macOS set to prefer tabs, Mail opens every
+  compose window as a tab, and only the tab it shows can be read. `apple_mail_list_open_drafts` now
+  lists each tab with its own handle, a hidden one by subject only. `update_draft` selects a hidden
+  tab, checks it is the draft, edits and saves it, and then leaves that tab shown, because Mail does
+  not say when a save has landed and switching back early could save the other draft. A handle can
+  come back marked `rebound` after Mail rebuilds its tab bar; it then edits only by `ref`, which
+  checks the text, until that text is proved.
+- **The Mail pane says when drafts need Accessibility.** Writing into a compose window requires it,
+  and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes
+  are on and the grant is missing.
 
 ### Changed
 
@@ -52,6 +82,26 @@ summary.
   after every pause waited about a second for Mail to list its accounts again. An expired list is
   now served at once and refreshed behind the call, and an account name it does not know is read
   afresh before it is refused.
+- **A new message, reply or forward keeps your signature.** The text you give goes in above the
+  signature Mail adds, as it always did, and the signature stays below it, an image in it
+  included; the check that the text landed reads back your text followed by the signature.
+  Changing a draft that already exists with `update_draft` and a `body` still replaces everything
+  you wrote in it, signature included.
+- **Editing a draft is faster and interrupts less.** The text is selected without moving the caret
+  line by line and without a copy for every step, so Mail comes to the front once, to paste, and your
+  clipboard and the app you were in are put back afterwards.
+- **`apple_mail_list_open_drafts` returns a handle for each window.** It also reports From, To, Cc and
+  Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without
+  searching for it first.
+
+### Fixed
+
+- **Two drafts with the same subject are no longer refused.** Two replies in one thread share a
+  title, and the old edit gave up rather than guess which window was meant. Each window now has its
+  own handle, so the right one is edited and the other is left as it was.
+- **A missing Accessibility grant is explained once, in plain words.** Each draft tool said so in its
+  own way, and some only said it could not read the window. They now say what the missing grant
+  stopped and where to turn it on.
 
 ## [1.31.0] - 2026-10-25
 

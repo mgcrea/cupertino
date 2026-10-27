@@ -182,318 +182,6 @@ describe("findComposer", () => {
   });
 });
 
-describe("listComposers", () => {
-  /*
-   * Three windows the way Mail had them when this was measured: an untitled
-   * 53×48 sliver, a reply composer, and the main viewer. Only the composer
-   * carries a subject FIELD, and that — not its title — is what makes it one.
-   */
-  const mail = (over: { bcc?: boolean; boundary?: "found" | "unreadable" } = {}) =>
-    hostStub({
-      list_windows: {
-        windows: [
-          { handle: "w0", index: 0 },
-          { handle: "w1", index: 1, title: "Re: lunch", main: true },
-          { handle: "w2", index: 2, title: "Inbox – 12 messages" },
-        ],
-      },
-      ui_tree: (args) => {
-        if (args.window !== 1)
-          return { elements: [el({ handle: "x", role: "AXToolbar", depth: 1 })] };
-        if (args.maxDepth === 1) {
-          return {
-            elements: [
-              el({ handle: "to", role: "AXTextField", id: "Mail.toField", value: "￼￼", depth: 1 }),
-              el({
-                handle: "cc",
-                role: "AXTextField",
-                id: "Mail.ccField",
-                value: "￼bob@ex",
-                depth: 1,
-              }),
-              ...(over.bcc
-                ? [
-                    el({
-                      handle: "bcc",
-                      role: "AXTextField",
-                      id: "Mail.bccField",
-                      value: "",
-                      depth: 1,
-                    }),
-                  ]
-                : []),
-              el({
-                handle: "subj",
-                role: "AXTextField",
-                id: "Mail.subjectField",
-                value: "Re: lunch",
-                depth: 1,
-              }),
-              el({
-                handle: "from",
-                role: "AXPopUpButton",
-                id: "popup_from",
-                value: "Me – me@ex",
-                depth: 1,
-              }),
-            ],
-          };
-        }
-        return { elements: [el({ handle: "body", role: "AXWebArea", depth: 4 })] };
-      },
-      expand: (args) => {
-        if (args.handle === "to") {
-          return {
-            elements: [
-              el({
-                handle: "t1",
-                role: "AXTextField",
-                subrole: "AXTextAttachment",
-                value: "Ann",
-                depth: 0,
-              }),
-              el({
-                handle: "t2",
-                role: "AXTextField",
-                subrole: "AXTextAttachment",
-                value: "Cy",
-                depth: 0,
-              }),
-            ],
-          };
-        }
-        if (args.handle === "cc") {
-          return {
-            elements: [
-              el({
-                handle: "c1",
-                role: "AXTextField",
-                subrole: "AXTextAttachment",
-                value: "Dee",
-                depth: 0,
-              }),
-            ],
-          };
-        }
-        return {
-          elements: [
-            el({ handle: "b1", value: "Tuesday works.", depth: 0 }),
-            el({ handle: "b2", role: "AXGroup", depth: 0 }),
-            el({ handle: "b3", value: "See you", depth: 1 }),
-            el({ handle: "q1", value: "On Mon, Ann wrote:", depth: 0 }),
-            el({ handle: "q2", role: "AXGroup", depth: 0 }),
-            el({ handle: "q3", value: "Lunch on ", depth: 1 }),
-            el({ handle: "q4", value: "Tuesday?", depth: 1 }),
-          ],
-        };
-      },
-      get_attribute: (args) =>
-        over.boundary === "unreadable"
-          ? { refusal: "busy" }
-          : { value: String(args.handle).startsWith("q") ? 1 : 0 },
-    });
-
-  it("finds composers by their subject field and reads them as a reviewer would", async () => {
-    const { env, seen } = await mail();
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.listComposers()).resolves.toEqual([
-      {
-        subject: "Re: lunch",
-        main: true,
-        from: "Me – me@ex",
-        to: ["Ann", "Cy"],
-        // A name still being typed has not become a token yet, and is kept.
-        cc: ["Dee", "bob@ex"],
-        bcc: null,
-        text: "Tuesday works.\nSee you",
-        quoted: true,
-        quote: "On Mon, Ann wrote:\nLunch on Tuesday?",
-        quoteTruncated: false,
-      },
-    ]);
-    // Reads only: nothing raised, focused or typed while someone may be writing.
-    for (const call of seen) {
-      expect(["list_windows", "ui_tree", "expand", "get_attribute"]).toContain(call.tool);
-    }
-    lane.close();
-  });
-
-  it("tells a hidden Bcc field from an empty one", async () => {
-    const { env } = await mail({ bcc: true });
-    const lane = MailAxLane.open(env)!;
-    const [composer] = await lane.listComposers();
-    expect(composer?.bcc).toEqual([]);
-    lane.close();
-  });
-
-  it("cuts the quote to the length asked for, and says so", async () => {
-    const { env } = await mail();
-    const lane = MailAxLane.open(env)!;
-    const [composer] = await lane.listComposers(7);
-    expect(composer).toMatchObject({ quote: "On Mon,", quoteTruncated: true });
-    lane.close();
-  });
-
-  /*
-   * A reviewer is not about to replace anything, so an unsplit body is still
-   * worth reading — but it must be labelled unsplit, or the quoted original
-   * would be reviewed as the user's own words.
-   */
-  it("returns the whole body, labelled unsplit, when the quote boundary cannot be read", async () => {
-    const { env } = await mail({ boundary: "unreadable" });
-    const lane = MailAxLane.open(env)!;
-    const [composer] = await lane.listComposers();
-    expect(composer).toMatchObject({ quoted: null, quote: null });
-    expect(composer?.text).toContain("On Mon, Ann wrote:");
-    lane.close();
-  });
-
-  it("is empty when no window is a composer", async () => {
-    const { env } = await hostStub({
-      list_windows: { windows: [{ handle: "w2", index: 0, title: "Inbox" }] },
-      ui_tree: { elements: [el({ handle: "x", role: "AXToolbar", depth: 1 })] },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.listComposers()).resolves.toEqual([]);
-    lane.close();
-  });
-});
-
-describe("bodyText", () => {
-  it("joins the accessible values under the body", async () => {
-    const { env } = await hostStub({
-      expand: {
-        elements: [
-          el({ handle: "e8", value: "Thanks — Tuesday works." }),
-          el({ handle: "e9", value: "   " }),
-          el({ handle: "e10", value: null }),
-          el({ handle: "e11", value: "> original" }),
-        ],
-      },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodyText("e7")).resolves.toBe("Thanks — Tuesday works.\n> original");
-    lane.close();
-  });
-
-  /*
-   * Blind and empty are different answers and must not collapse: one means the
-   * composer holds nothing, the other means we cannot see it, and only the
-   * second may abandon a draft.
-   */
-  it("returns null when the body cannot be read at all", async () => {
-    const { env } = await hostStub({ expand: { refusal: "stale handle" } });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodyText("e7")).resolves.toBeNull();
-    lane.close();
-  });
-});
-
-describe("bodySize", () => {
-  /*
-   * `matched` rather than the returned length. The response is byte capped, so
-   * a long quoted message truncates — and a fingerprint read off a truncated
-   * list would compare two bounds instead of two states, which is exactly the
-   * comparison that decides whether pasting again is safe.
-   */
-  it("counts what matched, not what fitted in the response", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" })], matched: 412, truncated: "raise maxNodes" },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodySize("e7")).resolves.toBe(412);
-    lane.close();
-  });
-
-  /*
-   * Null, and never a number. This returned -1, and the caller compared it as a
-   * count: a composer that CLOSES takes its handle with it, so a body that had
-   * gone in perfectly read back as -1, compared unequal to the size before, and
-   * was reported as "something landed that cannot be matched". A reply sent by
-   * hand mid-call came back as a body that never went in.
-   */
-  it("is null, never a number, when the body cannot be read", async () => {
-    const { env } = await hostStub({ expand: { refusal: "gone" } });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.bodySize("e7")).resolves.toBeNull();
-    lane.close();
-  });
-});
-
-describe("paste", () => {
-  /*
-   * The order is load-bearing. A raise orders the window forward inside Mail; an
-   * activate makes Mail the app a synthetic keystroke reaches; the focus decides
-   * which element inside it receives the key. Drop any one and command-V lands
-   * somewhere else.
-   */
-  it("raises, activates, focuses, then sends command-V, in that order", async () => {
-    const { env, seen } = await hostStub({ focus: { focused: true } });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 })).resolves.toBe(true);
-    expect(seen.map((c) => c.tool)).toEqual(["raise_window", "activate", "focus", "key"]);
-    // The paste names the body it was focused into, so the desktop server brings
-    // Mail forward first and posts nothing if the person has switched away.
-    expect(seen[3]?.args).toEqual({ key: "v", modifiers: ["command"], handle: "e7" });
-    lane.close();
-  });
-
-  /*
-   * An element can report itself focusable and not take the focus. Pressing on
-   * regardless would paste into whatever DID have it.
-   */
-  it("does not send the keystroke when the focus did not take", async () => {
-    const { env, seen } = await hostStub({ focus: { focused: false } });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 30)).resolves.toBe(false);
-    expect(seen.map((c) => c.tool)).not.toContain("key");
-    lane.close();
-  });
-
-  /*
-   * MEASURED, three fresh composers: the body is readable ~140 ms before it will
-   * take the focus, and the FIRST attempt failed on every one. Asking once made
-   * this a coin flip that `compose.ts`'s unrelated retry happened to cover.
-   */
-  it("keeps asking for the focus, because readable is not ready", async () => {
-    const { env, seen } = await hostStub({
-      focus: (_args: unknown, nth: number) => ({ focused: nth > 2 }),
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.paste({ window: "w1", body: "e7", index: 0 }, 2_000)).resolves.toBe(true);
-    expect(seen.filter((c) => c.tool === "focus")).toHaveLength(3);
-    expect(seen.at(-1)?.tool).toBe("key");
-    lane.close();
-  });
-});
-
-describe("maxQuoteLevel", () => {
-  it("reports the deepest level any element carries", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" }), el({ handle: "e9" }), el({ handle: "e10" })] },
-      get_attribute: (args) => ({ value: args.handle === "e9" ? 2 : 0 }),
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.maxQuoteLevel("e7")).resolves.toBe(2);
-    lane.close();
-  });
-
-  /*
-   * An element that does not carry the attribute answers null, which the driver
-   * returns rather than throwing — structural absences outnumber the nodes on a
-   * healthy walk.
-   */
-  it("treats a missing attribute as level zero", async () => {
-    const { env } = await hostStub({
-      expand: { elements: [el({ handle: "e8" })] },
-      get_attribute: { value: null },
-    });
-    const lane = MailAxLane.open(env)!;
-    await expect(lane.maxQuoteLevel("e7")).resolves.toBe(0);
-    lane.close();
-  });
-});
-
 describe("containsText", () => {
   it("ignores where a WebKit view chose to break lines", () => {
     expect(containsText("Thanks —\n  Tuesday   works.", "Thanks — Tuesday works.")).toBe(true);
@@ -570,6 +258,33 @@ describe("finish", () => {
    * A composer that has gone cannot be raised, and command-shift-D posted into
    * an unknown foreground is the one outcome worth refusing outright.
    */
+  /*
+   * A window holding several drafts as tabs acts on the tab it shows, so the
+   * caller can name a check that must pass right before the key: once Mail is
+   * in front, after the raise. A no (or a check that throws) presses nothing.
+   */
+  it("presses nothing when the check right before the key says no", async () => {
+    const { env, seen } = await hostStub({});
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.finish(true, REF, async () => false)).resolves.toBe("unready");
+    await expect(
+      lane.finish(true, REF, async () => {
+        throw new Error("listing failed");
+      }),
+    ).resolves.toBe("unready");
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    let asked = 0;
+    await expect(
+      lane.finish(true, REF, async () => {
+        asked += 1;
+        return true;
+      }),
+    ).resolves.toBe("pressed");
+    expect(asked).toBe(1);
+    expect(seen.slice(-3).map((c) => c.tool)).toEqual(["raise_window", "activate", "key"]);
+    lane.close();
+  });
+
   it("presses nothing when the composer can no longer be raised", async () => {
     const { env, seen } = await hostStub({ raise_window: { refusal: "stale handle" } });
     const lane = MailAxLane.open(env)!;
@@ -604,6 +319,26 @@ describe("composerGone", () => {
     lane.close();
   });
 
+  /*
+   * A tab Mail is not showing is not a window title, so the window list alone
+   * would call a draft in a background tab gone. The composers list sees tabs.
+   */
+  it("is false while a tab with that subject is open, though no window carries it", async () => {
+    const { env } = await hostStub({
+      list_windows: { windows: [{ handle: "w1", index: 0, title: "Another draft" }] },
+      mail_composers: {
+        composers: [
+          { composer: "mc-1", subject: "Another draft", tab: "selected" },
+          { composer: "mc-2", subject: "Re: lunch", tab: "background", text: null },
+        ],
+      },
+    });
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.composerGone("Re: lunch", 0)).resolves.toBe(false);
+    await expect(lane.composerGone("Something else", 0)).resolves.toBe(true);
+    lane.close();
+  });
+
   it("waits for the window to go rather than reading once", async () => {
     const { env } = await hostStub({
       list_windows: (_args, n) =>
@@ -613,6 +348,50 @@ describe("composerGone", () => {
     });
     const lane = MailAxLane.open(env)!;
     await expect(lane.composerGone("Re: lunch", 2000)).resolves.toBe(true);
+    lane.close();
+  });
+});
+
+describe("composers", () => {
+  it("passes quoteChars on only when given", async () => {
+    const { env, seen } = await hostStub({ mail_composers: { composers: [] } });
+    const lane = MailAxLane.open(env)!;
+    await lane.composers();
+    await lane.composers(0);
+    expect(seen.map((c) => c.args)).toEqual([{}, { quoteChars: 0 }]);
+    lane.close();
+  });
+
+  it("carries each composer's tab through, with a background tab's unread fields null", async () => {
+    const background = {
+      composer: "mc-2",
+      subject: "Re: lunch",
+      tab: "background",
+      main: false,
+      from: null,
+      to: null,
+      cc: null,
+      bcc: null,
+      recipients: null,
+      text: null,
+      quoted: null,
+      quote: null,
+      quoteTruncated: false,
+      files: [],
+    };
+    const { env } = await hostStub({
+      mail_composers: {
+        composers: [
+          { composer: "mc-1", subject: "Hello", tab: "selected", text: "hi", recipients: [] },
+          background,
+          { composer: "mc-3", subject: "Alone", tab: null, text: "", recipients: [] },
+        ],
+      },
+    });
+    const lane = MailAxLane.open(env)!;
+    const listed = await lane.composers();
+    expect(listed.map((c) => c.tab)).toEqual(["selected", "background", null]);
+    expect(listed[1]).toEqual(background);
     lane.close();
   });
 });

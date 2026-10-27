@@ -1,0 +1,61 @@
+1917        
+From: Olivier Louvignes <olivier@example.com>
+Content-Type: multipart/alternative;
+	boundary="Apple-Mail=_5E1A2B3C-4D5E-4F60-8A7B-9C0D1E2F3A4B"
+X-Uniform-Type-Identifier: com.apple.mail-draft
+Mime-Version: 1.0 (Mac OS X Mail 16.0 \(3826.700.81\))
+Subject: Re: Quarterly numbers
+X-Apple-Base-Url: x-msg://5/
+Date: Sat, 25 Oct 2026 10:12:03 +0200
+X-Apple-Mail-Remote-Attachments: NO
+In-Reply-To: <A1B2C3D4-0000-4000-8000-000000000001@example.com>
+X-Apple-Windows-Friendly: 1
+To: Ann Example <ann@example.com>
+Cc: "Rivers, Cy" <cy@example.com>
+References: <A1B2C3D4-0000-4000-8000-000000000001@example.com>
+X-Apple-Auto-Saved: 1
+Message-Id: <7F0E9D8C-1B2A-4C3D-9E8F-0A1B2C3D4E5F@example.com>
+X-Universally-Unique-Identifier: 0B3369D2-E513-4069-9457-668E2F5905B7
+
+
+--Apple-Mail=_5E1A2B3C-4D5E-4F60-8A7B-9C0D1E2F3A4B
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain;
+	charset=utf-8
+
+Thanks Ann, the numbers look right. See the sheet <https://example.com/Ann>=
+.
+
+> On 22 Oct 2026, at 11:30, Ann Example <ann@example.com> wrote:
+> 
+> Here are the quarterly numbers.
+
+--Apple-Mail=_5E1A2B3C-4D5E-4F60-8A7B-9C0D1E2F3A4B
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/html;
+	charset=utf-8
+
+<html aria-label=3D"message body"><head><meta http-equiv=3D"content-type" c=
+ontent=3D"text/html; charset=3Dutf-8"></head><body style=3D"overflow-wrap: =
+break-word; -webkit-nbsp-mode: space; line-break: after-white-space;"><div>=
+Thanks Ann, the numbers look <b>right</b>. See <a href=3D"https://example.c=
+om/Ann">the sheet</a>.</div><div class=3D"AppleOriginalContents" style=3D"d=
+irection: ltr;"><br><blockquote type=3D"cite"><div>On 22 Oct 2026, at 11:30=
+, Ann Example &lt;ann@example.com&gt; wrote:</div><br class=3D"Apple-interc=
+hange-newline"><div><div>Here are the quarterly numbers.</div></div></block=
+quote></div><br></body></html>
+--Apple-Mail=_5E1A2B3C-4D5E-4F60-8A7B-9C0D1E2F3A4B--
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>date-last-viewed</key>
+	<integer>1792915923</integer>
+	<key>date-received</key>
+	<integer>1792915923</integer>
+	<key>flags</key>
+	<integer>8590195841</integer>
+	<key>remote-id</key>
+	<string>5</string>
+</dict>
+</plist>

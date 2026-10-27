@@ -289,6 +289,24 @@ struct DispatchCheck {
       simulatorReach(gates: true, lent: .only(["com.apple.mail"])) == pinned
         && simulatorReach(gates: true, lent: .any) == pinned)
 
+    // Mail's drafts are written through the app's own Accessibility grant, so the
+    // Mail pane says so when writes are on and the grant is not. The condition is
+    // a pure function so the rows it gates cannot drift from it.
+    for enabled in [true, false] {
+      for writes in [true, false] {
+        for access in [AccessibilityStatus.granted, .denied] {
+          let want = enabled && writes && access == .denied
+          check(
+            "Mail drafts need Accessibility: enabled=\(enabled) writes=\(writes) \(access) -> \(want)",
+            Permissions.mailDraftsNeedAccessibility(
+              mailEnabled: enabled, mailWrites: writes, accessibility: access) == want)
+        }
+      }
+    }
+    check(
+      "the Mail line names the drafts",
+      Permissions.mailDraftsNeedAccessibilityMessage == "Mail drafts need Accessibility.")
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
   }

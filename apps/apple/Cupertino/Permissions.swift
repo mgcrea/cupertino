@@ -651,6 +651,27 @@ nonisolated enum Permissions {
     NSWorkspace.shared.open(url)
   }
 
+  /// What the Mail pane says when drafts cannot be written for want of the grant.
+  ///
+  /// Mail is reached through Apple Events and a file lane, neither of which needs
+  /// Accessibility, so its own row never mentions it. Drafts are the exception:
+  /// they are written by the app's native composer driver, which does. The Mail
+  /// server's draft tools say the same thing in their own words
+  /// (`MailAxLane.grantMessage`).
+  nonisolated static let mailDraftsNeedAccessibilityMessage = "Mail drafts need Accessibility."
+
+  /// Whether to show it: Mail is served, may write, and the grant is missing.
+  ///
+  /// A pure function of its three inputs so the row and the check cannot
+  /// disagree. Writes matter because reading drafts and the rest of Mail
+  /// needs no grant, and a pane that complained with writes off would be asking
+  /// for something that changes nothing.
+  nonisolated static func mailDraftsNeedAccessibility(
+    mailEnabled: Bool, mailWrites: Bool, accessibility: AccessibilityStatus
+  ) -> Bool {
+    mailEnabled && mailWrites && accessibility != .granted
+  }
+
   static func isRunning(_ bundleID: String) -> Bool {
     !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
   }

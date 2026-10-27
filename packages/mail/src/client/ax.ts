@@ -30,7 +30,9 @@ import { MAIL_SURFACE } from "./errors.js";
  * then does nothing" — measured in `jxa/write.ts`, and independently in
  * `docs/desktop.md`, which found the same trap on the first text field of all
  * seven apps it probed. A native driver does not make an app honour a write it
- * ignores. The clipboard is still borrowed and still put back.
+ * ignores. What changed is who pastes: the app's `mail_composer_edit` verb does,
+ * bringing Mail forward for a moment, borrowing the clipboard and restoring it,
+ * and reading the result back before it answers. This file only asks.
  *
  * **Nothing reports a draft ready on the strength of a write being accepted.**
  * That is the failure this whole path is shaped around: a draft correct in every
@@ -58,67 +60,6 @@ const BODY_ROLE = "AXWebArea";
  */
 const BODY_DEPTH = 8;
 
-/**
- * How long to keep asking the composer's body to take the focus.
- *
- * **Readable is not ready, and the gap is not zero.** `findComposer` returns as
- * soon as the window and its web area can be READ; the body cannot take the
- * keyboard for about another 140 ms after that. Measured over three fresh
- * composers, driving the real driver:
- *
- *     web area readable at 395 ms   focus -> false at 421 ms, true at 560 ms
- *     web area readable at 637 ms   focus -> false at 671 ms, true at 812 ms
- *     web area readable at 640 ms   focus -> false at 665 ms, true at 805 ms
- *
- * The first attempt failed on every trial. Without a poll here that is a
- * coin-flip resting on how long the surrounding round trips happen to take —
- * `compose.ts` retries the whole paste once, for an unrelated reason, and that
- * retry was silently carrying this.
- *
- * Which is `docs/desktop.md`'s most expensive lesson arriving in a new place:
- * *the control must be polled for, not waited for*. It was written about a
- * window's chrome appearing before its content; this is the same shape one level
- * down, where the content is there and the focus is not.
- */
-const FOCUS_TIMEOUT_MS = 2_000;
-
-/** Between focus attempts. Each one is a round trip, so this is not a spin. */
-const FOCUS_POLL_MS = 100;
-
-/**
- * How many leading blocks to classify as quoted or not.
- *
- * `composerBody` only needs the FIRST quoted block — everything from it down is
- * the original — and on a reply that is the attribution line, two or three
- * blocks in. The bound is therefore generous rather than tight, and its job is
- * the failure case: a body whose boundary is not inside it is reported as
- * unknown rather than guessed at, because guessing "no quote" would offer the
- * whole quoted original up for replacement.
- */
-const BLOCK_SCAN_MAX = 60;
-
-/**
- * How many times to ask for a block's quote level before giving up on it.
- *
- * A busy WebKit view answers "did not answer in time … retry" rather than
- * refusing, and it says so straight after a paste — which is exactly when this
- * is read. See `#quoteLevel`.
- */
-const QUOTE_READ_TRIES = 3;
-const QUOTE_READ_PAUSE_MS = 120;
-
-/** One keystroke, as `apple_desktop_key` takes it. */
-type Keystroke = { key: string; modifiers?: string[] };
-
-/**
- * How many keystrokes go in one `apple_desktop_run`.
- *
- * The verb caps a run at 25 steps. Staying under it here means a burst is
- * chunked rather than refused, which matters because the number of strokes is
- * the number of lines in somebody's draft.
- */
-const KEY_BURST = 20;
-
 type Element = {
   handle: string;
   role: string;
@@ -139,112 +80,80 @@ type Windows = {
   windows?: { handle: string; index: number; title?: string | null; main?: boolean }[];
 };
 
-/**
- * The composer's header fields, by the identifiers Mail gives them.
- *
- * Identifiers rather than labels, because the labels are localised — a French
- * Mail says "À :" — and the identifiers are not. `popup_from` is the account
- * picker, whose value reads `Name – address`.
- */
-const SUBJECT_FIELD = "Mail.subjectField";
-const FROM_FIELD = "popup_from";
-const RECIPIENT_FIELDS = { to: "Mail.toField", cc: "Mail.ccField", bcc: "Mail.bccField" } as const;
-
-/**
- * What a recipient field holds in place of each recipient.
- *
- * MEASURED, macOS 27.0: a field holding one token reads `AXValue` "￼" —
- * the object replacement character — and the token itself is a child
- * `AXTextField` with subrole `AXTextAttachment` whose value is the DISPLAY NAME.
- * No attribute on it carries the address: AXDescription, AXHelp, AXTitle,
- * AXValueDescription and AXIdentifier all read null.
- */
-const TOKEN_CHAR = "￼";
-const TOKEN_SUBROLE = "AXTextAttachment";
-
-/** How much of the quoted original to return by default. */
-const QUOTE_CHARS = 2_000;
-
 export type ComposerRef = { window: string; body: string; index: number };
 
-/**
- * A composer's own text, told apart from the original it quotes.
- *
- * MEASURED, macOS 27.0 (build 26A428), on a reply composer: `AXBlockQuoteLevel`
- * reads 0 on every block the sender wrote and 1 on every block from the
- * attribution line — `On <date>, <who> wrote:` — down, including the quoted
- * message's images and links. The split is exact, which is what makes replacing
- * a reply's text without touching its quote possible at all.
- *
- * **A FORWARD is quoted too**, and that was worth measuring rather than assuming:
- * a forward reads as prose with a `Begin forwarded message:` header and nothing
- * about it looks like a quotation, but that line and everything under it read
- * level 1 on the same build. Had they read 0 the whole forwarded message would
- * have counted as the sender's own text and been offered up for replacement.
- *
- * `blocks` counts the top-level elements above that boundary, NOT rendered
- * lines: a paragraph that wraps is one block and two lines. So it is a floor for
- * how many times the selection has to be extended, never a target — see
- * `selectOwnText` in `revise.ts`, which converges upwards from it and verifies
- * the answer before anything is replaced.
- */
-export type ComposerBody = {
-  /** What the sender wrote, blocks joined by newlines. "" when they wrote nothing. */
-  text: string;
-  /** Top-level elements above the quote. */
-  blocks: number;
-  /** Whether a quoted original follows. */
-  quoted: boolean;
+/** One open composer, as the app's `mail_composers` verb reports it. */
+export type NativeComposer = {
   /**
-   * The names of the files sitting in the sender's own text, in order. See
-   * `FILE_ROLES`. They carry no value, so `text` never includes them.
+   * The handle, `mc-<n>`. It names this composer, tab or window, for as long
+   * as it lives, and its number is never reused. One thing moves it: Mail
+   * re-mints every tab button when a tab opens or closes, and a tab's handle
+   * is then re-bound to the live tab of its window carrying its title, when
+   * that title was unique both before and after. That tab may be another
+   * draft, which `rebound` says.
    */
+  composer: string;
+  /**
+   * True while the handle was re-bound to a tab that may be another draft
+   * (the person closed the first and opened, or retitled, another under its
+   * title). An edit by the handle alone is refused; one by ref, which sends
+   * the draft's text as `expectHead`, goes through when the text matches. A
+   * moved handle stays reference-only until its text is proved: a verified
+   * edit by ref clears the mark, and so does a listing that reads the tab's
+   * own text, not empty, as what the handle was last seen with. Absent from
+   * an app that predates it.
+   */
+  rebound?: boolean;
+  /** A tab's subject is its title. */
+  subject: string;
+  /**
+   * Null (or absent) for a window of its own. With "Prefer tabs: Always" Mail
+   * opens every composer as a tab of one window, and Accessibility shows only
+   * the selected tab's content: `"selected"` reads as a window does,
+   * `"background"` carries its subject and nothing else, because reading the
+   * rest would mean switching tabs and a listing never does.
+   */
+  tab?: "selected" | "background" | null;
+  /** To and Cc names together. Null for a background tab. */
+  recipients: string[] | null;
+  /** The window Mail considers main: the one in front, when Mail is. */
+  main?: boolean;
+  /** The account picker's value, `Name – address`; null when there is none. */
+  from?: string | null;
+  to?: string[] | null;
+  cc?: string[] | null;
+  /** Null when the Bcc field is not shown, which is not the same as empty. */
+  bcc?: string[] | null;
+  /** The opening of the quoted original; null when none, or none was asked for. */
+  quote?: string | null;
+  quoteTruncated?: boolean;
+  /**
+   * The sender's own text, blocks joined by newlines. Null for a background
+   * tab, and for a body the app could not read (Mail still loading it, or not
+   * answering): never "" for one, which would read as an empty draft.
+   */
+  text: string | null;
+  /** Null when a quote level was unreadable, and for a background tab. */
+  quoted: boolean | null;
+  /** Named files in the own text. Empty for a background tab, which is not read. */
   files: string[];
 };
 
-/**
- * What a file in a composer's body reads as.
- *
- * MEASURED, macOS 27.0, pasting file URLs into a new message's body: an image
- * is an `AXImage` NAMED with its filename (`attach-probe.png`), and anything
- * else an `AXButton` named with the filename and its size (`attach-probe.txt,
- * 23 bytes`). The size is localised and the filename is not, so a file is
- * matched by the name or by the name followed by a comma — see `isFileNamed`.
- * Neither has a value, so neither disturbs the text read beside it. The image's
- * own child button is unnamed, and is not counted.
- */
-const FILE_ROLES = new Set(["AXImage", "AXButton"]);
-
-/** Does this element name read as the file called `name`? */
-export const isFileNamed = (element: string, name: string): boolean =>
-  element === name || element.startsWith(`${name}, `);
-
-/**
- * One compose window as a person would read it, for reviewing what they wrote.
- *
- * Recipients are display names, never addresses — see `TOKEN_CHAR`. A name
- * still being typed, not yet turned into a token, is returned as typed.
- */
-export type OpenComposer = {
-  subject: string;
-  /** The window Mail considers main — the one in front, when Mail is. */
-  main: boolean;
-  /** The account picker's value, `Name – address`. */
-  from: string | null;
-  to: string[];
-  cc: string[];
-  /** Null when the Bcc field is not shown, which is not the same as empty. */
-  bcc: string[] | null;
+export type EditComposerArgs = {
+  composer: string;
+  body?: string;
   /**
-   * What the sender wrote. When `quoted` is null the boundary could not be
-   * found, and this is the readable text of the whole body instead.
+   * Put `body` in ABOVE the own text instead of over it: for a new composer,
+   * whose own text is the account's signature. The answer then carries
+   * `kept`, the own text it went in above. An app that predates it ignores
+   * it and replaces, which the caller's read-back still catches.
    */
-  text: string | null;
-  /** Whether a quoted original follows; null when that could not be established. */
-  quoted: boolean | null;
-  /** The opening of the quoted original, up to the requested length. */
-  quote: string | null;
-  quoteTruncated: boolean;
+  insert?: boolean;
+  html?: string;
+  edits?: { find: string; replace: string }[];
+  attachments?: string[];
+  save?: boolean;
+  expectHead?: string;
 };
 
 export type ReachReport = {
@@ -280,6 +189,24 @@ export class MailAxLane {
     return this.#channel.call({ tool: `apple_desktop_${tool}`, args });
   }
 
+  /** Every open composer, with its handle and own text. */
+  async composers(quoteChars?: number): Promise<NativeComposer[]> {
+    const result = (await this.#call(
+      "mail_composers",
+      quoteChars === undefined ? {} : { quoteChars },
+    )) as { composers?: NativeComposer[] };
+    return result.composers ?? [];
+  }
+
+  /**
+   * Edit a composer in one verified native step. The verb's JSON comes back
+   * verbatim: a refusal is an answer, not an error. A failure of the call itself
+   * (bad arguments, Accessibility not trusted) throws, as every `#call` does.
+   */
+  async editComposer(args: EditComposerArgs): Promise<Record<string, unknown>> {
+    return (await this.#call("mail_composer_edit", { ...args })) as Record<string, unknown>;
+  }
+
   /**
    * Can this process read Mail's windows, right now?
    *
@@ -311,22 +238,30 @@ export class MailAxLane {
   }
 
   /**
-   * The sentence to say when the composer cannot be reached natively.
+   * The sentence to say when the app is there but Mail's windows cannot be read.
+   *
+   * Said once, in one wording, by every draft entry point (compose, edit,
+   * rebuild, list open drafts), so whoever meets it from any of them is led to
+   * the same switch. `mode` is accepted so callers can keep naming what they
+   * were doing, and is deliberately not part of the text.
    *
    * One grant rather than two, and none of the "quit Cupertino and open it
-   * again" ritual the System Events path needs — that exists because a node
+   * again" ritual the System Events path needs: that exists because a node
    * child started before the grant does not inherit it, and this driver runs in
-   * the app itself.
+   * the app itself. A server Cupertino did not start has no lane to be refused
+   * on, and says so in its own words.
    */
-  static grantMessage(mode: string): string {
+  static grantMessage(_mode?: string): string {
     return (
-      `Cupertino cannot read Mail's windows, which is the only route into a ${mode} composer, ` +
-      `so it was not started and nothing was written. This needs Accessibility for ` +
-      `Cupertino.app in System Settings > Privacy & Security > Accessibility. If the app is ` +
-      `already listed, toggle it off and on — the grant goes stale when the bundle is ` +
-      `reinstalled. Run apple_mail_diagnostics to check; it names the windows it can see.`
+      "Cupertino needs Accessibility to write Mail drafts. Turn it on for Cupertino in " +
+      "System Settings › Privacy & Security › Accessibility (if it is already listed, toggle " +
+      "it off and on: the grant goes stale when the app is reinstalled), then run " +
+      "apple_mail_diagnostics."
     );
   }
+
+  /** What a WRITE refusal adds to `grantMessage`; a read has no use for it. */
+  static readonly nothingWritten = "Nothing was written.";
 
   /**
    * Poll for the composer window, and for its body.
@@ -361,33 +296,6 @@ export class MailAxLane {
     }
   }
 
-  /**
-   * Every composer currently under this subject, in window order.
-   *
-   * `findComposer` takes the first match because it is looking for a window it
-   * just opened. Rewriting one that was already there is the opposite problem:
-   * the caller has to know whether the subject picks out ONE composer, because
-   * two under one title cannot be told apart — handles are minted per call —
-   * and replacing the body of the wrong one destroys what somebody wrote. So
-   * this returns the list and lets `revise.ts` refuse on its length.
-   *
-   * Does not poll. Nothing here opened a window, so there is nothing to wait
-   * for: the composer either is on screen or is not.
-   */
-  async findComposers(subject: string): Promise<ComposerRef[]> {
-    const listed = (await this.#call("list_windows", {
-      bundleId: MAIL_BUNDLE,
-      includeTitles: true,
-    })) as Windows;
-    const found: ComposerRef[] = [];
-    for (const win of listed.windows ?? []) {
-      if ((win.title ?? "") !== subject) continue;
-      const body = await this.#bodyOf(win.index);
-      if (body) found.push({ window: win.handle, body, index: win.index });
-    }
-    return found;
-  }
-
   async #bodyOf(windowIndex: number): Promise<string | null> {
     const tree = (await this.#call("ui_tree", {
       bundleId: MAIL_BUNDLE,
@@ -401,377 +309,6 @@ export class MailAxLane {
   /** Bring Mail to the front. A synthetic keystroke lands in whatever is frontmost. */
   async activate(): Promise<void> {
     await this.#call("activate", { bundleId: MAIL_BUNDLE });
-  }
-
-  /**
-   * The accessible text under the body, which is what a person would see.
-   *
-   * One call rather than a bounded walk. The System Events version reads a
-   * parent at a time and stops at a character budget because every node costs an
-   * Apple Event; here the whole subtree comes back in one answer with each
-   * element's value already on it.
-   *
-   * Returns null when the body cannot be reached at all — a different answer
-   * from "", and the two must stay apart: one means we are blind, the other
-   * means the composer is empty.
-   */
-  async bodyText(body: string): Promise<string | null> {
-    try {
-      const tree = (await this.#call("expand", {
-        handle: body,
-        detail: "all",
-        maxDepth: BODY_DEPTH,
-      })) as Tree;
-      return (tree.elements ?? [])
-        .map((el) => el.value)
-        .filter((v): v is string => typeof v === "string" && v.trim() !== "")
-        .join("\n");
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * How many elements the body holds.
-   *
-   * A fingerprint, not a reading. Taken before and after a paste it answers "did
-   * anything at all land", which is what decides whether pasting again is safe:
-   * a paste that landed and cannot be read must NOT be repeated, or the reply
-   * ends up in the draft twice with no way to undo it from here.
-   *
-   * `matched` rather than the returned length, because the response is byte
-   * capped and a long quoted message will truncate — a fingerprint taken from a
-   * truncated list would compare two different bounds rather than two states.
-   *
-   * **Null when the body cannot be read at all, and that is the whole point.**
-   * This returned -1 for a failed read, and the caller compared it as a count.
-   * A composer that CLOSES takes its element handle with it — the driver answers
-   * `staleHandle` — so a body that had gone in perfectly read back as -1 and
-   * compared unequal to the size before, which is the signature of "something
-   * landed that cannot be matched". A reply sent by hand mid-call was reported
-   * as a body that never went in, with a warning against the retry that was in
-   * fact the safe move. Blind and different are not the same answer, exactly as
-   * `bodyText` above insists, and this is where that was forgotten.
-   */
-  async bodySize(body: string): Promise<number | null> {
-    try {
-      const tree = (await this.#call("expand", {
-        handle: body,
-        detail: "all",
-        maxDepth: BODY_DEPTH,
-      })) as Tree;
-      return tree.matched ?? (tree.elements ?? []).length;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Focus the body and paste, and say whether the focus took.
-   *
-   * Focus is not a raise: a raise orders a window forward inside Mail while the
-   * keystroke goes wherever the focus actually is. Both are needed, and the
-   * focus is read back because an element can report itself focusable and not
-   * take it.
-   *
-   * **What "read back" has to mean here, learned the hard way.** Mail's composer
-   * web area answers `AXFocused: false` while holding the keyboard — measured
-   * over 1.2 s without ever flipping, with a command-V landing in it the whole
-   * time. `apple_desktop_focus` used to return that flag, so this guard refused
-   * to press command-V and every native reply came back "Nothing landed in it"
-   * for a body that would have gone in. The driver now answers from the
-   * APPLICATION's `AXFocusedUIElement`, which is what the window server routes
-   * keystrokes by and so cannot disagree with where one will land.
-   *
-   * The guard itself stays. Posting command-V without knowing where the focus is
-   * types into whatever happens to be in front, and that is the user's window.
-   *
-   * **A composer that has gone answers false rather than throwing.** Both handles
-   * die with the window, so raising or focusing one afterwards is a `staleHandle`
-   * — and letting that escape turns a describable failure into a bare channel
-   * error with no note attached, on the one path whose whole job is to say what
-   * happened. False is the honest answer: the focus was not taken, so nothing was
-   * typed.
-   */
-  async paste(ref: ComposerRef, focusTimeoutMs = FOCUS_TIMEOUT_MS): Promise<boolean> {
-    return this.keys(ref, [{ key: "v", modifiers: ["command"] }], focusTimeoutMs);
-  }
-
-  /**
-   * Focus the composer's body and send a burst of keystrokes to it.
-   *
-   * What `paste` was, generalised, because replacing a reply's text without
-   * touching its quote is a sequence rather than one key: the caret goes to the
-   * top of the document, the selection is walked down to the end of the
-   * sender's own text, and only then is anything pasted over it.
-   *
-   * Sent through `apple_desktop_run` so a burst is ONE round trip. That is not
-   * only speed: every stroke in a run is checked before the first one is posted,
-   * and the run stops at the first failure, so a selection cannot be left
-   * half-extended by a refusal partway through.
-   *
-   * Each stroke names the body's handle, so the desktop server brings Mail
-   * forward before posting and refuses rather than typing into whatever the
-   * person at the keyboard just switched to.
-   */
-  async keys(
-    ref: ComposerRef,
-    strokes: Keystroke[],
-    focusTimeoutMs = FOCUS_TIMEOUT_MS,
-  ): Promise<boolean> {
-    if (strokes.length === 0) return true;
-    try {
-      await this.#call("raise_window", { handle: ref.window });
-      await this.activate();
-      const deadline = Date.now() + focusTimeoutMs;
-      for (;;) {
-        const focused = (await this.#call("focus", { handle: ref.body })) as { focused?: boolean };
-        if (focused.focused === true) break;
-        if (Date.now() >= deadline) return false;
-        await new Promise((resolve) => setTimeout(resolve, FOCUS_POLL_MS));
-      }
-      for (let at = 0; at < strokes.length; at += KEY_BURST) {
-        const chunk = strokes.slice(at, at + KEY_BURST);
-        if (chunk.length === 1) {
-          const only = chunk[0] as Keystroke;
-          await this.#call("key", { ...only, handle: ref.body });
-          continue;
-        }
-        await this.#call("run", {
-          steps: chunk.map((stroke) => ({ tool: "key", ...stroke, handle: ref.body })),
-        });
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Read the composer's own text, stopping where the quoted original begins.
-   *
-   * Null when the boundary cannot be established, and that answer is the point.
-   * Two ways it happens: the body cannot be read at all, or no quoted block was
-   * found within `BLOCK_SCAN_MAX` of a body that has more blocks than that.
-   * Reporting the second as "no quote, all of it is yours" would hand the whole
-   * quoted message to a caller that is about to replace what it is given.
-   *
-   * The quote level is read per element rather than from the tree, because the
-   * tree's field set is chosen for addressing controls and does not carry it.
-   * Affordable only natively — 0.2 ms a read against System Events' 47 ms — and
-   * bounded anyway, since the loop stops at the first quoted block and on a
-   * reply that is two or three in.
-   */
-  /**
-   * One block's quote level, retried, because "busy" is not "no".
-   *
-   * MEASURED, macOS 27.0: on a composer quoting a long thread, a single
-   * `AXBlockQuoteLevel` read came back `Reading AXBlockQuoteLevel of 'e8320' did
-   * not answer in time. The app may be busy; retry.` — WebKit still digesting
-   * the paste that had just landed in it. One such timeout used to fail the
-   * whole read, which failed the verification, which refused a rewrite that had
-   * in fact gone in perfectly and left the composer unsaved.
-   *
-   * The app says to retry, so it retries. Null is kept for a read that never
-   * answers, because the caller must not mistake it for level zero.
-   */
-  async #quoteLevel(handle: string): Promise<number | null> {
-    for (let attempt = 0; attempt < QUOTE_READ_TRIES; attempt += 1) {
-      try {
-        const read = (await this.#call("get_attribute", {
-          handle,
-          attribute: "AXBlockQuoteLevel",
-        })) as { value?: unknown };
-        return typeof read.value === "number" ? read.value : 0;
-      } catch {
-        if (attempt + 1 >= QUOTE_READ_TRIES) return null;
-        await new Promise((resolve) => setTimeout(resolve, QUOTE_READ_PAUSE_MS));
-      }
-    }
-    return null;
-  }
-
-  async composerBody(body: string): Promise<ComposerBody | null> {
-    const split = await this.#split(body);
-    return split ? split.own : null;
-  }
-
-  /**
-   * The body read once, split at the quote: the sender's own text, and the
-   * blocks from the boundary down. Null exactly when `composerBody` is.
-   */
-  async #split(
-    body: string,
-  ): Promise<{ own: ComposerBody; tree: Tree; quoteBlocks: string[] } | null> {
-    let tree: Tree;
-    try {
-      tree = (await this.#call("expand", {
-        handle: body,
-        detail: "all",
-        maxDepth: BODY_DEPTH,
-      })) as Tree;
-    } catch {
-      return null;
-    }
-    const elements = tree.elements ?? [];
-    const starts = elements.flatMap((el, at) => (el.depth === 0 ? [at] : []));
-
-    let boundary: number | null = null;
-    for (let block = 0; block < starts.length && block < BLOCK_SCAN_MAX; block += 1) {
-      const handle = elements[starts[block] as number]?.handle;
-      if (!handle) continue;
-      const level = await this.#quoteLevel(handle);
-      // Unknown, not zero. A block whose level could not be read cannot be
-      // called the sender's own — that is the reading that decides what may be
-      // replaced, and guessing it is how a quoted original gets overwritten.
-      if (level === null) return null;
-      if (level > 0) {
-        boundary = block;
-        break;
-      }
-    }
-
-    // Every block read was the sender's own. Believable only if the scan saw
-    // the whole body: a truncated list or one longer than the bound leaves the
-    // boundary unknown, which is not the same as there being none.
-    const truncated = tree.truncated !== undefined || (tree.matched ?? 0) > elements.length;
-    if (boundary === null) {
-      if (truncated || starts.length > BLOCK_SCAN_MAX) return null;
-      boundary = starts.length;
-    }
-
-    // A block's text is its own value plus its descendants' — inline runs on one
-    // line, so they join with nothing, and the blocks themselves with newlines.
-    const blockText = (block: number): string =>
-      elements
-        .slice(starts[block] as number, starts[block + 1] ?? elements.length)
-        .map((el) => el.value)
-        .filter((v): v is string => typeof v === "string")
-        .join("");
-    const lines: string[] = [];
-    for (let block = 0; block < boundary; block += 1) lines.push(blockText(block));
-    const quoteBlocks: string[] = [];
-    for (let block = boundary; block < starts.length; block += 1)
-      quoteBlocks.push(blockText(block));
-    // Only above the boundary: a quoted original's images are not the sender's.
-    const files = elements
-      .slice(0, starts[boundary] ?? elements.length)
-      .flatMap((el) => (FILE_ROLES.has(el.role) && el.name ? [el.name] : []));
-    return {
-      own: {
-        text: lines.join("\n"),
-        blocks: boundary,
-        quoted: boundary < starts.length,
-        files,
-      },
-      tree,
-      quoteBlocks,
-    };
-  }
-
-  /**
-   * Every compose window open in Mail, read the way a person reviewing it would.
-   *
-   * **Why this reads windows rather than asking Mail.** `outgoing messages` —
-   * the scripting class for a composer — came back EMPTY with a reply composer
-   * on screen that the person had opened by hand (measured 2026-10-06, macOS
-   * 27.0). It lists only the composers a script made. The window is the one
-   * place every draft being written can be seen.
-   *
-   * A composer is recognised by its subject FIELD, not its title: the title is
-   * the subject, so it cannot tell a composer from a viewer showing a message
-   * with the same one. The shallow walk that finds the field is cheap on Mail's
-   * main window, which is the one with thousands of rows under it.
-   *
-   * Pure reads. Nothing is raised, focused or typed, so it can run while
-   * someone is using the Mac.
-   */
-  async listComposers(quoteChars = QUOTE_CHARS): Promise<OpenComposer[]> {
-    const listed = (await this.#call("list_windows", {
-      bundleId: MAIL_BUNDLE,
-      includeTitles: true,
-    })) as Windows;
-    const found: OpenComposer[] = [];
-    for (const win of listed.windows ?? []) {
-      const header = (await this.#call("ui_tree", {
-        bundleId: MAIL_BUNDLE,
-        window: win.index,
-        detail: "labelled",
-        maxDepth: 1,
-      })) as Tree;
-      const fields = new Map(
-        (header.elements ?? []).flatMap((el) => (el.id ? [[el.id, el] as const] : [])),
-      );
-      const subject = fields.get(SUBJECT_FIELD);
-      if (!subject) continue;
-
-      const body = await this.#bodyOf(win.index);
-      const reading = body ? await this.#readBody(body, quoteChars) : null;
-      const bccField = fields.get(RECIPIENT_FIELDS.bcc);
-      found.push({
-        subject: subject.value ?? win.title ?? "",
-        main: win.main === true,
-        from: fields.get(FROM_FIELD)?.value ?? null,
-        to: await this.#recipients(fields.get(RECIPIENT_FIELDS.to)),
-        cc: await this.#recipients(fields.get(RECIPIENT_FIELDS.cc)),
-        bcc: bccField ? await this.#recipients(bccField) : null,
-        ...(reading ?? { text: null, quoted: null, quote: null, quoteTruncated: false }),
-      });
-    }
-    return found;
-  }
-
-  /** The names in one recipient field: its tokens, then anything still being typed. */
-  async #recipients(field: Element | undefined): Promise<string[]> {
-    if (!field) return [];
-    const typed = (field.value ?? "").split(TOKEN_CHAR).map((s) => s.trim());
-    const names: string[] = [];
-    if ((field.value ?? "").includes(TOKEN_CHAR)) {
-      try {
-        const tokens = (await this.#call("expand", {
-          handle: field.handle,
-          detail: "all",
-          maxDepth: 2,
-        })) as Tree;
-        for (const el of tokens.elements ?? []) {
-          if (el.subrole === TOKEN_SUBROLE && el.value?.trim()) names.push(el.value.trim());
-        }
-      } catch {
-        // A field whose tokens cannot be read still has its typed text below.
-      }
-    }
-    return [...names, ...typed.filter((s) => s !== "")];
-  }
-
-  /**
-   * The body for a reader: own text, and the opening of the quote.
-   *
-   * When the quote boundary cannot be found the whole readable body is returned
-   * with `quoted: null` rather than nothing — a reviewer is not about to replace
-   * anything, so a body it cannot split is still worth reading, as long as it is
-   * labelled as unsplit.
-   */
-  async #readBody(
-    body: string,
-    quoteChars: number,
-  ): Promise<Pick<OpenComposer, "text" | "quoted" | "quote" | "quoteTruncated">> {
-    const split = await this.#split(body);
-    if (!split) {
-      return { text: await this.bodyText(body), quoted: null, quote: null, quoteTruncated: false };
-    }
-    if (!split.own.quoted) {
-      return { text: split.own.text, quoted: false, quote: null, quoteTruncated: false };
-    }
-    const whole = split.quoteBlocks.join("\n");
-    const treeCut =
-      split.tree.truncated !== undefined ||
-      (split.tree.matched ?? 0) > (split.tree.elements ?? []).length;
-    return {
-      text: split.own.text,
-      quoted: true,
-      quote: whole.slice(0, quoteChars),
-      quoteTruncated: whole.length > quoteChars || treeCut,
-    };
   }
 
   /**
@@ -813,14 +350,25 @@ export class MailAxLane {
    *
    * Posting a send into an unknown foreground is the one outcome worth refusing
    * outright, which is why neither of them throws.
+   *
+   * `ready`, when given, is asked once Mail is in front, right before the key,
+   * and the key is pressed only on a yes: `"unready"` means nothing was
+   * pressed. A window holding several drafts as tabs sends or saves the one it
+   * SHOWS, so the caller checks that is still its draft. A check that throws
+   * is a no.
    */
-  async finish(sendNow: boolean, ref: ComposerRef): Promise<"pressed" | "gone" | "refused"> {
+  async finish(
+    sendNow: boolean,
+    ref: ComposerRef,
+    ready?: () => Promise<boolean>,
+  ): Promise<"pressed" | "gone" | "refused" | "unready"> {
     try {
       await this.#call("raise_window", { handle: ref.window });
       await this.activate();
     } catch {
       return "gone";
     }
+    if (ready && !(await ready().catch(() => false))) return "unready";
     try {
       await this.#call(
         "key",
@@ -841,6 +389,10 @@ export class MailAxLane {
    * window still being there means it did not go — which is checked rather than
    * assumed, because nothing in this path may report success on the strength of
    * a keystroke having been delivered.
+   *
+   * A tab Mail is not showing is no window's title, so the composers listed as
+   * tabs are asked too: a draft in a background tab is still there. When they
+   * cannot be listed, the window titles decide alone, as they always did.
    */
   async composerGone(subject: string, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
@@ -849,41 +401,15 @@ export class MailAxLane {
         bundleId: MAIL_BUNDLE,
         includeTitles: true,
       })) as Windows;
-      if (!(listed.windows ?? []).some((w) => (w.title ?? "") === subject)) return true;
+      const tabs = await this.composers().catch(() => [] as NativeComposer[]);
+      if (
+        !(listed.windows ?? []).some((w) => (w.title ?? "") === subject) &&
+        !tabs.some((c) => c.tab != null && c.subject === subject)
+      )
+        return true;
       if (Date.now() >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-  }
-
-  /** Select everything in the body, for the quote strip. */
-  async selectAll(): Promise<void> {
-    await this.#call("key", { key: "a", modifiers: ["command"] });
-  }
-
-  /**
-   * The deepest quote level anywhere in the body; 0 once the citation is gone.
-   *
-   * `AXBlockQuoteLevel` is not in the tree's field set, which is chosen for
-   * addressing controls — so it is read one element at a time. That is
-   * affordable only natively: 343 elements at 0.2 ms is well under a tenth of a
-   * second, where the same walk through System Events would be sixteen.
-   */
-  async maxQuoteLevel(body: string): Promise<number> {
-    const tree = (await this.#call("expand", {
-      handle: body,
-      detail: "all",
-      maxDepth: BODY_DEPTH,
-    })) as Tree;
-    let worst = 0;
-    for (const el of tree.elements ?? []) {
-      const read = (await this.#call("get_attribute", {
-        handle: el.handle,
-        attribute: "AXBlockQuoteLevel",
-      })) as { value?: unknown };
-      const level = typeof read.value === "number" ? read.value : 0;
-      if (level > worst) worst = level;
-    }
-    return worst;
   }
 }
 

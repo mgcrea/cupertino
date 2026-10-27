@@ -635,6 +635,31 @@ export class EnvelopeIndex {
     return this.#toIso(value);
   }
 
+  /**
+   * The messages carrying one RFC 5322 Message-ID, newest first, or null when
+   * this index has no `message_global_data.message_id_header` to ask.
+   *
+   * How a reply draft finds what it answers: its `In-Reply-To` names the
+   * original by Message-ID, and the ref to reply to is built from the row this
+   * returns. Several rows are normal, one per mailbox a message sits in. The
+   * header is matched with and without its angle brackets, because which form
+   * the column keeps is not something this code should bet on.
+   */
+  findByMessageIdHeader(header: string): { rowid: number; mailbox: number }[] | null {
+    if (!this.caps.has.messageIdHeader) return null;
+    const bare = header.trim().replace(/^<|>$/g, "");
+    if (!bare) return [];
+    const rows = this.#db
+      .prepare(
+        "SELECT m.ROWID AS rowid, m.mailbox AS mailbox FROM messages m " +
+          "JOIN message_global_data g ON g.ROWID = m.global_message_id " +
+          "WHERE m.deleted = 0 AND g.message_id_header IN (?, ?) " +
+          "ORDER BY m.date_received DESC, m.ROWID DESC",
+      )
+      .all(`<${bare}>`, bare) as { rowid: number; mailbox: number }[];
+    return rows.map((r) => ({ rowid: Number(r.rowid), mailbox: Number(r.mailbox) }));
+  }
+
   /** conversation_id for one message, so get_thread can start from a ref. */
   conversationOf(rowid: number): number | null {
     if (!this.caps.has.conversationId) return null;

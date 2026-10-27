@@ -6,12 +6,19 @@ release. Read on macOS 26.6, and checked against a live Mail with four accounts 
 contradict the dictionary. One claim in an earlier version of this file was itself wrong --
 see [Attachments can be added](#attachments-can-be-added-and-the-dictionary-always-said-so).
 
-**Implemented, in two lanes.** `apple_mail_update_draft` first tries to edit the draft **in its own
-composer window** (`packages/mail/src/client/revise.ts`), which keeps threading, attachments and the
-quoted original because nothing is recreated. Only when no composer is open does it fall back to
-recreating the draft (`packages/mail/src/client/jxa/write.ts`), which is where the familiar refusals
-live. The heading below — "why a draft cannot be edited" — is still true of Apple Events and is no
-longer true of the tool.
+**Implemented, in two lanes.** `apple_mail_update_draft` first edits the draft **in its own composer
+window** (`packages/mail/src/client/revise.ts`, through the app's `mail_composer_edit` verb), which
+keeps threading, attachments and the quoted original because nothing is recreated. When no composer
+is open, a closed reply is **rebuilt** as a reply to its original (`packages/mail/src/client/rebuild.ts`,
+see [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)); the recreate route through
+`jxa/write.ts` remains only for a server not hosted by Cupertino. The heading below — "why a draft
+cannot be edited" — is still true of Apple Events and is no longer true of the tool.
+
+**Read the dated sections as history.** Everything from here to
+[The composer moved into the app](#the-composer-moved-into-the-app) was written while the Node
+server drove the composer one keystroke at a time, and four of its passages describe code the branch
+of 2026-10-26 deleted; each is marked **Superseded** where it stands. The current behaviour is in
+that section and the ones after it.
 
 **Checked live** — `node scripts/verify-mail-ax.mjs --compose` forwards a real message to your own
 address through the hosted mail server, asserts the body arrived in the composer, and then rewrites
@@ -78,7 +85,7 @@ not tidiness: the ref for a sent message is shaped exactly like the ref for a dr
 
 "Review my draft" names no message, and the draft meant is the one on screen.
 `apple_mail_list_open_drafts` reads every compose window
-([`MailAxLane.listComposers`](../packages/mail/src/client/ax.ts)). Measured 2026-10-06 on macOS
+([`MailAxLane.composers`](../packages/mail/src/client/ax.ts), which asks the app's `apple_desktop_mail_composers` verb since 2026-10-26). Measured 2026-10-06 on macOS
 27.0, against a reply composer the user had opened by hand:
 
 | Tried                                   | Answer                                                                                                                                                                                                  |
@@ -270,7 +277,10 @@ REPLACE the sender's words with the files, and the files would then read back pe
 the text before and after is what stops that from being saved. "Once more than before" stops a file
 of the same name already in the draft from being taken as proof.
 
-**No window, no files.** Recreating a draft writes a new body, so with files and no body there is
+**No window, no files.** **Superseded 2026-10-26:** a closed reply, files only included, is now
+rebuilt from its own HTML and files (see [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)),
+and the paragraph that follows describes the recreate route only a server not hosted by Cupertino
+still takes. Recreating a draft writes a new body, so with files and no body there is
 nothing to recreate it from, and the tool refuses rather than rebuilding the old text from its
 plain rendering. With a body, on a draft that recreation accepts (not a reply, no files of its
 own), `UPDATE_DRAFT` attaches them to the replacement through `attachFiles`, before the save, so a
@@ -345,7 +355,11 @@ a reply or forward either. `update_draft`'s recreate route is split the same way
 `STAGE_REPLACEMENT` opens the replacement with no body, the client fills and saves its window, and
 `COMMIT_REPLACEMENT` confirms it in Drafts before deleting the original. Both halves share
 `UPDATE_DRAFT`'s preflight and its confirm-then-delete tail, so the refusals and the order are the
-same on both routes.
+same on both routes. **Superseded 2026-10-26:** `STAGE_REPLACEMENT` is deleted. A closed draft is
+rebuilt by `rebuild.ts`, which opens the reply through `OPEN_COMPOSER` and has the app's verb fill
+it, and `COMMIT_REPLACEMENT` now confirms the new draft by its `Date`, `In-Reply-To` and text head,
+exactly one candidate, before it deletes the original (see
+[Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)).
 
 **When it does not — or for a new message with no subject, whose window has no stable title — the
 old assigning path remains, and a failed undo is loud.** `SEND_MESSAGE` returns `quoted: true`,
@@ -573,7 +587,10 @@ anything that reaches past the sender's own words stops, having changed nothing.
 The window is also matched to the draft by CONTENT, not only by subject: two replies in one thread
 carry the same title, and rewriting the wrong one destroys what somebody wrote. Two composers under
 one title are refused outright, for the same reason `compose.ts` refuses them — handles are minted
-per call, so there is nothing to tell them apart by.
+per call, so there is nothing to tell them apart by. **Superseded 2026-10-26:** the app's registry
+keeps a handle per window or tab for its life, so two composers under one title are told apart and
+each can be edited (see [The two verbs](#the-two-verbs) and
+[Composers in tabs](#composers-in-tabs)).
 
 ### What it still cannot do
 
@@ -618,9 +635,183 @@ the end, raised `Invalid index.` and returned a null subject and an unusable `#n
 row. A Drafts mailbox almost always holds fewer messages than the limit, so an agent that had just
 written a reply could not address it. `jxa/read.ts` carries the readings.
 
+## The composer moved into the app
+
+Added 2026-10-26. Everything above was measured when the Node server drove the composer one
+keystroke at a time through `apple_desktop_*` calls. That is now the app's job, in one process, and
+the sections above describe the behaviour it replaced. This is what a spike on **macOS 27.0**
+measured to justify the move, what shipped, and the rule for the one case that still needs a rebuild.
+
+### What the spike measured
+
+[`scripts/spike-mail-composer.swift`](../scripts/spike-mail-composer.swift) carries the numbers in its
+header. The ones that decided the design:
+
+| Question                                      | Measured 2026-10-25                                                                                                                                                                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can the own text be selected without keys?    | **Yes.** In process, `AXTextMarkerRangeForUIElement` on each own block gives a range, `AXSelectedTextMarkerRange` is settable **with Mail in the background**, and `AXStringForTextMarkerRange` reads it back exactly. No copy, no per-line walk. |
+| Can a span inside a block be selected?        | **Yes, for the case measured**: `AXTextMarkerForIndex` offsets are index-compatible with the own range's start, and `"ALPHA two"` read back as exactly itself. Mid-block spans and non-BMP text were not measured.                                |
+| Does the paste need Mail active?              | **Yes.** command-V posted to Mail's pid in the background was ignored. With Mail active and the event on the HID tap it landed in about 70 ms, over exactly the selection, quote intact.                                                          |
+| Does HTML survive a paste?                    | **Yes.** `<b>` and `<a href>` survive; Mail rewrites spaces to `&nbsp;`, adds a `font-size: medium` wrapper and the quote is not touched.                                                                                                         |
+| Can the subject be retyped?                   | **No.** The subject field accepts an `AXValue` write and displays it, but the title and the saved draft keep the old subject.                                                                                                                     |
+| Is a saved draft's Message-ID an address?     | **No.** It changes on every save, as does the row id. `In-Reply-To` and `References` survive, which is what a rebuild uses.                                                                                                                       |
+| Can a closed draft be reopened as a composer? | **No.** `message://<Message-ID>` on a saved draft opens the read-only viewer, the same dead end as `M.open`.                                                                                                                                      |
+
+`X-Universally-Unique-Identifier` held across two saves of one composer but is the same value on two
+different composers replying to one message, so it is not used as an address either.
+
+### The two verbs
+
+Both are answered only on the channel the app lends to the Mail server (the peer check in
+`ServerHost` refuses anything it did not spawn), so a terminal cannot borrow them.
+
+- **`apple_desktop_mail_composers`** reads every compose window: a `composer` handle (`mc-<n>`),
+  subject, From, To, Cc, Bcc, the own text apart from the quote (split by `AXBlockQuoteLevel`, as
+  before), the opening of the quote (`quoteChars`) and the named files. A handle names one window,
+  or one tab, for as long as it lives, and is never reused (see
+  [Composers in tabs](#composers-in-tabs) for what that means when Mail rebuilds its tab bar).
+  This is what `apple_mail_list_open_drafts` returns, so two windows under one subject can finally be
+  told apart and addressed.
+- **`apple_desktop_mail_composer_edit`** changes one window: a whole `body`, find/replace `edits`,
+  files, or HTML (a rebuilt draft keeps its formatting).
+
+### The edit sequence and its guards
+
+    select the own text (or each `find`) with text markers, Mail still in the background
+    read the selection back                  must equal what was asked for, exactly
+    save the pasteboard (every item, every type) and the front app
+    activate Mail, once
+    command-V                                the replacement, as text or text plus HTML
+    read back the own text and the quote     must be what was pasted, quote still level 1
+    command-S                                the save
+    restore the pasteboard and the front app
+
+What it refuses, changing nothing: a `find` that matches zero or several places (compared ignoring
+whitespace, against the own text only, never the quote), a window whose own text cannot be told
+apart from its quote, and a selection that does not read back as asked. Nothing destructive happens
+until the selection is verified, as before; what changed is that verifying it costs a read instead
+of a copy and a poll, so the clipboard is borrowed once, for the paste, and Mail is brought forward
+once instead of for the whole walk.
+
+Two windows under one subject are no longer refused. `update_draft` takes a `composer` handle, or
+`ref` (matched to its window by content), or neither: with exactly one compose window open it edits
+that one, and with none or several it refuses and lists them.
+
+**A compose keeps the signature (2026-10-27).** A new composer's own text is the account's
+signature, and a `body` replaces the own text, so `send_message`, `reply_to_message` and
+`forward_message` used to paste over the signature, and refused outright when it held an image
+(nothing that removes a file is allowed). The System Events path never did either: it pasted at
+Mail's caret, above the signature. So compose asks the verb to INSERT (`insert: true`): the
+selection collapses at the start of the own text (the document start when there is none, as for an
+empty draft), is proved outside the quote and read back empty, and the body is pasted there, with a
+newline after it only when the own text's first line holds text. The read-back must be the body, a
+newline, then the own text as it was, whitespace folded; the answer returns that prior text as
+`kept`, and `composeNatively` verifies `body` followed by it. Nothing is removed, so neither files
+refusal applies. `update_draft` with a `body`, the in-place rewrites and the rebuild still replace.
+UNMEASURED LIVE: how Mail's blocks read back after an insert above a text signature and above an
+image signature.
+
+### Route B: a closed draft is rebuilt as a reply
+
+A draft whose window is closed has no composer and cannot get one back (see the table). So it is
+rebuilt, in `rebuild.ts`:
+
+1. Preflight, before any window opens: Accessibility, no window already open under the subject, not
+   a forward (what was forwarded is not known from here), the original found in the index by the
+   draft's `In-Reply-To`, every `find` matching exactly once, none crossing formatting, every file
+   stored locally. A refusal here opens nothing.
+2. The original is reopened as a reply, so Mail writes the threading headers and the quote itself.
+3. The draft's own HTML (everything before Mail's `AppleOriginalContents` div) and its files are
+   pasted by the app's verb, read back and saved.
+4. **The regenerated quote must match the old one and the recipients must be the ones asked for,** or
+   the window is left open, unsaved, for the person to close.
+5. **Confirm, then delete.** The new draft is found in Drafts by what it holds: its `Date`, its
+   `In-Reply-To` and the head of its text, and there must be **exactly one** candidate. Only then is
+   the original deleted. Message-ID and row id are never used, because both change on every save.
+   If Drafts cannot confirm, the original is kept and the reply says there are two.
+
+The new draft gets a new ref. `method: "rebuild"` in the result says this route ran;
+`threadingKept` and `inReplyTo` say what carried over.
+
+### Composers in tabs
+
+Measured 2026-10-26, macOS 27.0, Mail 16.0. With **System Settings › Desktop & Dock › Prefer tabs when
+opening documents: Always** (`defaults read -g AppleWindowTabbingMode` prints `always`), Mail opens
+every compose window as a TAB of one window. Nothing in Mail's own settings shows this.
+
+- `kAXWindowsAttribute` lists ONE window for the whole tab group. Its title, subject field, web area
+  and recipients are the SELECTED tab's only, so a window-keyed reading sees one composer where there
+  are several.
+- The window has an `AXTabGroup` child. Each tab is an `AXRadioButton` with subrole `AXTabButton`,
+  its `AXTitle` is the subject, and `AXValue` is 1 on the selected tab. A last child with an empty
+  title is the new-tab button.
+- **Opening a tab re-creates every tab button.** After a third tab opened, `CFEqual` was false for
+  every tab that was already there. Reads with no change in between return the same elements. So a
+  handle keyed by the button dies whenever a tab opens or closes; the registry re-binds it only to a
+  tab whose title is unique in its window, and marks it `rebound`: an edit by a marked handle must
+  prove the draft's text (`expectHead`) until a listing or a verified edit proves it.
+- **Selecting a tab re-creates nothing**: every button stayed `CFEqual` after a press (2026-10-26).
+- **A new composer opens as the selected tab.** Measured in runs 6 to 12: the second same-subject
+  composer read `tab: "selected"` on its first listing.
+- **Each tab is its own window element.** After `AXPress` on a tab, `kAXWindowsAttribute` lists a
+  different element, the newly shown tab's. An element held from before the press goes on reading
+  the old tab's subject, with `AXMain` 0, so always re-read the windows after a switch. Re-read,
+  the new tab's window was there within about 50 ms (2026-10-27). The run-4 finding that the content
+  "swaps only while Mail is frontmost" was read from such a held element, so it is not established.
+  The edit brings Mail forward before pressing in any case.
+- **The compose window does not answer `AXEdited`**: it is not among its attribute names, and
+  `AXDocument` is nil too. So nothing confirms a ⌘S landed, and after editing a background tab the
+  edit leaves that tab shown instead of reselecting the person's: a press right after ⌘S could be
+  handled first (⌘S goes by HID, a press by Mach message) and the save land in the other draft.
+  Decided 2026-10-27 (final review, decision (a)): the code that waited on `AXEdited` is deleted,
+  the edit's note says the tab is left shown and to tell the person, and so do the descriptions of
+  `update_draft` and `list_open_drafts`. A refusal before ⌘S still selects the person's tab again.
+  A reselect by keystroke (⌃⇧Tab posted after ⌘S, on the same HID queue) is a possible follow-up.
+- The window's `AXCloseButton` closed only the selected tab in the 2026-10-26 cleanups. In runs 11
+  and 12, though, a tab nobody asked to close was gone afterwards. Unexplained; the product never
+  closes windows.
+
+### Measured live, 2026-10-26
+
+Twelve runs of `verify-mail-ax --compose` (2026-10-26 and 27) against a Debug build, macOS 27.0, accounts on iCloud, Gmail and
+Exchange. These are the behaviours that the stubs could not have shown and that shaped the code:
+
+- **A forward has no own block.** Its reply area is a bare `<br id="lineBreakAtBeginningOfMessage">`
+  ahead of `<div class="AppleOriginalContents">`, and Accessibility exposes no block for it: the web
+  area's first child is already the quote, at level 1. A caret placed at "the start of the first
+  block" lands inside the forwarded message, before `Begin forwarded message:`. The caret goes at
+  the document start instead, and both ends of every selection are walked up to the body to prove
+  no ancestor has a quote level.
+- **An attachment in the own text** is an `AXButton` with an empty title and an `AXDescription` of
+  `"probe-note.txt, 6 bytes"`: the name, `", "`, a localised size. A read-back comparing bare names
+  never matches, even though the file is in the saved draft.
+- **Mail autosaves an open composer by itself** (`X-Apple-Auto-Saved: 1` in the saved source). A
+  paste that was refused after it reached the window can therefore already be in Drafts. Every
+  refusal after a paste says so.
+- **The frontmost-application read can be wrong for one sample.** A paste was refused as "Mail is no
+  longer frontmost" while the system log showed Mail in front for the whole edit. The front check now
+  waits out an unanswered or helper-process read (up to 1 s), and still refuses at once on another
+  regular application. Waits are logged:
+  `/usr/bin/log show --last 30m --predicate 'subsystem == "io.mgcrea.cupertino" AND category == "front"'`.
+- **A new message is saved to its own account's Drafts**, which is not the account a forward of an
+  Exchange message lands in. A search for a run's drafts has to cover every account.
+- **Windows of deleted drafts came back.** After test drafts were moved to the Trash, Mail reopened
+  their compose windows unprompted, one at a time, holding the old text. Seen twice. The cause was not
+  established.
+- **Route B ran end to end** on run 5: a closed reply draft was rebuilt as a reply to its original,
+  found by `message_global_data.message_id_header`. `In-Reply-To` was kept, the edit landed, the
+  original was deleted and exactly one draft remained.
+
+Running it: start the Debug build (`make run`, which points `dev.json` at the checkout it is run
+from), then `node scripts/verify-mail-ax.mjs --compose --debug`. Without `--debug` it talks to the
+installed app. The script cannot close Mail windows, because the driver is not lent to a terminal. It
+prints `close the Mail window "<subject>" (tab)` and waits up to 120 s for someone, or something
+holding its own Accessibility grant, to press that window's close button. It leaves a forward and a
+new-message draft as evidence.
+
 ## Still open
 
-- **Where an attachment lands in a native-lane reply, and whether the read-back still passes.**
+- **Where an attachment lands in a native-lane reply, and whether the read-back still passes.** **STILL OPEN 2026-10-26.**
   `OPEN_COMPOSER` attaches after the last paragraph and before the body is pasted, so on a reply
   the file may sit under the quoted original rather than under the new text. Unmeasured, as is
   whether the attachment character disturbs `paste`'s read-back. The 26.6 probe above sent through
@@ -637,26 +828,44 @@ written a reply could not address it. `jxa/read.ts` carries the readings.
   [Editing the composer that is already open](#editing-the-composer-that-is-already-open). A draft
   whose window has been CLOSED still has none: `M.open` gives a viewer, and driving the message list
   means moving the user's window. That case falls back to recreation and keeps its refusals.
-- **Whether the selection survives a body with inline images or attachments.** Measured on text
+  **ANSWERED 2026-10-26 for a reply:** there is still no route to the window, so a closed reply is
+  rebuilt as a reply to its original, threading and files kept (see
+  [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)). A forward cannot be, because what it
+  forwarded is not known from here, and still refuses.
+- **Whether the selection survives a body with inline images or attachments.** **PARTLY ANSWERED 2026-10-26:** the native edit selects by text marker on the own blocks and reads the range back, so a copy no longer has to match the tree. Not measured on a body holding an inline image or a file, and `verify-mail-ax --compose` edits a forward that holds two files, which is the first place it will show. Measured on text
   above a quote. A composer whose own text holds an attachment character or an inline image has
   blocks the copy-back may render differently from the accessibility tree, which would show up as a
   refusal rather than damage — but it has not been seen either way. It matters more now: a draft
   `update_draft` has added files to is exactly that, so a SECOND call on it (another body change,
   or more files) depends on the answer. `sameDraft` already ignores U+FFFC on both sides, in case
   Mail's plain text renders a file that way; that is a guess, unmeasured for a stored draft.
-- **The native new-message path, live.** Every piece of it is measured — a message opened without
+- ~~**The native new-message path, live.**~~ **ANSWERED 2026-10-26:** pasted, read back and saved,
+  with no blockquote in the saved source, on four live runs. Every piece of it is measured — a message opened without
   `content`, a body pasted into it, files pasted after a body — but the shipped sequence has run only
   against stubs. `verify-mail-ax --compose` runs it, and reads the source.
-- **Two files in one paste, and a paste above a quote.** The probe pasted one file at a time into a
+- **Two files in one paste, and a paste above a quote.** **PARTLY ANSWERED 2026-10-26:** two files
+  pasted into the forward landed (the saved draft held `verify-note.txt`), but their read-back
+  failed because Mail names a file `"<name>, <size>"` (see
+  [Measured live](#measured-live-2026-10-26)). Where they sit relative to the quote was not checked. The probe pasted one file at a time into a
   new message. `node scripts/verify-mail-ax.mjs --compose` now adds two (an image and a text file)
   to the forward it rewrites, which covers both.
-- **Re-selecting is bounded at 200 extra lines.** One press per wrapped line, so a draft of a few
+- **Re-selecting is bounded at 200 extra lines.** **ANSWERED 2026-10-26, by removal:** the native edit selects by text marker and no longer walks lines, so there is no bound. One press per wrapped line, so a draft of a few
   hundred wrapped lines would reach the bound and refuse. Not seen; cheap to raise.
-- **Bcc on a saved draft.** Read from `bccRecipients` and preserved, but a draft stored on an IMAP
+- **Bcc on a saved draft.** **STILL OPEN 2026-10-26.** `list_open_drafts` now reads the Bcc field of an open window (null when it is not shown), but a rebuilt draft takes its recipients from the saved message. Read from `bccRecipients` and preserved, but a draft stored on an IMAP
   server may not carry Bcc at all. Not measured, and it would be silently dropped if so.
-- **How long the renumbering window lasts.** One observation, on iCloud, of a single rewrite.
+- **How long the renumbering window lasts.** **STILL OPEN 2026-10-26.** The rebuild sidesteps it by never using an id to find its own result. One observation, on iCloud, of a single rewrite.
   Whether a draft settles after one sync or keeps moving is unknown, and it decides whether
   `newId` is worth returning at all.
-- **The discovery scan is capped at 200 messages of All Drafts.** An account whose drafts all sit
+- **The discovery scan is capped at 200 messages of All Drafts.** **STILL OPEN 2026-10-26.** An account whose drafts all sit
   past that point in the ordering would fall through to the refusal. Not seen, and cheap to raise
   if it ever is.
+- **Whether the rebuild's confirmation rule holds across providers.** New 2026-10-26. A draft is
+  found again by `Date`, `In-Reply-To` and the head of its text, with exactly one candidate. It held
+  on an Exchange account on 2026-10-26 (one run). It is unmeasured on an account that rewrites `Date`
+  on sync, where it would refuse and keep both drafts.
+- **A mid-block selection with text after it, a span across two blocks, and non-BMP text.** New
+  2026-10-26. The spike measured one ASCII span at the end of a block, and the live runs edited one
+  ASCII word inside a sentence (`REVISED` to `EDITED`), which held twice. An edit that is not that
+  shape is read back before the paste, so a miss refuses, but cross-block and non-BMP spans are not seen.
+- **Pasting into the subject field.** New 2026-10-26. An `AXValue` write is ignored, so a subject
+  change still rebuilds the draft. Whether a paste into the field would hold is untested.

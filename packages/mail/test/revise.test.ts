@@ -6,22 +6,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MailAxLane } from "../src/client/ax.js";
-import type { Clipboard } from "../src/client/compose.js";
 import { reviseDraftInPlace, type DraftFacts } from "../src/client/revise.js";
 
 /**
- * Editing a draft in its own composer, run against a fake Mail window.
+ * Editing a draft in its own composer, run against a fake Cupertino channel.
  *
- * The thing being pinned is not that it works. It is that **every way it can go
- * wrong leaves the draft alone**, and the reason this path is allowed to exist
- * at all is that selecting and copying change nothing — so a selection that
- * cannot be proved exact costs a refusal, never a body.
- *
- * So the fake below is built to lie in the ways a real composer does: a window
- * that is a leftover from another thread, a paragraph that wraps so the block
- * count undercounts the lines, an empty selection that leaves the pasteboard as
- * it was, and a tree that has not caught up with the paste yet. The assertion in
- * every refusal case is the same one — **no command-V was ever posted.**
+ * The keystroke walk lives in the app now (`mail_composer_edit`), so what is
+ * pinned here is the Node half of the contract: find the ONE composer that holds
+ * this draft by content, hand it to the verb with a head to double-check, and
+ * pass whatever the verb answers back unchanged. Null still means "no composer".
  */
 
 const open = new Set<Server>();
@@ -35,189 +28,55 @@ afterEach(() => {
 
 type Call = { tool: string; args: Record<string, unknown> };
 
-/** How many whole rendered lines a caret in this state has selected. */
-const selected = (entry: { endLine: number; atEnd: boolean }): number =>
-  entry.endLine + (entry.atEnd ? 1 : 0);
-
-/** A composer window: what it holds above the quote, and what it quotes. */
-type Composer = {
-  title: string;
-  /** Rendered lines of the sender's own text. A wrapped paragraph is >1 line. */
-  lines: string[];
-  /** How many blocks those lines make up — what AXBlockQuoteLevel 0 counts. */
-  blocks?: number;
-  quote?: string[];
-  /** Files already in the sender's own text, by name. */
+type FakeComposer = {
+  composer: string;
+  subject: string;
+  /** Null for a tab Mail is not showing: it cannot be read without switching. */
+  text: string | null;
+  tab?: "selected" | "background" | null;
+  recipients?: string[];
+  quoted?: boolean | null;
   files?: string[];
 };
 
 type Behaviour = {
-  composers: Composer[];
-  /** command-C copies nothing, the way it does over an empty selection. */
-  copyDoesNothing?: boolean;
-  /** The body cannot be focused: someone is using the Mac. */
-  unfocusable?: boolean;
-  /** How many reads after the paste before the tree shows it. */
-  renderAfter?: number;
-  /** The paste swallows the quoted original — the damage this must never save. */
-  quoteLostOnPaste?: boolean;
-  /** Pasted files never show up in the tree. */
-  filesNeverRender?: boolean;
-  /** A plain right arrow leaves the selection where it is. */
-  selectionStays?: boolean;
+  composers: FakeComposer[];
+  /** What `mail_composer_edit` answers. Defaults to a success. */
+  editAnswer?: Record<string, unknown>;
 };
 
-/**
- * A Mail whose composer really holds a document and a caret.
- *
- * It models the two things the selection depends on: the caret's line, and the
- * selection's extent in rendered lines. `up+command` homes it, `down+shift`
- * extends by a line, `right+shift+command` runs to that line's end, and `c` puts
- * the selected lines on the stub clipboard. Everything past the sender's own
- * lines is quoted text, so a selection that reaches it copies it back — which is
- * exactly the overshoot the real thing has to refuse.
- */
 const hostStub = async (
   behaviour: Behaviour,
-  clipboard: { value: string | null; files?: string[] | null },
 ): Promise<{ env: NodeJS.ProcessEnv; seen: Call[] }> => {
   const dir = mkdtempSync(join(tmpdir(), "mail-revise-"));
   scratch.add(dir);
   const path = join(dir, "s.sock");
   const seen: Call[] = [];
 
-  // Which window each body handle belongs to, and where its caret is.
-  /*
-   * The caret, modelled the way a text view really behaves.
-   *
-   * `endLine` is the rendered line the selection reaches, and `atEnd` whether it
-   * runs to that line's end. Extending DOWN lands mid-line — the column comes
-   * from wherever the selection started — so a line is only wholly selected once
-   * command-right has run it out. Collapsing those two into one counter is what
-   * the first version of this fake did, and it made an overshoot look exact.
-   */
-  const state = behaviour.composers.map((composer) => ({
-    composer,
-    endLine: 0,
-    atEnd: false,
-    pastes: 0,
-    // Whether a paste would replace a selection rather than land at a caret.
-    selecting: false,
-  }));
-  let readsSincePaste = 0;
-
-  const lines = (at: number): string[] => {
-    const { composer } = state[at] as (typeof state)[number];
-    return [...composer.lines, ...(composer.quote ?? [])];
-  };
-
-  const answer = (tool: string, args: Record<string, unknown>): Record<string, unknown> => {
-    if (tool === "list_windows") {
+  const answer = (tool: string): Record<string, unknown> => {
+    if (tool === "list_windows") return { windows: [{ handle: "w0", index: 0, title: "Inbox" }] };
+    if (tool === "mail_composers") {
       return {
-        windows: behaviour.composers.map((composer, index) => ({
-          handle: `w${index}`,
-          index,
-          title: composer.title,
+        composers: behaviour.composers.map((c) => ({
+          recipients: [],
+          quoted: true,
+          files: [],
+          ...c,
         })),
       };
     }
-    if (tool === "ui_tree") {
-      // Any window with a body area is a composer.
-      return { elements: [{ role: "AXWebArea", depth: 1, handle: `b${args.window}` }] };
-    }
-    if (tool === "expand") {
-      const at = Number(String(args.handle).slice(1));
-      const entry = state[at] as (typeof state)[number];
-      const own = entry.composer.lines;
-      const shown =
-        entry.pastes > 0 && readsSincePaste++ < (behaviour.renderAfter ?? 0)
-          ? // The tree has not caught up with the paste yet.
-            ["ALPHA one", "ALPHA two"]
-          : own;
-      const blocks = entry.pastes > 0 ? shown.length : (entry.composer.blocks ?? shown.length);
-      // One element per block, then the quote as one more block.
-      const elements: Record<string, unknown>[] = Array.from({ length: blocks }, (_, block) => ({
-        role: "AXGroup",
-        depth: 0,
-        handle: `${args.handle}q${block}`,
-        // Blocks that wrap hold more than one line; join them back for the value.
-        value: shown
-          .slice(blockStart(shown, blocks, block), blockStart(shown, blocks, block + 1))
-          .join(" "),
-      }));
-      // Files sit in the sender's own text, after its last block's words; a body
-      // with no blocks gets one to hold them, as WebKit makes a paragraph.
-      const files = entry.composer.files ?? [];
-      if (files.length > 0 && elements.length === 0) {
-        elements.push({ role: "AXGroup", depth: 0, handle: `${args.handle}q0`, value: "" });
-      }
-      files.forEach((name, index) => {
-        elements.push({
-          ...(name.endsWith(".png")
-            ? { role: "AXImage", name }
-            : { role: "AXButton", name: `${name}, 23 bytes` }),
-          depth: 1,
-          handle: `${args.handle}f${index}`,
-        });
-      });
-      const quoteGone = behaviour.quoteLostOnPaste === true && entry.pastes > 0;
-      if ((entry.composer.quote ?? []).length > 0 && !quoteGone) {
-        elements.push({
-          role: "AXGroup",
-          depth: 0,
-          handle: `${args.handle}quote`,
-          value: "quoted",
-        });
-      }
-      return { elements, matched: elements.length, returned: elements.length };
-    }
-    if (tool === "get_attribute") {
-      return { value: String(args.handle).endsWith("quote") ? 1 : 0 };
-    }
-    if (tool === "focus") return { focused: behaviour.unfocusable !== true };
-    if (tool === "raise_window" || tool === "activate") return {};
-    if (tool === "key" || tool === "run") {
-      const strokes =
-        tool === "run"
-          ? (args.steps as Record<string, unknown>[])
-          : [args as Record<string, unknown>];
-      for (const stroke of strokes) {
-        const at = Number(String(stroke.handle).slice(1));
-        const entry = state[at] as (typeof state)[number];
-        const mods = (stroke.modifiers as string[] | undefined) ?? [];
-        const key = String(stroke.key);
-        if (key === "up" && mods.includes("command")) {
-          entry.endLine = 0;
-          entry.atEnd = false;
-          entry.selecting = false;
-        } else if (key === "down" && mods.includes("shift")) {
-          entry.endLine += 1;
-          entry.atEnd = false;
-          entry.selecting = true;
-        } else if (key === "right" && mods.includes("shift")) {
-          entry.atEnd = true;
-          entry.selecting = true;
-        } else if (key === "right" && mods.length === 0) {
-          if (behaviour.selectionStays !== true) entry.selecting = false;
-        } else if (key === "c" && mods.includes("command")) {
-          if (behaviour.copyDoesNothing !== true && selected(entry) > 0) {
-            clipboard.value = lines(at).slice(0, selected(entry)).join("\n");
-          }
-        } else if (key === "v" && mods.includes("command") && clipboard.files) {
-          if (behaviour.filesNeverRender === true) continue;
-          // Over a live selection the files replace what is selected.
-          if (entry.selecting) entry.composer.lines = entry.composer.lines.slice(selected(entry));
-          entry.selecting = false;
-          const names = clipboard.files.map((file) => file.split("/").at(-1) as string);
-          entry.composer.files = [...(entry.composer.files ?? []), ...names];
-        } else if (key === "v" && mods.includes("command")) {
-          entry.pastes += 1;
-          entry.composer.lines = String(clipboard.value ?? "").split("\n");
-          entry.selecting = false;
-          readsSincePaste = 0;
+    if (tool === "mail_composer_edit") {
+      return (
+        behaviour.editAnswer ?? {
+          replaced: true,
+          method: "inPlace",
+          text: "BRAVO",
+          quoteKept: true,
+          filesAdded: [],
+          saved: true,
+          note: "done",
         }
-      }
-      return {};
+      );
     }
     return {};
   };
@@ -246,7 +105,7 @@ const hostStub = async (
           `${JSON.stringify({
             jsonrpc: "2.0",
             id: message.id,
-            result: { content: [{ type: "text", text: JSON.stringify(answer(tool, args)) }] },
+            result: { content: [{ type: "text", text: JSON.stringify(answer(tool)) }] },
           })}\n`,
         );
       }
@@ -257,16 +116,10 @@ const hostStub = async (
   return { env: { CUPERTINO_AX_SOCKET: path, CUPERTINO_AX_FOR: "mail" }, seen };
 };
 
-/** Where a block starts, when `lines` rendered lines are shared over `blocks`. */
-const blockStart = (lines: string[], blocks: number, block: number): number => {
-  const extra = lines.length - blocks;
-  // The first block soaks up every wrapped line, which is the awkward shape.
-  if (block === 0) return 0;
-  return Math.min(lines.length, block + extra);
-};
+const SUBJECT = "Re: Quarterly numbers";
 
 const facts = (over: Partial<DraftFacts> = {}): DraftFacts => ({
-  subject: "Re: Quarterly numbers",
+  subject: SUBJECT,
   isReply: true,
   attachments: 0,
   recipientCount: 2,
@@ -275,52 +128,18 @@ const facts = (over: Partial<DraftFacts> = {}): DraftFacts => ({
   ...over,
 });
 
-const stubClipboard = (initial = "user's own clipboard") => {
-  const box = { value: initial as string | null, files: null as string[] | null };
-  const clipboard: Clipboard = {
-    read: async () => box.value,
-    write: async (text) => {
-      box.value = text;
-      box.files = null;
-    },
-    writeFiles: async (paths) => {
-      box.value = null;
-      box.files = paths;
-    },
-  };
-  return { box, clipboard };
-};
-
-const pastes = (seen: Call[]): number =>
-  seen.filter((call) => {
-    const steps =
-      call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args];
-    return steps.some(
-      (step) => step.key === "v" && ((step.modifiers as string[]) ?? []).includes("command"),
-    );
-  }).length;
+const edits = (seen: Call[]): Call[] => seen.filter((c) => c.tool === "mail_composer_edit");
 
 describe("reviseDraftInPlace", () => {
-  it("replaces the draft's own text and leaves the quote alone", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          {
-            title: "Re: Quarterly numbers",
-            lines: ["ALPHA one", "ALPHA two"],
-            quote: ["On 18 Sep 2026, Ada wrote:", "the original"],
-          },
-        ],
-      },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      body: "BRAVO one\nBRAVO two\nBRAVO three",
-      clipboard,
-      renderTimeoutMs: 2000,
+  it("edits the one composer whose text matches when two share the subject", async () => {
+    const { env, seen } = await hostStub({
+      composers: [
+        { composer: "mc-1", subject: SUBJECT, text: "something else entirely" },
+        { composer: "mc-2", subject: SUBJECT, text: "ALPHA one\nALPHA two" },
+      ],
     });
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
     lane.close();
 
     expect(result).toMatchObject({
@@ -330,479 +149,252 @@ describe("reviseDraftInPlace", () => {
       quoteKept: true,
       saved: true,
     });
-    expect(pastes(seen)).toBe(1);
+    expect(edits(seen)).toHaveLength(1);
+    expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-2", body: "BRAVO" });
   });
 
-  /*
-   * The clipboard is shared machine state. Borrowing it is the mechanism, so the
-   * only acceptable behaviour is to put back exactly what was there — including
-   * after a refusal, which is the path where it is easiest to forget.
-   */
-  it("puts the clipboard back", async () => {
-    const { box, clipboard } = stubClipboard("something the user copied");
-    const { env } = await hostStub(
-      { composers: [{ title: "Re: Quarterly numbers", lines: ["ALPHA one"], quote: ["q"] }] },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    await reviseDraftInPlace(lane, facts({ contentHead: "ALPHA one" }), {
-      body: "BRAVO",
-      clipboard,
-      renderTimeoutMs: 2000,
+  it("passes the expected head, the first 120 characters of the draft's content", async () => {
+    const head = "x".repeat(200);
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: SUBJECT, text: head }],
     });
+    const lane = MailAxLane.open(env)!;
+    await reviseDraftInPlace(lane, facts({ contentHead: head }), { body: "BRAVO" });
     lane.close();
-    expect(box.value).toBe("something the user copied");
+    expect(edits(seen)[0]!.args.expectHead).toBe("x".repeat(120));
   });
 
-  /*
-   * `blocks` counts paragraphs; the selection moves by rendered lines. A wrapped
-   * paragraph therefore starts the loop SHORT, and the copy-back is what notices
-   * and keeps extending. Getting this wrong does not mangle anything — it
-   * refuses — but it refuses the ordinary case of a long sentence.
-   */
-  it("keeps extending the selection when a paragraph wraps", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          {
-            title: "Re: Quarterly numbers",
-            lines: ["a long sentence that", "wrapped onto three", "rendered lines"],
-            blocks: 1,
-            quote: ["On 18 Sep 2026, Ada wrote:"],
-          },
-        ],
-      },
-      box,
-    );
+  it("passes the native refusal through unchanged", async () => {
+    const refusal = {
+      replaced: false,
+      degraded: true,
+      method: "inPlace",
+      capability: "confirmation",
+      reason: "The paste did not read back, so IT WAS NOT SAVED.",
+      hint: "Look at the composer in Mail.",
+      extra: { nested: [1, 2] },
+    };
+    const { env } = await hostStub({
+      composers: [{ composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two" }],
+      editAnswer: refusal,
+    });
     const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(
-      lane,
-      facts({ contentHead: "a long sentence that wrapped onto three rendered lines" }),
-      { body: "shorter now", clipboard, renderTimeoutMs: 2000 },
-    );
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
     lane.close();
-    expect(result).toMatchObject({ replaced: true });
-    expect(pastes(seen)).toBe(1);
+    expect(result).toEqual(refusal);
   });
 
-  /*
-   * Two composers under one title cannot be told apart — handles are minted per
-   * call — and one of them holds somebody's unsent reply. The same refusal the
-   * compose path makes for the same reason.
-   */
-  it("refuses when two composers share the subject", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          { title: "Re: Quarterly numbers", lines: ["ALPHA one"], quote: ["q"] },
-          { title: "Re: Quarterly numbers", lines: ["other reply"], quote: ["q"] },
-        ],
-      },
-      box,
-    );
+  it("answers null when no composer has this subject", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: "Inbox", text: "ALPHA one ALPHA two" }],
+    });
     const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO", clipboard });
+    await expect(reviseDraftInPlace(lane, facts(), { body: "BRAVO" })).resolves.toBeNull();
     lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "composer" });
-    expect(pastes(seen)).toBe(0);
+    expect(edits(seen)).toHaveLength(0);
   });
 
-  /*
-   * A window with the right title holding a different message. Subject alone is
-   * not an identity in a thread where two replies are in flight, and rewriting
-   * the wrong one destroys what somebody wrote.
-   */
-  it("refuses a composer whose contents are not this draft's", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          { title: "Re: Quarterly numbers", lines: ["a different reply entirely"], quote: ["q"] },
-        ],
-      },
-      box,
-    );
+  it("refuses a composer under this subject whose text is a different message, and does not call edit", async () => {
+    const { env, seen } = await hostStub({
+      composers: [
+        { composer: "mc-1", subject: "Inbox", text: "ALPHA one ALPHA two" },
+        { composer: "mc-2", subject: SUBJECT, text: "a different reply entirely" },
+      ],
+    });
     const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO", clipboard });
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+    lane.close();
+    expect(result).toMatchObject({
+      replaced: false,
+      degraded: true,
+      method: "inPlace",
+      capability: "identity",
+      composerText: "a different reply entirely",
+      draftText: facts().contentHead,
+    });
+    expect(edits(seen)).toHaveLength(0);
+  });
+
+  it("answers null when no composer is open", async () => {
+    const { env } = await hostStub({ composers: [] });
+    const lane = MailAxLane.open(env)!;
+    await expect(reviseDraftInPlace(lane, facts(), { body: "BRAVO" })).resolves.toBeNull();
+    lane.close();
+  });
+
+  it("refuses when several windows hold the draft's text", async () => {
+    const { env, seen } = await hostStub({
+      composers: [
+        { composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two" },
+        { composer: "mc-2", subject: SUBJECT, text: "ALPHA one\nALPHA two" },
+      ],
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
     lane.close();
     expect(result).toMatchObject({ replaced: false, capability: "identity" });
-    expect(pastes(seen)).toBe(0);
+    expect(String((result as { reason: string }).reason)).toContain(
+      "windows hold this draft's text",
+    );
+    expect(edits(seen)).toHaveLength(0);
   });
 
   /*
-   * Belt and braces. Nothing should be able to reach this — the selection was
-   * copied back and matched — but a saved draft cannot be undone from here and
-   * an unsaved composer can, so a vanished quote stops before command-S.
+   * Mail with "Prefer tabs: Always". A tab it is not showing gives its subject
+   * and a null text, so it cannot be matched by content here: the app selects
+   * it and checks `expectHead` against what the window then shows.
    */
-  it("does not save a paste that swallowed the quoted original", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
+  describe("composers in tabs", () => {
+    const background = (composer: string): FakeComposer => ({
+      composer,
+      subject: SUBJECT,
+      text: null,
+      tab: "background",
+      quoted: null,
+      recipients: [],
+    });
+
+    it("edits the one background tab under the subject, with the head for the app to check", async () => {
+      const { env, seen } = await hostStub({
         composers: [
-          { title: "Re: Quarterly numbers", lines: ["ALPHA one", "ALPHA two"], quote: ["q"] },
+          { composer: "mc-1", subject: SUBJECT, text: "a different reply", tab: "selected" },
+          background("mc-2"),
         ],
-        quoteLostOnPaste: true,
-      },
-      box,
-    );
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+      expect(edits(seen)).toHaveLength(1);
+      expect(edits(seen)[0]!.args).toMatchObject({
+        composer: "mc-2",
+        body: "BRAVO",
+        expectHead: facts().contentHead.slice(0, 120),
+      });
+    });
+
+    it("sends an empty head for a background tab, so the app checks its text is empty", async () => {
+      const { env, seen } = await hostStub({ composers: [background("mc-2")] });
+      const lane = MailAxLane.open(env)!;
+      await reviseDraftInPlace(lane, facts({ contentHead: "" }), { body: "BRAVO" });
+      lane.close();
+      expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-2", expectHead: "" });
+    });
+
+    /*
+     * Fix round 5: the head goes along whenever the composer was matched by
+     * content, empty or not. A handle Mail's tab rebuild re-bound is refused
+     * by the app without one, and an empty saved draft is still this draft.
+     */
+    it("sends an empty head for a shown composer matched by its empty text", async () => {
+      const { env, seen } = await hostStub({
+        composers: [{ composer: "mc-1", subject: SUBJECT, text: "", tab: "selected" }],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts({ contentHead: "" }), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+      expect(edits(seen)).toHaveLength(1);
+      expect(edits(seen)[0]!.args).toEqual({ composer: "mc-1", body: "BRAVO", expectHead: "" });
+    });
+
+    it("refuses when the shown tab matches but a background tab under the subject could too", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two", tab: "selected" },
+          background("mc-2"),
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: false, capability: "identity" });
+      expect(String((result as { reason: string }).reason)).toContain("tab");
+      expect(edits(seen)).toHaveLength(0);
+    });
+
+    it("refuses when several background tabs carry the subject", async () => {
+      const { env, seen } = await hostStub({
+        composers: [background("mc-2"), background("mc-3")],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: false, capability: "identity" });
+      expect(edits(seen)).toHaveLength(0);
+    });
+
+    it("keeps the shown tab's own head behaviour when no background tab shares the subject", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two", tab: "selected" },
+          { ...background("mc-2"), subject: "Another draft" },
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      await reviseDraftInPlace(lane, facts(), { body: "BRAVO" });
+      lane.close();
+      expect(edits(seen)[0]!.args).toMatchObject({ composer: "mc-1" });
+    });
+  });
+
+  it("sends edits, not a body, when given edits", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two" }],
+    });
     const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      body: "BRAVO",
-      clipboard,
-      renderTimeoutMs: 2000,
+    await reviseDraftInPlace(lane, facts(), {
+      edits: [{ find: "ALPHA", replace: "BRAVO" }],
     });
     lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
-    expect(String((result as { reason: string }).reason)).toContain("GONE");
-    const saves = seen.filter((call) => {
-      const steps =
-        call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args];
-      return steps.some(
-        (step) => step.key === "s" && ((step.modifiers as string[]) ?? []).includes("command"),
-      );
-    });
-    expect(saves).toHaveLength(0);
+    const args = edits(seen)[0]!.args;
+    expect(args.edits).toEqual([{ find: "ALPHA", replace: "BRAVO" }]);
+    expect("body" in args).toBe(false);
   });
 
-  /*
-   * The selection ran past the sender's own words and copied part of the quoted
-   * original back. That is the one outcome this path exists to prevent — the
-   * quote is the thing recreation could not keep — so it stops rather than
-   * pasting over it, and the draft is left exactly as it was.
-   */
-  it("refuses when the selection reaches into the quoted original", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          {
-            title: "Re: Quarterly numbers",
-            lines: ["ALPHA one", "ALPHA two"],
-            // One block more than there are lines, so the opening burst
-            // overshoots into the quote.
-            blocks: 3,
-            quote: ["On 18 Sep 2026, Ada wrote:"],
-          },
-        ],
+  it("edits the handle it is given without matching by content", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-7", subject: "Unrelated", text: "nothing alike" }],
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), { body: "BRAVO", composer: "mc-7" });
+    lane.close();
+    expect(result).toMatchObject({ replaced: true });
+    expect(edits(seen)[0]!.args.composer).toBe("mc-7");
+  });
+
+  it("sends files as attachments and names them in the result", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: SUBJECT, text: "ALPHA one ALPHA two" }],
+      editAnswer: {
+        replaced: true,
+        method: "inPlace",
+        text: "ALPHA one ALPHA two",
+        quoteKept: true,
+        filesAdded: ["report.pdf"],
+        saved: true,
+        note: "ok",
       },
-      box,
-    );
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await reviseDraftInPlace(lane, facts(), {
+      attachments: ["/Users/me/report.pdf"],
+    });
+    lane.close();
+    expect(edits(seen)[0]!.args.attachments).toEqual(["/Users/me/report.pdf"]);
+    expect(result).toMatchObject({ replaced: true, filesAdded: ["report.pdf"] });
+  });
+
+  it("ignores the file-character and whitespace when matching content", async () => {
+    const { env, seen } = await hostStub({
+      composers: [{ composer: "mc-1", subject: SUBJECT, text: "ALPHA\n￼ one   ALPHA two" }],
+    });
     const lane = MailAxLane.open(env)!;
     const result = await reviseDraftInPlace(lane, facts({ contentHead: "ALPHA one ALPHA two" }), {
       body: "BRAVO",
-      clipboard,
     });
     lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "selection" });
-    expect(pastes(seen)).toBe(0);
-  });
-
-  /*
-   * command-C over an empty selection leaves the pasteboard untouched, so
-   * without the sentinel this would compare against its own previous answer and
-   * paste over a selection it never made.
-   */
-  it("refuses when the selection cannot be read back", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [{ title: "Re: Quarterly numbers", lines: ["ALPHA one"], quote: ["q"] }],
-        copyDoesNothing: true,
-      },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts({ contentHead: "ALPHA one" }), {
-      body: "BRAVO",
-      clipboard,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "selection" });
-    expect(pastes(seen)).toBe(0);
-  });
-
-  /*
-   * No composer at all is NOT a refusal: it is the signal to fall back to
-   * recreating the draft, and folding it into one would take that away.
-   */
-  it("answers null when no composer is open", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env } = await hostStub({ composers: [{ title: "Inbox", lines: [] }] }, box);
-    const lane = MailAxLane.open(env)!;
-    await expect(
-      reviseDraftInPlace(lane, facts(), { body: "BRAVO", clipboard }),
-    ).resolves.toBeNull();
-    lane.close();
-  });
-
-  /*
-   * Someone is using the Mac, so the keystroke is refused rather than posted
-   * into their window. Nothing typed, nothing changed.
-   */
-  it("refuses when the composer will not take the keyboard", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [{ title: "Re: Quarterly numbers", lines: ["ALPHA one"], quote: ["q"] }],
-        unfocusable: true,
-      },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts({ contentHead: "ALPHA one" }), {
-      body: "BRAVO",
-      clipboard,
-      focusTimeoutMs: 0,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "composer" });
-    expect(pastes(seen)).toBe(0);
-  });
-
-  /*
-   * The paste is on the pasteboard before the tree shows it — measured on a real
-   * composer, where reading once reported a correct body as a failure. Here the
-   * tree lies for two reads and the poll has to outlast it.
-   */
-  it("waits for the pasted body to reach the tree before saving", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          { title: "Re: Quarterly numbers", lines: ["ALPHA one", "ALPHA two"], quote: ["q"] },
-        ],
-        renderAfter: 2,
-      },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      body: "BRAVO",
-      clipboard,
-      renderTimeoutMs: 3000,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: true, saved: true });
-    // command-S comes after the verification, never before it.
-    const order = seen.flatMap((call) =>
-      call.tool === "run"
-        ? (call.args.steps as Record<string, unknown>[]).map((s) => s.key)
-        : call.tool === "key"
-          ? [call.args.key]
-          : [call.tool],
-    );
-    expect(order.lastIndexOf("expand")).toBeLessThan(order.lastIndexOf("s"));
-  });
-
-  /*
-   * A body that never reads back is NOT saved. The draft keeps its old text and
-   * the window is left on screen to be looked at, which is strictly safer than
-   * committing something nothing could verify.
-   */
-  it("does not save a paste it could not verify", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      {
-        composers: [
-          { title: "Re: Quarterly numbers", lines: ["ALPHA one", "ALPHA two"], quote: ["q"] },
-        ],
-        renderAfter: 1000,
-      },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      body: "BRAVO",
-      clipboard,
-      renderTimeoutMs: 400,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
-    const saves = seen.filter((call) => {
-      const steps =
-        call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args];
-      return steps.some(
-        (step) => step.key === "s" && ((step.modifiers as string[]) ?? []).includes("command"),
-      );
-    });
-    expect(saves).toHaveLength(0);
-  });
-});
-
-const saves = (seen: Call[]): number =>
-  seen.filter((call) => {
-    const steps =
-      call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args];
-    return steps.some(
-      (step) => step.key === "s" && ((step.modifiers as string[]) ?? []).includes("command"),
-    );
-  }).length;
-
-/*
- * Files go in by pasting their URLs, which is what a file copied in Finder does
- * to a composer — MEASURED on macOS 27.0, with an image reading back as an
- * AXImage and anything else as an AXButton, each named by its filename. The
- * claim pinned here is the same as for a body: nothing is saved until the files
- * read back in the sender's own text, and that text is still exactly what it
- * was.
- */
-/** A reply composer: two lines of the sender's own above a quote. */
-const reply = (over: Partial<Composer> = {}): Composer => ({
-  title: "Re: Quarterly numbers",
-  lines: ["ALPHA one", "ALPHA two"],
-  quote: ["On 18 Sep 2026, Ada wrote:", "the original"],
-  ...over,
-});
-
-describe("reviseDraftInPlace, adding files", () => {
-  it("lands them after the sender's text and above the quote, then saves", async () => {
-    const { box, clipboard } = stubClipboard();
-    const composer = reply();
-    const { env, seen } = await hostStub({ composers: [composer] }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf", "/Users/me/chart.png"],
-      clipboard,
-      renderTimeoutMs: 2000,
-    });
-    lane.close();
-
-    expect(result).toMatchObject({
-      replaced: true,
-      method: "inPlace",
-      attachmentsAdded: ["report.pdf", "chart.png"],
-      quoteKept: true,
-      saved: true,
-    });
-    expect(composer.lines).toEqual(["ALPHA one", "ALPHA two"]);
-    expect(composer.files).toEqual(["report.pdf", "chart.png"]);
-    expect(saves(seen)).toBe(1);
-    // The selection was collapsed to its end before anything was pasted.
-    const order = seen.flatMap((call) =>
-      call.tool === "run" ? (call.args.steps as Record<string, unknown>[]) : [call.args],
-    );
-    const collapse = order.findIndex((s) => s.key === "right" && !s.modifiers);
-    const paste = order.findIndex((s) => s.key === "v");
-    expect(collapse).toBeGreaterThan(-1);
-    expect(collapse).toBeLessThan(paste);
-  });
-
-  it("replaces the body and then adds the files", async () => {
-    const { box, clipboard } = stubClipboard();
-    const composer = reply();
-    const { env, seen } = await hostStub({ composers: [composer] }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      body: "BRAVO one",
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 2000,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: true, attachmentsAdded: ["report.pdf"] });
-    expect(composer.lines).toEqual(["BRAVO one"]);
-    expect(composer.files).toEqual(["report.pdf"]);
-    expect(pastes(seen)).toBe(2);
-  });
-
-  it("adds them to a reply whose own text is still empty", async () => {
-    const { box, clipboard } = stubClipboard();
-    const composer = reply({ lines: [], blocks: 0 });
-    const { env } = await hostStub({ composers: [composer] }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts({ contentHead: "" }), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 2000,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: true, saved: true });
-    expect(composer.files).toEqual(["report.pdf"]);
-  });
-
-  it("does not save when the files never read back", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub({ composers: [reply()], filesNeverRender: true }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 300,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
-    expect(String((result as { reason: string }).reason)).toMatch(/NOT SAVED/);
-    expect(saves(seen)).toBe(0);
-  });
-
-  /*
-   * A file of the same name already in the draft is not proof the new one went
-   * in: the count has to go up.
-   */
-  it("does not take a file already in the draft for the one just pasted", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub(
-      { composers: [reply({ files: ["report.pdf"] })], filesNeverRender: true },
-      box,
-    );
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 300,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
-    expect(saves(seen)).toBe(0);
-  });
-
-  /*
-   * The hazard of pasting files at all: if the selection was not collapsed, the
-   * paste REPLACES the sender's words. The files then read back fine, and only
-   * the text check stands between that and a saved draft missing its words.
-   */
-  it("does not save when the paste replaced the sender's text", async () => {
-    const { box, clipboard } = stubClipboard();
-    const composer = reply();
-    const { env, seen } = await hostStub({ composers: [composer], selectionStays: true }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 300,
-    });
-    lane.close();
-    expect(composer.files).toEqual(["report.pdf"]);
-    expect(result).toMatchObject({ replaced: false, capability: "confirmation" });
-    expect(saves(seen)).toBe(0);
-  });
-
-  it("pastes nothing when the selection cannot be proved", async () => {
-    const { box, clipboard } = stubClipboard();
-    const { env, seen } = await hostStub({ composers: [reply()], copyDoesNothing: true }, box);
-    const lane = MailAxLane.open(env)!;
-    const result = await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 300,
-    });
-    lane.close();
-    expect(result).toMatchObject({ replaced: false, capability: "selection" });
-    expect(pastes(seen)).toBe(0);
-  });
-
-  it("puts the clipboard back", async () => {
-    const { box, clipboard } = stubClipboard("something the user copied");
-    const { env } = await hostStub({ composers: [reply()] }, box);
-    const lane = MailAxLane.open(env)!;
-    await reviseDraftInPlace(lane, facts(), {
-      attachments: ["/Users/me/report.pdf"],
-      clipboard,
-      renderTimeoutMs: 2000,
-    });
-    lane.close();
-    expect(box.value).toBe("something the user copied");
+    expect(result).toMatchObject({ replaced: true });
+    expect(edits(seen)).toHaveLength(1);
   });
 });

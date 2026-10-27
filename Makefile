@@ -280,6 +280,8 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 	@swiftc -O -o apps/apple/.build/desktop-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
@@ -295,6 +297,28 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/desktop-check.swift
 	@apps/apple/.build/desktop-check
 
+mail-composer-check: ## Assert the Mail composer's text matching, handle registry and Mail-only verbs
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/mail-composer-check \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
+		apps/apple/Cupertino/DrivingSession.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/mail-composer-check.swift
+	@apps/apple/.build/mail-composer-check
+
 simulator-check: ## Assert the in-process simulator server speaks MCP, answers in iOS points, and cannot drive with writes off
 	@# The same gate scripts/verify-servers.sh cannot be, for the reason
 	@# screen-check gives. Stricter than desktop-check about what it may touch:
@@ -306,6 +330,8 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 	@swiftc -O -o apps/apple/.build/simulator-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
@@ -388,6 +414,8 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
@@ -483,6 +511,8 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
@@ -1300,7 +1330,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check desktop-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check desktop-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \

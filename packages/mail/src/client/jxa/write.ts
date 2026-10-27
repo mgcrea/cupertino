@@ -470,11 +470,13 @@ const RESOLVE_DRAFT = `
  * ways to rewrite a draft and the choice between them is made outside any
  * script: editing the open composer in place (`revise.ts`) needs the subject to
  * find the window and the body's opening to prove the window is this draft,
- * while recreating it (`UPDATE_DRAFT` below) needs neither.
+ * while rebuilding it (`client/rebuild.ts`) needs the Drafts mailbox and the
+ * rows already under the subject it will save under (`siblings`; pass the new
+ * subject as `p.subject` when it changes).
  *
  * Costs one Apple Event and is only spent when the accessibility lane exists to
- * use it — `client/mail.ts` goes straight to recreation otherwise, so a server
- * running outside Cupertino pays nothing for a path it cannot take.
+ * use it — `client/mail.ts` goes straight to `UPDATE_DRAFT` otherwise, so a
+ * server running outside Cupertino pays nothing for a path it cannot take.
  *
  * `contentHead` is capped rather than whole: it is an identity, not a body, and
  * a quoted newsletter runs to six figures of characters.
@@ -484,13 +486,26 @@ export const DRAFT_FACTS = script(`
 
   var content = String(prop(function () { return original.content(); }, ""));
 
+  // Every row already in Drafts under the subject a rebuild would save under,
+  // so the commit cannot take one of them for the rebuilt draft. Read here,
+  // before any window exists, so the rebuilt draft's first autosave is not
+  // among them.
+  var wanted = p.subject === null || p.subject === undefined ? oldSubject : String(p.subject);
+  var siblings = [p.id];
+  var same = prop(function () { return drafts.messages.whose({ subject: wanted })(); }, []);
+  for (var s = 0; s < same.length; s++) {
+    var sid = prop(function () { return same[s].id(); }, null);
+    if (sid !== null && sid !== p.id) siblings.push(sid);
+  }
+
   return ok({
     subject: oldSubject,
     isReply: isReply,
     attachments: attachments,
     recipientCount: to.length + cc.length + bcc.length,
     draftsMailbox: draftsName,
-    contentHead: content.slice(0, 400)
+    contentHead: content.slice(0, 400),
+    siblings: siblings
   });
 `);
 
@@ -537,22 +552,17 @@ export const DRAFT_FACTS = script(`
  * every visible respect except the part nobody checks is the exact failure the
  * compose path already learned once.
  *
- * ## This is the FALLBACK, not the first choice
+ * ## Only without Cupertino
  *
- * Every refusal below is a cost of recreating, and none of them is a cost of
- * editing. When the draft's own composer is still open — which it is for the
- * whole of "draft a reply, now change this line", because nothing here ever
- * closes one — `revise.ts` rewrites the body in that window instead, and
- * threading, attachments and the quoted original all survive because nothing is
- * remade. `client/mail.ts` tries that first and arrives here only when there is
- * no window to edit.
+ * Every refusal below is a cost of assigning a body through Apple Events. A
+ * server hosted by Cupertino never comes here: it edits the draft's open window
+ * (`revise.ts`), or rebuilds a closed draft by reopening it as a reply to its
+ * original and pasting into it (`rebuild.ts`), which keeps threading and files.
+ * This is what is left for a server run by hand, with no window to reach.
  */
 /**
- * Everything both recreate routes check before a replacement exists.
- *
- * Shared, like `RESOLVE_DRAFT`, so the route that pastes the body and the one
- * that assigns it refuse exactly the same drafts. Leaves `facts`, `subject` and
- * `before` in scope.
+ * Everything `UPDATE_DRAFT` checks before a replacement exists. Leaves
+ * `facts`, `subject` and `before` in scope.
  */
 const DRAFT_PREFLIGHT = `
   // Everything the caller needs to decide what to do instead, reported on the
@@ -634,9 +644,9 @@ const ADDRESS_REPLACEMENT = `
 /**
  * Confirm the replacement is in Drafts, and only then delete the original.
  *
- * Needs `subject`, `before`, `facts`, `saved`, `unquoted` and `attached` in
- * scope; the route that pastes its body supplies them as parameters, because
- * by the time it confirms, the script that composed the replacement is gone.
+ * `UPDATE_DRAFT`'s, which needs `subject`, `before`, `facts`, `saved`,
+ * `unquoted` and `attached` in scope. A draft rebuilt natively is confirmed by
+ * `COMMIT_REPLACEMENT` instead, by what it holds rather than by subject alone.
  */
 const CONFIRM_AND_DELETE = `
   // Ask the Drafts mailbox, not the object we just made: "save() did not throw"
@@ -764,61 +774,194 @@ export const UPDATE_DRAFT = script(
 );
 
 /**
- * The first half of recreating a draft without assigning its body.
+ * Confirm a rebuilt draft is in Drafts, and only then delete the one it replaces.
  *
- * MEASURED, macOS 27.0: assigning `content` in any form, "" included and an
- * attachment pushed onto it included, makes Mail wrap the body in
- * `<blockquote type="cite">` inside an `Apple-Mail-URLShareWrapperClass`
- * div, styled with no border. Mail shows nothing; Outlook shows a quotation,
- * and the text/plain part carries "> " on every line. A message created with
- * no `content` at all has none of it. So this composes the replacement with
- * no body, the client pastes the body and any files into its window and
- * presses save, and `COMMIT_REPLACEMENT` finishes the job.
+ * The second half of `client/rebuild.ts`: the client opened a new composer
+ * (a reply to the draft's original, or a new message), filled it through the
+ * app, and the app read it back and saved it. Nothing has been deleted yet.
  *
- * Every refusal `UPDATE_DRAFT` makes, it makes here, before anything opens.
- */
-export const STAGE_REPLACEMENT = script(
-  `
-  ${RESOLVE_DRAFT}
-  ${DRAFT_PREFLIGHT}
-
-  var replacement = M.OutgoingMessage({ subject: subject, visible: true });
-  M.outgoingMessages.push(replacement);
-  ${ADDRESS_REPLACEMENT}
-
-  var ids = [];
-  for (var key in before) ids.push(Number(key));
-  return ok({ staged: true, subject: subject, before: ids, draftsMailbox: draftsName });
-`,
-  { allowLaunch: true },
-);
-
-/**
- * The second half: the replacement was pasted into and saved by the client.
+ * ## How the new draft is recognised
  *
- * The same confirmation and the same order as `UPDATE_DRAFT`, which is the
- * point of sharing it: nothing is deleted until a row that was not there
- * before is in Drafts under the subject.
+ * Not by row id or Message-ID: MEASURED, both change on every save of a draft,
+ * and sync renumbers rows within seconds, so a row that was there before the
+ * rebuild (an older copy, or the original itself) can come back under a new
+ * id. What renumbering leaves alone is what the row holds, so a row is the
+ * rebuilt draft only when ALL of these hold:
+ *
+ *   * its `Date` header, which Mail stamps on every save, is at or after
+ *     `p.openedAt` (when the rebuild asked for its composer, ms) minus 2 s, the
+ *     header's whole-second resolution and some slack;
+ *   * it sits under `p.subject` (what `whose` asks for) and, for a reply, its
+ *     `In-Reply-To` names the original (`p.inReplyTo`);
+ *   * its text opens with `p.head` (the app's read-back, whitespace squashed);
+ *     and when there is no text to go by, its attachments' names are exactly
+ *     `p.files`, the files the app put in;
+ *   * it is not the original's id, nor one of `p.before`.
+ *
+ * Exactly one row may pass. None after the polling, or several, and nothing
+ * is deleted: the result says two (or more) drafts now exist.
+ *
+ * ## Deleting the original
+ *
+ * Re-found by id immediately before the delete, never through a reference held
+ * across the polling: MEASURED, a syncing account rewrites row ids within
+ * seconds, and a held reference then fails with "Can't get object." When the
+ * id no longer finds the original, or finds a message under another subject,
+ * nothing is guessed at and nothing is deleted: both drafts are kept and the
+ * result says so.
  */
 export const COMMIT_REPLACEMENT = script(
   `
-  ${RESOLVE_DRAFT}
+  var acct = findAccount(M, p.accountUuid);
+  if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
+  var drafts = resolveMailbox(acct, p.mailbox);
+  if (!drafts) return err("MAILBOX_NOT_FOUND", "No mailbox " + p.mailbox + " in that account");
+  var draftsName = String(prop(function () { return drafts.name(); }, p.mailbox));
 
-  var facts = {
-    subject: oldSubject,
-    isReply: isReply,
-    attachments: attachments,
-    recipientCount: to.length + cc.length + bcc.length
-  };
   var subject = String(p.subject);
   var before = {};
   before[p.id] = true;
-  for (var b = 0; b < p.before.length; b++) before[p.before[b]] = true;
-  var saved = true;
-  var unquoted = null;
-  var attached = { count: p.attachmentsAdded || 0 };
+  var listed = p.before || [];
+  for (var b = 0; b < listed.length; b++) before[listed[b]] = true;
 
-  ${CONFIRM_AND_DELETE}
+  var squash = function (s) {
+    return String(s).replace(/\\uFFFC/g, "").replace(/\\s+/g, " ").replace(/^ | $/g, "");
+  };
+  var head = squash(p.head || "");
+  var wantedReply = p.inReplyTo ? String(p.inReplyTo).toLowerCase() : null;
+  var since = Number(p.openedAt) - 2000;
+  var nameKey = function (list) {
+    return list.map(function (x) { return String(x).toLowerCase(); }).sort().join("/");
+  };
+  var wantedFiles = nameKey(p.files || []);
+  var headerOf = function (headers, name) {
+    var line = new RegExp("^" + name + ":[ \\t]*(.*(?:\\r?\\n[ \\t]+.*)*)", "im").exec(headers);
+    return line ? line[1] : null;
+  };
+
+  // Is this row the rebuilt draft? Only rows that pass every check count.
+  var isRebuilt = function (row) {
+    var headers = String(prop(function () { return row.allHeaders(); }, ""));
+    var stamped = Date.parse(String(headerOf(headers, "date") || "").replace(/\\s+/g, " "));
+    if (!(stamped >= since)) return false;
+    if (wantedReply !== null) {
+      var answers = headerOf(headers, "in-reply-to");
+      if (answers === null || answers.toLowerCase().indexOf(wantedReply) === -1) return false;
+    }
+    if (head) {
+      var text = squash(prop(function () { return row.content(); }, ""));
+      if (text.slice(0, head.length) !== head) return false;
+    } else {
+      var held = prop(function () { return row.mailAttachments(); }, []);
+      var names = [];
+      for (var a = 0; a < held.length; a++) {
+        var one = held[a];
+        names.push(String(prop(function () { return one.name(); }, "")));
+      }
+      if (nameKey(names) !== wantedFiles) return false;
+    }
+    return true;
+  };
+
+  var found = [];
+  for (var attempt = 0; attempt < 15 && found.length === 0; attempt++) {
+    pause(0.4);
+    var matches = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
+    for (var k = 0; k < matches.length; k++) {
+      var row = matches[k];
+      var mid = prop(function () { return row.id(); }, null);
+      if (mid === null || before[mid]) continue;
+      if (isRebuilt(row)) found.push(mid);
+    }
+  }
+
+  if (found.length === 0) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", draftsMailbox: draftsName,
+      originalDeleted: false,
+      reason:
+        "The new draft was filled, read back and saved in its window, but no draft saved since " +
+        "then appeared in " + draftsName + " within six seconds under \\"" + subject + "\\"" +
+        (wantedReply !== null ? " answering the original" : "") + " and holding the new " +
+        (head ? "text" : "files") + ", so it could not be confirmed. THE ORIGINAL DRAFT WAS NOT " +
+        "DELETED. Two drafts now exist if the new one did save.",
+      hint:
+        "Look in " + draftsName + " and at the open window in Mail, then delete the draft you do " +
+        "not want. Nothing here will delete either of them."
+    });
+  }
+  if (found.length > 1) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", draftsMailbox: draftsName,
+      originalDeleted: false, candidates: found,
+      reason:
+        found.length + " drafts saved since the rebuild began under \\"" + subject + "\\" hold the " +
+        "new " + (head ? "text" : "files") + ", so which one is the rebuilt draft cannot be told. " +
+        "Nothing was deleted: the original and all of them are kept, so at least three drafts " +
+        "now exist.",
+      hint:
+        "Look in " + draftsName + " and keep the one you want. Nothing here will delete any of them."
+    });
+  }
+  var newId = found[0];
+
+  // Re-found by id now, and only that: a held reference may have gone stale.
+  var original = null;
+  try {
+    original = drafts.messages.byId(p.id);
+    var was = String(original.subject());
+    if (p.originalSubject !== null && p.originalSubject !== undefined &&
+        was !== String(p.originalSubject)) original = null;
+  } catch (e) {
+    original = null;
+  }
+  if (original === null) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", newId: newId,
+      draftsMailbox: draftsName, subject: subject, originalDeleted: false,
+      reason:
+        "A new draft holding the change was found in " + draftsName + ", but the one it " +
+        "replaces could no longer be found by its id, most likely because Mail renumbered it " +
+        "while syncing. Nothing is deleted on a guess, so two drafts now exist.",
+      hint: "Look in " + draftsName + " and delete the old draft yourself."
+    });
+  }
+
+  var movesToTrash = prop(function () { return acct.moveDeletedMessagesToTrash(); }, null);
+  try {
+    M.delete(original);
+  } catch (e) {
+    return ok({
+      replaced: false, degraded: true, capability: "confirmation", newId: newId,
+      draftsMailbox: draftsName, subject: subject, originalDeleted: false,
+      removeError: String(e && e.message ? e.message : e),
+      reason:
+        "A new draft holding the change was found in " + draftsName + ", but Mail would not " +
+        "delete the one it replaces, so two drafts now exist.",
+      hint: "Look in " + draftsName + " and delete the old draft yourself."
+    });
+  }
+
+  // Read the id back once more: the same sync rewrite can renumber the new
+  // draft between confirmation and return.
+  pause(0.4);
+  var settledId = newId;
+  var finals = prop(function () { return drafts.messages.whose({ subject: subject })(); }, []);
+  for (var f = 0; f < finals.length; f++) {
+    var last = finals[f];
+    var fid = prop(function () { return last.id(); }, null);
+    if (fid !== null && !before[fid] && fid > settledId && isRebuilt(last)) settledId = fid;
+  }
+
+  return ok({
+    replaced: true,
+    newId: settledId,
+    confirmedId: newId,
+    draftsMailbox: draftsName,
+    subject: subject,
+    originalDeleted: true,
+    originalMovedToTrash: movesToTrash
+  });
 `,
   { allowLaunch: true },
 );
@@ -1104,17 +1247,74 @@ export const REPLY_OR_FORWARD = script(
  *
  * **`content` is never touched, and that includes attaching files.** MEASURED,
  * macOS 27.0: any write to it — assigning "" or pushing an attachment onto it —
- * makes Mail wrap the body in a hidden quotation that every other client shows
- * (`STAGE_REPLACEMENT` has the detail). The native half pastes the body and the
- * files into the window instead.
+ * makes Mail wrap the body in `<blockquote type="cite">` inside an
+ * `Apple-Mail-URLShareWrapperClass` div, styled with no border: Mail shows
+ * nothing, Outlook shows a quotation, and the text/plain part carries "> " on
+ * every line. A message created with no `content` at all has none of it. The
+ * native half pastes the body and the files into the window instead.
+ *
+ * **Overrides, for rebuilding a closed draft** (`client/rebuild.ts`).
+ * `recipients` (`{ to, cc, bcc }`, addresses) replaces the recipients Mail
+ * chose, and `subject` the subject, on a reply as on a new message. They are
+ * applied as soon as the composer exists, which for a reply is right after
+ * `reply` opened its window: the opening is the measured path, and the window
+ * is not filled or saved until the client has read what this returns. Each
+ * list is left alone when it already holds those addresses, and the addresses
+ * it ends up with are read back and returned as `recipients`, so the client
+ * checks them rather than trusting the writes.
  */
 export const OPEN_COMPOSER = script(
   `
   var draft;
+
+  var addressesOf = function (getter) {
+    var out = [];
+    var items = prop(getter, []);
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var addr = prop(function () { return item.address(); }, null);
+      if (addr) out.push(String(addr));
+    }
+    return out;
+  };
+  var sameAddresses = function (a, b) {
+    var norm = function (list) {
+      return list.map(function (x) { return String(x).toLowerCase(); }).sort().join(",");
+    };
+    return norm(a) === norm(b);
+  };
+  // Make each list hold exactly the addresses given, and say what it holds after.
+  var applyRecipients = function (wanted) {
+    var kinds = [
+      ["to", function () { return draft.toRecipients; }, function (a) { return M.ToRecipient({ address: a }); }],
+      ["cc", function () { return draft.ccRecipients; }, function (a) { return M.CcRecipient({ address: a }); }],
+      ["bcc", function () { return draft.bccRecipients; }, function (a) { return M.BccRecipient({ address: a }); }]
+    ];
+    var back = {};
+    for (var k = 0; k < kinds.length; k++) {
+      var kind = kinds[k][0];
+      var list = kinds[k][1]();
+      var make = kinds[k][2];
+      var want = wanted[kind] || [];
+      var have = addressesOf(function () { return list(); });
+      if (!sameAddresses(have, want)) {
+        for (var d = have.length - 1; d >= 0; d--) {
+          try { M.delete(list[d]); } catch (e) {}
+        }
+        for (var w = 0; w < want.length; w++) list.push(make(want[w]));
+      }
+      back[kind] = addressesOf(function () { return list(); });
+    }
+    return back;
+  };
+
   if (p.mode === "new") {
     draft = M.OutgoingMessage({ subject: p.subject || "", visible: true });
     M.outgoingMessages.push(draft);
     if (p.senderAddress) draft.sender = p.senderAddress;
+    if (p.recipients) {
+      return ok({ subject: String(p.subject || ""), recipients: applyRecipients(p.recipients) });
+    }
     var lists = [["to", p.to], ["cc", p.cc], ["bcc", p.bcc]];
     for (var l = 0; l < lists.length; l++) {
       var kind = lists[l][0];
@@ -1151,6 +1351,13 @@ export const OPEN_COMPOSER = script(
   if (!subject) {
     return err("COMPOSER_NOT_FOUND", "Mail did not return a composer for the " + p.mode + ".");
   }
+
+  if (p.subject && String(p.subject) !== subject) {
+    try { draft.subject = String(p.subject); } catch (e) {}
+    subject = String(prop(function () { return draft.subject(); }, subject));
+  }
+
+  if (p.recipients) return ok({ subject: subject, recipients: applyRecipients(p.recipients) });
 
   if (p.mode === "forward") {
     var addrs = p.to || [];

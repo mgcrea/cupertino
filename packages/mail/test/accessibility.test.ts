@@ -1,6 +1,8 @@
 import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { describe, expect, it, vi } from "vitest";
 
+import { MailAxLane } from "../src/client/ax.js";
+import { composeNatively } from "../src/client/compose.js";
 import { COMPOSER_ACCESS } from "../src/client/jxa/write.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import { loadConfig } from "../src/config.js";
@@ -114,5 +116,110 @@ describe("composerAccess()", () => {
     expect(COMPOSER_ACCESS).toContain("-1743");
     // The runner unwraps `{ ok, data }`; the probe has to speak that envelope.
     expect(COMPOSER_ACCESS).toContain("ok: true");
+  });
+});
+
+/**
+ * The grant is named once. Every draft entry point that finds the app there but
+ * Accessibility missing says the same sentence, because a customer who hits it
+ * from any of them has to be led to the same switch.
+ */
+describe("a missing Accessibility grant", () => {
+  const unreachable = {
+    reach: async () => ({ ok: false, reason: "accessibility", windows: null }),
+    composers: async () => [],
+    watch: () => ({ check: async () => null }),
+  } as unknown as MailAxLane;
+  const REF = "m1:98AC2C3D-408C-47E4-8FE4-6E64D1F58E99/Drafts#42";
+  const runner = {
+    run: async () => ({
+      subject: "Re: Quarterly numbers",
+      isReply: true,
+      attachments: 0,
+      saved: true,
+      note: "ok",
+      contentHead: "ALPHA",
+      draftsMailbox: "Drafts",
+    }),
+  } as unknown as OsascriptRunner;
+  const client = new AppleMailClient({
+    config: loadConfig({ APPLE_MAIL_ALLOW_WRITES: "1" }),
+    osascript: runner,
+    ax: unreachable,
+  });
+  const text = MailAxLane.grantMessage("edit");
+
+  it("leads with the one sentence, the settings path and the diagnostics tool", () => {
+    expect(text.startsWith("Cupertino needs Accessibility to write Mail drafts.")).toBe(true);
+    expect(text).toContain("System Settings › Privacy & Security › Accessibility");
+    expect(text).toContain("then run apple_mail_diagnostics");
+    expect(text).not.toContain("\u2014");
+    // Shared by a read as well as the writes, so it claims nothing about either.
+    expect(text).not.toContain("written");
+  });
+
+  it("is the same text whatever the mode", () => {
+    expect(MailAxLane.grantMessage("reply")).toBe(text);
+    expect(MailAxLane.grantMessage("replacement")).toBe(text);
+  });
+
+  it("is what composing throws", async () => {
+    await expect(
+      composeNatively(unreachable, runner, {
+        accountUuid: "U",
+        mailbox: "INBOX",
+        id: 1,
+        mode: "reply",
+        body: "x",
+        to: [],
+        replyToAll: false,
+        sendNow: false,
+      } as never),
+    ).rejects.toThrow(`${text} Nothing was written.`);
+    await expect(
+      client.sendMessage({
+        to: ["a@b.c"],
+        cc: [],
+        bcc: [],
+        subject: "Hi",
+        body: "x",
+        sendNow: false,
+      }),
+    ).rejects.toThrow(`${text} Nothing was written.`);
+  });
+
+  it("is the reason when editing an open composer", async () => {
+    const result = await client.updateDraft({ composer: "mc-0" }, { body: "x" });
+    expect(result).toMatchObject({
+      capability: "accessibility",
+      reason: text,
+      hint: "Nothing was written.",
+    });
+  });
+
+  it("is the reason when rebuilding a closed draft", async () => {
+    const result = await client.updateDraft({ ref: REF }, { body: "x" });
+    expect(result).toMatchObject({
+      capability: "accessibility",
+      reason: text,
+      hint: "Nothing was written.",
+    });
+  });
+
+  it("is the reason when listing open drafts, and still says nothing was read", async () => {
+    const result = await client.listOpenDrafts();
+    expect(result).toMatchObject({ capability: "accessibility", reason: text, drafts: [] });
+    expect(String(result["hint"])).toContain("does NOT mean no draft is open");
+    expect(String(result["reason"])).not.toContain("written");
+  });
+
+  it("keeps its own wording for a server Cupertino did not start", async () => {
+    const bare = new AppleMailClient({
+      config: loadConfig({ APPLE_MAIL_ALLOW_WRITES: "1" }),
+      osascript: runner,
+    });
+    const result = await bare.listOpenDrafts();
+    expect(String(result["reason"])).toContain("not started by Cupertino");
+    expect(String(result["reason"])).not.toBe(text);
   });
 });

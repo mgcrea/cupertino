@@ -408,6 +408,94 @@ nonisolated enum Changelog {
             body: [
               "`apple_mail_watch` and `apple_messages_watch` take a sender filter, `from` or `domains`, and hand back a resource the host can subscribe to; when a matching message lands, the server pushes `notifications/resources/updated`, and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything. A watch carries envelope metadata only, never a body or message text. It works with both the 2025 and the 2026-07-28 protocol, and lives as long as the connection that made it. Claude Code does not subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log shows each subscription, and the Activity log and the audit file record each push, so what Cupertino sent into a session reads the same as what it was asked.",
             ]),
+          Entry(
+            ordinal: 2,
+            headline: "A draft whose window was closed can still be edited.",
+            body: [
+              "`apple_mail_update_draft` used to refuse once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the thread and keeps its files and formatting, and the old draft is deleted only after the new one is confirmed in Drafts. It still refuses, leaving the draft as it was, for a forward and for an original Mail can't find. When the quote Mail writes into the new reply is not the one the draft had, the draft is left as it was too, but that new reply window stays open, unfilled and unsaved, for you to close without saving.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Edits can be find and replace.",
+            body: [
+              "`update_draft` takes `edits`, pairs of text to find and what replaces it, applied to what you wrote and never to the quoted message. Each `find` must match exactly once, and only the matched words change, so the rest of the draft, its formatting and its files are left alone.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A draft can be named by its window, or not at all.",
+            body: [
+              "`update_draft` takes a `composer` handle from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose window that is open. With none or several open it refuses and lists them.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "Drafts open as tabs of one window are handled.",
+            body: [
+              "With macOS set to prefer tabs, Mail opens every compose window as a tab, and only the tab it shows can be read. `apple_mail_list_open_drafts` now lists each tab with its own handle, a hidden one by subject only. `update_draft` selects a hidden tab, checks it is the draft, edits and saves it, and then leaves that tab shown, because Mail does not say when a save has landed and switching back early could save the other draft. A handle can come back marked `rebound` after Mail rebuilds its tab bar; it then edits only by `ref`, which checks the text, until that text is proved.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "The Mail pane says when drafts need Accessibility.",
+            body: [
+              "Writing into a compose window requires it, and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes are on and the grant is missing.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 7,
+            headline: "Mail's everyday reads no longer wait on Mail.",
+            body: [
+              "With Full Disk Access, `list_messages`, `count_messages`, `list_mailboxes` with counts, `get_message` and `list_attachments` answer from Mail's search index and the message files, and send Mail no Apple Event at all. On a 210,000-message store, listing twenty messages took 8.4 s and now takes milliseconds; `list_mailboxes` took 1.2 s, `count_messages` 0.77 s and `get_message` 0.45 s, nearly all of it Apple Events for columns the index already holds. `list_messages` is no longer capped at 50 when the index answers, and its `source` says which lane did. `count_messages` reports `unread.index` alone when the index answers, and Mail's cached badge figure only when it cannot; counts from `list_mailboxes` now agree with it, Gmail labels included, and are null for a mailbox the index does not hold rather than zero. Without Full Disk Access, or for a mailbox the index has no row for, each still asks Mail.",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "A sender's display name is quoted the way Mail writes it.",
+            body: [
+              "Results built from the index, `search_messages` and `get_thread` included, gave `Doe, Jane <jane@example.com>`, which reads as two recipients. They now give `\"Doe, Jane\" <jane@example.com>`, matching Mail's own `sender` — which differed on 18 of 20 messages of an Exchange account.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "The account list stops costing a second a minute.",
+            body: [
+              "It was cached for 60 s, so the first call after every pause waited about a second for Mail to list its accounts again. An expired list is now served at once and refreshed behind the call, and an account name it does not know is read afresh before it is refused.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "A new message, reply or forward keeps your signature.",
+            body: [
+              "The text you give goes in above the signature Mail adds, as it always did, and the signature stays below it, an image in it included; the check that the text landed reads back your text followed by the signature. Changing a draft that already exists with `update_draft` and a `body` still replaces everything you wrote in it, signature included.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "Editing a draft is faster and interrupts less.",
+            body: [
+              "The text is selected without moving the caret line by line and without a copy for every step, so Mail comes to the front once, to paste, and your clipboard and the app you were in are put back afterwards.",
+            ]),
+          Entry(
+            ordinal: 12,
+            headline: "`apple_mail_list_open_drafts` returns a handle for each window.",
+            body: [
+              "It also reports From, To, Cc and Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without searching for it first.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 13,
+            headline: "Two drafts with the same subject are no longer refused.",
+            body: [
+              "Two replies in one thread share a title, and the old edit gave up rather than guess which window was meant. Each window now has its own handle, so the right one is edited and the other is left as it was.",
+            ]),
+          Entry(
+            ordinal: 14,
+            headline: "A missing Accessibility grant is explained once, in plain words.",
+            body: [
+              "Each draft tool said so in its own way, and some only said it could not read the window. They now say what the missing grant stopped and where to turn it on.",
+            ]),
         ]),
     ])
 

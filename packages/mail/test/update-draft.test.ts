@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  COMMIT_REPLACEMENT,
-  DRAFT_FACTS,
-  STAGE_REPLACEMENT,
-  UPDATE_DRAFT,
-} from "../src/client/jxa/write.js";
+import { COMMIT_REPLACEMENT, DRAFT_FACTS, UPDATE_DRAFT } from "../src/client/jxa/write.js";
 
 /**
  * The draft-rewrite script, run for real against a fake Mail.
@@ -50,7 +45,7 @@ type MailBehaviour = {
    * Drafts already in the mailbox beside the original. Mail keeps autosaved
    * copies under one subject, so a second row carrying it is the ordinary case.
    */
-  otherDrafts?: { id: number; subject: string }[];
+  otherDrafts?: Row[];
   /** Mail refuses to attach a file to the replacement. */
   attachFails?: boolean;
   /**
@@ -61,7 +56,23 @@ type MailBehaviour = {
   citationStrips?: boolean;
   /** The replacement was already saved, by a keystroke, before this script ran. */
   alreadySaved?: boolean;
+  /** What the replacement holds once it is in Drafts. */
+  replacementHeaders?: string;
+  replacementContent?: string;
+  /** The names of the files the replacement holds. */
+  replacementFiles?: string[];
+  /** The original's id finds nothing once the polling has begun: Mail renumbered it. */
+  originalGoneAfterPolls?: boolean;
 };
+
+/** A row in the Drafts mailbox. */
+type Row = { id: number; subject: string; headers?: string; content?: string; files?: string[] };
+
+/** A `Date` header just after the rebuild opened its composer, and one long before it. */
+const SAVED_NOW = "Date: Sat, 25 Oct 2026 10:00:03 +0000\r\n";
+const SAVED_EARLIER = "Date: Sat, 25 Oct 2026 09:00:00 +0000\r\n";
+/** When the rebuild opened its composer, as `COMMIT_REPLACEMENT` is told. */
+const OPENED_AT = Date.parse("2026-10-25T10:00:00Z");
 
 const ORIGINAL_ID = 42;
 
@@ -69,6 +80,15 @@ const ORIGINAL_ID = 42;
 const Path = (path: string) => ({ path });
 
 const addressee = (address: string) => ({ address: () => address });
+
+/** A Drafts row as Mail hands it back. */
+const row = (r: Row) => ({
+  id: () => r.id,
+  subject: () => r.subject,
+  allHeaders: () => r.headers ?? "",
+  content: () => r.content ?? "",
+  mailAttachments: () => (r.files ?? []).map((name) => ({ name: () => name })),
+});
 
 const runScript = (
   params: Record<string, unknown>,
@@ -91,6 +111,10 @@ const runScript = (
     attachFails = false,
     citationStrips = true,
     alreadySaved = false,
+    replacementHeaders = `From: me@example.com\r\n${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+    replacementContent = "The revised numbers.\n\nOn 18 Sep 2026, Ada wrote:\nthe original",
+    replacementFiles = [],
+    originalGoneAfterPolls = false,
   } = behaviour;
 
   const state = {
@@ -105,7 +129,7 @@ const runScript = (
     attached: [] as string[],
     closed: 0,
     /** Rows the Drafts mailbox reports. The replacement is added on save.  */
-    draftRows: [{ id: ORIGINAL_ID, subject }, ...otherDrafts],
+    draftRows: [{ id: ORIGINAL_ID, subject }, ...otherDrafts] as Row[],
   };
 
   const original = {
@@ -123,24 +147,29 @@ const runScript = (
   const draftsMailbox = {
     name: () => "Drafts",
     account: () => account,
-    messages: Object.assign(() => state.draftRows.map((r) => ({ id: () => r.id })), {
+    messages: Object.assign(() => state.draftRows.map(row), {
       // Mail hands back a live reference. On a syncing account the row is
       // renumbered underneath it, and the reference — not the id — goes dead.
       // An id that is not there raises, the way Mail does: "Can't get object."
       byId: (id: number) => {
         if (id !== ORIGINAL_ID) throw new Error("Can't get object.");
+        if (originalGoneAfterPolls && state.polls > 0) throw new Error("Can't get object.");
         return { ...original, bornAt: state.polls };
       },
       whose: (spec: { subject: string }) => () => {
         // The replacement only becomes visible once Mail has caught up.
         if (state.saves > 0 && ++state.polls >= savedAfterPolls) {
           if (!state.draftRows.some((r) => r.id === 99)) {
-            state.draftRows.push({ id: 99, subject: state.composed?.subject ?? subject });
+            state.draftRows.push({
+              id: 99,
+              subject: state.composed?.subject ?? subject,
+              headers: replacementHeaders,
+              content: replacementContent,
+              files: replacementFiles,
+            });
           }
         }
-        return state.draftRows
-          .filter((r) => r.subject === spec.subject)
-          .map((r) => ({ id: () => r.id }));
+        return state.draftRows.filter((r) => r.subject === spec.subject).map(row);
       },
     }),
   };
@@ -532,6 +561,18 @@ describe("reading a draft's facts", () => {
    * An identity, not a body. A draft quoting a newsletter runs to six figures of
    * characters and all of it would cross the Apple Event boundary.
    */
+  /* What a rebuild must never take for the draft it saves: rows already there. */
+  it("lists the rows already under the subject a rebuild would save under", () => {
+    const others = [
+      { id: 50, subject: "Quarterly numbers" },
+      { id: 60, subject: "Revised numbers" },
+    ];
+    const kept = runScript({ subject: null }, { otherDrafts: others }, DRAFT_FACTS);
+    expect(kept.envelope.data.siblings).toEqual([42, 50]);
+    const changed = runScript({ subject: "Revised numbers" }, { otherDrafts: others }, DRAFT_FACTS);
+    expect(changed.envelope.data.siblings).toEqual([42, 60]);
+  });
+
   it("caps the content it reads back", () => {
     const { envelope } = runScript({}, { content: "x".repeat(5000) }, DRAFT_FACTS);
     expect(envelope.data.contentHead).toHaveLength(400);
@@ -555,71 +596,243 @@ describe("reading a draft's facts", () => {
 });
 
 /*
- * Recreating with the body pasted rather than assigned: `STAGE_REPLACEMENT`
- * opens the replacement, the client fills and saves its window, and
- * `COMMIT_REPLACEMENT` confirms it and deletes the original. The split must
- * keep both halves of `UPDATE_DRAFT`'s contract: the same refusals, and the
- * same order.
+ * Confirming a rebuilt draft and deleting the one it replaces. The client has
+ * already opened, filled and saved the new draft; this only finds it in Drafts
+ * by what it holds, and deletes the original only then. Message-ID and row id
+ * change on every save, so neither is what it is found by.
  */
-describe("recreating a draft with its body pasted", () => {
-  /*
-   * The point of staging at all. Any write to `content` — "" included —
-   * makes Mail wrap the body in a hidden quotation, measured on macOS 27.0.
-   */
-  it("stages a replacement that never touches content", () => {
-    const { envelope, state } = runScript({}, {}, STAGE_REPLACEMENT);
-    expect(envelope.data).toMatchObject({ staged: true, subject: "Quarterly numbers" });
-    expect(state.composed).not.toHaveProperty("content");
-    expect(state.attached).toEqual([]);
-    expect(state.to).toEqual(["ada@example.com"]);
-    expect(state.saves).toBe(0);
-    expect(state.deleted).toEqual([]);
-  });
+describe("committing a rebuilt draft", () => {
+  const commit = {
+    subject: "Quarterly numbers",
+    originalSubject: "Quarterly numbers",
+    inReplyTo: "<abc@example.com>",
+    head: "The revised numbers.",
+    before: [42],
+    openedAt: OPENED_AT,
+    files: [],
+  };
 
-  /* Rows already under the subject are handed over, so none is taken for the new one. */
-  it("hands over every row that was already there", () => {
-    const { envelope } = runScript(
-      {},
-      { otherDrafts: [{ id: 50, subject: "Quarterly numbers" }] },
-      STAGE_REPLACEMENT,
-    );
-    expect([...envelope.data.before].toSorted()).toEqual([42, 50]);
-  });
-
-  it("refuses a reply before opening anything", () => {
-    const { envelope, state } = runScript({}, { headers: REPLY_HEADERS }, STAGE_REPLACEMENT);
-    expect(envelope.data).toMatchObject({ replaced: false, capability: "threading" });
-    expect(state.composed).toBeNull();
-  });
-
-  it("deletes the original once the saved replacement is confirmed", () => {
-    const { envelope, state } = runScript(
-      { subject: "Quarterly numbers", before: [42], attachmentsAdded: 1 },
-      { alreadySaved: true },
-      COMMIT_REPLACEMENT,
-    );
-    expect(envelope.data).toMatchObject({ replaced: true, newId: 99, attachmentsAdded: 1 });
+  it("deletes the original once the rebuilt reply is confirmed", () => {
+    const { envelope, state } = runScript(commit, { alreadySaved: true }, COMMIT_REPLACEMENT);
+    expect(envelope.data).toMatchObject({ replaced: true, newId: 99, originalDeleted: true });
     expect(state.deleted).toEqual([ORIGINAL_ID]);
   });
 
-  it("keeps the original when the replacement never shows up", () => {
+  it("confirms a draft that is not a reply by its subject and text", () => {
     const { envelope, state } = runScript(
-      { subject: "Quarterly numbers", before: [42] },
+      { ...commit, inReplyTo: null },
+      { alreadySaved: true, replacementHeaders: `From: me@example.com\r\n${SAVED_NOW}` },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: true, newId: 99 });
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
+  });
+
+  it("keeps the original when the new draft never shows up, and says two may exist", () => {
+    const { envelope, state } = runScript(
+      commit,
       { alreadySaved: true, savedAfterPolls: Infinity },
       COMMIT_REPLACEMENT,
     );
     expect(envelope.data).toMatchObject({ replaced: false, capability: "confirmation" });
+    expect(envelope.data.reason).toMatch(/ORIGINAL DRAFT WAS NOT DELETED/);
+    expect(envelope.data.reason).toMatch(/two drafts now exist/i);
     expect(state.deleted).toEqual([]);
   });
 
-  /* An autosaved copy handed over as already there is not the replacement. */
-  it("does not take a row that was already there for the replacement", () => {
+  /* An autosaved copy handed over as already there is not the new draft. */
+  it("does not take a row that was already there for the new draft", () => {
     const { envelope, state } = runScript(
-      { subject: "Quarterly numbers", before: [42, 50] },
-      { otherDrafts: [{ id: 50, subject: "Quarterly numbers" }], savedAfterPolls: Infinity },
+      { ...commit, before: [42, 50] },
+      {
+        otherDrafts: [
+          {
+            id: 50,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The revised numbers.",
+          },
+        ],
+        savedAfterPolls: Infinity,
+      },
       COMMIT_REPLACEMENT,
     );
     expect(envelope.data.replaced).toBe(false);
     expect(state.deleted).toEqual([]);
+  });
+
+  it("does not take a draft whose text is not the new text", () => {
+    const { envelope, state } = runScript(
+      commit,
+      { alreadySaved: true, replacementContent: "The old numbers, as they stood." },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("does not take a draft answering another message", () => {
+    const { envelope, state } = runScript(
+      commit,
+      {
+        alreadySaved: true,
+        replacementHeaders: `${SAVED_NOW}In-Reply-To: <other@example.com>\r\n`,
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data.replaced).toBe(false);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /*
+   * Sync renumbers rows, so an id missing from `before` proves nothing: an older
+   * copy, or the original itself, can come back under a new id holding the same
+   * text. What tells them apart is when they were saved.
+   */
+  it("does not take a renumbered older copy holding the same text", () => {
+    const { envelope, state } = runScript(
+      commit,
+      {
+        otherDrafts: [
+          {
+            id: 120,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_EARLIER}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The revised numbers.",
+          },
+        ],
+        savedAfterPolls: Infinity,
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("does not take the original back under a new id", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "The numbers as they stand." },
+      {
+        otherDrafts: [
+          {
+            id: 121,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_EARLIER}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The numbers as they stand.\n\nOn 18 Sep 2026, Ada wrote:",
+          },
+        ],
+        savedAfterPolls: Infinity,
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* With no text to go by, the files are what the new draft holds. */
+  it("confirms a draft with no text by the files it holds", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "", files: ["report.pdf"] },
+      {
+        alreadySaved: true,
+        replacementContent: "",
+        replacementFiles: ["report.pdf"],
+        otherDrafts: [
+          {
+            id: 130,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+            content: "",
+            files: ["notes.txt"],
+          },
+        ],
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: true, newId: 99, originalDeleted: true });
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
+  });
+
+  it("does not confirm a draft with no text whose files are not the ones put in", () => {
+    const { envelope, state } = runScript(
+      { ...commit, head: "", files: ["report.pdf"] },
+      { alreadySaved: true, replacementContent: "", replacementFiles: [] },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("deletes nothing when two drafts could each be the new one", () => {
+    const { envelope, state } = runScript(
+      commit,
+      {
+        alreadySaved: true,
+        otherDrafts: [
+          {
+            id: 140,
+            subject: "Quarterly numbers",
+            headers: `${SAVED_NOW}In-Reply-To: <abc@example.com>\r\n`,
+            content: "The revised numbers.",
+          },
+        ],
+      },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({
+      replaced: false,
+      capability: "confirmation",
+      originalDeleted: false,
+    });
+    expect([...envelope.data.candidates].toSorted((a, b) => a - b)).toEqual([99, 140]);
+    expect(envelope.data.reason).toMatch(/cannot be told/);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* Never a guess: an original that the id no longer finds is left, and both kept. */
+  it("keeps both drafts when the original can no longer be found by its id", () => {
+    const { envelope, state } = runScript(
+      commit,
+      { alreadySaved: true, originalGoneAfterPolls: true },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false, newId: 99 });
+    expect(envelope.data.reason).toMatch(/two drafts now exist/i);
+    // Nothing was deleted, so nothing is called confirmed.
+    expect(envelope.data.reason).not.toMatch(/confirmed/i);
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("keeps both drafts when the id now finds a message under another subject", () => {
+    const { envelope, state } = runScript(
+      { ...commit, originalSubject: "Something else" },
+      { alreadySaved: true },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("keeps both drafts and says so when Mail will not delete the original", () => {
+    const { envelope, state } = runScript(
+      commit,
+      { alreadySaved: true, deleteThrows: true },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: false, originalDeleted: false });
+    expect(envelope.data.reason).toMatch(/two drafts now exist/i);
+    expect(envelope.data.reason).not.toMatch(/confirmed/i);
+    expect(state.deleted).toEqual([]);
+  });
+
+  /* Re-found by id right before the delete, so a renumbered reference is not reused. */
+  it("deletes through a fresh reference after the polling", () => {
+    const { envelope, state } = runScript(
+      commit,
+      { alreadySaved: true, savedAfterPolls: 3, staleAfterPolling: true },
+      COMMIT_REPLACEMENT,
+    );
+    expect(envelope.data).toMatchObject({ replaced: true, originalDeleted: true });
+    expect(state.deleted).toEqual([ORIGINAL_ID]);
   });
 });

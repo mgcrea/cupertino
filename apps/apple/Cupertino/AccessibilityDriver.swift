@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
+import os
 
 /// The Accessibility layer for the `desktop` surface: read a window's element
 /// tree, address a control, press it.
@@ -200,7 +201,9 @@ nonisolated enum AccessibilityDriver {
   /// at 4.5 ms a round trip) and far short of a client timeout.
   private static let messagingTimeout: Float = 2.0
 
-  private static func element(for pid: pid_t) -> AXUIElement {
+  /// Internal rather than private for `AXComposerWindow`, which reads Mail through
+  /// the same bound.
+  static func element(for pid: pid_t) -> AXUIElement {
     let el = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(el, messagingTimeout)
     return el
@@ -552,6 +555,22 @@ nonisolated enum AccessibilityDriver {
   /// scroll area, neither of which is a window. `kAXWindows` still leads, so an
   /// app that answers it properly keeps the order and the indices it had.
   static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
+    try windowElements(bundleId: bundleId, scope: scope).enumerated().map { index, window in
+      WindowRef(
+        handle: handles.put(window, bundleId: bundleId),
+        index: index,
+        title: string(window, kAXTitleAttribute as String),
+        role: string(window, kAXRoleAttribute as String) ?? "AXWindow",
+        rect: frame(window),
+        main: (copy(window, kAXMainAttribute as String) as? Bool) ?? false)
+    }
+  }
+
+  /// The elements behind `windows`, minting no handles: for a caller that keeps
+  /// its own, as `AXComposerWindow` does. Read through an application element
+  /// carrying `messagingTimeout`, so a hung application answers `busy` rather
+  /// than holding the connection thread.
+  static func windowElements(bundleId: String, scope: Scope) throws -> [AXUIElement] {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     let running = try app(forBundleId: bundleId)
@@ -574,16 +593,7 @@ nonisolated enum AccessibilityDriver {
     guard !list.isEmpty else {
       throw Failure.noWindows(running.localizedName ?? bundleId)
     }
-
-    return list.enumerated().map { index, window in
-      WindowRef(
-        handle: handles.put(window, bundleId: bundleId),
-        index: index,
-        title: string(window, kAXTitleAttribute as String),
-        role: string(window, kAXRoleAttribute as String) ?? "AXWindow",
-        rect: frame(window),
-        main: (copy(window, kAXMainAttribute as String) as? Bool) ?? false)
-    }
+    return list
   }
 
   // ─── the tree ──────────────────────────────────────────────────────────────
@@ -1483,6 +1493,179 @@ nonisolated enum AccessibilityDriver {
     return frontmostBundleId() == bundleId
   }
 
+  /// Poll `holds` until it has answered yes for `stable` seconds running, or
+  /// `timeout` has passed. A `stable` of zero returns at the first yes.
+  static func holdsSteadily(
+    for stable: TimeInterval, within timeout: TimeInterval, every poll: TimeInterval = 0.02,
+    _ holds: () -> Bool
+  ) -> Bool {
+    let started = Date()
+    var since: Date?
+    while true {
+      let now = Date()
+      if holds() {
+        let first = since ?? now
+        since = first
+        if now.timeIntervalSince(first) >= stable { return true }
+      } else {
+        since = nil
+      }
+      if now.timeIntervalSince(started) >= timeout { return false }
+      usleep(useconds_t(poll * 1_000_000))
+    }
+  }
+
+  /// How long an unanswered front read is given to clear before a post is refused.
+  static let frontmostGrace: TimeInterval = 1
+
+  /// What the front check found. `first` is the first read that did not name
+  /// the target: nil when the read had no answer, else that bundle id.
+  enum FrontCheck: Equatable {
+    /// The first read named the target.
+    case held
+    /// The target held the front after a wait of `waited` seconds.
+    case heldAfter(first: String?, waited: TimeInterval)
+    /// Never held: `last` is the final read.
+    case refused(first: String?, last: String?, waited: TimeInterval)
+  }
+
+  /// Whether `bundleId` is frontmost, as `read` (the window server) says,
+  /// waiting a moment ONLY when the read did not name a real application.
+  ///
+  /// - A first read naming the target is taken at once, as it always was.
+  /// - A read naming another REGULAR application (`isRegularApp`) refuses at
+  ///   once, whether it is the first read or comes during a wait. That is
+  ///   somebody's app in front, and waiting for the target to come back would
+  ///   post into the app of a person who went and came back.
+  /// - A read with no answer, or naming a background or helper process (WebKit's
+  ///   WebContent, a view service), is read again for up to `grace`, and only
+  ///   the target holding for 100 ms then counts, so a flicker never does.
+  ///
+  /// MEASURED, LIVE RUN 1 (2026-10-26, macOS 27): a forward's paste was refused
+  /// as "Mail is no longer frontmost" while LaunchServices had Mail in front for
+  /// the whole edit (SETFRONT Mail at 15:46:00.090, the next SETFRONT 14.8 s
+  /// later, after the run had ended), a tenth of a second after this same read
+  /// had said Mail, right after an activation and a focus change into a
+  /// freshly opened web view. Which wrong answer it gave was not recorded; the
+  /// slow path now logs it (`confirmFront`).
+  static func checkFront(
+    _ bundleId: String, grace: TimeInterval = frontmostGrace, read: () -> String?,
+    isRegularApp: (String) -> Bool, every poll: TimeInterval = 0.02
+  ) -> FrontCheck {
+    let first = read()
+    if first == bundleId { return .held }
+    if let first, isRegularApp(first) { return .refused(first: first, last: first, waited: 0) }
+    let started = Date()
+    var since: Date?
+    var last = first
+    while true {
+      usleep(useconds_t(poll * 1_000_000))
+      let now = Date()
+      let seen = read()
+      last = seen
+      let waited = now.timeIntervalSince(started)
+      if seen == bundleId {
+        let from = since ?? now
+        since = from
+        if now.timeIntervalSince(from) >= 0.1 { return .heldAfter(first: first, waited: waited) }
+      } else {
+        since = nil
+        if let seen, isRegularApp(seen) {
+          return .refused(first: first, last: seen, waited: waited)
+        }
+      }
+      if waited >= grace { return .refused(first: first, last: last, waited: waited) }
+    }
+  }
+
+  /// `checkFront` as a yes or no, for a gate with nothing else to re-check.
+  static func frontmostHolds(
+    _ bundleId: String, grace: TimeInterval = frontmostGrace, read: () -> String?,
+    isRegularApp: (String) -> Bool
+  ) -> Bool {
+    if case .refused = checkFront(bundleId, grace: grace, read: read, isRegularApp: isRegularApp) {
+      return false
+    }
+    return true
+  }
+
+  /// Whether a running application with this bundle id is an ordinary one, with
+  /// a Dock icon and windows a person works in, rather than a helper process.
+  static func isRegularApp(_ bundleId: String) -> Bool {
+    NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).contains {
+      $0.activationPolicy == .regular
+    }
+  }
+
+  /// The check right before a post, for `announceSessionInput`. Throws unless
+  /// the event may go out.
+  ///
+  /// After a WAIT, what held when the wait began is asked again: `stillDriving`
+  /// (the person may have pressed Stop meanwhile) and `still`, the caller's own
+  /// condition (the composer must still be Mail's focused window). Without them
+  /// a wait would be a window in which a verb checked once posts into a state
+  /// nobody checked.
+  ///
+  /// Every wait is logged through `log`, the first wrong read and how long it
+  /// lasted, EVEN WHEN the post then goes ahead: a passing run is the evidence
+  /// that the wait was needed, and nothing else would record it.
+  static func confirmFront(
+    _ who: String, grace: TimeInterval = frontmostGrace, read: () -> String?,
+    isRegularApp: (String) -> Bool, still: () -> Bool, stillDriving: () throws -> Void,
+    log: (String) -> Void
+  ) throws {
+    func named(_ seen: String?) -> String { seen.map { "\($0)" } ?? "no answer" }
+    func ms(_ t: TimeInterval) -> Int { Int((t * 1000).rounded()) }
+    switch checkFront(who, grace: grace, read: read, isRegularApp: isRegularApp) {
+    case .held:
+      return
+    case .heldAfter(let first, let waited):
+      let found =
+        "front read for \(who) first answered \(named(first)); \(who) held the front after "
+        + "\(ms(waited)) ms"
+      do {
+        try stillDriving()
+      } catch {
+        log(found + ", but driving was stopped meanwhile; refused")
+        throw error
+      }
+      guard still() else {
+        log(found + ", but the caller's target no longer held; refused")
+        throw Failure.refused(
+          "\(DrivingSession.appName(who)) was not reported in front at first (\(named(first))), "
+            + "and by the time it was, \(ms(waited)) ms later, the window this was meant for no "
+            + "longer had the focus, so nothing was posted.")
+      }
+      log(found + ", posting")
+    case .refused(let first, let last, let waited):
+      if waited > 0 {
+        log(
+          "front read for \(who) first answered \(named(first)), last \(named(last)), after "
+            + "\(ms(waited)) ms; refused")
+      }
+      let seen =
+        first.map { " Accessibility reported \(DrivingSession.appName($0)) (\($0)) in front" }
+        ?? " Accessibility could not say which application was in front"
+      let after =
+        last == first
+        ? "." : ", then \(last.map { "\(DrivingSession.appName($0)) (\($0))" } ?? "no answer")."
+      throw Failure.refused(
+        "\(DrivingSession.appName(who)) is no longer frontmost, so nothing was posted — the "
+          + "event would have landed in whatever replaced it. Name the application with "
+          + "'bundleId' and it is brought back to the front first." + seen + after)
+    }
+  }
+
+  /// Where `confirmFront` logs: the app's Log pane, stderr, and the unified log
+  /// under subsystem `io.mgcrea.cupertino`, category `front`, which outlives
+  /// the process and is what a live run is read back from.
+  static func frontLog(_ text: String) {
+    hostLog("desktop", .info, text)
+    frontLogger.notice("\(text, privacy: .public)")
+  }
+
+  private static let frontLogger = Logger(subsystem: "io.mgcrea.cupertino", category: "front")
+
   /// The application that holds the focus RIGHT NOW, asked of the window
   /// server through Accessibility rather than of `NSWorkspace`.
   ///
@@ -1721,7 +1904,9 @@ nonisolated enum AccessibilityDriver {
   /// Returns the application it admitted, for a verb that posts in several
   /// steps and has to check between them that it still holds the screen.
   @discardableResult
-  private static func announceSessionInput(_ target: String?, scope: Scope) throws -> String {
+  private static func announceSessionInput(
+    _ target: String?, scope: Scope, still: (() -> Bool)? = nil
+  ) throws -> String {
     let who: String
     if let target {
       guard scope.admits(target) else { throw Failure.outOfScope(target) }
@@ -1730,12 +1915,12 @@ nonisolated enum AccessibilityDriver {
       who = try frontmostInReach(scope)
     }
     try DrivingSession.admit(who)
-    guard frontmostBundleId() == who else {
-      throw Failure.refused(
-        "\(DrivingSession.appName(who)) is no longer frontmost, so nothing was posted — the "
-          + "event would have landed in whatever replaced it. Name the application with "
-          + "'bundleId' and it is brought back to the front first.")
-    }
+    // Waits only for a read that named no regular application, and re-checks
+    // Stop and the caller's own condition after any wait: see `confirmFront`.
+    // Only a yes posts.
+    try confirmFront(
+      who, read: frontmostBundleId, isRegularApp: isRegularApp, still: still ?? { true },
+      stillDriving: { try DrivingSession.checkStillDriving(who) }, log: frontLog)
     DriveActivity.record(who)
     return who
   }
@@ -2070,8 +2255,13 @@ nonisolated enum AccessibilityDriver {
   }
 
   /// A named key with modifiers — what `type` cannot express.
+  ///
+  /// `still` is the caller's own condition for the key to go out, asked again
+  /// if the front check had to wait (the composer passes "this window still has
+  /// Mail's focus").
   static func key(
-    _ name: String, modifiers: [String], scope: Scope, announcing target: String? = nil
+    _ name: String, modifiers: [String], scope: Scope, announcing target: String? = nil,
+    still: (() -> Bool)? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     guard let code = keyCode(for: name) else {
@@ -2095,7 +2285,7 @@ nonisolated enum AccessibilityDriver {
     else { throw Failure.refused("Could not synthesise a key press.") }
     down.flags = flags
     up.flags = flags
-    try announceSessionInput(target, scope: scope)
+    try announceSessionInput(target, scope: scope, still: still)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DriveActivity.postedInput()
