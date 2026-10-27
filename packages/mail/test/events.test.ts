@@ -397,6 +397,40 @@ describe("events over a connection", () => {
     expect(two).not.toMatch(/watch/i);
   });
 
+  it("Mail not running with mailboxes is the server's state, not the client's mistake: -32603", async () => {
+    const created = build(
+      ON,
+      closed,
+      runner(() => false),
+    );
+    const adapter = mailEventAdapter(created.events!);
+    const args = { domains: ["acme.com"], mailboxes: ["INBOX"] };
+    const err = await adapter.parseArguments(args).then(
+      () => null,
+      (e: unknown) => e as { code?: number },
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.code).not.toBe(-32602);
+    // Without mailboxes, a closed Mail is no refusal at all.
+    await expect(adapter.parseArguments({ domains: ["acme.com"] })).resolves.toBeDefined();
+    created.events!.close();
+
+    const { client } = await connect(
+      ON,
+      closed,
+      runner(() => false),
+    );
+    const res = await poll(client, { name: "mail.received", arguments: args, cursor: null }).then(
+      () => null,
+      (e: unknown) => e as { code: number; message: string },
+    );
+    expect(res?.code).toBe(-32603);
+    expect(res?.message).toContain(
+      "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
+        "mailboxes an account has. Open Mail and try again, or subscribe without `mailboxes`.",
+    );
+  });
+
   it("serves nothing with the gate off", async () => {
     const { client, events } = await connect({}, running);
     expect(events).toBeUndefined();

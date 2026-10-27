@@ -489,14 +489,7 @@ export class MailWatchService {
       await this.ensure();
       return [];
     }
-    if (!(running ?? (await this.#isMailRunning()))) {
-      throw new PreconditionError(
-        "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
-          `mailboxes an account has. Open Mail and try again, or ${
-            noun === "watch" ? "watch" : "subscribe"
-          } without \`mailboxes\`.`,
-      );
-    }
+    if (!(running ?? (await this.#isMailRunning()))) throw this.#mailboxesNeedMail();
     for (const name of mailboxes) {
       // The source excludes these for every watch, so a watch on one would never fire.
       if (isUnwatchedMailbox(`imap://x/${name}`)) {
@@ -515,6 +508,24 @@ export class MailWatchService {
       );
     }
     return rowids.map(String);
+  }
+
+  /**
+   * The refusal `resolveMailboxScope` makes for mailbox names while Mail is not
+   * running, made on its own: for a caller that has to tell it (the server's
+   * state) from the client's own mistakes, and then passes `running: true` on.
+   */
+  async requireRunningFor(mailboxes: string[]): Promise<void> {
+    if (mailboxes.length > 0 && !(await this.#isMailRunning())) throw this.#mailboxesNeedMail();
+  }
+
+  #mailboxesNeedMail(): PreconditionError {
+    return new PreconditionError(
+      "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
+        `mailboxes an account has. Open Mail and try again, or ${
+          this.#noun === "watch" ? "watch" : "subscribe"
+        } without \`mailboxes\`.`,
+    );
   }
 
   /** Resolve `mailboxes` to scope keys and register the watch. */

@@ -73,11 +73,16 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
 
   parseArguments: (args) =>
     parseSenderArgs("mail.received", Args, args, {
-      open: () => service.ensure(),
+      open: async ({ mailboxes }) => {
+        await service.ensure();
+        // Mail not running is the server's state, not the client's mistake, so it
+        // is refused here rather than in `resolve`: -32603, with the same advice.
+        await service.requireRunningFor(mailboxes ?? []);
+      },
       resolve: async ({ from, domains, mailboxes }) => ({
         ...(from ? { from } : {}),
         ...(domains ? { domains } : {}),
-        scope: await service.resolveMailboxScope(mailboxes ?? []),
+        scope: await service.resolveMailboxScope(mailboxes ?? [], true),
       }),
     }),
 
