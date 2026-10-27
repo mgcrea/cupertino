@@ -6,19 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.31.0`,
-`notes-v1.31.0`, `reminders-v1.31.0`, `core-v1.31.0` for the npm packages, and `app-v1.31.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.32.0`,
+`notes-v1.32.0`, `reminders-v1.32.0`, `core-v1.32.0` for the npm packages, and `app-v1.32.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.32.0] - 2026-10-27
 
-**Mail reads without waiting on Mail, and drafts can be edited after their window is closed.**
-Everyday Mail reads answer from its index, Mail and Messages can tell a session when something
-arrives, and the npm servers also speak the 2026-07-28 protocol. `apple_mail_update_draft` rebuilds
-a closed reply as a reply, changes only the words you name, and tells two windows with one subject
-apart, with the editing done inside Cupertino.
+**Mail drafts can be edited after their window closes.** A closed reply is rebuilt as a reply,
+edits change only the words you name, everyday Mail reads answer from its index, and Mail and
+Messages can tell a session when something arrives.
 
 ### Added
 
@@ -3067,7 +3065,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.31.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.32.0...HEAD
+[1.32.0]: https://github.com/mgcrea/cupertino/compare/app-v1.31.0...app-v1.32.0
 [1.31.0]: https://github.com/mgcrea/cupertino/compare/app-v1.30.0...app-v1.31.0
 [1.30.0]: https://github.com/mgcrea/cupertino/compare/app-v1.29.1...app-v1.30.0
 [1.29.1]: https://github.com/mgcrea/cupertino/compare/app-v1.29.0...app-v1.29.1
