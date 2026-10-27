@@ -144,6 +144,17 @@ const call = async (client: Client, name: string, args: Record<string, unknown> 
   return { isError: Boolean(res.isError), text, json: () => JSON.parse(text) as never };
 };
 
+/** One tab of the live-tabs payload, frontmost when it is the first. */
+const tab = (index: number, url: string) => ({
+  window: 1,
+  windowIndex: 1,
+  index,
+  url,
+  title: "t",
+  active: index === 1,
+  frontmost: index === 1,
+});
+
 describe("tool registration", () => {
   it("registers eight ungated tools", async () => {
     expect(await toolNames(await connect())).toEqual([
@@ -489,6 +500,56 @@ describe("live tabs", () => {
 
       expect(body.historyMatched).toBe("2/3");
       expect(body.historyMatchKinds).toEqual({ exact: 1, normalized: 1 });
+    });
+
+    it("matches a tab whose history row adds a query, and ranks it above query-stripped", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "safari-store-"));
+      const path = join(dir, "History.db");
+      const db = new DatabaseSync(path);
+      db.exec(
+        readFileSync(
+          join(dirname(fileURLToPath(import.meta.url)), "fixtures", "safari-history.sql"),
+          "utf8",
+        ),
+      );
+      // The measured shape: the tab is canonical, history holds the cruft.
+      db.exec(
+        `INSERT INTO history_items
+           (url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+         VALUES ('https://shop.example/plus5?variant=1', 4, X'', 0, 0),
+                ('https://shop.example/plus5-pro', 9, X'', 0, 0),
+                ('https://example.com/search', 2, X'', 0, 0),
+                ('https://example.com/search?q=w&utm_source=x', 6, X'', 0, 0)`,
+      );
+      db.close();
+      const c = await connect(
+        { APPLE_SAFARI_STORE: path, APPLE_SAFARI_INDEX_MODE: "ro" },
+        fakeOsascript({
+          tabs: {
+            ...TABS_PAYLOAD,
+            tabs: [
+              tab(1, "https://shop.example/plus5"),
+              tab(2, "https://example.com/search?q=w"),
+              tab(3, "https://shop.example/plus"),
+            ],
+          },
+        }),
+      );
+      const body = (await call(c, "apple_safari_list_tabs")).json() as {
+        tabs: { url: string; history: { url: string } | null; historyMatch: string | null }[];
+        historyMatchKinds: Record<string, number>;
+      };
+      const byUrl = new Map(body.tabs.map((t) => [t.url, t]));
+
+      expect(byUrl.get("https://shop.example/plus5")?.historyMatch).toBe("query-added");
+      expect(byUrl.get("https://shop.example/plus5")?.history?.url).toBe(
+        "https://shop.example/plus5?variant=1",
+      );
+      // Same path with the tab's own query kept beats the bare path.
+      expect(byUrl.get("https://example.com/search?q=w")?.historyMatch).toBe("query-added");
+      // A shorter path is not a prefix match: `/plus` must not find `/plus5…`.
+      expect(byUrl.get("https://shop.example/plus")?.history).toBeNull();
+      expect(body.historyMatchKinds).toEqual({ queryAdded: 2 });
     });
 
     it("does not claim a page was never visited when the store simply lacks the URL", async () => {

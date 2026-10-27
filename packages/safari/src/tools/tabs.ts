@@ -33,8 +33,9 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
         "enormously with the tab set — measured at 61%, 55% and 8% on three real runs — so treat " +
         "a miss as the normal case and never infer anything from one. Single-page apps are the " +
         "main reason: a page reached by pushState commits no history row at all. " +
-        '`historyMatch` says how the match was made; treat "query-stripped" as being about the ' +
-        "path rather than this exact page. Even an exact match can be about a different site " +
+        '`historyMatch` says how the match was made; treat "query-added" (history holds this URL ' +
+        'with a query or fragment added) and "query-stripped" as being about the path rather ' +
+        "than this exact page. Even an exact match can be about a different site " +
         "when the URL is reused — a localhost address is the common case — so if the tab's own " +
         "title disagrees with the matched title, trust the tab.",
       inputSchema: z.object({
@@ -109,6 +110,7 @@ export const registerTabTools = (server: McpServer, client: AppleSafariClient): 
                 ? compact({
                     exact: byKind("exact") || undefined,
                     normalized: byKind("normalized") || undefined,
+                    queryAdded: byKind("query-added") || undefined,
                     queryStripped: byKind("query-stripped") || undefined,
                   })
                 : undefined,

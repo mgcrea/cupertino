@@ -20,7 +20,7 @@ import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
 import { ADD_READING_LIST_ITEM, OPEN_URL } from "./jxa/writes.js";
 import { locateStore, type LocateResult } from "./locate.js";
-import { urlVariants, type MatchKind } from "./match.js";
+import { extensionRanges, urlVariants, type MatchKind } from "./match.js";
 import {
   networkGet,
   networkList,
@@ -362,12 +362,29 @@ export class AppleSafariClient {
         const store = this.store();
         const candidates = [...ladders.values()].flatMap((ladder) => ladder.map((v) => v.url));
         const rows = store.getMany(candidates);
+        const render = (row: HistoryRow, kind: MatchKind) => ({
+          page: this.#render(row, store.caps.epoch),
+          kind,
+        });
         resolve = (url) => {
-          for (const variant of ladders.get(url) ?? []) {
+          const ladder = ladders.get(url) ?? [];
+          for (const variant of ladder) {
+            if (variant.kind === "query-stripped") break;
             const hit = rows.get(variant.url);
             // First hit wins, and the ladder is ordered most-faithful-first, so
             // an exact match is never lost to a looser one that also resolved.
-            if (hit) return { page: this.#render(hit, store.caps.epoch), kind: variant.kind };
+            if (hit) return render(hit, variant.kind);
+          }
+          // Below every rung that keeps the tab's query, above the one that
+          // throws it away: `/search?q=w&utm_source=x` is closer to a tab on
+          // `/search?q=w` than the bare `/search` is. Asked only for a tab the
+          // faithful rungs missed, one indexed query each.
+          const extended = store.extending(extensionRanges(url));
+          if (extended) return render(extended, "query-added");
+          for (const variant of ladder) {
+            if (variant.kind !== "query-stripped") continue;
+            const hit = rows.get(variant.url);
+            if (hit) return render(hit, variant.kind);
           }
           return null;
         };

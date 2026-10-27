@@ -42,11 +42,15 @@
  *                    tab's own title disagrees, the tab is right.
  *   normalized     — differed only in a fragment, a trailing slash, a scheme,
  *                    a `www.`, or a tracking parameter. Same page.
+ *   query-added    — history holds the tab's URL with a query or fragment
+ *                    ADDED (`/plus5` → `/plus5?variant=…`). Usually the same
+ *                    product or search with cruft on it, but a variant is a
+ *                    view, so the row is about the path, as below.
  *   query-stripped — matched only with the whole query string removed. The row
  *                    may be about a DIFFERENT view of the same path, so the
  *                    visit count is about the path rather than about this page.
  */
-export type MatchKind = "exact" | "normalized" | "query-stripped";
+export type MatchKind = "exact" | "normalized" | "query-added" | "query-stripped";
 
 /**
  * Parameters that identify who sent you, never what you are looking at.
@@ -159,4 +163,40 @@ export const urlVariants = (url: string): { url: string; kind: MatchKind }[] => 
   }
 
   return out;
+};
+
+/**
+ * The ranges of history URLs that EXTEND this one, for the rung the ladder
+ * cannot generate.
+ *
+ * Every rung above only removes things from the tab's URL, and the run that
+ * matched 5 of 61 tabs failed the other way round: the tab held the canonical
+ * `/products/plus5`, history held only `/products/plus5?variant=…` and a
+ * campaign URL, and no amount of removing reaches either. See docs/safari.md,
+ * "Why the match rate collapsed".
+ *
+ * Each range is `[prefix + c, prefix + (c + 1))` for one character `c` that
+ * can only START something added to a URL: `?` for a query on a URL without
+ * one, `&` for a parameter on a URL that has one, `#` for a fragment. That is
+ * the bound — `/plus5-pro` begins `/plus5-`, which no range covers, so a longer
+ * path is never taken for this one. As half-open string ranges they run on the
+ * unique index on `history_items.url` directly.
+ *
+ * Built from the tab's URL as Safari reported it, not from a re-serialised
+ * `URL`, because history holds what Safari wrote and a parser that re-encodes
+ * a character would move the prefix off it.
+ */
+export const extensionRanges = (url: string): [string, string][] => {
+  try {
+    const { protocol } = new URL(url);
+    if (protocol !== "http:" && protocol !== "https:") return [];
+  } catch {
+    return [];
+  }
+  const hash = url.indexOf("#");
+  const prefix = hash === -1 ? url : url.slice(0, hash);
+  return [prefix.includes("?") ? "&" : "?", "#"].map((c) => [
+    prefix + c,
+    prefix + String.fromCharCode(c.charCodeAt(0) + 1),
+  ]);
 };

@@ -126,6 +126,15 @@ cannot match `/plus5-pro` — is the shape that reaches these rows. It is unbuil
 shipped is correct and simply cannot see them, which is why it reported five honest matches and
 invented nothing.
 
+> **Built, as the bounded probe.** A tab the faithful rungs miss is looked up once more, for a
+> history row that EXTENDS its URL: the tab's URL without its fragment, followed by `?` (or `&` when
+> it already has a query) or `#`. Each is a half-open string range on the unique `url` index
+> (`extensionRanges` in `match.ts`, `extending` in `store.ts`), so `/plus5` reaches
+> `/plus5?variant=…` and never `/plus5-pro`. The most visited row in range answers, as
+> `historyMatch: "query-added"`, ranked below `normalized` and above `query-stripped`. It does not
+> help the single-page-app misses below, which have no row at all. How far it lifts the 8.3% is
+> **unmeasured**; it needs `probe-safari.mjs` re-run from a process with Full Disk Access.
+
 ## An exact URL match is not proof the row is about that page
 
 Also from the third run, and worth more than the rate: one tab was `http://localhost:4321/`, titled
