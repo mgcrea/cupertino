@@ -247,6 +247,32 @@ describe("events over a connection", () => {
     expect(() => events?.source.head()).toThrow();
   });
 
+  it("an unreadable index is not the client's mistake: -32603, not -32602", async () => {
+    const missing = join(dir, "missing", "Envelope Index");
+    const config = loadConfig({ ...ON, APPLE_MAIL_ENVELOPE_INDEX: missing });
+    const created = createServer({
+      config,
+      osascript: runner(),
+      era: "modern",
+      isMailRunning: running,
+    });
+    const adapter = mailEventAdapter(created.events!);
+    for (const args of [
+      { domains: ["acme.com"] },
+      { domains: ["acme.com"], mailboxes: ["INBOX"] },
+    ]) {
+      const err = await adapter.parseArguments(args).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: number }).code).not.toBe(-32602);
+    }
+
+    const { client } = await connect({ ...ON, APPLE_MAIL_ENVELOPE_INDEX: missing }, running);
+    await expect(poll(client, { ...acme, cursor: null })).rejects.toMatchObject({ code: -32603 });
+  });
+
   it("serves nothing with the gate off", async () => {
     const { client, events } = await connect({}, running);
     expect(events).toBeUndefined();

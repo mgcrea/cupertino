@@ -80,7 +80,7 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
     }
     const { from, domains, mailboxes } = parsed.data;
     // Opening the index is not the client's mistake, so it is outside the wrap below.
-    if (mailboxes && mailboxes.length > 0) await service.ensure();
+    await service.ensure();
     try {
       const scope = await service.resolveMailboxScope(mailboxes ?? []);
       return normalizeFilter({
