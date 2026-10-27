@@ -79,15 +79,20 @@ export const mailEventAdapter = (service: MailWatchService): EventTypeAdapter<Ma
       );
     }
     const { from, domains, mailboxes } = parsed.data;
-    // Opening the index is not the client's mistake, so it is outside the wrap below.
+    const sender = { ...(from ? { from } : {}), ...(domains ? { domains } : {}) };
+    // The caller's own mistakes first, without touching the index: an empty
+    // filter is InvalidParams whatever state the index is in.
+    try {
+      normalizeFilter(sender);
+    } catch (err) {
+      if (err instanceof PreconditionError) throw invalidParams(err.message);
+      throw err;
+    }
+    // Opening the index is not the client's mistake, so it stays outside the wrap.
     await service.ensure();
     try {
       const scope = await service.resolveMailboxScope(mailboxes ?? []);
-      return normalizeFilter({
-        ...(from ? { from } : {}),
-        ...(domains ? { domains } : {}),
-        scope,
-      });
+      return normalizeFilter({ ...sender, scope });
     } catch (err) {
       if (err instanceof PreconditionError) throw invalidParams(err.message);
       throw err;

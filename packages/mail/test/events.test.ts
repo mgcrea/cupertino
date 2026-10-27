@@ -269,8 +269,23 @@ describe("events over a connection", () => {
       expect((err as { code?: number }).code).not.toBe(-32602);
     }
 
+    // An empty filter is the caller's mistake whatever state the index is in.
+    for (const args of [{}, { mailboxes: ["INBOX"] }]) {
+      await expect(adapter.parseArguments(args)).rejects.toMatchObject({ code: -32602 });
+    }
+
     const { client } = await connect({ ...ON, APPLE_MAIL_ENVELOPE_INDEX: missing }, running);
     await expect(poll(client, { ...acme, cursor: null })).rejects.toMatchObject({ code: -32603 });
+    await expect(
+      poll(client, {
+        name: "mail.received",
+        arguments: { domains: ["acme.com"], mailboxes: ["INBOX"] },
+        cursor: null,
+      }),
+    ).rejects.toMatchObject({ code: -32603 });
+    await expect(
+      poll(client, { name: "mail.received", arguments: {}, cursor: null }),
+    ).rejects.toMatchObject({ code: -32602 });
   });
 
   it("serves nothing with the gate off", async () => {
