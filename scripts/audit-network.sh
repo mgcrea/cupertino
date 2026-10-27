@@ -202,8 +202,9 @@ if [ "$saw_sparkle" -eq 1 ]; then
   # Keychain is not a socket, but it made the blind spot worth closing. This
   # asserts the set is EXACTLY what is measured: automation and audio-input,
   # both of which the comments in Cupertino.entitlements measure the need for,
-  # plus get-task-allow, which only a Debug build carries. Anything else is a
-  # claim nobody made.
+  # the keychain access group Shell's seal key lives in, with the application
+  # and team identifiers its profile puts beside it, plus get-task-allow, which
+  # only a Debug build carries. Anything else is a claim nobody made.
   #
   # Keep this in step with Cupertino.entitlements, and with the source check in
   # the Sources section below, which holds the same allowlist. The sound surface
@@ -244,8 +245,8 @@ if [ "$saw_sparkle" -eq 1 ]; then
   fi
   case "$granted" in
     "__unsigned__") ;;
-    "com.apple.security.automation.apple-events,com.apple.security.device.audio-input"|\
-    "com.apple.security.automation.apple-events,com.apple.security.device.audio-input,com.apple.security.get-task-allow")
+    "com.apple.application-identifier,com.apple.developer.team-identifier,com.apple.security.automation.apple-events,com.apple.security.device.audio-input,keychain-access-groups"|\
+    "com.apple.application-identifier,com.apple.developer.team-identifier,com.apple.security.automation.apple-events,com.apple.security.device.audio-input,com.apple.security.get-task-allow,keychain-access-groups")
       printf '  ok    %-46s %s\n' "entitlements" "only what is measured" ;;
     "")
       printf '  FAIL  %-46s could not be read\n' "entitlements"
@@ -293,8 +294,8 @@ fi
 # bundle check above skips an ad-hoc build — which is what CI's PR build is — so
 # the entitlement set was first checked on a Developer ID artifact at release
 # time, one commit after the entitlement that broke it had landed. Same
-# allowlist, minus get-task-allow (which Xcode adds to a Debug signature and the
-# file never carries), read from the file the build signs with rather than from
+# allowlist, minus get-task-allow and the application and team identifiers
+# (which the signature gets from Xcode or the profile and the file never carries), read from the file the build signs with rather than from
 # the signature, so drift is red at the commit that introduces it. Repo-relative
 # like SOURCES, because it is an assertion about this checkout, not about $APP.
 ENTITLEMENTS="apps/apple/Cupertino.entitlements"
@@ -306,7 +307,7 @@ else
     || true)
 fi
 case "$declared" in
-  "com.apple.security.automation.apple-events,com.apple.security.device.audio-input")
+  "com.apple.security.automation.apple-events,com.apple.security.device.audio-input,keychain-access-groups")
     printf '  ok    %-46s %s\n' "entitlements (source)" "only what is measured" ;;
   "__missing__")
     printf '  FAIL  %-46s no such file: %s\n' "entitlements (source)" "$ENTITLEMENTS"

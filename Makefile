@@ -407,7 +407,6 @@ shell-check: ## Assert the shell surface's runner, seal and run record, with no 
 		apps/apple/Cupertino/ShellRecord.swift \
 		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/LogStore.swift \
-		apps/apple/Cupertino/KeyStore.swift \
 		apps/apple/Cupertino/BridgeProtocol.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
 	@apps/apple/.build/shell-check
@@ -548,7 +547,6 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/ServerResolution.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
-		apps/apple/Cupertino/KeyStore.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
 	@apps/apple/.build/host-check
@@ -739,6 +737,14 @@ RELEASE_SPARKLE := $(RELEASE_APP)/Contents/Frameworks/Sparkle.framework
 RELEASE_EXTENSION := $(RELEASE_APP)/Contents/PlugIns/CupertinoSafariExtension.appex
 TEAM_ID     := 75QE9PRT3V
 
+# The Developer ID provisioning profile `sign` embeds, which authorises the
+# keychain access group Shell's seal key lives in. Required: see
+# scripts/release-entitlements.sh for why, and docs/distribution.md for where
+# it comes from. CI decodes it from DEVELOPER_ID_PROVISIONING_PROFILE_BASE64.
+PROVISIONING_PROFILE ?=
+RELEASE_BUNDLE_ID    := io.mgcrea.cupertino
+RELEASE_ENTITLEMENTS := apps/apple/.build/Cupertino-release.entitlements
+
 # `sign` below is what gives the Release bundle its Developer ID signature, so
 # letting xcodebuild sign first is redundant — and on a CI runner it is fatal:
 # automatic signing demands a "Mac Development" certificate for the team, which
@@ -747,6 +753,10 @@ TEAM_ID     := 75QE9PRT3V
 # break shows up for the first time in CI. Debug keeps automatic signing, which
 # the TCC identity of a locally installed build depends on.
 bundle: servers node ## Build, stage and sign a Release Cupertino.app
+	@# The profile first, so a release without one fails now rather than after
+	@# the build. `sign` checks it again against the identity it signs with.
+	@scripts/release-entitlements.sh "$(PROVISIONING_PROFILE)" $(TEAM_ID) $(RELEASE_BUNDLE_ID) \
+		apps/apple/Cupertino.entitlements $(RELEASE_ENTITLEMENTS)
 	@$(MAKE) --no-print-directory app CONFIG=Release \
 		XCARGS="$(XCARGS) CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO"
 	@rm -rf "$(RELEASE_APP)/Contents/Resources/servers" "$(RELEASE_APP)/Contents/Resources/node"
@@ -792,6 +802,10 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 	@# `set -e`: the codesign calls below are one shell line joined by `;`, so
 	@# without it a failed signature on Sparkle, node, the bridge or the
 	@# extension was hidden whenever the app's own, the last command, succeeded.
+	@#
+	@# The profile is checked after the identity is known and before anything is
+	@# signed: a profile that does not name that certificate is a bundle AMFI
+	@# kills at launch, and a missing one is a release that can never seal.
 	@set -e; \
 	id=$$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $$2; exit}'); \
 	if [ -z "$$id" ]; then \
@@ -799,6 +813,8 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		echo "  !! no Developer ID Application certificate — signing with Apple Development."; \
 		echo "     This build will NOT notarize and will not run on another Mac."; \
 	fi; \
+	scripts/release-entitlements.sh "$(PROVISIONING_PROFILE)" $(TEAM_ID) $(RELEASE_BUNDLE_ID) \
+		apps/apple/Cupertino.entitlements $(RELEASE_ENTITLEMENTS) "$$id"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_SPARKLE)/Versions/B/Updater.app"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
@@ -811,8 +827,9 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/SafariExtension.entitlements "$(RELEASE_EXTENSION)"; \
+	cp "$(PROVISIONING_PROFILE)" "$(RELEASE_APP)/Contents/embedded.provisionprofile"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
-		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
+		--entitlements $(RELEASE_ENTITLEMENTS) "$(RELEASE_APP)"
 	@# Captured rather than piped: through `| sed` the line's status was sed's,
 	@# and a bundle that failed verification passed this target.
 	@out=$$(codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1); status=$$?; \
@@ -822,6 +839,12 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 	@# Mac, long after this. Assert the team here, where the message is readable.
 	@codesign -dv --verbose=2 "$(RELEASE_SPARKLE)" 2>&1 | grep -q 'TeamIdentifier=$(TEAM_ID)' \
 		|| { echo "  Sparkle is not signed by $(TEAM_ID) — library validation will reject it"; exit 1; }
+	@# What the seal key needs, read back from the signature rather than trusted
+	@# from the file it was signed with.
+	@group=$$(/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' $(RELEASE_ENTITLEMENTS)); \
+	codesign -d --entitlements - --xml "$(RELEASE_APP)" 2>/dev/null | grep -q "<string>$$group</string>" \
+		&& test -f "$(RELEASE_APP)/Contents/embedded.provisionprofile" \
+		|| { echo "  the signed app does not carry keychain access group $$group and its profile"; exit 1; }
 	@echo "  size: $$(du -sh "$(RELEASE_APP)" | cut -f1)"
 
 # Run once, ever. The private key goes into the login keychain and the public

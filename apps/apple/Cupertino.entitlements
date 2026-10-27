@@ -55,5 +55,33 @@
        because a build with signing disabled never parses this file at all. -->
   <key>com.apple.security.device.audio-input</key>
   <true/>
+
+  <!-- Shell's seal key, in the data protection keychain under this group.
+       The login keychain lets any program create an item under any service
+       and account, with an ACL that trusts every app, so a program could plant
+       the seal key itself before Shell was ever turned on, compute the seals,
+       and write "Shell is on" and "Don't ask" with no prompt anywhere. A
+       keychain access group can only be named by code whose signature carries
+       it, which is what this key is. The group is the app's own application
+       identifier, so the Debug build and the release have different ones.
+
+       This is a restricted entitlement: a provisioning profile must authorise
+       it. Xcode embeds one for Debug. The release is signed by hand, so `make
+       sign` embeds the Developer ID profile and signs with a copy of this
+       file whose variables are spelled out (scripts/release-entitlements.sh);
+       codesign does not expand them.
+
+       MEASURED, macOS 27, a trivial binary signed with the hardened runtime
+       and this key, and no profile:
+
+           plain     ran                exit 0
+           entitled  (prints nothing)   exit 137
+
+       SIGKILL before the first line runs, with nothing on stderr: none of
+       Cupertino's own code would get the chance to say why. -->
+  <key>keychain-access-groups</key>
+  <array>
+    <string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  </array>
 </dict>
 </plist>

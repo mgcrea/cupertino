@@ -147,12 +147,23 @@ struct ShellCheck {
     check(
       "turning off removes the value and its seal",
       store.object(forKey: enabled) == nil && store.object(forKey: ShellSeal.enabledSealKey) == nil)
-    check("and leaves \"Don't ask\" standing", ShellSeal.effectiveBefore(store) == .none)
+    check(
+      "and puts \"Before running\" back to ask, unsealed",
+      ShellSeal.effectiveBefore(store) == .ask && store.string(forKey: ShellPolicy.key) == "ask"
+        && store.object(forKey: ShellSeal.beforeSealKey) == nil)
     store.set(true, forKey: enabled)
     store.set(copied, forKey: ShellSeal.enabledSealKey)
     check("a seal copied before turn-off does not validate after", !ShellSeal.isEnabled(store))
 
     ShellSeal.setEnabled(true, store)
+    ShellSeal.setBefore(.none, store)
+    ShellSeal.setEnabled(false, store)
+    ShellSeal.setEnabled(true, store)
+    check(
+      "on with \"Don't ask\", turned off and on again, reads ask",
+      ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+
+    ShellSeal.setBefore(.none, store)
     let copiedNone = store.string(forKey: ShellSeal.beforeSealKey)
     ShellSeal.setBefore(.session, store)
     check("session needs no seal", ShellSeal.effectiveBefore(store) == .session)
@@ -185,6 +196,58 @@ struct ShellCheck {
     check(
       "no key reads off and ask",
       !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+  }
+
+  /// Where the seal key lives, from the pure query alone. The real Keychain is never touched:
+  /// this binary has no application identifier, so its `Keychain` source never gets a query.
+  static func keychainChecks() {
+    print("\nShellSeal.Keychain: the data protection keychain, in the app's own group")
+    let debugID = "75QE9PRT3V.io.mgcrea.cupertino.debug"
+    let releaseID = "75QE9PRT3V.io.mgcrea.cupertino"
+    let debug = ShellSeal.Keychain.query(
+      applicationIdentifier: debugID, appIdentifier: "io.mgcrea.cupertino.debug")
+    check(
+      "the data protection keychain",
+      debug?[kSecUseDataProtectionKeychain as String] as? Bool == true)
+    check(
+      "the access group is the application identifier",
+      debug?[kSecAttrAccessGroup as String] as? String == debugID)
+    check(
+      "a generic password, account shell-seal, service of its own build",
+      debug?[kSecClass as String] as? String == kSecClassGenericPassword as String
+        && debug?[kSecAttrAccount as String] as? String == "shell-seal"
+        && debug?[kSecAttrService as String] as? String == "io.mgcrea.cupertino.debug.shell-seal")
+    let release = ShellSeal.Keychain.query(
+      applicationIdentifier: releaseID, appIdentifier: "io.mgcrea.cupertino")
+    check(
+      "release has a group of its own",
+      release?[kSecAttrAccessGroup as String] as? String == releaseID
+        && release?[kSecUseDataProtectionKeychain as String] as? Bool == true)
+    check(
+      "a legacy App ID prefix is kept as signed",
+      ShellSeal.Keychain.accessGroup(
+        applicationIdentifier: "CDV6DT8QF2.io.mgcrea.cupertino.debug",
+        appIdentifier: "io.mgcrea.cupertino.debug") == "CDV6DT8QF2.io.mgcrea.cupertino.debug")
+    check(
+      "the other build's identifier gets no query",
+      ShellSeal.Keychain.query(applicationIdentifier: debugID, appIdentifier: "io.mgcrea.cupertino")
+        == nil
+        && ShellSeal.Keychain.query(
+          applicationIdentifier: releaseID, appIdentifier: "io.mgcrea.cupertino.debug") == nil
+    )
+    check(
+      "a wildcard, a bare bundle id or no identifier gets none",
+      ["75QE9PRT3V.*", "io.mgcrea.cupertino", ".io.mgcrea.cupertino", nil].allSatisfy {
+        ShellSeal.Keychain.query(applicationIdentifier: $0, appIdentifier: "io.mgcrea.cupertino")
+          == nil
+      })
+    check(
+      "this binary is signed with no application identifier",
+      ShellSeal.Keychain.signedApplicationIdentifier == nil)
+    let unentitled = ShellSeal.Keychain()
+    check(
+      "so its Keychain source reads no key and keeps a reason",
+      unentitled.key() == nil && unentitled.rotate() == nil && ShellSeal.lastKeyError != nil)
   }
 
   /// The run record, in a scratch directory of its own. The app's own `shell-runs` is never
@@ -260,6 +323,7 @@ struct ShellCheck {
     _ = signal(SIGPIPE, SIG_IGN)
 
     sealChecks()
+    keychainChecks()
     try recordChecks()
 
     print("\nShellRunner: the command line and the environment")

@@ -247,21 +247,22 @@ The bump is automatic but not unconditional — the `release-app` job skips it w
 
 ### The secrets the release needs
 
-Nine secrets, and until this table nothing listed them. A successor — see
+Ten secrets, and until this table nothing listed them. A successor — see
 [succession.md](succession.md) — has to obtain every one, and two of them are exactly what that
 document promises are never shared.
 
-| Secret                      | Used by                                       | What it is                                                                                        |
-| --------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `DEVELOPER_ID_P12_BASE64`   | `release-app`                                 | The Developer ID Application certificate and private key, as a base64 `.p12`. Never shared.       |
-| `DEVELOPER_ID_P12_PASSWORD` | `release-app`                                 | The password that `.p12` was exported with.                                                       |
-| `KEYCHAIN_PASSWORD`         | `release-app`                                 | Any string; it locks the temporary keychain the job creates and deletes.                          |
-| `AC_KEY_ID`                 | `release-app`                                 | The App Store Connect API key id, for `notarytool`.                                               |
-| `AC_ISSUER_ID`              | `release-app`                                 | The issuer id of the same key.                                                                    |
-| `AC_KEY_P8_BASE64`          | `release-app`                                 | The `.p8` private key of that API key, base64. Notarization only; it can sign nothing.            |
-| `SPARKLE_ED_PRIVATE_KEY`    | `release-app`                                 | The EdDSA update key, exported once by `make sparkle-keys`. Never shared — see succession.md §3b. |
-| `HOMEBREW_TAP_TOKEN`        | `release-app`                                 | Write access to `mgcrea/homebrew-tap`. Optional: the cask bump is skipped without it.             |
-| `CLOUDFLARE_API_TOKEN`      | `deploy-api`, `deploy-website`, `revocations` | The Worker, D1 and the site. `revocations` only reads D1 through it.                              |
+| Secret                                     | Used by                                       | What it is                                                                                        |
+| ------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `DEVELOPER_ID_P12_BASE64`                  | `release-app`                                 | The Developer ID Application certificate and private key, as a base64 `.p12`. Never shared.       |
+| `DEVELOPER_ID_P12_PASSWORD`                | `release-app`                                 | The password that `.p12` was exported with.                                                       |
+| `DEVELOPER_ID_PROVISIONING_PROFILE_BASE64` | `release-app`                                 | The Developer ID provisioning profile for `io.mgcrea.cupertino`, base64. See below.               |
+| `KEYCHAIN_PASSWORD`                        | `release-app`                                 | Any string; it locks the temporary keychain the job creates and deletes.                          |
+| `AC_KEY_ID`                                | `release-app`                                 | The App Store Connect API key id, for `notarytool`.                                               |
+| `AC_ISSUER_ID`                             | `release-app`                                 | The issuer id of the same key.                                                                    |
+| `AC_KEY_P8_BASE64`                         | `release-app`                                 | The `.p8` private key of that API key, base64. Notarization only; it can sign nothing.            |
+| `SPARKLE_ED_PRIVATE_KEY`                   | `release-app`                                 | The EdDSA update key, exported once by `make sparkle-keys`. Never shared — see succession.md §3b. |
+| `HOMEBREW_TAP_TOKEN`                       | `release-app`                                 | Write access to `mgcrea/homebrew-tap`. Optional: the cask bump is skipped without it.             |
+| `CLOUDFLARE_API_TOKEN`                     | `deploy-api`, `deploy-website`, `revocations` | The Worker, D1 and the site. `revocations` only reads D1 through it.                              |
 
 `CLOUDFLARE_API_TOKEN` is a secret of the `production` environment, not of the repository, which is
 why every job that reads it names that environment — a job without the line reads an empty token.
@@ -271,9 +272,31 @@ Creations besides the Workers template's own permissions. Without D1 the `revoca
 `7403 … not authorized to access this service`, which is what 1.25.0's first cut hit, and so would the
 `Migrate D1` step of `deploy-api`. Adding a permission does not change the token string, so the GitHub
 secret is left alone.
-`release-app` runs in a `release` environment so that the eight secrets it reads can be moved
+`release-app` runs in a `release` environment so that the nine secrets it reads can be moved
 there, behind a tag-only deployment policy, where a workflow edited on a pull-request branch cannot
 read the signing or the update key.
+
+### The provisioning profile
+
+Since Shell, the release embeds a Developer ID provisioning profile at
+`Contents/embedded.provisionprofile`. Shell's seal key lives in the data protection keychain, under
+the keychain access group `<prefix>.io.mgcrea.cupertino`, so that no other program can plant or
+replace it (`ShellSeal.swift` says how the login keychain let one). On macOS a keychain access group
+is a restricted entitlement: an app that claims one with no profile authorising it is killed at
+launch. Xcode embeds a profile for Debug by itself. `make sign` signs by hand, so it embeds this one
+and signs with `apps/apple/.build/Cupertino-release.entitlements`, which
+`scripts/release-entitlements.sh` writes from `Cupertino.entitlements` with the identifiers spelled
+out. That script refuses a missing profile, one for another team or App ID, a development profile,
+an expired one, and one that does not name the certificate doing the signing. Each of those would
+otherwise ship a build that dies at launch, or one that runs but can never turn Shell on.
+
+The file is a **Developer ID** profile for the explicit App ID `io.mgcrea.cupertino` (team
+`75QE9PRT3V`), made at developer.apple.com under Certificates, Identifiers & Profiles → Profiles,
+naming the same Developer ID Application certificate as `DEVELOPER_ID_P12_BASE64`. Locally, pass it
+as `make build-release PROVISIONING_PROFILE=path/to/Cupertino.provisionprofile`. CI decodes it from
+`DEVELOPER_ID_PROVISIONING_PROFILE_BASE64` (`base64 -i Cupertino.provisionprofile`). To renew it,
+when it expires or when the certificate is replaced: edit or regenerate the profile there, download
+it, and update the secret. `sign` prints the profile's expiry date on every release.
 
 ### The version number, and where it lives
 
