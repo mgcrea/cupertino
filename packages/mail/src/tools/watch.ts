@@ -107,8 +107,15 @@ import { wrap } from "./util.js";
  *   judged by the next poll or tick, with a fresh lookup) or when the index's
  *   head has moved past the last head it saw and the TTL has passed. An idle
  *   subscription then costs no Apple Event however long it lives, and a poll
- *   every ten seconds costs no more than a watch. A hold that a failed refresh
- *   cannot resolve is judged with the accounts in hand, as a watch tick does.
+ *   every ten seconds costs no more than a watch. Until a lookup has loaded at
+ *   all, it asks on every `ensure`, as a watch's setup would, since nothing can
+ *   be judged without one; and the head it saw only counts once a refresh it
+ *   needed has worked.
+ * - A mailbox is held back once. After the refresh it caused, the mailbox is
+ *   known whether or not the index now lists it (a row can name a mailbox with
+ *   no `mailboxes` row at all), so its rows are judged, and excluded if they
+ *   still do not resolve, as a watch tick's second pass does. Otherwise such a
+ *   row would stop every scan, and cost a refresh on every poll, for good.
  * - The trigger calls core's `onChange` directly: core's tick runs `ensure`.
  */
 
@@ -163,6 +170,8 @@ export class MailWatchService {
   #refreshedAt = 0;
   /** Events only: the index's head at the last `ensure`, so a refresh waits for new rows. */
   #seenHead = 0;
+  /** Events only: mailboxes a scan held back at and a refresh was asked for, held no more. */
+  readonly #askedFor = new Set<number>();
   /** Whether the last refresh failed, so a failure that persists is logged once. */
   #refreshFailing = false;
   #tickFailing = false;
@@ -239,21 +248,26 @@ export class MailWatchService {
   }
 
   /**
-   * Events' refresh: now for a scan that held back, else only once rows have
-   * arrived since the last call and the TTL has passed. Never throws.
+   * Events' refresh: now for a scan that held back, and on every call until a
+   * lookup has loaded; else only once rows have arrived since the last call
+   * and the TTL has passed. The head counts as seen only when no refresh was
+   * needed or the refresh worked. Never throws.
    */
   async #catchUp(): Promise<void> {
     const inner = this.#ready();
     const head = inner.head();
-    const arrived = head > this.#seenHead;
-    this.#seenHead = head;
-    if (inner.takeHeld()) {
-      // Refreshed or not, the held row is judged next time: a rebuild from the
-      // accounts in hand knows the mailbox, and excludes it if it still does
-      // not resolve, as a watch tick does.
-      if (!(await this.#refreshSoftly())) this.#rebuild();
-    } else if (arrived && this.#stale()) {
-      await this.#refreshSoftly();
+    const held = inner.takeHeld();
+    if (held !== null) {
+      // Held once: whatever the refresh says, the mailbox is known from here on,
+      // so the row is judged next time, and excluded if it still does not
+      // resolve, as a watch tick's second pass does.
+      this.#askedFor.add(held);
+      if (await this.#refreshSoftly()) this.#seenHead = head;
+      else this.#rebuild();
+    } else if (!this.#loaded || (head > this.#seenHead && this.#stale())) {
+      if (await this.#refreshSoftly()) this.#seenHead = head;
+    } else {
+      this.#seenHead = head;
     }
   }
 
@@ -350,6 +364,7 @@ export class MailWatchService {
     const accounts = this.#accounts ?? [];
     const map = new Map<number, { accountUuid: string; mailbox: string }>();
     const known = new Set<number>();
+    for (const id of this.#askedFor) known.add(id);
     for (const row of index.mailboxes()) {
       known.add(row.rowid);
       const resolved = this.#client.mailboxes.resolveIndexUrlIn(accounts, row.url);
@@ -414,7 +429,7 @@ export class MailWatchService {
     } finally {
       inner.holdNewMailboxes = false;
     }
-    if (!inner.takeHeld()) return;
+    if (inner.takeHeld() === null) return;
     // Refreshed or not, tick again with nothing held: a mailbox still unknown
     // after asking is excluded, as it would have been before.
     await this.#refreshSoftly();

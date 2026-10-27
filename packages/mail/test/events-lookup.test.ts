@@ -41,12 +41,14 @@ const ACCOUNTS = [
   },
 ];
 
+/** Counts the account listing; `open: false` makes it fail, as Mail does while launching. */
 const countingRunner = () => {
-  const state = { listAccounts: 0 };
+  const state = { listAccounts: 0, open: true };
   const run: OsascriptRunner = {
     run: vi.fn(async (script: string) => {
       if (!script.includes("a.emailAddresses()")) return [];
       state.listAccounts += 1;
+      if (!state.open) throw new Error("Mail got an error: not ready");
       return ACCOUNTS;
     }) as OsascriptRunner["run"],
   };
@@ -54,6 +56,7 @@ const countingRunner = () => {
 };
 
 const running = async () => true;
+const closed = async () => false;
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -152,18 +155,24 @@ const settle = async () => {
  * The events service `createServer` builds, over `path`, with the account
  * listing counted. Only `Date` is faked, so the TTL can pass without waiting.
  */
-const eventsServer = (path: string, ttlMs: number) => {
+const eventsServer = (
+  path: string,
+  ttlMs: number,
+  isMailRunning: () => Promise<boolean> = running,
+  open = true,
+) => {
   const config = loadConfig({
     APPLE_MAIL_ENVELOPE_INDEX: path,
     APPLE_MAIL_ALLOW_EVENTS: "1",
     APPLE_MAIL_MAILBOX_CACHE_TTL_MS: String(ttlMs),
   });
   const counted = countingRunner();
+  counted.state.open = open;
   const created = createServer({
     config,
     osascript: counted.run,
     era: "modern",
-    isMailRunning: running,
+    isMailRunning,
   });
   return { ...created, runner: counted.state };
 };
@@ -258,6 +267,53 @@ describe("events: a mailbox the lookup has never seen", () => {
     await fire();
     expect(runner.listAccounts).toBe(before + 1);
     expect(events()).toEqual(["7020", "7021"]);
+  });
+});
+
+describe("events: a row the lookup can never learn", () => {
+  it("a row whose mailbox has no row at all is held once, then excluded, and mail after it arrives", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fx = copyIndex();
+    addMessage(fx.db, 10, 1);
+    const { server, runner } = eventsServer(fx.path, 60_000);
+    const { poll } = await connect(server);
+    let cursor = (await poll(null)).cursor;
+    const before = runner.listAccounts;
+
+    // Mailbox 99 is in no `mailboxes` row: no refresh can ever make it known.
+    addMessage(fx.db, 20, 99);
+    addMessage(fx.db, 21, 1);
+    const delivered: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const res = await poll(cursor);
+      delivered.push(...res.events.map((e) => e.eventId));
+      cursor = res.cursor;
+    }
+    expect(delivered).toEqual(["7021"]);
+    expect(cursor).toMatch(/\.21$/);
+    // One refresh for the hold, not one per poll.
+    expect(runner.listAccounts).toBe(before + 1);
+  });
+});
+
+describe("events: a lookup that has never loaded", () => {
+  it("is asked for again on the next poll, which delivers what waited, with no new arrival", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fx = copyIndex();
+    addMessage(fx.db, 10, 1);
+    // Mail is launching: it has written the index but cannot answer yet.
+    const { server, runner } = eventsServer(fx.path, 60_000, closed, false);
+    const { poll } = await connect(server);
+    const boot = await poll(null);
+    addMessage(fx.db, 11, 1);
+    const waiting = await poll(boot.cursor);
+    expect(waiting.events).toEqual([]);
+    expect(waiting.cursor).toBe(boot.cursor);
+
+    runner.open = true;
+    const res = await poll(waiting.cursor);
+    expect(res.events.map((e) => e.eventId)).toEqual(["7011"]);
+    expect(res.cursor).toMatch(/\.11$/);
   });
 });
 

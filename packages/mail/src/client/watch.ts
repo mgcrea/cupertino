@@ -88,7 +88,8 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
   readonly #own: Set<string>;
   readonly #lookup: MailboxLookup;
   readonly #known: ReadonlySet<number> | undefined;
-  #held = false;
+  /** The mailbox the last scan held back at, until `takeHeld()`. */
+  #held: number | null = null;
 
   /**
    * While set, `since` stops before the first row whose mailbox is not among
@@ -106,10 +107,10 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
     this.#known = opts.knownMailboxes;
   }
 
-  /** Whether a scan held back since the last call, and clear it. */
-  takeHeld(): boolean {
+  /** The mailbox a scan held back at since the last call, or null; and clear it. */
+  takeHeld(): number | null {
     const held = this.#held;
-    this.#held = false;
+    this.#held = null;
     return held;
   }
 
@@ -123,8 +124,8 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
     if (this.holdNewMailboxes && known) {
       const at = scanned.findIndex((r) => !known.has(r.mailboxRowid));
       if (at >= 0) {
+        this.#held = scanned[at]?.mailboxRowid ?? null;
         scanned = scanned.slice(0, at);
-        this.#held = true;
       }
     }
     return scanned.map((r) => {
