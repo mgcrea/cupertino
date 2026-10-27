@@ -382,6 +382,7 @@ nonisolated struct Surface: Identifiable, Hashable {
       gates: [
         Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets apple_messages_find_codes extract 2FA codes from recent messages. Off by default."),
         Surface.Gate(id: "allowWatches", envSuffix: "ALLOW_WATCHES", label: "Watch for incoming messages", description: "Lets a client register a watch on handles or email domains and be notified when a matching message arrives. Off by default."),
+        Surface.Gate(id: "allowEvents", envSuffix: "ALLOW_EVENTS", label: "Experimental: MCP Events for incoming messages", description: "Serves the draft MCP Events extension (messages.received) to clients on the 2026 protocol. Off by default."),
       ]
     ),
     Surface(

@@ -25,6 +25,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ APPLE_MESSAGES_ALLOW_CODES: "1" }).allowWrites).toBe(false);
   });
 
+  it("keeps events off unless asked", () => {
+    expect(loadConfig({}).allowEvents).toBe(false);
+    expect(loadConfig({ APPLE_MESSAGES_ALLOW_EVENTS: "1" }).allowEvents).toBe(true);
+  });
+
   it("keeps watches off unless asked, independent of the other gates", () => {
     expect(loadConfig({}).allowWatches).toBe(false);
     expect(loadConfig({ APPLE_MESSAGES_ALLOW_WATCHES: "1" }).allowWatches).toBe(true);

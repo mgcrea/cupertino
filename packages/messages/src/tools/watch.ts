@@ -189,6 +189,11 @@ export class MessagesWatchService {
     tick();
   }
 
+  /** The file identity of the chat.db the service reads now, or null when it is unknown or unreadable. */
+  identity(): FileIdentity | null {
+    return this.#identity;
+  }
+
   /** Close the service's own handle. Called when the connection ends. */
   close(): void {
     this.#store?.close();
