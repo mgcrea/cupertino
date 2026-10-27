@@ -34,7 +34,8 @@ export interface Surface {
     | "screen"
     | "sound"
     | "desktop"
-    | "simulator";
+    | "simulator"
+    | "shell";
   // </generated:surfaces>
   name: string;
   pkg: string;
@@ -91,6 +92,7 @@ export const KIND: Record<Surface["id"], "app" | "capability"> = {
   sound: "capability",
   desktop: "capability",
   simulator: "app",
+  shell: "capability",
 };
 
 export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
@@ -106,6 +108,7 @@ export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
   sound: false,
   desktop: false,
   simulator: false,
+  shell: false,
 };
 
 export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
@@ -121,6 +124,7 @@ export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
   sound: true,
   desktop: true,
   simulator: true,
+  shell: false,
 };
 // </generated:kind>
 

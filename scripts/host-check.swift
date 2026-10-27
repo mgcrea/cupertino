@@ -274,6 +274,21 @@ struct HostCheck {
 
     let scratch = URL(fileURLWithPath: "/tmp/cupertino-host-check-\(getpid())", isDirectory: true)
     HostCheckHome.url = scratch
+
+    // `shell` is in `Surface.all`, so anything here that asks `SurfaceSettings.isEnabled` of every
+    // surface asks `ShellSeal` too. A scratch suite and a key held in memory, so that never reads
+    // the app's own defaults or touches the Keychain.
+    let shellSuite = "host-check-shell"
+    let shellStore = UserDefaults(suiteName: shellSuite)!
+    shellStore.removePersistentDomain(forName: shellSuite)
+    defer { shellStore.removePersistentDomain(forName: shellSuite) }
+    ShellSeal.domain = shellSuite
+    ShellSeal.source = MemoryKey()
+    ShellServer.defaults = shellStore
+    ShellRecord.directory = scratch.appendingPathComponent("shell-runs", isDirectory: true)
+    check(
+      "Shell reads off here, from the scratch suite",
+      Surface.named("shell").map { !SurfaceSettings.isEnabled($0) } == true)
     try? FileManager.default.createDirectory(
       atPath: BridgeProtocol.socketDirectory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
@@ -548,5 +563,17 @@ struct HostCheck {
 
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
+  }
+}
+
+/// A seal key held in memory, so this check never reads or writes the real Keychain.
+final class MemoryKey: ShellSeal.KeySource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Data?
+  func key() -> Data? { lock.withLock { stored } }
+  func rotate() -> Data? {
+    let fresh = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+    lock.withLock { stored = fresh }
+    return fresh
   }
 }

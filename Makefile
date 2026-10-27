@@ -27,9 +27,9 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator
+SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator shell
 NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
-SWIFT_SURFACES := screen sound desktop simulator
+SWIFT_SURFACES := screen sound desktop simulator shell
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -393,14 +393,23 @@ sound-check: ## Assert the in-process sound server speaks MCP and its gates are 
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
 	@apps/apple/.build/sound-check
 
-shell-check: ## Assert the shell surface's runner, seal and run record, with no app
+shell-check: ## Assert the shell surface's runner, seal, run record and server, with no app
 	@# Spawns real processes, unlike the checks above: what it pins is how a
 	@# script starts and stops, and above all that a timeout or a cancel takes
 	@# the whole process group with it. Interpreters the machine lacks are
 	@# skipped and say so. Needs no app, no socket and no grant.
 	@# The run record writes only to a scratch folder, never the app's shell-runs.
+	@# The server is driven with a fake window, a scratch defaults suite and a
+	@# seal key held in memory, never the app's own defaults or the Keychain.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/shell-check \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/ShellRunner.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
@@ -429,6 +438,12 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/ScreenServer.swift \
 		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/SoundServer.swift \
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
@@ -550,8 +565,12 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/Permissions.swift \
 		apps/apple/Cupertino/ServerLocator.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
 	@apps/apple/.build/host-check
@@ -1227,7 +1246,7 @@ SHOT_SCREENS := surface prompt activity connections settings writes chat
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
 SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO -allowWrites.desktop NO -allowWrites.simulator NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES -surfaceEnabled.shell YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \

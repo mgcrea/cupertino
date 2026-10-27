@@ -876,6 +876,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // left running after its client went had nobody left to stop it — and if
       // the gate went off too, no tool left to stop it with.
       if surface.id == "sound" { SoundCapture.connectionClosed(session) }
+      // A session approval and a cooldown belong to the connection, and end with it.
+      if surface.id == "shell" { ShellServer.connectionClosed(session) }
       Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
       hostLog(authority.id, .info, "server stopped")
     }

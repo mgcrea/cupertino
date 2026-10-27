@@ -550,6 +550,7 @@ struct ShellCheck {
       "script files are removed after the run",
       ((try? FileManager.default.contentsOfDirectory(atPath: scratch.path)) ?? [])
         .filter { $0.hasPrefix("\(getpid())-") }.isEmpty)
+    try serverChecks()
     check("nothing left live at the end", ShellRunner.live.isEmpty)
 
     print("\n\(checks - failures)/\(checks) passed")
@@ -579,4 +580,672 @@ final class MemoryKey: ShellSeal.KeySource, @unchecked Sendable {
 
   /// As if the Keychain item were deleted.
   func drop() { lock.withLock { stored = nil } }
+}
+
+/// `AppInfo` reaches for screenshot-mode state, and that pulls half the app in behind it. The
+/// server only ever asks it for a version string.
+enum DemoSeed {
+  static let isEnabled = false
+  static let version = "0.0.0"
+}
+
+/// A window that is never drawn: it answers what it is told and counts what it was asked.
+///
+/// With `hold` on, `ask` waits as an open window does, until a cancel names its prompt. A cancel
+/// that arrives before the prompt it names is kept and answers that prompt `.cancelled` at once,
+/// which is the contract `ShellConsenting.cancel` states.
+final class FakeConsent: ShellConsenting, @unchecked Sendable {
+  private let state = NSCondition()
+  private var answer: ShellPromptAnswer = .dontRun
+  private var holding = false
+  private var asked: [ShellPrompt] = []
+  private var cancels: [String] = []
+  private var shown = 0
+  private var finished = 0
+  private var lastStop: (@Sendable () -> Void)?
+  /// Signalled each time a held `ask` starts waiting.
+  let waiting = DispatchSemaphore(value: 0)
+
+  var next: ShellPromptAnswer {
+    get { state.withLock { answer } }
+    set { state.withLock { answer = newValue } }
+  }
+  var hold: Bool {
+    get { state.withLock { holding } }
+    set { state.withLock { holding = newValue } }
+  }
+  var asks: Int { state.withLock { asked.count } }
+  var prompts: [ShellPrompt] { state.withLock { asked } }
+  var notices: Int { state.withLock { shown } }
+  var ended: Int { state.withLock { finished } }
+  var stop: (@Sendable () -> Void)? { state.withLock { lastStop } }
+
+  private static func key(_ connection: UUID, _ requestId: String) -> String {
+    "\(connection)|\(requestId)"
+  }
+
+  func ask(_ prompt: ShellPrompt) -> ShellPromptAnswer {
+    state.lock()
+    defer { state.unlock() }
+    asked.append(prompt)
+    let key = Self.key(prompt.connection, prompt.requestId)
+    if let early = cancels.firstIndex(of: key) {
+      cancels.remove(at: early)
+      return .cancelled
+    }
+    guard holding else { return answer }
+    waiting.signal()
+    let deadline = Date().addingTimeInterval(5)
+    while !cancels.contains(key) {
+      if !state.wait(until: deadline) { return .noAnswer }
+    }
+    cancels.removeAll { $0 == key }
+    return .cancelled
+  }
+
+  func cancel(connection: UUID, requestId: String) {
+    state.lock()
+    cancels.append(Self.key(connection, requestId))
+    state.broadcast()
+    state.unlock()
+  }
+
+  func running(_ prompt: ShellPrompt, stop: @escaping @Sendable () -> Void)
+    -> any ShellNoticeToken
+  {
+    state.withLock {
+      shown += 1
+      lastStop = stop
+    }
+    return Notice(owner: self)
+  }
+
+  fileprivate func noticeEnded() { state.withLock { finished += 1 } }
+
+  private final class Notice: ShellNoticeToken, @unchecked Sendable {
+    let owner: FakeConsent
+    init(owner: FakeConsent) { self.owner = owner }
+    func ended() { owner.noticeEnded() }
+  }
+}
+
+/// A count several threads add to.
+final class Tally: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: Int
+  init(_ value: Int = 0) { self.value = value }
+  var count: Int { lock.withLock { value } }
+  func next() -> Int {
+    lock.withLock {
+      value += 1
+      return value
+    }
+  }
+}
+
+/// What a tool call came back with.
+struct ToolAnswer {
+  var isError: Bool
+  var text: String
+  /// The JSON a successful result carries as its text, parsed.
+  var structured: [String: Any]
+  var reply: [String: Any]
+}
+
+extension ShellCheck {
+  static let conn = UUID()
+  static let requestsMade = Tally()
+  static let ids = Tally(1000)
+
+  static let declinedCopy =
+    "The person chose not to run this. Nothing ran. Ask them in the conversation what they want; "
+    + "do not retry on your own."
+  static let noAnswerCopy =
+    "Nobody answered within 60 s, so nothing ran. They may have stepped away. Ask them before "
+    + "trying again."
+  static let busyCopy = "Four commands are already running. Nothing ran. Wait for one to finish."
+  static let cancelledCopy = "Cancelled. The command was stopped."
+  static let instructionsCopy =
+    "Runs a script with Cupertino's access, including Full Disk Access when Cupertino has it. The "
+    + "person sees the full script and decides each run unless they have chosen otherwise. A "
+    + "refusal means ask them in the conversation, not retry. Put related work in one script "
+    + "rather than many small runs: each run can cost them a decision."
+
+  /// The cooldown sentence, with the wait it names, or nil when `text` is not it.
+  static func cooldownWait(_ text: String) -> Int? {
+    let head =
+      "The person turned down a command from this session a moment ago. Nothing ran, and "
+      + "Cupertino will not ask again for another "
+    let tail = " s. Ask them in the conversation first."
+    guard text.hasPrefix(head), text.hasSuffix(tail) else { return nil }
+    return Int(text.dropFirst(head.count).dropLast(tail.count))
+  }
+
+  static func frame(_ method: String, _ params: [String: Any]? = nil, id: Int) -> String {
+    var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
+    if let params { message["params"] = params }
+    let data = try! JSONSerialization.data(withJSONObject: message)
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  static func send(_ line: String, on connection: UUID?) -> [String: Any]? {
+    guard let surface = Surface.named("shell"),
+      let text = ShellServer.handle(line, surface: surface, connection: connection)
+    else { return nil }
+    return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+  }
+
+  static func result(_ method: String, _ params: [String: Any]? = nil) -> [String: Any] {
+    send(frame(method, params, id: ids.next()), on: conn)?["result"] as? [String: Any] ?? [:]
+  }
+
+  static func call(
+    _ tool: String, _ args: [String: Any], on connection: UUID = conn, id: Int? = nil
+  ) -> ToolAnswer {
+    if tool == "apple_shell_run" { _ = requestsMade.next() }
+    let line = frame(
+      "tools/call", ["name": tool, "arguments": args], id: id ?? ids.next())
+    let reply = send(line, on: connection) ?? [:]
+    let result = reply["result"] as? [String: Any] ?? [:]
+    let text = ((result["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+    let isError = result["isError"] as? Bool ?? (reply["error"] != nil)
+    let structured =
+      isError
+      ? [:] : ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:])
+    return ToolAnswer(isError: isError, text: text, structured: structured, reply: reply)
+  }
+
+  /// A run on a connection of its own, so no approval or cooldown carries in.
+  static func callFresh(_ args: [String: Any]) -> ToolAnswer {
+    call("apple_shell_run", args, on: UUID())
+  }
+
+  static func shellRun(
+    _ script: String = "true", on connection: UUID = conn, _ extra: [String: Any] = [:],
+    id: Int? = nil
+  ) -> ToolAnswer {
+    var args: [String: Any] = ["script": script, "purpose": "p"]
+    for (key, value) in extra { args[key] = value }
+    return call("apple_shell_run", args, on: connection, id: id)
+  }
+
+  /// `run` on a thread of its own, for a call that has to be stopped from here.
+  static func runAside(
+    _ script: String, on connection: UUID = UUID(), id: Int? = nil
+  ) -> (answer: () -> ToolAnswer?, done: DispatchSemaphore) {
+    let done = DispatchSemaphore(value: 0)
+    let box = AnswerBox()
+    Thread.detachNewThread {
+      box.set(shellRun(script, on: connection, id: id))
+      done.signal()
+    }
+    return ({ box.get() }, done)
+  }
+
+  static func toolNames() -> [String] {
+    (result("tools/list")["tools"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+      .sorted()
+  }
+
+  static func tool(_ name: String) -> [String: Any] {
+    (result("tools/list")["tools"] as? [[String: Any]] ?? []).first {
+      $0["name"] as? String == name
+    }
+      ?? [:]
+  }
+
+  static func annotations(_ name: String) -> [String: Any] {
+    tool(name)["annotations"] as? [String: Any] ?? [:]
+  }
+
+  /// Whether `condition` came true within `timeout`.
+  static func eventually(_ timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if condition() { return true }
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+    return condition()
+  }
+
+  /// `ShellServer` against a scratch defaults suite, a key held in memory, a record in a scratch
+  /// folder and a fake window. The app's own defaults, Keychain and `shell-runs` are never touched.
+  static func serverChecks() throws {
+    print("\nShellServer: the tools, behind the policy, the seal and the record")
+    let suite = "shell-check-server"
+    let store = UserDefaults(suiteName: suite)!
+    store.removePersistentDomain(forName: suite)
+    defer { store.removePersistentDomain(forName: suite) }
+    ShellSeal.domain = suite
+    ShellSeal.source = MemoryKey()
+    ShellServer.defaults = store
+    let recordDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-server-check-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: recordDir) }
+    ShellRecord.directory = recordDir
+    ShellServer.fullDiskAccess = { true }
+    ShellServer.clientName = { _ in "check-client" }
+    let marker = scratch("must-not-exist")
+    defer { try? FileManager.default.removeItem(atPath: marker) }
+    let exists = { FileManager.default.fileExists(atPath: marker) }
+    let touch = "touch \(marker)"
+
+    // Before any window is wired in, which is every build until the app sets its own.
+    let probe = ShellPrompt(
+      client: "c", purpose: "p", script: "true", stdin: nil, interpreter: .zsh, cwd: "/",
+      timeoutSeconds: 60, offerSession: false, connection: UUID(), requestId: "i1")
+    check(
+      "with no window wired in, the stand-in answers cancelled",
+      ShellServer.consent.ask(probe) == .cancelled)
+    let standIn = shellRun(touch, on: UUID())
+    check(
+      "so nothing runs in a build that cannot ask",
+      standIn.isError && standIn.text == cancelledCopy && !exists())
+    ShellSeal.setBefore(.none, store)
+    let standInNone = shellRun(touch, on: UUID())
+    check(
+      "nor under a sealed Don't ask, with no card to show",
+      standInNone.isError && standInNone.text == cancelledCopy && !exists()
+        && ShellServer.inFlight == 0)
+    ShellSeal.setBefore(.ask, store)
+
+    let fake = FakeConsent()
+    ShellServer.consent = fake
+
+    let initialize = result("initialize")
+    check(
+      "the server that answers is cupertino-shell",
+      (initialize["serverInfo"] as? [String: Any])?["name"] as? String == "cupertino-shell")
+    check(
+      "the instructions, verbatim", initialize["instructions"] as? String == instructionsCopy)
+    check(
+      "tools/list has run and diagnostics",
+      toolNames() == ["apple_shell_diagnostics", "apple_shell_run"])
+    check(
+      "run's annotations",
+      annotations("apple_shell_run")["destructiveHint"] as? Bool == true
+        && annotations("apple_shell_run")["openWorldHint"] as? Bool == true
+        && annotations("apple_shell_run")["readOnlyHint"] as? Bool == false)
+    check(
+      "diagnostics is read-only",
+      annotations("apple_shell_diagnostics")["readOnlyHint"] as? Bool == true)
+    let schema = tool("apple_shell_run")["inputSchema"] as? [String: Any] ?? [:]
+    let properties = schema["properties"] as? [String: Any] ?? [:]
+    check(
+      "run takes the spec's parameters, script and purpose required",
+      Set(properties.keys) == [
+        "script", "purpose", "interpreter", "cwd", "stdin", "timeoutSeconds",
+      ]
+        && Set(schema["required"] as? [String] ?? []) == ["script", "purpose"])
+    check(
+      "the interpreters on offer",
+      (properties["interpreter"] as? [String: Any])?["enum"] as? [String]
+        == ["zsh", "bash", "python3", "node", "osascript", "jxa"])
+    let resources = (result("resources/list")["resources"] as? [[String: Any]] ?? [])
+      .compactMap { $0["uri"] as? String }
+    check(
+      "the guide reads back",
+      resources.contains("cupertino://shell/guide")
+        && ((result("resources/read", ["uri": "cupertino://shell/guide"])["contents"]
+          as? [[String: Any]])?.first?["text"] as? String)?.isEmpty == false
+    )
+
+    print("\nShellServer: asking")
+    fake.next = .runOnce
+    let ok = call("apple_shell_run", ["script": "echo hi", "purpose": "p"])
+    check(
+      "approved run returns output",
+      ok.isError == false && ok.structured["stdout"] as? String == "hi\n"
+        && ok.structured["decision"] as? String == "approved")
+    check(
+      "the result carries the spec's fields",
+      Set(ok.structured.keys) == [
+        "decision", "exitCode", "signal", "timedOut", "durationMs", "stdout", "stdoutTruncated",
+        "stderr", "stderrTruncated",
+      ] && ok.structured["exitCode"] as? Int == 0 && ok.structured["signal"] is NSNull)
+    let shown = fake.prompts.last
+    check(
+      "the window is handed the whole request",
+      shown?.script == "echo hi" && shown?.purpose == "p" && shown?.interpreter == .zsh
+        && shown?.cwd == NSHomeDirectory() && shown?.timeoutSeconds == 60 && shown?.stdin == nil
+        && shown?.offerSession == false && shown?.connection == conn
+        && shown?.client == "check-client")
+    fake.next = .dontRun
+    let declined = call("apple_shell_run", ["script": touch, "purpose": "p"])
+    check("declined is an error and runs nothing", declined.isError && !exists())
+    check("declined, verbatim", declined.text == declinedCopy)
+    let cooled = call("apple_shell_run", ["script": "true", "purpose": "p"])
+    check("cooldown refuses without asking", cooled.isError && fake.asks == 2)
+    check(
+      "cooldown, verbatim, with the wait in whole seconds",
+      cooldownWait(cooled.text).map { (1...30).contains($0) } == true)
+
+    fake.next = .noAnswer
+    let quiet = UUID()
+    let unanswered = shellRun(touch, on: quiet)
+    check(
+      "no answer is an error, verbatim, and runs nothing",
+      unanswered.isError && unanswered.text == noAnswerCopy && !exists())
+    let asksAfterQuiet = fake.asks
+    check(
+      "no answer cools the connection down too",
+      cooldownWait(shellRun(on: quiet).text) != nil && fake.asks == asksAfterQuiet)
+
+    print("\nShellServer: the arguments")
+    fake.next = .runOnce
+    check(
+      "tilde cwd expanded",
+      callFresh(["script": "pwd", "purpose": "p", "cwd": "~"]).structured["stdout"] as? String
+        == NSHomeDirectory() + "\n")
+    check(
+      "an absolute cwd is honoured",
+      callFresh(["script": "pwd -P", "purpose": "p", "cwd": "/private/tmp"]).structured["stdout"]
+        as? String == "/private/tmp\n")
+    check(
+      "stdin delivered",
+      callFresh(["script": "cat", "purpose": "p", "stdin": "abc"]).structured["stdout"] as? String
+        == "abc")
+    check(
+      "an interpreter by name",
+      callFresh(["script": "echo ${BASH_VERSION:+bash}", "purpose": "p", "interpreter": "bash"])
+        .structured["stdout"] as? String == "bash\n")
+    let failed = callFresh(["script": "echo no >&2; exit 3", "purpose": "p"])
+    check(
+      "a failing script is a result, not an error",
+      !failed.isError && failed.structured["exitCode"] as? Int == 3
+        && failed.structured["stderr"] as? String == "no\n")
+    let timed = callFresh(["script": "sleep 5", "purpose": "p", "timeoutSeconds": 1])
+    check(
+      "a timeout is reported",
+      !timed.isError && timed.structured["timedOut"] as? Bool == true
+        && timed.structured["exitCode"] is NSNull && timed.structured["signal"] as? String != nil)
+
+    let asksBeforeInvalid = fake.asks
+    check(
+      "relative cwd refused", callFresh(["script": "pwd", "purpose": "p", "cwd": "tmp"]).isError)
+    check(
+      "a cwd that does not exist refused",
+      callFresh(["script": "pwd", "purpose": "p", "cwd": "/nonexistent-\(getpid())"]).isError)
+    check(
+      "a cwd that is a file refused",
+      callFresh(["script": "pwd", "purpose": "p", "cwd": "/etc/hosts"]).isError)
+    check("missing purpose refused", callFresh(["script": "true"]).isError)
+    check("blank purpose refused", callFresh(["script": "true", "purpose": "  \n"]).isError)
+    check("missing script refused", callFresh(["purpose": "p"]).isError)
+    check("empty script refused", callFresh(["script": "", "purpose": "p"]).isError)
+    check(
+      "script over 512 KB refused, connection fine",
+      callFresh(["script": String(repeating: "a", count: 600_000), "purpose": "p"]).isError
+        && !shellRun("true", on: UUID()).isError)
+    check(
+      "a script of exactly 512 KB is not refused for its size",
+      !callFresh(["script": "#" + String(repeating: "a", count: 512 * 1024 - 1), "purpose": "p"])
+        .isError)
+    check(
+      "purpose over 500 chars refused",
+      callFresh(["script": "true", "purpose": String(repeating: "p", count: 501)]).isError)
+    check(
+      "timeout out of range refused",
+      callFresh(["script": "true", "purpose": "p", "timeoutSeconds": 601]).isError
+        && callFresh(["script": "true", "purpose": "p", "timeoutSeconds": 0]).isError)
+    check(
+      "a timeout that is not a whole number refused",
+      callFresh(["script": "true", "purpose": "p", "timeoutSeconds": 1.5]).isError
+        && callFresh(["script": "true", "purpose": "p", "timeoutSeconds": "60"]).isError
+        && callFresh(["script": "true", "purpose": "p", "timeoutSeconds": true]).isError)
+    check(
+      "an unknown interpreter refused",
+      callFresh(["script": "true", "purpose": "p", "interpreter": "fish"]).isError)
+    check(
+      "stdin that is not a string refused",
+      callFresh(["script": "cat", "purpose": "p", "stdin": 5]).isError)
+    // One more for the size check above, which ran a valid script to prove the connection.
+    check(
+      "no refused request opened a window", fake.asks == asksBeforeInvalid + 2)
+
+    print("\nShellServer: once per session")
+    ShellSeal.setBefore(.session, store)
+    fake.next = .runForSession
+    let a = UUID()
+    _ = shellRun(on: a)
+    let before = fake.asks
+    check("the window offers the session", fake.prompts.last?.offerSession == true)
+    let again = shellRun(on: a)
+    check(
+      "session approval skips the window",
+      again.isError == false && fake.asks == before && fake.notices == 1
+        && again.structured["decision"] as? String == "approvedForSession")
+    check("and the card ends with the run", fake.ended == 1)
+    let b = UUID()
+    fake.next = .dontRun
+    _ = shellRun(on: b)
+    check("a session approval does not cross connections", fake.asks == before + 1)
+    ShellServer.connectionClosed(a)
+    fake.next = .runOnce
+    check(
+      "closing the connection ends the approval",
+      {
+        _ = shellRun(on: a)
+        return fake.asks == before + 2
+      }())
+    ShellServer.connectionClosed(b)
+    check(
+      "closing the connection ends its cooldown",
+      {
+        _ = shellRun(on: b)
+        return fake.asks == before + 3
+      }())
+    ShellSeal.setBefore(.ask, store)
+    fake.next = .runForSession
+    let c = UUID()
+    _ = shellRun(on: c)
+    let asksAfterAsk = fake.asks
+    _ = shellRun(on: c)
+    check(
+      "under Ask every time a session answer approves only that run",
+      fake.asks == asksAfterAsk + 1 && fake.prompts.last?.offerSession == false)
+
+    print("\nShellServer: Don't ask")
+    ShellSeal.setBefore(.none, store)
+    let asksBeforeNone = fake.asks
+    let noticesBeforeNone = fake.notices
+    let free = shellRun("echo free", on: UUID())
+    check(
+      "a sealed Don't ask runs without the window, with the card",
+      !free.isError && free.structured["stdout"] as? String == "free\n"
+        && free.structured["decision"] as? String == "notAsked" && fake.asks == asksBeforeNone
+        && fake.notices == noticesBeforeNone + 1)
+    check("and the card ends with the run", fake.ended == fake.notices)
+    let sealedNone = store.string(forKey: ShellSeal.beforeSealKey)
+    store.removeObject(forKey: ShellSeal.beforeSealKey)
+    _ = shellRun(on: UUID())
+    check("an unsealed Don't ask still asks", fake.asks == asksBeforeNone + 1)
+    store.set(sealedNone, forKey: ShellSeal.beforeSealKey)
+
+    print("\nShellServer: four at once")
+    let slow = (0..<4).map { _ in runAside("sleep 1.5") }
+    check("four runs in flight", eventually { ShellServer.inFlight == 4 })
+    let asksBeforeBusy = fake.asks
+    let busy = shellRun(on: UUID())
+    check(
+      "a fifth is refused, verbatim, without asking",
+      busy.isError && busy.text == busyCopy && fake.asks == asksBeforeBusy)
+    check(
+      "diagnostics count the runs in flight",
+      call("apple_shell_diagnostics", [:]).structured["inFlight"] as? Int == 4)
+    for (_, done) in slow { done.wait() }
+    check("the four all ran", slow.allSatisfy { $0.answer()?.isError == false })
+    check("their slots come back", ShellServer.inFlight == 0)
+
+    print("\nShellServer: stopping")
+    let noticesBeforeStop = fake.notices
+    let carded = runAside("sleep 30")
+    let cardShown = eventually {
+      fake.notices == noticesBeforeStop + 1 && ShellServer.inFlight == 1
+    }
+    let stopStart = Date()
+    fake.stop?()
+    let stoppedFromCard = carded.done.wait(timeout: .now() + 5) == .success
+    check(
+      "Stop on the card ends the run as cancelled",
+      cardShown && stoppedFromCard && carded.answer()?.text == cancelledCopy
+        && Date().timeIntervalSince(stopStart) < 3)
+
+    let switchedOff = runAside("sleep 30")
+    let offRunning = eventually { ShellServer.inFlight == 1 }
+    ShellServer.stopAll()
+    check(
+      "stopAll cancels a run in flight",
+      offRunning && switchedOff.done.wait(timeout: .now() + 5) == .success
+        && switchedOff.answer()?.text == cancelledCopy)
+
+    // A cancel that reaches `InProcessCalls` before the call registers, and a client that hung up
+    // first: nothing is asked and nothing runs, under "Don't ask" where nothing else would stop it.
+    let early = UUID()
+    InProcessCalls.cancel(connection: early, requestId: "i900")
+    let earlyAnswer = shellRun(touch, on: early, id: 900)
+    check(
+      "a cancel that beats the call: nothing runs, and it says cancelled",
+      earlyAnswer.isError && earlyAnswer.text == cancelledCopy && !exists())
+    let gone = UUID()
+    InProcessCalls.cancelAll(connection: gone)
+    let goneAnswer = shellRun(touch, on: gone)
+    check(
+      "a hang-up that beats the call: nothing runs",
+      goneAnswer.isError && goneAnswer.text == cancelledCopy && !exists())
+    InProcessCalls.forget(connection: early)
+    InProcessCalls.forget(connection: gone)
+
+    ShellSeal.setBefore(.ask, store)
+    let asksBeforeEarly = fake.asks
+    let earlyAsk = UUID()
+    InProcessCalls.cancel(connection: earlyAsk, requestId: "i901")
+    let earlyAskAnswer = shellRun(touch, on: earlyAsk, id: 901)
+    check(
+      "a cancel that beats the window: nothing is asked",
+      earlyAskAnswer.text == cancelledCopy && fake.asks == asksBeforeEarly && !exists())
+    InProcessCalls.forget(connection: earlyAsk)
+
+    fake.hold = true
+    let held = UUID()
+    let waiting = runAside(touch, on: held, id: 902)
+    let windowUp = fake.waiting.wait(timeout: .now() + 5) == .success
+    InProcessCalls.cancel(connection: held, requestId: "i902")
+    check(
+      "a cancel while the window waits closes it, and nothing runs",
+      windowUp && waiting.done.wait(timeout: .now() + 5) == .success
+        && waiting.answer()?.text == cancelledCopy && !exists())
+    let heldAgain = runAside(touch)
+    let windowAgain = fake.waiting.wait(timeout: .now() + 5) == .success
+    ShellServer.stopAll()
+    check(
+      "stopAll closes a waiting window, and nothing runs",
+      windowAgain && heldAgain.done.wait(timeout: .now() + 5) == .success
+        && heldAgain.answer()?.text == cancelledCopy && !exists())
+    fake.hold = false
+
+    fake.next = .runOnce
+    let approved = UUID()
+    let long = runAside("sleep 30", on: approved, id: 903)
+    let longRunning = eventually { ShellServer.inFlight == 1 }
+    let cancelStart = Date()
+    InProcessCalls.cancel(connection: approved, requestId: "i903")
+    check(
+      "a cancel mid-run stops it",
+      longRunning && long.done.wait(timeout: .now() + 5) == .success
+        && long.answer()?.text == cancelledCopy && Date().timeIntervalSince(cancelStart) < 3)
+    InProcessCalls.forget(connection: approved)
+    check(
+      "nothing is left registered",
+      InProcessCalls.held(connection: approved)?.running ?? 0 == 0
+        && InProcessCalls.held(connection: held)?.running ?? 0 == 0)
+
+    print("\nShellServer: diagnostics")
+    let diagnostics = call("apple_shell_diagnostics", [:]).structured
+    let interpreters = diagnostics["interpreters"] as? [String: Any] ?? [:]
+    check("before is the effective setting", diagnostics["before"] as? String == "ask")
+    check(
+      "fullDiskAccess comes from the injected check", diagnostics["fullDiskAccess"] as? Bool == true
+    )
+    check(
+      "every interpreter is listed, a path or null",
+      Set(interpreters.keys) == Set(ShellRunner.Interpreter.allCases.map(\.rawValue))
+        && interpreters.values.allSatisfy {
+          ($0 as? String)?.hasPrefix("/") == true || $0 is NSNull
+        }
+        && (interpreters["zsh"] as? String)?.hasPrefix("/") == true)
+    check("nothing in flight", diagnostics["inFlight"] as? Int == 0)
+    check("the record is intact", diagnostics["recordIntact"] as? Bool == true)
+    store.set("none", forKey: ShellPolicy.key)
+    check(
+      "an unsealed Don't ask reads as ask there too",
+      call("apple_shell_diagnostics", [:]).structured["before"] as? String == "ask")
+    ShellSeal.setBefore(.ask, store)
+
+    print("\nShellServer: the record")
+    let secret = "SHELL-CHECK-\(getpid())"
+    fake.next = .runOnce
+    // `conn` turned a command down at the start; closing it lifts the cooldown.
+    ShellServer.connectionClosed(conn)
+    let recorded = shellRun("echo \(secret)", on: conn)
+    ShellRecord.flushForCheck()
+    let entries = ShellRecord.recent(1000, in: recordDir)
+    check("every request is on the record", entries.count == requestsMade.count)
+    check(
+      "every decision is recorded by its name",
+      Set(entries.map(\.decision)) == [
+        .approved, .approvedForSession, .notAsked, .declined, .noAnswer, .cooldown, .busy,
+        .cancelled, .invalid,
+      ])
+    let line = entries.first
+    check(
+      "a run's line: who, what, where and how it ended",
+      recorded.structured["stdout"] as? String == "\(secret)\n" && line?.decision == .approved
+        && line?.client == "check-client" && line?.connection == conn && line?.purpose == "p"
+        && line?.interpreter == "zsh" && line?.cwd == NSHomeDirectory()
+        && line?.scriptBytes == "echo \(secret)".utf8.count
+        && line?.scriptSHA256 == AuditChain.digest("echo \(secret)") && line?.exitCode == 0
+        && line?.timedOut == false && line?.durationMs != nil)
+    let onFile = try FileManager.default.contentsOfDirectory(
+      at: recordDir, includingPropertiesForKeys: nil
+    ).map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+    check("no script text or output on file", !onFile.contains(secret))
+    check("the chain verifies", ShellRecord.verify(in: recordDir).isIntact)
+
+    // The activity log needs nothing of its own: `serveInProcess` hands every in-process frame to
+    // `RequestObserver`, which records it through `CallCapture`. These are the rules it applies.
+    print("\nShellServer: through the activity log")
+    let request =
+      try JSONSerialization.jsonObject(
+        with: Data(
+          frame(
+            "tools/call", ["name": "apple_shell_run", "arguments": ["script": "echo \(secret)"]],
+            id: 1
+          ).utf8)) as? [String: Any]
+    check(
+      "the script is in the call's arguments, under the payloads switch",
+      CallCapture.arguments(
+        params: request?["params"] as? [String: Any], mode: .arguments, content: false)?
+        .contains(secret) == true
+        && CallCapture.arguments(
+          params: request?["params"] as? [String: Any], mode: .off, content: false) == nil
+    )
+    check(
+      "stdout is in the result, kept only under the content switch",
+      CallCapture.result(recorded.reply, mode: .argumentsAndResults, content: false)
+        == CallCapture.redacted
+        && CallCapture.result(recorded.reply, mode: .argumentsAndResults, content: true)?
+          .contains(secret) == true
+    )
+
+    check("nothing left live after the server checks", ShellRunner.live.isEmpty)
+  }
+}
+
+/// One answer handed from a thread of its own.
+final class AnswerBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: ToolAnswer?
+  func set(_ answer: ToolAnswer) { lock.withLock { value = answer } }
+  func get() -> ToolAnswer? { lock.withLock { value } }
 }

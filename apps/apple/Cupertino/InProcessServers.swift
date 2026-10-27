@@ -65,9 +65,11 @@ nonisolated enum InProcessServers {
   /// own gate. Passed rather than derived here for the same reason gates are:
   /// a check can then pin every combination without touching a preference.
   ///
-  /// `connection` is the session the request arrived on. Only Sound reads it,
-  /// to tie a recording to the client that started it — see
-  /// `SoundCapture.connectionClosed`. nil from a check or a capability probe.
+  /// `connection` is the session the request arrived on. Sound reads it to tie
+  /// a recording to the client that started it — see
+  /// `SoundCapture.connectionClosed` — and Shell to keep a session approval,
+  /// a cooldown and a cancel to one connection. nil from a check or a
+  /// capability probe.
   ///
   /// `surfaceEnabled` answers for ANOTHER surface: `screen` photographs the
   /// windows of Mail, Notes and the rest, and a surface the user has switched
@@ -116,6 +118,11 @@ nonisolated enum InProcessServers {
     case "simulator":
       return reply(
         SimulatorServer.handle(line, surface: surface, writesAllowed: allowWrites))
+    // No write flag and no gate: running a script is the only thing it does, so the surface
+    // switch, which the host enforces, is the gate. It needs the connection, because a session
+    // approval, a cooldown and a cancel all belong to the one a request came in on.
+    case "shell":
+      return reply(ShellServer.handle(line, surface: surface, connection: connection))
     default:
       return .noServer
     }
