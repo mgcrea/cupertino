@@ -129,6 +129,17 @@ export class MessagesWatchService {
     return this.#init;
   }
 
+  /**
+   * `ensure`, then reopen chat.db if it was replaced since. What an events poll
+   * or tick runs before it reads: a poll has no trigger to notice a rebuild for
+   * it, and without this would read the deleted file for as long as the
+   * connection lives. `ensure` itself does not reopen, so watches are unchanged.
+   */
+  async refresh(): Promise<void> {
+    await this.ensure();
+    this.#reopenIfReplaced();
+  }
+
   #setUp(): void {
     // Throws the store's own reason when it is off or unreadable.
     const { store, path } = this.#client.watchStore();

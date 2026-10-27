@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -35,9 +35,7 @@ afterEach(async () => {
 
 type Fixture = { path: string; db: DatabaseSync };
 
-const makeStore = (): Fixture => {
-  const dir = mkdtempSync(join(tmpdir(), "mcp-apple-messages-events-"));
-  const path = join(dir, "chat.db");
+const seedStore = (path: string): DatabaseSync => {
   const db = new DatabaseSync(path);
   db.exec(schema());
   db.exec(`
@@ -49,6 +47,13 @@ const makeStore = (): Fixture => {
       (1, 'iMessage;-;+33612345678', '+33612345678', NULL, 45, 'iMessage'),
       (2, 'iMessage;-;Friend@Example.com', 'Friend@Example.com', NULL, 45, 'iMessage');
   `);
+  return db;
+};
+
+const makeStore = (): Fixture => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-apple-messages-events-"));
+  const path = join(dir, "chat.db");
+  const db = seedStore(path);
   cleanups.push(() => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -224,6 +229,37 @@ describe("events over a connection", () => {
     const res = await poll(client, { ...args, cursor: boot.cursor });
     expect(res.events).toEqual([]);
     expect(res.cursor).toMatch(/\.2$/);
+  });
+
+  it("a poll notices chat.db replaced since the last one: truncated, then the new file's rows", async () => {
+    const fx = makeStore();
+    for (let rowid = 1; rowid <= 5; rowid++) addMessage(fx.db, { rowid, handle: 1 });
+    const { client } = await connect(fx);
+    const args = { name: "messages.received", arguments: { from: ["+33612345678"] } };
+    const boot = await poll(client, { ...args, cursor: null });
+    expect(boot.cursor).toMatch(/\.5$/);
+
+    // Messages rebuilds chat.db: a new file, renumbered from 1, renamed over the old one.
+    // No stream is open, so no trigger runs: only the poll can notice.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = seedStore(next);
+    for (let rowid = 1; rowid <= 3; rowid++) addMessage(rebuilt, { rowid, handle: 1 });
+    rebuilt.close();
+    renameSync(next, fx.path);
+    const { dev, ino } = statSync(fx.path);
+
+    const after = await poll(client, { ...args, cursor: boot.cursor });
+    expect(after.truncated).toBe(true);
+    expect(after.events).toEqual([]);
+    expect(after.cursor).toBe(`v1.${dev}-${ino}.3`);
+
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    addMessage(live, { rowid: 4, handle: 1 });
+    const later = await poll(client, { ...args, cursor: after.cursor });
+    expect(later.truncated).toBe(false);
+    expect(later.events.map((e) => e.eventId)).toEqual(["guid-4"]);
+    expect(later.cursor).toBe(`v1.${dev}-${ino}.4`);
   });
 
   it("watches and events on together use separate services, both closed with the connection", async () => {

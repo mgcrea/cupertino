@@ -113,7 +113,7 @@ export const messagesEventAdapter = (
   },
 
   source: service.source,
-  ensure: () => service.ensure(),
+  ensure: () => service.refresh(),
   identity: () => service.identity(),
   startTrigger: (onChange) => service.startTrigger(onChange),
 });
