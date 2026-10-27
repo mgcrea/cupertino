@@ -12,25 +12,6 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
-
-### Changed
-
-- **Reminders' `list_lists` takes seconds, not half a minute.** It sent five Apple Events per list
-  and took 17–29 s for twelve lists. It now reads the list tree in bulk, and takes each list's
-  counts from the Reminders store with Full Disk Access (1 ms, agreeing with Reminders on every
-  list measured) or from one chained Apple Event without it. A list whose counts could not be read
-  reports null rather than zero. `list_accounts` reports an account's `reminderCount` as null when
-  Reminders will not count it, which it never does on macOS 27, instead of 0.
-
-### Fixed
-
-- **`apple_reminders_get_reminder` answers instead of timing out.** It read sixteen properties as
-  separate Apple Events, each costing about a second while Reminders resolved the reminder again,
-  and ran past the 30 s timeout on every call. It now reads them in one event of about a second, and
-  names the reminder's list from the store when it can. A reminder Reminders no longer has is
-  reported as not found rather than as a row of empty fields.
-
 ## [1.32.0] - 2026-10-27
 
 **Mail drafts can be edited after their window closes.** A closed reply is rebuilt as a reply,
@@ -110,6 +91,12 @@ Messages can tell a session when something arrives.
 - **`apple_mail_list_open_drafts` returns a handle for each window.** It also reports From, To, Cc and
   Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without
   searching for it first.
+- **Reminders' `list_lists` takes seconds, not half a minute.** It sent five Apple Events per list
+  and took 17–29 s for twelve lists. It now reads the list tree in bulk, and takes each list's
+  counts from the Reminders store with Full Disk Access (1 ms, agreeing with Reminders on every
+  list measured) or from one chained Apple Event without it. A list whose counts could not be read
+  reports null rather than zero. `list_accounts` reports an account's `reminderCount` as null when
+  Reminders will not count it, which it never does on macOS 27, instead of 0.
 
 ### Fixed
 
@@ -119,6 +106,11 @@ Messages can tell a session when something arrives.
 - **A missing Accessibility grant is explained once, in plain words.** Each draft tool said so in its
   own way, and some only said it could not read the window. They now say what the missing grant
   stopped and where to turn it on.
+- **`apple_reminders_get_reminder` answers instead of timing out.** It read sixteen properties as
+  separate Apple Events, each costing about a second while Reminders resolved the reminder again,
+  and ran past the 30 s timeout on every call. It now reads them in one event of about a second, and
+  names the reminder's list from the store when it can. A reminder Reminders no longer has is
+  reported as not found rather than as a row of empty fields.
 
 ## [1.31.0] - 2026-10-25
 
