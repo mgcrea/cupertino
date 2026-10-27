@@ -214,6 +214,7 @@ nonisolated struct Surface: Identifiable, Hashable {
       runtime: .node,
       gates: [
         Surface.Gate(id: "allowWatches", envSuffix: "ALLOW_WATCHES", label: "Watch for incoming mail", description: "Lets a client register a watch on senders or domains and be notified when matching mail arrives. Off by default."),
+        Surface.Gate(id: "allowEvents", envSuffix: "ALLOW_EVENTS", label: "Experimental: MCP Events for incoming mail", description: "Serves the draft MCP Events extension (mail.received) to clients on the 2026 protocol. Off by default."),
       ]
     ),
     Surface(

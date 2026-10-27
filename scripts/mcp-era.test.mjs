@@ -349,3 +349,86 @@ test(
     }
   },
 );
+
+// ── MCP Events (draft SEP-3415), end to end ──────────────────────────────────
+//
+// Mail's built `dist/cli.js` with `APPLE_MAIL_ALLOW_EVENTS` on, over the same
+// fixture index and stub osascript as the watches above. The extension is served
+// on the modern era only; a legacy instance and a gate-off instance answer
+// `events/*` with -32601.
+
+const eventsEnv = (fx) => ({ ...mailEnv(fx), APPLE_MAIL_ALLOW_EVENTS: "1" });
+const acmeDomain = { name: "mail.received", arguments: { domains: ["acme.com"] } };
+
+test("modern: events/poll delivers matching mail", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "modern");
+  try {
+    const boot = await s.request("events/poll", { ...acmeDomain, cursor: null });
+    assert.equal(boot.error, undefined, JSON.stringify(boot.error));
+    assert.deepEqual(boot.result.events, []);
+    assert.match(boot.result.cursor, /^v1\.\d+-\d+\.101$/);
+    fx.arrive(102);
+    const res = await s.request("events/poll", { ...acmeDomain, cursor: boot.result.cursor });
+    assert.equal(res.error, undefined, JSON.stringify(res.error));
+    assert.equal(res.result.events.length, 1);
+    const [event] = res.result.events;
+    assert.equal(event.name, "mail.received");
+    assert.equal(event.eventId, "7102");
+    assert.equal(event.data.senderAddress, "jo@acme.com");
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("modern: events/stream pushes matching mail", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "modern");
+  try {
+    s.write({
+      id: "stream-1",
+      method: "events/stream",
+      params: { ...acmeDomain, _meta: s.meta },
+    });
+    await s.next((m) => m.method === "notifications/events/active", "events/stream to be active");
+    fx.arrive(103);
+    const pushed = await s.next(
+      (m) => m.method === "notifications/events/event",
+      "notifications/events/event",
+    );
+    assert.equal(pushed.params.name, "mail.received");
+    assert.equal(pushed.params.data.senderAddress, "jo@acme.com");
+    s.write({ method: "notifications/cancelled", params: { requestId: "stream-1" } });
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("legacy: events/list is method not found", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(eventsEnv(fx), "legacy");
+  try {
+    const init = await s.request("initialize", initialize[2]);
+    assert.equal(init.error, undefined);
+    s.write({ method: "notifications/initialized" });
+    const res = await s.request("events/list", {});
+    assert.equal(res.error?.code, -32601);
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
+
+test("gate off: events/list is method not found on modern", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(mailEnv(fx), "modern");
+  try {
+    const res = await s.request("events/list", {});
+    assert.equal(res.error?.code, -32601);
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});

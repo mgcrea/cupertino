@@ -403,21 +403,30 @@ export class MailWatchService {
     return this.#registry?.remove(id) ?? false;
   }
 
-  /** Resolve `mailboxes` to scope keys and register the watch. */
-  async add(
-    filter: ReturnType<typeof normalizeFilter>,
-    mailboxes: string[] | undefined,
-  ): Promise<{ watch: Watch; running: boolean }> {
-    const registry = this.#registry;
-    if (!registry) throw new Error("Mail watches are not bound to a registry.");
-    const running = await this.#isMailRunning();
-    if (!running && mailboxes && mailboxes.length > 0) {
+  /** The file identity of the index the watch reads now, or null when it is unknown or unreadable. */
+  identity(): FileIdentity | null {
+    return this.#identity;
+  }
+
+  /**
+   * Resolve mailbox names to scope keys (Envelope Index rowids, as strings).
+   * Empty for no names. Refuses with a `PreconditionError` for a name that can
+   * never fire, for names when Mail is not running, for a name that matches no
+   * mailbox, and for more mailboxes than a watch can follow. `running` is for a
+   * caller that has already asked.
+   */
+  async resolveMailboxScope(mailboxes: string[], running?: boolean): Promise<string[]> {
+    if (mailboxes.length === 0) {
+      await this.ensure();
+      return [];
+    }
+    if (!(running ?? (await this.#isMailRunning()))) {
       throw new PreconditionError(
         "Mailbox names cannot be resolved until Mail is running: Mail is what says which " +
           "mailboxes an account has. Open Mail and try again, or watch without `mailboxes`.",
       );
     }
-    for (const name of mailboxes ?? []) {
+    for (const name of mailboxes) {
       // The source excludes these for every watch, so a watch on one would never fire.
       if (isUnwatchedMailbox(`imap://x/${name}`)) {
         throw new PreconditionError(
@@ -427,15 +436,25 @@ export class MailWatchService {
       }
     }
     await this.ensure();
-    const rowids =
-      mailboxes && mailboxes.length > 0 ? await this.#client.mailboxRowidsFor(mailboxes) : [];
+    const rowids = await this.#client.mailboxRowidsFor(mailboxes);
     if (rowids.length > MAX_WATCHED_MAILBOXES) {
       throw new PreconditionError(
         `Those names cover ${rowids.length} mailboxes across the accounts, more than a watch can ` +
           `follow (${MAX_WATCHED_MAILBOXES}). Name fewer mailboxes.`,
       );
     }
-    const scope = rowids.map(String);
+    return rowids.map(String);
+  }
+
+  /** Resolve `mailboxes` to scope keys and register the watch. */
+  async add(
+    filter: ReturnType<typeof normalizeFilter>,
+    mailboxes: string[] | undefined,
+  ): Promise<{ watch: Watch; running: boolean }> {
+    const registry = this.#registry;
+    if (!registry) throw new Error("Mail watches are not bound to a registry.");
+    const running = await this.#isMailRunning();
+    const scope = await this.resolveMailboxScope(mailboxes ?? [], running);
     const watch = registry.add(normalizeFilter({ ...filter, scope }));
     return { watch, running };
   }
