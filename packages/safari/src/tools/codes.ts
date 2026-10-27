@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
-import { compact, fail, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, pageUrlArg, resolvePageUrl, wrapResult } from "./util.js";
 
 /**
  * The one-time-code tool, registered only when `allowCodes` is on.
@@ -57,13 +57,7 @@ export const registerCodeTools = (server: McpServer, client: AppleSafariClient):
         "Returning nothing is the normal result. It does NOT mean the code was missed: prefer " +
         "asking the user to trigger a new one, or check the page is the one holding the code.",
       inputSchema: z.object({
-        url: z
-          .string()
-          .min(1)
-          .describe(
-            "The exact URL of the page to scan, as apple_safari_list_tabs reports it. Required " +
-              "so the scan cannot land on a different tab than the one you meant.",
-          ),
+        url: pageUrlArg,
         limit: z
           .number()
           .int()
@@ -74,8 +68,9 @@ export const registerCodeTools = (server: McpServer, client: AppleSafariClient):
       }),
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ url, limit }) =>
+    async ({ url: given, limit }) =>
       wrapResult(async () => {
+        const { url, tab } = await resolvePageUrl(client, given);
         const startedAt = Date.now();
         const result = await client.pageAction({ action: "codes", url, limit });
         if (!result.ok) return fail(result.error ?? "The page could not be scanned for codes.");
@@ -117,6 +112,7 @@ export const registerCodeTools = (server: McpServer, client: AppleSafariClient):
         return ok(
           compact({
             url,
+            tab,
             scannedAt: data.scannedAt ?? null,
             pageAgeSeconds: data.pageAgeSeconds ?? null,
             roundTripMs: Date.now() - startedAt,

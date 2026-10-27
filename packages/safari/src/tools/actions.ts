@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
-import { compact, fail, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, pageUrlArg, resolvePageUrl, wrapResult } from "./util.js";
 
 /**
  * Acting inside a page, through the Safari extension.
@@ -89,7 +89,7 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
           "is filled, which is usually the thing you actually needed to know.",
       ),
       inputSchema: z.object({
-        url: urlArg,
+        url: pageUrlArg,
         limit: z
           .number()
           .int()
@@ -111,8 +111,9 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
       }),
       annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ url, limit, maxValueChars }) =>
+    async ({ url: given, limit, maxValueChars }) =>
       wrapResult(async () => {
+        const { url, tab } = await resolvePageUrl(client, given);
         const result = await client.pageAction({
           action: "elements",
           url,
@@ -123,6 +124,7 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
         return ok(
           compact({
             url,
+            tab,
             ...(result.data as Record<string, unknown>),
             idNote:
               "These ids are valid for this page load only — the tab that answered, until it " +

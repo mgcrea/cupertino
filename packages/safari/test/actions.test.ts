@@ -37,7 +37,11 @@ const fakeOsascript: OsascriptRunner = {
   run: async <T>(): Promise<T> => ({ entries: [], folders: 0, depthTruncated: false }) as T,
 };
 
-const connect = async (pages: string, env: NodeJS.ProcessEnv = {}) => {
+const connect = async (
+  pages: string,
+  env: NodeJS.ProcessEnv = {},
+  osascript: OsascriptRunner = fakeOsascript,
+) => {
   const config: Config = loadConfig({
     APPLE_SAFARI_INDEX_MODE: "off",
     APPLE_SAFARI_PAGES: pages,
@@ -46,7 +50,7 @@ const connect = async (pages: string, env: NodeJS.ProcessEnv = {}) => {
     APPLE_SAFARI_ACTION_TIMEOUT_MS: "1200",
     ...env,
   });
-  const { server } = createServer({ config, home: "/nonexistent-home", osascript: fakeOsascript });
+  const { server } = createServer({ config, home: "/nonexistent-home", osascript });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -810,5 +814,161 @@ describe("page_elements value cap", () => {
     const c = await connect(dirs.pages);
     await call(c, "apple_safari_page_elements", { url: "https://x.example/", maxValueChars: 5000 });
     expect(ext.seen[0]).toMatchObject({ action: "elements", maxValueChars: 5000 });
+  });
+});
+
+/** A script runner that answers every script with `payload` and records what ran. */
+const tabsScript = (payload: Record<string, unknown>) => {
+  const calls: string[] = [];
+  const runner: OsascriptRunner = {
+    run: async <T>(script: string): Promise<T> => {
+      calls.push(script);
+      return payload as T;
+    },
+  };
+  return { runner, calls };
+};
+
+/**
+ * "What is on my screen" used to cost a list_tabs call first, because every
+ * page tool wanted an exact URL. The tools that only READ now default to the
+ * frontmost tab, and say which URL they used; the ones that act still name
+ * their page through the element id.
+ */
+describe("the frontmost tab, when no url is given", () => {
+  const FRONT = "https://front.example/page";
+  const SAFARI = {
+    running: true,
+    windows: 1,
+    appFrontmost: true,
+    windowOrderUnknown: false,
+    tabs: [
+      {
+        window: 1,
+        windowIndex: 1,
+        index: 1,
+        url: "https://behind.example/",
+        title: "B",
+        active: false,
+        frontmost: false,
+      },
+      {
+        window: 1,
+        windowIndex: 1,
+        index: 2,
+        url: FRONT,
+        title: "F",
+        active: true,
+        frontmost: true,
+      },
+    ],
+  };
+
+  it("reads the frontmost tab live, and says which URL it read", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, (c) => ({
+      ok: true,
+      data: {
+        url: c.url,
+        title: "F",
+        format: "text",
+        content: "hello",
+        totalChars: 5,
+        truncated: false,
+        readAt: new Date().toISOString(),
+      },
+    }));
+    running = ext;
+    const { runner } = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, {}, runner);
+    const r = await call(c, "apple_safari_read_page", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+    expect((r.json() as { url: string; tab: string }).url).toBe(FRONT);
+    expect((r.json() as { url: string; tab: string }).tab).toBe("frontmost");
+  });
+
+  it("enumerates the frontmost tab's elements", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { page: "3f9a2c1d", elements: [] } }));
+    running = ext;
+    const c = await connect(dirs.pages, {}, tabsScript(SAFARI).runner);
+    const r = await call(c, "apple_safari_page_elements", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+    expect((r.json() as { url: string }).url).toBe(FRONT);
+  });
+
+  it("scans the frontmost tab for codes", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { excerpts: [] } }));
+    running = ext;
+    const c = await connect(
+      dirs.pages,
+      { APPLE_SAFARI_ALLOW_CODES: "true" },
+      tabsScript(SAFARI).runner,
+    );
+    const r = await call(c, "apple_safari_find_codes", {});
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]?.url).toBe(FRONT);
+  });
+
+  it("sends no Apple Event when a url is given", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: { page: "3f9a2c1d", elements: [] } }));
+    running = ext;
+    const script = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, {}, script.runner);
+    await call(c, "apple_safari_page_elements", { url: "https://named.example/" });
+    expect(script.calls).toHaveLength(0);
+    expect(ext.seen[0]?.url).toBe("https://named.example/");
+  });
+
+  it("asks for a url, writing no command, when live tabs are off", async () => {
+    const dirs = paths();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: {} }));
+    running = ext;
+    const script = tabsScript(SAFARI);
+    const c = await connect(dirs.pages, { APPLE_SAFARI_LIVE_TABS: "false" }, script.runner);
+    const r = await call(c, "apple_safari_page_elements", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("APPLE_SAFARI_LIVE_TABS");
+    expect(r.text).toContain("url");
+    expect(script.calls).toHaveLength(0);
+    expect(ext.seen).toHaveLength(0);
+  });
+
+  it("says Safari is not running rather than guessing a page", async () => {
+    const dirs = paths();
+    const c = await connect(
+      dirs.pages,
+      {},
+      tabsScript({
+        running: false,
+        windows: 0,
+        appFrontmost: null,
+        windowOrderUnknown: false,
+        tabs: [],
+      }).runner,
+    );
+    const r = await call(c, "apple_safari_read_page", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not running");
+  });
+
+  it("refuses when no tab can be called frontmost", async () => {
+    const dirs = paths();
+    const c = await connect(
+      dirs.pages,
+      { APPLE_SAFARI_ALLOW_CODES: "true" },
+      tabsScript({
+        ...SAFARI,
+        windowOrderUnknown: true,
+        tabs: SAFARI.tabs.map((t) => ({ ...t, frontmost: false })),
+      }).runner,
+    );
+    const r = await call(c, "apple_safari_find_codes", {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("frontmost");
   });
 });

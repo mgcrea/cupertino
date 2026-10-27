@@ -571,6 +571,38 @@ export class AppleSafariClient {
    * to describe, and a caller that ignored a boolean would report a page as
    * opened that never was.
    */
+  /**
+   * The URL of the tab the user is looking at, for a page tool called without
+   * one.
+   *
+   * The live-tabs script again, unenriched: the frontmost tab needs the
+   * window's front-to-back position as well as its selected tab, which that
+   * script already reads, and a second script would be a second idea of
+   * "frontmost". Each refusal names the url argument, because passing one is
+   * always the way round it.
+   */
+  async frontmostTabUrl(): Promise<string> {
+    this.#assertAppleEventsAllowed("No url was given, and finding the frontmost tab");
+    const result = await this.tabs({ enrich: false });
+    if (!result.running) {
+      throw new PreconditionError(
+        "No url was given, and Safari is not running, so no tab is in front. It was not " +
+          "launched to check.",
+      );
+    }
+    const front = result.tabs.find((t) => t.frontmost);
+    if (!front?.url) {
+      throw new PreconditionError(
+        result.windowOrderUnknown
+          ? "No url was given, and Safari did not report its window order, so no tab can be " +
+              "called frontmost. Pass the page's url; apple_safari_list_tabs lists them."
+          : "No url was given, and Safari has no frontmost tab showing a page. Pass the page's " +
+              "url; apple_safari_list_tabs lists them.",
+      );
+    }
+    return front.url;
+  }
+
   #assertAppleEventsAllowed(what: string): void {
     if (!this.#config.liveTabs) {
       throw new PreconditionError(
