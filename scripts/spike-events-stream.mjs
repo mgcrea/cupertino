@@ -14,7 +14,8 @@
 //      whether the request stays open, whether the handler's heartbeats reach
 //      stdout, and whether the cancel aborts `ctx.mcpReq.signal`.
 //   2. Eleven streams at once, held 3 s, then all cancelled. Records whether any
-//      request timeout or cap ended one early, and whether the 11th is refused.
+//      request timeout or cap ended one early. It confirms the SDK refuses
+//      nothing: all eleven stay open.
 //
 // The server registers `events/stream` through the three-argument
 // `setRequestHandler(method, { params, result }, handler)`. The handler sends
@@ -48,13 +49,22 @@ const MODERN = "2026-07-28";
 const HOLD_MS = Number(process.env.SPIKE_HOLD_MS ?? 5000);
 const SUB = "io.modelcontextprotocol/subscriptionId";
 
+const say = (line) => process.stderr.write(`SPIKE ${line}\n`);
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const count = (list, method) => list.filter((m) => m.method === method).length;
+// The subscription id a frame is stamped with, if any. Destructured because the
+// repo's lint rejects `._meta` member access (see scripts/mcp-era.test.mjs).
+const subscriptionOf = (msg) => {
+  const { _meta: tags } = msg.params ?? {};
+  return tags?.[SUB];
+};
+
 // ---------------------------------------------------------------- server ---
 
 const serve = async () => {
   const { McpServer } = await load("@modelcontextprotocol/server");
   const { serveStdio } = await load("@modelcontextprotocol/server/stdio");
   const { z } = await load("zod");
-  const say = (line) => process.stderr.write(`SPIKE ${line}\n`);
 
   serveStdio(
     () => {
@@ -100,7 +110,11 @@ const client = async () => {
   const t0 = Date.now();
   const at = () => ((Date.now() - t0) / 1000).toFixed(1);
   createInterface({ input: child.stdout }).on("line", (line) => {
-    frames.push({ t: Date.now(), msg: JSON.parse(line) });
+    try {
+      frames.push({ t: Date.now(), msg: JSON.parse(line) });
+    } catch {
+      console.error(`[spike] non-JSON line on server stdout: ${line}`);
+    }
   });
   createInterface({ input: child.stderr }).on("line", (line) => {
     if (line.startsWith("SPIKE ")) serverLog.push(line.slice(6));
@@ -117,10 +131,8 @@ const client = async () => {
   const open = (id) => write({ id, method: "events/stream", params: { _meta: meta } });
   const cancel = (id) =>
     write({ method: "notifications/cancelled", params: { requestId: id, reason: "spike done", _meta: meta } });
-  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
-  const forId = (id) => frames.filter((f) => f.msg.params?._meta?.[SUB] === id).map((f) => f.msg);
+  const forId = (id) => frames.filter((f) => subscriptionOf(f.msg) === id).map((f) => f.msg);
   const response = (id) => frames.find((f) => f.msg.id === id && ("result" in f.msg || "error" in f.msg))?.msg;
-  const count = (list, method) => list.filter((m) => m.method === method).length;
 
   // Warm-up: the first request pins the era. `tools/list` answers -32601 (no tools
   // registered), which is fine: the era is pinned either way.
@@ -139,7 +151,7 @@ const client = async () => {
   const beforeCancel = frames.length;
   cancel("s1");
   await sleep(1000);
-  const after = frames.slice(beforeCancel).filter((f) => f.msg.params?._meta?.[SUB] === "s1");
+  const after = frames.slice(beforeCancel).filter((f) => subscriptionOf(f.msg) === "s1");
   console.log(`[${at()}s] after cancel: response=${JSON.stringify(response("s1") ?? null)} ` +
     `frames for s1 still arriving=${after.length}`);
 
@@ -163,8 +175,9 @@ const client = async () => {
   for (const l of serverLog) console.log(`  ${l}`);
 
   child.stdin.end();
-  setTimeout(() => child.kill(), 2000);
+  const killer = setTimeout(() => child.kill(), 2000);
   await exited;
+  clearTimeout(killer);
 };
 
 if (process.argv.includes("--server")) await serve();
