@@ -171,8 +171,10 @@ struct UnitCheck {
 
     print("\nCall capture: subscriptions and pushed updates")
 
-    check("subscriptions/listen is a subscription", CallCapture.isSubscription("subscriptions/listen"))
-    check("resources/subscribe is a subscription", CallCapture.isSubscription("resources/subscribe"))
+    check(
+      "subscriptions/listen is a subscription", CallCapture.isSubscription("subscriptions/listen"))
+    check(
+      "resources/subscribe is a subscription", CallCapture.isSubscription("resources/subscribe"))
     check("resources/read is not", !CallCapture.isSubscription("resources/read"))
     check(
       "a 2026 listen names its uris",
@@ -201,7 +203,9 @@ struct UnitCheck {
       ]) == nil)
     check(
       "an updated notification without a uri is not a push",
-      CallCapture.pushedUri(["method": "notifications/resources/updated", "params": [:] as [String: Any]]) == nil)
+      CallCapture.pushedUri([
+        "method": "notifications/resources/updated", "params": [:] as [String: Any],
+      ]) == nil)
 
     print("\nCall capture: malformed input")
 
@@ -374,13 +378,17 @@ struct UnitCheck {
 
     check(
       "a marker split by a read is found in skip mode",
-      drive(["{\"id\":1}\n" + String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == ["mail://a"])
+      drive(["{\"id\":1}\n" + String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])])
+        .pushed == ["mail://a"])
     check(
       "a marker split by a read is found in parsing mode",
-      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])], parsing: true).pushed == ["mail://a"])
+      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])], parsing: true)
+        .pushed == ["mail://a"])
     check(
       "a marker split with no earlier newline is found",
-      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == ["mail://a"])
+      drive([String(pushFrame[..<markerCut]), String(pushFrame[markerCut...])]).pushed == [
+        "mail://a"
+      ])
     check(
       "a push frame split after its marker is found",
       drive([String(pushFrame.dropLast(12)), String(pushFrame.suffix(12))]).pushed == ["mail://a"])
@@ -403,7 +411,8 @@ struct UnitCheck {
     check("a marker-free stream never leaves skip", plain.skipped == 21 && plain.pushed.isEmpty)
 
     var open = PushScanner()
-    _ = open.needsSplit(Data("{\"method\":\"notifications/resources/updated\",".utf8), parsing: false)
+    _ = open.needsSplit(
+      Data("{\"method\":\"notifications/resources/updated\",".utf8), parsing: false)
     check("a frame open after a marker is collecting", open.collecting)
     _ = open.needsSplit(Data("\"params\":{}}\n{\"id\":1".utf8), parsing: false)
     check("and stops collecting once it closes", !open.collecting)
@@ -423,7 +432,9 @@ struct UnitCheck {
     head.skip(Data("{\"method\":\"notifications/res".utf8))
     check(
       "a small read holding only a frame head is kept, not discarded",
-      text(head.lines(Data("ources/updated\"}\n".utf8))) == ["{\"method\":\"notifications/resources/updated\"}"])
+      text(head.lines(Data("ources/updated\"}\n".utf8))) == [
+        "{\"method\":\"notifications/resources/updated\"}"
+      ])
 
     print("\nSafari captures: what the extension has written")
 
