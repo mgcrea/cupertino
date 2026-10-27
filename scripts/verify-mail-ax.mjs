@@ -1070,6 +1070,19 @@ async function rebuildCheck(mail, addresses, forwardSubject) {
       }
       const to = addressesIn(message?.headers?.to);
       const cc = addressesIn(message?.headers?.cc);
+      if (to.length === 0 || cc.length > 0) continue;
+      // A deleted draft is from and to the user too, and sits in Trash where
+      // the Drafts test above cannot see it: runs 12 and 14 picked one. Mail
+      // marks every draft it saved, sent ones never.
+      let head = "";
+      try {
+        head =
+          (await mail.call("apple_mail_get_message_source", { ref: candidate.ref, maxBytes: 8192 }))
+            ?.source ?? "";
+      } catch {
+        continue;
+      }
+      if (/^X-Uniform-Type-Identifier:\s*com\.apple\.mail-draft/im.test(head)) continue;
       if (
         to.length > 0 &&
         cc.length === 0 &&
