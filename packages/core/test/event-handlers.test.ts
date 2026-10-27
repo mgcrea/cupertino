@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import type { Era } from "../src/cli.js";
-import { registerEvents } from "../src/event-handlers.js";
+import { readFailure, registerEvents, type EventsOptions } from "../src/event-handlers.js";
 import { encodeCursor, EVENTS_EXTENSION_ID, type EventTypeAdapter } from "../src/events.js";
 import { normalizeFilter, type ArrivalRow, type ArrivalSource } from "../src/watches.js";
 
@@ -19,18 +19,31 @@ const id = { dev: 1, ino: 2 };
 /** A store whose rows the test appends to, as `watch-resources.test.ts` does. */
 const fakeSource = () => {
   const rows: Row[] = [];
+  let failure: Error | null = null;
   const source: ArrivalSource<Row> = {
     head: () => rows.at(-1)?.cursor ?? 0,
-    since: (after, limit) => rows.filter((r) => r.cursor > after).slice(0, limit),
+    since: (after, limit) => {
+      if (failure !== null) throw failure;
+      return rows.filter((r) => r.cursor > after).slice(0, limit);
+    },
   };
   return {
     source,
     arrive: (cursor: number, sender = "jo@acme.com") =>
-      rows.push({ cursor, key: `g${cursor}`, sender, at: 1_700_000_000_000 + cursor * 1000 }),
+      rows.push({ cursor, key: `g${cursor}`, sender, at: BASE + cursor * 1000 }),
+    fail: (err: Error | null) => {
+      failure = err;
+    },
   };
 };
 
-const adapterOf = (store: ReturnType<typeof fakeSource>, calls: string[]) => {
+const BASE = 1_700_000_000_000;
+
+const adapterOf = (
+  store: ReturnType<typeof fakeSource>,
+  calls: string[],
+  overrides: Partial<EventTypeAdapter<Row>> = {},
+) => {
   const adapter: EventTypeAdapter<Row> = {
     descriptor: {
       name: "test.received",
@@ -61,6 +74,7 @@ const adapterOf = (store: ReturnType<typeof fakeSource>, calls: string[]) => {
       return id;
     },
     startTrigger: () => ({ stop: () => {} }),
+    ...overrides,
   };
   return adapter;
 };
@@ -79,14 +93,17 @@ type Reply = { result?: Record<string, unknown>; error?: { code: number; data?: 
  * the 2026-07-28 `_meta` envelope is modern, one without it is legacy. The
  * store is shared, so rows appended between requests are seen by the next one.
  */
-const setup = () => {
+const setup = (
+  overrides: Partial<EventTypeAdapter<Row>> = {},
+  extra: Partial<EventsOptions> = {},
+) => {
   const store = fakeSource();
   const calls: string[] = [];
   const eras: Era[] = [];
   const handler = createMcpHandler(({ era }) => {
     eras.push(era);
     const server = new McpServer({ name: "test", version: "0.0.0" });
-    registerEvents(server, { era, adapters: [adapterOf(store, calls)] });
+    registerEvents(server, { era, adapters: [adapterOf(store, calls, overrides)], ...extra });
     return server;
   });
   let n = 0;
@@ -222,5 +239,133 @@ describe("registerEvents", () => {
     const res = await call("events/poll", { ...acme, cursor: boot.cursor, maxEvents: 0 });
     expect(res.events).toHaveLength(1);
     expect(res.hasMore).toBe(true);
+  });
+});
+
+describe("events/poll: cursors that cannot be resumed", () => {
+  it("a cursor from another store resets to head with truncated, not an error", async () => {
+    const { call, store } = setup();
+    for (let i = 1; i <= 5; i++) store.arrive(i);
+    const res = await call("events/poll", { ...acme, cursor: encodeCursor({ dev: 9, ino: 9 }, 3) });
+    expect(res).toMatchObject({ events: [], cursor: encodeCursor(id, 5), truncated: true });
+  });
+
+  it("a cursor above head resets to head with truncated", async () => {
+    const { call, store } = setup();
+    for (let i = 1; i <= 5; i++) store.arrive(i);
+    const res = await call("events/poll", { ...acme, cursor: encodeCursor(id, 99) });
+    expect(res).toMatchObject({ events: [], cursor: encodeCursor(id, 5), truncated: true });
+  });
+
+  it("a malformed cursor is -32602", async () => {
+    const { call } = setup();
+    await expect(call("events/poll", { ...acme, cursor: "garbage" })).rejects.toMatchObject({
+      code: -32602,
+    });
+  });
+
+  it("an unreadable store (identity null) resets with truncated and keeps the client's cursor", async () => {
+    const { call, store } = setup({ identity: () => null });
+    store.arrive(1);
+    const cursor = encodeCursor(id, 1);
+    const res = await call("events/poll", { ...acme, cursor });
+    expect(res).toMatchObject({ events: [], cursor, truncated: true });
+    const boot = await call("events/poll", { ...acme, cursor: null });
+    expect(boot).toMatchObject({ events: [], cursor: null, truncated: false });
+  });
+});
+
+describe("events/poll: failures", () => {
+  it("a ProtocolError from parseArguments or ensure passes through unchanged", async () => {
+    const boom = new SdkProtocolError(-32602, "bad thing", { x: 1 });
+    const { call: viaEnsure } = setup({
+      ensure: async () => {
+        throw boom;
+      },
+    });
+    await expect(viaEnsure("events/poll", acme)).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringContaining("bad thing"),
+      data: { x: 1 },
+    });
+    const { call: viaArgs } = setup();
+    await expect(viaArgs("events/poll", { name: acme.name, arguments: {} })).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringContaining("domains is required"),
+    });
+  });
+
+  it("a plain Error from the source becomes -32603 naming the event", async () => {
+    const { call, store } = setup();
+    store.arrive(1);
+    const boot = await call("events/poll", { ...acme, cursor: null });
+    store.fail(new Error("database is locked"));
+    await expect(call("events/poll", { ...acme, cursor: boot.cursor })).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining("Could not read test.received events: database is locked"),
+    });
+  });
+
+  it("a plain Error from ensure becomes -32603 too", async () => {
+    const { call } = setup({
+      ensure: async () => {
+        throw new Error("index not loaded");
+      },
+    });
+    await expect(call("events/poll", acme)).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining("Could not read test.received events: index not loaded"),
+    });
+  });
+
+  it("readFailure keeps a ProtocolError and wraps anything else", () => {
+    const own = new SdkProtocolError(-32602, "mine");
+    expect(readFailure("x.y", own)).toBe(own);
+    expect(readFailure("x.y", "oops").message).toContain("Could not read x.y events: oops");
+  });
+});
+
+describe("events/poll: maxAgeMs", () => {
+  const NOW = BASE + 4500;
+
+  it("with a cursor, skips matches older than now - maxAgeMs and says truncated", async () => {
+    const { call, store } = setup({}, { now: () => NOW });
+    for (let i = 1; i <= 4; i++) store.arrive(i);
+    const res = await call("events/poll", {
+      ...acme,
+      cursor: encodeCursor(id, 0),
+      maxAgeMs: 2000,
+    });
+    expect((res.events as { eventId: string }[]).map((e) => e.eventId)).toEqual(["g3", "g4"]);
+    expect(res.truncated).toBe(true);
+  });
+
+  it("with a null cursor, ignores maxAgeMs", async () => {
+    const { call, store } = setup({}, { now: () => NOW });
+    for (let i = 1; i <= 4; i++) store.arrive(i);
+    const res = await call("events/poll", { ...acme, cursor: null, maxAgeMs: 0 });
+    expect(res).toMatchObject({ events: [], cursor: encodeCursor(id, 4), truncated: false });
+  });
+
+  it("refuses a negative or fractional maxAgeMs with -32602", async () => {
+    const { call } = setup();
+    for (const maxAgeMs of [-1, 1.5]) {
+      await expect(call("events/poll", { ...acme, maxAgeMs })).rejects.toMatchObject({
+        code: -32602,
+      });
+    }
+  });
+});
+
+describe("registerEvents: registration", () => {
+  it("throws when two adapters share a name", () => {
+    const store = fakeSource();
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    expect(() =>
+      registerEvents(server, {
+        era: "modern",
+        adapters: [adapterOf(store, []), adapterOf(store, [])],
+      }),
+    ).toThrow(/test\.received/);
   });
 });

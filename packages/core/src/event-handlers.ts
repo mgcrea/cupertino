@@ -1,4 +1,8 @@
-import { McpServer, ProtocolError as SdkProtocolError } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  ProtocolError as SdkProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { Era } from "./cli.js";
@@ -31,6 +35,8 @@ export type EventsOptions = {
   heartbeatMs?: number;
   /** Concurrent streams allowed per connection. Default 10. */
   maxStreams?: number;
+  /** The clock `maxAgeMs` is measured against. Default `Date.now`; a test seam. */
+  now?: () => number;
 };
 
 const DEFAULT_NEXT_POLL_MS = 10_000;
@@ -45,6 +51,7 @@ const PollParams = z.looseObject({
   arguments: z.unknown().optional(),
   cursor: z.string().nullable().optional(),
   maxEvents: z.number().optional(),
+  maxAgeMs: z.number().int().min(0).optional(),
 });
 const PollResult = z.looseObject({});
 
@@ -55,6 +62,21 @@ const clampMaxEvents = (n: number | undefined): number =>
     : Math.min(MAX_EVENTS, Math.max(1, Math.trunc(n)));
 
 /**
+ * What a failed read of an event type becomes on the wire. A `ProtocolError` is
+ * already what a client should see and passes through; anything else is an
+ * internal error naming the event. Shared with `events/stream`, which sends the
+ * same thing in `notifications/events/error`.
+ */
+export const readFailure = (name: string, err: unknown): SdkProtocolError => {
+  if (err instanceof SdkProtocolError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  return new SdkProtocolError(
+    ProtocolErrorCode.InternalError,
+    `Could not read ${name} events: ${message}`,
+  );
+};
+
+/**
  * Register `events/list` and `events/poll` on `server`. Call before `connect`.
  * The returned closer is for the connection's `onclose`; it has nothing to
  * release until streams exist.
@@ -63,7 +85,14 @@ export const registerEvents = (server: McpServer, opts: EventsOptions): { close(
   if (opts.era === "legacy") return { close: () => {} };
 
   const nextPollMs = opts.nextPollMs ?? DEFAULT_NEXT_POLL_MS;
-  const byName = new Map(opts.adapters.map((a) => [a.descriptor.name, a]));
+  const now = opts.now ?? Date.now;
+  const byName = new Map<string, (typeof opts.adapters)[number]>();
+  for (const a of opts.adapters) {
+    if (byName.has(a.descriptor.name)) {
+      throw new Error(`Two event adapters are named "${a.descriptor.name}".`);
+    }
+    byName.set(a.descriptor.name, a);
+  }
 
   server.server.registerCapabilities({ extensions: { [EVENTS_EXTENSION_ID]: {} } });
 
@@ -87,29 +116,40 @@ export const registerEvents = (server: McpServer, opts: EventsOptions): { close(
           { kind: "event" },
         );
       }
-      const filter = await adapter.parseArguments(params.arguments ?? {});
-      // `ensure` first: `identity` and `source` read what it opens.
-      await adapter.ensure();
-      const store = adapter.identity();
-      const start = resolveStart(params.cursor, store, adapter.source.head());
-      const scan = scanEvents(adapter, filter, start.from, {
-        maxEvents: clampMaxEvents(params.maxEvents),
-        scanLimit: SCAN_LIMIT,
-      });
-      // With no readable store there is nothing a cursor could name; leave the
-      // client's position alone rather than invent one.
-      const cursor = store === null ? (params.cursor ?? null) : encodeCursor(store, scan.cursor);
-      const events: EventOccurrence[] = scan.rows.map((row) => ({
-        ...adapter.occurrence(row),
-        name: adapter.descriptor.name,
-      }));
-      return {
-        events,
-        cursor,
-        truncated: start.truncated || scan.truncated,
-        hasMore: scan.hasMore,
-        nextPollMs,
-      };
+      try {
+        const filter = await adapter.parseArguments(params.arguments ?? {});
+        // `ensure` first: `identity` and `source` read what it opens.
+        await adapter.ensure();
+        const store = adapter.identity();
+        const start = resolveStart(params.cursor, store, adapter.source.head());
+        // A null cursor means now, so there is no age to bound; `maxAgeMs` only
+        // limits how far back a resumed cursor may reach.
+        const floorMs =
+          params.cursor !== null && params.cursor !== undefined && params.maxAgeMs !== undefined
+            ? now() - params.maxAgeMs
+            : undefined;
+        const scan = scanEvents(adapter, filter, start.from, {
+          maxEvents: clampMaxEvents(params.maxEvents),
+          scanLimit: SCAN_LIMIT,
+          floorMs,
+        });
+        // With no readable store there is nothing a cursor could name; leave the
+        // client's position alone rather than invent one.
+        const cursor = store === null ? (params.cursor ?? null) : encodeCursor(store, scan.cursor);
+        const events: EventOccurrence[] = scan.rows.map((row) => ({
+          ...adapter.occurrence(row),
+          name: adapter.descriptor.name,
+        }));
+        return {
+          events,
+          cursor,
+          truncated: start.truncated || scan.truncated,
+          hasMore: scan.hasMore,
+          nextPollMs,
+        };
+      } catch (err) {
+        throw readFailure(adapter.descriptor.name, err);
+      }
     },
   );
 
