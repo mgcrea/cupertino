@@ -900,6 +900,12 @@ struct UpdatesPane: View {
         } label: {
           Text(lastCheck)
         }
+        // `UpdateController.start` is a no-op in Debug, so the button above does
+        // nothing there. Saying so keeps it from reading as broken.
+        #if DEBUG
+          Text("A Debug build never updates itself.")
+            .foregroundStyle(.secondary)
+        #endif
       }
 
       Section {

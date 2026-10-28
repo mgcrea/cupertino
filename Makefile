@@ -101,10 +101,13 @@ app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@# A Debug build ships no Safari extension, and that is the honest state
 	@# rather than a shortcut. Safari refuses to list an extension whose container
 	@# app is not notarized AND stapled — measured, silently, in docs/safari.md —
-	@# so a Debug appex can never be enabled or exercised. What it CAN do is
+	@# so a Debug appex cannot be enabled the normal way. What it CAN do is
 	@# register itself: LaunchServices picks it up, and a second "Cupertino"
 	@# appears in Safari's Extensions pane beside the installed one with nothing
-	@# to say which is live. Three of them turned up during development.
+	@# to say which is live. Three of them turned up during development, and on
+	@# 2026-10-27 Safari was found asking launchd once a second for the Debug
+	@# extension's native service (`io.mgcrea.cupertino.debug.SafariExtension`),
+	@# long after the bundle was gone: a Debug copy does end up loaded.
 	@#
 	@# Renaming it was tried first and cannot work here: Safari shows
 	@# manifest.json's `name`, one file shared by both configurations, and a build
@@ -112,11 +115,19 @@ app: sparkle ## Build Cupertino.app (Debug; Release needs the bundled servers)
 	@# path ("Multiple commands produce"). Scoping ENABLE_USER_SCRIPT_SANDBOXING
 	@# off to get around that would trade a project-wide hardening for a string.
 	@#
+	@# Removed from inside the app AND from beside it, where xcodebuild leaves the
+	@# standalone product; then the trimmed app is registered again, because
+	@# xcodebuild registered it while the appex was still inside and LaunchServices
+	@# otherwise keeps listing the plugin for a bundle that no longer has one.
+	@#
 	@# Extension work therefore goes through `make build-release`, which is what
 	@# Safari requires of it anyway.
 	@if [ "$(CONFIG)" = "Debug" ]; then \
 		rm -rf "$(APP)/Contents/PlugIns/CupertinoSafariExtension.appex"; \
 		rmdir "$(APP)/Contents/PlugIns" 2>/dev/null || true; \
+		rm -rf "$(dir $(APP))CupertinoSafariExtension.appex"; \
+		/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+			-f "$(abspath $(APP))" 2>/dev/null || true; \
 	fi
 
 run: app dev-config ## Build, then (re)launch the menu bar app
