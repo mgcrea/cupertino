@@ -525,29 +525,6 @@ struct ShellCheck {
 
     print("\nShellRunner: the command line and the environment")
     check(
-      "argv zsh",
-      ShellRunner.argv(
-        .init(
-          script: "echo hi", interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
-          timeout: 1), scriptFile: nil) == ["/bin/zsh", "-f", "-c", "echo hi"])
-    check(
-      "argv jxa",
-      ShellRunner.argv(
-        .init(
-          script: "1", interpreter: .jxa, cwd: URL(fileURLWithPath: "/"), stdin: nil, timeout: 1),
-        scriptFile: URL(fileURLWithPath: "/t/s"))
-        == [
-          "/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "osascript", "-l", "JavaScript", "/t/s",
-        ])
-    check(
-      "argv python3",
-      ShellRunner.argv(
-        .init(
-          script: "1", interpreter: .python3, cwd: URL(fileURLWithPath: "/"), stdin: nil,
-          timeout: 1),
-        scriptFile: URL(fileURLWithPath: "/t/s"))
-        == ["/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "python3", "-I", "/t/s"])
-    check(
       "env has only the base keys",
       Set(ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t").keys)
         == ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "PATH"])
@@ -565,6 +542,7 @@ struct ShellCheck {
 
     try searchPathChecks()
     try startupFileChecks()
+    try scriptDeliveryChecks()
 
     print("\nShellRunner: a run")
     let a = try run("echo out; echo err >&2; exit 3")
@@ -722,11 +700,6 @@ struct ShellCheck {
         "\(i) runs through zsh with no startup files",
         try run(script, i).stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "42")
     }
-    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("cupertino-shell")
-    check(
-      "script files are removed after the run",
-      ((try? FileManager.default.contentsOfDirectory(atPath: scratch.path)) ?? [])
-        .filter { $0.hasPrefix("\(getpid())-") }.isEmpty)
     try serverChecks()
     check("nothing left live at the end", ShellRunner.live.isEmpty)
 
@@ -990,9 +963,9 @@ extension ShellCheck {
     }
 
     // python3 imports `site` unless it is isolated: every `import` line of a `.pth` file in the
-    // user site-packages runs, and so does `usercustomize`. And the script's own folder comes
-    // first on `sys.path`, so a `json.py` planted beside it shadows the standard library's. A
-    // process running as the person can write both places, Full Disk Access or not.
+    // user site-packages runs, and so does `usercustomize`. And a `-c` script has the current
+    // folder first on `sys.path`, so a `json.py` planted there shadows the standard library's.
+    // A process running as the person can write both places, Full Disk Access or not.
     print("\nShellRunner: python3 runs isolated")
     guard ShellRunner.resolve(.python3) != nil else {
       print("  skip python3 not installed")
@@ -1010,48 +983,53 @@ extension ShellCheck {
     // Asked of the python3 a run finds, with the run's home folder.
     let userSite = try zsh("python3 -c 'import site; print(site.getusersitepackages())'")
       .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    check("python3's user site-packages is in the home folder", userSite.hasPrefix(home + "/"))
+    // Planted only in the scratch home: should a run ever stop getting it, the person's real
+    // `~/Library/Python` would be written to, with nothing to clean it up.
+    guard userSite.hasPrefix(home + "/") else {
+      check("python3's user site-packages is in the scratch home (got \(userSite))", false)
+      return
+    }
+    check("python3's user site-packages is in the scratch home", true)
     let pthMarker = home + "/read-pth"
     let customizeMarker = home + "/read-usercustomize"
     try write(
       "import os; open('\(pthMarker)', 'w').close()\n", to: userSite + "/shell-check.pth")
     try write("open('\(customizeMarker)', 'w').close()\n", to: userSite + "/usercustomize.py")
 
-    // The real folder scripts are written to: it is where `sys.path[0]` points.
-    let scripts = ShellRunner.scriptDirectory.path
-    try fm.createDirectory(
-      atPath: scripts, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    let jsonMarker = home + "/read-json"
-    let shadow = scripts + "/json.py"
-    let probe = scripts + "/shell-check-\(getpid())-probe.py"
+    // A `json.py` in the run's folder, where a `-c` script's `sys.path[0]` would point, and one
+    // in its `$TMPDIR`, where scripts were written until 2026-10-28.
+    let cwd = try scratchFolder("python-cwd")
+    let tmp = try scratchFolder("python-tmp")
     defer {
-      try? fm.removeItem(atPath: shadow)
-      try? fm.removeItem(atPath: probe)
+      try? fm.removeItem(atPath: cwd)
+      try? fm.removeItem(atPath: tmp)
     }
-    try write("open('\(jsonMarker)', 'w').close()\n", to: shadow)
-    try write("import json\n", to: probe)
+    let jsonMarker = home + "/read-json"
+    for folder in [cwd, tmp] {
+      try write("open('\(jsonMarker)', 'w').close()\n", to: folder + "/json.py")
+    }
 
     // Without isolation, each plant runs: so the checks below are not vacuous.
     _ = try zsh("python3 -c pass")
     check(
       "a python3 that is not isolated runs the planted .pth and usercustomize",
       fm.fileExists(atPath: pthMarker) && fm.fileExists(atPath: customizeMarker))
-    _ = try zsh("python3 \(probe)")
-    check(
-      "and imports a json.py from its script's folder", fm.fileExists(atPath: jsonMarker))
+    _ = try zsh("cd \(cwd) && python3 -c 'import json'")
+    check("and imports a json.py from the folder it runs in", fm.fileExists(atPath: jsonMarker))
     for marker in [pthMarker, customizeMarker, jsonMarker] { try? fm.removeItem(atPath: marker) }
 
     let approved = try ShellRunner.start(
       .init(
         script: "import json; print(json.dumps(6*7))", interpreter: .python3,
-        cwd: URL(fileURLWithPath: "/"), stdin: nil, timeout: 30),
-      home: home
+        cwd: URL(fileURLWithPath: cwd), stdin: nil, timeout: 30),
+      home: home, tmp: tmp
     ).wait()
     check("an approved python3 run still runs its script", approved.stdout == "42\n")
     check(
       "and runs no .pth and no usercustomize from the user site-packages",
       !fm.fileExists(atPath: pthMarker) && !fm.fileExists(atPath: customizeMarker))
-    check("and imports no json.py from its script's folder", !fm.fileExists(atPath: jsonMarker))
+    check(
+      "and imports no json.py from its folder or its $TMPDIR", !fm.fileExists(atPath: jsonMarker))
   }
 }
 
@@ -1915,5 +1893,160 @@ extension ShellCheck {
     if let frontH = queue.front { queue.answer(frontH.id, .cancelled) }
     check("which can be answered the same way", h.wait() == .cancelled)
     check("leaving nothing waiting", queue.front == nil && queue.waiting == 0)
+  }
+}
+
+// MARK: - How the script reaches the interpreter
+
+extension ShellCheck {
+  /// A run of `script` under `i`, with a scratch home and a scratch `$TMPDIR` of its own.
+  static func runIn(
+    _ script: String, _ i: ShellRunner.Interpreter, cwd: String = "/", tmp: String,
+    timeout: TimeInterval = 30
+  ) throws -> ShellRunner.Outcome {
+    try ShellRunner.start(
+      .init(
+        script: script, interpreter: i, cwd: URL(fileURLWithPath: cwd), stdin: nil,
+        timeout: timeout),
+      tmp: tmp
+    ).wait()
+  }
+
+  /// A script that searches its own `$TMPDIR` for `marker`, which its own text holds, and
+  /// prints every file it finds and then `done`. A file the interpreter read the script from
+  /// would hold the marker, so a run that prints only `done` had no such file while it ran.
+  static func searchingScript(_ i: ShellRunner.Interpreter, marker: String) -> String {
+    switch i {
+    case .zsh, .bash:
+      return "m='\(marker)'\n/usr/bin/grep -rlF -- \"$m\" \"$TMPDIR\"\necho done"
+    case .python3:
+      return """
+        import os, subprocess
+        m = '\(marker)'
+        r = subprocess.run(['/usr/bin/grep', '-rlF', '--', m, os.environ['TMPDIR']],
+                           capture_output=True, text=True)
+        print(r.stdout + 'done')
+        """
+    case .node:
+      return """
+        const m = '\(marker)';
+        const r = require('child_process').spawnSync(
+          '/usr/bin/grep', ['-rlF', '--', m, process.env.TMPDIR], { encoding: 'utf8' });
+        console.log(r.stdout + 'done');
+        """
+    case .osascript:
+      return """
+        set m to "\(marker)"
+        set found to do shell script "/usr/bin/grep -rlF -- " & quoted form of m & " \\"$TMPDIR\\" || true"
+        return found & "done"
+        """
+    case .jxa:
+      return """
+        const app = Application.currentApplication();
+        app.includeStandardAdditions = true;
+        const m = '\(marker)';
+        app.doShellScript("/usr/bin/grep -rlF -- '" + m + "' \\"$TMPDIR\\" || true") + "done"
+        """
+    }
+  }
+
+  /// Several lines, both quote marks and a `$`, which must reach the interpreter as written.
+  static func quotingScript(_ i: ShellRunner.Interpreter) -> String {
+    switch i {
+    case .zsh, .bash:
+      return "a='it'\"'\"'s'\nb=\"say \\\"hi\\\"\"\nc='$HOME stays'\necho \"$a $b $c\""
+    case .python3:
+      return "a = \"it's\"\nb = 'say \"hi\"'\nc = '$HOME stays'\nprint(a, b, c)"
+    case .node:
+      return "const a = \"it's\";\nconst b = 'say \"hi\"';\nconst c = '$HOME stays';\n"
+        + "console.log(a, b, c);"
+    case .osascript:
+      return "set a to \"it's\"\nset b to \"say \\\"hi\\\"\"\nset c to \"$HOME stays\"\n"
+        + "return a & \" \" & b & \" \" & c"
+    case .jxa:
+      return "var a = \"it's\";\nvar b = 'say \"hi\"';\nvar c = '$HOME stays';\n"
+        + "a + \" \" + b + \" \" + c"
+    }
+  }
+
+  /// A script of exactly 512 KB, the request limit: one long comment, then 6*7.
+  static func largestScript(_ i: ShellRunner.Interpreter) -> String {
+    let (comment, body): (String, String) =
+      switch i {
+      case .zsh, .bash: ("#", "echo $((6*7))")
+      case .python3: ("#", "print(6*7)")
+      case .node: ("//", "console.log(6*7)")
+      case .osascript: ("--", "return 6*7")
+      case .jxa: ("//", "6*7")
+      }
+    let pad = ShellServer.maxScriptBytes - comment.utf8.count - body.utf8.count - 1
+    return comment + String(repeating: "a", count: pad) + "\n" + body
+  }
+
+  /// Any same-user process can rewrite or rename a file between the moment it is written and
+  /// the moment the interpreter reads it, Full Disk Access or not. The person would approve one
+  /// text and another would run with every grant. So no interpreter is ever handed a path.
+  static func scriptDeliveryChecks() throws {
+    print("\nShellRunner: the script reaches the interpreter as an argument, never a file")
+    check(
+      "argv zsh",
+      ShellRunner.argv(
+        .init(
+          script: "echo hi", interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
+          timeout: 1)) == ["/bin/zsh", "-f", "-c", "--", "echo hi"])
+    let wrapper = ["/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\""]
+    let expected: [ShellRunner.Interpreter: [String]] = [
+      .bash: ["bash", "-c", "--", "S"],
+      .python3: ["python3", "-I", "-c", "S"],
+      .node: ["node", "--eval=S"],
+      .osascript: ["osascript", "-e", "S"],
+      .jxa: ["osascript", "-l", "JavaScript", "-e", "S"],
+    ]
+    for (i, tail) in expected.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+      check(
+        "argv \(i)",
+        ShellRunner.argv(
+          .init(script: "S", interpreter: i, cwd: URL(fileURLWithPath: "/"), stdin: nil, timeout: 1)
+        ) == wrapper + tail)
+    }
+
+    for i in ShellRunner.Interpreter.allCases {
+      guard ShellRunner.resolve(i) != nil else {
+        print("  skip \(i) not installed")
+        continue
+      }
+      let tmp = try scratchFolder("tmp-\(i)")
+      defer { try? FileManager.default.removeItem(atPath: tmp) }
+      let marker = "SHELL-CHECK-MARK-\(UUID().uuidString)"
+      let searched = try runIn(searchingScript(i, marker: marker), i, tmp: tmp)
+      check(
+        "\(i): no file under $TMPDIR holds the script while it runs"
+          + (searched.stdout == "done\n" ? "" : " (got \(searched.stdout.debugDescription))"),
+        searched.stdout == "done\n" && searched.exitCode == 0)
+      let quoted = try runIn(quotingScript(i), i, tmp: tmp)
+      check(
+        "\(i): several lines, quotes and $ run as written",
+        quoted.stdout == "it's say \"hi\" $HOME stays\n")
+      let largest = try runIn(largestScript(i), i, tmp: tmp)
+      check(
+        "\(i): a 512 KB script runs",
+        largest.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "42"
+          && largest.exitCode == 0)
+      check(
+        "\(i): and leaves nothing in $TMPDIR",
+        ((try? FileManager.default.contentsOfDirectory(atPath: tmp)) ?? []).isEmpty)
+    }
+    // A script that starts with a dash is still the script, not an option.
+    for i in [ShellRunner.Interpreter.zsh, .bash] {
+      check(
+        "\(i): a script starting with a dash is not read as an option",
+        try runIn("-x 2>/dev/null\necho ran", i, tmp: NSTemporaryDirectory()).stdout == "ran\n")
+    }
+    if ShellRunner.resolve(.node) != nil {
+      check(
+        "node: a script starting with a dash is not read as an option",
+        try runIn("-1\nconsole.log('ran')", .node, tmp: NSTemporaryDirectory()).stdout
+          == "ran\n")
+    }
   }
 }

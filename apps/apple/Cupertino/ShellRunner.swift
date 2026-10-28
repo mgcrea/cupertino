@@ -27,10 +27,27 @@ import Foundation
 /// shows them. Read by a run, they would run code nobody approved under every grant this app
 /// holds. A script that needs a version manager sets it up itself, where the window shows it.
 ///
-/// For `zsh` the script is the `-c` argument; for the others it is written to a 0600 file and
-/// zsh `exec`s the interpreter on it, so the leader is the interpreter itself. The environment
-/// is `baseEnvironment` and nothing else: no variable of this app's own, and none of the
-/// `APPLE_*` server settings, reaches the script.
+/// The environment is `baseEnvironment` and nothing else: no variable of this app's own, and
+/// none of the `APPLE_*` server settings, reaches the script.
+///
+/// ## How the script reaches the interpreter: as an argument, never a file
+///
+/// For `zsh` the script is the `-c` argument. For the others zsh `exec`s the interpreter with the
+/// script as an argument of its own (`bash -c`, `python3 -I -c`, `node --eval=`, `osascript -e`),
+/// so the leader is the interpreter itself. A script is never written to a file and read back by
+/// path: any process running as the person can rewrite or rename a file between the write and
+/// the read, Full Disk Access or not, and the person would have approved one text while another
+/// ran with every grant. An argument is copied into the new process by the kernel at `exec`, and
+/// nothing else can reach it there. A file removed after it is opened is no better: whoever
+/// opened it first can still write to it.
+///
+/// `--` (zsh, bash) and `--eval=` (node) keep a script that starts with a dash from being read as
+/// an option; `python3 -c` and `osascript -e` take the next argument whatever it starts with. A
+/// multi-line script as one `-e` compiles as it does from a file, for AppleScript and for
+/// JavaScript, and a 512 KB script fits: `ARG_MAX` is 1 MiB for the arguments and the
+/// environment together, and the environment is a few short variables. `make shell-check`
+/// pins both for every installed interpreter ("ShellRunner: the script reaches the interpreter
+/// as an argument, never a file").
 ///
 /// PATH is `searchPath`: `/etc/paths`, then `/etc/paths.d`, as `/usr/libexec/path_helper`
 /// reads them for Terminal, then Homebrew's folders. Without it the servers' `/usr/bin:/bin`
@@ -40,7 +57,7 @@ import Foundation
 /// `python3` runs with `-I`, isolated, for the same reason. Without it Python imports `site`,
 /// which runs every `import` line of a `.pth` file in the user site-packages
 /// (`~/Library/Python/<version>/lib/python/site-packages`) and imports `usercustomize`, and it
-/// puts the script's folder, `scriptDirectory`, first on `sys.path`, where a planted `json.py`
+/// puts the current folder first on `sys.path` for a `-c` script, where a planted `json.py`
 /// would shadow the standard library's. A same-user process can write both. A script that needs
 /// the user site-packages adds them to `sys.path` itself.
 ///
@@ -64,22 +81,27 @@ nonisolated enum ShellRunner {
   enum Interpreter: String, CaseIterable, Sendable {
     case zsh, bash, python3, node, osascript, jxa
 
-    /// What zsh `exec`s on the script file. Empty for `zsh`, whose script is the
-    /// `-c` argument itself.
-    var prefix: [String] {
+    /// What zsh `exec`s, the script among its arguments. Empty for `zsh`, whose script is
+    /// the `-c` argument itself.
+    func arguments(_ script: String) -> [String] {
       switch self {
       case .zsh: []
-      case .bash: ["bash"]
+      case .bash: ["bash", "-c", "--", script]
       // Isolated: see the type's comment.
-      case .python3: ["python3", "-I"]
-      case .node: ["node"]
-      case .osascript: ["osascript"]
-      case .jxa: ["osascript", "-l", "JavaScript"]
+      case .python3: ["python3", "-I", "-c", script]
+      case .node: ["node", "--eval=" + script]
+      case .osascript: ["osascript", "-e", script]
+      case .jxa: ["osascript", "-l", "JavaScript", "-e", script]
       }
     }
 
     /// The command `resolve` looks up.
-    var command: String { prefix.first ?? rawValue }
+    var command: String {
+      switch self {
+      case .zsh, .bash, .python3, .node, .osascript: rawValue
+      case .jxa: "osascript"
+      }
+    }
   }
 
   struct Request: Sendable {
@@ -116,20 +138,12 @@ nonisolated enum ShellRunner {
   static let outputCap = 256 * 1024
   static let killGrace: TimeInterval = 2
 
-  /// Where scripts for interpreters other than `zsh` are written for the length of their run.
-  static var scriptDirectory: URL {
-    FileManager.default.temporaryDirectory.appendingPathComponent(
-      "cupertino-shell", isDirectory: true)
-  }
-
-  static func argv(_ request: Request, scriptFile: URL?) -> [String] {
-    // `-f`: no startup file of the person's is read. See the type's comment.
+  /// The command line, the script in it. `-f`: no startup file of the person's is read. See the
+  /// type's comment.
+  static func argv(_ request: Request) -> [String] {
     let shell = ["/bin/zsh", "-f", "-c"]
-    guard request.interpreter != .zsh else { return shell + [request.script] }
-    guard let scriptFile else {
-      preconditionFailure("\(request.interpreter) runs from a script file")
-    }
-    return shell + ["exec \"$0\" \"$@\""] + request.interpreter.prefix + [scriptFile.path]
+    guard request.interpreter != .zsh else { return shell + ["--", request.script] }
+    return shell + ["exec \"$0\" \"$@\""] + request.interpreter.arguments(request.script)
   }
 
   /// The whole environment zsh starts with. Nothing reads a startup file to extend it.
@@ -215,16 +229,12 @@ nonisolated enum ShellRunner {
   }
 
   /// Starts the script and returns at once. The run is in `live` until it has been waited out,
-  /// whether or not anybody calls `wait`. `home` is for the checks, which give it a scratch
-  /// folder; the app leaves it alone.
-  static func start(_ request: Request, home: String = NSHomeDirectory()) throws -> Running {
-    let scriptFile = request.interpreter == .zsh ? nil : try writeScript(request.script)
-    do {
-      return try spawn(request, scriptFile: scriptFile, home: home)
-    } catch {
-      if let scriptFile { try? FileManager.default.removeItem(at: scriptFile) }
-      throw error
-    }
+  /// whether or not anybody calls `wait`. `home` and `tmp`, the script's `HOME` and `TMPDIR`,
+  /// are for the checks, which give it scratch folders; the app leaves them alone.
+  static func start(
+    _ request: Request, home: String = NSHomeDirectory(), tmp: String = NSTemporaryDirectory()
+  ) throws -> Running {
+    try spawn(request, home: home, tmp: tmp)
   }
 
   /// The interpreter's path on a script's PATH, or nil when it is not installed. Starts no
@@ -277,14 +287,14 @@ nonisolated enum ShellRunner {
 
     fileprivate func begin(
       timeout: TimeInterval, stdout: Int32, stderr: Int32, stdin: (fd: Int32, bytes: [UInt8])?,
-      scriptFile: URL?, started: UInt64
+      started: UInt64
     ) {
       thread("leader") { $0.watchLeader() }
       thread("stdout") { $0.drain(stdout, as: 1) }
       thread("stderr") { $0.drain(stderr, as: 2) }
       if let stdin { thread("stdin") { $0.feed(stdin.fd, stdin.bytes) } }
       thread("supervisor") {
-        $0.supervise(timeout: timeout, scriptFile: scriptFile, started: started)
+        $0.supervise(timeout: timeout, started: started)
       }
     }
 
@@ -368,7 +378,7 @@ nonisolated enum ShellRunner {
     /// Whether a live process is left in the group. The unreaped leader does not count.
     private var groupHasMembers: Bool { kill(-pid, 0) == 0 }
 
-    private func supervise(timeout: TimeInterval, scriptFile: URL?, started: UInt64) {
+    private func supervise(timeout: TimeInterval, started: UInt64) {
       state.lock()
       let deadline = Date().addingTimeInterval(timeout)
       while !leaderExited, !cancelRequested {
@@ -407,7 +417,6 @@ nonisolated enum ShellRunner {
       var reaped: pid_t
       repeat { reaped = waitpid(pid, &status, 0) } while reaped < 0 && errno == EINTR
       ShellRunner.registry.withLock { runs in runs.removeAll { $0 === self } }
-      if let scriptFile { try? FileManager.default.removeItem(at: scriptFile) }
 
       let ended: (exitCode: Int32?, signal: String?) =
         reaped == pid ? ShellRunner.decode(status) : (nil, nil)
@@ -429,7 +438,7 @@ nonisolated enum ShellRunner {
   private static let registry = Locked<[Running]>([])
   private static let resolved = Locked<[Interpreter: String?]>([:])
 
-  private static func spawn(_ request: Request, scriptFile: URL?, home: String) throws -> Running {
+  private static func spawn(_ request: Request, home: String, tmp: String) throws -> Running {
     var opened: [Int32] = []
     func pipePair(_ step: String) throws -> (read: Int32, write: Int32) {
       var ends: [Int32] = [0, 0]
@@ -486,9 +495,9 @@ nonisolated enum ShellRunner {
     }
 
     let environment = baseEnvironment(
-      home: home, user: NSUserName(), tmp: NSTemporaryDirectory()
+      home: home, user: NSUserName(), tmp: tmp
     ).map { "\($0.key)=\($0.value)" }.sorted()
-    let arguments = argv(request, scriptFile: scriptFile)
+    let arguments = argv(request)
     let started = DispatchTime.now().uptimeNanoseconds
     var pid: pid_t = 0
     let spawned = withCStrings(arguments) { argv in
@@ -512,36 +521,12 @@ nonisolated enum ShellRunner {
     running.begin(
       timeout: request.timeout, stdout: out.read, stderr: err.read,
       stdin: input.map { ($0.write, Array((request.stdin ?? "").utf8)) },
-      scriptFile: scriptFile, started: started)
+      started: started)
     return running
   }
 
   private static func check(_ code: Int32, _ step: String) throws {
     guard code == 0 else { throw StartError(step: step, code: code) }
-  }
-
-  private static func writeScript(_ script: String) throws -> URL {
-    let directory = scriptDirectory
-    try FileManager.default.createDirectory(
-      at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    // This process's pid first, so a file left by a crash says whose it was.
-    let file = directory.appendingPathComponent("\(getpid())-\(UUID().uuidString)")
-    let fd = open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-    guard fd >= 0 else { throw StartError(step: "script file", code: errno) }
-    defer { close(fd) }
-    let bytes = Array(script.utf8)
-    var offset = 0
-    while offset < bytes.count {
-      let written = bytes.withUnsafeBytes { write(fd, $0.baseAddress! + offset, $0.count - offset) }
-      if written < 0, errno == EINTR { continue }
-      guard written > 0 else {
-        let code = errno
-        unlink(file.path)
-        throw StartError(step: "script file", code: code)
-      }
-      offset += written
-    }
-    return file
   }
 
   private static func withCStrings<R>(

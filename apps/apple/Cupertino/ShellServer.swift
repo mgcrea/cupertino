@@ -792,8 +792,11 @@ nonisolated enum ShellServer {
     - zsh without the person's shell startup files (`/bin/zsh -f -c`): `~/.zshenv`,
       `~/.zprofile`, `~/.zshrc` and `~/.zlogin` are not read. Other interpreters start
       through it.
+    - The script is passed as an argument (`bash -c`, `python3 -I -c`, `node --eval=`,
+      `osascript -e`), never written to a file, so `$0`, `__file__` and `__filename` do not
+      name a script file.
     - python3 runs isolated (`python3 -I`): the user site-packages are not on its path,
-      and neither is the script's folder. A script that needs the user site-packages adds
+      and neither is the folder it runs in. A script that needs the user site-packages adds
       them itself.
     - PATH is the system's, from `/etc/paths` and `/etc/paths.d`, then Homebrew's folders.
       A script that needs a version manager sets it up itself, for example
