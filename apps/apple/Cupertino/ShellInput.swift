@@ -109,3 +109,48 @@ nonisolated enum ShellCover {
     return windows(from: list)
   }
 }
+
+/// The Shell window and the sheets that lower the bar, while they are open: where a click from a
+/// driving surface must never land.
+///
+/// The Desktop surface checks that a point is on a window of the app it names, and steps over
+/// windows at higher levels, so a click aimed at a window under the Shell window would be posted
+/// onto Run once, with only `ShellInput.isHardware` left to drop it. `AccessibilityDriver`'s
+/// `click` and `drag` ask `covers` first and refuse. The card is not listed: it sits in a
+/// corner over whatever is there, by design, as the driving card does.
+///
+/// Thread-safe: set on the main thread as a panel shows and closes, read on a connection's
+/// worker as a click is about to be posted. Each panel's frame is read from the window list
+/// when asked, so a window the person dragged is where it is now; the frame given at `shown`
+/// stands in when the list has none for it.
+nonisolated enum ShellPanels {
+  private static let lock = NSLock()
+  // Guarded by `lock`. Window number to frame, in the window list's coordinates.
+  nonisolated(unsafe) private static var open: [Int: CGRect] = [:]
+
+  static func shown(_ windowNumber: Int, frame: CGRect) {
+    lock.withLock { open[windowNumber] = frame }
+  }
+
+  static func closed(_ windowNumber: Int) {
+    lock.withLock { _ = open.removeValue(forKey: windowNumber) }
+  }
+
+  /// Whether `point`, in the window list's coordinates (where clicks are posted), is on an
+  /// open Shell panel.
+  static func covers(_ point: CGPoint) -> Bool {
+    let panels = lock.withLock { open }
+    return panels.contains { number, given in
+      (liveFrame(number) ?? given).contains(point)
+    }
+  }
+
+  private static func liveFrame(_ windowNumber: Int) -> CGRect? {
+    guard windowNumber > 0,
+      let list = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowNumber))
+        as? [[String: Any]],
+      let first = list.first
+    else { return nil }
+    return ShellCover.windows(from: [first]).first?.bounds
+  }
+}

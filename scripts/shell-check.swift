@@ -2043,6 +2043,35 @@ extension ShellCheck {
     check(
       "a window listed without a pid counts as another program's",
       ShellCover.isCovered(panel, by: [parsed[2]], ownPid: me))
+    print("\nShellPanels: where a click from a driving surface must not land")
+    // Window numbers no window has, so the frame given is the one used.
+    let fakeWindow = Int(Int32.max) - 7
+    let fakeSheet = fakeWindow - 1
+    let windowFrame = CGRect(x: 100, y: 100, width: 600, height: 400)
+    check("nothing open: no point is under one", !ShellPanels.covers(CGPoint(x: 300, y: 300)))
+    ShellPanels.shown(fakeWindow, frame: windowFrame)
+    ShellPanels.shown(fakeSheet, frame: CGRect(x: 1000, y: 0, width: 100, height: 100))
+    check("a point on the window is under one", ShellPanels.covers(CGPoint(x: 300, y: 300)))
+    check("a point on a sheet is under one", ShellPanels.covers(CGPoint(x: 1050, y: 50)))
+    check("a point elsewhere is not", !ShellPanels.covers(CGPoint(x: 800, y: 300)))
+    ShellPanels.closed(fakeWindow)
+    check("closed, it is gone", !ShellPanels.covers(CGPoint(x: 300, y: 300)))
+    check("and the other stays", ShellPanels.covers(CGPoint(x: 1050, y: 50)))
+    ShellPanels.closed(fakeSheet)
+    check("closed too, nothing is left", !ShellPanels.covers(CGPoint(x: 1050, y: 50)))
+    let threads = DispatchGroup()
+    for n in 0..<50 {
+      DispatchQueue.global().async(group: threads) {
+        ShellPanels.shown(fakeWindow - 10 - n, frame: windowFrame)
+        _ = ShellPanels.covers(CGPoint(x: 300, y: 300))
+        ShellPanels.closed(fakeWindow - 10 - n)
+      }
+    }
+    check(
+      "shown, asked and closed from many threads at once, it ends empty",
+      threads.wait(timeout: .now() + 5) == .success
+        && !ShellPanels.covers(CGPoint(x: 300, y: 300)))
+
     check(
       "a frame turned from AppKit's coordinates into the window list's",
       ShellCover.windowListRect(

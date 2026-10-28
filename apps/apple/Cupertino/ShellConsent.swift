@@ -116,6 +116,7 @@ final class ShellConsent: ShellConsenting {
     guard showing?.id != front?.id else { return }
     if let showing {
       showing.watch.stop()
+      ShellPanels.closed(showing.panel.windowNumber)
       showing.panel.orderOut(nil)
       self.showing = nil
     }
@@ -141,6 +142,10 @@ final class ShellConsent: ShellConsenting {
         x: (visible.midX - size.width / 2).rounded(),
         y: (visible.midY - size.height / 2).rounded()))
     window.panel.makeKeyAndOrderFront(nil)
+    ShellPanels.shown(
+      window.panel.windowNumber,
+      frame: ShellCover.windowListRect(
+        window.panel.frame, primaryScreenHeight: NSScreen.screens.first?.frame.height ?? 0))
     watch.start()
     queue.shown(id)
   }
@@ -517,9 +522,15 @@ struct ShellConfirmSheet {
       panel.center()
       panel.makeKeyAndOrderFront(nil)
     }
+    // Its frame is read from the window list when asked; this one stands in until then.
+    ShellPanels.shown(
+      panel.windowNumber,
+      frame: ShellCover.windowListRect(
+        panel.frame, primaryScreenHeight: NSScreen.screens.first?.frame.height ?? 0))
   }
 
   func dismiss() {
+    ShellPanels.closed(panel.windowNumber)
     if let parent = panel.sheetParent {
       parent.endSheet(panel)
     } else {

@@ -1155,6 +1155,34 @@ struct DesktopCheck {
       AccessibilityDriver.frame(point: CGPoint(x: 1, y: 2), size: CGSize(width: 3, height: 4))
         == [1, 2, 3, 4])
 
+    // ─── never a click on the Shell window ──────────────────────────────────
+    // The window that decides whether a script runs is above every other, so
+    // a point "on" another app's window can be on it. `click` and `drag` ask
+    // this before anything else, a grant included; the check calls only this,
+    // so nothing can be posted whatever it answers.
+    let shellNumber = Int(Int32.max) - 3
+    ShellPanels.shown(shellNumber, frame: CGRect(x: 200, y: 200, width: 600, height: 400))
+    var underShell: String?
+    do {
+      try AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 500, y: 400))
+    } catch {
+      underShell = error.localizedDescription
+    }
+    check(
+      "a click on the Shell window is refused, and says nothing was posted",
+      underShell?.contains("Shell window") == true
+        && underShell?.contains("nothing was posted") == true
+        && underShell?.contains("\u{2014}") == false)
+    check(
+      "a click beside it is not",
+      (try? AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 900, y: 400)))
+        != nil)
+    ShellPanels.closed(shellNumber)
+    check(
+      "once it closes, the same point is not",
+      (try? AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 500, y: 400)))
+        != nil)
+
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:
     // generate-surfaces.mjs refuses a swift surface with a non-null npmName, so
