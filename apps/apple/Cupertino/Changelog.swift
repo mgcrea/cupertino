@@ -527,6 +527,36 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Safari can close the tabs an agent opened.",
+            body: [
+              "`apple_safari_close_tabs` takes the `ref` that `apple_safari_open_url` now returns for a new tab, or `all: true` for every tab an agent opened, from this session or another, in the last seven days. It closes a tab only while it still shows the URL it was opened on and no other tab shows that URL too. Anything else is reported and left open. A tab that redirected or was navigated away is let go rather than followed. Safari is not launched to close tabs, and the tool is registered only with writes on.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Shell's window shows the whole script, not two and a half lines of it.",
+            body: [
+              "The script box was measured before its text was laid out, so it opened at its least height whatever the script's length, and the rest had to be scrolled to. It now grows with the script up to its cap, and so does the box for a script's input.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

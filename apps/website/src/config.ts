@@ -7,7 +7,7 @@
  * a `packages/<surface>/src/tools/index.ts`, the tree is right and this file is stale.
  */
 
-import { SURFACES } from "./data/surfaces.ts";
+import { isCapability, SURFACES } from "./data/surfaces.ts";
 
 export const SITE_DOMAIN = "cupertino.mgcrea.io";
 export const SITE_URL = `https://${SITE_DOMAIN}`;
@@ -69,8 +69,15 @@ export const SPELLED = [
   "twenty",
 ];
 
-/** "Mail, Notes, Reminders and Calendar" — however many there turn out to be. */
-const surfaceList = SURFACES.map((s) => s.name)
+/**
+ * "Mail, Notes, Reminders and Calendar" — however many there turn out to be.
+ *
+ * The Apple apps only. The headline calls them "Apple apps", and with Screen, Sound, Desktop
+ * and Shell counted it said twelve, then thirteen, of something four of them are not.
+ */
+const cardApps = SURFACES.filter((s) => !isCapability(s));
+const surfaceList = cardApps
+  .map((s) => s.name)
   .join(", ")
   .replace(/, ([^,]+)$/, " and $1");
 
@@ -107,7 +114,7 @@ const surfaceList = SURFACES.map((s) => s.name)
  * Contacts shipped and wrong again at 1.2.0, in a picture nothing in CI looks
  * at.
  */
-const spelledSurfaces = SPELLED[SURFACES.length] ?? String(SURFACES.length);
+const spelledSurfaces = SPELLED[cardApps.length] ?? String(cardApps.length);
 
 /**
  * The two lines swapped jobs at eight surfaces, and the reason is mechanical:
@@ -201,6 +208,22 @@ export const LATENCY = {
   indexedMs: 97,
   /** Where the Apple Events lane stops being usable for Notes. */
   notesCeiling: "5k notes",
+} as const;
+
+/**
+ * Mail's everyday reads, asked of Mail by Apple Events and then answered from the Envelope
+ * Index, as 1.32.0 does. Measured old lane against new on a live store in commit 209937f, which
+ * is the authority; it is not LATENCY's store, so the card names its own size. Each pair is the
+ * fastest old time against the slowest new one, the smallest gain the measurement supports.
+ */
+export const EVERYDAY_READS = {
+  storeSize: 210_000,
+  rows: [
+    { tool: "list_messages", what: "20 messages", appleEventsMs: 3_400, indexedMs: 52 },
+    { tool: "list_mailboxes", what: "with counts", appleEventsMs: 9_600, indexedMs: 230 },
+    { tool: "count_messages", what: "one mailbox", appleEventsMs: 370, indexedMs: 48 },
+    { tool: "get_message", what: "one message", appleEventsMs: 450, indexedMs: 5 },
+  ],
 } as const;
 
 /**

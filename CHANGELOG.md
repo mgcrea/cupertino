@@ -23,6 +23,12 @@ summary.
   open. A tab that redirected or was navigated away is let go rather than followed. Safari is not
   launched to close tabs, and the tool is registered only with writes on.
 
+### Fixed
+
+- **Shell's window shows the whole script, not two and a half lines of it.** The script box was
+  measured before its text was laid out, so it opened at its least height whatever the script's
+  length, and the rest had to be scrolled to. It now grows with the script up to its cap, and so
+  does the box for a script's input.
 ## [1.33.0] - 2026-10-28
 
 **Shell runs a script you approve.** An agent can run one script under Cupertino's grants once you

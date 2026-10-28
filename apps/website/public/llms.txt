@@ -77,7 +77,7 @@ The app itself hosts five more surfaces, none of them a separate npm install:
 - Simulator — 12 tools (4 always registered, 8 write-gated). The same idea for an iOS Simulator
   window: reads an app's own controls in iOS points and, behind the write gate, presses, taps,
   swipes, types and folds a foldable, with no WebDriverAgent runner to keep alive.
-- Shell — 1 tool, off until switched on. `apple_shell_run` runs one script, in zsh, bash, python3,
+- Shell — 2 tools, off until switched on. `apple_shell_run` runs one script, in zsh, bash, python3,
   node, AppleScript or JXA, as Cupertino's own child, so it holds every grant Cupertino holds. Before
   each run a window shows the whole script and the agent's reason, and only a click by hand on Run
   once runs it. Every request leaves a line in a run record that keeps a hash of the script, never

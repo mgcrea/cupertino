@@ -1,5 +1,5 @@
 ---
-import { LATENCY } from "../config";
+import { EVERYDAY_READS, LATENCY } from "../config";
 import SectionHeader from "./SectionHeader.astro";
 
 /**
@@ -24,6 +24,13 @@ const rows = [
     color: "var(--color-ok)",
   },
 ] as const;
+
+/** Each read to its own scale: on one track the 450 ms row would draw both bars as slivers. */
+const ms = (n: number) => `${n.toLocaleString("en-US")} ms`;
+const reads = EVERYDAY_READS.rows.map((r) => ({
+  ...r,
+  pct: (r.indexedMs / r.appleEventsMs) * 100,
+}));
 ---
 
 <section id="latency" class="wrap scroll-mt-20 py-[96px]">
@@ -71,6 +78,37 @@ const rows = [
       > and nothing else, so they return a structured <code
         class="font-mono text-[13px] text-fg-dim">degraded</code
       > result naming what is absent.
+    </p>
+  </div>
+  <div class="reveal mt-10 flex flex-col gap-7 rounded-[16px] border border-rule bg-bg-2 p-6 sm:p-9">
+    <p class="m-0 max-w-[62ch] text-[14px] leading-[1.65] text-fg-muted">
+      <span class="text-fg">Everyday reads stopped waiting on Mail too.</span> Since 1.32, listing,
+      counting and opening mail answer from the same index, and Mail is sent no Apple Event at all.
+    </p>
+    {
+      reads.map((r) => (
+        <div class="flex flex-col gap-2">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span class="text-[14px]">
+              <span class="font-mono text-fg">{r.tool}</span>
+              <span class="text-fg-muted"> {r.what}</span>
+            </span>
+            <span class="font-mono text-[14px] text-fg-dim">
+              {ms(r.appleEventsMs)} → {ms(r.indexedMs)}
+            </span>
+          </div>
+          <div class="h-2.5 overflow-hidden rounded-full bg-bg-3">
+            <div class="bar" style="width:100%;background:var(--color-danger)" />
+          </div>
+          <div class="h-2.5 overflow-hidden rounded-full bg-bg-3">
+            <div class="bar" style={`width:${r.pct}%;background:var(--color-ok)`} />
+          </div>
+        </div>
+      ))
+    }
+    <p class="mono m-0">
+      each row drawn to its own scale — measured on a {EVERYDAY_READS.storeSize.toLocaleString("en-US")}-message
+      store, with Full Disk Access
     </p>
   </div>
 </section>

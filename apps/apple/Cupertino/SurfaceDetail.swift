@@ -83,6 +83,9 @@ struct SurfaceDetail: View {
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+    // The `shell` stage photographs the run record, which is the pane's last card and below
+    // the fold at the capture's size.
+    .defaultScrollAnchor(DemoSeed.isEnabled && DemoSeed.stage == .shell ? .bottom : nil)
     .task(id: surface.id) {
       if surface.id == ShellPane.surfaceID { ShellSwitch.shared.checkSeal() }
       await resolveStore()
@@ -1003,7 +1006,7 @@ private struct ShellControls: View {
 ///
 /// Read when the pane appears, off the main actor: `ShellRecord.recent` reads the month's
 /// segment from disk. Never under screenshot mode, where it would put the capturing Mac's own
-/// clients and purposes into a marketing image.
+/// clients and purposes into a marketing image: that lists `DemoSeed.shellRuns` instead.
 private struct ShellRecentRuns: View {
   @State private var entries: [ShellRecord.Entry]?
 
@@ -1027,7 +1030,7 @@ private struct ShellRecentRuns: View {
     }
     .task {
       if DemoSeed.isEnabled {
-        entries = []
+        entries = DemoSeed.shellRuns
         return
       }
       entries = await Task.detached(priority: .userInitiated) {
@@ -1041,6 +1044,10 @@ private struct ShellRecentRuns: View {
     return VStack(alignment: .leading, spacing: 2) {
       HStack(alignment: .firstTextBaseline) {
         Text(entry.at, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+          // In the process's default zone, which is the system's except under screenshot mode,
+          // where DemoSeed pins it to UTC. `Text` formats in the environment's zone, which
+          // ignores the pin.
+          .environment(\.timeZone, NSTimeZone.default)
           .monospacedDigit()
         Text(row.client)
           .lineLimit(1)
@@ -1102,8 +1109,7 @@ final class ShellSwitch {
   @ObservationIgnored private var observer: NSObjectProtocol?
 
   private init() {
-    isOn = ShellSeal.isEnabled(.standard)
-    before = ShellSeal.effectiveBefore(.standard)
+    (isOn, before) = Self.inForce()
     observer = NotificationCenter.default.addObserver(
       forName: UserDefaults.didChangeNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -1170,9 +1176,15 @@ final class ShellSwitch {
     sealProblem = ShellPane.sealProblem()
   }
 
+  /// The sealed values, or under screenshot mode the fixture's. What is drawn only: every gate
+  /// reads `ShellSeal` itself, so the fixture turns nothing on.
+  private static func inForce() -> (on: Bool, before: ShellPolicy.Before) {
+    if DemoSeed.isEnabled { return (DemoSeed.shellOn, DemoSeed.shellBefore) }
+    return (ShellSeal.isEnabled(.standard), ShellSeal.effectiveBefore(.standard))
+  }
+
   private func reload() {
-    let on = ShellSeal.isEnabled(.standard)
-    let before = ShellSeal.effectiveBefore(.standard)
+    let (on, before) = Self.inForce()
     if on != isOn { isOn = on }
     if before != self.before { self.before = before }
     if on, sealProblem != nil { sealProblem = nil }

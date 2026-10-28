@@ -576,6 +576,23 @@ export const SURFACES: readonly Surface[] = [
     withoutGrant:
       "Which simulators CoreSimulator knows and which are booted, read from its own plists. Everything on the device's screen needs Accessibility, and refuses by name until it is given.",
   },
+  {
+    id: "shell",
+    name: "Shell",
+    // No package, for the reason none of the capabilities has one, and more so:
+    // the point of the surface is the grants the app holds, and the approval
+    // window is drawn by the app. A package would run scripts with neither.
+    pkg: "—",
+    // `apple_shell_run` is not in `write`: Shell has no write switch, and the
+    // surface's own switch, off until a confirming click, is its gate. Listed
+    // under `write` it would read as something `*_ALLOW_WRITES` turns on.
+    read: ["apple_shell_run", "apple_shell_diagnostics"],
+    write: [],
+    pitch:
+      "Whatever the other surfaces have no tool for, as a script the agent writes and you read first. It runs in zsh, bash, python3, node, AppleScript or JXA as Cupertino's own child, so it holds every grant Cupertino holds. A window shows the whole script and the agent's reason, Don't run is the default, and only a click by hand on Run once runs it. Every request, refusals included, leaves a line in a run record that keeps a hash of the script, never its text or output.",
+    withoutGrant:
+      "Still runs, with whatever else Cupertino holds. A script just cannot open what Full Disk Access opens: the Mail, Messages and Safari stores among them.",
+  },
 ] as const;
 
 export const toolCount = (s: Surface) => s.read.length + s.write.length + (s.gated?.length ?? 0);
