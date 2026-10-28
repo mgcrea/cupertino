@@ -1,14 +1,15 @@
 # Cupertino
 
 > MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar,
-> Contacts, Messages, Safari and Maps — plus the Mac's screen, sound, desktop and Simulator — and
-> the signed menu-bar app that holds their permission grants once instead of handing them to every
-> editor.
+> Contacts, Messages, Safari and Maps — plus the Mac's screen, sound, desktop, Simulator and a
+> shell — and the signed menu-bar app that holds their permission grants once instead of handing
+> them to every editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
-1.32.0 as of October 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
-packages are MIT and on npm; the app carries Screen, Sound, Desktop and Simulator instead, which
-have no npm package because they need permissions and frameworks only the signed app can hold.
+1.33.0 as of October 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+packages are MIT and on npm; the app carries Screen, Sound, Desktop, Simulator and Shell instead,
+which have no npm package because they need permissions and frameworks only the signed app can
+hold.
 
 ## The argument
 
@@ -61,7 +62,7 @@ hold.
   and page contents are the only things in the whole bundle that work with no Full Disk Access at
   all — tabs need an Automation grant, and page contents need the extension.
 
-The app itself hosts four more surfaces, none of them a separate npm install:
+The app itself hosts five more surfaces, none of them a separate npm install:
 
 - Screen — 3 tools (2 always registered, 1 behind its own flag). A picture of a window Cupertino is
   already brokering — Mail, Safari, Calendar — written to disk as a PNG. Never an arbitrary app,
@@ -76,6 +77,11 @@ The app itself hosts four more surfaces, none of them a separate npm install:
 - Simulator — 12 tools (4 always registered, 8 write-gated). The same idea for an iOS Simulator
   window: reads an app's own controls in iOS points and, behind the write gate, presses, taps,
   swipes, types and folds a foldable, with no WebDriverAgent runner to keep alive.
+- Shell — 1 tool, off until switched on. `apple_shell_run` runs one script, in zsh, bash, python3,
+  node, AppleScript or JXA, as Cupertino's own child, so it holds every grant Cupertino holds. Before
+  each run a window shows the whole script and the agent's reason, and only a click by hand on Run
+  once runs it. Every request leaves a line in a run record that keeps a hash of the script, never
+  its text or output.
 
 ## The app
 
