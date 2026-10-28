@@ -1874,6 +1874,29 @@ extension ShellCheck {
         && CallCapture.arguments(
           params: request?["params"] as? [String: Any], mode: .off, content: false) == nil
     )
+    // On the way to the audit file, `auditContent` off: arguments under the 4 KB cap keep the
+    // script, because `script` is not a content key; over it they were cut to a prefix that is
+    // no longer JSON, and `reredact` blanks what it cannot parse.
+    func audited(_ script: String, content: Bool) -> String? {
+      let params: [String: Any] = [
+        "name": "apple_shell_run", "arguments": ["script": script, "purpose": "p"],
+      ]
+      return CallCapture.reredact(
+        CallCapture.arguments(params: params, mode: .arguments, content: false),
+        content: content)
+    }
+    let small = "echo \(secret)"
+    let large = "echo \(secret)\n" + String(repeating: "#", count: 5000)
+    check(
+      "on disk without content: arguments under 4 KB keep the script",
+      audited(small, content: false)?.contains(secret) == true)
+    check(
+      "and arguments over 4 KB become \(CallCapture.redacted), script and all",
+      audited(large, content: false) == CallCapture.redacted)
+    check(
+      "with content, over 4 KB: the first 4 KB as captured, the script's start in them",
+      audited(large, content: true)?.contains(secret) == true
+        && audited(large, content: true)?.contains("bytes") == true)
     func parsed(_ text: String?) -> [String: Any]? {
       text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
     }
