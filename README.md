@@ -49,21 +49,25 @@ off cannot see that they exist.
 | Shell     | —                                          | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on         |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
 
-**Screen, Sound, Desktop and Simulator arrive switched off.** Every other surface that brokers an
-Apple app is on when Cupertino is installed; those four are not, because Screen Recording, the
-microphone and Accessibility are per-process grants that reach past the surface being brokered.
+**Screen, Sound, Desktop, Simulator and Shell arrive switched off.** Every other surface that brokers
+an Apple app is on when Cupertino is installed. The first four are not, because Screen Recording,
+the microphone and Accessibility are per-process grants that reach past the surface being brokered.
 Desktop reaches furthest — Accessibility does not scope to a target at all, so the right to press a
 button in Maps is the right to press one in anything, and it additionally arrives with writes off, so
 it can only look until you say otherwise. Simulator holds the same grant and pins its own reach to
-Simulator.app, with no switch that widens it. Switch them on in the surface list if you want them.
+Simulator.app, with no switch that widens it. Shell runs an agent's script with every grant
+Cupertino holds, and the window that shows you each script first is the only safeguard left, so
+turning it on takes a confirming click and no other program can turn it on for you; see
+[docs/shell.md](docs/shell.md). Switch them on in the surface list if you want them.
 
 Each surface is its own server, so a host loads only the tools it wants. Every surface that brokers
 an Apple app through its store or its scripting dictionary is also its own npm package; `screen`,
 `sound`, `desktop` and `simulator` are not, and could not be — the first three broker a framework
 rather than an app, `simulator` brokers an app through Accessibility, and in every case the grant
-lives in the app, so the app serves them in-process and a published package could do nothing. See
-[docs/screen.md](docs/screen.md), [docs/desktop.md](docs/desktop.md) and
-[docs/simulator.md](docs/simulator.md).
+lives in the app, so the app serves them in-process and a published package could do nothing.
+Neither is `shell`: a script holds Cupertino's grants only because it is the app's own child. See
+[docs/screen.md](docs/screen.md), [docs/desktop.md](docs/desktop.md),
+[docs/simulator.md](docs/simulator.md) and [docs/shell.md](docs/shell.md).
 
 `simulator` is the lane for an app you are building. Simulator.app bridges the simulated device's
 accessibility tree into the Mac's, so an iOS app's own controls are readable and pressable here with
@@ -566,6 +570,7 @@ Apple Mail for an assistant, and where those tools are ahead.
 | [docs/screen.md](docs/screen.md)                               | the Screen surface, served in-process         |
 | [docs/sound.md](docs/sound.md)                                 | the Sound surface, and its two gates          |
 | [docs/desktop.md](docs/desktop.md)                             | driving any app's interface natively          |
+| [docs/shell.md](docs/shell.md)                                 | the Shell surface, and what stops a script    |
 | [docs/ax-lane.md](docs/ax-lane.md)                             | the rules a negative has to meet              |
 | [docs/contacts.md](docs/contacts.md)                           | Apple Contacts phase-0 measurements           |
 | [docs/clients.md](docs/clients.md)                             | wiring the servers into each MCP host         |

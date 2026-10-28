@@ -3,7 +3,7 @@
 The per-surface findings live in [notes.md](notes.md), [reminders.md](reminders.md),
 [messages.md](messages.md), [calendar.md](calendar.md), [safari.md](safari.md),
 [contacts.md](contacts.md), [maps.md](maps.md), [home.md](home.md), [passwords.md](passwords.md),
-[screen.md](screen.md) and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
+[screen.md](screen.md), [shell.md](shell.md) and [envelope-index.md](envelope-index.md). This document is the layer above them: which Apple apps can
 be reached at all, what a new surface costs to add, and the rules the phase-0 probes have taught that
 now generalise across surfaces.
 
@@ -57,13 +57,14 @@ rather than about capability.
 | Sound     | CoreAudio — 4 devices in 28 ms                   | implemented, in the app; two independent gates         |
 | Desktop   | **sixth lane** — native AX, 1.24 ms a round trip | implemented, in the app; reaches any running app       |
 | Simulator | the AX lane into Simulator.app, in iOS points    | implemented, in the app; one bundle id, no scope gate  |
+| Shell     | **a child of the app**, with all of its grants   | implemented, in the app; sealed off, a window per run  |
 
 Every probed surface now has a server, though **Screen no longer means a package** — it is served
 in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
 holds no `screencapture`. `surfaces.json` carries a `runtime` field for exactly that split, so the
 targets that mean "has a node package" (the bundler's entry map, the CI handshake, `make servers`)
 say so, while the bridge, the closed table and the settings UI take every surface — which is now
-four of them, `screen`, `sound`, `desktop` and `simulator`. "Served in the app" became the rule for a
+five of them, `screen`, `sound`, `desktop`, `simulator` and `shell`. "Served in the app" became the rule for a
 capability rather than the exception `screen` looked like, and then stopped being about capabilities
 at all: `simulator` is `kind: app` with a `bundleId` and no package, which is why `kind` and
 `runtime` are separate fields — see below.
