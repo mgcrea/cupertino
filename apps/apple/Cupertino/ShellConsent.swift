@@ -536,9 +536,10 @@ struct ShellConfirmSheet {
 }
 
 /// The confirmation window for one request, in the spec's order: who is asking, what the agent
-/// says, the script, how it would run, the risk, and the buttons.
+/// says, the script, how it would run, the risk, and the buttons. Not private, so
+/// `make shell-window-check` can measure its views.
 @MainActor
-private struct PromptWindow {
+struct PromptWindow {
   let panel: ShellPanel
   let runButtons: [HandPressedButton]
   /// Shown while another program's window is over this one. Always laid out, as tall as the
@@ -763,7 +764,11 @@ private struct PromptWindow {
     view.textContainer?.widthTracksTextView = true
     var height: CGFloat = 40
     if let layout = view.layoutManager, let container = view.textContainer {
-      layout.ensureLayout(for: container)
+      // By character range: with a text container inset, as the bezelled script view has,
+      // `ensureLayout(for: container)` lays out nothing and `usedRect` comes back empty, so
+      // every script showed at `scriptLeast` whatever its length, two and a half lines of it.
+      layout.ensureLayout(
+        forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
       height = layout.usedRect(for: container).height + view.textContainerInset.height * 2 + 4
     }
     scroll.translatesAutoresizingMaskIntoConstraints = false

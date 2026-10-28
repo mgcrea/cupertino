@@ -58,6 +58,7 @@ struct ShellWindowCheck {
     buttonChecks()
     sheetChecks()
     noScreenChecks()
+    scriptHeightChecks()
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
@@ -321,6 +322,29 @@ struct ShellWindowCheck {
     cg.setIntegerValueField(
       .eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
     return NSEvent(cgEvent: cg)
+  }
+
+  /// The height a `PromptWindow.textView` was given.
+  @MainActor static func height(_ view: NSScrollView) -> CGFloat? {
+    view.constraints.first {
+      $0.firstItem === view && $0.firstAttribute == .height && $0.secondItem == nil
+    }?.constant
+  }
+
+  @MainActor static func scriptHeightChecks() {
+    print("\nPromptWindow: the script's view is as tall as the script, up to its cap")
+    let one = height(PromptWindow.textView("echo", width: 560, maxHeight: 600))
+    let five = height(
+      PromptWindow.textView(
+        (1...5).map { "echo \($0)" }.joined(separator: "\n"), width: 560,
+        maxHeight: 600))
+    let long = height(
+      PromptWindow.textView(
+        (1...200).map { "echo \($0)" }.joined(separator: "\n"), width: 560,
+        maxHeight: 300))
+    check("one line takes the least height", one == PromptWindow.scriptLeast)
+    check("five lines take more than that", (five ?? 0) > (one ?? 0) + 40)
+    check("two hundred lines stop at the cap", long == 300)
   }
 
   @MainActor static func noScreenChecks() {
