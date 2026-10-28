@@ -1,5 +1,7 @@
 # Shell Surface Implementation Plan
 
+> Superseded on 2026-10-28 for how a run starts (`-f`, not `-l`; no process to look up an interpreter; `python3 -I`); see docs/shell.md.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A `shell` surface, served in-process by Cupertino, that runs a one-shot script under

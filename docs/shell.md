@@ -238,23 +238,30 @@ point below except where it says otherwise:
   `jxa` is `osascript -l JavaScript`. Interpreters that are not installed are skipped by the check
   and say so ("ShellRunner: no shell startup files", "`<interpreter>` runs through zsh with no
   startup files").
-- **PATH is the system's, then Homebrew's.** It is built from the root-owned `/etc/paths` and
-  `/etc/paths.d`, in the order `path_helper` reads them for Terminal, then `/opt/homebrew/bin`,
-  `/opt/homebrew/sbin` and `/usr/local/bin` where they exist and are not listed yet ("ShellRunner:
-  the search path, from /etc only"). If `/etc/paths` cannot be read, `/usr/bin:/bin:/usr/sbin:/sbin`
-  stands in for it. Interpreters installed through nvm, pyenv or asdf are not found unless the
-  script sets them up itself, for example with `source ~/.nvm/nvm.sh`, and that line then shows
-  in the window with the rest. Because `/etc/paths`, with `/usr/bin` in it, comes before
-  Homebrew's folders, `python3` is Apple's `/usr/bin/python3` on an Apple silicon Mac that has
-  both; a script that wants Homebrew's names it.
+- **PATH is listed by root-owned files, not made of root-owned folders.** It is built from
+  `/etc/paths` and `/etc/paths.d`, both owned by root, in the order `path_helper` reads them for
+  Terminal, then `/opt/homebrew/bin`, `/opt/homebrew/sbin` and `/usr/local/bin` where they exist
+  and are not listed yet ("ShellRunner: the search path, from /etc only"). If `/etc/paths` cannot
+  be read, `/usr/bin:/bin:/usr/sbin:/sbin` stands in for it. The folders those files name need not
+  be root's: see [What the window cannot show](#what-the-window-cannot-show). Interpreters installed
+  through nvm, pyenv or asdf are not found unless the script sets them up itself, for example with
+  `source ~/.nvm/nvm.sh`, and that line then shows in the window with the rest.
+- **Which interpreter a name finds depends on the Mac.** On this Mac, on 2026-10-28 (macOS 27.0.1),
+  `/etc/paths` lists `/usr/local/bin` first, then `/System/Cryptexes/App/usr/bin`, `/usr/bin`,
+  `/bin`, `/usr/sbin` and `/sbin`, and `/opt/homebrew/bin` comes later from
+  `/etc/paths.d/homebrew`. `/usr/local/bin` is root's here and holds no interpreter, so `python3`
+  is Apple's `/usr/bin/python3` and `node` is Homebrew's `/opt/homebrew/bin/node`. On a Mac where
+  `/usr/local/bin` holds a `python3`, `bash` or `osascript` (Intel Homebrew, a python.org install),
+  that one is found ahead of `/usr/bin`'s. A script that wants a particular one names its path.
 - **Finding an interpreter starts nothing.** `ShellRunner.resolve` walks that PATH in Swift, so
   `apple_shell_diagnostics` starts no process at all ("resolving every interpreter starts no
   process").
 - **python3 runs isolated, as `python3 -I`.** No user site-packages, so no `.pth` file or
-  `usercustomize` there runs; no script folder on `sys.path`, so a planted `json.py` beside the
-  script file does not shadow the standard library's; and `PYTHON*` variables are ignored. A script
-  that needs the user site-packages adds them to `sys.path` itself ("ShellRunner: python3 runs
-  isolated", with a non-isolated control that does run the planted files).
+  `usercustomize` there runs, and no script folder on `sys.path`, so a planted `json.py` beside the
+  script file does not shadow the standard library's ("ShellRunner: python3 runs isolated", with a
+  non-isolated control that does run the planted files). `PYTHON*` variables are ignored too: `-I`
+  ignores them, and none reaches the script anyway ("env has only the base keys"). A script that
+  needs the user site-packages adds them to `sys.path` itself.
 - **A minimal environment:** `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and that `PATH`.
   Nothing of Cupertino's own environment, and none of the `APPLE_*` server variables ("env has only
   the base keys"). Signal dispositions are reset, so the app's ignored SIGPIPE does not reach the
@@ -288,16 +295,21 @@ That was closed on 2026-10-28 by `-f`, the PATH from `/etc`, a lookup that start
 
 The window shows the script, not what the programs it calls will do. Residuals no check pins:
 
-- **Binaries on PATH can be the person's to replace.** An approved run still starts programs from
-  PATH folders a same-user process may own: `/opt/homebrew/bin` is owned by the user on this Mac,
-  and `/usr/local/bin` is on Intel Homebrew Macs. Such a process could replace a binary an approved
-  script calls, or shadow a command with one of the same name earlier on PATH.
+- **The interpreter itself can be the person's to replace.** This is the most direct case. The
+  interpreter is resolved from the same PATH as everything else, and `node`, and Homebrew's
+  `python3`, live in `/opt/homebrew/bin`, which the user owns on this Mac (checked 2026-10-28).
+  `/usr/local/bin`, first in `/etc/paths`, is user-owned on an Intel Homebrew Mac and can hold a
+  python.org `python3`, ahead of `/usr/bin` for `bash`, `osascript` and `python3`. A same-user
+  process can replace that binary, and every approved run with that interpreter then runs its code.
+- **So can any binary on PATH.** The same folders hold the programs a script calls. A same-user
+  process could replace one, or shadow a command with one of the same name earlier on PATH.
 - **So can anything the script reads or sources.** A file the script sources, a module it imports
   from a writable folder, a config file a tool it calls reads: all run or are read with the run's
   grants, and none is in the window.
 - **node's `require()`.** A non-core module name resolves from a `node_modules` folder above the
-  script file, and the script file sits in `$TMPDIR`. A planted `node_modules` there can shadow a
-  package the script asks for. Ruled a residual: it only loads a module the script itself names.
+  script file, which sits in `$TMPDIR`, and then from `~/.node_modules` and `~/.node_libraries`.
+  The user can write to all of them, so a planted module there can shadow a package the script
+  asks for. Ruled a residual: it only loads a module the script itself names.
 
 ## Cancellation, switching off and quitting
 
@@ -323,8 +335,11 @@ The window shows the script, not what the programs it calls will do. Residuals n
 **What a stop cannot reach (known residual, no check pins it).** Every stop above, at a timeout, a
 cancel, switching off or quitting, signals the run's process group, so it reaches only what is
 still in that group. A script that double-forks through `setsid`, hands a job to `launchctl submit`,
-or starts an app with `open` leaves processes that survive the stop and keep Cupertino's grants,
-with nothing supervising them. No supported macOS API tracks processes once they leave the group.
+or starts an app with `open` leaves processes that survive the stop, with nothing supervising them.
+No supported macOS API tracks processes once they leave the group. The forked process keeps
+Cupertino as its responsible process, and so keeps Cupertino's grants. A `launchctl submit` job and
+an app started with `open` are spawned by launchd and are normally their own responsible process,
+so they are expected not to hold Cupertino's grants; that has not been measured.
 
 ## What is recorded
 
@@ -343,10 +358,11 @@ folder. Each line holds:
   `busy`, `cancelled` or `invalid`
 - the exit code or signal, whether it timed out, and the duration
 
-**Never the text of the script or of stdin, and never any output.** The hashes close the gap the
-activity log leaves: it keeps at most 4 KB of a call's whole arguments object, so a script hiding
-its payload past that much harmless text would be logged without it, and stdin can carry the real
-payload (`sh -s`). Lines are
+**The run record never holds the text of the script or of stdin, or any output.** That is a
+property of this record only: the activity log and the audit file can hold the first 4 KB of the
+arguments, script and stdin among them (see below). The hashes close the gap those leave: they
+keep at most 4 KB of a call's whole arguments object, so a script hiding its payload past that much
+harmless text would be logged without it, and stdin can carry the real payload (`sh -s`). Lines are
 chained with `AuditChain`, which gives tamper evidence, not prevention: a same-user process can
 still delete the files. 90 days are kept. The Shell pane lists the 20 most recent under "Recent
 runs", with a 12-digit prefix of each script's hash. `make shell-check`, "ShellRecord" and
@@ -369,7 +385,11 @@ Shell calls also go through the existing activity log path, under its existing s
   stderr reach the Activity window only under the content switch for Shell, `captureContent.shell`,
   which falls back to the app-wide `captureContent`, because output can be the text of somebody's
   mail.
-- **The audit file**, off by default, gets a Shell result with its decision and exit only when
+- **The audit file**, off by default, gets every call's arguments when `auditEnabled` and
+  `auditPayloads` are both on, in either capture mode that keeps arguments. `auditContent` does not
+  strip them, because `script`, `stdin`, `purpose` and `cwd` are not among the keys it treats as
+  content. So up to 4 KB of the arguments, the script and stdin among them, reach disk in plain
+  text. It gets a Shell result with its decision and exit only when
   `auditEnabled` and `auditPayloads` are both on, the capture mode is "Arguments and results", and
   the live capture kept the row in the first place. On the way to the file, `auditContent`
   re-redacts it: without that switch, stdout and stderr are taken out again, even when the

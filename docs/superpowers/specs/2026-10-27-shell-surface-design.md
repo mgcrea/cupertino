@@ -1,5 +1,7 @@
 # Shell surface: design
 
+> Superseded on 2026-10-28 for how a run starts (`-f`, not `-l`; no process to look up an interpreter; `python3 -I`); see docs/shell.md.
+
 Date: 2026-10-27. Status: design approved by Olivier in chat on 2026-10-27, with the review's three questions
 answered the same day; this document is the write-up, for planning.
 
