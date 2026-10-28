@@ -13,10 +13,10 @@ import { registerWriteTools } from "./writes.js";
 
 export type ToolContext = {
   /**
-   * Gates the six tools that change something outside this process, across two
+   * Gates the seven tools that change something outside this process, across two
    * lanes that have nothing in common but this flag.
    *
-   * `open_url` and `add_reading_list_item` are Apple Events, so with writes off
+   * `open_url`, `add_reading_list_item` and `close_tabs` are Apple Events, so with writes off
    * this server sends an Apple Event for exactly one thing — reading live tabs —
    * and changes nothing anywhere.
    *

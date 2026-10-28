@@ -63,6 +63,7 @@ which the user can see and revoke per site.
 | ------------------------------------ | --------------------------------------- |
 | `apple_safari_open_url`              | open a URL, in a new tab or the current |
 | `apple_safari_add_reading_list_item` | save a URL for later                    |
+| `apple_safari_close_tabs`            | close tabs an agent opened, if unmoved  |
 | `apple_safari_click`                 | click an element on a live page         |
 | `apple_safari_fill`                  | type into one                           |
 | `apple_safari_scroll`                | scroll a page                           |
@@ -72,7 +73,7 @@ which the user can see and revoke per site.
 
 | Variable                               | Default       |                                                       |
 | -------------------------------------- | ------------- | ----------------------------------------------------- |
-| `APPLE_SAFARI_ALLOW_WRITES`            | off           | Register the five write tools at all.                 |
+| `APPLE_SAFARI_ALLOW_WRITES`            | off           | Register the seven write tools at all.                |
 | `APPLE_SAFARI_ALLOW_CODES`             | off           | One-time codes — see below.                           |
 | `APPLE_SAFARI_ALLOW_NETWORK`           | off           | Network capture — see below.                          |
 | `APPLE_SAFARI_DOWNLOAD_DIR`            | `~/Downloads` | Where `network_get` `saveAs` writes.                  |
@@ -81,6 +82,7 @@ which the user can see and revoke per site.
 | `APPLE_SAFARI_STORE`                   | auto          | Explicit `History.db` path.                           |
 | `APPLE_SAFARI_BOOKMARKS`               | auto          | Explicit `Bookmarks.plist` path.                      |
 | `APPLE_SAFARI_PAGES`                   | auto          | Explicit extension capture directory.                 |
+| `APPLE_SAFARI_OPENED_TABS`             | auto          | Explicit record of tabs `open_url` opened.            |
 | `APPLE_SAFARI_ACTION_TIMEOUT_MS`       | `12000`       | How long an action waits for the page to answer.      |
 | `APPLE_SAFARI_LIVE_READ_TIMEOUT_MS`    | `2500`        | How long `read_page` waits on the tab. `0` = capture. |
 | `APPLE_SAFARI_READING_LIST_CONFIRM_MS` | `1500`        | Beat before re-reading to confirm a Reading List add. |

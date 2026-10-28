@@ -629,9 +629,10 @@ credential now comes back `redacted: "credential"` with `hasValue` and no value,
 returns it**. The one-time-code setting is named for codes and does not widen past them; see
 [Reading a code](#reading-a-code-and-the-two-places-one-can-be).
 
-**`close_tab`**, because closing destroys state that cannot be recovered — a half-filled form, a page
-that no longer resolves — and it is the one verb here that doing again differently does not undo. Not
-hard; a separate decision.
+**Closing a tab that is not the agent's.** Closing destroys state that cannot be recovered — a
+half-filled form, a page that no longer resolves — and it is the one verb here that doing again
+differently does not undo. This paragraph used to rule out `close_tab` altogether; the decision has
+since been made the narrow way, see [Closing a tab, built](#closing-a-tab-built).
 
 **`search_web`**, which is `open_url` with the search engine's URL.
 
@@ -717,6 +718,82 @@ arms: a hit stops after one walk, a miss costs two.
 
 The three-state design stands regardless — the cost of being wrong in the other direction is a
 duplicate nothing can remove.
+
+## Closing a tab, built
+
+**`apple_safari_close_tabs` closes only tabs an agent opened, and only while each still shows the URL
+it was opened on.** It came from cleaning up after research: an agent had opened thirteen tabs in the
+user's Safari and could not close any of them.
+
+### A tab has no identity, so the agent's tabs are written down
+
+Safari's `tab` class has `URL`, `name`, `index`, `visible`, `text`, `source` and a hidden `pid` (the
+WebContent process, shared between tabs and replaced on navigation), and no id. The extension lane
+has none to offer either: its manifest asks for `nativeMessaging` only, and `tabs` would change the
+permission Safari asks the user for. So "a tab the agent opened" cannot be read off Safari; it has to
+be recorded when it is opened.
+
+`open_url` with `target: "new-tab"` writes one JSON file per tab into
+`~/Library/Application Support/io.mgcrea.cupertino/safari/opened-tabs/` (`APPLE_SAFARI_OPENED_TABS`
+overrides it): the URL asked for, the Safari window id the tab was pushed into (null when Safari
+chose the window), and when. It returns `ref: "st1:<uuid>"`. `current-tab` records nothing — that
+tab was the user's, and the agent only navigated it. Every server process shares the directory,
+which is what lets one session close what another opened; one file per entry means two servers
+recording at once cannot lose each other's entries. Entries expire after seven days.
+
+### Found again by URL, and nothing is chosen when two tabs could be it
+
+`close_tabs` (`refs`, or `all: true`) reads the live tabs and, for each entry, looks for tabs on its
+URL — compared after WHATWG parsing, so a bare host and its trailing slash agree, while query and
+fragment stay significant. It looks in the entry's window while that window is open, and in every
+window once it has gone, since window ids do not survive a relaunch and session restore brings the
+tabs back. Then:
+
+- as many tabs on the URL as agent entries claim it: each entry takes one, and they are closed;
+- MORE tabs than entries: one of them is the user's, so every one is reported `ambiguous` and left
+  open, and the entry kept. A tab whose URL could not be read — loading, a native error page, a
+  window whose tab list failed — counts as one that might show it, so it makes its window
+  ambiguous too: `LIVE_TABS` reports such tabs in `unreadable` rather than dropping them, since
+  a list that silently omitted the agent's own tab would let the user's copy of the page pass
+  for it;
+- no tab on the URL: `notFound`, and the entry forgotten. The tab was closed, or it moved to another
+  page, and this version cannot tell which.
+
+Entries whose window is still open are matched first, inside it; entries whose window has gone are
+matched afterwards, across every window, among the tabs the first pass did not take — so an old
+entry can never claim a live one's tab. A ref given twice is closed once.
+
+The close script checks each tab again immediately before `close` — window by Safari's id
+(`windows.byId`, confirmed, never a position in the window list), tab position, exact URL — and skips one that no longer matches as `stale`, so a tab dragged between the read and
+the close is never mistaken for its new neighbour. Targets go rightmost first within a window, so
+one close never moves the next. Safari is not launched, and nothing is forgotten while it is quit.
+
+### What this costs, and the version that would not pay it
+
+**A tab that leaves its URL is let go.** A redirect on load, a link the agent followed with `click`
+or `submit`, or the user navigating all turn the agent's tab into one this tool cannot close, and the
+result can only say `notFound`, not where the tab went. And with two tabs on one page, one of which
+moved away, the remaining one is closed whichever of the two it was — the same page, but not
+necessarily the same form state.
+
+The fuller version follows a tab through navigation by position. Each entry keeps the window's whole
+list of tab URLs as last seen, refreshed whenever the server reads tabs (`list_tabs` too), and finds
+the tab again by aligning the old list against the current one: neighbours that still match pin the
+gap the tab sits in, and a single changed tab in that gap is it. That turns `notFound` into "this tab,
+now on this URL", which is where a confirmation belongs — close it only on `confirm: true`, after the
+agent has asked the user. It was designed and set aside for the simpler rule: the alignment is the
+one part that could close the user's tab by mistake, and it is worth building only once redirects
+turn out to be common in practice. The live run below is what would say.
+
+**Unmeasured.** `tab.close()` from JXA against a live Safari, the window id read back by `open_url`,
+`windows.byId`, and how often a freshly opened tab's URL differs from the one asked for. The scripts
+are run in tests (`test/jxa-run.test.ts`) against a fake that resolves specifiers by position the
+way JXA does, which is not Safari. `scripts/probe-safari-write.mjs` does not cover closing yet.
+
+**Tab Groups are the open risk.** If `tabs of window` lists only the group on screen — believed, not
+measured — then an agent tab in a hidden group is invisible, and the user's own tab on the same URL
+in the visible group would pass for it. Window scoping does not help, since both are in one window.
+This has to be measured before the tool is trusted with a Safari that uses Tab Groups.
 
 ## Acting on a page, built
 

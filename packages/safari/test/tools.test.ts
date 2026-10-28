@@ -182,15 +182,17 @@ describe("tool registration", () => {
    * it still does the same job in the other direction: the read set must be
    * untouched, and only the named verbs may appear.
    */
-  it("adds six write tools with writes enabled, and nothing else", async () => {
+  it("adds seven write tools with writes enabled, and nothing else", async () => {
     const off = await toolNames(await connect());
     const on = await toolNames(await connect({ APPLE_SAFARI_ALLOW_WRITES: "true" }));
     expect(on.filter((n) => !off.includes(n))).toEqual([
-      // Two Apple Events that move the browser between pages…
+      // Three Apple Events: two that move the browser between pages and one
+      // that closes the tabs an agent opened…
       "apple_safari_add_reading_list_item",
       // …and four that act inside one, through the extension, sending no
       // Apple Event at all.
       "apple_safari_click",
+      "apple_safari_close_tabs",
       "apple_safari_fill",
       "apple_safari_open_url",
       "apple_safari_scroll",
@@ -210,6 +212,7 @@ describe("tool registration", () => {
     expect(names).not.toContain("apple_safari_click");
     expect(names).not.toContain("apple_safari_fill");
     expect(names).not.toContain("apple_safari_submit");
+    expect(names).not.toContain("apple_safari_close_tabs");
   });
 
   /**

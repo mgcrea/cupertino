@@ -13,8 +13,9 @@
  * `test/jxa.test.ts` asserts no script in this package contains `doJavaScript`,
  * and that assertion covers this file too.
  *
- * So what ships here is navigation and the Reading List: the writes that move a
- * browser between pages rather than reaching into one.
+ * So what ships here is navigation, the Reading List, and closing a tab an
+ * agent opened: the writes that move a browser between pages rather than
+ * reaching into one.
  *
  * ## A `javascript:` URL is `do JavaScript` by another name
  *
@@ -97,6 +98,7 @@ function run(argv) {
   try { wins = S.windows(); } catch (e) { wins = []; }
 
   var route = null;
+  var windowId = null;
   var target = p.target === "current-tab" ? "current-tab" : "new-tab";
 
   try {
@@ -104,6 +106,9 @@ function run(argv) {
       wins[0].currentTab.url = p.url;
       route = "current-tab";
     } else if (wins.length > 0) {
+      // Read before the push, from the window pushed into: the id is what the
+      // record of opened tabs scopes this tab to.
+      try { windowId = wins[0].id(); } catch (e) {}
       var t = S.Tab({ url: p.url });
       wins[0].tabs.push(t);
       // Selecting it is what makes "open a tab" mean what a person means by it.
@@ -148,6 +153,7 @@ function run(argv) {
       route: route,
       launchedSafari: wasRunning === null ? null : !wasRunning,
       windows: windows,
+      windowId: windowId,
       tab: { url: landedUrl, title: landedTitle, index: landedIndex }
     }
   });
@@ -213,5 +219,74 @@ function run(argv) {
     ok: true,
     data: { launchedSafari: wasRunning === null ? null : !wasRunning }
   });
+}
+`;
+
+/**
+ * Close tabs an agent opened, each only if it is still where it was seen.
+ *
+ * The server has already found each tab in the record of opened tabs
+ * (`opened.ts`) and sends where it saw it: Safari's window id, the tab's
+ * position, and the URL it showed. Between that read and this script the user
+ * may have dragged, closed or navigated a tab, and a position alone would then
+ * name a different one. So every target is checked again here, immediately
+ * before `close`, and one that no longer matches exactly is skipped and
+ * reported `stale` rather than closed.
+ *
+ * Targets arrive rightmost first within a window, so closing one never moves
+ * the position of the next.
+ *
+ * Safari is not launched: a quit Safari has no tabs to close, and session
+ * restore may bring the recorded ones back, so the record is left alone.
+ */
+export const CLOSE_TABS = `
+function run(argv) {
+  var p = JSON.parse(argv[0]);
+  var S = Application("Safari");
+
+  var running = null;
+  try { running = Boolean(S.running()); } catch (e) {}
+  if (running === false) {
+    return JSON.stringify({ ok: true, data: { running: false, results: [] } });
+  }
+
+  // Touched once so a missing grant is reported as one, before any target.
+  try {
+    S.windows.length;
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: { code: "NO_ACCESS", message: String(e.message || e) } });
+  }
+
+  var results = [];
+  for (var j = 0; j < p.targets.length; j++) {
+    var t = p.targets[j];
+
+    // By id, and confirmed: a window found by its place in the list would
+    // become a different window when an earlier close emptied one before it.
+    var w = null;
+    try {
+      w = S.windows.byId(t.windowId);
+      if (w.id() !== t.windowId) w = null;
+    } catch (e) { w = null; }
+    if (!w) { results.push({ id: t.id, outcome: "stale" }); continue; }
+
+    var tabs = [];
+    try { tabs = w.tabs(); } catch (e) { tabs = []; }
+    var tab = tabs[t.index - 1];
+    var url = null;
+    try { url = tab ? String(tab.url()) : null; } catch (e) {}
+    if (url !== t.url) { results.push({ id: t.id, outcome: "stale" }); continue; }
+
+    // Closing a window's last tab closes the window, which is worth saying.
+    var last = tabs.length === 1;
+    try {
+      tab.close();
+      results.push({ id: t.id, outcome: "closed", windowClosed: last });
+    } catch (e) {
+      results.push({ id: t.id, outcome: "failed", message: String(e.message || e) });
+    }
+  }
+
+  return JSON.stringify({ ok: true, data: { running: true, results: results } });
 }
 `;

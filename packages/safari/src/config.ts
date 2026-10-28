@@ -47,6 +47,12 @@ const ConfigSchema = BaseConfigSchema.extend({
    */
   pagesPath: z.string().optional(),
   /**
+   * Explicit directory for the record of tabs `open_url` opened, which is what
+   * `close_tabs` may close. Shared by every server by default, so a tab one
+   * session opened can be closed from another; see `client/opened.ts`.
+   */
+  openedTabsPath: z.string().optional(),
+  /**
    * How long to wait before re-reading `Bookmarks.plist` to confirm a Reading
    * List add, and how long to wait again before giving up.
    *
@@ -176,6 +182,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     storePath: trimmed(env.APPLE_SAFARI_STORE),
     bookmarksPath: trimmed(env.APPLE_SAFARI_BOOKMARKS),
     pagesPath: trimmed(env.APPLE_SAFARI_PAGES),
+    openedTabsPath: trimmed(env.APPLE_SAFARI_OPENED_TABS),
     readingListConfirmMs: parseIntOpt(env.APPLE_SAFARI_READING_LIST_CONFIRM_MS),
     actionTimeoutMs: parseIntOpt(env.APPLE_SAFARI_ACTION_TIMEOUT_MS),
     liveReadTimeoutMs: parseIntOpt(env.APPLE_SAFARI_LIVE_READ_TIMEOUT_MS),

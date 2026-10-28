@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   decodeBookmarkRef,
   decodeHistoryRef,
+  decodeOpenedTabRef,
   encodeBookmarkRef,
   encodeHistoryRef,
+  encodeOpenedTabRef,
   InvalidSafariRefError,
 } from "../src/client/ref.js";
 
@@ -66,6 +68,22 @@ describe("bookmark refs", () => {
 
   it("rejects a history ref", () => {
     expect(() => decodeBookmarkRef("s1:https://example.com/")).toThrow(InvalidSafariRefError);
+  });
+});
+
+describe("opened-tab refs", () => {
+  const id = "0b4c6e2a-9f1d-4a3b-8c5e-7d6f5a4b3c2d";
+
+  it("round-trips the record's id", () => {
+    expect(decodeOpenedTabRef(encodeOpenedTabRef(id))).toBe(id);
+  });
+
+  it.each(["st1:", "st1:../../etc", `s1:${id}`, id])("rejects %s", (raw) => {
+    expect(() => decodeOpenedTabRef(raw)).toThrow(InvalidSafariRefError);
+  });
+
+  it("names a history ref handed to it", () => {
+    expect(() => decodeOpenedTabRef("s1:https://example.com/")).toThrow("HISTORY ref");
   });
 });
 

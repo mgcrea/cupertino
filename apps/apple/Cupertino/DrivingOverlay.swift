@@ -423,6 +423,7 @@ extension VisibleTools.Notice {
     case .showing(.fillingPage): "character.cursor.ibeam"
     case .showing(.scrollingPage): "arrow.up.and.down"
     case .showing(.submittingPage): "paperplane"
+    case .showing(.closingTabs): "xmark.square"
     case .showing(.openingPlace): "map"
     case .launching: "arrow.up.forward.app"
     }
@@ -443,6 +444,7 @@ extension VisibleTools.Notice {
     case .showing(.fillingPage): "Filling in a form. You can keep working."
     case .showing(.scrollingPage): "Scrolling a page. You can keep working."
     case .showing(.submittingPage): "Sending a form. You can keep working."
+    case .showing(.closingTabs): "Closing tabs it opened. You can keep working."
     case .showing(.openingPlace): "Opening a place in the background. You can keep working."
     case .launching: "It was not running. You can keep working."
     }

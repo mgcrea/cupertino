@@ -33,7 +33,13 @@ import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
  * above does not apply — there is a stable opaque id and it is used. Reading
  * List entries are bookmarks in that file, so one ref kind covers both.
  *
- * ## Why `s1:` and `sb1:`
+ * ## Why opened tabs get the record's id
+ *
+ * A live tab has no id at all, so `st1:` names an entry in the record
+ * `open_url` keeps of the tabs it opened (`opened.ts`), not a tab. The tab is
+ * found again by its URL when the ref is used.
+ *
+ * ## Why `s1:`, `sb1:` and `st1:`
  *
  * `c1:` is Calendar's, `r1:` Reminders', `k1:` Contacts', `m1:`/`mc1:`
  * Messages'. A ref that decodes under two surfaces is worse than one that
@@ -44,6 +50,7 @@ import { AppleAutomationError } from "@mgcrea/mcp-apple-core";
 
 export const HISTORY_REF_VERSION = "s1";
 export const BOOKMARK_REF_VERSION = "sb1";
+export const OPENED_TAB_REF_VERSION = "st1";
 
 /**
  * Greedy tails. A URL contains `:`, `/`, `?`, `#` and anything else a site
@@ -52,6 +59,8 @@ export const BOOKMARK_REF_VERSION = "sb1";
  */
 const HISTORY_PATTERN = /^s1:(.+)$/s;
 const BOOKMARK_PATTERN = /^sb1:(.+)$/s;
+/** Not a greedy tail: the payload is an id that names a file, so it is held to its shape. */
+const OPENED_TAB_PATTERN = /^st1:([0-9a-f-]{36})$/;
 
 const otherSurface = (raw: string): string => {
   if (raw.startsWith("c1:")) return " That one is a Calendar event ref.";
@@ -59,16 +68,23 @@ const otherSurface = (raw: string): string => {
   if (raw.startsWith("k1:")) return " That one is a Contacts ref.";
   if (raw.startsWith("mc1:")) return " That one is a Messages chat ref.";
   if (raw.startsWith("m1:")) return " That one is a Messages message ref.";
-  if (raw.startsWith("sb1:")) return " That one is a BOOKMARK ref — this wants a history ref.";
-  if (raw.startsWith("s1:")) return " That one is a HISTORY ref — this wants a bookmark ref.";
+  if (raw.startsWith("st1:")) return " That one is an OPENED-TAB ref.";
+  if (raw.startsWith("sb1:")) return " That one is a BOOKMARK ref.";
+  if (raw.startsWith("s1:")) return " That one is a HISTORY ref.";
   return "";
 };
+
+const SHAPES = {
+  history: '"s1:<url>"',
+  bookmark: '"sb1:<uuid>"',
+  "opened tab": '"st1:<uuid>"',
+} as const;
 
 export class InvalidSafariRefError extends AppleAutomationError {
   override readonly name = "InvalidSafariRefError";
 
-  constructor(raw: string, want: "history" | "bookmark") {
-    const shape = want === "history" ? '"s1:<url>"' : '"sb1:<uuid>"';
+  constructor(raw: string, want: keyof typeof SHAPES) {
+    const shape = SHAPES[want];
     super(
       `"${raw}" is not a ${want} ref. Refs come from apple_safari_* results and look like ` +
         `${shape} — they are opaque and must not be constructed by hand.${otherSurface(raw)}`,
@@ -79,6 +95,7 @@ export class InvalidSafariRefError extends AppleAutomationError {
 
 export const encodeHistoryRef = (url: string): string => `${HISTORY_REF_VERSION}:${url}`;
 export const encodeBookmarkRef = (uuid: string): string => `${BOOKMARK_REF_VERSION}:${uuid}`;
+export const encodeOpenedTabRef = (id: string): string => `${OPENED_TAB_REF_VERSION}:${id}`;
 
 export const decodeHistoryRef = (raw: string): string => {
   // Only the envelope is trimmed. Leading and trailing whitespace INSIDE a URL
@@ -92,5 +109,11 @@ export const decodeHistoryRef = (raw: string): string => {
 export const decodeBookmarkRef = (raw: string): string => {
   const m = BOOKMARK_PATTERN.exec(raw.trim());
   if (!m?.[1]) throw new InvalidSafariRefError(raw, "bookmark");
+  return m[1];
+};
+
+export const decodeOpenedTabRef = (raw: string): string => {
+  const m = OPENED_TAB_PATTERN.exec(raw.trim());
+  if (!m?.[1]) throw new InvalidSafariRefError(raw, "opened tab");
   return m[1];
 };

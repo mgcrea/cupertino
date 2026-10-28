@@ -91,10 +91,11 @@ export const buildDiagnostics = async (
           "allowed on that site, or the page closed — and never that the page refused.",
       },
       writes: client.config.allowWrites
-        ? "enabled — open_url and add_reading_list_item (Apple Events), plus click, fill and " +
-          "scroll (extension, no Apple Event)"
+        ? "enabled — open_url, add_reading_list_item and close_tabs (Apple Events), plus " +
+          "click, fill, submit and scroll (extension, no Apple Event)"
         : "off — set APPLE_SAFARI_ALLOW_WRITES to enable open_url, add_reading_list_item, " +
-          "click, fill and scroll. They are not registered at all, so they do not appear in " +
+          "close_tabs, click, fill, submit and scroll. They are not registered at all, so they " +
+          "do not appear in " +
           "the tool list.",
       codes: client.config.allowCodes
         ? "enabled — apple_safari_find_codes is registered, and page_elements returns the " +

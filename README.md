@@ -40,7 +40,7 @@ off cannot see that they exist.
 | Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
 | Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
 | Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches       |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 19 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 20 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
@@ -318,14 +318,15 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 
 ### Safari
 
-| Always available                                     | Write-gated                        | Behind their own flag                         |
-| ---------------------------------------------------- | ---------------------------------- | --------------------------------------------- |
-| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` | `find_codes`                                  |
-| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll` `submit`   | `network_record` `network_list` `network_get` |
-| `wait_for` `diagnostics`                             |                                    |                                               |
+| Always available                                     | Write-gated                                     | Behind their own flag                         |
+| ---------------------------------------------------- | ----------------------------------------------- | --------------------------------------------- |
+| `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` `close_tabs` | `find_codes`                                  |
+| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll` `submit`                | `network_record` `network_list` `network_get` |
+| `wait_for` `diagnostics`                             |                                                 |                                               |
 
 **The widest write set here, and it splits across two lanes that share nothing but the flag.**
-`open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser.
+`open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, and
+`close_tabs` closes only tabs `open_url` opened, while they still show the URL they were opened on.
 `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari
 consents to one website at a time — so their real gate is a per-site grant the user can see and
 revoke, and the write flag is the second lock rather than the only one. `find_codes` is registered

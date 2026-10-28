@@ -18,7 +18,7 @@ import {
 } from "./errors.js";
 import { BOOKMARKS_WALK } from "./jxa/bookmarks.js";
 import { LIVE_TABS } from "./jxa/tabs.js";
-import { ADD_READING_LIST_ITEM, OPEN_URL } from "./jxa/writes.js";
+import { ADD_READING_LIST_ITEM, CLOSE_TABS, OPEN_URL } from "./jxa/writes.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { extensionRanges, urlVariants, type MatchKind } from "./match.js";
 import {
@@ -32,6 +32,14 @@ import {
   type RecordState,
 } from "./network.js";
 import {
+  forgetOpenedTabs,
+  locateOpenedTabs,
+  openedTabsDirectory,
+  readOpenedTabs,
+  recordOpenedTab,
+  type OpenedTab,
+} from "./opened.js";
+import {
   ageSeconds,
   answeringDiagnosis,
   defaultPagesDirectory,
@@ -44,7 +52,12 @@ import {
   type HeartbeatStatus,
   type PagesStatus,
 } from "./pages.js";
-import { encodeBookmarkRef, encodeHistoryRef } from "./ref.js";
+import {
+  decodeOpenedTabRef,
+  encodeBookmarkRef,
+  encodeHistoryRef,
+  encodeOpenedTabRef,
+} from "./ref.js";
 import { openStore, type HistoryRow, type RangeQuery, type SafariStore } from "./store.js";
 
 /**
@@ -153,8 +166,12 @@ type TabsPayload = {
   windows: number;
   appFrontmost: boolean | null;
   windowOrderUnknown: boolean;
+  /** Tabs the read could not see, per window; `tabs: null` when the whole list failed. */
+  unreadable?: { windowId: number | null; tabs: number | null }[];
   tabs: {
     window: number;
+    /** Safari's window id. Absent from a payload that predates it. */
+    windowId?: number | null;
     windowIndex: number | null;
     index: number | null;
     url: string | null;
@@ -174,8 +191,36 @@ export type OpenUrlResult = {
   /** Null when it could not be read — never guessed. */
   launchedSafari: boolean | null;
   windows: number | null;
+  /** The window a `tab-push` went into; null on every other route. */
+  windowId?: number | null;
   /** Read back immediately, so a still-loading page reports nulls. */
   tab: { url: string | null; title: string | null; index: number | null };
+  /**
+   * The `st1:` ref `close_tabs` takes, when the new tab was recorded. Null for
+   * `current-tab`, which navigated a tab that was the user's, and when the
+   * record could not be written — `refNote` then says why.
+   */
+  ref?: string | null;
+  refNote?: string | null;
+};
+
+export type CloseTabsResult = {
+  safariRunning: boolean;
+  closed: { ref: string; url: string; windowClosed: boolean }[];
+  notFound: { ref: string; url: string; openedAt: string }[];
+  ambiguous: { ref: string; url: string; tabs: number }[];
+  stale: { ref: string; url: string; reason: string | null }[];
+  unknown: string[];
+};
+
+type ClosePayload = {
+  running: boolean;
+  results: {
+    id: string;
+    outcome: "closed" | "stale" | "failed";
+    windowClosed?: boolean;
+    message?: string;
+  }[];
 };
 
 export type AddReadingListItemResult = {
@@ -513,11 +558,136 @@ export class AppleSafariClient {
   }): Promise<OpenUrlResult> {
     this.#assertAppleEventsAllowed("Opening a URL");
     assertNavigableUrl(input.url);
-    return await this.#osascript.run<OpenUrlResult>(OPEN_URL, {
+    const result = await this.#osascript.run<OpenUrlResult>(OPEN_URL, {
       url: input.url,
       target: input.target,
       activate: input.activate,
     });
+    if (input.target === "current-tab" || result.route === "current-tab") {
+      return { ...result, ref: null, refNote: null };
+    }
+    // The page is open whatever happens here, so a record that cannot be
+    // written costs the ref and nothing else.
+    try {
+      const entry = recordOpenedTab(this.openedTabsDirectory, {
+        url: input.url,
+        windowId: result.route === "tab-push" ? (result.windowId ?? null) : null,
+      });
+      return { ...result, ref: encodeOpenedTabRef(entry.id), refNote: null };
+    } catch (cause) {
+      return {
+        ...result,
+        ref: null,
+        refNote:
+          `The tab is open but could not be recorded, so apple_safari_close_tabs cannot close ` +
+          `it. (${String(cause)})`,
+      };
+    }
+  }
+
+  /** Where the record of tabs `openUrl` opened lives; see `opened.ts`. */
+  get openedTabsDirectory(): string {
+    return this.#config.openedTabsPath ?? openedTabsDirectory(this.#home);
+  }
+
+  /**
+   * Close tabs an agent opened: the ones named, or every one in the record.
+   *
+   * A tab is closed only when it still shows the URL it was opened on and no
+   * other open tab could be it; `locateOpenedTabs` decides that, and the close
+   * script checks it again right before closing. Everything else is reported
+   * and left open. An entry is forgotten once its tab is closed or can no
+   * longer be found, and kept when it was ambiguous or stale, since a later
+   * call may yet close it.
+   */
+  async closeTabs(input: { refs: string[] } | { all: true }): Promise<CloseTabsResult> {
+    this.#assertAppleEventsAllowed("Closing a tab");
+    // Decoded before anything is read, so a malformed ref fails the call
+    // without an Apple Event sent.
+    // And deduplicated: one ref twice would send one position twice, and the
+    // tab that slides into it after the first close would pass the second.
+    const ids = "refs" in input ? [...new Set(input.refs.map((r) => decodeOpenedTabRef(r)))] : null;
+
+    const dir = this.openedTabsDirectory;
+    const all = readOpenedTabs(dir);
+    const byId = new Map(all.map((e) => [e.id, e]));
+    const asked: OpenedTab[] = ids ? ids.flatMap((id) => byId.get(id) ?? []) : all;
+    const unknown = ids ? ids.filter((id) => !byId.has(id)).map(encodeOpenedTabRef) : [];
+
+    const result: CloseTabsResult = {
+      safariRunning: true,
+      closed: [],
+      notFound: [],
+      ambiguous: [],
+      stale: [],
+      unknown,
+    };
+    if (asked.length === 0) return result;
+
+    const payload = await this.#osascript.run<TabsPayload>(LIVE_TABS, {});
+    if (payload.running === false) return { ...result, safariRunning: false };
+
+    const live = [
+      ...payload.tabs.map((t) => ({ windowId: t.windowId ?? null, index: t.index, url: t.url })),
+      // A tab the read could not see stands in as one whose URL is unknown,
+      // which is what keeps its window from being called unambiguous.
+      ...(payload.unreadable ?? []).map((u) => ({ windowId: u.windowId, index: null, url: null })),
+    ];
+    const targets: { id: string; windowId: number; index: number; url: string }[] = [];
+    const forget: string[] = [];
+    for (const { entry, outcome } of locateOpenedTabs(asked, all, live)) {
+      const ref = encodeOpenedTabRef(entry.id);
+      if (outcome.kind === "notFound") {
+        result.notFound.push({ ref, url: entry.url, openedAt: entry.openedAt });
+        forget.push(entry.id);
+      } else if (outcome.kind === "ambiguous") {
+        result.ambiguous.push({ ref, url: entry.url, tabs: outcome.tabs });
+      } else {
+        const { windowId, index, url } = outcome.tab;
+        if (windowId === null || index === null || url === null) {
+          result.stale.push({ ref, url: entry.url, reason: "Safari did not report its window." });
+        } else {
+          targets.push({ id: entry.id, windowId, index, url });
+        }
+      }
+    }
+
+    // Before the close, which can time out: a notFound entry is let go either way.
+    forgetOpenedTabs(dir, forget.splice(0));
+
+    // One position, one target. Matching never assigns a tab twice, so this
+    // is the backstop that keeps it impossible rather than merely untested.
+    const seen = new Set<string>();
+    const unique = targets.filter((t) => {
+      const key = `${t.windowId}:${t.index}`;
+      if (seen.has(key)) {
+        result.ambiguous.push({ ref: encodeOpenedTabRef(t.id), url: t.url, tabs: 2 });
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+    if (unique.length > 0) {
+      // Rightmost first within a window, so one close never moves the next.
+      unique.sort((a, b) => a.windowId - b.windowId || b.index - a.index);
+      const closed = await this.#osascript.run<ClosePayload>(CLOSE_TABS, { targets: unique });
+      const outcomes = new Map(closed.results.map((r) => [r.id, r]));
+      for (const t of unique) {
+        const ref = encodeOpenedTabRef(t.id);
+        const url = byId.get(t.id)?.url ?? t.url;
+        const r = outcomes.get(t.id);
+        if (r?.outcome === "closed") {
+          result.closed.push({ ref, url, windowClosed: r.windowClosed === true });
+          forget.push(t.id);
+        } else {
+          result.stale.push({ ref, url, reason: r?.message ?? null });
+        }
+      }
+    }
+
+    forgetOpenedTabs(dir, forget);
+    return result;
   }
 
   /**

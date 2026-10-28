@@ -114,9 +114,22 @@ function run(argv) {
   var out = [];
   var windowOrderUnknown = false;
 
+  // Tabs this read could not see, per window: null when the window's whole tab
+  // list failed. A list of tabs is not complete without it, and close_tabs
+  // will not name a tab the agent's while one it cannot see might be.
+  var unreadable = [];
+
   for (var i = 0; i < wins.length; i++) {
+    // Safari's own id for the window, stable while it stays open. What a
+    // recorded tab is scoped to, and what close_tabs addresses a window by.
+    var windowId = null;
+    try { windowId = wins[i].id(); } catch (e) {}
+
     var tabs = [];
-    try { tabs = wins[i].tabs(); } catch (e) { tabs = []; }
+    try { tabs = wins[i].tabs(); } catch (e) {
+      tabs = [];
+      unreadable.push({ windowId: windowId, tabs: null });
+    }
 
     var currentIndex = null;
     try { currentIndex = wins[i].currentTab().index(); } catch (e) {}
@@ -128,17 +141,20 @@ function run(argv) {
       windowIndex = i + 1;
     }
 
+    var skipped = 0;
     for (var j = 0; j < tabs.length; j++) {
       var url = null, name = null, index = null;
       // Each property defensively: a tab still loading, or showing a native
-      // error page, throws on some of these while answering others.
-      try { url = String(tabs[j].url()); } catch (e) {}
+      // error page, throws on some of these while answering others. A missing
+      // value comes back null, and is kept null rather than made "null".
+      try { var raw = tabs[j].url(); url = raw == null ? null : String(raw); } catch (e) {}
       try { name = String(tabs[j].name()); } catch (e) {}
       try { index = tabs[j].index(); } catch (e) { index = j + 1; }
-      if (url === null && name === null) continue;
+      if (url === null && name === null) { skipped++; continue; }
       var active = currentIndex !== null && index === currentIndex;
       out.push({
         window: i + 1,
+        windowId: windowId,
         windowIndex: windowIndex,
         index: index,
         url: url,
@@ -147,6 +163,7 @@ function run(argv) {
         frontmost: active && windowIndex === 1
       });
     }
+    if (skipped > 0) unreadable.push({ windowId: windowId, tabs: skipped });
   }
 
   return JSON.stringify({
@@ -155,6 +172,7 @@ function run(argv) {
       windows: wins.length,
       appFrontmost: appFrontmost,
       windowOrderUnknown: windowOrderUnknown,
+      unreadable: unreadable,
       tabs: out
     }
   });
