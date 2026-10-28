@@ -50,11 +50,11 @@ hold.
   Guide, with coordinates. The write tools save and remove favourites through a store write, and —
   when Cupertino is hosting the server — save places and file them into Guides through the app's own
   interface. `@mgcrea/mcp-apple-maps`
-- Safari — 19 tools (9 always registered, 6 write-gated, 1 behind its own flag for reading 2FA
+- Safari — 20 tools (9 always registered, 7 write-gated, 1 behind its own flag for reading 2FA
   codes, 3 behind another for reading a page's network traffic). `@mgcrea/mcp-apple-safari`.
   History, live tabs, bookmarks and the Reading List, plus a bundled Safari extension you enable per
   website that reads what a page actually says, waits for text to appear on it, and lets the
-  write-gated tools click, fill, submit forms and scroll. The write tools also open a URL and save one to the Reading List. With "Read network
+  write-gated tools click, fill, submit forms and scroll. The write tools also open a URL, save one to the Reading List, and close the tabs an agent opened. With "Read network
   traffic" on, the extension also records what an armed tab fetches (fetch and XMLHttpRequest from
   the top frame, plus console errors) and can save a file out of a response, such as a PDF returned
   as base64 inside JSON; bodies are not redacted. There is still no `do JavaScript` tool: that verb

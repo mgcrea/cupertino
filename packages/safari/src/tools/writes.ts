@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { PreconditionError } from "../client/errors.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { compact, ok, wrapResult } from "./util.js";
 
@@ -14,10 +15,12 @@ import { compact, ok, wrapResult } from "./util.js";
  * permanent, unreadable Safari toggle — see the header of `jxa/writes.ts`. That
  * capability belongs on the extension lane, where Safari gates it per website.
  *
- * **`close_tab`.** Closing a tab destroys state the user may not be able to get
- * back — a half-filled form, a page that no longer resolves — and unlike every
- * other verb here it cannot be undone by doing it again differently. It is not
- * hard to add; it is a separate decision.
+ * **Closing a tab that is not the agent's.** Closing destroys state the user
+ * may not get back — a half-filled form, a page that no longer resolves — and
+ * unlike every other verb here it cannot be undone by doing it again
+ * differently. So `close_tabs` reaches only tabs `open_url` opened and
+ * recorded, and only while each still shows the URL it was opened on; see
+ * `client/opened.ts`.
  *
  * **`search_web`.** It is `open_url` with the search engine's URL, and one verb
  * that navigates is easier to reason about than two.
@@ -29,6 +32,9 @@ import { compact, ok, wrapResult } from "./util.js";
  * whether to call this on a quiet machine should know that "add this to my
  * Reading List" can put a browser on somebody's screen.
  */
+/** A list only when it has something in it, so an empty outcome is no key at all. */
+const some = <T>(xs: T[]): T[] | undefined => (xs.length > 0 ? xs : undefined);
+
 export const registerWriteTools = (server: McpServer, client: AppleSafariClient): void => {
   server.registerTool(
     "apple_safari_open_url",
@@ -83,6 +89,8 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
             route: result.route,
             windows: result.windows,
             tab: result.tab,
+            ref: result.ref ?? undefined,
+            refNote: result.refNote ?? undefined,
             launchedSafari: result.launchedSafari ? true : undefined,
             // Only when it happened. A note about imprecise placement on a run
             // that placed the tab precisely is noise that trains a reader to
@@ -154,6 +162,64 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
             duplicateNote:
               "The Reading List accepts duplicates and this server cannot remove one. Do not " +
               "call again for the same URL on an unconfirmed result.",
+          }),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "apple_safari_close_tabs",
+    {
+      description:
+        "Close tabs an agent opened with apple_safari_open_url: the ones named by `refs`, or " +
+        "every one still recorded with `all: true` — which includes tabs opened by other " +
+        "sessions. Use it to clean up after research. A tab is closed ONLY while it still " +
+        "shows the URL it was opened on, and only when no more tabs show that URL than agents " +
+        "opened there — two agent tabs on one page are both closed, but a third tab on it " +
+        "leaves all three open, since this server cannot tell tabs on the same page apart. " +
+        "Everything else is left open and reported: `notFound` (the tab was closed, or it " +
+        "moved to another page — a redirect, a link followed — so it may still be open " +
+        "somewhere and is now the user's to close), `ambiguous` (more tabs show the URL than " +
+        "agents opened, or a tab in that window could not be read), `stale` (it moved between " +
+        "the check " +
+        "and the close), `unknown` (a ref that is not in the record). Tell the user which " +
+        "tabs were left open. Sends an Apple Event; does NOT launch Safari, and closes nothing " +
+        "while it is quit. Closing a window's last tab closes the window. There is no undo, " +
+        "though Safari's own History › Reopen Last Closed Tab works.",
+      inputSchema: z.object({
+        refs: z
+          .array(z.string().min(1))
+          .min(1)
+          .optional()
+          .describe(
+            'Refs from apple_safari_open_url results (look like "st1:<uuid>"). Give this or ' +
+              "`all`.",
+          ),
+        all: z
+          .literal(true)
+          .optional()
+          .describe("Every tab still in the record, whichever session opened it."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async ({ refs, all }) =>
+      wrapResult(async () => {
+        if ((refs === undefined) === (all === undefined)) {
+          throw new PreconditionError("Give exactly one of `refs` and `all`.");
+        }
+        const r = await client.closeTabs(refs ? { refs } : { all: true });
+        return ok(
+          compact({
+            safariRunning: r.safariRunning ? undefined : false,
+            closed: some(r.closed),
+            notFound: some(r.notFound),
+            ambiguous: some(r.ambiguous),
+            stale: some(r.stale),
+            unknown: some(r.unknown),
+            note: r.safariRunning
+              ? undefined
+              : "Safari is not running, so nothing was closed. It was not launched to check, " +
+                "and its tabs may come back when it reopens a session.",
           }),
         );
       }),

@@ -433,8 +433,8 @@ export const SURFACES: readonly Surface[] = [
       "apple_safari_wait_for",
       "apple_safari_diagnostics",
     ],
-    // Two verbs that move a browser between pages, and nothing that acts
-    // inside one. There is deliberately no `do JavaScript` tool: it needs a
+    // Two verbs that move a browser between pages and one that closes the
+    // tabs an agent opened, and nothing among them that acts inside a page. There is deliberately no `do JavaScript` tool: it needs a
     // developer-menu toggle which is not a TCC grant and whose own state
     // cannot be read, so diagnostics could never say in advance whether it
     // would work — and Safari exposes no AXWebArea for page content either
@@ -446,6 +446,7 @@ export const SURFACES: readonly Surface[] = [
     write: [
       "apple_safari_open_url",
       "apple_safari_add_reading_list_item",
+      "apple_safari_close_tabs",
       "apple_safari_click",
       "apple_safari_fill",
       "apple_safari_scroll",

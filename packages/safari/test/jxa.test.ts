@@ -25,17 +25,20 @@ const strings = (mod: object): [string, string][] =>
  */
 const READ_SCRIPTS = [...strings(tabs), ...strings(bookmarks)];
 const WRITE_SCRIPTS = strings(writes);
+/** The writes that send Safari to a URL. Closing a tab sends it nowhere. */
+const NAVIGATION_SCRIPTS = WRITE_SCRIPTS.filter(([name]) => name !== "CLOSE_TABS");
 const SCRIPTS = [...READ_SCRIPTS, ...WRITE_SCRIPTS];
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "client", "jxa");
 
 describe("JXA scripts", () => {
   it("found every script", () => {
-    // Two reads — live tabs and the bookmark walk — and two writes: open a URL
-    // and add a Reading List item. A fifth appearing without this number
-    // changing means a script is not being checked by anything below.
+    // Two reads — live tabs and the bookmark walk — and three writes: open a
+    // URL, add a Reading List item, and close tabs an agent opened. Another
+    // appearing without this number changing means a script is not being
+    // checked by anything below.
     expect(READ_SCRIPTS.length).toBe(2);
-    expect(WRITE_SCRIPTS.length).toBe(2);
+    expect(WRITE_SCRIPTS.length).toBe(3);
   });
 
   it.each(SCRIPTS)("%s passes the interpolation tripwire", (_name, source) => {
@@ -140,7 +143,7 @@ describe("JXA scripts", () => {
    * `javascript:` URL through a navigation verb is `do JavaScript` by another
    * name, which is the capability this whole surface declines to offer.
    */
-  it.each(WRITE_SCRIPTS)("%s refuses a non-http scheme in the script", (_name, source) => {
+  it.each(NAVIGATION_SCRIPTS)("%s refuses a non-http scheme in the script", (_name, source) => {
     expect(source).toContain("BAD_SCHEME");
     expect(source).toContain('indexOf("https://")');
   });
@@ -150,7 +153,7 @@ describe("JXA scripts", () => {
    * disclosed as doing so. That disclosure is only honest if the scripts read
    * `running` BEFORE the command that would launch it.
    */
-  it.each(WRITE_SCRIPTS)("%s measures whether Safari was already running", (_name, source) => {
+  it.each(NAVIGATION_SCRIPTS)("%s measures whether Safari was already running", (_name, source) => {
     const asked = source.indexOf("S.running()");
     expect(asked).toBeGreaterThan(-1);
     // The first verb that would launch Safari. Read `running` after any of
@@ -161,6 +164,34 @@ describe("JXA scripts", () => {
       .filter((at) => at > -1);
     expect(launches.length).toBeGreaterThan(0);
     expect(asked).toBeLessThan(Math.min(...launches));
+  });
+
+  /**
+   * Closing is the one write that cannot be undone by doing something else, so
+   * its script carries its own guards rather than trusting the server's read.
+   */
+  describe("CLOSE_TABS", () => {
+    const source = writes.CLOSE_TABS;
+
+    it("does not launch a quit Safari to close its tabs", () => {
+      expect(source.indexOf("S.running()")).toBeGreaterThan(-1);
+      expect(source.indexOf("S.running()")).toBeLessThan(source.indexOf("S.windows"));
+    });
+
+    it("checks the tab's URL again immediately before closing it", () => {
+      const check = source.indexOf("url !== t.url");
+      expect(check).toBeGreaterThan(-1);
+      expect(check).toBeLessThan(source.indexOf("tab.close()"));
+    });
+
+    it("addresses a window by Safari's id, never by its position", () => {
+      expect(source).toContain("S.windows.byId(t.windowId)");
+      expect(source).not.toMatch(/windows\[\s*t\./);
+    });
+
+    it("navigates nowhere", () => {
+      expect(source).not.toMatch(/\.url\s*=|openLocation|S\.Tab\(/);
+    });
   });
 
   /**

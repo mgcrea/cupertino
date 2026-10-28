@@ -12,6 +12,17 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Safari can close the tabs an agent opened.** `apple_safari_close_tabs` takes the `ref` that
+  `apple_safari_open_url` now returns for a new tab, or `all: true` for every tab an agent opened,
+  from this session or another, in the last seven days. It closes a tab only while it still shows
+  the URL it was opened on and no other tab shows that URL too. Anything else is reported and left
+  open. A tab that redirected or was navigated away is let go rather than followed. Safari is not
+  launched to close tabs, and the tool is registered only with writes on.
+
 ## [1.33.0] - 2026-10-28
 
 **Shell runs a script you approve.** An agent can run one script under Cupertino's grants once you

@@ -773,6 +773,9 @@ struct UnitCheck {
     check(
       "a form submit is a submit",
       VisibleTools.notice(forTool: "apple_safari_submit") == .showing(.submittingPage))
+    check(
+      "closing tabs is shown",
+      VisibleTools.notice(forTool: "apple_safari_close_tabs") == .showing(.closingTabs))
     // Waiting reads the page and changes nothing, like page_elements.
     check(
       "wait_for shows no notice",

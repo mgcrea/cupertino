@@ -32,6 +32,7 @@ nonisolated enum VisibleTools {
     case fillingPage
     case scrollingPage
     case submittingPage
+    case closingTabs
     case openingPlace
   }
 
@@ -53,7 +54,8 @@ nonisolated enum VisibleTools {
   ]
 
   /// Safari's page verbs go through the extension, and `open_url` switches the
-  /// front window's tab; none of them activates Safari unless asked. Maps opens
+  /// front window's tab; none of them activates Safari unless asked.
+  /// `close_tabs` takes tabs out of a window's tab bar, which is on screen. Maps opens
   /// a search with `open -g`, so it moves behind whatever is in front.
   private static let showing: [String: Action] = [
     "apple_safari_open_url": .openingPage,
@@ -61,6 +63,7 @@ nonisolated enum VisibleTools {
     "apple_safari_fill": .fillingPage,
     "apple_safari_scroll": .scrollingPage,
     "apple_safari_submit": .submittingPage,
+    "apple_safari_close_tabs": .closingTabs,
     "apple_maps_add_favorite": .openingPlace,
   ]
 
