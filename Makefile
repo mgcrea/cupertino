@@ -195,12 +195,18 @@ install-from:
 	@# Functional, not structural. Checking for Resources/servers would only catch
 	@# the shapes of breakage anyone thought to look for; actually starting a
 	@# server catches an install that cannot serve, whatever the reason.
+	@# A surface switched off in the app is refused by the app, which says so,
+	@# and proves nothing either way: Shell is off until someone turns it on, so
+	@# failing on it failed every install (seen 2026-10-28).
 	@sleep 2
 	@for s in $(SURFACES); do \
-		printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"install","version":"0"}}}' \
-			| "$(INSTALLED)/Contents/Helpers/cupertino-bridge" --server=$$s 2>/dev/null \
-			| grep -q '"serverInfo"' && echo "  serves $$s" \
-			|| { echo "  FAILED to serve $$s — this install cannot run a server"; exit 1; }; \
+		out=$$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"install","version":"0"}}}' \
+			| "$(INSTALLED)/Contents/Helpers/cupertino-bridge" --server=$$s 2>&1); \
+		case "$$out" in \
+			*'"serverInfo"'*) echo "  serves $$s" ;; \
+			*'is switched off in Cupertino'*) echo "  off    $$s — switched off in Cupertino, not started" ;; \
+			*) echo "  FAILED to serve $$s — this install cannot run a server"; exit 1 ;; \
+		esac; \
 	done
 
 uninstall: ## Remove the installed copy
