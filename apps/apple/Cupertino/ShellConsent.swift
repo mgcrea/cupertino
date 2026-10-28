@@ -135,12 +135,8 @@ final class ShellConsent: ShellConsenting {
     let watch = CoverWatch(
       panel: window.panel, buttons: window.runButtons, notice: window.coverNotice)
     showing = Showing(id: id, panel: window.panel, watch: watch)
-    let visible = screen.visibleFrame
-    let size = window.panel.frame.size
-    window.panel.setFrameOrigin(
-      NSPoint(
-        x: (visible.midX - size.width / 2).rounded(),
-        y: (visible.midY - size.height / 2).rounded()))
+    window.panel.setFrame(
+      ShellCover.placed(window.panel.frame.size, in: screen.visibleFrame), display: false)
     window.panel.makeKeyAndOrderFront(nil)
     ShellPanels.shown(
       window.panel.windowNumber,
@@ -545,14 +541,14 @@ struct ShellConfirmSheet {
 private struct PromptWindow {
   let panel: ShellPanel
   let runButtons: [HandPressedButton]
-  /// Shown while another program's window is over this one. Always laid out, so showing it
-  /// does not move the buttons.
+  /// Shown while another program's window is over this one. Always laid out, as tall as the
+  /// longest name makes it, so showing it or naming another program does not move the buttons.
   let coverNotice: NSTextField
-
-  static let coverCopy = "Another window is over this one, so Run is off until it moves."
 
   static let width: CGFloat = 600
   static let inset: CGFloat = 20
+  /// The script view's least height, as `textView` draws a bezelled one.
+  static let scriptLeast: CGFloat = 40
 
   init(_ prompt: ShellPrompt, screen: NSScreen, answer: @escaping (ShellPromptAnswer) -> Void) {
     let content = Self.width - Self.inset * 2
@@ -592,7 +588,8 @@ private struct PromptWindow {
 
     views.append(
       Self.label(Self.caption("Script", prompt.script), width: content, size: 11, bold: true))
-    views.append(Self.textView(prompt.script, width: content, maxHeight: scriptMax))
+    let script = Self.textView(prompt.script, width: content, maxHeight: scriptMax)
+    views.append(script)
     if let stdin = prompt.stdin {
       views.append(
         Self.label(Self.caption("Input (stdin)", stdin), width: content, size: 11, bold: true))
@@ -619,7 +616,12 @@ private struct PromptWindow {
         "This can read everything Cupertino can, including mail, messages and browsing "
           + "history, and can control apps Cupertino controls.", width: content, bold: true))
 
-    let coverNotice = Self.label(Self.coverCopy, width: content, size: 11, color: .systemRed)
+    let coverNotice = Self.label(
+      CoverWatch.notice(String(repeating: "W", count: ShellText.ownerLimit)), width: content,
+      size: 11, color: .systemRed)
+    coverNotice.heightAnchor.constraint(equalToConstant: coverNotice.fittingSize.height)
+      .isActive = true
+    coverNotice.stringValue = CoverWatch.notice(nil)
     coverNotice.alphaValue = 0
     views.append(coverNotice)
 
@@ -674,6 +676,17 @@ private struct PromptWindow {
     ])
     panel.contentView = container
     panel.setContentSize(container.fittingSize)
+    // Never taller than the screen's visible area, so never under the menu bar: the script
+    // gives up the difference, down to its usual least, and scrolls.
+    let excess = panel.frame.height - screen.visibleFrame.height
+    if excess > 0,
+      let height = script.constraints.first(where: {
+        $0.firstItem === script && $0.firstAttribute == .height && $0.secondItem == nil
+      })
+    {
+      height.constant = max(height.constant - excess, Self.scriptLeast)
+      panel.setContentSize(container.fittingSize)
+    }
     panel.defaultButtonCell = dontRun.cell as? NSButtonCell
     panel.initialFirstResponder = dontRun
 
@@ -757,7 +770,7 @@ private struct PromptWindow {
     NSLayoutConstraint.activate([
       scroll.widthAnchor.constraint(equalToConstant: width),
       scroll.heightAnchor.constraint(
-        equalToConstant: min(max(height, plain ? 0 : 40), maxHeight)),
+        equalToConstant: min(max(height, plain ? 0 : scriptLeast), maxHeight)),
     ])
     return scroll
   }
@@ -776,11 +789,11 @@ final class CoverWatch {
 
   private let panel: NSPanel
   private let buttons: [HandPressedButton]
-  private let notice: NSView
+  private let notice: NSTextField
   private var armedAt: Date
   private var timer: Timer?
 
-  init(panel: NSPanel, buttons: [HandPressedButton], notice: NSView) {
+  init(panel: NSPanel, buttons: [HandPressedButton], notice: NSTextField) {
     self.panel = panel
     self.buttons = buttons
     self.notice = notice
@@ -792,11 +805,22 @@ final class CoverWatch {
   }
 
   /// Whether another program's window is over the panel now.
-  var covered: Bool {
+  var covered: Bool { coverer != nil }
+
+  /// The first window of another program over the panel now, Apple's own aside.
+  private var coverer: ShellCover.Window? {
     let height = NSScreen.screens.first?.frame.height ?? 0
-    return ShellCover.isCovered(
+    return ShellCover.coverer(
       ShellCover.windowListRect(panel.frame, primaryScreenHeight: height),
-      by: ShellCover.above(panel.windowNumber), ownPid: getpid())
+      by: ShellCover.above(panel.windowNumber), ownPid: getpid(),
+      isPlatform: ShellPlatform.shared.isPlatform)
+  }
+
+  /// What the window says while `owner`'s window is over it, naming the program when the list
+  /// gave a name with something left once made safe to show.
+  nonisolated static func notice(_ owner: String?) -> String {
+    let who = ShellText.owner(owner).map { "A window of \($0)" } ?? "Another window"
+    return "\(who) is over this one, so Run is off until it moves."
   }
 
   /// After the panel is on screen.
@@ -817,9 +841,12 @@ final class CoverWatch {
   }
 
   private func tick() {
-    let covered = covered
-    if covered {
+    let coverer = coverer
+    let covered = coverer != nil
+    if let coverer {
       armedAt = max(armedAt, Date().addingTimeInterval(ShellConsent.armDelay))
+      let text = Self.notice(coverer.owner)
+      if notice.stringValue != text { notice.stringValue = text }
     }
     notice.alphaValue = covered ? 1 : 0
     let on = !covered && panel.isVisible && Date() >= armedAt

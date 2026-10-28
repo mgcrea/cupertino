@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Security
 
 /// Whether an input event came from the person's hands or from a program.
 ///
@@ -49,30 +50,53 @@ nonisolated enum ShellInput {
 /// that click is one. So the run buttons are off while any window of another process lies over
 /// the Shell window, and a click is refused if one does at the moment it lands.
 ///
-/// The window list gives each window's owner pid, bounds and alpha. Its names need Screen
-/// Recording; these fields are documented not to, which has not been measured from a process
-/// without the grant. A window listed without bounds counts as covering everything, so a list
-/// that withholds them leaves Run off rather than on.
+/// Apple's own windows are the exception: the menu bar, the Dock and `screencaptureui` keep
+/// windows above the Shell window's level over the whole screen, and would keep Run off for
+/// good. The level cannot tell them apart, since a program can pick any level; the code
+/// signature can, since a program running as the person cannot make its window belong to a
+/// process signed by Apple. `isPlatform` is that test (`ShellPlatform` in the app).
+///
+/// The window list gives each window's owner pid, owner name, bounds and alpha. Window titles
+/// need Screen Recording; these fields are documented not to, which has not been measured from
+/// a process without the grant. A window listed without bounds, unless it is Apple's, counts as
+/// covering everything, and so does one listed without a pid, so a list that withholds them
+/// leaves Run off rather than on.
 ///
 /// The decision is pure, so `make shell-check` pins it; `above` asks the window server.
 nonisolated enum ShellCover {
   struct Window: Equatable {
-    /// Nil when the list gave none: then it is never this app's.
+    /// Nil when the list gave none: then it is never this app's, nor Apple's.
     var pid: Int32?
     /// In the window list's coordinates: points, origin at the top left of the main screen.
     /// Nil when the list gave none.
     var bounds: CGRect?
     var alpha: Double
+    /// The owning program's name, as the list gives it. Its own words: shown only through
+    /// `ShellText.owner`.
+    var owner: String? = nil
   }
 
-  /// True when a window of another process, not fully transparent, overlaps `frame` by any
-  /// area. A window that only touches its edge does not.
-  static func isCovered(_ frame: CGRect, by windows: [Window], ownPid: Int32) -> Bool {
-    windows.contains { window in
+  /// True when a window of another process, not fully transparent and not Apple's own,
+  /// overlaps `frame` by any area. A window that only touches its edge does not.
+  static func isCovered(
+    _ frame: CGRect, by windows: [Window], ownPid: Int32, isPlatform: (Int32) -> Bool
+  ) -> Bool {
+    coverer(frame, by: windows, ownPid: ownPid, isPlatform: isPlatform) != nil
+  }
+
+  /// The first window, front to back, that covers `frame` as `isCovered` counts it. Nil when
+  /// none does. `isPlatform` is asked only for a window that would otherwise cover.
+  static func coverer(
+    _ frame: CGRect, by windows: [Window], ownPid: Int32, isPlatform: (Int32) -> Bool
+  ) -> Window? {
+    windows.first { window in
       guard window.pid != ownPid, window.alpha > 0 else { return false }
-      guard let bounds = window.bounds else { return true }
-      let overlap = frame.intersection(bounds)
-      return !overlap.isNull && overlap.width > 0 && overlap.height > 0
+      if let bounds = window.bounds {
+        let overlap = frame.intersection(bounds)
+        guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else { return false }
+      }
+      guard let pid = window.pid else { return true }
+      return !isPlatform(pid)
     }
   }
 
@@ -84,7 +108,8 @@ nonisolated enum ShellCover {
         bounds: (info[kCGWindowBounds as String] as? NSDictionary).flatMap {
           CGRect(dictionaryRepresentation: $0 as CFDictionary)
         },
-        alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1)
+        alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
+        owner: info[kCGWindowOwnerName as String] as? String)
     }
   }
 
@@ -94,6 +119,19 @@ nonisolated enum ShellCover {
     CGRect(
       x: frame.minX, y: primaryScreenHeight - frame.maxY, width: frame.width,
       height: frame.height)
+  }
+
+  /// Where a window of `size` goes on a screen whose visible area is `visible`, both in
+  /// AppKit's coordinates: centred, and never outside it, cut down to it when larger. Apple's
+  /// windows no longer count as covering, so a Shell window under the menu bar or the Dock
+  /// would be partly hidden with Run still on.
+  static func placed(_ size: CGSize, in visible: CGRect) -> CGRect {
+    let width = min(size.width, visible.width)
+    let height = min(size.height, visible.height)
+    // Rounded to whole points, then held inside, which rounding alone could step past.
+    let x = min(max((visible.midX - width / 2).rounded(), visible.minX), visible.maxX - width)
+    let y = min(max((visible.midY - height / 2).rounded(), visible.minY), visible.maxY - height)
+    return CGRect(x: x, y: y, width: width, height: height)
   }
 
   /// Stands for every window when the list cannot be had: it covers everything.
@@ -108,6 +146,97 @@ nonisolated enum ShellCover {
     else { return [unknown] }
     return windows(from: list)
   }
+}
+
+/// Whether a process is Apple's own code: its running code meets the `anchor apple`
+/// requirement, which only Apple's own signing meets. Not `anchor apple generic`, which any
+/// Developer ID program meets, an attacker's among them.
+///
+/// Any error is a no, so a window whose owner cannot be checked still covers. Each verdict is
+/// kept for its process, a pid together with the time it started, so a pid the system hands to
+/// a new process is asked about afresh. A process whose start time cannot be read is not
+/// Apple's and is not kept, nor is one whose start time changed while it was asked about. At
+/// most `limit` verdicts are kept; past that, all are let go.
+///
+/// Thread-safe: `CoverWatch` asks on the main thread every 0.1 s. `started` and `verify` are
+/// given, so `make shell-check` pins the keeping without real processes.
+nonisolated final class ShellPlatform: @unchecked Sendable {
+  struct Start: Hashable {
+    var seconds: Int
+    var microseconds: Int
+  }
+
+  private struct Key: Hashable {
+    let pid: Int32
+    let start: Start
+  }
+
+  static let limit = 256
+  static let shared = ShellPlatform(started: started, verify: signedByApple)
+
+  private let started: (Int32) -> Start?
+  private let verify: (Int32) -> Bool
+  private let lock = NSLock()
+  // Guarded by `lock`.
+  private var verdicts: [Key: Bool] = [:]
+
+  init(started: @escaping (Int32) -> Start?, verify: @escaping (Int32) -> Bool) {
+    self.started = started
+    self.verify = verify
+  }
+
+  /// How many verdicts are kept.
+  var count: Int { lock.withLock { verdicts.count } }
+
+  func isPlatform(_ pid: Int32) -> Bool {
+    guard let start = started(pid) else { return false }
+    let key = Key(pid: pid, start: start)
+    if let known = lock.withLock({ verdicts[key] }) { return known }
+    let verdict = verify(pid)
+    // The pid went to another process while it was asked about: the answer may be that one's.
+    guard started(pid) == start else { return false }
+    lock.withLock {
+      if verdicts.count >= Self.limit { verdicts.removeAll() }
+      verdicts[key] = verdict
+    }
+    return verdict
+  }
+
+  /// When process `pid` started, from the kernel's process table. Nil when it cannot be read.
+  ///
+  /// Not `proc_pidinfo`'s `PROC_PIDTBSDINFO`, which refuses a process of another user: measured
+  /// on 2026-10-28, it gave EPERM for the window server, which runs as `_windowserver` and draws
+  /// the menu bar, and the same start time as this for every process of the person's own.
+  static func started(_ pid: Int32) -> Start? {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+    var name = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    // A pid no process has is no error: it gives back nothing.
+    guard sysctl(&name, 4, &info, &size, nil, 0) == 0, size == MemoryLayout<kinfo_proc>.size,
+      info.kp_proc.p_pid == pid
+    else { return nil }
+    let start = info.kp_proc.p_un.__p_starttime
+    return Start(seconds: start.tv_sec, microseconds: Int(start.tv_usec))
+  }
+
+  /// Whether process `pid`'s running code is valid and meets `anchor apple`. Any error is a no.
+  static func signedByApple(_ pid: Int32) -> Bool {
+    guard let requirement = appleRequirement else { return false }
+    var code: SecCode?
+    let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
+      let code
+    else { return false }
+    return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+  }
+
+  // Made once; nil if it cannot be, and then no process is Apple's. Never changed once made.
+  nonisolated(unsafe) private static let appleRequirement: SecRequirement? = {
+    var requirement: SecRequirement?
+    let made = SecRequirementCreateWithString("anchor apple" as CFString, [], &requirement)
+    guard made == errSecSuccess else { return nil }
+    return requirement
+  }()
 }
 
 /// The Shell window and the sheets that lower the bar, while they are open: where a click from a

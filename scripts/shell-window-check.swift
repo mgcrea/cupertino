@@ -218,7 +218,7 @@ struct ShellWindowCheck {
     let watchedPanel = ShellPanel(
       contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
       backing: .buffered, defer: false)
-    let notice = NSView()
+    let notice = NSTextField(labelWithString: CoverWatch.notice(nil))
     notice.alphaValue = 0
     let watch = CoverWatch(panel: watchedPanel, buttons: [watched], notice: notice)
     check("a watched button starts off", !watched.isEnabled)
@@ -228,6 +228,19 @@ struct ShellWindowCheck {
     check("it stays off while its window is not on screen", !watched.isEnabled)
     watch.stop()
     check("stopping leaves it off", !watched.isEnabled)
+    check(
+      "the notice names no one when the window over it has no owner to give",
+      CoverWatch.notice(nil) == "Another window is over this one, so Run is off until it moves."
+        && CoverWatch.notice("\u{202E}") == CoverWatch.notice(nil))
+    check(
+      "and names the program whose window it is, made safe to show",
+      CoverWatch.notice("No\u{202E}tes")
+        == "A window of Notes is over this one, so Run is off until it moves.")
+    let longest = CoverWatch.notice(String(repeating: "W", count: 60))
+    check(
+      "a long name is capped",
+      longest == CoverWatch.notice(String(repeating: "W", count: ShellText.ownerLimit)))
+    check("none of it has an em dash", !longest.contains("\u{2014}"))
   }
 
   /// The sheets that turn Shell on and choose "Don't ask": only the confirming button lowers
