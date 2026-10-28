@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Security
 
 /// Asserts what the Shell surface does with a script once it has been allowed to run.
 ///
@@ -2024,7 +2025,7 @@ extension ShellCheck {
     {
       ShellCover.Window(pid: pid, bounds: rect, alpha: alpha, owner: owner)
     }
-    // Stands for the code-signing test: only `apple` is Apple's.
+    // Stands for the code-signing test: only `apple` is the system's own interface.
     let isApple: (Int32) -> Bool = { $0 == apple }
     let none: (Int32) -> Bool = { _ in false }
     func covered(_ windows: [ShellCover.Window], _ isPlatform: (Int32) -> Bool = none) -> Bool {
@@ -2055,11 +2056,11 @@ extension ShellCheck {
     ]
     let systemPids: (Int32) -> Bool = { $0 >= apple && $0 <= apple + 2 }
     check(
-      "a full-screen window of Apple's own code: not covered",
+      "a full-screen window of the system's own interface: not covered",
       !covered([window(apple, screen)], isApple))
     check("nor the probe's three together", !covered(system, systemPids))
     check(
-      "another program's window over it, among Apple's: covered",
+      "another program's window over it, among the system's: covered",
       covered(system + [window(200, panel)], systemPids)
         && covered([window(200, panel)] + system, systemPids))
     check(
@@ -2073,7 +2074,7 @@ extension ShellCheck {
       "a window of another program with no bounds covers",
       covered([ShellCover.Window(pid: 200, bounds: nil, alpha: 1)], isApple))
     check(
-      "one of Apple's own with no bounds does not",
+      "one of the system's own with no bounds does not",
       !covered([ShellCover.Window(pid: apple, bounds: nil, alpha: 1)], isApple))
     check(
       "this app's own window never covers, even untrusted",
@@ -2140,7 +2141,7 @@ extension ShellCheck {
       "a window listed without a pid counts as another program's",
       covered([parsed[2]], { _ in true }))
 
-    print("\nShellPlatform: whether a window's owner is Apple's own code")
+    print("\nShellPlatform: whether a window's owner is the system's own interface")
     var starts: [Int32: ShellPlatform.Start] = [:]
     var verified: [Int32] = []
     var verdicts: [Int32: Bool] = [:]
@@ -2154,7 +2155,7 @@ extension ShellCheck {
       })
     starts[apple] = .init(seconds: 1000, microseconds: 1)
     verdicts[apple] = true
-    check("Apple's process is trusted", trust.isPlatform(apple))
+    check("a system interface process is trusted", trust.isPlatform(apple))
     check(
       "and asked again, the verdict is the one kept",
       trust.isPlatform(apple) && verified == [apple])
@@ -2226,15 +2227,52 @@ extension ShellCheck {
         && shared.count <= ShellPlatform.limit)
 
     check(
-      "this check's own process is not Apple's",
-      ShellPlatform.started(getpid()) != nil && !ShellPlatform.signedByApple(getpid()))
+      "this check's own process is not trusted",
+      ShellPlatform.started(getpid()) != nil && !ShellPlatform.isSystemUI(getpid()))
     // launchd runs as root: a start time read only from processes of the same user would
     // leave out the window server, which runs as its own user and draws the menu bar.
     check("a process of another user has a start time", ShellPlatform.started(1) != nil)
     check(
-      "a pid no process has: no start time, and an error, so not Apple's",
-      ShellPlatform.started(Int32.max) == nil && !ShellPlatform.signedByApple(Int32.max)
+      "a pid no process has: no start time, and an error, so not trusted",
+      ShellPlatform.started(Int32.max) == nil && !ShellPlatform.isSystemUI(Int32.max)
         && !ShellPlatform.shared.isPlatform(Int32.max))
+
+    check(
+      "the requirement is built from the list, one identifier each, under Apple's anchor",
+      ShellPlatform.requirement(for: ["a.b", "c.d"])
+        == "anchor apple and (identifier \"a.b\" or identifier \"c.d\")")
+    check(
+      "the list is the system's own interface processes, and nothing else",
+      ShellPlatform.systemUI == [
+        "com.apple.WindowServer", "com.apple.dock", "com.apple.screencaptureui",
+        "com.apple.notificationcenterui", "com.apple.controlcenter", "com.apple.systemuiserver",
+        "com.apple.Spotlight", "com.apple.WindowManager", "com.apple.loginwindow",
+        "com.apple.TextInputMenuAgent", "com.apple.TextInputSwitcher",
+      ] && ShellPlatform.requirementText == ShellPlatform.requirement(for: ShellPlatform.systemUI))
+    check(
+      "osascript and Terminal, which show what a program gives them, are not on it",
+      !ShellPlatform.requirementText.contains("com.apple.osascript")
+        && !ShellPlatform.requirementText.contains("com.apple.Terminal"))
+    var compiled: SecRequirement?
+    check(
+      "it is a requirement Security accepts",
+      SecRequirementCreateWithString(ShellPlatform.requirementText as CFString, [], &compiled)
+        == errSecSuccess && compiled != nil)
+    // The program on disk against the same requirement: nothing is run.
+    func meets(_ path: String) -> Bool {
+      var code: SecStaticCode?
+      guard let compiled,
+        SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code)
+          == errSecSuccess, let code
+      else { return false }
+      return SecStaticCodeCheckValidity(code, [], compiled) == errSecSuccess
+    }
+    check("the Dock on disk meets it", meets("/System/Library/CoreServices/Dock.app"))
+    check(
+      "osascript, Apple-signed and able to make a click-through window, does not",
+      !meets("/usr/bin/osascript"))
+    check(
+      "nor does Terminal", !meets("/System/Applications/Utilities/Terminal.app"))
 
     print("\nShellCover.placed: the Shell window inside the screen's visible area")
     // AppKit's coordinates: a 33-point menu bar above, a 70-point Dock below.

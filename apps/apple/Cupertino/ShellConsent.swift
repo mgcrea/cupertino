@@ -807,7 +807,7 @@ final class CoverWatch {
   /// Whether another program's window is over the panel now.
   var covered: Bool { coverer != nil }
 
-  /// The first window of another program over the panel now, Apple's own aside.
+  /// The first window of another program over the panel now, the system's own aside.
   private var coverer: ShellCover.Window? {
     let height = NSScreen.screens.first?.frame.height ?? 0
     return ShellCover.coverer(

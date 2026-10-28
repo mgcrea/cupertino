@@ -50,22 +50,22 @@ nonisolated enum ShellInput {
 /// that click is one. So the run buttons are off while any window of another process lies over
 /// the Shell window, and a click is refused if one does at the moment it lands.
 ///
-/// Apple's own windows are the exception: the menu bar, the Dock and `screencaptureui` keep
-/// windows above the Shell window's level over the whole screen, and would keep Run off for
-/// good. The level cannot tell them apart, since a program can pick any level; the code
-/// signature can, since a program running as the person cannot make its window belong to a
-/// process signed by Apple. `isPlatform` is that test (`ShellPlatform` in the app).
+/// The system's own interface is the exception: the menu bar, the Dock and `screencaptureui`
+/// keep windows above the Shell window's level over the whole screen, and would keep Run off
+/// for good. The level cannot tell them apart, since a program can pick any level; the code
+/// signature can, since a program running as the person cannot make its window belong to one
+/// of those processes. `isPlatform` is that test (`ShellPlatform` in the app).
 ///
 /// The window list gives each window's owner pid, owner name, bounds and alpha. Window titles
 /// need Screen Recording; these fields are documented not to, which has not been measured from
-/// a process without the grant. A window listed without bounds, unless it is Apple's, counts as
+/// a process without the grant. A window listed without bounds, unless it is the system's, counts as
 /// covering everything, and so does one listed without a pid, so a list that withholds them
 /// leaves Run off rather than on.
 ///
 /// The decision is pure, so `make shell-check` pins it; `above` asks the window server.
 nonisolated enum ShellCover {
   struct Window: Equatable {
-    /// Nil when the list gave none: then it is never this app's, nor Apple's.
+    /// Nil when the list gave none: then it is never this app's, nor the system's.
     var pid: Int32?
     /// In the window list's coordinates: points, origin at the top left of the main screen.
     /// Nil when the list gave none.
@@ -76,7 +76,7 @@ nonisolated enum ShellCover {
     var owner: String? = nil
   }
 
-  /// True when a window of another process, not fully transparent and not Apple's own,
+  /// True when a window of another process, not fully transparent and not the system's own,
   /// overlaps `frame` by any area. A window that only touches its edge does not.
   static func isCovered(
     _ frame: CGRect, by windows: [Window], ownPid: Int32, isPlatform: (Int32) -> Bool
@@ -122,9 +122,9 @@ nonisolated enum ShellCover {
   }
 
   /// Where a window of `size` goes on a screen whose visible area is `visible`, both in
-  /// AppKit's coordinates: centred, and never outside it, cut down to it when larger. Apple's
-  /// windows no longer count as covering, so a Shell window under the menu bar or the Dock
-  /// would be partly hidden with Run still on.
+  /// AppKit's coordinates: centred, and never outside it, cut down to it when larger. The
+  /// system's own windows do not count as covering, so a Shell window under the menu bar or the
+  /// Dock would be partly hidden with Run still on.
   static func placed(_ size: CGSize, in visible: CGRect) -> CGRect {
     let width = min(size.width, visible.width)
     let height = min(size.height, visible.height)
@@ -148,14 +148,14 @@ nonisolated enum ShellCover {
   }
 }
 
-/// Whether a process is Apple's own code: its running code meets the `anchor apple`
-/// requirement, which only Apple's own signing meets. Not `anchor apple generic`, which any
-/// Developer ID program meets, an attacker's among them.
+/// Whether a process is one of the system's own interface processes, the menu bar, the Dock and
+/// the like: its running code is signed by Apple and has an identifier on `systemUI`. See there
+/// for why not every program Apple signed.
 ///
 /// Any error is a no, so a window whose owner cannot be checked still covers. Each verdict is
 /// kept for its process, a pid together with the time it started, so a pid the system hands to
 /// a new process is asked about afresh. A process whose start time cannot be read is not
-/// Apple's and is not kept, nor is one whose start time changed while it was asked about. At
+/// trusted and is not kept, nor is one whose start time changed while it was asked about. At
 /// most `limit` verdicts are kept; past that, all are let go.
 ///
 /// Thread-safe: `CoverWatch` asks on the main thread every 0.1 s. `started` and `verify` are
@@ -172,7 +172,46 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
   }
 
   static let limit = 256
-  static let shared = ShellPlatform(started: started, verify: signedByApple)
+  static let shared = ShellPlatform(started: started, verify: isSystemUI)
+
+  /// The processes whose windows never count as covering the Shell window, by signing
+  /// identifier, each also required to be signed by Apple (`anchor apple`).
+  ///
+  /// An allowlist, not every program `anchor apple` meets: that one says who signed a program,
+  /// not who wrote what it shows. `osascript` meets it, and its JavaScript reaches AppKit through
+  /// its Objective-C bridge, where `NSWindow` answers `setLevel:` and `setIgnoresMouseEvents:`
+  /// (measured 2026-10-28, without making a window); `/usr/bin/swift` and the Command Line
+  /// Tools' `python3` meet it too. So a program running as the person could put a borderless,
+  /// click-through window of theirs over the Shell window, and it would have been trusted.
+  ///
+  /// Every entry is system chrome: it draws the menu bar, the Dock, screenshots, Spotlight, the
+  /// login and input-source windows, and no content a program running as the person writes
+  /// into a click-through window. Notification Center comes nearest: it shows text a program
+  /// wrote (`display notification`), but in banners that take clicks rather than letting them
+  /// through, so one can hide Run but not trick a click onto it. A process added here later
+  /// must meet the same rule.
+  static let systemUI = [
+    "com.apple.WindowServer",
+    "com.apple.dock",
+    "com.apple.screencaptureui",
+    "com.apple.notificationcenterui",
+    "com.apple.controlcenter",
+    "com.apple.systemuiserver",
+    "com.apple.Spotlight",
+    "com.apple.WindowManager",
+    "com.apple.loginwindow",
+    "com.apple.TextInputMenuAgent",
+    "com.apple.TextInputSwitcher",
+  ]
+
+  /// The code requirement `isSystemUI` checks, in Security's requirement language.
+  static let requirementText = requirement(for: systemUI)
+
+  /// `anchor apple and (identifier "a" or identifier "b" …)`.
+  static func requirement(for identifiers: [String]) -> String {
+    let any = identifiers.map { "identifier \"\($0)\"" }.joined(separator: " or ")
+    return "anchor apple and (\(any))"
+  }
 
   private let started: (Int32) -> Start?
   private let verify: (Int32) -> Bool
@@ -219,9 +258,10 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
     return Start(seconds: start.tv_sec, microseconds: Int(start.tv_usec))
   }
 
-  /// Whether process `pid`'s running code is valid and meets `anchor apple`. Any error is a no.
-  static func signedByApple(_ pid: Int32) -> Bool {
-    guard let requirement = appleRequirement else { return false }
+  /// Whether process `pid`'s running code is valid and meets `requirementText`. Any error is a
+  /// no.
+  static func isSystemUI(_ pid: Int32) -> Bool {
+    guard let requirement = systemUIRequirement else { return false }
     var code: SecCode?
     let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
     guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
@@ -230,10 +270,10 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
     return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
   }
 
-  // Made once; nil if it cannot be, and then no process is Apple's. Never changed once made.
-  nonisolated(unsafe) private static let appleRequirement: SecRequirement? = {
+  // Made once; nil if it cannot be, and then no process is trusted. Never changed once made.
+  nonisolated(unsafe) private static let systemUIRequirement: SecRequirement? = {
     var requirement: SecRequirement?
-    let made = SecRequirementCreateWithString("anchor apple" as CFString, [], &requirement)
+    let made = SecRequirementCreateWithString(requirementText as CFString, [], &requirement)
     guard made == errSecSuccess else { return nil }
     return requirement
   }()
