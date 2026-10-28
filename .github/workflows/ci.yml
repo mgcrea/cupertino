@@ -211,6 +211,16 @@ jobs:
       # exactly what a runner is.
       - name: Sound server 🔍
         run: make sound-check
+      # The shell surface's runner. It spawns real processes, which a runner
+      # can: the gate is that a timeout or a cancel takes the script's whole
+      # process group with it, and that output is capped. Interpreters the
+      # image lacks are skipped and say so.
+      - name: Shell runner 🔍
+        run: make shell-check
+      # The Shell window's run buttons, pressed every way a program can reach them
+      # without a click. AppKit, but nothing is shown or posted.
+      - name: Shell window 🔍
+        run: make shell-window-check
       # The third in-process surface, and the one with the most to be careful
       # about, because it can click. It is CI-safe by construction and the check
       # says so at length: every tools/call in it is either a refusal path that
@@ -810,6 +820,20 @@ jobs:
           # reason the notarytool output does not name.
           security find-identity -v -p codesigning | grep -q 'Developer ID Application' \
             || { echo "::error::no Developer ID Application identity after import"; exit 1; }
+      # The Developer ID profile `make sign` embeds. It authorises the keychain
+      # access group Shell's seal key lives in, and without it the app is killed
+      # at launch (docs/distribution.md, "The provisioning profile"). Empty is
+      # refused here, where the message names the secret, rather than inside
+      # `sign` after the build.
+      - name: Install provisioning profile 🔑
+        env:
+          PROFILE_BASE64: ${{ secrets.DEVELOPER_ID_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          test -n "$PROFILE_BASE64" \
+            || { echo "::error::DEVELOPER_ID_PROVISIONING_PROFILE_BASE64 is empty; see docs/distribution.md"; exit 1; }
+          profile="$RUNNER_TEMP/Cupertino.provisionprofile"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$profile"
+          echo "PROVISIONING_PROFILE=$profile" >> "$GITHUB_ENV"
       - name: Build, sign and notarize 📦
         env:
           AC_KEY_ID: ${{ secrets.AC_KEY_ID }}
@@ -847,7 +871,9 @@ jobs:
       # than staying one `security` call away until the cleanup at the end.
       - name: Drop the signing keychain 🔒
         if: always()
-        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/Cupertino.provisionprofile"
       # Every claim the download page makes, checked against the artifact that is
       # about to be uploaded rather than against the tree it was built from.
       - name: Verify the artifact 🔍

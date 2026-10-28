@@ -160,13 +160,50 @@ nonisolated enum CallCapture {
   /// construction — a `get_message` result IS the mail. There is nothing
   /// structural to keep separate here, so `content` gates the whole thing
   /// rather than picking fields out of it.
-  static func result(_ frame: [String: Any]?, mode: Mode, content: Bool) -> String? {
+  ///
+  /// `tool` is the one exception, and only for the tools `structuralResults` names: their
+  /// result keeps its structure without content. Every other tool, and nil, is as above.
+  static func result(
+    _ frame: [String: Any]?, mode: Mode, content: Bool, tool: String? = nil
+  ) -> String? {
     guard mode >= .argumentsAndResults, let frame else { return nil }
     if let error = frame["error"] { return encode(redact(error, content: content)) }
     guard let value = frame["result"] else { return nil }
     if let object = value as? [String: Any], object.isEmpty { return nil }
-    guard content else { return redacted }
+    guard content else { return structure(of: value, tool: tool).flatMap(encode) ?? redacted }
     return encode(redact(value, content: true))
+  }
+
+  /// The tools whose result is partly structure, and the `structuredContent` fields that are.
+  ///
+  /// A result is content by construction, which is why `result` keeps none of it without the
+  /// content switch. A Shell run is the exception the spec names: what was decided and how the
+  /// run ended is the record of what an agent did, the same kind of fact as a tool name, while
+  /// stdout can be the text of somebody's mail. So for a tool listed here, a result with no
+  /// content switch keeps `isError` and those `structuredContent` fields, and every other field
+  /// and the text become `redacted`.
+  ///
+  /// An allowlist, keyed by tool, so a field added to a result later is redacted until someone
+  /// lists it, and a surface that is not listed records exactly what it always did.
+  static let structuralResults: [String: Set<String>] = [
+    "apple_shell_run": [
+      "decision", "exitCode", "signal", "timedOut", "durationMs", "stdoutTruncated",
+      "stderrTruncated",
+    ]
+  ]
+
+  /// The structural part of a listed tool's result, or nil for any other tool and for a result
+  /// with no `structuredContent` object.
+  static func structure(of value: Any, tool: String?) -> [String: Any]? {
+    guard let tool, let fields = structuralResults[tool],
+      let object = value as? [String: Any],
+      let structured = object["structuredContent"] as? [String: Any]
+    else { return nil }
+    var kept: [String: Any] = [:]
+    for (key, inner) in structured { kept[key] = fields.contains(key) ? inner : redacted }
+    var out: [String: Any] = ["content": redacted, "structuredContent": kept]
+    if let isError = object["isError"] { out["isError"] = isError }
+    return out
   }
 
   /// Whether a frame reported a failure, for the row's tint.
@@ -256,6 +293,23 @@ nonisolated enum CallCapture {
     guard let data = payload.data(using: .utf8),
       let object = try? JSONSerialization.jsonObject(with: data)
     else { return redacted }
+    return encode(redact(object, content: false)) ?? redacted
+  }
+
+  /// `reredact` for a result, which knows its tool: a listed tool's result keeps its structure
+  /// on the way to disk as it does in the window. Without that, a row kept whole in the window
+  /// would reach the file with stdout in `structuredContent`, a key `redact` does not know.
+  /// Every other tool is exactly `reredact`.
+  static func reredactResult(_ payload: String?, tool: String?, content: Bool) -> String? {
+    guard let tool, structuralResults[tool] != nil else {
+      return reredact(payload, content: content)
+    }
+    guard let payload else { return nil }
+    guard !content else { return payload }
+    guard let data = payload.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data)
+    else { return redacted }
+    if let kept = structure(of: object, tool: tool) { return encode(kept) ?? redacted }
     return encode(redact(object, content: false)) ?? redacted
   }
 

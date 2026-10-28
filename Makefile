@@ -27,9 +27,9 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator
+SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator shell
 NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
-SWIFT_SURFACES := screen sound desktop simulator
+SWIFT_SURFACES := screen sound desktop simulator shell
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
 # the `app-v*` tag so the shipped version is the tag rather than the pbxproj
@@ -294,6 +294,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -316,6 +317,7 @@ mail-composer-check: ## Assert the Mail composer's text matching, handle registr
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -346,6 +348,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -368,6 +371,7 @@ simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by 
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/simulator-spike \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -404,6 +408,66 @@ sound-check: ## Assert the in-process sound server speaks MCP and its gates are 
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/sound-check.swift
 	@apps/apple/.build/sound-check
 
+shell-check: ## Assert the shell surface's runner, seal, run record and server, with no app
+	@# Spawns real processes, unlike the checks above: what it pins is how a
+	@# script starts and stops, and above all that a timeout or a cancel takes
+	@# the whole process group with it. Interpreters the machine lacks are
+	@# skipped and say so. Needs no app, no socket and no grant.
+	@# The run record writes only to a scratch folder, never the app's shell-runs.
+	@# The server is driven with a fake window, a scratch defaults suite and a
+	@# seal key held in memory, never the app's own defaults or the Keychain.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/shell-check \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/ShellPromptQueue.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPane.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift \
+		apps/apple/Cupertino/ChildTermination.swift scripts/shell-check.swift
+	@apps/apple/.build/shell-check
+
+shell-window-check: ## Assert only a person's click presses the Shell window's run buttons
+	@# AppKit, so apart from shell-check, which must stay free of it. Posts no
+	@# event, shows no window, launches nothing: the buttons sit in views never
+	@# put on screen, and each press calls what an Accessibility client or
+	@# performClick reaches. It also has the window find no screen, and asserts
+	@# the queue answers rather than wedges.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/shell-window-check \
+		apps/apple/Cupertino/ShellConsent.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/ShellPromptQueue.swift \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/CallCapture.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPane.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift \
+		apps/apple/Cupertino/ChildTermination.swift scripts/shell-window-check.swift
+	@apps/apple/.build/shell-window-check
+
 dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 	@# The gate neither screen-check nor sound-check can be: both drive one
 	@# server directly, and this bug lives in the code that CHOOSES the server.
@@ -419,8 +483,15 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 	@swiftc -O -o apps/apple/.build/dispatch-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessServers.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/ScreenServer.swift \
 		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/SoundServer.swift \
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
@@ -430,6 +501,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -456,6 +528,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
@@ -496,6 +569,11 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# lookup reads HostCheckHome.url instead: the real one ignores $$HOME, so
 	@# the shipped file would bind the installed Cupertino's socket and lock.
 	@# The check refuses to start if the path it got is not the scratch one.
+	@#
+	@# ScreenServer.swift and ScreenCapture.swift are left out on purpose: the
+	@# check defines a stand-in ScreenServer with a call slow enough to cancel,
+	@# so the shared in-process loop can be driven without a hook in the app.
+	@# screen-check and dispatch-check compile the real one.
 	@mkdir -p apps/apple/.build
 	@sed 's/FileManager\.default\.homeDirectoryForCurrentUser/HostCheckHome.url/' \
 		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
@@ -516,8 +594,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessServers.swift \
-		apps/apple/Cupertino/ScreenServer.swift \
-		apps/apple/Cupertino/ScreenCapture.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/SoundServer.swift \
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
@@ -527,6 +604,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SimulatorServer.swift \
 		apps/apple/Cupertino/SimulatorGeometry.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
@@ -537,6 +615,12 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/Permissions.swift \
 		apps/apple/Cupertino/ServerLocator.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
+		apps/apple/Cupertino/ShellServer.swift \
+		apps/apple/Cupertino/ShellRunner.swift \
+		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPolicy.swift \
+		apps/apple/Cupertino/ShellRecord.swift \
+		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
 	@apps/apple/.build/host-check
@@ -727,6 +811,14 @@ RELEASE_SPARKLE := $(RELEASE_APP)/Contents/Frameworks/Sparkle.framework
 RELEASE_EXTENSION := $(RELEASE_APP)/Contents/PlugIns/CupertinoSafariExtension.appex
 TEAM_ID     := 75QE9PRT3V
 
+# The Developer ID provisioning profile `sign` embeds, which authorises the
+# keychain access group Shell's seal key lives in. Required: see
+# scripts/release-entitlements.sh for why, and docs/distribution.md for where
+# it comes from. CI decodes it from DEVELOPER_ID_PROVISIONING_PROFILE_BASE64.
+PROVISIONING_PROFILE ?=
+RELEASE_BUNDLE_ID    := io.mgcrea.cupertino
+RELEASE_ENTITLEMENTS := apps/apple/.build/Cupertino-release.entitlements
+
 # `sign` below is what gives the Release bundle its Developer ID signature, so
 # letting xcodebuild sign first is redundant — and on a CI runner it is fatal:
 # automatic signing demands a "Mac Development" certificate for the team, which
@@ -735,6 +827,10 @@ TEAM_ID     := 75QE9PRT3V
 # break shows up for the first time in CI. Debug keeps automatic signing, which
 # the TCC identity of a locally installed build depends on.
 bundle: servers node ## Build, stage and sign a Release Cupertino.app
+	@# The profile first, so a release without one fails now rather than after
+	@# the build. `sign` checks it again against the identity it signs with.
+	@scripts/release-entitlements.sh "$(PROVISIONING_PROFILE)" $(TEAM_ID) $(RELEASE_BUNDLE_ID) \
+		apps/apple/Cupertino.entitlements $(RELEASE_ENTITLEMENTS)
 	@$(MAKE) --no-print-directory app CONFIG=Release \
 		XCARGS="$(XCARGS) CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO"
 	@rm -rf "$(RELEASE_APP)/Contents/Resources/servers" "$(RELEASE_APP)/Contents/Resources/node"
@@ -780,6 +876,10 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 	@# `set -e`: the codesign calls below are one shell line joined by `;`, so
 	@# without it a failed signature on Sparkle, node, the bridge or the
 	@# extension was hidden whenever the app's own, the last command, succeeded.
+	@#
+	@# The profile is checked after the identity is known and before anything is
+	@# signed: a profile that does not name that certificate is a bundle AMFI
+	@# kills at launch, and a missing one is a release that can never seal.
 	@set -e; \
 	id=$$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $$2; exit}'); \
 	if [ -z "$$id" ]; then \
@@ -787,6 +887,8 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		echo "  !! no Developer ID Application certificate — signing with Apple Development."; \
 		echo "     This build will NOT notarize and will not run on another Mac."; \
 	fi; \
+	scripts/release-entitlements.sh "$(PROVISIONING_PROFILE)" $(TEAM_ID) $(RELEASE_BUNDLE_ID) \
+		apps/apple/Cupertino.entitlements $(RELEASE_ENTITLEMENTS) "$$id"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		"$(RELEASE_SPARKLE)/Versions/B/Updater.app"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
@@ -799,8 +901,9 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 		"$(RELEASE_APP)/Contents/Helpers/cupertino-bridge"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
 		--entitlements apps/apple/SafariExtension.entitlements "$(RELEASE_EXTENSION)"; \
+	cp "$(PROVISIONING_PROFILE)" "$(RELEASE_APP)/Contents/embedded.provisionprofile"; \
 	codesign --force --options runtime --timestamp --sign "$$id" \
-		--entitlements apps/apple/Cupertino.entitlements "$(RELEASE_APP)"
+		--entitlements $(RELEASE_ENTITLEMENTS) "$(RELEASE_APP)"
 	@# Captured rather than piped: through `| sed` the line's status was sed's,
 	@# and a bundle that failed verification passed this target.
 	@out=$$(codesign --verify --deep --strict --verbose=1 "$(RELEASE_APP)" 2>&1); status=$$?; \
@@ -810,6 +913,12 @@ sign: ## Sign the Release bundle (Developer ID if present, else Apple Developmen
 	@# Mac, long after this. Assert the team here, where the message is readable.
 	@codesign -dv --verbose=2 "$(RELEASE_SPARKLE)" 2>&1 | grep -q 'TeamIdentifier=$(TEAM_ID)' \
 		|| { echo "  Sparkle is not signed by $(TEAM_ID) — library validation will reject it"; exit 1; }
+	@# What the seal key needs, read back from the signature rather than trusted
+	@# from the file it was signed with.
+	@group=$$(/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' $(RELEASE_ENTITLEMENTS)); \
+	codesign -d --entitlements - --xml "$(RELEASE_APP)" 2>/dev/null | grep -q "<string>$$group</string>" \
+		&& test -f "$(RELEASE_APP)/Contents/embedded.provisionprofile" \
+		|| { echo "  the signed app does not carry keychain access group $$group and its profile"; exit 1; }
 	@echo "  size: $$(du -sh "$(RELEASE_APP)" | cut -f1)"
 
 # Run once, ever. The private key goes into the login keychain and the public
@@ -1187,7 +1296,7 @@ SHOT_SCREENS := surface prompt activity connections settings writes chat
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
 SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO -allowWrites.desktop NO -allowWrites.simulator NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES -surfaceEnabled.shell YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \
@@ -1341,7 +1450,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check desktop-check mail-composer-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check shell-check shell-window-check desktop-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \

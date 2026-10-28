@@ -44,11 +44,17 @@ struct SurfaceDetail: View {
     _writes = AppStorage(wrappedValue: false, "allowWrites.\(surface.id)")
   }
 
+  /// Whether this surface is on. Shell's is the sealed value and never the plain preference
+  /// above: a `defaults write` can set the bool, and only the seal says Shell is on.
+  private var isOn: Bool {
+    surface.id == ShellPane.surfaceID ? ShellSwitch.shared.isOn : enabled
+  }
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
         heading
-        if enabled {
+        if isOn {
           accessSection
           // No Store card for a capability. It has no store, and the empty-state
           // copy under it says "everything goes through Apple Events", which is
@@ -70,11 +76,15 @@ struct SurfaceDetail: View {
           if surface.kind == .app, surface.storePath != nil { storeSection }
           pageContentSection
         }
+        // On or off: what was asked is a fact about the past, and the question "what ran while
+        // it was on" is asked after turning it off as much as before.
+        if surface.id == ShellPane.surfaceID { ShellRecentRuns() }
       }
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .task(id: surface.id) {
+      if surface.id == ShellPane.surfaceID { ShellSwitch.shared.checkSeal() }
       await resolveStore()
       await resolveExtension()
       grant =
@@ -131,6 +141,17 @@ struct SurfaceDetail: View {
       )
       .font(.callout)
       .fixedSize(horizontal: false, vertical: true)
+
+      // Otherwise the switch above would flip back with no word said. The detail is the
+      // Keychain's own, for whoever has to fix the build; the sentence is for everybody else.
+      if surface.id == ShellPane.surfaceID, let problem = ShellSwitch.shared.sealProblem {
+        Divider()
+        Label(ShellPane.Copy.sealProblem, systemImage: "exclamationmark.triangle.fill")
+          .font(.callout)
+          .foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+          .help(problem)
+      }
 
       if let first = leftoverClients.first {
         Divider()
@@ -364,6 +385,13 @@ struct SurfaceDetail: View {
       if surface.id == "desktop" || surface.id == "simulator", surface.supportsWrites {
         Divider()
         DrivingPolicyControl()
+      }
+
+      // Shell has no write switch and no gate: the surface switch is its gate. What lowers the
+      // bar past that is this one setting, and "Don't ask" only with a confirming click.
+      if surface.id == ShellPane.surfaceID {
+        Divider()
+        ShellControls()
       }
 
       // Node surfaces only. The facade and the `$schema` trim both live in
@@ -940,6 +968,266 @@ private struct DrivingPolicyControl: View {
         "An agent takes the keyboard and mouse as soon as it asks, even while you are typing. "
         + "The card still names what it is driving. Applies to Desktop and Simulator."
     }
+  }
+}
+
+/// "Before running", Shell's one setting past the switch.
+///
+/// The picker shows `ShellSeal.effectiveBefore`, so a forged "Don't ask" is drawn as what it
+/// is, "Ask every time". A change applies to the next request: `ShellServer` reads the setting
+/// on every one.
+private struct ShellControls: View {
+  var body: some View {
+    let shell = ShellSwitch.shared
+    // Read here so the picker redraws after a choice that changed nothing, such as "Don't ask"
+    // waiting on its sheet. `before` alone would not move.
+    let _ = shell.revision
+    Picker(
+      ShellPane.Copy.beforeLabel,
+      selection: Binding(get: { shell.before }, set: { shell.choose($0) })
+    ) {
+      ForEach(ShellPolicy.Before.allCases, id: \.self) { before in
+        Text(ShellPane.Copy.choice(before)).tag(before)
+      }
+    }
+    .font(.callout)
+
+    Text(ShellPane.Copy.caption(shell.before))
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
+/// The run record's newest lines, so the person can see what was asked without opening a file.
+///
+/// Read when the pane appears, off the main actor: `ShellRecord.recent` reads the month's
+/// segment from disk. Never under screenshot mode, where it would put the capturing Mac's own
+/// clients and purposes into a marketing image.
+private struct ShellRecentRuns: View {
+  @State private var entries: [ShellRecord.Entry]?
+
+  var body: some View {
+    Card(ShellPane.Copy.recentTitle) {
+      switch entries {
+      case nil:
+        Text("Looking…").font(.callout).foregroundStyle(.secondary)
+      case .some(let entries) where entries.isEmpty:
+        Text(ShellPane.Copy.recentEmpty).font(.callout).foregroundStyle(.secondary)
+      case .some(let entries):
+        ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+          if index > 0 { Divider() }
+          row(entry)
+        }
+      }
+      Text(ShellPane.Copy.recentFooter)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .task {
+      if DemoSeed.isEnabled {
+        entries = []
+        return
+      }
+      entries = await Task.detached(priority: .userInitiated) {
+        ShellRecord.recent(ShellPane.recentLimit)
+      }.value
+    }
+  }
+
+  private func row(_ entry: ShellRecord.Entry) -> some View {
+    let row = ShellPane.row(entry)
+    return VStack(alignment: .leading, spacing: 2) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(entry.at, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+          .monospacedDigit()
+        Text(row.client)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        Spacer(minLength: 8)
+        Text(row.decision)
+          .foregroundStyle(Self.ran(entry.decision) ? Color.primary : Color.secondary)
+      }
+      .font(.callout)
+      HStack(alignment: .firstTextBaseline) {
+        Text(row.outcome)
+        Spacer(minLength: 8)
+        Text(row.hash)
+          .font(.system(.caption, design: .monospaced))
+          .textSelection(.enabled)
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+    .help(row.help)
+  }
+
+  private static func ran(_ decision: ShellRecord.Decision) -> Bool {
+    decision == .approved || decision == .approvedForSession || decision == .notAsked
+  }
+}
+
+/// Every Shell switch's state, and the one place Shell is turned on.
+///
+/// The pane's heading switch, the Settings row and the sidebar's context menu all read `isOn`
+/// from here and send their requests to `set(on:)`, which `ShellPane.switchStep` decides. Off
+/// is at once, from anywhere. On always opens the Shell pane with the confirming sheet up, so
+/// there is only one place a seal is made: that sheet's confirming button, pressed by hand.
+///
+/// `isOn` and `before` are the sealed values, re-read whenever a default changes. A forged
+/// `defaults write` therefore draws Shell off and "Ask every time", and turning it on from there
+/// still takes the sheet.
+///
+/// Re-reading costs two copies of the persistent domain per notification, the same read
+/// `AppDelegate.watchShellSwitch` already makes. Each value is assigned only when it moved, so a
+/// window saving its frame does not invalidate every view that reads this.
+@MainActor
+@Observable
+final class ShellSwitch {
+  static let shared = ShellSwitch()
+
+  private(set) var isOn: Bool
+  private(set) var before: ShellPolicy.Before
+  /// The Keychain's reason a seal cannot be made, once a check or an attempt has found one.
+  /// The pane says it in one plain sentence and keeps this as the detail.
+  private(set) var sealProblem: String?
+  /// Bumped by every request, so a control whose request changed nothing (Shell asked on while
+  /// its sheet is up) redraws to what is in force instead of to what was clicked.
+  private(set) var revision = 0
+
+  private enum Sheet { case enable, dontAsk }
+
+  @ObservationIgnored private var sheet: (kind: Sheet, view: ShellConfirmSheet)?
+  @ObservationIgnored private var observer: NSObjectProtocol?
+
+  private init() {
+    isOn = ShellSeal.isEnabled(.standard)
+    before = ShellSeal.effectiveBefore(.standard)
+    observer = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.reload() }
+    }
+  }
+
+  /// Ask for Shell on or off, from any switch.
+  func set(on wantsOn: Bool) {
+    defer { revision &+= 1 }
+    reload()
+    let problem = wantsOn && !isOn ? ShellPane.sealProblem() : nil
+    switch ShellPane.switchStep(isOn: isOn, wantsOn: wantsOn, sealProblem: problem) {
+    case .none:
+      break
+    case .turnOff:
+      ShellSeal.setEnabled(false, .standard)
+      // Also done by `AppDelegate` when it sees the seal go; both are idempotent, and this one
+      // does not wait for a notification.
+      ShellServer.stopAll()
+      if let shell = Surface.all.first(where: { $0.id == ShellPane.surfaceID }) {
+        ServerHost.shared.stopSessions(for: shell)
+      }
+      reload()
+      StatusModel.shared.refresh()
+    case .cannotSeal:
+      sealProblem = problem
+      MainWindowController.show(.surface(ShellPane.surfaceID))
+    case .confirmOn:
+      sealProblem = nil
+      MainWindowController.show(.surface(ShellPane.surfaceID))
+      present(
+        .enable, title: ShellPane.Copy.enableTitle,
+        paragraphs: [ShellPane.Copy.enableBody, ShellPane.Copy.enableSafeguard],
+        confirm: ShellPane.Copy.enableConfirm
+      ) { [weak self] in self?.confirmedEnable() }
+    }
+  }
+
+  /// A choice in "Before running". Only while Shell is on: the picker is not drawn otherwise.
+  func choose(_ chosen: ShellPolicy.Before) {
+    defer { revision &+= 1 }
+    reload()
+    guard isOn else { return }
+    switch ShellPane.beforeStep(current: before, chosen: chosen) {
+    case .none:
+      break
+    case .apply(let before):
+      ShellSeal.setBefore(before, .standard)
+      reload()
+    case .confirmDontAsk:
+      present(
+        .dontAsk, title: ShellPane.Copy.dontAskTitle,
+        paragraphs: [ShellPane.Copy.dontAskBody, ShellPane.Copy.dontAskCard],
+        confirm: ShellPane.Copy.dontAskConfirm
+      ) { [weak self] in self?.confirmedDontAsk() }
+    }
+  }
+
+  /// Find out now whether a seal could be made, so the pane can say so before anybody tries.
+  /// Only while Shell is off, the one state in which it matters.
+  func checkSeal() {
+    guard !isOn else { return }
+    sealProblem = ShellPane.sealProblem()
+  }
+
+  private func reload() {
+    let on = ShellSeal.isEnabled(.standard)
+    let before = ShellSeal.effectiveBefore(.standard)
+    if on != isOn { isOn = on }
+    if before != self.before { self.before = before }
+    if on, sealProblem != nil { sealProblem = nil }
+    // A sheet whose question has been answered some other way goes: Shell turned on elsewhere
+    // under the enable sheet, or turned off under "Don't ask".
+    switch sheet?.kind {
+    case .enable where on: closeSheet()
+    case .dontAsk where !on: closeSheet()
+    default: break
+    }
+  }
+
+  private func present(
+    _ kind: Sheet, title: String, paragraphs: [String], confirm: String,
+    onConfirm: @escaping () -> Void
+  ) {
+    if sheet != nil {
+      // One at a time. The one already up is in front of the window just brought forward.
+      return
+    }
+    let view = ShellConfirmSheet(
+      title: title, paragraphs: paragraphs, confirmTitle: confirm, onConfirm: onConfirm,
+      onCancel: { [weak self] in
+        self?.closeSheet()
+        self?.revision &+= 1
+      })
+    sheet = (kind, view)
+    view.present(on: MainWindowController.window)
+  }
+
+  private func closeSheet() {
+    guard let sheet else { return }
+    self.sheet = nil
+    sheet.view.dismiss()
+  }
+
+  private func confirmedEnable() {
+    closeSheet()
+    ShellSeal.setEnabled(true, .standard)
+    reload()
+    if !isOn {
+      // The seal did not hold: no key could be read or made.
+      sealProblem = ShellSeal.lastKeyError ?? "The seal Cupertino made did not validate."
+    }
+    revision &+= 1
+    StatusModel.shared.refresh()
+  }
+
+  private func confirmedDontAsk() {
+    closeSheet()
+    // Shell may have gone off while the sheet was up; "Don't ask" is no use without it, and
+    // turning Shell on again must not bring it back.
+    if ShellSeal.isEnabled(.standard) { ShellSeal.setBefore(.none, .standard) }
+    reload()
+    revision &+= 1
   }
 }
 

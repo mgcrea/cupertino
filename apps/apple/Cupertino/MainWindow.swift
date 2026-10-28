@@ -33,6 +33,10 @@ enum MainWindowController {
 
   static func show() { hosted.show() }
 
+  /// The window, nil until it has been shown once. The Shell pane's confirming sheets attach
+  /// to it.
+  static var window: NSWindow? { hosted.current }
+
   /// Open onto a particular pane, including on a window that is already up.
   ///
   /// The default is written *before* the window is shown, exactly as
@@ -702,7 +706,15 @@ private struct SurfaceSidebarRow: View {
     _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
   }
 
+  private var isShell: Bool { surface.id == ShellPane.surfaceID }
+
+  /// Shell's is the sealed value: a forged plain bool must not draw it on.
+  private var isOn: Bool { isShell ? ShellSwitch.shared.isOn : enabled }
+
   var body: some View {
+    // Shadows the stored preference for the drawing below; the context menu's
+    // plain path writes `self.enabled`.
+    let enabled = isOn
     // The app's own icon leads the row, so the sidebar reads as a list of the
     // apps rather than of abstractions — and the automation status moves to the
     // trailing edge instead of being displaced by it. Both facts fit; one was
@@ -735,9 +747,15 @@ private struct SurfaceSidebarRow: View {
     // navigations; from here it is four right-clicks without leaving the list,
     // which is the one thing a Settings list of all eight would have bought.
     .contextMenu {
-      Button(enabled ? "Turn Off" : "Turn On") {
-        enabled.toggle()
-        if !enabled { ServerHost.shared.stopSessions(for: surface) }
+      // Shell cannot be turned on from here: this opens its pane with the
+      // confirming sheet up, hence the ellipsis.
+      Button(enabled ? "Turn Off" : (isShell ? "Turn On…" : "Turn On")) {
+        if isShell {
+          ShellSwitch.shared.set(on: !enabled)
+          return
+        }
+        self.enabled.toggle()
+        if !self.enabled { ServerHost.shared.stopSessions(for: surface) }
         model.refresh()
       }
     }

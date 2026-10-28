@@ -91,6 +91,23 @@ struct DispatchCheck {
   static func main() {
     print("\nin-process dispatch\n")
 
+    // Shell reads its "Before running" setting and the seal on a call, and writes a run record.
+    // A scratch suite, a key held in memory and a scratch folder, so this check never reads the
+    // app's own defaults, touches the Keychain or writes the app's `shell-runs`.
+    let shellSuite = "dispatch-check-shell"
+    let shellStore = UserDefaults(suiteName: shellSuite)!
+    shellStore.removePersistentDomain(forName: shellSuite)
+    defer { shellStore.removePersistentDomain(forName: shellSuite) }
+    ShellSeal.domain = shellSuite
+    ShellSeal.source = MemoryKey()
+    ShellServer.defaults = shellStore
+    let shellRecord = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("dispatch-check-shell-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: shellRecord) }
+    ShellRecord.directory = shellRecord
+    let witness = WitnessConsent()
+    ShellServer.consent = witness
+
     let hosted = Surface.all.filter { $0.runtime == .swift }
     check("the closed table still has swift-hosted surfaces", !hosted.isEmpty)
 
@@ -217,6 +234,35 @@ struct DispatchCheck {
     }
     check("a surface with no in-process server says so", noServer)
 
+    // `shell` is answered by ShellServer (the loop above pins `cupertino-shell`), and it is the
+    // one in-process surface that needs the connection: a session approval, a cooldown and a
+    // cancel all belong to the connection the request came in on.
+    if let shell = Surface.named("shell") {
+      let connection = UUID()
+      let message: [String: Any] = [
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": [
+          "name": "apple_shell_run",
+          "arguments": ["script": "true", "purpose": "dispatch-check"],
+        ],
+      ]
+      let line = String(
+        data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
+      let outcome = InProcessServers.handle(
+        line, surface: shell, allowWrites: false, gateOn: { _ in false },
+        surfaceEnabled: { _ in true }, connection: connection)
+      check(
+        "shell: the request reaches ShellServer with its connection",
+        witness.connections == [connection])
+      var refused = false
+      if case .message(let text) = outcome, text.contains("chose not to run this") {
+        refused = true
+      }
+      check("shell: and the server's answer comes back", refused)
+    } else {
+      check("shell: the closed table has it", false)
+    }
+
     // ─── the internal channel ────────────────────────────────────────────────
     //
     // `ServerHost` lends `desktop` to a node surface for that surface's own
@@ -317,4 +363,36 @@ struct DispatchCheck {
 enum DemoSeed {
   static let isEnabled = false
   static let version = "0.0.0"
+}
+
+/// A seal key held in memory, so this check never reads or writes the real Keychain.
+final class MemoryKey: ShellSeal.KeySource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Data?
+  func key() -> Data? { lock.withLock { stored } }
+  func rotate() -> Data? {
+    let fresh = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+    lock.withLock { stored = fresh }
+    return fresh
+  }
+}
+
+/// A window that is never drawn. It says no, and remembers which connection each prompt came on.
+final class WitnessConsent: ShellConsenting, @unchecked Sendable {
+  private let lock = NSLock()
+  private var seen: [UUID] = []
+  var connections: [UUID] { lock.withLock { seen } }
+
+  func ask(_ prompt: ShellPrompt) -> ShellPromptAnswer {
+    lock.withLock { seen.append(prompt.connection) }
+    return .dontRun
+  }
+  func cancel(connection: UUID, requestId: String) {}
+  func running(_ prompt: ShellPrompt, stop: @escaping @Sendable () -> Void)
+    -> any ShellNoticeToken
+  { NoNotice() }
+
+  private struct NoNotice: ShellNoticeToken {
+    func ended() {}
+  }
 }

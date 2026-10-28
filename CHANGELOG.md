@@ -29,6 +29,20 @@ summary.
   it. `apple_safari_page_elements` takes `query`, `kind` and `inViewOnly`, applied before its cap.
   `read_page`, `page_elements`, `find_codes` and `wait_for` read the frontmost tab when no `url` is
   given.
+- **Shell: an agent can run a script with Cupertino's access, after you approve it.**
+  `apple_shell_run` runs one script, in zsh, bash, python3, node, AppleScript or JXA, as
+  Cupertino's own child, so it holds every grant Cupertino holds, Full Disk Access among them when
+  Cupertino has it. Before each run a window shows you the whole script and the agent's reason.
+  Don't run is the default, Return and Escape mean it, and only a click by hand on Run once runs
+  it, so VoiceOver can't approve a run. You can let a connection stop asking for 30 minutes, or
+  turn asking off, and a run with no window still shows a card you can stop it from. Shell arrives
+  off, and turning it on, or turning asking off, takes a confirming click that another program
+  can't fake by writing Cupertino's preferences. Every request, refusals included, leaves a line in
+  a run record that keeps a hash of the script and never its text or output. Timeouts, Esc in the
+  client and quitting Cupertino stop the script and everything still in its process group. Scripts
+  start without your shell startup files, with the system's PATH plus Homebrew's, so an interpreter
+  from nvm or pyenv needs the script to set it up, where the window shows it. See
+  [docs/shell.md](docs/shell.md).
 
 ### Changed
 
@@ -49,6 +63,16 @@ summary.
 - **A Debug build of the app no longer updates itself into a second copy of the release.** The
   copy registered the Safari extension a second time, and Safari ran no Cupertino extension until
   the extra copies were removed.
+
+### Internal
+
+- Release signing needs a Developer ID provisioning profile, read from the
+  `DEVELOPER_ID_PROVISIONING_PROFILE_BASE64` secret, because Shell's seal key lives in a keychain
+  access group that only Cupertino's own signature may name. `make build-release` takes it as
+  `PROVISIONING_PROFILE`, and `scripts/release-entitlements.sh` refuses a profile that would ship
+  a build which dies at launch or can never turn Shell on. See
+  [docs/distribution.md](docs/distribution.md#the-provisioning-profile).
+- `make shell-check` and `make shell-window-check` run in CI.
 
 ## [1.32.0] - 2026-10-27
 

@@ -932,6 +932,42 @@ struct UnitCheck {
           idleRelease: TimeInterval(DrivingPolicy.idleReleaseRange.lowerBound)))
     UserDefaults.standard.removePersistentDomain(forName: suite)
 
+    // Its own scope: `t0` already names the in-flight checks' clock above.
+    do {
+      print("\nShell policy: a cooldown outranks everything, a session never crosses into ask")
+      let t0 = Date(timeIntervalSince1970: 1_000_000)
+      func shell(
+        _ b: ShellPolicy.Before, until: Date? = nil, declined: Date? = nil, inFlight: Int = 0
+      ) -> ShellPolicy.Decision {
+        ShellPolicy.decide(
+          b, sessionApprovedUntil: until, declinedUntil: declined, inFlight: inFlight, now: t0)
+      }
+      check("ask: window, no session button", shell(.ask) == .ask(timeout: 60, offerSession: false))
+      check(
+        "session: window offers the session button",
+        shell(.session) == .ask(timeout: 60, offerSession: true))
+      check(
+        "session approved: runs, card shown", shell(.session, until: t0 + 10) == .run(notice: true))
+      check(
+        "session approval expired at 30 min asks again",
+        shell(.session, until: t0) == .ask(timeout: 60, offerSession: true))
+      check(
+        "approval ignored once the setting is ask",
+        shell(.ask, until: t0 + 10) == .ask(timeout: 60, offerSession: false))
+      check("none: runs, card shown", shell(.none) == .run(notice: true))
+      check("cooldown beats none", shell(.none, declined: t0 + 12) == .declined(retryIn: 12))
+      check(
+        "cooldown beats a session approval",
+        shell(.session, until: t0 + 10, declined: t0 + 5) == .declined(retryIn: 5))
+      check(
+        "cooldown in the past is ignored",
+        shell(.ask, declined: t0 - 1) == .ask(timeout: 60, offerSession: false))
+      check("fifth run is busy", shell(.none, inFlight: 4) == .busy)
+      check("fourth run is allowed", shell(.none, inFlight: 3) == .run(notice: true))
+      check(
+        "cooldown beats busy", shell(.none, declined: t0 + 3, inFlight: 4) == .declined(retryIn: 3))
+    }
+
     print("\nNotice style: where the card lands and how big it is")
 
     // Silent when wrong, which is the whole reason this is arithmetic in its

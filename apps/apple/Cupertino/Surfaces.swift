@@ -841,6 +841,50 @@ nonisolated struct Surface: Identifiable, Hashable {
       runtime: .swift,
       gates: []
     ),
+    Surface(
+      id: "shell",
+      displayName: "Shell",
+      // The one surface that is not bounded by what it reaches. Every other
+      // entry brokers one application or capability through a narrow tool set,
+      // behind write switches, gates and account allowlists. A script running
+      // under Cupertino's grants gets past all of them: it can read chat.db,
+      // the Envelope Index, Safari history and anything else Full Disk Access
+      // opens, and send Apple Events to every app Cupertino may already drive.
+      // An agent that reads a mail or a page saying 'run this' is the
+      // realistic attack.
+      //
+      // THE CONFIRMATION WINDOW IS THE ONLY SAFEGUARD LEFT, and 'Don't ask'
+      // removes it. So the window shows the script itself, not a summary; the
+      // safe answer is the default; and even with the window off a run is
+      // never invisible. 'Shell is on' and 'Don't ask' count only with a seal
+      // Cupertino made (ShellSeal), so a program that can write the
+      // preferences cannot turn a shell into Full Disk Access.
+      //
+      // supportsWrites is FALSE and there is no gate, following screen's note:
+      // running a script is the only thing the surface does, so the surface
+      // switch is the gate, and a second switch would be on whenever the first
+      // is. usesAppleEvents is false because the surface sends none itself; a
+      // script may, under its own grants.
+      //
+      // storePermission is full-disk-access, but the surface works without it:
+      // a script then has whatever else Cupertino holds, and diagnostics say so.
+      // Every request leaves a line in the run record (ShellRecord), whatever
+      // the activity and audit settings. See docs/superpowers/specs/
+      // 2026-10-27-shell-surface-design.md.
+      bundleID: nil,
+      kind: .capability,
+      iconPath: "/System/Applications/Utilities/Terminal.app",
+      symbol: "terminal",
+      usesAppleEvents: false,
+      appleEventsScope: nil,
+      supportsWrites: false,
+      defaultEnabled: false,
+      storePath: nil,
+      storePermission: .fullDiskAccess,
+      envPrefix: "APPLE_SHELL_",
+      runtime: .swift,
+      gates: []
+    ),
   ]
   // </generated:surfaces>
 

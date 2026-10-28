@@ -2063,10 +2063,24 @@ nonisolated enum AccessibilityDriver {
     }
   }
 
+  /// Refuses a pointer event at `point` when it is on Cupertino's Shell window or one of the
+  /// sheets that lower its bar (`ShellPanels`). Those sit above every other window, and
+  /// `pointOnWindow` steps over higher levels, so a point checked as "on" the named app's window
+  /// can be on Run once. No surface clicks the window where a person decides whether a script
+  /// runs. Asked first by `click` and `drag`, before the grant, so `desktop-check` can pin it.
+  static func refuseUnderShellPanel(_ point: CGPoint) throws {
+    guard ShellPanels.covers(point) else { return }
+    throw Failure.refused(
+      "(\(Int(point.x)), \(Int(point.y))) is on Cupertino's Shell window, so nothing was "
+        + "posted. No surface clicks the window where a person decides whether a script runs; "
+        + "wait for them to answer it.")
+  }
+
   static func click(
     x: Double, y: Double, button: MouseButton = .left, scope: Scope,
     announcing target: String? = nil
   ) throws {
+    try refuseUnderShellPanel(CGPoint(x: x, y: y))
     guard isTrusted() else { throw Failure.notTrusted }
     let point = CGPoint(x: x, y: y)
     let source = CGEventSource(stateID: .hidSystemState)
@@ -2096,6 +2110,9 @@ nonisolated enum AccessibilityDriver {
   static func drag(
     from: CGPoint, to: CGPoint, durationMs: Int, scope: Scope, announcing target: String? = nil
   ) throws {
+    // Both ends: a press or a release on the Shell window is a click on it.
+    try refuseUnderShellPanel(from)
+    try refuseUnderShellPanel(to)
     guard isTrusted() else { throw Failure.notTrusted }
     let source = CGEventSource(stateID: .hidSystemState)
     func event(_ type: CGEventType, at point: CGPoint) throws -> CGEvent {

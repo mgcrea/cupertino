@@ -47,6 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // answered from a cold cache. See `AccessibilityDriver.watchLayout`.
     AccessibilityDriver.watchLayout()
 
+    // Before the socket, so the first Shell request already meets the real window. Until this
+    // runs, `ShellServer` answers every request as cancelled and runs nothing.
+    ShellServer.consent = ShellConsent.shared
+    ShellServer.clientName = { Sessions.clientName($0) ?? ShellConsent.unnamedClient }
+    ShellServer.fullDiskAccess = { Permissions.diskAccess() == .granted }
+    watchShellSwitch()
+
     do {
       try ServerHost.shared.start()
     } catch {
@@ -99,6 +106,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   static let licencePromptShown = "licencePromptShown"
+
+  private var shellSwitch: NSObjectProtocol?
+  private var shellWasOn = false
+
+  /// Switching Shell off closes every window still waiting and stops every run in flight.
+  ///
+  /// The value is read back through `ShellSeal` on each change, never taken from the raw
+  /// preference: a `defaults write` can set the bool, and only the seal says Shell is on.
+  /// `stopAll` is idempotent, so the Shell pane's own switch calling it as well costs nothing.
+  ///
+  /// "Before running" is handed to `ShellServer.beforeObserved` on each change too, so moving
+  /// away from "Ask once per session" withdraws every session approval at once, even if the
+  /// person moves back before one would have run out.
+  private func watchShellSwitch() {
+    shellWasOn = ShellSeal.isEnabled(.standard)
+    ShellServer.beforeObserved(ShellSeal.effectiveBefore(.standard))
+    shellSwitch = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        let on = ShellSeal.isEnabled(.standard)
+        if self.shellWasOn, !on { ShellServer.stopAll() }
+        self.shellWasOn = on
+        ShellServer.beforeObserved(ShellSeal.effectiveBefore(.standard))
+      }
+    }
+  }
 
   /// Open the licence pane once, and only when there is nothing to run with.
   ///
@@ -566,6 +601,7 @@ struct StatusMenu: View {
       // to take their hands off the keyboard, and it stops being true a few
       // seconds after they read it.
       DrivingNotice()
+      ShellRunsNotice()
 
       // First otherwise, and in the popover rather than behind a tab. This is
       // the one state where nothing works at all, and whoever is reading it has
@@ -919,6 +955,11 @@ struct GateToggle: View {
 /// surfaces exist. Not a literal `true`: Screen and Sound default off, and a
 /// hardcoded `true` here would draw their switch on while the relay served
 /// nothing.
+///
+/// Shell is the exception, and draws and sets nothing through `@AppStorage`: it
+/// reads the sealed value from `ShellSwitch` and hands every flip to it. Off is
+/// at once; on opens the Shell pane with the confirming sheet up, which is the
+/// only place a seal is made.
 struct SurfaceSwitch: View {
   enum Style {
     /// Under the surface it belongs to, in the main window's detail pane.
@@ -939,9 +980,27 @@ struct SurfaceSwitch: View {
     _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
   }
 
+  private var isShell: Bool { surface.id == ShellPane.surfaceID }
+
+  /// The plain preference, or for Shell the sealed value and its one way in.
+  private var isOn: Binding<Bool> {
+    guard isShell else { return $enabled }
+    let shell = ShellSwitch.shared
+    return Binding(get: { shell.isOn }, set: { shell.set(on: $0) })
+  }
+
   var body: some View {
+    // Read in the body, so Shell's switch redraws when the seal moves, and after a
+    // flip that changed nothing because a sheet now waits for the click.
+    if isShell {
+      let _ = ShellSwitch.shared.isOn
+      let _ = ShellSwitch.shared.revision
+    }
     control
       .onChange(of: enabled) { _, isOn in
+        // Shell's switch does both of these itself, and its raw value is not
+        // what is in force.
+        guard !isShell else { return }
         // Off means off now, not at the next editor restart. An MCP host opens
         // one stdio connection when it launches and keeps it for the life of
         // that editor, so refusing new connections alone would leave the tools
@@ -959,15 +1018,15 @@ struct SurfaceSwitch: View {
   @ViewBuilder private var control: some View {
     switch style {
     case .inline:
-      Toggle("Enabled", isOn: $enabled)
+      Toggle("Enabled", isOn: isOn)
         .toggleStyle(.switch)
         .controlSize(.small)
         .labelsHidden()
     case .row:
-      Toggle(isOn: $enabled) {
+      Toggle(isOn: isOn) {
         SurfaceLabel(
           surface: surface,
-          caption: enabled ? nil : "off — not served, and not written to clients")
+          caption: isOn.wrappedValue ? nil : "off — not served, and not written to clients")
       }
       .help(
         "Turn this off to stop serving \(surface.displayName). Clients you have already "
@@ -1131,6 +1190,27 @@ struct DrivingNotice: View {
         }
       }
       Divider()
+    }
+  }
+}
+
+/// "Stop running commands", while any Shell command is running.
+///
+/// `ShellRunner.live` is not observable, so it is read once a second while the popover is open,
+/// which is the only time anyone can see this.
+struct ShellRunsNotice: View {
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { _ in
+      if !ShellRunner.live.isEmpty {
+        VStack(alignment: .leading, spacing: 6) {
+          Label("Running a command with Cupertino's access", systemImage: "terminal")
+            .foregroundStyle(.orange)
+            .font(.callout.weight(.medium))
+          Button("Stop running commands") { ShellServer.stopAll() }
+            .controlSize(.small)
+        }
+        Divider()
+      }
     }
   }
 }

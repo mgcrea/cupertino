@@ -25,6 +25,9 @@ final class HostedWindow {
   /// keeps the frame it autosaved.
   private var window: NSWindow?
 
+  /// The window, once `show()` has built it. For a sheet that has to attach to it.
+  var current: NSWindow? { window }
+
   /// Lives only long enough to see off SwiftUI's opening resize. See `show()`.
   private var resizeGuard: OpeningResizeGuard?
 

@@ -180,7 +180,10 @@ final class AuditLog {
     open()
     append(
       kind: entry.failed ? .error : .result, surface: entry.surface, text: entry.text,
-      args: nil, result: Self.recordsPayloads ? Self.forDisk(entry.result) : nil,
+      args: nil,
+      result: Self.recordsPayloads
+        ? CallCapture.reredactResult(entry.result, tool: entry.text, content: Self.recordsContent)
+        : nil,
       failed: entry.failed ? true : nil, ref: reference)
   }
 
