@@ -411,12 +411,14 @@ nonisolated enum ShellRunner {
       let err = captured[2] ?? ([], false)
       state.unlock()
 
-      // Reaped only now, beside leaving `live`: until then the group id cannot be handed to
-      // another process, so a teardown signalling `live` cannot reach a stranger.
+      // Out of `live` first, then reaped: until the reap the group id cannot be handed to
+      // another process, so a teardown that reads `live` from here on never sees a group id
+      // that may already belong to a stranger. One that read it a moment before keeps the
+      // narrow window between its read and its signal.
+      ShellRunner.registry.withLock { runs in runs.removeAll { $0 === self } }
       var status: Int32 = 0
       var reaped: pid_t
       repeat { reaped = waitpid(pid, &status, 0) } while reaped < 0 && errno == EINTR
-      ShellRunner.registry.withLock { runs in runs.removeAll { $0 === self } }
 
       let ended: (exitCode: Int32?, signal: String?) =
         reaped == pid ? ShellRunner.decode(status) : (nil, nil)
