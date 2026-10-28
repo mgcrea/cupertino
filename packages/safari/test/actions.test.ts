@@ -488,6 +488,61 @@ describe("when the whole lane has gone quiet", () => {
   });
 });
 
+/** A heartbeat as the native handler stamps one: a file per origin, named by its digest. */
+const beat = (pages: string, origin: string, at = new Date().toISOString()) => {
+  const dir = join(dirname(pages), "heartbeat");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${createHash("sha256").update(origin).digest("hex")}.json`),
+    JSON.stringify({ origin, at, extensionVersion: "1.33.0" }),
+  );
+};
+
+/**
+ * The three causes a timeout used to give one text: the extension not running
+ * at all, running but not on this site, running on this site but not answering
+ * this command. Heartbeats — one file per origin, stamped when an open page
+ * polls — are what tell them apart.
+ */
+describe("a timeout read against the heartbeats", () => {
+  /** 2026-10-27, as it would read with heartbeats: nothing anywhere polled. */
+  it("says the extension is running on no open page when no heartbeat is fresh", async () => {
+    const dirs = paths();
+    beat(dirs.pages, "https://gallica.bnf.fr", hoursAgo(7));
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("No open page");
+    expect(r.text).toContain("second Cupertino");
+    expect(r.text).toContain("quit and reopen Safari");
+  });
+
+  it("says this site is the problem when other sites are answering", async () => {
+    const dirs = paths();
+    beat(dirs.pages, "https://github.com");
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/a?b=1" });
+
+    expect(r.text).toContain("running");
+    expect(r.text).toContain("https://github.com");
+    expect(r.text).toContain("not on https://x.example");
+    expect(r.text).toContain("not allowed on this site");
+    expect(r.text).not.toContain("reopen Safari");
+  });
+
+  it("says the page is there but did not answer when this site is answering", async () => {
+    const dirs = paths();
+    beat(dirs.pages, "https://x.example");
+    const c = await connect(dirs.pages);
+    const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/a" });
+
+    expect(r.text).toContain("is running on https://x.example");
+    expect(r.text).toContain("this exact URL");
+    expect(r.text).not.toContain("not allowed on this site");
+  });
+});
+
 describe("apple_safari_page_elements", () => {
   it("works with writes disabled, because enumerating changes nothing", async () => {
     const dirs = paths();

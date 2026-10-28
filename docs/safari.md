@@ -971,6 +971,58 @@ drift like every other copy. One wrinkle it has to handle that semver does not: 
 to four dot-separated integers, so a pre-release suffix is dropped rather than copied — `1.7.0-beta.1`
 in the manifest would make Safari reject the whole thing.
 
+### Duplicate copies are the fifth cause, and heartbeats tell the causes apart
+
+Seen 2026-10-27/28. Nothing was captured on any site from 14:44 UTC until the next morning, every
+`page_elements` timed out, and diagnostics said `"working": true` beside a newest capture 7.5 hours
+old. Observed, from the unified log, `lsregister -dump` and Safari's Extensions pane:
+
+- At 15:45 local the Debug app in `apps/apple/.build` ran Sparkle (its preferences had
+  `SUEnableAutomaticChecks = 1`) and installed the 1.32.0 release over itself. That made a second
+  notarized `Cupertino.app`, registering `io.mgcrea.cupertino.SafariExtension` a second time. The
+  last capture was 70 seconds earlier.
+- Safari then asked launchd about once a second for `io.mgcrea.cupertino.debug.SafariExtension`'s
+  native service, which no longer existed (`No such process`). A Debug copy of the extension was
+  loaded, polling, and could store nothing.
+- Settings › Extensions showed two "Cupertino" rows, both ticked, both 1.32.0, the selected one
+  allowed on all websites. So neither "switched off" nor "not allowed on this site", which is what
+  every message said, was true.
+- Quitting and reopening Safari alone fixed nothing: the new Safari never launched either native
+  handler. What fixed it was unregistering every other copy (the Sparkle-converted Debug app, a
+  `.build/Release` copy with a broken appex signature, an empty bundle left in `$TMPDIR`, and eleven
+  stale Debug registrations) and then relaunching Safari. Which copy was decisive is not isolated.
+
+Two changes came out of it. A Debug build no longer runs Sparkle at all (`UpdateController.start`),
+and `make app` removes the standalone Debug appex as well as the one inside the app, then registers
+the trimmed app again so LaunchServices stops listing its plugin.
+
+The other is the reason `working` could lie. **Captures cannot tell a dead extension from an idle
+one**: they are written when a page loads, so seven hours of silence reads the same whether the
+extension is broken or nobody opened an allowed page. Every allowed page already polls the handler
+for commands, so the handler now stamps a heartbeat on each poll, one file per origin under
+`heartbeat/` beside `pages/`, rewritten at most every 5 s and pruned at the capture TTL. The origin
+is the page's own `location.origin`, so it serializes exactly as the server's `new URL(url).origin`
+does, and no full URL is kept.
+
+Diagnostics now report `state`: `never-ran`, `never-captured`, `stale`, `capturing`, or `answering`
+(a heartbeat in the last 30 s, which covers a hidden tab's 10 s poll). `working` is true only for
+`answering`, or for `capturing` from an extension too old to write heartbeats. A timeout or a
+`read_page` miss says which of three cases it is: no page polling anywhere (not running, so check
+for a second Cupertino row and relaunch Safari), other sites polling but not this one (this site's
+permission, or a tab not reloaded since it was allowed), or this site polling but no page on this
+exact URL taking the command.
+
+What heartbeats still cannot tell: an extension switched off from one allowed on no open page.
+Neither writes anything, and whether it is enabled is a switch in Safari that the server cannot
+read (the containing app could, through `SFSafariExtensionManager`; nothing asks it yet).
+
+Two page types were suspected and cleared, measured 2026-10-28 on Gallica with the extension
+healthy. A Cloudflare challenge ("Just a moment...") replaced itself with the real page in a
+background tab, and the stored capture was the real page, taken after it. Safari's viewer for raw
+XML (`/SRU?…`) is an HTML page with a body: the content script runs there and a live read returns
+the viewer's "This XML file does not appear to have any style information" banner followed by the
+tree as text.
+
 ### Not verified end to end
 
 The server half is tested against a fake extension — 17 tests covering the command shape, the page's

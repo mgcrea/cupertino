@@ -78,9 +78,17 @@ final class UpdateController: NSObject {
   }
 
   private func start() {
-    guard controller == nil else { return }
-    controller = SPUStandardUpdaterController(
-      startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
+    // A Debug build never updates itself. Sparkle installs the RELEASE over
+    // whatever bundle it runs from, so on 2026-10-27 a Debug app in
+    // apps/apple/.build became a second notarized Cupertino.app, registering
+    // a second copy of the Safari extension, and Safari stopped running the
+    // extension until the extra copies were unregistered. The feed is the
+    // release's; a Debug build has no business consuming it.
+    #if !DEBUG
+      guard controller == nil else { return }
+      controller = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
+    #endif
   }
 }
 

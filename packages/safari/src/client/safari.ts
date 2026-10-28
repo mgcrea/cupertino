@@ -33,12 +33,15 @@ import {
 } from "./network.js";
 import {
   ageSeconds,
+  answeringDiagnosis,
   defaultPagesDirectory,
+  heartbeatStatus,
   isQuiet,
   pagesStatus,
   readPage,
   readPages,
   type CapturedPage,
+  type HeartbeatStatus,
   type PagesStatus,
 } from "./pages.js";
 import { encodeBookmarkRef, encodeHistoryRef } from "./ref.js";
@@ -934,6 +937,11 @@ export class AppleSafariClient {
       }
     }
 
+    // Heartbeats, where the extension writes them, answer the question the
+    // captures below can only guess at: is anything running, and where.
+    const diagnosis = answeringDiagnosis(this.heartbeatStatus(), url);
+    if (diagnosis !== null) return new PageCommandTimeoutError(`${error.message} ${diagnosis}`);
+
     const status = this.pagesStatus();
     if (!isQuiet(status)) return error;
     const quietMinutes = Math.round((status.newestAgeSeconds ?? 0) / 60);
@@ -984,6 +992,11 @@ export class AppleSafariClient {
 
   pagesStatus(): PagesStatus {
     return pagesStatus(this.pagesDirectory);
+  }
+
+  /** Which open pages have polled lately; see `heartbeatStatus`. */
+  heartbeatStatus(): HeartbeatStatus {
+    return heartbeatStatus(this.pagesDirectory);
   }
 
   /** Everything diagnostics needs, with no lane allowed to fail the whole call. */

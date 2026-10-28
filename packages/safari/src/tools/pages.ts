@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { isQuiet } from "../client/pages.js";
+import { answeringDiagnosis, isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { compact, fail, ok, pageUrlArg, resolvePageUrl, wrapResult } from "./util.js";
 
@@ -131,6 +131,12 @@ export const registerPageTools = (server: McpServer, client: AppleSafariClient):
                 "Cupertino, then enable the extension in Safari > Settings > Extensions. Note " +
                 "a locally built Debug app ships no extension; only an installed release does.",
             );
+          }
+          // Heartbeats, where the extension writes them, say whether it is
+          // running and where, which the captures' age below can only guess.
+          const diagnosis = answeringDiagnosis(client.heartbeatStatus(), url);
+          if (diagnosis !== null) {
+            return fail(`No capture for that URL, and no live read. ${diagnosis}`);
           }
           if (status.count === 0) {
             return fail(

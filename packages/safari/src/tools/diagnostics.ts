@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
-import { isQuiet } from "../client/pages.js";
+import { extensionState, isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { wrap } from "./util.js";
 
@@ -20,6 +20,8 @@ export const buildDiagnostics = async (
 ): Promise<Record<string, unknown>> => {
   const status = client.status();
   const pages = client.pagesStatus();
+  const beats = client.heartbeatStatus();
+  const health = extensionState(pages, beats);
   const located = status.located;
   const base = buildBaseDiagnostics({
     build: BUILD_INFO,
@@ -52,21 +54,32 @@ export const buildDiagnostics = async (
           "what a page actually says, as text or HTML — and, through a command channel in " +
           "the same container, what is on it (page_elements), acting on it (click, fill, " +
           "scroll) and any one-time code it is showing (find_codes)",
-        // `working` is measured — the store exists — and `captured` is what is in
-        // it. Both matter: a directory with nothing in it means the extension ran
-        // but has been allowed on no site, which is a different fix from not
-        // having the extension at all.
-        working: pages.exists,
+        // `working` used to be `pages.exists`, which stays true forever once the
+        // extension has run: on 2026-10-27 it read true beside a newest capture
+        // 7.5 hours old, and an agent reading that field alone trusted a dead
+        // lane. It now needs recent evidence; `state` says which kind.
+        state: health.state,
+        working: health.working,
+        answering: health.answering,
+        answeringOrigins: beats.supported ? beats.answering.map((beat) => beat.origin) : undefined,
         captured: pages.count,
         newestAgeSeconds: pages.newestAgeSeconds,
+        canTell:
+          "From what the extension leaves on disk this can tell apart: never ran, ran but " +
+          "captured nothing, captured but gone quiet (stale), captured within the last 30 " +
+          "minutes, and — from an extension that writes heartbeats — a page answering right " +
+          "now and on which sites. It cannot tell an extension switched off from one allowed " +
+          "on no open page: neither writes anything, and whether it is enabled is a switch " +
+          "in Safari this process cannot read.",
         // Measured, not asserted. Whether the extension is ENABLED is a switch
         // in Safari that only the containing app can read, and a value handed
         // to this process at spawn would be a snapshot of something the user
         // can flip a second later. Silence is what CAN be measured here.
         quiet: isQuiet(pages)
-          ? "Nothing captured recently. The extension is probably switched off, or allowed " +
-            "on no site visited since — check Safari > Settings > Extensions. Anything still " +
-            "on disk is stale."
+          ? "Nothing captured recently. Either the extension is not running in Safari — " +
+            "switched off, or loaded but broken (two Cupertino rows in Safari > Settings > " +
+            "Extensions is one known cause) — or it is allowed on no site loaded since. " +
+            "Anything still on disk is stale."
           : undefined,
         directory: pages.directory,
         note:
