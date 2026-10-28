@@ -211,6 +211,23 @@ struct ShellWindowCheck {
     check("arming disables it at once", !button.isEnabled)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
     check("and leaves it disabled when its window is not on screen", !button.isEnabled)
+
+    print("\nCoverWatch: the run buttons and another program's window")
+    let watched = HandPressedButton.make("Run once") {}
+    watched.isEnabled = true
+    let watchedPanel = ShellPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    let notice = NSView()
+    notice.alphaValue = 0
+    let watch = CoverWatch(panel: watchedPanel, buttons: [watched], notice: notice)
+    check("a watched button starts off", !watched.isEnabled)
+    check("and is given a test to pass at the moment of a click", watched.clear != nil)
+    watch.start()
+    RunLoop.main.run(until: Date().addingTimeInterval(ShellConsent.armDelay + 0.3))
+    check("it stays off while its window is not on screen", !watched.isEnabled)
+    watch.stop()
+    check("stopping leaves it off", !watched.isEnabled)
   }
 
   /// The sheets that turn Shell on and choose "Don't ask": only the confirming button lowers

@@ -1990,6 +1990,64 @@ extension ShellCheck {
     pidOnly?.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
     check(
       "pid 0 from another state is not hardware", pidOnly.map(ShellInput.isHardware) == false)
+
+    print("\nShellCover: another program's window over the Shell window")
+    let me: Int32 = 100
+    let panel = CGRect(x: 100, y: 100, width: 600, height: 400)
+    func window(_ pid: Int32, _ rect: CGRect, alpha: Double = 1) -> ShellCover.Window {
+      ShellCover.Window(pid: pid, bounds: rect, alpha: alpha)
+    }
+    check("nothing above: not covered", !ShellCover.isCovered(panel, by: [], ownPid: me))
+    check(
+      "this app's own window above (the card): not covered",
+      !ShellCover.isCovered(panel, by: [window(me, panel)], ownPid: me))
+    check(
+      "another program's window over it: covered",
+      ShellCover.isCovered(panel, by: [window(200, panel)], ownPid: me))
+    check(
+      "even over a corner only",
+      ShellCover.isCovered(
+        panel, by: [window(200, CGRect(x: 690, y: 490, width: 50, height: 50))], ownPid: me))
+    check(
+      "a window elsewhere on the screen: not covered",
+      !ShellCover.isCovered(
+        panel, by: [window(200, CGRect(x: 800, y: 100, width: 100, height: 100))], ownPid: me))
+    check(
+      "a window that only touches its edge: not covered",
+      !ShellCover.isCovered(
+        panel, by: [window(200, CGRect(x: 700, y: 100, width: 100, height: 100))], ownPid: me))
+    check(
+      "a fully transparent window shows nothing: not covered",
+      !ShellCover.isCovered(panel, by: [window(200, panel, alpha: 0)], ownPid: me))
+    check(
+      "a nearly transparent one can: covered",
+      ShellCover.isCovered(panel, by: [window(200, panel, alpha: 0.02)], ownPid: me))
+
+    let listed: [[String: Any]] = [
+      [
+        kCGWindowOwnerPID as String: NSNumber(value: 200),
+        kCGWindowBounds as String: CGRect(x: 1, y: 2, width: 3, height: 4)
+          .dictionaryRepresentation,
+        kCGWindowAlpha as String: NSNumber(value: 0.5),
+      ],
+      [kCGWindowOwnerPID as String: NSNumber(value: 300)],
+      [kCGWindowBounds as String: panel.dictionaryRepresentation],
+    ]
+    let parsed = ShellCover.windows(from: listed)
+    check(
+      "a window's pid, bounds and alpha are read from the window list",
+      parsed.first == window(200, CGRect(x: 1, y: 2, width: 3, height: 4), alpha: 0.5))
+    check(
+      "a window listed without bounds counts as covering everything",
+      parsed.count == 3 && parsed[1].pid == 300 && ShellCover.isCovered(panel, by: [parsed[1]], ownPid: me))
+    check(
+      "a window listed without a pid counts as another program's",
+      ShellCover.isCovered(panel, by: [parsed[2]], ownPid: me))
+    check(
+      "a frame turned from AppKit's coordinates into the window list's",
+      ShellCover.windowListRect(
+        CGRect(x: 10, y: 100, width: 50, height: 20), primaryScreenHeight: 1000)
+        == CGRect(x: 10, y: 880, width: 50, height: 20))
   }
 
   static func prompt(_ connection: UUID = UUID(), _ requestId: String) -> ShellPrompt {

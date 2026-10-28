@@ -20,6 +20,10 @@ import SwiftUI
 ///   without a click at all. The cost is that VoiceOver can read them but not press them.
 /// - The window is a `ShellPanel`, which drops every click and keystroke that did not come
 ///   from hardware.
+/// - While any window of another program lies over the window, the run buttons are off and the
+///   window says why, and once it moves they wait `armDelay` again before coming on. A click
+///   on Run while one does is refused at the click itself (`CoverWatch`, `ShellCover`). A
+///   program that draws a harmless script over the real one cannot borrow a person's click.
 /// - No answer within `ShellPolicy.askTimeout` is a no, timed from when the window shows.
 /// - The script is shown whole, wrapped rather than scrolled sideways, so nothing can be hidden
 ///   past the right edge, and a script holding invisible characters says so.
@@ -100,6 +104,7 @@ final class ShellConsent: ShellConsenting {
   private struct Showing {
     let id: Int
     let panel: ShellPanel
+    let watch: CoverWatch
   }
 
   private var showing: Showing?
@@ -110,6 +115,7 @@ final class ShellConsent: ShellConsenting {
     let front = queue.front
     guard showing?.id != front?.id else { return }
     if let showing {
+      showing.watch.stop()
       showing.panel.orderOut(nil)
       self.showing = nil
     }
@@ -125,8 +131,9 @@ final class ShellConsent: ShellConsenting {
     let window = PromptWindow(front.prompt, screen: screen) { [weak self] answer in
       self?.choose(id, answer)
     }
-    showing = Showing(id: id, panel: window.panel)
-    for button in window.runButtons { button.arm(after: Self.armDelay) }
+    let watch = CoverWatch(
+      panel: window.panel, buttons: window.runButtons, notice: window.coverNotice)
+    showing = Showing(id: id, panel: window.panel, watch: watch)
     let visible = screen.visibleFrame
     let size = window.panel.frame.size
     window.panel.setFrameOrigin(
@@ -134,6 +141,7 @@ final class ShellConsent: ShellConsenting {
         x: (visible.midX - size.width / 2).rounded(),
         y: (visible.midY - size.height / 2).rounded()))
     window.panel.makeKeyAndOrderFront(nil)
+    watch.start()
     queue.shown(id)
   }
 
@@ -328,6 +336,10 @@ final class HandPressedButton: NSButton {
 
   var onPress: (() -> Void)?
 
+  /// Asked at the moment of a person's click, after every other test: false refuses it. The
+  /// Shell window's run buttons ask whether another program's window is over it.
+  var clear: (() -> Bool)?
+
   /// True only while `mouseDown` runs AppKit's tracking loop for a hardware click on this
   /// button.
   private var trackingHandClick = false
@@ -391,6 +403,13 @@ final class HandPressedButton: NSButton {
     guard trackingHandClick, Self.isPersonClick(event, in: window) else {
       Self.refusedAtAction += 1
       hostLog("shell", .info, "ignored a press of '\(title)' that was not a click by hand")
+      return
+    }
+    guard clear?() ?? true else {
+      Self.refusedAtAction += 1
+      hostLog(
+        "shell", .info,
+        "refused a click on '\(title)': another program's window was over the Shell window")
       return
     }
     onPress?()
@@ -515,6 +534,11 @@ struct ShellConfirmSheet {
 private struct PromptWindow {
   let panel: ShellPanel
   let runButtons: [HandPressedButton]
+  /// Shown while another program's window is over this one. Always laid out, so showing it
+  /// does not move the buttons.
+  let coverNotice: NSTextField
+
+  static let coverCopy = "Another window is over this one, so Run is off until it moves."
 
   static let width: CGFloat = 600
   static let inset: CGFloat = 20
@@ -584,6 +608,10 @@ private struct PromptWindow {
         "This can read everything Cupertino can, including mail, messages and browsing "
           + "history, and can control apps Cupertino controls.", width: content, bold: true))
 
+    let coverNotice = Self.label(Self.coverCopy, width: content, size: 11, color: .systemRed)
+    coverNotice.alphaValue = 0
+    views.append(coverNotice)
+
     let dontRun = ShellButton.make("Don't run") { answer(.dontRun) }
     dontRun.keyEquivalent = "\r"
     let runOnce = HandPressedButton.make("Run once") { answer(.runOnce) }
@@ -640,6 +668,7 @@ private struct PromptWindow {
 
     self.panel = panel
     self.runButtons = runs
+    self.coverNotice = coverNotice
   }
 
   /// "Script, 3 lines, 120 bytes": a long script says so before anyone scrolls.
@@ -720,6 +749,70 @@ private struct PromptWindow {
         equalToConstant: min(max(height, plain ? 0 : 40), maxHeight)),
     ])
     return scroll
+  }
+}
+
+/// Keeps the Shell window's run buttons off while another program's window lies over it.
+///
+/// Asked every `interval` while the window is up: covered, the buttons go off, the notice shows,
+/// and the arming delay starts again, so a cover that vanishes just before a click still leaves
+/// Run off for `ShellConsent.armDelay`. A cover pulled away only once the click is on its way is
+/// caught by the buttons' `clear`, asked at the click itself. A window that appears after the
+/// click has been taken is not seen.
+@MainActor
+final class CoverWatch {
+  static let interval: TimeInterval = 0.1
+
+  private let panel: NSPanel
+  private let buttons: [HandPressedButton]
+  private let notice: NSView
+  private var armedAt: Date
+  private var timer: Timer?
+
+  init(panel: NSPanel, buttons: [HandPressedButton], notice: NSView) {
+    self.panel = panel
+    self.buttons = buttons
+    self.notice = notice
+    armedAt = Date().addingTimeInterval(ShellConsent.armDelay)
+    for button in buttons {
+      button.isEnabled = false
+      button.clear = { [weak self] in self.map { !$0.covered } ?? false }
+    }
+  }
+
+  /// Whether another program's window is over the panel now.
+  var covered: Bool {
+    let height = NSScreen.screens.first?.frame.height ?? 0
+    return ShellCover.isCovered(
+      ShellCover.windowListRect(panel.frame, primaryScreenHeight: height),
+      by: ShellCover.above(panel.windowNumber), ownPid: getpid())
+  }
+
+  /// After the panel is on screen.
+  func start() {
+    tick()
+    let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.tick() }
+    }
+    // Common modes, so it keeps asking while a button tracks the mouse.
+    RunLoop.main.add(timer, forMode: .common)
+    self.timer = timer
+  }
+
+  func stop() {
+    timer?.invalidate()
+    timer = nil
+    for button in buttons { button.isEnabled = false }
+  }
+
+  private func tick() {
+    let covered = covered
+    if covered {
+      armedAt = max(armedAt, Date().addingTimeInterval(ShellConsent.armDelay))
+    }
+    notice.alphaValue = covered ? 1 : 0
+    let on = !covered && panel.isVisible && Date() >= armedAt
+    for button in buttons where button.isEnabled != on { button.isEnabled = on }
   }
 }
 

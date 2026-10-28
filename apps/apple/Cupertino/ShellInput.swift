@@ -40,3 +40,72 @@ nonisolated enum ShellInput {
         == Int64(CGEventSourceStateID.hidSystemState.rawValue)
   }
 }
+
+/// Whether another program's window is over the Shell window.
+///
+/// Any program running as the person can put a borderless window above the Shell window's
+/// level, drawing a harmless script where the real one is and letting clicks fall through, so a
+/// person's genuine click lands on Run once. A hardware click is all `ShellInput` asks for, and
+/// that click is one. So the run buttons are off while any window of another process lies over
+/// the Shell window, and a click is refused if one does at the moment it lands.
+///
+/// The window list gives each window's owner pid, bounds and alpha. Its names need Screen
+/// Recording; these fields are documented not to, which has not been measured from a process
+/// without the grant. A window listed without bounds counts as covering everything, so a list
+/// that withholds them leaves Run off rather than on.
+///
+/// The decision is pure, so `make shell-check` pins it; `above` asks the window server.
+nonisolated enum ShellCover {
+  struct Window: Equatable {
+    /// Nil when the list gave none: then it is never this app's.
+    var pid: Int32?
+    /// In the window list's coordinates: points, origin at the top left of the main screen.
+    /// Nil when the list gave none.
+    var bounds: CGRect?
+    var alpha: Double
+  }
+
+  /// True when a window of another process, not fully transparent, overlaps `frame` by any
+  /// area. A window that only touches its edge does not.
+  static func isCovered(_ frame: CGRect, by windows: [Window], ownPid: Int32) -> Bool {
+    windows.contains { window in
+      guard window.pid != ownPid, window.alpha > 0 else { return false }
+      guard let bounds = window.bounds else { return true }
+      let overlap = frame.intersection(bounds)
+      return !overlap.isNull && overlap.width > 0 && overlap.height > 0
+    }
+  }
+
+  /// The windows in a `CGWindowListCopyWindowInfo` answer.
+  static func windows(from list: [[String: Any]]) -> [Window] {
+    list.map { info in
+      Window(
+        pid: (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+        bounds: (info[kCGWindowBounds as String] as? NSDictionary).flatMap {
+          CGRect(dictionaryRepresentation: $0 as CFDictionary)
+        },
+        alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1)
+    }
+  }
+
+  /// An AppKit frame (origin at the bottom left of the main screen) in the window list's
+  /// coordinates.
+  static func windowListRect(_ frame: CGRect, primaryScreenHeight: CGFloat) -> CGRect {
+    CGRect(
+      x: frame.minX, y: primaryScreenHeight - frame.maxY, width: frame.width,
+      height: frame.height)
+  }
+
+  /// Stands for every window when the list cannot be had: it covers everything.
+  static let unknown = Window(pid: nil, bounds: nil, alpha: 1)
+
+  /// The windows on screen above window number `windowNumber`, front to back. `unknown` alone
+  /// when the window server gives no list, or the window has no number yet.
+  static func above(_ windowNumber: Int) -> [Window] {
+    guard windowNumber > 0,
+      let list = CGWindowListCopyWindowInfo(
+        [.optionOnScreenAboveWindow], CGWindowID(windowNumber)) as? [[String: Any]]
+    else { return [unknown] }
+    return windows(from: list)
+  }
+}
