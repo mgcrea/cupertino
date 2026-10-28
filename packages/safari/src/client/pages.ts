@@ -362,8 +362,12 @@ export const answeringDiagnosis = (
   const origin = originOf(url);
   const waited = wait === undefined ? 0 : wait.now - wait.sentAt;
   const decisive = wait !== undefined && waited >= FULL_POLL_MS;
-  const live = decisive ? beats.answering.filter((b) => b.at >= wait.sentAt) : beats.answering;
-  const stopped = decisive ? beats.answering.filter((b) => b.at < wait.sentAt) : [];
+  // The handler stamps `at` to the whole second, so a poll just after the send
+  // can read as just before it. Counting that second as during the wait leans
+  // towards "still running", which is the reading that was there before.
+  const cutoff = wait === undefined ? 0 : Math.floor(wait.sentAt / 1000) * 1000;
+  const live = decisive ? beats.answering.filter((b) => b.at >= cutoff) : beats.answering;
+  const stopped = decisive ? beats.answering.filter((b) => b.at < cutoff) : [];
 
   const [latest] = stopped;
   if (live.length === 0 && latest !== undefined) {

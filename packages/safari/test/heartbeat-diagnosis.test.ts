@@ -71,6 +71,19 @@ describe("a timeout read against when the command was sent", () => {
     expect(text).toContain("this exact URL");
   });
 
+  it("counts a poll in the second the command went out, which the handler stamps to the second", () => {
+    // ISO8601DateFormatter writes no fraction: a poll 0.4 s after the send
+    // reads back as the whole second it fell in, before the send.
+    const sentMidSecond = { sentAt: SENT + 600, now: SENT + 13_000 };
+    const text = answeringDiagnosis(
+      status(beat("https://x.example", 0, sentMidSecond.now)),
+      "https://x.example/a",
+      sentMidSecond,
+    );
+
+    expect(text).toContain("is running on https://x.example");
+  });
+
   it("concludes nothing from timing when the wait was too short for a hidden tab to poll", () => {
     const short = { sentAt: SENT, now: SENT + 1_200 };
     const text = answeringDiagnosis(
