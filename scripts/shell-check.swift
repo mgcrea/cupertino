@@ -1499,6 +1499,36 @@ extension ShellCheck {
       "under Ask every time a session answer approves only that run",
       fake.asks == asksAfterAsk + 1 && fake.prompts.last?.offerSession == false)
 
+    // A person who moves away from "Ask once per session" withdraws every approval, even if
+    // they move back before it would have run out.
+    ShellSeal.setBefore(.session, store)
+    ShellServer.beforeObserved(.session)
+    fake.next = .runForSession
+    let withdrawn = UUID()
+    _ = shellRun(on: withdrawn)
+    let asksApproved = fake.asks
+    _ = shellRun(on: withdrawn)
+    let stillApproved = fake.asks == asksApproved
+    ShellSeal.setBefore(.ask, store)
+    ShellServer.beforeObserved(.ask)
+    ShellSeal.setBefore(.session, store)
+    ShellServer.beforeObserved(.session)
+    _ = shellRun(on: withdrawn)
+    check(
+      "switching away from once per session and back asks again",
+      stillApproved && fake.asks == asksApproved + 1)
+    // Approved again; this time the change is seen only by a request made under it.
+    _ = shellRun(on: withdrawn)
+    let reapproved = fake.asks
+    ShellSeal.setBefore(.ask, store)
+    fake.next = .runOnce
+    _ = shellRun(on: UUID())
+    ShellSeal.setBefore(.session, store)
+    _ = shellRun(on: withdrawn)
+    check(
+      "a change seen first by a request withdraws it too", fake.asks == reapproved + 2)
+    ShellSeal.setBefore(.ask, store)
+
     print("\nShellServer: a cooldown follows the client's name across connections")
     ShellSeal.setBefore(.ask, store)
     let first = UUID()

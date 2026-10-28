@@ -163,6 +163,22 @@ nonisolated enum ShellServer {
     state.lock.withLock { _ = state.connections.removeValue(forKey: connection) }
   }
 
+  /// "Before running" is `before` now. When that is a change from the last value seen, every
+  /// session approval goes: a person who moves away from "Ask once per session" has withdrawn
+  /// them, even if they move back before they would have run out. The app calls this whenever
+  /// its defaults change, and every request calls it with the value it was decided under, so a
+  /// change is seen at the latest by the next request.
+  static func beforeObserved(_ before: ShellPolicy.Before) {
+    state.lock.withLock { noteBefore(before) }
+  }
+
+  /// Under `state.lock`.
+  private static func noteBefore(_ before: ShellPolicy.Before) {
+    defer { state.lastBefore = before }
+    guard let last = state.lastBefore, last != before else { return }
+    for key in state.connections.keys { state.connections[key]?.approvedUntil = nil }
+  }
+
   /// Shell was switched off: close every window still waiting, stop every run, and drop every
   /// session approval. A request already past the host's switch check is turned away too.
   static func stopAll() {
@@ -209,6 +225,8 @@ nonisolated enum ShellServer {
     var inFlight = 0
     /// Requests waiting for the window, the one on screen included.
     var waiting = 0
+    /// "Before running" as last seen, by `beforeObserved` or a request.
+    var lastBefore: ShellPolicy.Before?
     /// Calls that may ask or run, for `stopAll`.
     var calls: [ObjectIdentifier: Call] = [:]
     /// Moved on by `stopAll`, so a request that started before it cannot go on to ask or run.
@@ -440,6 +458,7 @@ nonisolated enum ShellServer {
     // The decision, the slot it takes and the call `stopAll` can reach, in one step.
     let decision = state.lock.withLock { () -> ShellPolicy.Decision? in
       guard state.generation == generation else { return nil }
+      noteBefore(before)
       let now = clock()
       let standing = connection.flatMap { state.connections[$0] }
       state.declinedClients = state.declinedClients.filter { $0.value > now }

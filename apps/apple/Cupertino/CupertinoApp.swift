@@ -115,8 +115,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// The value is read back through `ShellSeal` on each change, never taken from the raw
   /// preference: a `defaults write` can set the bool, and only the seal says Shell is on.
   /// `stopAll` is idempotent, so the Shell pane's own switch calling it as well costs nothing.
+  ///
+  /// "Before running" is handed to `ShellServer.beforeObserved` on each change too, so moving
+  /// away from "Ask once per session" withdraws every session approval at once, even if the
+  /// person moves back before one would have run out.
   private func watchShellSwitch() {
     shellWasOn = ShellSeal.isEnabled(.standard)
+    ShellServer.beforeObserved(ShellSeal.effectiveBefore(.standard))
     shellSwitch = NotificationCenter.default.addObserver(
       forName: UserDefaults.didChangeNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -125,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let on = ShellSeal.isEnabled(.standard)
         if self.shellWasOn, !on { ShellServer.stopAll() }
         self.shellWasOn = on
+        ShellServer.beforeObserved(ShellSeal.effectiveBefore(.standard))
       }
     }
   }
