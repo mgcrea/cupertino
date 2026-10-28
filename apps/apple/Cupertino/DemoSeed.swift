@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import Synchronization
 
@@ -78,6 +79,9 @@ nonisolated enum DemoSeed {
     case settings
     case writes
     case chat
+    case shell
+    /// Shell's approval window on its own, which no other stage opens.
+    case shellPrompt = "shell-prompt"
 
     /// Which window the shutter is aimed at.
     ///
@@ -102,7 +106,8 @@ nonisolated enum DemoSeed {
     /// out — and the next pane that outgrows a form will want it back.
     var subject: Subject {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell: .main
+      case .shellPrompt: .shellPrompt
       }
     }
 
@@ -125,13 +130,18 @@ nonisolated enum DemoSeed {
       // surface detail pane, and `settings` photographs Clients from its top.
       // Kept rather than deleted because the next long pane will want it, and
       // the retry loop it drove is the non-obvious part.
-      case .settings, .writes, .surface, .prompt, .activity, .connections, .chat: .top
+      case .settings, .writes, .surface, .prompt, .activity, .connections, .chat, .shell,
+        .shellPrompt:
+        .top
       }
     }
 
     enum Subject {
       case main
       case settings(SettingsPane)
+      /// A staged copy of Shell's approval window and nothing else, so it is the
+      /// only window appshot can photograph.
+      case shellPrompt
     }
 
     /// A named position in the Permissions form, resolved to a view `id` there.
@@ -143,7 +153,8 @@ nonisolated enum DemoSeed {
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell: .main
+      case .shellPrompt: .shellPrompt
       }
     }
 
@@ -172,6 +183,9 @@ nonisolated enum DemoSeed {
       // the only pane that draws every card this screen has.
       case .settings: .client("claude-code")
       case .chat: .chat
+      // `shellPrompt` never opens the main window; the pane is named only because
+      // the switch is exhaustive.
+      case .shell, .shellPrompt: .surface(ShellPane.surfaceID)
       }
     }
 
@@ -188,7 +202,8 @@ nonisolated enum DemoSeed {
       // disagreed with the Chat pane beside it would be a picture of the one
       // claim this feature makes — that these are real calls — being false.
       case .chat: DemoSeed.chatTurnLogLines
-      case .surface, .activity, .connections, .settings, .writes: DemoSeed.logLines
+      case .surface, .activity, .connections, .settings, .writes, .shell, .shellPrompt:
+        DemoSeed.logLines
       }
     }
   }
@@ -208,6 +223,7 @@ nonisolated enum DemoSeed {
   enum ReadySource {
     case main
     case settings
+    case shellPrompt
   }
 
   /// A stage argument that does not parse must be loud. The silent version of
@@ -264,6 +280,10 @@ nonisolated enum DemoSeed {
     // `show(_:)` would PERSIST the selection, leaving the developer's own
     // settings pointing at whatever the last screenshot needed.
     case .settings: SettingsWindowController.show()
+    case .shellPrompt:
+      ShellConsent.stage(shellPrompt)
+      // After the panel has drawn: it is AppKit, with no `.task` to report from.
+      DispatchQueue.main.async { signalReady(from: .shellPrompt) }
     }
   }
 
@@ -762,6 +782,71 @@ nonisolated enum DemoSeed {
     let real = FileManager.default.homeDirectoryForCurrentUser.path
     guard url.path.hasPrefix(real) else { return url }
     return URL(fileURLWithPath: home + String(url.path.dropFirst(real.count)))
+  }
+
+  // MARK: - Shell
+
+  /// Shell as the `shell` stage photographs it: on, and asking before every run.
+  ///
+  /// Display only. `ShellSwitch` draws these instead of the sealed values, and
+  /// nothing that decides whether a script runs reads `ShellSwitch`: `ServerHost`
+  /// and `ShellServer` read `ShellSeal` themselves, so a launch with
+  /// `-ScreenshotMode YES` draws Shell on and still runs nothing.
+  nonisolated static let shellOn = true
+  nonisolated static let shellBefore = ShellPolicy.Before.ask
+
+  /// The request the `shell-prompt` stage shows.
+  ///
+  /// Something none of the other surfaces can do, and nothing a reader would
+  /// hesitate over. A script reading mail or browsing history is the honest
+  /// picture of what Shell can reach, and the window says so in its own bold
+  /// line; the plate's point is that you read the script before it runs.
+  ///
+  /// `claude-code` is what Claude Code sends as its `clientInfo.name`, and the
+  /// window prints that name as sent, so this is what the real one shows.
+  nonisolated static let shellPrompt = ShellPrompt(
+    client: "claude-code",
+    purpose:
+      "Convert the HEIC photos on your Desktop to JPEG so they can be attached to the email.",
+    script: shellScript, stdin: nil, interpreter: .zsh, cwd: home,
+    timeoutSeconds: ShellServer.defaultTimeoutSeconds, offerSession: false,
+    connection: UUID(uuidString: "6F1C2A9E-4B7D-4E3A-9C55-1D2E3F405162")!, requestId: "1")
+
+  nonisolated private static let shellScript = """
+    mkdir -p ~/Desktop/JPEG
+    for photo in ~/Desktop/*.heic; do
+      sips -s format jpeg "$photo" --out ~/Desktop/JPEG/ > /dev/null
+    done
+    ls ~/Desktop/JPEG | wc -l
+    """
+
+  /// The run record the `shell` stage lists, newest first, in place of this
+  /// Mac's own: its lines carry the real clients and purposes.
+  ///
+  /// The newest is the prompt above, approved. Below it a refusal and a script
+  /// that failed, because a record of nothing but successes reads as a log
+  /// nobody looked at, and the record's point is that it keeps the no's too.
+  /// Hashes are real SHA-256s of the fixture's own scripts, so they are fixed.
+  nonisolated static let shellRuns: [ShellRecord.Entry] = [
+    shellRun(at(41, 12), "claude-code", shellScript, .approved, exit: 0),
+    shellRun(at(36, 40), "claude-code", "rm -rf ~/Library/Caches/*", .declined),
+    shellRun(
+      at(31, 5), "cursor-vscode", "git -C ~/Projects/site log --oneline -5", .approved, exit: 0),
+    shellRun(at(22, 47), "claude-code", "xcrun simctl list devices booted", .approved, exit: 1),
+    shellRun(at(15, 3), "claude-code", "brew outdated --quiet", .noAnswer),
+  ]
+
+  nonisolated private static func shellRun(
+    _ at: Date, _ client: String, _ script: String, _ decision: ShellRecord.Decision,
+    exit: Int32? = nil
+  ) -> ShellRecord.Entry {
+    let data = Data(script.utf8)
+    return ShellRecord.Entry(
+      at: at, client: client, connection: shellPrompt.connection, purpose: "",
+      interpreter: ShellRunner.Interpreter.zsh.rawValue, cwd: home, scriptBytes: data.count,
+      scriptSHA256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+      stdinBytes: nil, stdinSHA256: nil, decision: decision, exitCode: exit, signal: nil,
+      timedOut: false, durationMs: exit == nil ? nil : 840)
   }
 
   /// A client config, instead of the one on this Mac.

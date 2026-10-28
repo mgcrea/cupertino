@@ -151,6 +151,28 @@ final class ShellConsent: ShellConsenting {
     showFront()
   }
 
+  // MARK: - Screenshot mode
+
+  private static var staged: ShellPanel?
+
+  /// The window for `DemoSeed`'s `shell-prompt` stage, the one Shell window a screen capture
+  /// can see.
+  ///
+  /// Never the queue's: no request is behind it, its buttons answer nothing, and every real
+  /// request still gets a window of its own with `sharingType = .none`. It returns at once
+  /// outside screenshot mode, so a launch without `-ScreenshotMode YES` never draws it. It sits
+  /// at the normal level because appshot photographs a layer-0 window only.
+  static func stage(_ prompt: ShellPrompt) {
+    guard DemoSeed.isEnabled, let screen = NSScreen.main else { return }
+    let panel = PromptWindow(prompt, screen: screen) { _ in }.panel
+    panel.isFloatingPanel = false
+    panel.level = .normal
+    panel.sharingType = .readOnly
+    panel.center()
+    panel.makeKeyAndOrderFront(nil)
+    staged = panel
+  }
+
   // MARK: - The card
 
   private struct Card {

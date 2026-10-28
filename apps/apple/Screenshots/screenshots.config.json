@@ -99,7 +99,7 @@
       "id": "writes",
       "website": "writes",
       "title": "Writes are off until you say so.",
-      "subtitle": "With the toggle off, the mutating tools are never registered — seven tools here against Mail's twenty. An assistant is not refused; it is never told they exist."
+      "subtitle": "With the toggle off, the mutating tools are never registered — seven tools here against Mail's twenty-two. An assistant is not refused; it is never told they exist."
     },
     {
       "//": "Appended, never inserted: `appshot compose` stamps 01-…0N- from this order, so a new entry in the middle renames every later appstore/*.png and breaks the website's imports. The tools and the token counter are computed by ChatBudget.cost off the fixture's real schemas rather than typed in, so a change to what a tool costs shows up here rather than leaving the plate quietly claiming an old number. The calls sit above the prose because that is how the pane draws them — they are the evidence and the sentence is a small model's account of it.",
@@ -107,9 +107,22 @@
       "website": "chat",
       "title": "Try the tools without wiring anything.",
       "subtitle": "Ask in plain words and Apple's on-device model calls the same tools an editor would, over the same connection — every call shown with the arguments it invented. Nothing leaves the Mac."
+    },
+    {
+      "//": "Appended with `shell-prompt` in 1.33.0, for the release video. Shell is drawn on from DemoSeed.shellOn rather than sealed, and the run record is DemoSeed.shellRuns rather than this Mac's: the real one carries the clients and purposes of whoever captured it. No `website`: the site does not show Shell yet.",
+      "id": "shell",
+      "title": "Every run on the record.",
+      "subtitle": "Approved, declined or never answered, each request leaves a line with a hash of its script. Never the script, never its output."
+    },
+    {
+      "//": "A staged copy of the approval window (ShellConsent.stage), alone on screen. The real window sets sharingType = .none so no capture can see it; only this copy, under -ScreenshotMode, is capturable. The request is DemoSeed.shellPrompt, and `claude-code` is Claude Code's clientInfo.name as the real window prints it. On the site in Screens.astro.",
+      "id": "shell-prompt",
+      "website": "shell-prompt",
+      "title": "Scripts run only when you click.",
+      "subtitle": "The whole script and the agent's reason, before anything runs. Don't run is the default, and only a click by hand on Run once runs it."
     }
   ],
-  "//videos": "appshot compose video --from-stills, from the same captures as the plates; rect values are capture pixels, and every plate is 2240x1104. `intro` is the social cut: an opening line, an end card, square and 16:9. `tour` is the website's loop, built by `make site-video` into apps/website/public/video: no opening line and no card, because the page around it already says both, and it ends back on its first screen so the loop does not jump. A recorded take needs a cue handler in DemoSeed first. card-icon.png is design/cupertino-icon.svg at 512px, because appshot does not read SVG.",
+  "//videos": "appshot compose video --from-stills, from the same captures as the plates; rect values are capture pixels, and every plate but shell-prompt is 2240x1104. `intro` is the social cut: an opening line, an end card, square and 16:9. `tour` is the website's loop, built by `make site-video` into apps/website/public/video: no opening line and no card, because the page around it already says both, and it ends back on its first screen so the loop does not jump. A recorded take needs a cue handler in DemoSeed first. card-icon.png is design/cupertino-icon.svg at 512px, because appshot does not read SVG.",
   "videos": [
     {
       "id": "intro",
@@ -192,6 +205,79 @@
         },
         {
           "at": 18.5,
+          "endCard": true
+        }
+      ]
+    },
+    {
+      "//": "The 1.33.0 announcement for X: Shell, from the `shell-prompt` and `shell` captures. shell-prompt is 1200x930, centred on the 2240x1104 canvas at (520, 87), so its rects are its capture pixels plus that offset. 16 s, under X's 15-20 s sweet spot for a feed autoplay; square first because it takes more of a phone's feed.",
+      "id": "release-1-33",
+      "stage": "shell-prompt",
+      "duration": 16,
+      "poster": 4.2,
+      "outputs": {
+        "preview": false,
+        "promo": [
+          [1200, 1200],
+          [1920, 1080]
+        ],
+        "website": false
+      },
+      "motion": "kinetic",
+      "hook": "Let your agent *run a script.*",
+      "card": {
+        "title": "Cupertino 1.33",
+        "subtitle": "Shell: scripts run only when you approve them",
+        "icon": "card-icon.png",
+        "cta": "cupertino.mgcrea.io"
+      },
+      "beats": [
+        {
+          "at": 0,
+          "screen": "shell-prompt"
+        },
+        {
+          "at": 3,
+          "caption": "You read every line *first*",
+          "focus": {
+            "rect": [560, 432, 1120, 230],
+            "fill": 0.6
+          },
+          "pop": {
+            "rect": [560, 432, 1120, 230],
+            "until": 5.8
+          }
+        },
+        {
+          "at": 6.2,
+          "caption": "Nothing runs until *you click*",
+          "focus": "home"
+        },
+        {
+          "at": 6.8,
+          "pop": {
+            "rect": [1332, 921, 356, 64],
+            "until": 9
+          }
+        },
+        {
+          "at": 9.4,
+          "screen": "shell",
+          "caption": "Every run, *on the record*",
+          "spotlight": {
+            "rect": [460, 538, 1740, 526],
+            "until": 12.8
+          }
+        },
+        {
+          "at": 10.6,
+          "pop": {
+            "rect": [470, 645, 1720, 85],
+            "until": 12.8
+          }
+        },
+        {
+          "at": 13,
           "endCard": true
         }
       ]
