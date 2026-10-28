@@ -72,8 +72,10 @@ nonisolated protocol ShellNoticeToken: Sendable {
 /// 2. `ShellPolicy.decide`, over "Before running" as `ShellSeal` reads it, this connection's
 ///    session approval and cooldown, and the runs in flight.
 /// 3. The window, through `consent`, when the decision is to ask.
-/// 4. `ShellRunner`, with the card when no window was shown.
-/// 5. One line in `ShellRecord`, whatever happened, a refusal as much as a run.
+/// 4. A started line in `ShellRecord`, on disk before the script is spawned, then
+///    `ShellRunner`, with the card when no window was shown.
+/// 5. One line in `ShellRecord` for how it ended, whatever happened, a refusal as much as a
+///    run. A run's two lines share a `runId`.
 ///
 /// ## Cancelling
 ///
@@ -374,17 +376,23 @@ nonisolated enum ShellServer {
     let who = connection ?? UUID()
     let client = clientName(who)
     var asked = given(args)
+    let runId = UUID()
 
-    func record(_ decision: ShellRecord.Decision, _ outcome: ShellRunner.Outcome? = nil) {
-      ShellRecord.append(
-        ShellRecord.Entry(
-          at: at, client: client, connection: who, purpose: asked.purpose,
-          interpreter: asked.interpreter, cwd: asked.cwd, scriptBytes: asked.script.utf8.count,
-          scriptSHA256: AuditChain.digest(asked.script), stdinBytes: asked.stdin?.utf8.count,
-          stdinSHA256: asked.stdin.map(AuditChain.digest), decision: decision,
-          exitCode: outcome?.exitCode, signal: outcome?.signal,
-          timedOut: outcome?.timedOut ?? false,
-          durationMs: outcome?.durationMs))
+    /// The outcome line, or a refusal's only line. With `started`, the run's started line,
+    /// written before it returns.
+    func record(
+      _ decision: ShellRecord.Decision, _ outcome: ShellRunner.Outcome? = nil,
+      started: Bool = false
+    ) {
+      let entry = ShellRecord.Entry(
+        at: at, client: client, connection: who, purpose: asked.purpose,
+        interpreter: asked.interpreter, cwd: asked.cwd, scriptBytes: asked.script.utf8.count,
+        scriptSHA256: AuditChain.digest(asked.script), stdinBytes: asked.stdin?.utf8.count,
+        stdinSHA256: asked.stdin.map(AuditChain.digest), decision: decision,
+        exitCode: outcome?.exitCode, signal: outcome?.signal,
+        timedOut: outcome?.timedOut ?? false,
+        durationMs: outcome?.durationMs, runId: runId, started: started)
+      if started { ShellRecord.appendNow(entry) } else { ShellRecord.append(entry) }
     }
 
     /// Record a request that did not run to the end, and answer it.
@@ -527,15 +535,18 @@ nonisolated enum ShellServer {
   private static func execute(
     _ request: Valid, prompt: ShellPrompt, call: Call, id: Any?, notice: Bool,
     decision: ShellRecord.Decision,
-    record: (ShellRecord.Decision, ShellRunner.Outcome?) -> Void
+    record: (ShellRecord.Decision, ShellRunner.Outcome?, Bool) -> Void
   ) -> String {
     defer { state.lock.withLock { state.inFlight -= 1 } }
     let card = notice ? call.consent.running(prompt, stop: { call.cancel() }) : nil
     defer { card?.ended() }
     guard !call.isCancelled else {
-      record(.cancelled, nil)
+      record(.cancelled, nil, false)
       return refusal(id, .cancelled, cancelledCopy)
     }
+    // On disk before the spawn: a script that ends this process still leaves its request on
+    // the record.
+    record(decision, nil, true)
     let running: ShellRunner.Running
     do {
       running = try ShellRunner.start(
@@ -545,12 +556,12 @@ nonisolated enum ShellServer {
           timeout: TimeInterval(request.timeoutSeconds)))
     } catch {
       // Recorded under the decision that was made, with no exit: approved, and never started.
-      record(decision, nil)
+      record(decision, nil, false)
       return refusal(id, decision, "The command could not be started (\(error)). Nothing ran.")
     }
     if call.attach(running) { running.cancel() }
     let outcome = running.wait()
-    record(outcome.cancelled ? .cancelled : decision, outcome)
+    record(outcome.cancelled ? .cancelled : decision, outcome, false)
     guard !outcome.cancelled else { return refusal(id, .cancelled, cancelledCopy) }
     return answer(
       id,

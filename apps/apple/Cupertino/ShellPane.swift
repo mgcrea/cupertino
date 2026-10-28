@@ -109,6 +109,8 @@ nonisolated enum ShellPane {
   /// How the script ended, or that it never started. A refusal has neither an exit code nor a
   /// signal, and says it did not run rather than show an empty cell.
   static func outcome(_ entry: ShellRecord.Entry) -> String {
+    // Its outcome line never came: the run is still going, or Cupertino ended mid-run.
+    if entry.started { return "no outcome recorded" }
     if entry.timedOut { return "timed out" }
     if let code = entry.exitCode { return "exit \(code)" }
     if let signal = entry.signal { return "ended by \(signal)" }

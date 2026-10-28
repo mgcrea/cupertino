@@ -12,6 +12,17 @@ import Foundation
 /// Every request is a line, a refusal as much as a run: declined, no answer, cooldown and busy
 /// say as much about what an agent tried as a run does.
 ///
+/// ## A run is two lines
+///
+/// A run that starts writes a **started** line, with the decision, the hashes and the rest of
+/// the request, and waits for it to land before the script is spawned; then an **outcome** line
+/// once the run is over. Both carry the same `runId`. A script that kills Cupertino
+/// (`kill -9 $PPID`), a crash or a force-quit leaves the started line with nothing after it, so
+/// the request is never missing from the record, and the run that went on unsupervised shows as
+/// one with no outcome. `recent` folds a started line into the outcome that follows it. A
+/// refusal, which never starts, is one line. Lines written before run ids existed have none,
+/// and still read back and verify.
+///
 /// ## The file
 ///
 /// Monthly segments, `runs-YYYY-MM.jsonl`, months in UTC as the chain's clock is. Each line is an
@@ -55,6 +66,11 @@ nonisolated enum ShellRecord {
     var signal: String?
     var timedOut: Bool
     var durationMs: Int?
+    /// Shared by a run's started line and its outcome line. Nil on lines written before
+    /// 2026-10-28.
+    var runId: UUID? = nil
+    /// True on a run's started line, written before the script is spawned.
+    var started: Bool = false
   }
 
   /// `<Application Support>/<app id>/shell-runs`. Settable so a check can point it at a scratch
@@ -89,6 +105,12 @@ nonisolated enum ShellRecord {
   /// chained.
   static func append(_ entry: Entry, in dir: URL = directory, now: Date = Date()) {
     queue.async { write(entry, in: dir, now: now) }
+  }
+
+  /// Record one request and return once its line has been written, or has failed to be. For a
+  /// run's started line, which must be on disk before the script can end this process.
+  static func appendNow(_ entry: Entry, in dir: URL = directory, now: Date = Date()) {
+    queue.sync { write(entry, in: dir, now: now) }
   }
 
   /// Wait for every queued line to land. `append` returns before its line is written, so the
@@ -219,6 +241,9 @@ nonisolated enum ShellRecord {
     var signal: String?
     var timedOut: Bool
     var durationMs: Int?
+    var runId: UUID?
+    /// Written only when true, so an outcome line reads as the lines before it did.
+    var started: Bool?
   }
 
   private static func arguments(of entry: Entry) -> String {
@@ -227,7 +252,8 @@ nonisolated enum ShellRecord {
       interpreter: entry.interpreter, cwd: entry.cwd, scriptBytes: entry.scriptBytes,
       scriptSHA256: entry.scriptSHA256, stdinBytes: entry.stdinBytes,
       stdinSHA256: entry.stdinSHA256, exitCode: entry.exitCode, signal: entry.signal,
-      timedOut: entry.timedOut, durationMs: entry.durationMs)
+      timedOut: entry.timedOut, durationMs: entry.durationMs, runId: entry.runId,
+      started: entry.started ? true : nil)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     // Encoding strings, numbers and a UUID cannot fail; the fallback is never written.
@@ -320,16 +346,27 @@ nonisolated enum ShellRecord {
 
   // MARK: - Reading back
 
-  /// The `limit` most recent requests, newest first. Lines that do not read back as an entry
-  /// are skipped; `verify` is what names them.
+  /// The `limit` most recent requests, newest first. A run's started line is folded into the
+  /// outcome line after it, so a run is one entry; a started line with no outcome is an entry
+  /// of its own, with `started` set. Lines that do not read back as an entry are skipped;
+  /// `verify` is what names them.
   static func recent(_ limit: Int = 20, in dir: URL = directory) -> [Entry] {
     guard limit > 0 else { return [] }
     return queue.sync {
       var out: [Entry] = []
+      // Outcomes already listed, newest first, so the started line before each is skipped.
+      var ended = Set<UUID>()
       for segment in segments(in: dir).reversed() {
         guard let contents = read(segment.url) else { continue }
         for line in contents.lines.reversed() {
           guard let found = entry(from: line) else { continue }
+          if let runId = found.runId {
+            if found.started {
+              if ended.contains(runId) { continue }
+            } else {
+              ended.insert(runId)
+            }
+          }
           out.append(found)
           if out.count == limit { return out }
         }
@@ -352,7 +389,8 @@ nonisolated enum ShellRecord {
       interpreter: fields.interpreter, cwd: fields.cwd, scriptBytes: fields.scriptBytes,
       scriptSHA256: fields.scriptSHA256, stdinBytes: fields.stdinBytes,
       stdinSHA256: fields.stdinSHA256, decision: decision, exitCode: fields.exitCode,
-      signal: fields.signal, timedOut: fields.timedOut, durationMs: fields.durationMs)
+      signal: fields.signal, timedOut: fields.timedOut, durationMs: fields.durationMs,
+      runId: fields.runId, started: fields.started ?? false)
   }
 
   /// The whole record's chain, every surviving month in order. On the writer's queue, so a line

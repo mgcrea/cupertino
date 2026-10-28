@@ -367,6 +367,12 @@ struct ShellCheck {
     unstarted.exitCode = nil
     check(
       "an approved run with no exit says so", ShellPane.row(unstarted).outcome == "no exit code")
+    var cutShort = unstarted
+    cutShort.started = true
+    cutShort.runId = UUID()
+    check(
+      "a started line with no outcome says so",
+      ShellPane.row(cutShort).outcome == "no outcome recorded")
 
     let decisions: [ShellRecord.Decision] = [
       .approved, .approvedForSession, .notAsked, .declined, .noAnswer, .cooldown, .busy,
@@ -511,6 +517,50 @@ struct ShellCheck {
     check(
       "and the month still reads back",
       ShellRecord.recent(in: cut).map(\.decision) == [.approved, .declined])
+
+    print("\nShellRecord: a run's started line and its outcome")
+    let pairs = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-record-pairs-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: pairs) }
+    // A line written before runs had an id, as every line on file before 2026-10-28 is.
+    var legacy = e
+    legacy.decision = .declined
+    legacy.runId = nil
+    ShellRecord.append(legacy, in: pairs, now: t0)
+    // A run whose parent died mid-run: its started line and nothing after.
+    var orphan = e
+    orphan.decision = .notAsked
+    orphan.exitCode = nil
+    orphan.durationMs = nil
+    orphan.runId = UUID()
+    orphan.started = true
+    ShellRecord.append(orphan, in: pairs, now: t0)
+    var begun = orphan
+    begun.decision = .approved
+    begun.runId = UUID()
+    ShellRecord.append(begun, in: pairs, now: t0)
+    var ended = begun
+    ended.started = false
+    ended.exitCode = 0
+    ended.durationMs = 5
+    ShellRecord.append(ended, in: pairs, now: t0)
+    ShellRecord.drain()
+    let paired = ShellRecord.recent(in: pairs)
+    check(
+      "a started line and its outcome read back as one entry, the outcome",
+      paired.count == 3 && paired.first == ended)
+    check(
+      "a started line with no outcome reads back as started",
+      paired.count == 3 && paired[1] == orphan && paired[1].started)
+    check(
+      "a line from before run ids still reads back",
+      paired.count == 3 && paired[2] == legacy && paired[2].runId == nil)
+    check(
+      "every line is on file, and the chain verifies",
+      ShellRecord.verify(in: pairs).records == 4 && ShellRecord.verify(in: pairs).isIntact)
+    check(
+      "the limit counts entries, not lines",
+      ShellRecord.recent(1, in: pairs) == [ended] && ShellRecord.recent(2, in: pairs).count == 2)
   }
 
   static func main() throws {
@@ -1623,6 +1673,39 @@ extension ShellCheck {
       fed?.stdinSHA256 == AuditChain.digest("abc") && line?.stdinBytes == nil
         && line?.stdinSHA256 == nil)
     check("the chain verifies", ShellRecord.verify(in: recordDir).isIntact)
+
+    // A script that kills Cupertino, a crash or a force-quit must still leave a line: the
+    // started line is on disk before the script starts, and the script reads it there.
+    let freshDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("shell-server-started-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: freshDir) }
+    ShellRecord.directory = freshDir
+    let seen = shellRun(
+      "/usr/bin/grep -h -c 'started\\\\\":true' \(freshDir.path)/*.jsonl", on: UUID())
+    ShellRecord.drain()
+    check(
+      "the started line is on disk before the script runs",
+      seen.structured["stdout"] as? String == "1\n")
+    let freshLines = (try? FileManager.default.contentsOfDirectory(
+      at: freshDir, includingPropertiesForKeys: nil))?.compactMap {
+        try? String(contentsOf: $0, encoding: .utf8)
+      }.joined().split(separator: "\n") ?? []
+    let freshEntries = ShellRecord.recent(in: freshDir)
+    check(
+      "a run is two lines on file, and one entry with its outcome",
+      freshLines.count == 2 && freshEntries.count == 1 && freshEntries.first?.exitCode == 0
+        && freshEntries.first?.started == false && freshEntries.first?.runId != nil)
+    let refusedDir = freshDir.appendingPathComponent("refused")
+    ShellRecord.directory = refusedDir
+    fake.next = .dontRun
+    _ = shellRun("true", on: UUID())
+    ShellRecord.drain()
+    check(
+      "a refusal is one line, with no started line",
+      ShellRecord.verify(in: refusedDir).records == 1
+        && ShellRecord.recent(in: refusedDir).first?.started == false)
+    fake.next = .runOnce
+    ShellRecord.directory = recordDir
 
     // The activity log needs nothing of its own: `serveInProcess` hands every in-process frame to
     // `RequestObserver`, which records it through `CallCapture`. These are the rules it applies.
