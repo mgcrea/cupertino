@@ -59,7 +59,8 @@ summary.
   (`never-ran`, `never-captured`, `stale`, `capturing`, `answering`), which sites are answering,
   and what the server cannot tell apart. `read_page` and `page_elements` now say which case a
   timeout is: the extension running nowhere, running but not on this site, or running on this
-  site with no page on that exact URL.
+  site with no page on that exact URL. A site set to Deny, or an extension switched off, in the
+  half minute before the command is named as having just stopped, not as still running.
 - **A Debug build of the app no longer updates itself into a second copy of the release.** The
   copy registered the Safari extension a second time, and Safari ran no Cupertino extension until
   the extra copies were removed.
@@ -73,6 +74,8 @@ summary.
   a build which dies at launch or can never turn Shell on. See
   [docs/distribution.md](docs/distribution.md#the-provisioning-profile).
 - `make shell-check` and `make shell-window-check` run in CI.
+- `make install-release` no longer fails its closing check on a surface switched off in the app.
+  Shell arrives off, so every install failed it. A switched-off surface is listed as off.
 
 ## [1.32.0] - 2026-10-27
 
