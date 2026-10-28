@@ -546,7 +546,7 @@ struct ShellCheck {
           script: "1", interpreter: .python3, cwd: URL(fileURLWithPath: "/"), stdin: nil,
           timeout: 1),
         scriptFile: URL(fileURLWithPath: "/t/s"))
-        == ["/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "python3", "/t/s"])
+        == ["/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "python3", "-I", "/t/s"])
     check(
       "env has only the base keys",
       Set(ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t").keys)
@@ -935,7 +935,8 @@ extension ShellCheck {
     watched.wait()
     check("resolving every interpreter starts no process", seen.count == 0)
     check("zsh is found", found[.zsh]?.hasSuffix("/zsh") == true)
-    check("jxa is found as osascript", found[.jxa] == found[.osascript])
+    check(
+      "jxa is found as osascript", found[.osascript] != nil && found[.jxa] == found[.osascript])
 
     // Nothing else in the fake root, so only the fake folders are searched.
     for gone in ["/opt", "/usr", "/etc/paths.d"] {
@@ -987,6 +988,70 @@ extension ShellCheck {
         read.isEmpty)
       for file in read { try? FileManager.default.removeItem(atPath: home + "/read" + file) }
     }
+
+    // python3 imports `site` unless it is isolated: every `import` line of a `.pth` file in the
+    // user site-packages runs, and so does `usercustomize`. And the script's own folder comes
+    // first on `sys.path`, so a `json.py` planted beside it shadows the standard library's. A
+    // process running as the person can write both places, Full Disk Access or not.
+    print("\nShellRunner: python3 runs isolated")
+    guard ShellRunner.resolve(.python3) != nil else {
+      print("  skip python3 not installed")
+      return
+    }
+    let fm = FileManager.default
+    func zsh(_ script: String) throws -> ShellRunner.Outcome {
+      try ShellRunner.start(
+        .init(
+          script: script, interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
+          timeout: 30),
+        home: home
+      ).wait()
+    }
+    // Asked of the python3 a run finds, with the run's home folder.
+    let userSite = try zsh("python3 -c 'import site; print(site.getusersitepackages())'")
+      .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    check("python3's user site-packages is in the home folder", userSite.hasPrefix(home + "/"))
+    let pthMarker = home + "/read-pth"
+    let customizeMarker = home + "/read-usercustomize"
+    try write(
+      "import os; open('\(pthMarker)', 'w').close()\n", to: userSite + "/shell-check.pth")
+    try write("open('\(customizeMarker)', 'w').close()\n", to: userSite + "/usercustomize.py")
+
+    // The real folder scripts are written to: it is where `sys.path[0]` points.
+    let scripts = ShellRunner.scriptDirectory.path
+    try fm.createDirectory(
+      atPath: scripts, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let jsonMarker = home + "/read-json"
+    let shadow = scripts + "/json.py"
+    let probe = scripts + "/shell-check-\(getpid())-probe.py"
+    defer {
+      try? fm.removeItem(atPath: shadow)
+      try? fm.removeItem(atPath: probe)
+    }
+    try write("open('\(jsonMarker)', 'w').close()\n", to: shadow)
+    try write("import json\n", to: probe)
+
+    // Without isolation, each plant runs: so the checks below are not vacuous.
+    _ = try zsh("python3 -c pass")
+    check(
+      "a python3 that is not isolated runs the planted .pth and usercustomize",
+      fm.fileExists(atPath: pthMarker) && fm.fileExists(atPath: customizeMarker))
+    _ = try zsh("python3 \(probe)")
+    check(
+      "and imports a json.py from its script's folder", fm.fileExists(atPath: jsonMarker))
+    for marker in [pthMarker, customizeMarker, jsonMarker] { try? fm.removeItem(atPath: marker) }
+
+    let approved = try ShellRunner.start(
+      .init(
+        script: "import json; print(json.dumps(6*7))", interpreter: .python3,
+        cwd: URL(fileURLWithPath: "/"), stdin: nil, timeout: 30),
+      home: home
+    ).wait()
+    check("an approved python3 run still runs its script", approved.stdout == "42\n")
+    check(
+      "and runs no .pth and no usercustomize from the user site-packages",
+      !fm.fileExists(atPath: pthMarker) && !fm.fileExists(atPath: customizeMarker))
+    check("and imports no json.py from its script's folder", !fm.fileExists(atPath: jsonMarker))
   }
 }
 

@@ -37,6 +37,13 @@ import Foundation
 /// would hide Homebrew's `node` and `python3`. `resolve` walks the same PATH in Swift and starts
 /// nothing, so a diagnostics call runs no process at all.
 ///
+/// `python3` runs with `-I`, isolated, for the same reason. Without it Python imports `site`,
+/// which runs every `import` line of a `.pth` file in the user site-packages
+/// (`~/Library/Python/<version>/lib/python/site-packages`) and imports `usercustomize`, and it
+/// puts the script's folder, `scriptDirectory`, first on `sys.path`, where a planted `json.py`
+/// would shadow the standard library's. A same-user process can write both. A script that needs
+/// the user site-packages adds them to `sys.path` itself.
+///
 /// ## What the child inherits, and what it must not
 ///
 /// `POSIX_SPAWN_CLOEXEC_DEFAULT`, so the only descriptors it gets are its three pipes; this app
@@ -63,7 +70,8 @@ nonisolated enum ShellRunner {
       switch self {
       case .zsh: []
       case .bash: ["bash"]
-      case .python3: ["python3"]
+      // Isolated: see the type's comment.
+      case .python3: ["python3", "-I"]
       case .node: ["node"]
       case .osascript: ["osascript"]
       case .jxa: ["osascript", "-l", "JavaScript"]

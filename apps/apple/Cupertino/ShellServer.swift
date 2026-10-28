@@ -286,7 +286,9 @@ nonisolated enum ShellServer {
                 "What runs the script. jxa is JavaScript for Automation. It starts through zsh "
                 + "without the person's shell startup files, so PATH is the system's plus "
                 + "Homebrew's, and a version manager such as nvm is not set up unless the script "
-                + "does it, for example with source ~/.nvm/nvm.sh.",
+                + "does it, for example with source ~/.nvm/nvm.sh. python3 runs isolated (-I): "
+                + "the user site-packages are not on its path, and a script that needs them adds "
+                + "them itself.",
             ],
             "cwd": [
               "type": "string",
@@ -788,7 +790,11 @@ nonisolated enum ShellServer {
     ## What a script gets
 
     - zsh without the person's shell startup files (`/bin/zsh -f -c`): `~/.zshenv`,
-      `~/.zprofile` and `~/.zshrc` are not read. Other interpreters start through it.
+      `~/.zprofile`, `~/.zshrc` and `~/.zlogin` are not read. Other interpreters start
+      through it.
+    - python3 runs isolated (`python3 -I`): the user site-packages are not on its path,
+      and neither is the script's folder. A script that needs the user site-packages adds
+      them itself.
     - PATH is the system's, from `/etc/paths` and `/etc/paths.d`, then Homebrew's folders.
       A script that needs a version manager sets it up itself, for example
       `source ~/.nvm/nvm.sh`, and the person sees that line in the window with the rest.
