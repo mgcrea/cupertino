@@ -281,22 +281,33 @@ Return and Escape mean Don't run, and no key presses Run.
 window and press Don't run, but not Run once. That follows from the rule that only a person's hand
 can approve, and it is a real accessibility gap.
 
-**`ShellInput.isHardware`'s rule is UNCONFIRMED.** The rule is: the event's source pid
+**`ShellInput.isHardware`'s rule, measured.** The rule is: the event's source pid
 (`eventSourceUnixProcessID`) is 0 AND its source state (`eventSourceStateID`) is `.hidSystemState`.
-What has been measured, on 2026-10-27, without posting anything: a `CGEvent` this process builds
-carries its own pid whatever source it is built from, and the state id reads 0 for
-`.combinedSessionState`, 1 for `.hidSystemState` and an arbitrary number for `.privateState`. So a
-program can pick the HID state. Whether it can also get a pid of 0 once the window server has
-stamped the event has not been measured: a program can write 0 into an event it holds in memory
-(`make shell-check`, "pid 0 and the HID state is hardware"), and the rule rests on posting
-overwriting it. What confirms the rule, in a scratch panel that logs both fields:
+A program can write 0 into an event it holds in memory (`make shell-check`, "pid 0 and the HID
+state is hardware"), so the rule rests on posting overwriting it. It does. Measured 2026-10-28 on
+macOS 27.0.1, in a scratch panel that compiled `ShellInput.swift` and logged every input event's
+fields. Every posted event carried `eventSourceUserData` as a tag, so the log says which one arrived:
 
-- a real click, keystroke and trackpad scroll read pid 0 and state 1
-- a `CGEvent` posted at `.cghidEventTap` by a separate process reads that process's pid
-- one posted by Cupertino itself reads Cupertino's pid
+| Input                                                             | pid           | state | uid | `isHardware` |
+| ----------------------------------------------------------------- | ------------- | ----- | --- | ------------ |
+| Olivier's clicks, drags, right click, keys, trackpad scroll       | 0             | 1     | 0   | true         |
+| Separate process with Accessibility, HID source, `.cghidEventTap` | the poster's  | 1     | 501 | false        |
+| Same, pid 0 and state 1 written into the event first              | the poster's  | 1     | 501 | false        |
+| Same, forged, no source                                           | the poster's  | 1     | 501 | false        |
+| Same, forged, `.cgSessionEventTap` (click and F13)                | the poster's  | 1     | 501 | false        |
+| Same, forged, F13 by `postToPid`                                  | the poster's  | 1     | 501 | false        |
+| Forged click at `.cgAnnotatedSessionEventTap`, or by `postToPid`  | never arrived |       |     |              |
+| The panel posting at itself, all of the above                     | its own       | 1     | 501 | false        |
 
-If a real event reads otherwise, the window cannot be answered and times out as a no, which fails
-safe. If a posted event reads pid 0 and state 1, the rule is wrong and must change.
+So the window server stamps the poster's pid over whatever the event carried, and a program cannot
+reach pid 0. The state is the poster's choice, so the pid carries the whole test. `uid` also told
+the two apart (0 against 501) and is not part of the rule. If a real event ever reads otherwise, the window cannot be answered and
+times out as a no, which fails safe.
+
+Not measured: Screen Sharing, Universal Control and Sidecar input (see below), and a virtual HID
+device. Input from a DriverKit virtual keyboard or mouse, such as Karabiner-Elements', presumably
+reads as hardware. Installing one takes the person's approval in System Settings, so it is a
+residual, not a hole.
 
 ## Settings a program cannot forge
 
@@ -593,10 +604,10 @@ app's own defaults.
 
 ## Not yet verified on a real Mac
 
-Nothing here has been tried against a running Cupertino. These are still open:
+The hardware-input rule is measured, in a scratch panel, under
+[Only a person can approve](#only-a-person-can-approve). Nothing below has been tried against a
+running Cupertino. These are still open:
 
-- **The hardware-input measurement** for `ShellInput.isHardware`, described under
-  [Only a person can approve](#only-a-person-can-approve).
 - **The window, by hand** on the Debug build: the full script shows and long scripts scroll,
   Return and Escape decline, no answer declines at 60 s, the cooldown holds, a session approval
   ends when the connection closes, "Don't ask" shows the card and its Stop works, the menu bar's
@@ -625,6 +636,3 @@ Nothing here has been tried against a running Cupertino. These are still open:
   own click; it must never let a program approve a run.
 - **The covered-window check without Screen Recording**, and with a real borderless window from
   another process over the Shell window: Run must stay off and the window must say why.
-- **The release notes assume the hardware rule.** The CHANGELOG's "only a click by hand on Run once
-  runs it" holds only if `ShellInput.isHardware` is right. Olivier must confirm the measurement
-  above before the release that carries Shell.
