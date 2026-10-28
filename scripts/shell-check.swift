@@ -2112,6 +2112,17 @@ extension ShellCheck {
       "and capped at 40 characters",
       ShellText.owner(String(repeating: "é", count: 60)) == String(repeating: "é", count: 40)
         && ShellText.ownerLimit == 40)
+    // "e" and a combining acute: one character, two scalars. Capped by characters, a name of
+    // stacked marks would be any height, past what the notice keeps room for.
+    let stacked = ShellText.owner("x" + String(repeating: "\u{301}", count: 100))
+    check(
+      "the cap counts unicode scalars, not characters",
+      ShellText.owner(String(repeating: "e\u{301}", count: 30))
+        == String(repeating: "e\u{301}", count: 20)
+        && stacked?.unicodeScalars.count == 40)
+    check(
+      "a line or paragraph separator becomes a space",
+      ShellText.owner("Text\u{2028}Edit\u{2029}Pro") == "Text Edit Pro")
     check(
       "an owner with no name, or none left once stripped, has none",
       ShellText.owner(nil) == nil && ShellText.owner("") == nil
@@ -2145,13 +2156,15 @@ extension ShellCheck {
     var starts: [Int32: ShellPlatform.Start] = [:]
     var verified: [Int32] = []
     var verdicts: [Int32: Bool] = [:]
+    var unsure: Set<Int32> = []
     var during: (() -> Void)?
     let trust = ShellPlatform(
       started: { starts[$0] },
       verify: { pid in
         verified.append(pid)
         during?()
-        return verdicts[pid] ?? false
+        if unsure.contains(pid) { return .unknown }
+        return verdicts[pid] ?? false ? .yes : .no
       })
     starts[apple] = .init(seconds: 1000, microseconds: 1)
     verdicts[apple] = true
@@ -2189,12 +2202,30 @@ extension ShellCheck {
     check(
       "and that answer is not kept",
       trust.isPlatform(700) && verified == [700, 700])
+    verified = []
+    starts[800] = .init(seconds: 9, microseconds: 0)
+    verdicts[800] = true
+    unsure = [800]
+    check(
+      "Security failing to answer, not refusing: not trusted",
+      !trust.isPlatform(800) && verified == [800])
+    unsure = []
+    check(
+      "and not kept, so the next asking can trust it",
+      trust.isPlatform(800) && verified == [800, 800])
+    verified = []
+    starts[900] = .init(seconds: 10, microseconds: 0)
+    verdicts[900] = false
+    _ = trust.isPlatform(900)
+    check(
+      "a definite no is kept",
+      !trust.isPlatform(900) && verified == [900])
 
     let counted = ShellPlatform(
       started: { .init(seconds: Int($0), microseconds: 0) },
       verify: { pid in
         verified.append(pid)
-        return true
+        return .yes
       })
     verified = []
     for pid in 1...Int32(ShellPlatform.limit) { _ = counted.isPlatform(pid) }
@@ -2209,7 +2240,8 @@ extension ShellCheck {
       verified.count == ShellPlatform.limit + 2 && counted.count == 2)
 
     let shared = ShellPlatform(
-      started: { .init(seconds: Int($0 % 300), microseconds: 0) }, verify: { $0 % 2 == 0 })
+      started: { .init(seconds: Int($0 % 300), microseconds: 0) },
+      verify: { $0 % 2 == 0 ? .yes : .no })
     let askers = DispatchGroup()
     nonisolated(unsafe) var wrong = 0
     let tally = NSLock()
@@ -2228,13 +2260,13 @@ extension ShellCheck {
 
     check(
       "this check's own process is not trusted",
-      ShellPlatform.started(getpid()) != nil && !ShellPlatform.isSystemUI(getpid()))
+      ShellPlatform.started(getpid()) != nil && ShellPlatform.isSystemUI(getpid()) == .no)
     // launchd runs as root: a start time read only from processes of the same user would
     // leave out the window server, which runs as its own user and draws the menu bar.
     check("a process of another user has a start time", ShellPlatform.started(1) != nil)
     check(
-      "a pid no process has: no start time, and an error, so not trusted",
-      ShellPlatform.started(Int32.max) == nil && !ShellPlatform.isSystemUI(Int32.max)
+      "a pid no process has: no start time, and an error, so not trusted and not a definite no",
+      ShellPlatform.started(Int32.max) == nil && ShellPlatform.isSystemUI(Int32.max) == .unknown
         && !ShellPlatform.shared.isPlatform(Int32.max))
 
     check(
@@ -2242,37 +2274,45 @@ extension ShellCheck {
       ShellPlatform.requirement(for: ["a.b", "c.d"])
         == "anchor apple and (identifier \"a.b\" or identifier \"c.d\")")
     check(
-      "the list is the system's own interface processes, and nothing else",
+      "the list is the three processes measured above the Shell window, and nothing else",
       ShellPlatform.systemUI == [
         "com.apple.WindowServer", "com.apple.dock", "com.apple.screencaptureui",
-        "com.apple.notificationcenterui", "com.apple.controlcenter", "com.apple.systemuiserver",
-        "com.apple.Spotlight", "com.apple.WindowManager", "com.apple.loginwindow",
-        "com.apple.TextInputMenuAgent", "com.apple.TextInputSwitcher",
       ] && ShellPlatform.requirementText == ShellPlatform.requirement(for: ShellPlatform.systemUI))
     check(
-      "osascript and Terminal, which show what a program gives them, are not on it",
-      !ShellPlatform.requirementText.contains("com.apple.osascript")
-        && !ShellPlatform.requirementText.contains("com.apple.Terminal"))
+      "osascript, Terminal, Notification Center and Spotlight are not on it",
+      ["osascript", "Terminal", "notificationcenterui", "Spotlight"].allSatisfy {
+        !ShellPlatform.requirementText.contains("com.apple.\($0)")
+      })
     var compiled: SecRequirement?
+    var anyApple: SecRequirement?
+    let made = SecRequirementCreateWithString(
+      ShellPlatform.requirementText as CFString, [], &compiled)
+    let madeApple = SecRequirementCreateWithString("anchor apple" as CFString, [], &anyApple)
     check(
       "it is a requirement Security accepts",
-      SecRequirementCreateWithString(ShellPlatform.requirementText as CFString, [], &compiled)
-        == errSecSuccess && compiled != nil)
-    // The program on disk against the same requirement: nothing is run.
-    func meets(_ path: String) -> Bool {
+      made == errSecSuccess && compiled != nil && madeApple == errSecSuccess)
+    // The program on disk against a requirement: nothing is run. Nil when there is nothing to
+    // check, so a refusal is told apart from an error.
+    func status(_ path: String, _ requirement: SecRequirement?) -> OSStatus? {
       var code: SecStaticCode?
-      guard let compiled,
+      guard let requirement,
         SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code)
           == errSecSuccess, let code
-      else { return false }
-      return SecStaticCodeCheckValidity(code, [], compiled) == errSecSuccess
+      else { return nil }
+      return SecStaticCodeCheckValidity(code, [], requirement)
     }
-    check("the Dock on disk meets it", meets("/System/Library/CoreServices/Dock.app"))
+    let osascript = "/usr/bin/osascript"
+    let terminal = "/System/Applications/Utilities/Terminal.app"
     check(
-      "osascript, Apple-signed and able to make a click-through window, does not",
-      !meets("/usr/bin/osascript"))
+      "the Dock on disk meets it",
+      status("/System/Library/CoreServices/Dock.app", compiled) == errSecSuccess)
     check(
-      "nor does Terminal", !meets("/System/Applications/Utilities/Terminal.app"))
+      "osascript and Terminal on disk meet Apple's anchor alone",
+      status(osascript, anyApple) == errSecSuccess && status(terminal, anyApple) == errSecSuccess)
+    check(
+      "and fail this one as a refusal, not an error: the list is why",
+      status(osascript, compiled) == errSecCSReqFailed
+        && status(terminal, compiled) == errSecCSReqFailed)
 
     print("\nShellCover.placed: the Shell window inside the screen's visible area")
     // AppKit's coordinates: a 33-point menu bar above, a 70-point Dock below.

@@ -152,15 +152,22 @@ nonisolated enum ShellCover {
 /// the like: its running code is signed by Apple and has an identifier on `systemUI`. See there
 /// for why not every program Apple signed.
 ///
-/// Any error is a no, so a window whose owner cannot be checked still covers. Each verdict is
-/// kept for its process, a pid together with the time it started, so a pid the system hands to
-/// a new process is asked about afresh. A process whose start time cannot be read is not
-/// trusted and is not kept, nor is one whose start time changed while it was asked about. At
-/// most `limit` verdicts are kept; past that, all are let go.
+/// Any error is a no, so a window whose owner cannot be checked still covers. Each definite
+/// answer is kept for its process, a pid together with the time it started, so a pid the system
+/// hands to a new process is asked about afresh. An error is not kept, so one that passes does
+/// not keep Run off for as long as the process lives. A process whose start time cannot be read
+/// is not trusted and is not kept, nor is one whose start time changed while it was asked
+/// about. At most `limit` verdicts are kept; past that, all are let go.
 ///
 /// Thread-safe: `CoverWatch` asks on the main thread every 0.1 s. `started` and `verify` are
 /// given, so `make shell-check` pins the keeping without real processes.
 nonisolated final class ShellPlatform: @unchecked Sendable {
+  /// What Security says about a process. `no` is a refusal: valid code that does not meet the
+  /// requirement. `unknown` is anything else that went wrong, which may pass.
+  enum Answer {
+    case yes, no, unknown
+  }
+
   struct Start: Hashable {
     var seconds: Int
     var microseconds: Int
@@ -184,24 +191,18 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
   /// Tools' `python3` meet it too. So a program running as the person could put a borderless,
   /// click-through window of theirs over the Shell window, and it would have been trusted.
   ///
-  /// Every entry is system chrome: it draws the menu bar, the Dock, screenshots, Spotlight, the
-  /// login and input-source windows, and no content a program running as the person writes
-  /// into a click-through window. Notification Center comes nearest: it shows text a program
-  /// wrote (`display notification`), but in banners that take clicks rather than letting them
-  /// through, so one can hide Run but not trick a click onto it. A process added here later
-  /// must meet the same rule.
+  /// Nor every process of the system's interface. A trusted window that takes clicks but shows
+  /// what a program chose can sit over the script with Run still on beneath it: a Spotlight
+  /// panel listing files a program wrote, a Notification Center banner, Now Playing in Control
+  /// Center, an input method's name in the input-source switcher. So only the processes measured
+  /// above `.modalPanel`, over the middle of the screen, on a real Mac are listed: these three,
+  /// on Olivier's Mac on 2026-10-28. Every other window still covers, which fails safe. A new
+  /// entry needs that measurement and an argument that it draws no content a program chooses
+  /// over the Shell window.
   static let systemUI = [
     "com.apple.WindowServer",
     "com.apple.dock",
     "com.apple.screencaptureui",
-    "com.apple.notificationcenterui",
-    "com.apple.controlcenter",
-    "com.apple.systemuiserver",
-    "com.apple.Spotlight",
-    "com.apple.WindowManager",
-    "com.apple.loginwindow",
-    "com.apple.TextInputMenuAgent",
-    "com.apple.TextInputSwitcher",
   ]
 
   /// The code requirement `isSystemUI` checks, in Security's requirement language.
@@ -214,12 +215,12 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
   }
 
   private let started: (Int32) -> Start?
-  private let verify: (Int32) -> Bool
+  private let verify: (Int32) -> Answer
   private let lock = NSLock()
   // Guarded by `lock`.
   private var verdicts: [Key: Bool] = [:]
 
-  init(started: @escaping (Int32) -> Start?, verify: @escaping (Int32) -> Bool) {
+  init(started: @escaping (Int32) -> Start?, verify: @escaping (Int32) -> Answer) {
     self.started = started
     self.verify = verify
   }
@@ -231,9 +232,10 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
     guard let start = started(pid) else { return false }
     let key = Key(pid: pid, start: start)
     if let known = lock.withLock({ verdicts[key] }) { return known }
-    let verdict = verify(pid)
+    let answer = verify(pid)
     // The pid went to another process while it was asked about: the answer may be that one's.
-    guard started(pid) == start else { return false }
+    guard answer != .unknown, started(pid) == start else { return false }
+    let verdict = answer == .yes
     lock.withLock {
       if verdicts.count >= Self.limit { verdicts.removeAll() }
       verdicts[key] = verdict
@@ -258,16 +260,22 @@ nonisolated final class ShellPlatform: @unchecked Sendable {
     return Start(seconds: start.tv_sec, microseconds: Int(start.tv_usec))
   }
 
-  /// Whether process `pid`'s running code is valid and meets `requirementText`. Any error is a
-  /// no.
-  static func isSystemUI(_ pid: Int32) -> Bool {
-    guard let requirement = systemUIRequirement else { return false }
+  /// Whether process `pid`'s running code is valid and meets `requirementText`. `no` only for
+  /// `errSecCSReqFailed`, which is what valid code with another signer or another identifier
+  /// gives (measured 2026-10-28 with a running `osascript` and Terminal); any other error is
+  /// `unknown`, a process that has gone among them.
+  static func isSystemUI(_ pid: Int32) -> Answer {
+    guard let requirement = systemUIRequirement else { return .unknown }
     var code: SecCode?
     let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
     guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
       let code
-    else { return false }
-    return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+    else { return .unknown }
+    switch SecCodeCheckValidity(code, [], requirement) {
+    case errSecSuccess: return .yes
+    case errSecCSReqFailed: return .no
+    default: return .unknown
+    }
   }
 
   // Made once; nil if it cannot be, and then no process is trusted. Never changed once made.

@@ -184,55 +184,64 @@ longest name makes it, so naming one does not move the buttons. Once the window 
 arming delay starts again, so a cover pulled away just before a click still finds Run off. A click
 that lands on Run while one is there is refused and logged, at the click itself.
 
-**The system's own interface does not count.** The menu bar, the Dock and `screencaptureui` keep
-windows above the Shell window's level over the whole screen. A read-only probe on Olivier's Mac on
-2026-10-28 found `screencaptureui` ("Screenshot") at layer 24 over the full 1728×1117 screen, the
-menu bar (Window Server) at layer 24, and the Dock full-screen at layer 20, all opaque; counted as
-covering, they kept Run off for good. The level cannot tell them apart, because a program can put
-its window at any level. The code signature can: a program running as the person cannot make its
-window belong to one of those processes. So `ShellPlatform` asks Security for the owner's code by
-pid (`SecCodeCopyGuestWithAttributes`) and checks it (`SecCodeCheckValidity`, `isSystemUI`) against
-a requirement built from an allowlist, `ShellPlatform.systemUI`:
+**Three of the system's own processes do not count.** The menu bar, the Dock and `screencaptureui`
+keep windows above the Shell window's level over the whole screen. A read-only probe on Olivier's
+Mac on 2026-10-28 found `screencaptureui` ("Screenshot") at layer 24 over the full 1728×1117 screen
+and the menu bar (Window Server) at layer 24; an earlier probe that day found the Dock full-screen
+at layer 20. Each had a window alpha of 1, which is the window's own alpha and says nothing of
+whether its content is opaque; what those full-screen windows draw was not measured (see the limits
+below). Counted as covering, they kept Run off for good. The level cannot tell them apart, because a
+program can put its window at any level. The code signature can: a program running as the person
+cannot make its window belong to one of those processes. So `ShellPlatform` asks Security for the
+owner's code by pid (`SecCodeCopyGuestWithAttributes`) and checks it (`SecCodeCheckValidity`,
+`isSystemUI`) against a requirement built from an allowlist, `ShellPlatform.systemUI`:
 
 ```
 anchor apple and (identifier "com.apple.WindowServer" or identifier "com.apple.dock"
-  or identifier "com.apple.screencaptureui" or identifier "com.apple.notificationcenterui"
-  or identifier "com.apple.controlcenter" or identifier "com.apple.systemuiserver"
-  or identifier "com.apple.Spotlight" or identifier "com.apple.WindowManager"
-  or identifier "com.apple.loginwindow" or identifier "com.apple.TextInputMenuAgent"
-  or identifier "com.apple.TextInputSwitcher")
+  or identifier "com.apple.screencaptureui")
 ```
 
-Any error is a no, and the window still covers. It is an allowlist, not every program `anchor apple`
-meets, because that requirement says who signed a program, not who wrote what it shows. `osascript`,
-`/usr/bin/swift`, Xcode's `swift-frontend` and the Command Line Tools' `python3` all meet it
-(measured with `codesign -R` on 2026-10-28), and `osascript`'s JavaScript reaches AppKit through its
-Objective-C bridge: `NSWindow` answers `setLevel:` and `setIgnoresMouseEvents:` from it (measured on
-the same day without making a window). So with `anchor apple` alone, a program running as the
-person could, as far as is known, put a borderless, click-through window of `osascript`'s over the
-Shell window, and it would not have counted. Every process on the list is system chrome, drawing no
-content that a program running as the person writes into a click-through window. Not
-`anchor apple generic` either, which any Developer ID program meets, an attacker's among them.
+It is an allowlist, not every program `anchor apple` meets, because that requirement says who
+signed a program, not who wrote what it shows. `osascript`, `/usr/bin/swift`, Xcode's
+`swift-frontend` and the Command Line Tools' `python3` all meet it (measured with `codesign -R` on
+2026-10-28), and `osascript`'s JavaScript reaches AppKit through its Objective-C bridge: `NSWindow`
+answers `setLevel:` and `setIgnoresMouseEvents:` from it (measured on the same day without making a
+window). So with `anchor apple` alone, a program running as the person could, as far as is known,
+put a borderless, click-through window of `osascript`'s over the Shell window, and it would not have
+counted. Not `anchor apple generic` either, which any Developer ID program meets, an attacker's
+among them.
 
-Each verdict is kept for its process, a pid together with the time it started, read from the
+Nor every process of the system's interface. A trusted window that takes clicks but shows what a
+program chose could sit over the script with Run still on beneath it, where before any overlap
+turned Run off: a Spotlight panel listing files a program wrote, a Notification Center banner, Now
+Playing in Control Center, the name an installed input method gives itself in the input-source
+switcher. So only the processes measured above the Shell window's level on a real Mac are listed,
+the three above, and every other window still covers, which fails safe. A new entry needs that
+measurement and an argument that it draws no content a program chooses over the Shell window.
+
+Security's answer is yes, a refusal (`errSecCSReqFailed`, which valid code with another signer or
+identifier gives: measured on 2026-10-28 with a running `osascript` and Terminal), or an error. Yes
+and refusals are kept for their process, a pid together with the time it started, read from the
 kernel's process table (`sysctl` `KERN_PROC_PID`), so a pid handed to a new process is asked about
-afresh; a process whose start time cannot be read is not trusted. `proc_pidinfo` was not used for
-the start time: it refuses a process of another user, and the window server runs as
-`_windowserver`. At most 256 verdicts are kept. The same probe, run again with the allowlist on
-2026-10-28 (no events, no window, nothing launched), found the menu bar (Window Server),
-`screencaptureui`, Notification Center and WindowManager trusted, a centred 600×500 window not
-covered, and Terminal's running process not trusted; `/usr/bin/osascript` and Terminal on disk fail
-the requirement, and the Dock and `screencaptureui` on disk meet it. The Dock had no window on
-screen then, and its running process was trusted by pid. Every window that came out untrusted,
-Finder, Safari, Mail and the other apps among them, was at layer 0 or below, under the Shell window.
+afresh. An error is a no that is not kept, so one that passes does not keep Run off for as long as
+the process lives. A process whose start time cannot be read is not trusted. `proc_pidinfo` was not
+used for the start time: it refuses a process of another user, and the window server runs as
+`_windowserver`. At most 256 verdicts are kept.
 
-The Shell window is kept inside the screen's visible area (`ShellCover.placed`), so it never sits
-under the menu bar or the Dock, which no longer turn Run off: a script too tall for the window gives
-up height and scrolls.
+The same probe, run again with the three-entry list on 2026-10-28 (no events, no window, nothing
+launched), found the menu bar (Window Server), `screencaptureui` and the running Dock process
+trusted, Notification Center, WindowManager, Finder, Terminal and every app not trusted, and a
+centred 600×500 window not covered. `/usr/bin/osascript` and Terminal on disk meet `anchor apple`
+and are refused by the list's requirement; the Dock and `screencaptureui` on disk meet it.
+
+The Shell window is placed inside the screen's visible area (`ShellCover.placed`) when it is shown,
+so it does not start under the menu bar or the Dock, which do not turn Run off; a script too tall
+for the window gives up height and scrolls. Only the placement is held: the person, or a program
+with Accessibility, can move the window afterwards, under them.
 
 `ShellCover.isCovered`, the decision, is pure and pinned (`make shell-check`, "ShellCover",
 "ShellPlatform"): this app's own windows, the card among them, do not count; a fully transparent
-window does not; a window of the system's own interface does not, with or without bounds; a window
+window does not; a window of the three trusted processes does not, with or without bounds; a window
 the list gives no pid for, a window of anyone else's it gives no bounds for, or no list at all,
 counts as covering everything, so Run stays off rather than on; and the trust test failing for every
 pid leaves every overlapping window covering. `make shell-window-check` ("CoverWatch") pins that the
@@ -242,19 +251,19 @@ watched buttons start off, get the click-time test, and what the notice says. Li
 - **The card can still be covered.** Its Stop can only stop a run, so a cover there costs a stop
   the person meant, not a run they did not; the run goes on and is still on the record.
 - **The confirming sheets are not watched.** The person opened them from a switch themselves.
-- **Notification Center can show text a program wrote.** `display notification` puts a program's
-  words in a banner of a trusted process. A banner takes clicks rather than letting them through,
-  so it can hide Run but not trick a click onto it; while it covers part of the window, Run stays
-  on. A system interface process added to the list later must meet the same rule: it draws no
-  content a program running as the person writes into a click-through window.
+- **Unmeasured: what the three trusted processes can draw.** The `screencaptureui` and Dock
+  windows cover the whole screen, and what else they can draw there was not measured:
+  `screencapture -u`, for one, shows the image it took after a capture, and the Dock has badges and
+  the ⌘-Tab switcher. The three are listed because they were the windows seen above the Shell
+  window's level on Olivier's Mac on 2026-10-28, not because what they draw was checked.
 - **The fields read without Screen Recording are not measured.** The window list withholds window
   titles from a process without the grant, and documents bounds, owner pid, owner name and alpha as
   readable without it. Measured on 2026-10-28 only from a shell that holds the grant, so the case
   without it is unconfirmed; were bounds withheld, Run would stay off whenever another program's
   window is above the Shell window, which fails safe.
-- **Any window of another program, the system's own interface aside, above the Shell window's level
-  turns Run off**, an always-on-top utility among them. It comes back on 1 s after that window
-  moves.
+- **Any window of another program, the three trusted processes aside, above the Shell window's level
+  turns Run off**, an always-on-top utility, a Notification Center banner and a Spotlight panel
+  among them. It comes back on 1 s after that window moves.
 
 **No driving surface clicks it.** The Desktop surface checks that a point is on a window of the
 application it names, and steps over windows at higher levels, the Shell window among them. A
