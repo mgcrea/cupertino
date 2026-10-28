@@ -40,7 +40,7 @@ granted, because one bundle identifier can hold several Accessibility entries at
 that drives an interface through Accessibility may work, or may not.
 
 **Without Full Disk Access, Shell still works.** The script then has whatever else Cupertino
-holds. `apple_shell_diagnostics` reports `fullDiskAccess`, the interpreters the login shell finds,
+holds. `apple_shell_diagnostics` reports `fullDiskAccess`, the interpreters a script's PATH finds,
 the runs in flight, whether the run record's chain is intact, and `sealKeyError` when the seal key
 could not be read.
 
@@ -71,7 +71,10 @@ What a request is held to, before anything is decided and before any window show
 
 NUL is refused because `zsh -c` takes the script as a C string: the window and the record would
 hold the whole text while only the part before the NUL ran. The script and stdin caps keep a
-request inside the host's 1 MiB line, which drops a longer one with no answer at all.
+plain-text request inside the host's 1 MiB line, which drops a longer one with no answer at all,
+even with both at their limits. They count decoded bytes, though, and the line is the encoded JSON:
+text heavy in characters JSON escapes (quotes, backslashes, control characters) can push a request
+under both caps past 1 MiB, and that request gets no answer.
 
 ## How a run is decided
 
@@ -106,13 +109,13 @@ activating Cupertino. It shows, in order:
 2. "The agent says:" and the `purpose` in quotes.
 3. The **whole script**, monospaced, selectable, not editable, wrapped rather than scrolled
    sideways so nothing hides past the right edge, and never elided. Its caption counts lines and
-   bytes. `stdin`, when given, is shown the same way. A script holding invisible format characters
-   (bidirectional overrides, zero-width spaces) gets a red warning.
+   bytes. `stdin`, when given, is shown the same way. A script or stdin holding invisible format
+   characters (bidirectional overrides, zero-width spaces) gets a red warning.
 4. The interpreter, the folder and the timeout.
 5. "This can read everything Cupertino can, including mail, messages and browsing history, and can
    control apps Cupertino controls."
-6. **Don't run**, the default button, then **Run once**, and **Run, and stop asking this session**
-   only under "Ask once per session".
+6. The buttons, which read left to right as **Run, and stop asking this session** (only under "Ask
+   once per session"), **Run once**, then **Don't run**, the default button, at the right.
 
 Return and Escape both mean Don't run, so someone typing when the window arrives declines it. The
 run buttons stay disabled for 1 s after the window shows, so a click already on its way lands on
@@ -179,10 +182,10 @@ the two that lower the bar, count only with a seal Cupertino made.
   by the app's own signed application identifier, `<prefix>.io.mgcrea.cupertino` for the release.
   A process can only name an access group its own signature is entitled to, and that entitlement
   must be authorised by a provisioning profile. So a same-user process can neither plant the key
-  nor read it. The item is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so it never syncs to another Mac. `make shell-check`,
-  "ShellSeal.Keychain", pins the query: the data protection keychain, the group equal to the
-  application identifier, no query at all for a wildcard, a bare bundle id or the other build's
-  identifier.
+  nor read it. The item is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so it never syncs
+  to another Mac. `make shell-check`, "ShellSeal.Keychain", pins the query: the data protection
+  keychain, the group equal to the application identifier, no query at all for a wildcard, a bare
+  bundle id or the other build's identifier.
 - **Why not the login keychain**, which the spec suggested. A review showed that
   `security add-generic-password -A` plants an item there silently, with an ACL that trusts every
   app. A program could plant a key of its own choosing before Shell was first turned on, compute
@@ -191,8 +194,8 @@ the two that lower the bar, count only with a seal Cupertino made.
   claim that a planted key raises a Keychain prompt.
 - **The Debug build has its own key.** Its identifier, `io.mgcrea.cupertino.debug`, is both in the
   sealed text and in the access group, so a seal from one build never validates in the other. The
-  Debug group currently carries the legacy prefix `CDV6DT8QF2` that Xcode's wildcard profile gives
-  it; the code reads the prefix from the signature rather than assuming one.
+  Debug group carries the legacy prefix `CDV6DT8QF2` that Xcode's wildcard profile gave it, as
+  signed on 2026-10-27; the code reads the prefix from the signature rather than assuming one.
 - **A build without the entitlement cannot turn Shell on.** It gets `errSecMissingEntitlement`, so
   no key, so Shell off and ask. The Shell pane says "Shell can't be turned on, because Cupertino
   could not keep the key that protects this setting in the Keychain." and the switch stays off.
@@ -227,31 +230,74 @@ hold that identity.
 `ShellRunner` starts every run with `posix_spawn`. `make shell-check` ("ShellRunner") pins each
 point below except where it says otherwise:
 
-- **Through a login shell, `/bin/zsh -l -c`**, so `PATH` is Terminal's and Homebrew's `node` and
-  `python3` resolve. For `zsh` the script is the `-c` argument. For the others it is written to a
-  0600 file in a `cupertino-shell` folder of the temporary directory, the login shell `exec`s the
-  interpreter on it, and the file is removed after the run. `jxa` is `osascript -l JavaScript`.
-  Interpreters that are not installed are skipped by the check and say so.
-- **A login shell's own output is part of stdout.** A `~/.zprofile` that echoes puts its line ahead
-  of the script's. Measured 2026-10-28 on macOS 27.0.1, with a scratch `ZDOTDIR` whose `.zprofile`
-  echoed. `ShellRunner.resolve` takes the last line of `command -v` for that reason.
-- **A minimal environment:** `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and
-  `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, which the login shell then extends. Nothing of Cupertino's
-  own environment, and none of the `APPLE_*` server variables ("env has only the base keys").
-  Signal dispositions are reset, so the app's ignored SIGPIPE does not reach the script ("SIGPIPE
-  is back to its default in the script"). Only the three pipes are inherited
+- **Through zsh with no startup files, `/bin/zsh -f -c`.** `-f` is NO_RCS: zsh reads none of the
+  person's startup files (`~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.zlogin`), and the only file
+  it can read is a root-owned `/etc/zshenv`, if there is one. For `zsh` the script is the `-c`
+  argument. For the others it is written to a 0600 file in a `cupertino-shell` folder of the
+  temporary directory, zsh `exec`s the interpreter on it, and the file is removed after the run.
+  `jxa` is `osascript -l JavaScript`. Interpreters that are not installed are skipped by the check
+  and say so ("ShellRunner: no shell startup files", "`<interpreter>` runs through zsh with no
+  startup files").
+- **PATH is the system's, then Homebrew's.** It is built from the root-owned `/etc/paths` and
+  `/etc/paths.d`, in the order `path_helper` reads them for Terminal, then `/opt/homebrew/bin`,
+  `/opt/homebrew/sbin` and `/usr/local/bin` where they exist and are not listed yet ("ShellRunner:
+  the search path, from /etc only"). If `/etc/paths` cannot be read, `/usr/bin:/bin:/usr/sbin:/sbin`
+  stands in for it. Interpreters installed through nvm, pyenv or asdf are not found unless the
+  script sets them up itself, for example with `source ~/.nvm/nvm.sh`, and that line then shows
+  in the window with the rest. Because `/etc/paths`, with `/usr/bin` in it, comes before
+  Homebrew's folders, `python3` is Apple's `/usr/bin/python3` on an Apple silicon Mac that has
+  both; a script that wants Homebrew's names it.
+- **Finding an interpreter starts nothing.** `ShellRunner.resolve` walks that PATH in Swift, so
+  `apple_shell_diagnostics` starts no process at all ("resolving every interpreter starts no
+  process").
+- **python3 runs isolated, as `python3 -I`.** No user site-packages, so no `.pth` file or
+  `usercustomize` there runs; no script folder on `sys.path`, so a planted `json.py` beside the
+  script file does not shadow the standard library's; and `PYTHON*` variables are ignored. A script
+  that needs the user site-packages adds them to `sys.path` itself ("ShellRunner: python3 runs
+  isolated", with a non-isolated control that does run the planted files).
+- **A minimal environment:** `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and that `PATH`.
+  Nothing of Cupertino's own environment, and none of the `APPLE_*` server variables ("env has only
+  the base keys"). Signal dispositions are reset, so the app's ignored SIGPIPE does not reach the
+  script ("SIGPIPE is back to its default in the script"). Only the three pipes are inherited
   (`POSIX_SPAWN_CLOEXEC_DEFAULT`), which no check pins.
 - **Its own process group.** At the timeout, or at a cancel, the group gets SIGTERM, then SIGKILL
   once the group is empty or 2 s have passed. The grace belongs to the whole group, not only the
   leader, so a member that traps SIGTERM to clean up gets it even when the leader dies at once.
-  "A timeout kills a backgrounded grandchild" is checked by the grandchild's pid being gone.
+  "timeout killed the backgrounded grandchild" is checked by the grandchild's pid being gone.
 - **Output.** stdout and stderr are drained concurrently, each capped at 256 KB with the rest read
   and discarded, so a child writing 10 MB never blocks. Decoded as UTF-8 with replacement
   characters.
-- **`sudo` fails for want of a terminal.** A script has no tty and no way to receive typed input,
-  so `sudo` cannot ask for a password. This is the design's claim and has not been measured. It
-  says nothing about a `NOPASSWD` sudoers rule, `sudo -S` reading a password from `stdin`, or Touch
-  ID for `sudo`, none of which has been tried. Nothing works around it on purpose.
+- **`sudo` is expected to fail for want of a terminal (not measured).** Started the usual way
+  (Finder, a login item, `open`), Cupertino has no controlling terminal, so a script has none and
+  `sudo` cannot ask for a password. Started from a terminal (`make run`) or from Xcode, it may have
+  one: `ShellRunner` calls no `setsid`, so a script can inherit that terminal. None of this says
+  anything about a `NOPASSWD` sudoers rule, `sudo -S` reading a password from `stdin`, or Touch ID
+  for `sudo`, none of which has been tried. Nothing works around it on purpose.
+
+### Why no startup file is read
+
+Until 2026-10-28 every run, and every interpreter lookup, started `/bin/zsh -l -c`, a login shell
+that reads `~/.zshenv`, `~/.zprofile` and `~/.zlogin`. Any process running as the person can write
+those files, with Full Disk Access or without it. One that wrote `~/.zshenv` then had it run under
+Cupertino's grants the next time anything called `apple_shell_diagnostics`, which shows no window
+and leaves no line in the run record; and every approved run read files the window never showed.
+That was closed on 2026-10-28 by `-f`, the PATH from `/etc`, a lookup that starts nothing, and
+`python3 -I`.
+
+### What the window cannot show
+
+The window shows the script, not what the programs it calls will do. Residuals no check pins:
+
+- **Binaries on PATH can be the person's to replace.** An approved run still starts programs from
+  PATH folders a same-user process may own: `/opt/homebrew/bin` is owned by the user on this Mac,
+  and `/usr/local/bin` is on Intel Homebrew Macs. Such a process could replace a binary an approved
+  script calls, or shadow a command with one of the same name earlier on PATH.
+- **So can anything the script reads or sources.** A file the script sources, a module it imports
+  from a writable folder, a config file a tool it calls reads: all run or are read with the run's
+  grants, and none is in the window.
+- **node's `require()`.** A non-core module name resolves from a `node_modules` folder above the
+  script file, and the script file sits in `$TMPDIR`. A planted `node_modules` there can shadow a
+  package the script asks for. Ruled a residual: it only loads a module the script itself names.
 
 ## Cancellation, switching off and quitting
 
@@ -268,10 +314,17 @@ point below except where it says otherwise:
   approval (`make shell-check`, "stopAll").
 - **At quit and at an update relaunch,** `ServerHost.terminateChildren` stops Shell's calls first,
   then sends each live run group SIGTERM and then SIGKILL after a 3 s grace that belongs to the
-  whole group, not only its leader (`ChildTermination.terminateGroups`, `make shell-check`, "ChildTermination: a process group
-  that will not stop"). It then waits up to 1 s for open calls to settle and sweeps the groups a
-  second time, because a call that passed its last cancel check just before the first sweep can
-  spawn after it. Last, it drains the run record so the final lines are written.
+  whole group, not only its leader (`ChildTermination.terminateGroups`; `make shell-check`,
+  "ChildTermination: a process group that will not stop"). It then waits up to 1 s for open calls
+  to settle and sweeps the groups a second time, because a call that passed its last cancel check
+  just before the first sweep can spawn after it. Last, it drains the run record so the final lines
+  are written.
+
+**What a stop cannot reach (known residual, no check pins it).** Every stop above, at a timeout, a
+cancel, switching off or quitting, signals the run's process group, so it reaches only what is
+still in that group. A script that double-forks through `setsid`, hands a job to `launchctl submit`,
+or starts an app with `open` leaves processes that survive the stop and keep Cupertino's grants,
+with nothing supervising them. No supported macOS API tracks processes once they leave the group.
 
 ## What is recorded
 
@@ -291,8 +344,9 @@ folder. Each line holds:
 - the exit code or signal, whether it timed out, and the duration
 
 **Never the text of the script or of stdin, and never any output.** The hashes close the gap the
-activity log leaves: an argument there is cut at 4 KB, so a script hiding its payload past 4 KB of
-harmless text would be logged without it, and stdin can carry the real payload (`sh -s`). Lines are
+activity log leaves: it keeps at most 4 KB of a call's whole arguments object, so a script hiding
+its payload past that much harmless text would be logged without it, and stdin can carry the real
+payload (`sh -s`). Lines are
 chained with `AuditChain`, which gives tamper evidence, not prevention: a same-user process can
 still delete the files. 90 days are kept. The Shell pane lists the 20 most recent under "Recent
 runs", with a 12-digit prefix of each script's hash. `make shell-check`, "ShellRecord" and
@@ -301,31 +355,41 @@ script text or output on file.
 
 ### Through the activity log
 
-Shell calls also go through the existing activity log path, under its existing settings:
+Shell calls also go through the existing activity log path, under its existing settings.
 
-- The call's arguments, the script among them, are kept as for any tool, each cut at 4 KB. The
-  audit file, off by default, writes them only under the payloads switch (`auditPayloads`).
-- A result keeps the decision, exit code, signal, timeout and duration even without the content
-  switch. stdout and stderr appear only under the content switch (`auditContent`), because output
-  can be the text of somebody's mail.
-- In the default capture mode (Arguments) no result row is written at all. The run record covers
-  it.
+- **The call's arguments** are kept in the Activity window as for any tool, in the "Arguments" and
+  "Arguments and results" capture modes (`captureMode.shell`, falling back to the app-wide
+  `captureMode`). The 4 KB cap applies to the whole encoded arguments object, not to each argument,
+  and its keys are sorted, so `cwd`, `interpreter` and `purpose` come before `script`: less than
+  4 KB of a script is ever logged. The run record's SHA-256 covers the whole script, which is why
+  it exists.
+- **A result** is kept only in the "Arguments and results" mode. In the default mode, "Arguments",
+  no result row is written at all, and the run record covers it. When a result is kept, it keeps the
+  decision, exit code, signal, timeout and duration whatever the content switch says. stdout and
+  stderr reach the Activity window only under the content switch for Shell, `captureContent.shell`,
+  which falls back to the app-wide `captureContent`, because output can be the text of somebody's
+  mail.
+- **The audit file**, off by default, gets a Shell result with its decision and exit only when
+  `auditEnabled` and `auditPayloads` are both on, the capture mode is "Arguments and results", and
+  the live capture kept the row in the first place. On the way to the file, `auditContent`
+  re-redacts it: without that switch, stdout and stderr are taken out again, even when the
+  Activity window kept them, and the decision and exit stay.
 
 `make shell-check`, "ShellServer: through the activity log", pins these rules on `CallCapture`,
 and that every other tool records exactly what it did before.
 
 ## What pins what
 
-| Check                     | What it pins                                                                                                                                     |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `make unit`               | `ShellPolicy`: cooldown beats "Don't ask", a session approval and busy; a session approval expires at 30 min; ask never offers it; busy at 4     |
-| `make shell-check`        | the seal and its key query, the pane's switch steps and copy, the run record, the runner, the server's decisions, cancellation, the activity log |
-| `make shell-window-check` | the run buttons refuse both Accessibility entry points, `performClick` and a sent action; the sheets' confirms the same; a window with no screen |
-| `make host-check`         | cancel for an unknown id, cancel mid-call, EOF mid-call, a cancel or EOF that arrives before the call registers                                  |
-| `make dispatch-check`     | the `shell` case reaches `ShellServer` with its connection                                                                                       |
+| Check                     | What it pins                                                                                                                                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `make unit`               | `ShellPolicy`: cooldown beats "Don't ask", a session approval and busy; a session approval expires at 30 min; ask never offers it; busy at 4                                                                                               |
+| `make shell-check`        | the seal and its key query, the pane's switch steps and copy, the run record, the runner (no startup files read, PATH from `/etc`, a lookup that starts nothing, python3 isolated), the server's decisions, cancellation, the activity log |
+| `make shell-window-check` | the run buttons refuse both Accessibility entry points, `performClick` and a sent action; the sheets' confirms the same; a window with no screen                                                                                           |
+| `make host-check`         | cancel for an unknown id, cancel mid-call, EOF mid-call, a cancel or EOF that arrives before the call registers                                                                                                                            |
+| `make dispatch-check`     | the `shell` case reaches `ShellServer` with its connection                                                                                                                                                                                 |
 
-`shell-check` and `shell-window-check` run in CI. At `b649d27`, on 2026-10-28, `shell-check` passed
-261 of 261, `shell-window-check` 46 of 46, `unit` 293 of 293, `host-check` 26 of 26 and
+`shell-check` and `shell-window-check` run in CI. At `a766897`, on 2026-10-28, `shell-check` passed
+287 of 287, `shell-window-check` 46 of 46, `unit` 293 of 293, `host-check` 26 of 26 and
 `dispatch-check` 83 of 83. Neither Shell check posts an event, shows a window, or touches the real
 Keychain or the app's own defaults.
 
@@ -353,3 +417,6 @@ Nothing here has been tried against a running Cupertino. These are still open:
 - **Release signing end to end** with the Developer ID provisioning profile, and the notarized app
   turning Shell on.
 - **`sudo` without a terminal**, see above.
+- **The release notes assume the hardware rule.** The CHANGELOG's "only a click by hand on Run once
+  runs it" holds only if `ShellInput.isHardware` is right. Olivier must confirm the measurement
+  above before the release that carries Shell.

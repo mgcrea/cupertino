@@ -33,7 +33,9 @@ summary.
   off, and turning it on, or turning asking off, takes a confirming click that another program
   can't fake by writing Cupertino's preferences. Every request, refusals included, leaves a line in
   a run record that keeps a hash of the script and never its text or output. Timeouts, Esc in the
-  client and quitting Cupertino stop the script and everything it started. See
+  client and quitting Cupertino stop the script and everything still in its process group. Scripts
+  start without your shell startup files, with the system's PATH plus Homebrew's, so an interpreter
+  from nvm or pyenv needs the script to set it up, where the window shows it. See
   [docs/shell.md](docs/shell.md).
 
 ### Internal
