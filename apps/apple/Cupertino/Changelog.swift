@@ -220,7 +220,71 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_32_0, v1_31_0, v1_30_0, v1_29_1, v1_29_0]
+  static let releases: [Release] = [v1_33_0, v1_32_0, v1_31_0, v1_30_0, v1_29_1]
+
+  // swift-format-ignore
+  private static let v1_33_0: Release = Release(
+    version: "1.33.0",
+    date: "2026-10-28",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Experimental: Mail and Messages serve the draft MCP Events extension.",
+            body: [
+              "`events/list`, `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol only. The arguments are the watch filter, a sender is required, and an event carries envelope metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet, Claude Code included.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Safari can submit a form and wait for a page.",
+            body: [
+              "`apple_safari_submit` submits the form an element belongs to, as pressing Enter would, after the form's own validation, and names the fields that fail it. `apple_safari_wait_for` waits until some text appears on a page, or leaves it. `apple_safari_page_elements` takes `query`, `kind` and `inViewOnly`, applied before its cap. `read_page`, `page_elements`, `find_codes` and `wait_for` read the frontmost tab when no `url` is given.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Shell: an agent can run a script with Cupertino's access, after you approve it.",
+            body: [
+              "`apple_shell_run` runs one script, in zsh, bash, python3, node, AppleScript or JXA, as Cupertino's own child, so it holds every grant Cupertino holds, Full Disk Access among them when Cupertino has it. Before each run a window shows you the whole script and the agent's reason. Don't run is the default, Return and Escape mean it, and only a click by hand on Run once runs it, so VoiceOver can't approve a run. You can let a connection stop asking for 30 minutes, or turn asking off, and a run with no window still shows a card you can stop it from. Shell arrives off, and turning it on, or turning asking off, takes a confirming click that another program can't fake by writing Cupertino's preferences. Every request, refusals included, leaves a line in a run record that keeps a hash of the script and never its text or output. Timeouts, Esc in the client and quitting Cupertino stop the script and everything still in its process group. Scripts start without your shell startup files, with the system's PATH plus Homebrew's, so an interpreter from nvm or pyenv needs the script to set it up, where the window shows it. See [docs/shell.md](docs/shell.md).",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "Safari matches more open tabs to history.",
+            body: [
+              "A tab whose history row only exists with a query added (`/plus5` beside `/plus5?variant=…`) now matches, as `historyMatch: \"query-added\"`.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "Safari pulls large network bodies faster",
+            body: [
+              "by queueing the next chunks instead of waiting a second between each, and `read_page` no longer parses every stored capture to find one.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 5,
+            headline: "Safari diagnostics no longer call a dead extension working.",
+            body: [
+              "`working` was true whenever the extension had ever run, including beside a newest capture 7.5 hours old. The extension now stamps a heartbeat per site while a page is open, and diagnostics report a `state` (`never-ran`, `never-captured`, `stale`, `capturing`, `answering`), which sites are answering, and what the server cannot tell apart. `read_page` and `page_elements` now say which case a timeout is: the extension running nowhere, running but not on this site, or running on this site with no page on that exact URL. A site set to Deny, or an extension switched off, in the half minute before the command is named as having just stopped, not as still running.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "A Debug build of the app no longer updates itself into a second copy of the release.",
+            body: [
+              "The copy registered the Safari extension a second time, and Safari ran no Cupertino extension until the extra copies were removed.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_32_0: Release = Release(
@@ -458,106 +522,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_29_0: Release = Release(
-    version: "1.29.0",
-    date: "2026-10-21",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Safari can show what a page fetched.",
-            body: [
-              "With the new \"Read network traffic\" setting on, three tools appear: `apple_safari_network_record` starts and stops recording on an open tab, `apple_safari_network_list` lists the requests it made, with method, address, status and timing, and `apple_safari_network_get` reads one request's headers and response. It answers the questions a page's text cannot, such as why a button did nothing or which call came back with an error. The setting is off by default, recording is per tab and ends on its own after 15 minutes unless you ask for longer, and it works only on websites you have allowed the Cupertino extension on.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A file inside a response can be saved straight to disk.",
-            body: [
-              "Some sites hand over a document, a signed PDF for instance, as base64 inside a JSON response rather than as a download. `apple_safari_network_get` can pick that field out, decode it and save it to your Downloads folder in one call, without the file passing through the conversation. Saving a file, and reloading a tab to record it from the start, also need the write setting.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "What it cannot see, and what it does not hide.",
-            body: [
-              "Only the page's own `fetch` and `XMLHttpRequest` calls and its console errors are recorded: nothing from embedded frames, web or service workers, or WebSockets. Headers that carry credentials are masked, but response bodies and addresses are returned as the page received them, so a body or a link holding a token comes back with the token in it.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Experimental: Mail and Messages serve the draft MCP Events extension.",
-            body: [
-              "`events/list`, `events/poll` and `events/stream` offer `mail.received` and `messages.received` events, by poll with a cursor or pushed over stdio, following [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415). Off by default behind `APPLE_MAIL_ALLOW_EVENTS` and `APPLE_MESSAGES_ALLOW_EVENTS`, and served on the 2026-07-28 protocol only. The arguments are the watch filter, a sender is required, and an event carries envelope metadata only. Watches are unchanged. The extension is a draft and no client consumes it yet, Claude Code included.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Safari can submit a form and wait for a page.",
-            body: [
-              "`apple_safari_submit` submits the form an element belongs to, as pressing Enter would, after the form's own validation, and names the fields that fail it. `apple_safari_wait_for` waits until some text appears on a page, or leaves it. `apple_safari_page_elements` takes `query`, `kind` and `inViewOnly`, applied before its cap. `read_page`, `page_elements`, `find_codes` and `wait_for` read the frontmost tab when no `url` is given.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Shell: an agent can run a script with Cupertino's access, after you approve it.",
-            body: [
-              "`apple_shell_run` runs one script, in zsh, bash, python3, node, AppleScript or JXA, as Cupertino's own child, so it holds every grant Cupertino holds, Full Disk Access among them when Cupertino has it. Before each run a window shows you the whole script and the agent's reason. Don't run is the default, Return and Escape mean it, and only a click by hand on Run once runs it, so VoiceOver can't approve a run. You can let a connection stop asking for 30 minutes, or turn asking off, and a run with no window still shows a card you can stop it from. Shell arrives off, and turning it on, or turning asking off, takes a confirming click that another program can't fake by writing Cupertino's preferences. Every request, refusals included, leaves a line in a run record that keeps a hash of the script and never its text or output. Timeouts, Esc in the client and quitting Cupertino stop the script and everything still in its process group. Scripts start without your shell startup files, with the system's PATH plus Homebrew's, so an interpreter from nvm or pyenv needs the script to set it up, where the window shows it. See [docs/shell.md](docs/shell.md).",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "Safari matches more open tabs to history.",
-            body: [
-              "A tab whose history row only exists with a query added (`/plus5` beside `/plus5?variant=…`) now matches, as `historyMatch: \"query-added\"`.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Safari pulls large network bodies faster",
-            body: [
-              "by queueing the next chunks instead of waiting a second between each, and `read_page` no longer parses every stored capture to find one.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 5,
-            headline: "Safari diagnostics no longer call a dead extension working.",
-            body: [
-              "`working` was true whenever the extension had ever run, including beside a newest capture 7.5 hours old. The extension now stamps a heartbeat per site while a page is open, and diagnostics report a `state` (`never-ran`, `never-captured`, `stale`, `capturing`, `answering`), which sites are answering, and what the server cannot tell apart. `read_page` and `page_elements` now say which case a timeout is: the extension running nowhere, running but not on this site, or running on this site with no page on that exact URL.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "A Debug build of the app no longer updates itself into a second copy of the release.",
-            body: [
-              "The copy registered the Safari extension a second time, and Safari ran no Cupertino extension until the extra copies were removed.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
