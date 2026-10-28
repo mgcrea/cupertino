@@ -1009,12 +1009,41 @@ Diagnostics now report `state`: `never-ran`, `never-captured`, `stale`, `capturi
 `answering`, or for `capturing` from an extension too old to write heartbeats. A timeout or a
 `read_page` miss says which of three cases it is: no page polling anywhere (not running, so check
 for a second Cupertino row and relaunch Safari), other sites polling but not this one (this site's
-permission, or a tab not reloaded since it was allowed), or this site polling but no page on this
-exact URL taking the command.
+permission, or a tab not reloaded since it was allowed or since Cupertino was updated), or this
+site polling but no page on this exact URL taking the command.
 
-What heartbeats still cannot tell: an extension switched off from one allowed on no open page.
-Neither writes anything, and whether it is enabled is a switch in Safari that the server cannot
-read (the containing app could, through `SFSafariExtensionManager`; nothing asks it yet).
+A timeout also knows when its command went out, and that matters for the first half minute after
+a change. A heartbeat counts as answering for 30 s and a command waits 12, so the last heartbeat
+written before a site was set to Deny, or before the extension was switched off, still looked live
+to the next timeout. When the wait was long enough for every running page to poll (11 s: a hidden
+tab's 10 s poll, plus slack; the handler always rewrites a heartbeat older than 5 s), only pages
+that polled during it count. A site that stopped just before is named as having stopped ("its
+permission for this site was just withdrawn"), and no page polling at all during the wait says the
+extension was most likely just switched off. The live read's 2.5 s wait is too short for that, so
+`read_page` misses keep the plain reading.
+
+Measured live 2026-10-28, on a notarized build of `8b75ea9` installed in `/Applications`, with a
+Bing tab in front and Hacker News behind it:
+
+- Healthy: `state: answering`, `answeringOrigins` both sites, `page_elements` answered on HN.
+- HN before it was reloaded: its tab still ran the extension from before the reinstall, wrote no
+  heartbeat, and a timeout said "running — pages on www.bing.com are answering — but not on
+  news.ycombinator.com". The capture-version check did not fire because the reinstall kept the
+  version at 1.32.0; across a real update it names the stale tab first.
+- Bing set to Deny in Settings › Websites, tab reloaded: the reload wrote no capture, and once the
+  last heartbeat aged out the timeout said "running — pages on news.ycombinator.com are answering
+  — but not on www.bing.com: it is not allowed on this site". The first timeout, inside the half
+  minute, still said "running on www.bing.com right now, so it is allowed there", which is what
+  the timing rule above fixes.
+- Extension unticked in Settings › Extensions: `working: false`, `answering: false`, with `state`
+  still `capturing` from four captures under 30 minutes old. The timeout said "No open page has
+  polled the extension in the last 30 seconds, on any site". This is the 2026-10-27 shape, which
+  used to read `working: true`.
+
+What heartbeats still cannot tell, past that first half minute: an extension switched off from one
+allowed on no open page. Neither writes anything, and whether it is enabled is a switch in Safari
+that the server cannot read (the containing app could, through `SFSafariExtensionManager`; nothing
+asks it yet).
 
 Two page types were suspected and cleared, measured 2026-10-28 on Gallica with the extension
 healthy. A Cloudflare challenge ("Just a moment...") replaced itself with the real page in a

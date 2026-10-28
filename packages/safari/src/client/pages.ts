@@ -204,7 +204,13 @@ export const ageSeconds = (page: CapturedPage, now: number = Date.now()): number
  * page loads, so a healthy extension and a dead one look the same from captures
  * alone whenever nothing has loaded for half an hour.
  */
-export type Heartbeat = { origin: string; ageSeconds: number; extensionVersion: string | null };
+export type Heartbeat = {
+  origin: string;
+  /** When the page polled, in epoch milliseconds. */
+  at: number;
+  ageSeconds: number;
+  extensionVersion: string | null;
+};
 
 export type HeartbeatStatus = {
   /**
@@ -228,6 +234,15 @@ export type HeartbeatStatus = {
 export const ANSWERING_WINDOW_SECONDS = 30;
 
 /** Beside `pages/`, as the handler creates it (`channelDirectory` in the Swift). */
+/**
+ * The shortest wait that a page still running is sure to poll inside: a hidden
+ * tab polls every ten seconds, and the handler always rewrites a heartbeat older
+ * than five, so each of those polls lands. The extra second is timer slack.
+ * The default action timeout, twelve seconds, clears it; the live read's 2.5
+ * does not, and over a wait that short a missing poll means nothing.
+ */
+export const FULL_POLL_MS = 11_000;
+
 export const heartbeatDirectory = (pagesDirectory: string): string =>
   join(dirname(pagesDirectory), "heartbeat");
 
@@ -257,6 +272,7 @@ export const heartbeatStatus = (
       if (age > ANSWERING_WINDOW_SECONDS) continue;
       answering.push({
         origin: parsed.origin,
+        at,
         ageSeconds: age,
         extensionVersion:
           typeof parsed.extensionVersion === "string" ? parsed.extensionVersion : null,
@@ -328,13 +344,42 @@ const listOrigins = (beats: Heartbeat[]): string => {
  * Three answers, and each sends someone somewhere different: nothing running
  * anywhere is Safari's Extensions pane (or a relaunch), running elsewhere but
  * not here is this site's permission, and running here is the tab itself.
+ *
+ * `wait` is the command that went unanswered. A heartbeat stays "answering"
+ * for thirty seconds, longer than a command waits, so one written just before a
+ * site was set to Deny, or the extension switched off, still looked live: seen
+ * 2026-10-28, a revoked bing.com reported as "allowed there". When the wait was
+ * long enough for every running page to poll (`FULL_POLL_MS`), only the pages
+ * that polled during it count, and a page that stopped just before is named as
+ * having stopped.
  */
 export const answeringDiagnosis = (
   beats: HeartbeatStatus,
   url: string | undefined,
+  wait?: { sentAt: number; now: number },
 ): string | null => {
   if (!beats.supported) return null;
-  if (beats.answering.length === 0) {
+  const origin = originOf(url);
+  const waited = wait === undefined ? 0 : wait.now - wait.sentAt;
+  const decisive = wait !== undefined && waited >= FULL_POLL_MS;
+  // The handler stamps `at` to the whole second, so a poll just after the send
+  // can read as just before it. Counting that second as during the wait leans
+  // towards "still running", which is the reading that was there before.
+  const cutoff = wait === undefined ? 0 : Math.floor(wait.sentAt / 1000) * 1000;
+  const live = decisive ? beats.answering.filter((b) => b.at >= cutoff) : beats.answering;
+  const stopped = decisive ? beats.answering.filter((b) => b.at < cutoff) : [];
+
+  const [latest] = stopped;
+  if (live.length === 0 && latest !== undefined) {
+    return (
+      `Pages on ${listOrigins(stopped)} were polling the extension until ` +
+      `${latest.ageSeconds} seconds ago, but none has in the ${Math.floor(waited / 1000)} seconds this command ` +
+      `waited, which is long enough for even a hidden tab to check in. The extension was most ` +
+      `likely just switched off in Safari, or those tabs closed. Ask again in half a minute for ` +
+      `a firmer answer.`
+    );
+  }
+  if (live.length === 0) {
     return (
       `No open page has polled the extension in the last ${ANSWERING_WINDOW_SECONDS} seconds, ` +
       `on any site, so it is not running in Safari: switched off, allowed on no open page, or ` +
@@ -343,8 +388,7 @@ export const answeringDiagnosis = (
       `extension it never runs — then quit and reopen Safari and reload the tab.`
     );
   }
-  const origin = originOf(url);
-  const here = origin === null ? undefined : beats.answering.find((b) => b.origin === origin);
+  const here = origin === null ? undefined : live.find((b) => b.origin === origin);
   if (here) {
     return (
       `The extension is running on ${origin} right now, so it is allowed there, but no page on ` +
@@ -352,11 +396,19 @@ export const answeringDiagnosis = (
       `(apple_safari_list_tabs gives the one Safari holds), still loading, or closed.`
     );
   }
+  const quit = origin === null ? undefined : stopped.find((b) => b.origin === origin);
+  if (quit) {
+    return (
+      `Pages on ${origin} were polling the extension ${quit.ageSeconds} seconds ago, but none has ` +
+      `since this command was sent, while pages on ${listOrigins(live)} have: its permission for ` +
+      `this site was just withdrawn, or the tab was closed or navigated away.`
+    );
+  }
   return (
-    `The extension is running — pages on ${listOrigins(beats.answering)} are answering — ` +
+    `The extension is running — pages on ${listOrigins(live)} are answering — ` +
     (origin === null
       ? `but no page took the command.`
-      : `but not on ${origin}: it is not allowed on this site, or this tab has not loaded since ` +
-        `it was allowed (reload it), or the tab is not open.`)
+      : `but not on ${origin}: it is not allowed on this site, or this tab has not been reloaded ` +
+        `since it was allowed or since Cupertino was updated (reload it), or the tab is not open.`)
   );
 };
