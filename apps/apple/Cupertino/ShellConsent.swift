@@ -80,7 +80,8 @@ final class ShellConsent: ShellConsenting {
     -> any ShellNoticeToken
   {
     let id = UUID()
-    let client = prompt.client
+    // Capped by the server; stripped here, as everywhere the name is drawn.
+    let client = ShellText.display(prompt.client)
     let shown: Bool
     if Thread.isMainThread {
       shown = MainActor.assumeIsolated { self.addCard(id, client: client, stop: stop) }
@@ -525,10 +526,15 @@ private struct PromptWindow {
     // share that.
     let scriptMax = visible * (prompt.stdin == nil ? 0.6 : 0.45)
     let stdinMax = visible * 0.15
+    // The agent's purpose and the folder are its own words too: each scrolls past this, so
+    // neither can push the buttons off the screen.
+    let wordsMax = visible * 0.1
 
     var views: [NSView] = []
 
-    let client = prompt.client == ShellConsent.unnamedClient ? "An unnamed client" : prompt.client
+    let client =
+      prompt.client == ShellConsent.unnamedClient
+      ? "An unnamed client" : ShellText.display(prompt.client)
     let title = NSMutableAttributedString(
       string: client, attributes: [.font: NSFont.boldSystemFont(ofSize: 15)])
     title.append(
@@ -544,7 +550,10 @@ private struct PromptWindow {
         color: .secondaryLabelColor))
 
     views.append(Self.label("The agent says:", width: content, size: 11, bold: true))
-    views.append(Self.label("\u{201C}\(prompt.purpose)\u{201D}", width: content))
+    views.append(
+      Self.textView(
+        "\u{201C}\(ShellText.display(prompt.purpose))\u{201D}", width: content,
+        maxHeight: wordsMax, font: .systemFont(ofSize: 13), plain: true))
 
     views.append(
       Self.label(Self.caption("Script", prompt.script), width: content, size: 11, bold: true))
@@ -554,7 +563,10 @@ private struct PromptWindow {
         Self.label(Self.caption("Input (stdin)", stdin), width: content, size: 11, bold: true))
       views.append(Self.textView(stdin, width: content, maxHeight: stdinMax))
     }
-    if Self.hidesCharacters(prompt.script) || prompt.stdin.map(Self.hidesCharacters) == true {
+    // The purpose and the folder are drawn without them, so they are warned about here too.
+    if Self.hidesCharacters(prompt.script) || prompt.stdin.map(Self.hidesCharacters) == true
+      || Self.hidesCharacters(prompt.cwd) || Self.hidesCharacters(prompt.purpose)
+    {
       views.append(
         Self.label(
           "This contains invisible characters, which can make it read differently from what "
@@ -562,10 +574,10 @@ private struct PromptWindow {
     }
 
     views.append(
-      Self.label(
-        "Interpreter: \(prompt.interpreter.rawValue)\nFolder: \(prompt.cwd)\n"
-          + "Timeout: \(prompt.timeoutSeconds) s", width: content, size: 11,
-        color: .secondaryLabelColor))
+      Self.textView(
+        "Interpreter: \(prompt.interpreter.rawValue)\nFolder: \(ShellText.display(prompt.cwd))\n"
+          + "Timeout: \(prompt.timeoutSeconds) s", width: content, maxHeight: wordsMax,
+        font: .systemFont(ofSize: 11), plain: true, color: .secondaryLabelColor))
 
     views.append(
       Self.label(
@@ -664,22 +676,34 @@ private struct PromptWindow {
     return label
   }
 
-  /// Monospaced, selectable, not editable, wrapped, and scrolled once it is taller than
-  /// `maxHeight`. Never elided.
-  static func textView(_ text: String, width: CGFloat, maxHeight: CGFloat) -> NSScrollView {
+  /// Selectable, not editable, wrapped, and scrolled once it is taller than `maxHeight`. Never
+  /// elided. Monospaced in a bezel by default, for the script and stdin; `plain` draws it as a
+  /// label, for the agent's other words.
+  static func textView(
+    _ text: String, width: CGFloat, maxHeight: CGFloat,
+    font: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular), plain: Bool = false,
+    color: NSColor = .labelColor
+  ) -> NSScrollView {
     let scroll = NSTextView.scrollableTextView()
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = false
-    scroll.borderType = .bezelBorder
-    scroll.autohidesScrollers = false
+    scroll.borderType = plain ? .noBorder : .bezelBorder
+    scroll.autohidesScrollers = plain
+    scroll.drawsBackground = !plain
     let view = scroll.documentView as! NSTextView
     view.isEditable = false
     view.isSelectable = true
     view.isRichText = false
     view.usesFontPanel = false
-    view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-    view.textContainerInset = NSSize(width: 4, height: 6)
+    view.font = font
+    view.textColor = color
+    view.drawsBackground = !plain
+    view.textContainerInset = plain ? .zero : NSSize(width: 4, height: 6)
+    if plain { view.textContainer?.lineFragmentPadding = 0 }
     view.string = text
+    // Again once there is text: a plain text view takes these from the text it holds.
+    view.font = font
+    view.textColor = color
     let inner = width - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) - 4
     view.frame = NSRect(x: 0, y: 0, width: inner, height: 0)
     view.textContainer?.containerSize = NSSize(width: inner, height: .greatestFiniteMagnitude)
@@ -692,7 +716,8 @@ private struct PromptWindow {
     scroll.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
       scroll.widthAnchor.constraint(equalToConstant: width),
-      scroll.heightAnchor.constraint(equalToConstant: min(max(height, 40), maxHeight)),
+      scroll.heightAnchor.constraint(
+        equalToConstant: min(max(height, plain ? 0 : 40), maxHeight)),
     ])
     return scroll
   }

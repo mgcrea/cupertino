@@ -87,9 +87,11 @@ nonisolated enum ShellPane {
   static let hashDigits = 12
 
   static func row(_ entry: ShellRecord.Entry) -> Row {
+    // Lines written before the cap may hold a longer name, so it is capped here too.
     Row(
-      client: entry.client, decision: label(entry.decision), outcome: outcome(entry),
-      hash: String(entry.scriptSHA256.prefix(hashDigits)), help: entry.purpose)
+      client: ShellText.display(ShellText.client(entry.client)), decision: label(entry.decision),
+      outcome: outcome(entry), hash: String(entry.scriptSHA256.prefix(hashDigits)),
+      help: ShellText.display(entry.purpose))
   }
 
   static func label(_ decision: ShellRecord.Decision) -> String {

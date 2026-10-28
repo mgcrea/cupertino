@@ -413,7 +413,7 @@ nonisolated enum ShellServer {
     // A request with no connection (a check driving the server directly) is a connection of
     // its own: no approval or cooldown is kept for it.
     let who = connection ?? UUID()
-    let client = clientName(who)
+    let client = ShellText.client(clientName(who))
     var asked = given(args)
     let runId = UUID()
 
@@ -894,5 +894,43 @@ nonisolated enum ShellServer {
 
   private struct NoCard: ShellNoticeToken {
     func ended() {}
+  }
+}
+
+/// What a client says about itself, made safe to keep and to show.
+///
+/// The client name, the purpose and the folder are the agent's words, and the window, the card
+/// and Recent runs draw them beside the person's decision. A bidirectional override or a
+/// zero-width character can make a name read as another (`Claude\u{202E}…`), and a name a
+/// thousand characters long can push everything else off the card. So the name is capped
+/// wherever it is used, the record included, and all three are stripped of control and format
+/// characters wherever they are shown. The record keeps them as they came, capped, so the file
+/// says what the client sent.
+///
+/// Foundation only, so `make shell-check` pins it.
+nonisolated enum ShellText {
+  static let clientLimit = 100
+
+  /// The client name as Shell uses it everywhere: its first `clientLimit` characters.
+  static func client(_ name: String) -> String {
+    String(name.prefix(clientLimit))
+  }
+
+  /// `text` without control or format characters (Unicode categories Cc and Cf: bidirectional
+  /// overrides, zero-width spaces, a BOM, a bell). A tab, line feed or carriage return becomes
+  /// a space instead, so the words on either side stay apart.
+  static func display(_ text: String) -> String {
+    var out = String.UnicodeScalarView()
+    for scalar in text.unicodeScalars {
+      switch scalar.properties.generalCategory {
+      case .control:
+        if scalar == "\n" || scalar == "\t" || scalar == "\r" { out.append(" ") }
+      case .format:
+        break
+      default:
+        out.append(scalar)
+      }
+    }
+    return String(out)
   }
 }

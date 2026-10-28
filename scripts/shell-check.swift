@@ -374,6 +374,29 @@ struct ShellCheck {
       "a started line with no outcome says so",
       ShellPane.row(cutShort).outcome == "no outcome recorded")
 
+    print("\nShellText: what a client says about itself, made safe to show")
+    let spoof = "Claude\u{202E}edoC\u{200B}\u{0007}\u{FEFF}"
+    check(
+      "format and control characters are stripped",
+      ShellText.display(spoof) == "ClaudeedoC")
+    check(
+      "a line break or a tab becomes a space",
+      ShellText.display("one\ntwo\tthree\r\nfour") == "one two three  four")
+    check(
+      "ordinary text is left alone",
+      ShellText.display("Café 日本 «x» – ok") == "Café 日本 «x» – ok")
+    check(
+      "a client name is capped at 100 characters",
+      ShellText.client(String(repeating: "é", count: 150)) == String(repeating: "é", count: 100)
+        && ShellText.client("short") == "short" && ShellText.clientLimit == 100)
+    var spoofed = base
+    spoofed.client = String(repeating: "c", count: 150) + "\u{202E}"
+    spoofed.purpose = "List\u{200B} the\nfolder."
+    check(
+      "Recent runs shows the client stripped and capped, and the purpose stripped",
+      ShellPane.row(spoofed).client == String(repeating: "c", count: 100)
+        && ShellPane.row(spoofed).help == "List the folder.")
+
     let decisions: [ShellRecord.Decision] = [
       .approved, .approvedForSession, .notAsked, .declined, .noAnswer, .cooldown, .busy,
       .cancelled, .invalid,
@@ -1528,6 +1551,18 @@ extension ShellCheck {
     check(
       "a change seen first by a request withdraws it too", fake.asks == reapproved + 2)
     ShellSeal.setBefore(.ask, store)
+
+    print("\nShellServer: a client's name is capped wherever it is used")
+    let longName = String(repeating: "n", count: 150) + "\u{202E}tail"
+    fake.next = .runOnce
+    _ = shellRun(on: UUID().named(longName))
+    ShellRecord.drain()
+    check(
+      "the window is handed the name cut to 100 characters",
+      fake.prompts.last?.client == String(repeating: "n", count: 100))
+    check(
+      "and the record keeps the same 100",
+      ShellRecord.recent(1000, in: recordDir).first?.client == String(repeating: "n", count: 100))
 
     print("\nShellServer: a cooldown follows the client's name across connections")
     ShellSeal.setBefore(.ask, store)
