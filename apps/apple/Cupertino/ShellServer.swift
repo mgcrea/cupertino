@@ -498,11 +498,10 @@ nonisolated enum ShellServer {
     }
 
     // Outside every lock: `register` may run the canceller inline, and the canceller takes the
-    // call's lock.
-    let token = connection.flatMap { connection in
-      InProcessCalls.requestId(id).map {
-        InProcessCalls.register(connection: connection, requestId: $0) { call.cancel() }
-      }
+    // call's lock. An id that is no key (null, a fraction) is registered under the private
+    // `u<UUID>` one: no cancel can name it, but a hang-up's `cancelAll` still reaches it.
+    let token = connection.map { connection in
+      InProcessCalls.register(connection: connection, requestId: requestId) { call.cancel() }
     }
     defer { token?.done() }
 

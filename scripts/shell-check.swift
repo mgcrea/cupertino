@@ -1697,6 +1697,30 @@ extension ShellCheck {
       "a cancel mid-run stops it",
       longRunning && long.done.wait(timeout: .now() + 5) == .success
         && long.answer()?.text == cancelledCopy && Date().timeIntervalSince(cancelStart) < 3)
+    // An id that cannot be a cancel's key, null or a fraction, still has a canceller: a
+    // hang-up must stop its run as it stops any other.
+    for (label, id) in [("null", "null"), ("a fraction", "1.5")] {
+      let hungUp = UUID()
+      let done = DispatchSemaphore(value: 0)
+      let line =
+        "{\"jsonrpc\":\"2.0\",\"id\":\(id),\"method\":\"tools/call\",\"params\":"
+        + "{\"name\":\"apple_shell_run\",\"arguments\":{\"script\":\"sleep 30\","
+        + "\"purpose\":\"p\",\"timeoutSeconds\":5}}}"
+      _ = requestsMade.next()
+      Thread.detachNewThread {
+        _ = send(line, on: hungUp)
+        done.signal()
+      }
+      let started = eventually { ShellServer.inFlight == 1 }
+      let hangUpAt = Date()
+      InProcessCalls.cancelAll(connection: hungUp)
+      let ended = done.wait(timeout: .now() + 8) == .success
+      check(
+        "a call whose id is \(label) is stopped by a hang-up",
+        started && ended && Date().timeIntervalSince(hangUpAt) < 3)
+      InProcessCalls.forget(connection: hungUp)
+    }
+
     // Asked before `forget`, which would make the answer nil whatever was left.
     let approvedHeld = InProcessCalls.held(connection: approved)
     let heldHeld = InProcessCalls.held(connection: held)
