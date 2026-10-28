@@ -916,6 +916,22 @@ nonisolated enum ShellText {
     String(name.prefix(clientLimit))
   }
 
+  static let ownerLimit = 40
+
+  /// A window owner's name, from the window list, as the Shell window shows it: stripped as
+  /// `display` strips, a line or paragraph separator made a space, trimmed, and its first
+  /// `ownerLimit` unicode scalars. Scalars, not characters: a character can stack any number of
+  /// combining marks, and the notice keeps room for so many. Nil when there is none or nothing is
+  /// left. Any program names itself, so it says whose window it is, not that the window is safe.
+  static func owner(_ name: String?) -> String? {
+    guard let name else { return nil }
+    let flat = display(name).replacingOccurrences(of: "\u{2028}", with: " ")
+      .replacingOccurrences(of: "\u{2029}", with: " ")
+    let trimmed = flat.trimmingCharacters(in: .whitespaces)
+    let shown = String(String.UnicodeScalarView(trimmed.unicodeScalars.prefix(ownerLimit)))
+    return shown.isEmpty ? nil : shown
+  }
+
   /// `text` without control or format characters (Unicode categories Cc and Cf: bidirectional
   /// overrides, zero-width spaces, a BOM, a bell). A tab, line feed or carriage return becomes
   /// a space instead, so the words on either side stay apart.

@@ -175,27 +175,95 @@ borderless window above the Shell window's level, draw a harmless script where t
 let clicks fall through, so the person's genuine click lands on Run once. A hardware click is all
 the layers above ask for, and that click is one. So while the window is up, `CoverWatch` asks the
 window list every 0.1 s for the windows above it (`CGWindowListCopyWindowInfo` with
-`.optionOnScreenAboveWindow`). While any window of another process overlaps it, the run buttons
-are off and the window says "Another window is over this one, so Run is off until it moves."; once
-it moves, the 1 s arming delay starts again, so a cover pulled away just before a click still finds
-Run off. A click that lands on Run while one is there is refused and logged, at the click itself.
-`ShellCover.isCovered`, the decision, is pure and pinned (`make shell-check`, "ShellCover"): this
-app's own windows, the card among them, do not count; a fully transparent window does not; a window
-the list gives no bounds for, or no list at all, counts as covering everything, so Run stays off
-rather than on. `make shell-window-check` ("CoverWatch") pins that the watched buttons start off
-and get the click-time test. Limits:
+`.optionOnScreenAboveWindow`). While any window of another process overlaps it, the system's own
+interface aside, the run buttons are off and the window says which program's it is: "A window of
+Notes is over this one, so Run is off until it moves.", or "Another window is over this one, …" when
+the list gives no owner name. The name is the program's own, stripped of control and format
+characters and cut to 40 characters (`ShellText.owner`), and the notice is laid out as tall as the
+longest name makes it, so naming one does not move the buttons. Once the window moves, the 1 s
+arming delay starts again, so a cover pulled away just before a click still finds Run off. A click
+that lands on Run while one is there is refused and logged, at the click itself.
+
+**Three of the system's own processes do not count.** The menu bar, the Dock and `screencaptureui`
+keep windows above the Shell window's level over the whole screen. A read-only probe on Olivier's
+Mac on 2026-10-28 found `screencaptureui` ("Screenshot") at layer 24 over the full 1728×1117 screen
+and the menu bar (Window Server) at layer 24; an earlier probe that day found the Dock full-screen
+at layer 20. Each had a window alpha of 1, which is the window's own alpha and says nothing of
+whether its content is opaque; what those full-screen windows draw was not measured (see the limits
+below). Counted as covering, they kept Run off for good. The level cannot tell them apart, because a
+program can put its window at any level. The code signature can: a program running as the person
+cannot make its window belong to one of those processes. So `ShellPlatform` asks Security for the
+owner's code by pid (`SecCodeCopyGuestWithAttributes`) and checks it (`SecCodeCheckValidity`,
+`isSystemUI`) against a requirement built from an allowlist, `ShellPlatform.systemUI`:
+
+```
+anchor apple and (identifier "com.apple.WindowServer" or identifier "com.apple.dock"
+  or identifier "com.apple.screencaptureui")
+```
+
+It is an allowlist, not every program `anchor apple` meets, because that requirement says who
+signed a program, not who wrote what it shows. `osascript`, `/usr/bin/swift`, Xcode's
+`swift-frontend` and the Command Line Tools' `python3` all meet it (measured with `codesign -R` on
+2026-10-28), and `osascript`'s JavaScript reaches AppKit through its Objective-C bridge: `NSWindow`
+answers `setLevel:` and `setIgnoresMouseEvents:` from it (measured on the same day without making a
+window). So with `anchor apple` alone, a program running as the person could, as far as is known,
+put a borderless, click-through window of `osascript`'s over the Shell window, and it would not have
+counted. Not `anchor apple generic` either, which any Developer ID program meets, an attacker's
+among them.
+
+Nor every process of the system's interface. A trusted window that takes clicks but shows what a
+program chose could sit over the script with Run still on beneath it, where before any overlap
+turned Run off: a Spotlight panel listing files a program wrote, a Notification Center banner, Now
+Playing in Control Center, the name an installed input method gives itself in the input-source
+switcher. So only the processes measured above the Shell window's level on a real Mac are listed,
+the three above, and every other window still covers, which fails safe. A new entry needs that
+measurement and an argument that it draws no content a program chooses over the Shell window.
+
+Security's answer is yes, a refusal (`errSecCSReqFailed`, which valid code with another signer or
+identifier gives: measured on 2026-10-28 with a running `osascript` and Terminal), or an error. Yes
+and refusals are kept for their process, a pid together with the time it started, read from the
+kernel's process table (`sysctl` `KERN_PROC_PID`), so a pid handed to a new process is asked about
+afresh. An error is a no that is not kept, so one that passes does not keep Run off for as long as
+the process lives. A process whose start time cannot be read is not trusted. `proc_pidinfo` was not
+used for the start time: it refuses a process of another user, and the window server runs as
+`_windowserver`. At most 256 verdicts are kept.
+
+The same probe, run again with the three-entry list on 2026-10-28 (no events, no window, nothing
+launched), found the menu bar (Window Server), `screencaptureui` and the running Dock process
+trusted, Notification Center, WindowManager, Finder, Terminal and every app not trusted, and a
+centred 600×500 window not covered. `/usr/bin/osascript` and Terminal on disk meet `anchor apple`
+and are refused by the list's requirement; the Dock and `screencaptureui` on disk meet it.
+
+The Shell window is placed inside the screen's visible area (`ShellCover.placed`) when it is shown,
+so it does not start under the menu bar or the Dock, which do not turn Run off; a script too tall
+for the window gives up height and scrolls. Only the placement is held: the person, or a program
+with Accessibility, can move the window afterwards, under them.
+
+`ShellCover.isCovered`, the decision, is pure and pinned (`make shell-check`, "ShellCover",
+"ShellPlatform"): this app's own windows, the card among them, do not count; a fully transparent
+window does not; a window of the three trusted processes does not, with or without bounds; a window
+the list gives no pid for, a window of anyone else's it gives no bounds for, or no list at all,
+counts as covering everything, so Run stays off rather than on; and the trust test failing for every
+pid leaves every overlapping window covering. `make shell-window-check` ("CoverWatch") pins that the
+watched buttons start off, get the click-time test, and what the notice says. Limits:
 
 - **A window that appears after the click has been taken is not seen.**
 - **The card can still be covered.** Its Stop can only stop a run, so a cover there costs a stop
   the person meant, not a run they did not; the run goes on and is still on the record.
 - **The confirming sheets are not watched.** The person opened them from a switch themselves.
+- **Unmeasured: what the three trusted processes can draw.** The `screencaptureui` and Dock
+  windows cover the whole screen, and what else they can draw there was not measured:
+  `screencapture -u`, for one, shows the image it took after a capture, and the Dock has badges and
+  the ⌘-Tab switcher. The three are listed because they were the windows seen above the Shell
+  window's level on Olivier's Mac on 2026-10-28, not because what they draw was checked.
 - **The fields read without Screen Recording are not measured.** The window list withholds window
-  names from a process without the grant, and documents bounds, owner pid and alpha as readable
-  without it. Measured on 2026-10-28 only from a shell that holds the grant, so the case without it
-  is unconfirmed; were bounds withheld, Run would stay off whenever another program's window is
-  above the Shell window, which fails safe.
-- **Any window of another program above the Shell window's level turns Run off**, a notification
-  banner or an always-on-top utility among them. It comes back on 1 s after that window moves.
+  titles from a process without the grant, and documents bounds, owner pid, owner name and alpha as
+  readable without it. Measured on 2026-10-28 only from a shell that holds the grant, so the case
+  without it is unconfirmed; were bounds withheld, Run would stay off whenever another program's
+  window is above the Shell window, which fails safe.
+- **Any window of another program, the three trusted processes aside, above the Shell window's level
+  turns Run off**, an always-on-top utility, a Notification Center banner and a Spotlight panel
+  among them. It comes back on 1 s after that window moves.
 
 **No driving surface clicks it.** The Desktop surface checks that a point is on a window of the
 application it names, and steps over windows at higher levels, the Shell window among them. A
@@ -508,14 +576,14 @@ other tool records exactly what it did before.
 
 ## What pins what
 
-| Check                     | What it pins                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make unit`               | `ShellPolicy`: cooldown beats "Don't ask", a session approval and busy; a session approval expires at 30 min; ask never offers it; busy at 4                                                                                                                                                                                                                                                                                                                                                              |
-| `make shell-check`        | the seal and its key query, the pane's switch steps and copy, the run record and its started and outcome lines, the runner (the script as an argument and never a file, no startup files read, PATH from `/etc`, a lookup that starts nothing, python3 isolated), the server's decisions (the name's cooldown, the four-window cap, approvals withdrawn on a change), cancellation, the client's words made safe to show, `ShellCover` and `ShellPanels`, the activity log and the audit file's arguments |
-| `make shell-window-check` | the run buttons refuse both Accessibility entry points, `performClick` and a sent action; the sheets' confirms the same; a window with no screen; `CoverWatch` starts the buttons off and gives them a click-time test                                                                                                                                                                                                                                                                                    |
-| `make desktop-check`      | a click or drag on an open Shell window or sheet is refused before anything is posted                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `make host-check`         | cancel for an unknown id, cancel mid-call, EOF mid-call, a cancel or EOF that arrives before the call registers                                                                                                                                                                                                                                                                                                                                                                                           |
-| `make dispatch-check`     | the `shell` case reaches `ShellServer` with its connection                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Check                     | What it pins                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make unit`               | `ShellPolicy`: cooldown beats "Don't ask", a session approval and busy; a session approval expires at 30 min; ask never offers it; busy at 4                                                                                                                                                                                                                                                                                                                                                                               |
+| `make shell-check`        | the seal and its key query, the pane's switch steps and copy, the run record and its started and outcome lines, the runner (the script as an argument and never a file, no startup files read, PATH from `/etc`, a lookup that starts nothing, python3 isolated), the server's decisions (the name's cooldown, the four-window cap, approvals withdrawn on a change), cancellation, the client's words made safe to show, `ShellCover`, `ShellPlatform` and `ShellPanels`, the activity log and the audit file's arguments |
+| `make shell-window-check` | the run buttons refuse both Accessibility entry points, `performClick` and a sent action; the sheets' confirms the same; a window with no screen; `CoverWatch` starts the buttons off, gives them a click-time test and names the cover                                                                                                                                                                                                                                                                                    |
+| `make desktop-check`      | a click or drag on an open Shell window or sheet is refused before anything is posted                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `make host-check`         | cancel for an unknown id, cancel mid-call, EOF mid-call, a cancel or EOF that arrives before the call registers                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `make dispatch-check`     | the `shell` case reaches `ShellServer` with its connection                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 `shell-check` and `shell-window-check` run in CI. At the final fix wave, on 2026-10-28,
 `shell-check` passed 367 of 367, `shell-window-check` 50 of 50, `unit` 293 of 293, `host-check` 26

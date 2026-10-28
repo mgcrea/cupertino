@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Security
 
 /// Asserts what the Shell surface does with a script once it has been allowed to run.
 ///
@@ -2016,35 +2017,116 @@ extension ShellCheck {
 
     print("\nShellCover: another program's window over the Shell window")
     let me: Int32 = 100
+    let apple: Int32 = 50
     let panel = CGRect(x: 100, y: 100, width: 600, height: 400)
-    func window(_ pid: Int32, _ rect: CGRect, alpha: Double = 1) -> ShellCover.Window {
-      ShellCover.Window(pid: pid, bounds: rect, alpha: alpha)
+    let screen = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    func window(_ pid: Int32, _ rect: CGRect, alpha: Double = 1, owner: String? = nil)
+      -> ShellCover.Window
+    {
+      ShellCover.Window(pid: pid, bounds: rect, alpha: alpha, owner: owner)
     }
-    check("nothing above: not covered", !ShellCover.isCovered(panel, by: [], ownPid: me))
-    check(
-      "this app's own window above (the card): not covered",
-      !ShellCover.isCovered(panel, by: [window(me, panel)], ownPid: me))
-    check(
-      "another program's window over it: covered",
-      ShellCover.isCovered(panel, by: [window(200, panel)], ownPid: me))
+    // Stands for the code-signing test: only `apple` is the system's own interface.
+    let isApple: (Int32) -> Bool = { $0 == apple }
+    let none: (Int32) -> Bool = { _ in false }
+    func covered(_ windows: [ShellCover.Window], _ isPlatform: (Int32) -> Bool = none) -> Bool {
+      ShellCover.isCovered(panel, by: windows, ownPid: me, isPlatform: isPlatform)
+    }
+    check("nothing above: not covered", !covered([]))
+    check("this app's own window above (the card): not covered", !covered([window(me, panel)]))
+    check("another program's window over it: covered", covered([window(200, panel)]))
     check(
       "even over a corner only",
-      ShellCover.isCovered(
-        panel, by: [window(200, CGRect(x: 690, y: 490, width: 50, height: 50))], ownPid: me))
+      covered([window(200, CGRect(x: 690, y: 490, width: 50, height: 50))]))
     check(
       "a window elsewhere on the screen: not covered",
-      !ShellCover.isCovered(
-        panel, by: [window(200, CGRect(x: 800, y: 100, width: 100, height: 100))], ownPid: me))
+      !covered([window(200, CGRect(x: 800, y: 100, width: 100, height: 100))]))
     check(
       "a window that only touches its edge: not covered",
-      !ShellCover.isCovered(
-        panel, by: [window(200, CGRect(x: 700, y: 100, width: 100, height: 100))], ownPid: me))
+      !covered([window(200, CGRect(x: 700, y: 100, width: 100, height: 100))]))
     check(
       "a fully transparent window shows nothing: not covered",
-      !ShellCover.isCovered(panel, by: [window(200, panel, alpha: 0)], ownPid: me))
+      !covered([window(200, panel, alpha: 0)]))
+    check("a nearly transparent one can: covered", covered([window(200, panel, alpha: 0.02)]))
+
+    // The windows a read-only probe found over the middle of the screen on 2026-10-28.
+    let system = [
+      window(apple, screen, owner: "screencaptureui"),
+      window(apple + 1, CGRect(x: 0, y: 0, width: 1728, height: 33), owner: "Window Server"),
+      window(apple + 2, screen, owner: "Dock"),
+    ]
+    let systemPids: (Int32) -> Bool = { $0 >= apple && $0 <= apple + 2 }
     check(
-      "a nearly transparent one can: covered",
-      ShellCover.isCovered(panel, by: [window(200, panel, alpha: 0.02)], ownPid: me))
+      "a full-screen window of the system's own interface: not covered",
+      !covered([window(apple, screen)], isApple))
+    check("nor the probe's three together", !covered(system, systemPids))
+    check(
+      "another program's window over it, among the system's: covered",
+      covered(system + [window(200, panel)], systemPids)
+        && covered([window(200, panel)] + system, systemPids))
+    check(
+      "the trust test failing for every pid: every window over it covers",
+      system.filter { $0.bounds!.intersects(panel) }.count == 2
+        && system.filter { $0.bounds!.intersects(panel) }.allSatisfy { covered([$0], none) })
+    check(
+      "a window with no pid covers, whatever the test says",
+      covered([ShellCover.Window(pid: nil, bounds: panel, alpha: 1)], { _ in true }))
+    check(
+      "a window of another program with no bounds covers",
+      covered([ShellCover.Window(pid: 200, bounds: nil, alpha: 1)], isApple))
+    check(
+      "one of the system's own with no bounds does not",
+      !covered([ShellCover.Window(pid: apple, bounds: nil, alpha: 1)], isApple))
+    check(
+      "this app's own window never covers, even untrusted",
+      !covered([window(me, panel)], none)
+        && !covered([ShellCover.Window(pid: me, bounds: nil, alpha: 1)], none))
+    var asked: [Int32] = []
+    _ = ShellCover.isCovered(
+      panel,
+      by: [window(200, CGRect(x: 800, y: 100, width: 100, height: 100)), window(me, panel)],
+      ownPid: me,
+      isPlatform: {
+        asked.append($0)
+        return false
+      })
+    check("the trust test is not asked for a window that misses or is this app's", asked.isEmpty)
+
+    check(
+      "the window that covers is the first of another program's over it",
+      ShellCover.coverer(
+        panel,
+        by: [
+          window(apple, screen, owner: "Dock"),
+          window(200, CGRect(x: 800, y: 100, width: 100, height: 100), owner: "Mail"),
+          window(300, panel, owner: "Notes"),
+          window(400, panel, owner: "Safari"),
+        ], ownPid: me, isPlatform: isApple)?.owner == "Notes")
+    check(
+      "and none when nothing covers",
+      ShellCover.coverer(panel, by: system, ownPid: me, isPlatform: systemPids) == nil)
+    check(
+      "a window's owner, as the person knows it, made safe to show",
+      ShellText.owner("No\u{202E}tes\u{200B}") == "Notes"
+        && ShellText.owner(" Text\nEdit ") == "Text Edit")
+    check(
+      "and capped at 40 characters",
+      ShellText.owner(String(repeating: "é", count: 60)) == String(repeating: "é", count: 40)
+        && ShellText.ownerLimit == 40)
+    // "e" and a combining acute: one character, two scalars. Capped by characters, a name of
+    // stacked marks would be any height, past what the notice keeps room for.
+    let stacked = ShellText.owner("x" + String(repeating: "\u{301}", count: 100))
+    check(
+      "the cap counts unicode scalars, not characters",
+      ShellText.owner(String(repeating: "e\u{301}", count: 30))
+        == String(repeating: "e\u{301}", count: 20)
+        && stacked?.unicodeScalars.count == 40)
+    check(
+      "a line or paragraph separator becomes a space",
+      ShellText.owner("Text\u{2028}Edit\u{2029}Pro") == "Text Edit Pro")
+    check(
+      "an owner with no name, or none left once stripped, has none",
+      ShellText.owner(nil) == nil && ShellText.owner("") == nil
+        && ShellText.owner("\u{202E}\u{200B} ") == nil)
 
     let listed: [[String: Any]] = [
       [
@@ -2052,20 +2134,203 @@ extension ShellCheck {
         kCGWindowBounds as String: CGRect(x: 1, y: 2, width: 3, height: 4)
           .dictionaryRepresentation,
         kCGWindowAlpha as String: NSNumber(value: 0.5),
+        kCGWindowOwnerName as String: "Notes",
       ],
       [kCGWindowOwnerPID as String: NSNumber(value: 300)],
       [kCGWindowBounds as String: panel.dictionaryRepresentation],
     ]
     let parsed = ShellCover.windows(from: listed)
     check(
-      "a window's pid, bounds and alpha are read from the window list",
-      parsed.first == window(200, CGRect(x: 1, y: 2, width: 3, height: 4), alpha: 0.5))
+      "a window's pid, bounds, alpha and owner are read from the window list",
+      parsed.first
+        == window(200, CGRect(x: 1, y: 2, width: 3, height: 4), alpha: 0.5, owner: "Notes")
+        && parsed.count == 3 && parsed[1].owner == nil)
     check(
       "a window listed without bounds counts as covering everything",
-      parsed.count == 3 && parsed[1].pid == 300 && ShellCover.isCovered(panel, by: [parsed[1]], ownPid: me))
+      parsed.count == 3 && parsed[1].pid == 300 && covered([parsed[1]], isApple))
     check(
       "a window listed without a pid counts as another program's",
-      ShellCover.isCovered(panel, by: [parsed[2]], ownPid: me))
+      covered([parsed[2]], { _ in true }))
+
+    print("\nShellPlatform: whether a window's owner is the system's own interface")
+    var starts: [Int32: ShellPlatform.Start] = [:]
+    var verified: [Int32] = []
+    var verdicts: [Int32: Bool] = [:]
+    var unsure: Set<Int32> = []
+    var during: (() -> Void)?
+    let trust = ShellPlatform(
+      started: { starts[$0] },
+      verify: { pid in
+        verified.append(pid)
+        during?()
+        if unsure.contains(pid) { return .unknown }
+        return verdicts[pid] ?? false ? .yes : .no
+      })
+    starts[apple] = .init(seconds: 1000, microseconds: 1)
+    verdicts[apple] = true
+    check("a system interface process is trusted", trust.isPlatform(apple))
+    check(
+      "and asked again, the verdict is the one kept",
+      trust.isPlatform(apple) && verified == [apple])
+    starts[apple] = .init(seconds: 1000, microseconds: 2)
+    verdicts[apple] = false
+    check(
+      "the pid reused by another process, started at another time: asked afresh",
+      !trust.isPlatform(apple) && verified == [apple, apple])
+    starts[apple] = .init(seconds: 1000, microseconds: 1)
+    verdicts[apple] = true
+    check(
+      "the first start time again is still served from what was kept",
+      trust.isPlatform(apple) && verified == [apple, apple])
+    verified = []
+    verdicts[600] = true
+    check(
+      "no start time to be had: not trusted, and not even asked",
+      !trust.isPlatform(600) && verified.isEmpty)
+    starts[600] = .init(seconds: 5, microseconds: 0)
+    check(
+      "nor kept, so once there is one it is asked",
+      trust.isPlatform(600) && verified == [600])
+    verified = []
+    starts[700] = .init(seconds: 7, microseconds: 0)
+    verdicts[700] = true
+    during = { starts[700] = .init(seconds: 8, microseconds: 0) }
+    check(
+      "a process that changes while it is asked about: not trusted",
+      !trust.isPlatform(700) && verified == [700])
+    during = nil
+    check(
+      "and that answer is not kept",
+      trust.isPlatform(700) && verified == [700, 700])
+    verified = []
+    starts[800] = .init(seconds: 9, microseconds: 0)
+    verdicts[800] = true
+    unsure = [800]
+    check(
+      "Security failing to answer, not refusing: not trusted",
+      !trust.isPlatform(800) && verified == [800])
+    unsure = []
+    check(
+      "and not kept, so the next asking can trust it",
+      trust.isPlatform(800) && verified == [800, 800])
+    verified = []
+    starts[900] = .init(seconds: 10, microseconds: 0)
+    verdicts[900] = false
+    _ = trust.isPlatform(900)
+    check(
+      "a definite no is kept",
+      !trust.isPlatform(900) && verified == [900])
+
+    let counted = ShellPlatform(
+      started: { .init(seconds: Int($0), microseconds: 0) },
+      verify: { pid in
+        verified.append(pid)
+        return .yes
+      })
+    verified = []
+    for pid in 1...Int32(ShellPlatform.limit) { _ = counted.isPlatform(pid) }
+    _ = counted.isPlatform(1)
+    check(
+      "\(ShellPlatform.limit) verdicts are kept",
+      verified.count == ShellPlatform.limit && counted.count == ShellPlatform.limit)
+    _ = counted.isPlatform(Int32(ShellPlatform.limit) + 1)
+    _ = counted.isPlatform(1)
+    check(
+      "one more and they are let go",
+      verified.count == ShellPlatform.limit + 2 && counted.count == 2)
+
+    let shared = ShellPlatform(
+      started: { .init(seconds: Int($0 % 300), microseconds: 0) },
+      verify: { $0 % 2 == 0 ? .yes : .no })
+    let askers = DispatchGroup()
+    nonisolated(unsafe) var wrong = 0
+    let tally = NSLock()
+    for n in 0..<64 {
+      DispatchQueue.global().async(group: askers) {
+        for pid in Int32(n * 10)..<Int32(n * 10 + 400)
+        where shared.isPlatform(pid) != (pid % 2 == 0) {
+          tally.withLock { wrong += 1 }
+        }
+      }
+    }
+    check(
+      "asked from many threads at once, every answer is right",
+      askers.wait(timeout: .now() + 10) == .success && wrong == 0
+        && shared.count <= ShellPlatform.limit)
+
+    check(
+      "this check's own process is not trusted",
+      ShellPlatform.started(getpid()) != nil && ShellPlatform.isSystemUI(getpid()) == .no)
+    // launchd runs as root: a start time read only from processes of the same user would
+    // leave out the window server, which runs as its own user and draws the menu bar.
+    check("a process of another user has a start time", ShellPlatform.started(1) != nil)
+    check(
+      "a pid no process has: no start time, and an error, so not trusted and not a definite no",
+      ShellPlatform.started(Int32.max) == nil && ShellPlatform.isSystemUI(Int32.max) == .unknown
+        && !ShellPlatform.shared.isPlatform(Int32.max))
+
+    check(
+      "the requirement is built from the list, one identifier each, under Apple's anchor",
+      ShellPlatform.requirement(for: ["a.b", "c.d"])
+        == "anchor apple and (identifier \"a.b\" or identifier \"c.d\")")
+    check(
+      "the list is the three processes measured above the Shell window, and nothing else",
+      ShellPlatform.systemUI == [
+        "com.apple.WindowServer", "com.apple.dock", "com.apple.screencaptureui",
+      ] && ShellPlatform.requirementText == ShellPlatform.requirement(for: ShellPlatform.systemUI))
+    check(
+      "osascript, Terminal, Notification Center and Spotlight are not on it",
+      ["osascript", "Terminal", "notificationcenterui", "Spotlight"].allSatisfy {
+        !ShellPlatform.requirementText.contains("com.apple.\($0)")
+      })
+    var compiled: SecRequirement?
+    var anyApple: SecRequirement?
+    let made = SecRequirementCreateWithString(
+      ShellPlatform.requirementText as CFString, [], &compiled)
+    let madeApple = SecRequirementCreateWithString("anchor apple" as CFString, [], &anyApple)
+    check(
+      "it is a requirement Security accepts",
+      made == errSecSuccess && compiled != nil && madeApple == errSecSuccess)
+    // The program on disk against a requirement: nothing is run. Nil when there is nothing to
+    // check, so a refusal is told apart from an error.
+    func status(_ path: String, _ requirement: SecRequirement?) -> OSStatus? {
+      var code: SecStaticCode?
+      guard let requirement,
+        SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code)
+          == errSecSuccess, let code
+      else { return nil }
+      return SecStaticCodeCheckValidity(code, [], requirement)
+    }
+    let osascript = "/usr/bin/osascript"
+    let terminal = "/System/Applications/Utilities/Terminal.app"
+    check(
+      "the Dock on disk meets it",
+      status("/System/Library/CoreServices/Dock.app", compiled) == errSecSuccess)
+    check(
+      "osascript and Terminal on disk meet Apple's anchor alone",
+      status(osascript, anyApple) == errSecSuccess && status(terminal, anyApple) == errSecSuccess)
+    check(
+      "and fail this one as a refusal, not an error: the list is why",
+      status(osascript, compiled) == errSecCSReqFailed
+        && status(terminal, compiled) == errSecCSReqFailed)
+
+    print("\nShellCover.placed: the Shell window inside the screen's visible area")
+    // AppKit's coordinates: a 33-point menu bar above, a 70-point Dock below.
+    let visible = CGRect(x: 0, y: 70, width: 1728, height: 1014)
+    check(
+      "a window that fits is centred in it",
+      ShellCover.placed(CGSize(width: 600, height: 500), in: visible)
+        == CGRect(x: 564, y: 327, width: 600, height: 500))
+    let tall = ShellCover.placed(CGSize(width: 600, height: 1400), in: visible)
+    check(
+      "a window taller than it ends up inside it, never under the menu bar",
+      visible.contains(tall) && tall.maxY == visible.maxY && tall.height == visible.height)
+    let wide = ShellCover.placed(CGSize(width: 2000, height: 300), in: visible)
+    check("and one wider than it too", visible.contains(wide) && wide.width == visible.width)
+    let offset = CGRect(x: -1440, y: 200, width: 1440, height: 800)
+    check(
+      "on a screen left of the main one as well",
+      offset.contains(ShellCover.placed(CGSize(width: 600, height: 1000), in: offset)))
     print("\nShellPanels: where a click from a driving surface must not land")
     // Window numbers no window has, so the frame given is the one used.
     let fakeWindow = Int(Int32.max) - 7
