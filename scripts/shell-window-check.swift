@@ -254,7 +254,9 @@ struct ShellWindowCheck {
       paragraphs: [ShellPane.Copy.enableBody, ShellPane.Copy.enableSafeguard],
       confirmTitle: ShellPane.Copy.enableConfirm, onConfirm: { confirmed += 1 },
       onCancel: { cancelled += 1 })
-    check("the confirming button's cell is the refusing one", sheet.confirm.cell is HandPressedButton.Cell)
+    check(
+      "the confirming button's cell is the refusing one",
+      sheet.confirm.cell is HandPressedButton.Cell)
     check(
       "it has no key equivalent and never takes focus",
       sheet.confirm.keyEquivalent.isEmpty && sheet.confirm.refusesFirstResponder)
@@ -263,9 +265,16 @@ struct ShellWindowCheck {
       sheet.panel.defaultButtonCell === sheet.cancel.cell && sheet.cancel.keyEquivalent == "\r")
     check("and Cancel has the focus", sheet.panel.initialFirstResponder === sheet.cancel)
 
-    let elements = accessible(under: sheet.panel.contentView!) + [sheet.confirm, sheet.confirm.cell!]
-    pressNew(elements.filter { ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell })
-    pressLegacy(elements.filter { ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell })
+    let elements =
+      accessible(under: sheet.panel.contentView!) + [sheet.confirm, sheet.confirm.cell!]
+    pressNew(
+      elements.filter {
+        ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell
+      })
+    pressLegacy(
+      elements.filter {
+        ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell
+      })
     sheet.confirm.performClick(nil)
     _ = sheet.confirm.sendAction(sheet.confirm.action, to: sheet.confirm.target)
     check("no Accessibility press, performClick or sent action confirms it", confirmed == 0)

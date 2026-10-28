@@ -82,7 +82,9 @@ const serve = async () => {
           let beats = 0;
           const timer = setInterval(() => {
             beats += 1;
-            frame("notifications/events/heartbeat").catch((e) => say(`heartbeat failed id=${id} ${e}`));
+            frame("notifications/events/heartbeat").catch((e) =>
+              say(`heartbeat failed id=${id} ${e}`),
+            );
           }, 1000);
           await new Promise((done) => {
             if (signal.aborted) return done();
@@ -130,30 +132,41 @@ const client = async () => {
   const write = (msg) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...msg })}\n`);
   const open = (id) => write({ id, method: "events/stream", params: { _meta: meta } });
   const cancel = (id) =>
-    write({ method: "notifications/cancelled", params: { requestId: id, reason: "spike done", _meta: meta } });
+    write({
+      method: "notifications/cancelled",
+      params: { requestId: id, reason: "spike done", _meta: meta },
+    });
   const forId = (id) => frames.filter((f) => subscriptionOf(f.msg) === id).map((f) => f.msg);
-  const response = (id) => frames.find((f) => f.msg.id === id && ("result" in f.msg || "error" in f.msg))?.msg;
+  const response = (id) =>
+    frames.find((f) => f.msg.id === id && ("result" in f.msg || "error" in f.msg))?.msg;
 
   // Warm-up: the first request pins the era. `tools/list` answers -32601 (no tools
   // registered), which is fine: the era is pinned either way.
   write({ id: "warm", method: "tools/list", params: { _meta: meta } });
   for (let i = 0; i < 50 && !response("warm"); i++) await sleep(100);
-  console.log(`[${at()}s] warm-up tools/list ->`, JSON.stringify(response("warm") ?? "NO RESPONSE").slice(0, 160));
+  console.log(
+    `[${at()}s] warm-up tools/list ->`,
+    JSON.stringify(response("warm") ?? "NO RESPONSE").slice(0, 160),
+  );
 
   // Probe 1: one stream, 5 s, then cancel.
   console.log(`\n== Probe 1: one stream held ${HOLD_MS / 1000} s, then cancelled`);
   open("s1");
   await sleep(HOLD_MS);
   const mid = forId("s1");
-  console.log(`[${at()}s] after hold: response=${JSON.stringify(response("s1") ?? null)} ` +
-    `active=${count(mid, "notifications/events/active")} heartbeats=${count(mid, "notifications/events/heartbeat")}`);
+  console.log(
+    `[${at()}s] after hold: response=${JSON.stringify(response("s1") ?? null)} ` +
+      `active=${count(mid, "notifications/events/active")} heartbeats=${count(mid, "notifications/events/heartbeat")}`,
+  );
   console.log(`            sample frame: ${JSON.stringify(mid[1] ?? mid[0] ?? null)}`);
   const beforeCancel = frames.length;
   cancel("s1");
   await sleep(1000);
   const after = frames.slice(beforeCancel).filter((f) => subscriptionOf(f.msg) === "s1");
-  console.log(`[${at()}s] after cancel: response=${JSON.stringify(response("s1") ?? null)} ` +
-    `frames for s1 still arriving=${after.length}`);
+  console.log(
+    `[${at()}s] after cancel: response=${JSON.stringify(response("s1") ?? null)} ` +
+      `frames for s1 still arriving=${after.length}`,
+  );
 
   // Probe 2: eleven streams.
   console.log(`\n== Probe 2: eleven concurrent streams held 3 s, then cancelled`);
@@ -163,13 +176,17 @@ const client = async () => {
   for (const id of ids) {
     const list = forId(id);
     const r = response(id);
-    console.log(`[${at()}s] ${id}: active=${count(list, "notifications/events/active")} ` +
-      `heartbeats=${count(list, "notifications/events/heartbeat")} response=${JSON.stringify(r ?? null)}`);
+    console.log(
+      `[${at()}s] ${id}: active=${count(list, "notifications/events/active")} ` +
+        `heartbeats=${count(list, "notifications/events/heartbeat")} response=${JSON.stringify(r ?? null)}`,
+    );
   }
   for (const id of ids) cancel(id);
   await sleep(1000);
-  console.log(`[${at()}s] responses after cancel: ` +
-    ids.map((id) => `${id}=${JSON.stringify(response(id) ?? null)}`).join(" "));
+  console.log(
+    `[${at()}s] responses after cancel: ` +
+      ids.map((id) => `${id}=${JSON.stringify(response(id) ?? null)}`).join(" "),
+  );
 
   console.log(`\n== Server log (stderr SPIKE lines)`);
   for (const l of serverLog) console.log(`  ${l}`);

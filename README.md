@@ -321,8 +321,8 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 | Always available                                     | Write-gated                        | Behind their own flag                         |
 | ---------------------------------------------------- | ---------------------------------- | --------------------------------------------- |
 | `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` | `find_codes`                                  |
-| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll`            | `network_record` `network_list` `network_get` |
-| `diagnostics`                                        |                                    |                                               |
+| `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll` `submit`   | `network_record` `network_list` `network_get` |
+| `wait_for` `diagnostics`                             |                                    |                                               |
 
 **The widest write set here, and it splits across two lanes that share nothing but the flag.**
 `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser.

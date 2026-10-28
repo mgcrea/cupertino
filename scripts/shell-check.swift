@@ -1836,8 +1836,9 @@ extension ShellCheck {
     check(
       "the started line is on disk before the script runs",
       seen.structured["stdout"] as? String == "1\n")
-    let freshLines = (try? FileManager.default.contentsOfDirectory(
-      at: freshDir, includingPropertiesForKeys: nil))?.compactMap {
+    let freshLines =
+      (try? FileManager.default.contentsOfDirectory(
+        at: freshDir, includingPropertiesForKeys: nil))?.compactMap {
         try? String(contentsOf: $0, encoding: .utf8)
       }.joined().split(separator: "\n") ?? []
     let freshEntries = ShellRecord.recent(in: freshDir)
