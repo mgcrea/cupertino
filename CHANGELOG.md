@@ -37,6 +37,19 @@ summary.
 - **Safari pulls large network bodies faster** by queueing the next chunks instead of waiting a
   second between each, and `read_page` no longer parses every stored capture to find one.
 
+### Fixed
+
+- **Safari diagnostics no longer call a dead extension working.** `working` was true whenever the
+  extension had ever run, including beside a newest capture 7.5 hours old. The extension now
+  stamps a heartbeat per site while a page is open, and diagnostics report a `state`
+  (`never-ran`, `never-captured`, `stale`, `capturing`, `answering`), which sites are answering,
+  and what the server cannot tell apart. `read_page` and `page_elements` now say which case a
+  timeout is: the extension running nowhere, running but not on this site, or running on this
+  site with no page on that exact URL.
+- **A Debug build of the app no longer updates itself into a second copy of the release.** The
+  copy registered the Safari extension a second time, and Safari ran no Cupertino extension until
+  the extra copies were removed.
+
 ## [1.32.0] - 2026-10-27
 
 **Mail drafts can be edited after their window closes.** A closed reply is rebuilt as a reply,
