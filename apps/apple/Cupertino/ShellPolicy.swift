@@ -55,6 +55,10 @@ nonisolated enum ShellPolicy {
 
   static let maxInFlight = 4
 
+  /// How many requests may wait for the window at once, app-wide, the one on screen included.
+  /// `ShellServer` refuses one more as busy, opening nothing.
+  static let maxWaiting = 4
+
   /// The whole rule, in order: cooldown, then busy, then "Don't ask", then a live session
   /// approval, then the window.
   ///

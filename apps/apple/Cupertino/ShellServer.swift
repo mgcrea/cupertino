@@ -94,6 +94,18 @@ nonisolated protocol ShellNoticeToken: Sendable {
 /// it counts only requests this server let run. A slot is taken under the same lock as the
 /// decision, so two requests that were both approved cannot make five.
 ///
+/// Windows are capped the same way: at most `ShellPolicy.maxWaiting` requests wait for the
+/// person at once, app-wide, the one on screen included. One past that is refused as busy and
+/// opens nothing, so an agent cannot stack windows in front of somebody to wear them down.
+///
+/// ## A cooldown follows the client's name
+///
+/// After "Don't run" or no answer, the connection and also the client's name are refused for
+/// `ShellPolicy.declineCooldown`. An agent with a shell can open a new connection per retry, so
+/// a cooldown kept per connection alone would cost it nothing. Closing a connection drops its
+/// own state, never its name's cooldown, which ends on its own. The name is whatever the client
+/// says it is, so two clients that share one share a cooldown.
+///
 /// Foundation only, so `make shell-check` drives it with a fake window.
 nonisolated enum ShellServer {
 
@@ -111,6 +123,10 @@ nonisolated enum ShellServer {
 
   /// Where "Before running" is read from, through `ShellSeal`. The checks set a scratch suite.
   nonisolated(unsafe) static var defaults: UserDefaults = .standard
+
+  /// The time cooldowns and session approvals are measured by. The checks move it on rather
+  /// than wait.
+  nonisolated(unsafe) static var clock: @Sendable () -> Date = { Date() }
 
   static let maxScriptBytes = 512 * 1024
   /// With the script at its limit, still well inside the host's 1 MiB line, which drops a
@@ -141,7 +157,8 @@ nonisolated enum ShellServer {
       call: { name, args, id in call(name, args: args, id: id, connection: connection) })
   }
 
-  /// The connection closed: its session approval and its cooldown go with it.
+  /// The connection closed: its session approval and its own cooldown go with it. Its client
+  /// name's cooldown stays until it ends.
   static func connectionClosed(_ connection: UUID) {
     state.lock.withLock { _ = state.connections.removeValue(forKey: connection) }
   }
@@ -176,7 +193,7 @@ nonisolated enum ShellServer {
   static let cancelledCopy = "Cancelled. The command was stopped."
 
   static func cooldownCopy(_ retryIn: TimeInterval) -> String {
-    "The person turned down a command from this session a moment ago. Nothing ran, and "
+    "The person turned down a command from this client a moment ago. Nothing ran, and "
       + "Cupertino will not ask again for another \(max(1, Int(retryIn.rounded(.up)))) s. Ask "
       + "them in the conversation first."
   }
@@ -187,7 +204,11 @@ nonisolated enum ShellServer {
     let lock = NSLock()
     // Everything below is guarded by `lock`.
     var connections: [UUID: (approvedUntil: Date?, declinedUntil: Date?)] = [:]
+    /// Each client name's cooldown, kept across its connections.
+    var declinedClients: [String: Date] = [:]
     var inFlight = 0
+    /// Requests waiting for the window, the one on screen included.
+    var waiting = 0
     /// Calls that may ask or run, for `stopAll`.
     var calls: [ObjectIdentifier: Call] = [:]
     /// Moved on by `stopAll`, so a request that started before it cannot go on to ask or run.
@@ -419,15 +440,21 @@ nonisolated enum ShellServer {
     // The decision, the slot it takes and the call `stopAll` can reach, in one step.
     let decision = state.lock.withLock { () -> ShellPolicy.Decision? in
       guard state.generation == generation else { return nil }
+      let now = clock()
       let standing = connection.flatMap { state.connections[$0] }
-      let decision = ShellPolicy.decide(
+      state.declinedClients = state.declinedClients.filter { $0.value > now }
+      let declinedUntil = [standing?.declinedUntil, state.declinedClients[client]]
+        .compactMap { $0 }.max()
+      var decision = ShellPolicy.decide(
         before, sessionApprovedUntil: standing?.approvedUntil,
-        declinedUntil: standing?.declinedUntil, inFlight: state.inFlight, now: Date())
+        declinedUntil: declinedUntil, inFlight: state.inFlight, now: now)
+      if case .ask = decision, state.waiting >= ShellPolicy.maxWaiting { decision = .busy }
       switch decision {
       case .run:
         state.inFlight += 1
         state.calls[ObjectIdentifier(call)] = call
       case .ask:
+        state.waiting += 1
         state.calls[ObjectIdentifier(call)] = call
       case .declined, .busy:
         break
@@ -471,21 +498,26 @@ nonisolated enum ShellServer {
         decision: before == .none ? .notAsked : .approvedForSession, record: record)
     }
 
-    // The window.
-    guard call.beginAsking() else {
-      return refuse(.cancelled, cancelledCopy)
+    // The window. Its place among the waiting is given back once it has answered.
+    let answer: ShellPromptAnswer
+    do {
+      defer { state.lock.withLock { state.waiting -= 1 } }
+      guard call.beginAsking() else {
+        return refuse(.cancelled, cancelledCopy)
+      }
+      answer = call.consent.ask(prompt)
     }
-    let answer = call.consent.ask(prompt)
     if call.endAsking() || answer == .cancelled {
       return refuse(.cancelled, cancelledCopy)
     }
 
     switch answer {
     case .dontRun, .noAnswer:
-      if let connection {
-        state.lock.withLock {
-          state.connections[connection, default: (nil, nil)].declinedUntil =
-            Date().addingTimeInterval(ShellPolicy.declineCooldown)
+      state.lock.withLock {
+        let until = clock().addingTimeInterval(ShellPolicy.declineCooldown)
+        state.declinedClients[client] = until
+        if let connection {
+          state.connections[connection, default: (nil, nil)].declinedUntil = until
         }
       }
       return answer == .dontRun
@@ -501,7 +533,7 @@ nonisolated enum ShellServer {
         guard state.generation == generation else { return .switchedOff }
         if forSession, let connection {
           state.connections[connection, default: (nil, nil)].approvedUntil =
-            Date().addingTimeInterval(ShellPolicy.sessionLength)
+            clock().addingTimeInterval(ShellPolicy.sessionLength)
         }
         // Taken again now: other runs may have started while the window waited.
         guard state.inFlight < ShellPolicy.maxInFlight else { return .full }
@@ -791,12 +823,14 @@ nonisolated enum ShellServer {
 
     - The person sees the full script, your purpose, the interpreter, the folder and the
       timeout, and chooses. "Don't run", or no answer within 60 s, is a no.
-    - After a no, this connection is refused for 30 s without asking again. Ask the person
-      in the conversation rather than retrying.
+    - After a no, this connection, and any connection under the same client name, is
+      refused for 30 s without asking again. Ask the person in the conversation rather than
+      retrying.
     - They may approve the rest of the session (30 min, or until the connection closes), or
       have turned asking off. A run that shows no window still shows a card they can stop it
       from.
-    - At most four runs at once. A fifth is refused, not queued.
+    - At most four runs at once, and at most four windows waiting. One more is refused,
+      not queued.
 
     ## What a script gets
 

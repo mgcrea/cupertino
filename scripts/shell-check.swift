@@ -1108,6 +1108,7 @@ struct ToolAnswer {
 
 extension ShellCheck {
   static let conn = UUID()
+  static let names = NameTable()
   static let requestsMade = Tally()
   static let ids = Tally(1000)
 
@@ -1128,7 +1129,7 @@ extension ShellCheck {
   /// The cooldown sentence, with the wait it names, or nil when `text` is not it.
   static func cooldownWait(_ text: String) -> Int? {
     let head =
-      "The person turned down a command from this session a moment ago. Nothing ran, and "
+      "The person turned down a command from this client a moment ago. Nothing ran, and "
       + "Cupertino will not ask again for another "
     let tail = " s. Ask them in the conversation first."
     guard text.hasPrefix(head), text.hasSuffix(tail) else { return nil }
@@ -1244,7 +1245,9 @@ extension ShellCheck {
     defer { try? FileManager.default.removeItem(at: recordDir) }
     ShellRecord.directory = recordDir
     ShellServer.fullDiskAccess = { true }
-    ShellServer.clientName = { _ in "check-client" }
+    // A name of its own for each connection, as distinct clients have, so one connection's
+    // cooldown does not reach the next; `names` gives several connections one name.
+    ShellServer.clientName = { names.name($0) }
     let marker = scratch("must-not-exist")
     defer { try? FileManager.default.removeItem(atPath: marker) }
     let exists = { FileManager.default.fileExists(atPath: marker) }
@@ -1482,12 +1485,10 @@ extension ShellCheck {
         return fake.asks == before + 2
       }())
     ShellServer.connectionClosed(b)
+    let afterClose = shellRun(on: b)
     check(
-      "closing the connection ends its cooldown",
-      {
-        _ = shellRun(on: b)
-        return fake.asks == before + 3
-      }())
+      "closing the connection does not end its client's cooldown",
+      decision(afterClose) == "cooldown" && fake.asks == before + 2)
     ShellSeal.setBefore(.ask, store)
     fake.next = .runForSession
     let c = UUID()
@@ -1497,6 +1498,64 @@ extension ShellCheck {
     check(
       "under Ask every time a session answer approves only that run",
       fake.asks == asksAfterAsk + 1 && fake.prompts.last?.offerSession == false)
+
+    print("\nShellServer: a cooldown follows the client's name across connections")
+    ShellSeal.setBefore(.ask, store)
+    let first = UUID()
+    let second = UUID()
+    let elsewhere = UUID()
+    names.set("Same Client", for: first, second)
+    fake.next = .dontRun
+    _ = shellRun(on: first)
+    let asksAfterNo = fake.asks
+    fake.next = .runOnce
+    let retried = shellRun(touch, on: second)
+    check(
+      "a new connection under the same name is refused without asking",
+      decision(retried) == "cooldown" && cooldownWait(retried.text) != nil
+        && fake.asks == asksAfterNo && !exists())
+    ShellServer.connectionClosed(first)
+    ShellServer.connectionClosed(second)
+    check(
+      "and closing both connections does not lift it",
+      decision(shellRun(on: UUID().named("Same Client"))) == "cooldown"
+        && fake.asks == asksAfterNo)
+    check(
+      "another client is still asked",
+      !shellRun(on: elsewhere).isError && fake.asks == asksAfterNo + 1)
+    ShellServer.clock = { Date().addingTimeInterval(ShellPolicy.declineCooldown + 1) }
+    check(
+      "the name's cooldown expires on its own",
+      !shellRun(on: UUID().named("Same Client")).isError && fake.asks == asksAfterNo + 2)
+    ShellServer.clock = { Date() }
+    fake.next = .noAnswer
+    _ = shellRun(on: UUID().named("Quiet Client"))
+    let asksAfterQuietName = fake.asks
+    check(
+      "no answer cools the name down too",
+      decision(shellRun(on: UUID().named("Quiet Client"))) == "cooldown"
+        && fake.asks == asksAfterQuietName)
+    fake.next = .runOnce
+
+    print("\nShellServer: at most four windows wait at once")
+    fake.hold = true
+    let windows = (0..<4).map { _ in runAside(touch) }
+    let allUp = (0..<4).allSatisfy { _ in fake.waiting.wait(timeout: .now() + 5) == .success }
+    let asksWithFour = fake.asks
+    let fifth = shellRun(touch, on: UUID())
+    check(
+      "a fifth window is refused as busy, verbatim, and none opens",
+      allUp && fifth.isError && fifth.text == busyCopy && decision(fifth) == "busy"
+        && fake.asks == asksWithFour)
+    ShellServer.stopAll()
+    check(
+      "the four waiting are answered when stopped",
+      windows.allSatisfy { $0.done.wait(timeout: .now() + 5) == .success }
+        && windows.allSatisfy { $0.answer()?.text == cancelledCopy } && !exists())
+    fake.hold = false
+    check(
+      "once they are gone a window opens again",
+      !shellRun(on: UUID()).isError && fake.asks == asksWithFour + 1)
 
     print("\nShellServer: Don't ask")
     ShellSeal.setBefore(.none, store)
@@ -1642,9 +1701,10 @@ extension ShellCheck {
     print("\nShellServer: the record")
     let secret = "SHELL-CHECK-\(getpid())"
     fake.next = .runOnce
-    // `conn` turned a command down at the start; closing it lifts the cooldown.
-    ShellServer.connectionClosed(conn)
+    // `conn` turned a command down at the start, and its client is still cooling down.
+    ShellServer.clock = { Date().addingTimeInterval(ShellPolicy.declineCooldown + 1) }
     let recorded = shellRun("echo \(secret)", on: conn)
+    ShellServer.clock = { Date() }
     ShellRecord.drain()
     let entries = ShellRecord.recent(1000, in: recordDir)
     check("every request is on the record", entries.count == requestsMade.count)
@@ -2131,5 +2191,31 @@ extension ShellCheck {
         try runIn("-1\nconsole.log('ran')", .node, tmp: NSTemporaryDirectory()).stdout
           == "ran\n")
     }
+  }
+}
+
+/// The client name each connection reports, as `Sessions` would give it. Each connection has a
+/// name of its own unless one is set; `ShellCheck.conn` is "check-client".
+final class NameTable: @unchecked Sendable {
+  private let lock = NSLock()
+  private var table: [UUID: String] = [:]
+
+  func name(_ connection: UUID) -> String {
+    lock.withLock {
+      if connection == ShellCheck.conn { return "check-client" }
+      return table[connection] ?? "client \(connection.uuidString.prefix(8))"
+    }
+  }
+
+  func set(_ name: String, for connections: UUID...) {
+    lock.withLock { for connection in connections { table[connection] = name } }
+  }
+}
+
+extension UUID {
+  /// This connection, reporting `name` as its client.
+  func named(_ name: String) -> UUID {
+    ShellCheck.names.set(name, for: self)
+    return self
   }
 }
